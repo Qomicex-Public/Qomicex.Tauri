@@ -1,0 +1,18 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build-backend",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"${workspaceFolder}/src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj",
+				"--configuration",
+				"Debug"
+			],
+			"group": "build",
+			"problemMatcher": "$msCompile"
+		}
+	]
+}
