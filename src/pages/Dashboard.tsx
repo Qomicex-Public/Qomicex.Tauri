@@ -8,11 +8,13 @@ import { Badge } from '../components/ui/badge.tsx'
 import { getSystemInfo } from '../api/system.ts'
 import { searchJava } from '../api/java.ts'
 import type { SystemInfo, JavaRuntime } from '../types/index.ts'
+import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 
 export default function Dashboard() {
   const navigate = useNavigate()
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>([])
+  const pageRef = usePageAnimation()
 
   useEffect(() => {
     Promise.all([getSystemInfo(), searchJava()])
@@ -26,7 +28,7 @@ export default function Dashboard() {
   const validJava = javaRuntimes.filter((j) => j.state === 'Valid')
 
   return (
-    <div className="animate-in space-y-6 p-8">
+    <div ref={pageRef} className="space-y-6 p-8">
       <div className="relative flex items-center justify-between overflow-hidden rounded-2xl border bg-gradient-to-br from-card to-card/80 p-7">
         <div className="absolute -right-16 -top-16 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
         <div className="z-10">
@@ -45,7 +47,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="anim-stagger grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -60,7 +62,7 @@ export default function Dashboard() {
                   ['操作系统', sysInfo.osName],
                   ['版本', sysInfo.osVersion],
                   ['架构', sysInfo.architecture],
-                  ['内存', `${(sysInfo.memory / 1024 / 1024 / 1024).toFixed(1)} GB`],
+                  ['内存', `${(sysInfo.memory / 1024).toFixed(1)} GB`],
                 ].map(([label, value]) => (
                   <div key={label as string} className="flex items-center justify-between border-b border-border py-1.5 text-sm last:border-0">
                     <span className="text-muted-foreground">{label as string}</span>

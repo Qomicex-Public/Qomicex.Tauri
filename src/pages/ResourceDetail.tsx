@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
+import { PageHeader } from '../components/PageHeader.tsx'
 import {
   faArrowLeft,
   faArrowUpRightFromSquare,
@@ -147,24 +148,26 @@ export default function ResourceDetailPage() {
   }
 
   return (
-    <div className="animate-in space-y-6 p-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-2">
-          <Link to={`/resource-center?${backQuery.toString()}`} className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
-            <FontAwesomeIcon icon={faArrowLeft} className="h-3.5 w-3.5" />
-            返回资源中心
-          </Link>
-          <h1 className="text-2xl font-semibold tracking-tight">资源详情</h1>
-        </div>
-        {detail?.projectUrl && (
-          <Button asChild variant="outline">
+    <div className="animate-in slide-up space-y-6 p-8">
+      <PageHeader
+        title={
+          <>
+            <Link to={`/resource-center?${backQuery.toString()}`} className="mr-2 text-sm font-normal text-muted-foreground transition-colors hover:text-foreground">
+              <FontAwesomeIcon icon={faArrowLeft} className="mr-1 h-3.5 w-3.5" />
+              返回
+            </Link>
+            资源详情
+          </>
+        }
+        actions={detail?.projectUrl ? (
+          <Button asChild variant="outline" size="sm">
             <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
-              <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
-              打开原始页面
+              <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3.5 w-3.5" />
+              原始页面
             </a>
           </Button>
-        )}
-      </div>
+        ) : undefined}
+      />
 
       {loading ? (
         <Card className="p-8">

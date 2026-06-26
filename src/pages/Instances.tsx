@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag } from '@fortawesome/free-solid-svg-icons'
+import { PageHeader } from '../components/PageHeader.tsx'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { Button } from '../components/ui/button.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -114,6 +115,7 @@ export default function Instances() {
   const [remoteCategory, setRemoteCategory] = useState('all')
   const [remoteSort, setRemoteSort] = useState('recommended')
   const [remoteViewMode, setRemoteViewMode] = useState<'grid' | 'list'>('grid')
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [form, setForm] = useState({ name: '', gameVersion: '', loader: '', loaderVersion: '' })
   const [selectedAddons, setSelectedAddons] = useState<string[]>([])
   const [loaderVersions, setLoaderVersions] = useState<LoaderVersionInfo[]>([])
@@ -348,7 +350,7 @@ export default function Instances() {
 
   if (step === 'select-version') {
     return (
-      <div className="animate-in space-y-5 p-8">
+      <div className="animate-in slide-up space-y-5 p-8">
         <div className="flex items-center gap-3">
           <button onClick={() => setStep('list')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -387,15 +389,15 @@ export default function Instances() {
             </Select>
 
             <div className="flex items-center gap-1 rounded-lg border border-input bg-background p-1">
-              <button
-                onClick={() => setRemoteViewMode('grid')}
-                className={cn('flex h-7 flex-1 items-center justify-center rounded-md transition-colors', remoteViewMode === 'grid' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+            <button
+              onClick={() => setRemoteViewMode('grid')}
+              className={cn('flex h-9 flex-1 items-center justify-center rounded-md transition-colors', remoteViewMode === 'grid' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
               >
                 <FontAwesomeIcon icon={faGrip} className="h-3.5 w-3.5" />
               </button>
-              <button
-                onClick={() => setRemoteViewMode('list')}
-                className={cn('flex h-7 flex-1 items-center justify-center rounded-md transition-colors', remoteViewMode === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+            <button
+              onClick={() => setRemoteViewMode('list')}
+              className={cn('flex h-9 flex-1 items-center justify-center rounded-md transition-colors', remoteViewMode === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
               >
                 <FontAwesomeIcon icon={faList} className="h-3.5 w-3.5" />
               </button>
@@ -458,7 +460,7 @@ export default function Instances() {
   if (step === 'configure') {
     const selectedVer = remoteVersions.find((v) => v.id === form.gameVersion)
     return (
-      <div className="animate-in space-y-5 p-8">
+      <div className="animate-in slide-up space-y-5 p-8">
         <div className="flex items-center gap-3">
           <button onClick={() => setStep('select-version')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -484,7 +486,7 @@ export default function Instances() {
                 )}
               </div>
             </div>
-            <div className="space-y-3">
+          <div className="anim-stagger space-y-3">
               <Label>模组加载器</Label>
               <div className="grid grid-cols-[1fr_1fr] gap-3">
                 <Select
@@ -646,11 +648,8 @@ export default function Instances() {
   }
 
   return (
-    <div className="animate-in space-y-6 p-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">游戏实例</h1>
-        <span className="text-sm text-muted-foreground">{scannedLocal.length} 个版本</span>
-      </div>
+      <div className="animate-in slide-up space-y-6 p-8">
+        <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`} />
 
       <div className="relative flex items-center gap-2" ref={popoverRef}>
         <button
@@ -825,7 +824,18 @@ export default function Instances() {
             <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />浏览并选择
           </Button>
         </div>
-      ) : loading || scanning ? (
+      ) : (
+        <div className="mb-4 flex items-center justify-end gap-1 rounded-lg border border-input bg-background p-1 w-fit">
+          <button onClick={() => setViewMode('grid')} className={cn('flex h-7 w-7 items-center justify-center rounded-md transition-colors', viewMode === 'grid' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}>
+            <FontAwesomeIcon icon={faGrip} className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={() => setViewMode('list')} className={cn('flex h-7 w-7 items-center justify-center rounded-md transition-colors', viewMode === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}>
+            <FontAwesomeIcon icon={faList} className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {loading || scanning ? (
         <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">扫描版本中...</div>
       ) : scannedLocal.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
@@ -834,44 +844,93 @@ export default function Instances() {
           <p className="text-xs text-muted-foreground/70">请确认目录下存在 versions/ 文件夹</p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {filtered.map((v) => (
-            <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
-              <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-2xl font-bold text-primary ring-1 ring-primary/20">
-                {v.name.charAt(0).toUpperCase()}
-              </div>
-              <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
-              {v.loaders && v.loaders.filter((l) => l.type).length > 0 && (
-                <div className="mt-1 flex flex-wrap justify-center gap-1">
-                  {v.loaders.filter((l) => l.type).map((l) => (
-                    <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
-                  ))}
+        viewMode === 'grid' ? (
+          <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            {filtered.map((v) => (
+              <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
+                <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-2xl font-bold text-primary ring-1 ring-primary/20">
+                  {v.name.charAt(0).toUpperCase()}
                 </div>
-              )}
-              <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/70">
-                <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
-                  <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
-                  {v.state === 'Available' ? '可用' : '异常'}
-                </span>
+                <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
+                {v.loaders && v.loaders.filter((l) => l.type).length > 0 && (
+                  <div className="mt-1 flex flex-wrap justify-center gap-1">
+                    {v.loaders.filter((l) => l.type).map((l) => (
+                      <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/70">
+                  <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
+                    <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
+                    {v.state === 'Available' ? '可用' : '异常'}
+                  </span>
+                </div>
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+                  <Tooltip content="启动">
+                    <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={() => handleLaunch(v.name)} disabled={launching === v.name}>
+                      <FontAwesomeIcon icon={launching === v.name ? faRotate : faPlay} className={cn('h-5 w-5', launching === v.name && 'animate-spin')} />
+                    </Button>
+                  </Tooltip>
+                  <div className="flex items-center gap-1">
+                    <Tooltip content="设置">
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={() => setSettingsVersion(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
+                    </Tooltip>
+                    <Tooltip content="打开文件夹">
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white"><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                    </Tooltip>
+                  </div>
+                </div>
               </div>
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
-                <Tooltip content="启动">
-                  <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={() => handleLaunch(v.name)} disabled={launching === v.name}>
-                    <FontAwesomeIcon icon={launching === v.name ? faRotate : faPlay} className={cn('h-5 w-5', launching === v.name && 'animate-spin')} />
-                  </Button>
-                </Tooltip>
-                <div className="flex items-center gap-1">
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filtered.map((v) => (
+              <div key={v.name} className="group flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 text-lg font-bold text-primary ring-1 ring-primary/20">
+                  {v.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="truncate text-sm font-medium">{v.name}</h3>
+                    {v.loaders && v.loaders.filter((l) => l.type).length > 0 && v.loaders.filter((l) => l.type).map((l) => (
+                      <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
+                    ))}
+                    <span className={cn('inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
+                      <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
+                      {v.state === 'Available' ? '可用' : '异常'}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+                    {v.loaders && v.loaders.filter((l) => l.version).length > 0 && (
+                      <span className="flex items-center gap-1">
+                        <FontAwesomeIcon icon={faTag} className="h-3 w-3" />
+                        {v.loaders.filter((l) => l.version).map((l) => l.version).join(', ')}
+                      </span>
+                    )}
+                    <span className="flex items-center gap-1">
+                      <FontAwesomeIcon icon={faCalendar} className="h-3 w-3" />
+                      {v.gameVersion}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  <Tooltip content="启动">
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLaunch(v.name)} disabled={launching === v.name}>
+                      <FontAwesomeIcon icon={launching === v.name ? faRotate : faPlay} className={cn('h-4 w-4', launching === v.name && 'animate-spin')} />
+                    </Button>
+                  </Tooltip>
                   <Tooltip content="设置">
-                    <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={() => setSettingsVersion(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setSettingsVersion(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                   </Tooltip>
                   <Tooltip content="打开文件夹">
-                    <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white"><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8"><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                   </Tooltip>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )
       )}
     </div>
   )

@@ -1,17 +1,24 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faMicrochip, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faDownload, faRotate, faCircle, faFolder, faTrashCan } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faMicrochip, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faDownload, faRotate, faFolder, faTrashCan, faTag, faDesktop, faRobot } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
+import { Checkbox } from '../components/ui/checkbox.tsx'
+import { PageHeader } from '../components/PageHeader.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
+import type { SystemInfo } from '../types/index.ts'
 import { generateRoomCode, validateRoomCode } from '../api/roomCode.ts'
 import { searchJava, validateJavaPath } from '../api/java.ts'
+import { getSystemInfo } from '../api/system.ts'
+import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
+import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 
 const CATEGORIES = [
@@ -27,12 +34,15 @@ interface AppSettings {
   downloadThreads: number
   versionIsolation: boolean
   closeAfterLaunch: boolean
+  memoryMode: 'auto' | 'custom'
   defaultMaxMemory: number
   jvmArgs: string
   language: string
   defaultJavaPath: string
   downloadSource: number
   downloadTimeout: number
+  animationsEnabled: boolean
+  animationSpeed: number
 }
 
 const DOWNLOAD_SOURCES = [
@@ -45,12 +55,15 @@ const DEFAULT_SETTINGS: AppSettings = {
   downloadThreads: 4,
   versionIsolation: true,
   closeAfterLaunch: false,
+  memoryMode: 'auto',
   defaultMaxMemory: 4096,
   jvmArgs: '',
   language: 'zh-CN',
   defaultJavaPath: '',
   downloadSource: 0,
   downloadTimeout: 15,
+  animationsEnabled: true,
+  animationSpeed: 1,
 }
 
 function loadSettings(): AppSettings {
@@ -63,16 +76,28 @@ function loadSettings(): AppSettings {
 
 function saveSettings(settings: AppSettings) {
   localStorage.setItem('qomicex-settings', JSON.stringify(settings))
+  const enabled = settings.animationsEnabled !== false
+  const speed = settings.animationSpeed ?? 1
+  document.documentElement.dataset.animEnabled = String(enabled)
+  document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
 }
 
 export default function Settings() {
-  const { error: msgError, prompt: msgPrompt, success: msgSuccess } = useMessageBox()
+  const { error: msgError, confirm: msgConfirm } = useMessageBox()
   const [category, setCategory] = useState('launcher')
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
   const [saved, setSaved] = useState(false)
 
+  const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [runtimes, setRuntimes] = useState<JavaRuntime[]>([])
   const [scanning, setScanning] = useState<'idle' | 'quick' | 'deep'>('idle')
+  const [javaStatus, setJavaStatus] = useState('就绪')
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [addPath, setAddPath] = useState('')
+  const [adding, setAdding] = useState(false)
+  const autoScanRef = useRef(false)
 
   const [roomCode, setRoomCode] = useState('')
   const [validationCode, setValidationCode] = useState('')
@@ -94,43 +119,122 @@ export default function Settings() {
 
   const validCount = runtimes.filter((j) => j.state === 'Valid').length
 
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval>
+    function refresh() {
+      getSystemInfo().then((info) => {
+        setSysInfo(info)
+        const cur = settingsRef.current
+        if (cur.memoryMode === 'auto') {
+          const autoVal = Math.max(512, Math.floor(info.availableMemory * 0.7))
+          if (autoVal !== cur.defaultMaxMemory) {
+            const next = { ...cur, defaultMaxMemory: autoVal }
+            setSettings(next)
+            saveSettings(next)
+          }
+        }
+      }).catch(() => {})
+    }
+    refresh()
+    timer = setInterval(refresh, 5000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (settings.memoryMode === 'auto') {
+      const autoVal = Math.max(512, Math.floor((sysInfo?.availableMemory ?? 0) * 0.7))
+      if (autoVal !== settings.defaultMaxMemory) {
+        const next = { ...settings, defaultMaxMemory: autoVal }
+        setSettings(next)
+        saveSettings(next)
+      }
+    }
+  }, [settings.memoryMode])
+
+  useEffect(() => {
+    if (category === 'java' && !autoScanRef.current) {
+      autoScanRef.current = true
+      handleScan('quick')
+    }
+  }, [category])
+
   const handleScan = useCallback(async (mode: 'quick' | 'deep') => {
     setScanning(mode)
+    setJavaStatus(mode === 'quick' ? '正在快速扫描...' : '正在深度扫描...')
     try {
       const result = await searchJava()
-      setRuntimes(result)
+      setRuntimes((prev) => {
+        const merged = [...prev]
+        for (const r of result) {
+          if (!merged.some((m) => m.path === r.path)) merged.push(r)
+        }
+        return merged
+      })
+      const newCount = runtimes.length === 0 ? result.length : result.filter((r) => !runtimes.some((m) => m.path === r.path)).length
+      setJavaStatus(newCount > 0 ? `扫描完成，发现 ${newCount} 个新版` : '扫描完成，无新版')
     } catch (e) {
+      setJavaStatus('扫描失败')
       console.error(e)
     } finally {
       setScanning('idle')
     }
-  }, [])
+  }, [runtimes])
 
-  function handleOpenFolder(path: string) {
-    const dir = path.replace(/[/\\]java(\.exe)?$/i, '')
-    import('@tauri-apps/plugin-opener').then(({ openUrl }) => openUrl(dir)).catch(() => {})
+  function handleRefresh() {
+    setJavaStatus('正在刷新...')
+    handleScan('quick')
   }
 
-  async function handleManualAdd() {
-    const p = await msgPrompt('请输入 Java 可执行文件的完整路径（如 C:\\Program Files\\Java\\jdk-17\\bin\\java.exe）', '手动添加 Java')
-    if (!p) return
+  function handleOpenFolder(path: string) {
+    revealItemInDir(path).catch(() => {
+      const dir = path.replace(/[/\\][^/\\]+$/i, '')
+      openPath(dir).catch(() => {})
+    })
+  }
+
+  function handleManualAdd() {
+    setAddPath('')
+    setAddDialogOpen(true)
+  }
+
+  async function handleBrowseJava() {
     try {
-      const result = await validateJavaPath(p)
+      const selected: unknown = await tauriOpen({
+        multiple: false,
+        title: '选择 Java 可执行文件',
+        filters: [{ name: 'Java', extensions: ['exe', ''] }],
+      })
+      if (typeof selected === 'string') setAddPath(selected)
+    } catch {}
+  }
+
+  async function confirmAddJava() {
+    if (!addPath) return
+    setAdding(true)
+    try {
+      const result = await validateJavaPath(addPath)
       setRuntimes((prev) => {
         const exists = prev.some((j) => j.path === result.path)
         return exists ? prev : [...prev, result]
       })
-      msgSuccess(`已添加 Java: ${result.name} ${result.version}`)
+      setJavaStatus(`已添加 ${result.name} ${result.version}`)
+      setAddDialogOpen(false)
     } catch {
-      msgError('无法识别该路径下的 Java 运行时')
+      setJavaStatus('无法识别该路径下的 Java 运行时')
+    } finally {
+      setAdding(false)
     }
   }
 
-  function handleDelete(path: string) {
+  async function handleDelete(path: string) {
+    const name = runtimes.find((j) => j.path === path)?.name || ''
+    const ok = await msgConfirm(`确定要删除 "${name}" 吗？`, '删除 Java')
+    if (!ok) return
     setRuntimes((prev) => prev.filter((j) => j.path !== path))
     if (settings.defaultJavaPath === path) {
       update('defaultJavaPath', '')
     }
+    setJavaStatus(`已删除 ${name}`)
   }
 
   async function handleGenerate() {
@@ -153,10 +257,8 @@ export default function Settings() {
   }
 
   return (
-    <div className="animate-in p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">设置</h1>
-      </div>
+    <div className="animate-in slide-up space-y-6 p-8">
+      <PageHeader title="设置" />
 
       <div className="flex gap-4">
         <div className="flex w-48 shrink-0 flex-col gap-0.5">
@@ -179,6 +281,7 @@ export default function Settings() {
 
         <div className="flex-1 space-y-4">
           {category === 'launcher' && (
+            <div key="launcher" className="animate-in slide-up">
             <Card>
               <CardHeader>
                 <CardTitle>
@@ -212,11 +315,9 @@ export default function Settings() {
                 </div>
 
                 <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={settings.versionIsolation}
-                    onChange={(e) => update('versionIsolation', e.target.checked)}
-                    className="h-4 w-4 rounded border-border bg-background accent-primary"
+                    onCheckedChange={(c) => update('versionIsolation', c === true)}
                   />
                   <div>
                     <div className="text-sm font-medium">版本隔离</div>
@@ -225,11 +326,9 @@ export default function Settings() {
                 </label>
 
                 <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={settings.closeAfterLaunch}
-                    onChange={(e) => update('closeAfterLaunch', e.target.checked)}
-                    className="h-4 w-4 rounded border-border bg-background accent-primary"
+                    onCheckedChange={(c) => update('closeAfterLaunch', c === true)}
                   />
                   <div>
                     <div className="text-sm font-medium">启动游戏后关闭启动器</div>
@@ -255,7 +354,7 @@ export default function Settings() {
                       </button>
                     ))}
                   </div>
-                  <p className="text-xs text-muted-foreground">官方源需要国际网络访问，BMCLAPI 镜像国内可用</p>
+                  <p className="text-xs text-muted-foreground">官方源更新最快，镜像源国内速度较快</p>
                 </div>
 
                 <div className="space-y-2">
@@ -272,10 +371,11 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
+            </div>
           )}
 
           {category === 'java' && (
-            <>
+            <div key="java" className="animate-in slide-up">
               <Card>
                 <CardHeader className="flex-row items-center justify-between">
                   <div>
@@ -309,16 +409,33 @@ export default function Settings() {
                         下载 Java
                       </a>
                     </Button>
+                    <Tooltip content="刷新列表">
+                      <Button size="sm" variant="ghost" onClick={handleRefresh} disabled={scanning !== 'idle'}>
+                        <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', scanning !== 'idle' && 'animate-spin')} />
+                      </Button>
+                    </Tooltip>
                   </div>
 
                   {scanning !== 'idle' && (
-                    <p className="text-sm text-muted-foreground">正在扫描 Java 运行时...</p>
+                    <div className="flex items-center gap-3 rounded-lg bg-muted px-4 py-3">
+                      <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin text-primary" />
+                      <span className="text-sm text-muted-foreground">正在扫描 Java 运行时...</span>
+                    </div>
                   )}
 
                   {scanning === 'idle' && runtimes.length === 0 && (
-                    <div className="flex flex-col items-center gap-2 py-8 text-center text-muted-foreground">
-                      <FontAwesomeIcon icon={faMicrochip} className="h-8 w-8 opacity-30" />
-                      <p className="text-sm">尚未扫描 Java 运行时，点击"快速扫描"开始检测</p>
+                    <div className="flex flex-col items-center gap-4 py-12 text-center">
+                      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
+                        <FontAwesomeIcon icon={faMicrochip} className="h-7 w-7 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-foreground">尚未检测到 Java 运行时</p>
+                        <p className="mt-1 text-xs text-muted-foreground">点击"快速扫描"自动检测系统中的 Java，或手动添加</p>
+                      </div>
+                      <Button size="sm" onClick={() => handleScan('quick')}>
+                        <FontAwesomeIcon icon={faMagnifyingGlass} className="h-4 w-4" />
+                        开始扫描
+                      </Button>
                     </div>
                   )}
 
@@ -337,22 +454,32 @@ export default function Settings() {
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium">{j.name}</span>
                               <Badge variant="outline" className="h-5 px-1.5 text-[10px]">{j.type}</Badge>
+                              {j.state === 'Valid' ? (
+                                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">可用</span>
+                              ) : (
+                                <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">不可用</span>
+                              )}
                             </div>
                             <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
-                              <span>版本 {j.version}</span>
-                              <span>{j.arch}</span>
-                              <FontAwesomeIcon icon={faCircle} className={cn('h-1.5 w-1.5', j.state === 'Valid' ? 'text-primary' : 'text-muted-foreground')} />
-                              <span className={j.state === 'Valid' ? 'text-primary' : 'text-muted-foreground'}>
-                                {j.state === 'Valid' ? '可用' : '不可用'}
+                              <span className="flex items-center gap-1">
+                                <FontAwesomeIcon icon={faTag} className="h-3 w-3" />
+                                版本 {j.version}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <FontAwesomeIcon icon={faDesktop} className="h-3 w-3" />
+                                {j.arch}
                               </span>
                             </div>
-                            <div className="mt-0.5 truncate text-xs text-muted-foreground/60">{j.path}</div>
+                            <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/60">
+                              <FontAwesomeIcon icon={faFolder} className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{j.path}</span>
+                            </div>
                           </div>
 
                           <div className="flex shrink-0 items-center gap-0.5">
                             <Tooltip content="打开文件夹">
                               <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleOpenFolder(j.path)}>
-                                <FontAwesomeIcon icon={faFolder} className="h-3.5 w-3.5" />
+                                <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
                             <Tooltip content="删除">
@@ -365,6 +492,14 @@ export default function Settings() {
                       ))}
                     </div>
                   )}
+
+                  <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
+                    <FontAwesomeIcon icon={faInfoCircle} className="h-3.5 w-3.5 text-primary" />
+                    <span>{javaStatus}</span>
+                    <span className="ml-auto">
+                      {runtimes.length > 0 && `${validCount} / ${runtimes.length} 可用`}
+                    </span>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -387,17 +522,81 @@ export default function Settings() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="maxMemory">默认最大内存 (MB)</Label>
-                    <Input
-                      id="maxMemory"
-                      type="number"
-                      min={512}
-                      max={65536}
-                      step={512}
-                      value={settings.defaultMaxMemory}
-                      onChange={(e) => update('defaultMaxMemory', Math.max(512, parseInt(e.target.value) || 512))}
-                    />
-                    <p className="text-xs text-muted-foreground">新建实例时的默认内存分配</p>
+                    <Label>内存分配</Label>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => {
+                        const next = { ...settings, memoryMode: 'auto' as const }
+                        if (sysInfo) next.defaultMaxMemory = Math.max(512, Math.floor(sysInfo.availableMemory * 0.7))
+                        setSettings(next)
+                        saveSettings(next)
+                        setSaved(true)
+                      }} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                        <FontAwesomeIcon icon={faRobot} className="mr-1.5 h-3.5 w-3.5" />自动
+                      </button>
+                      <button onClick={() => update('memoryMode', 'custom')} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                        <FontAwesomeIcon icon={faSliders} className="mr-1.5 h-3.5 w-3.5" />自定义
+                      </button>
+                    </div>
+
+                    {sysInfo ? (
+                      <>
+                        <div className="flex items-center gap-3 py-1">
+                          <input
+                            type="range"
+                            min={512}
+                            max={Math.max(512, Math.floor(sysInfo.availableMemory))}
+                            step={256}
+                            value={settings.defaultMaxMemory}
+                            disabled={settings.memoryMode === 'auto'}
+                            onChange={(e) => update('defaultMaxMemory', parseInt(e.target.value))}
+                            className={cn('flex-1', settings.memoryMode === 'auto' && 'pointer-events-none opacity-60')}
+                          />
+                          <span className="w-28 shrink-0 text-right text-sm tabular-nums text-muted-foreground">
+                            {settings.defaultMaxMemory >= 1024 ? `${(settings.defaultMaxMemory / 1024).toFixed(1)} GiB` : `${settings.defaultMaxMemory} MiB`}
+                          </span>
+                        </div>
+
+                        {(() => {
+                          const totalMb = sysInfo.memory
+                          const availMb = sysInfo.availableMemory
+                          const usedMb = Math.max(0, totalMb - availMb)
+                          const gameMb = Math.min(settings.defaultMaxMemory, availMb)
+                          const totalPx = totalMb
+                          const usedPct = (usedMb / totalPx) * 100
+                          const gamePct = (gameMb / totalPx) * 100
+                          return (
+                            <div className="space-y-1">
+                              <div className="flex h-2 overflow-hidden rounded-full bg-muted">
+                                <div className="rounded-l-full bg-primary/30 transition-all" style={{ width: `${usedPct}%` }} />
+                                <div className="bg-primary transition-all" style={{ width: `${gamePct}%` }} />
+                              </div>
+                              <div className="flex justify-between text-[11px] text-muted-foreground">
+                                <span>总内存 {(totalMb / 1024).toFixed(1)} GiB</span>
+                                <span>已使用 {(usedMb / 1024).toFixed(1)} GiB</span>
+                                <span>游戏分配 {(gameMb / 1024).toFixed(1)} GiB</span>
+                                <span>剩余 {((availMb - gameMb) / 1024).toFixed(1)} GiB</span>
+                              </div>
+                            </div>
+                          )
+                        })()}
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={512}
+                          max={16384}
+                          step={256}
+                          value={settings.defaultMaxMemory}
+                          disabled={settings.memoryMode === 'auto'}
+                          onChange={(e) => update('defaultMaxMemory', parseInt(e.target.value))}
+                          className={cn('flex-1', settings.memoryMode === 'auto' && 'pointer-events-none opacity-60')}
+                        />
+                        <span className="w-28 shrink-0 text-right text-sm tabular-nums text-muted-foreground">
+                          {settings.defaultMaxMemory >= 1024 ? `${(settings.defaultMaxMemory / 1024).toFixed(1)} GiB` : `${settings.defaultMaxMemory} MiB`}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -407,10 +606,11 @@ export default function Settings() {
                   </div>
                 </CardContent>
               </Card>
-            </>
+            </div>
           )}
 
           {category === 'appearance' && (
+            <div key="appearance" className="animate-in slide-up">
             <Card>
               <CardHeader>
                 <CardTitle>
@@ -427,12 +627,51 @@ export default function Settings() {
                   </Select>
                 </div>
 
-                <p className="text-sm text-muted-foreground">更多外观选项即将推出</p>
+                <div className="space-y-3">
+                  <Label>动画</Label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <Checkbox
+                      checked={settings.animationsEnabled}
+                      onCheckedChange={(c) => update('animationsEnabled', c === true)}
+                    />
+                    <div>
+                      <div className="text-sm font-medium">启用页面动画</div>
+                      <div className="text-xs text-muted-foreground">开启后页面切换、弹窗等带有过渡动画效果</div>
+                    </div>
+                  </label>
+
+                  {settings.animationsEnabled && (
+                    <div className="space-y-2 pl-7">
+                      <Label>动画速度</Label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={0.25}
+                          max={2}
+                          step={0.25}
+                          value={settings.animationSpeed}
+                          onChange={(e) => update('animationSpeed', parseFloat(e.target.value))}
+                          className="flex-1"
+                        />
+                        <span className="w-14 shrink-0 text-right text-sm tabular-nums text-muted-foreground">
+                          {settings.animationSpeed}x
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>慢</span>
+                        <span>正常</span>
+                        <span>快</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
+            </div>
           )}
 
           {category === 'roomcode' && (
+            <div key="roomcode" className="animate-in slide-up">
             <div className="grid gap-4 md:grid-cols-2">
               <Card>
                 <CardHeader>
@@ -483,9 +722,11 @@ export default function Settings() {
                 </CardContent>
               </Card>
             </div>
+            </div>
           )}
 
           {category === 'about' && (
+            <div key="about" className="animate-in slide-up">
             <Card>
               <CardHeader>
                 <CardTitle>
@@ -524,6 +765,7 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
+            </div>
           )}
 
           {saved && (
@@ -532,6 +774,28 @@ export default function Settings() {
               设置已保存
             </div>
           )}
+
+          <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)}>
+            <DialogHeader onClose={() => setAddDialogOpen(false)}>
+              <DialogTitle>手动添加 Java</DialogTitle>
+            </DialogHeader>
+            <DialogBody className="space-y-3">
+              <div className="space-y-1.5">
+                <Label>Java 可执行文件路径</Label>
+                <div className="flex gap-2">
+                  <Input value={addPath} onChange={(e) => setAddPath(e.target.value)} placeholder="C:\Program Files\Java\jdk-17\bin\java.exe" className="flex-1" />
+                  <Button variant="outline" onClick={handleBrowseJava}>浏览</Button>
+                </div>
+                <p className="text-xs text-muted-foreground">选择或输入 java.exe 的完整路径</p>
+              </div>
+            </DialogBody>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setAddDialogOpen(false)}>取消</Button>
+              <Button onClick={confirmAddJava} disabled={!addPath || adding}>
+                {adding ? '验证中...' : '添加'}
+              </Button>
+            </DialogFooter>
+          </Dialog>
         </div>
       </div>
     </div>

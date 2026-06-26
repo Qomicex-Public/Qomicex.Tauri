@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer } from '@fortawesome/free-solid-svg-icons'
+import { PageHeader } from '../components/PageHeader.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useNavigate } from 'react-router-dom'
@@ -129,23 +130,14 @@ export default function DownloadCenter() {
   })
 
   return (
-    <div className="animate-in space-y-6 p-8">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
-            <FontAwesomeIcon icon={faDownload} className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">下载中心</h1>
-            <p className="text-xs text-muted-foreground/70">{tasks.length} 个任务</p>
-          </div>
-        </div>
-        {tasks.some((t) => t.status === 'completed') && (
-          <Button variant="outline" size="sm" onClick={clearCompleted} className="gap-1.5 text-xs">
-            <FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" />清除已完成
+    <div className="animate-in slide-up space-y-6 p-8">
+      <PageHeader title="下载中心" subtitle={`${tasks.length} 个任务`} actions={
+        tasks.some((t) => t.status === 'completed') ? (
+          <Button variant="outline" size="sm" onClick={clearCompleted} className="gap-1.5">
+            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />清除已完成
           </Button>
-        )}
-      </div>
+        ) : undefined
+      } />
 
       <div className="flex flex-wrap items-center gap-2">
         {FILTERS.map((f) => (
@@ -153,7 +145,7 @@ export default function DownloadCenter() {
             key={f.key}
             onClick={() => setFilter(f.key)}
             className={cn(
-              'rounded-xl px-3.5 py-1.5 text-xs font-medium transition-all',
+              'h-9 rounded-md px-3 text-sm font-medium transition-all',
               filter === f.key
                 ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground'

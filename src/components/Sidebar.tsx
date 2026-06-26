@@ -16,8 +16,8 @@ export default function Sidebar() {
   return (
     <nav className="flex w-16 flex-col items-center border-r border-border bg-card">
       <div className="flex w-full flex-col items-center border-b border-border pb-3 pt-[18px]">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary font-extrabold tracking-tight text-primary-foreground">
-          Q
+        <div className="flex h-8 w-8 items-center justify-center">
+          <img src="/icon.png" alt="Qomicex" className="h-full w-full rounded-lg object-cover" />
         </div>
       </div>
 

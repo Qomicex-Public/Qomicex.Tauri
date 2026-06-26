@@ -19,7 +19,8 @@ public class SystemInfoController : ControllerBase
             osVersion = info.OSVersion,
             architecture = info.Architecture,
             osVersionId = info.OSVersionID,
-            memory = Modules.Helpers.MultiPlatforms.SystemMemoryHelper.GetTotalPhysicalMemory()
+            memory = Modules.Helpers.MultiPlatforms.SystemMemoryHelper.GetTotalPhysicalMemory(),
+            availableMemory = Modules.Helpers.MultiPlatforms.SystemMemoryHelper.GetAvailablePhysicalMemory() / (1024 * 1024)
         });
     }
 }

@@ -10,6 +10,7 @@ import {
   faUser,
 } from '@fortawesome/free-solid-svg-icons'
 import { Input } from '../components/ui/input.tsx'
+import { PageHeader } from '../components/PageHeader.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Card } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
@@ -263,11 +264,8 @@ export default function ResourceCenter() {
   const activeCategoryLabel = useMemo(() => CATEGORIES.find((item) => item.key === category)?.label ?? category, [category])
 
   return (
-    <div className="animate-in space-y-6 p-8">
-      <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">资源中心</h1>
-        <p className="text-sm text-muted-foreground">先筛选资源，再点右侧“安装”进入详情页选择版本。</p>
-      </div>
+    <div className="animate-in slide-up space-y-6 p-8">
+      <PageHeader title="资源中心" subtitle="先筛选资源，再点右侧「安装」进入详情页选择版本。" />
 
       <Card className="border-border/60 bg-muted/20 p-4">
         <div className="space-y-4">
@@ -275,18 +273,18 @@ export default function ResourceCenter() {
             <div className="space-y-2">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源源</p>
               <div className="flex flex-wrap gap-2">
-                {SOURCES.map((item) => (
+                {SOURCES.map((f) => (
                   <button
-                    key={item.key}
-                    onClick={() => handleSourceChange(item.key)}
+                    key={f.key}
+                    onClick={() => handleSourceChange(f.key)}
                     className={cn(
-                      'rounded-xl px-4 py-2 text-sm font-medium transition-all',
-                      source === item.key
+                      'h-9 rounded-md px-4 text-sm font-medium transition-all',
+                      source === f.key
                         ? 'bg-primary text-primary-foreground shadow-sm'
                         : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
                     )}
                   >
-                    {item.label}
+                    {f.label}
                   </button>
                 ))}
               </div>
@@ -301,7 +299,7 @@ export default function ResourceCenter() {
                     onClick={() => handleCategoryChange(item.key)}
                     disabled={source === 'ftb' && item.key !== 'modpack'}
                     className={cn(
-                      'rounded-xl px-4 py-2 text-sm font-medium transition-all',
+                      'h-9 rounded-md px-4 text-sm font-medium transition-all',
                       category === item.key
                         ? 'bg-primary text-primary-foreground shadow-sm'
                         : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground',

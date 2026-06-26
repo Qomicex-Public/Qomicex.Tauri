@@ -5,6 +5,7 @@ export interface SystemInfo {
   architecture: string
   osVersionId: string
   memory: number
+  availableMemory: number
 }
 
 export interface JavaRuntime {

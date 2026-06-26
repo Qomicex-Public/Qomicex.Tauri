@@ -8,6 +8,7 @@ import { Label } from '../components/ui/label.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { cn } from '../lib/utils.ts'
+import { PageHeader } from '../components/PageHeader.tsx'
 import { ApiError } from '../api/client.ts'
 import * as accountApi from '../api/account.ts'
 import type { MicrosoftOAuthResponse, Account } from '../types/index.ts'
@@ -212,10 +213,8 @@ export default function Accounts() {
   }
 
   return (
-    <div className="animate-in space-y-6 p-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">账户管理</h1>
-      </div>
+    <div className="animate-in slide-up space-y-6 p-8">
+      <PageHeader title="账户管理" />
 
       <div className="flex gap-4">
         <div className="flex w-64 shrink-0 flex-col gap-1.5">
@@ -286,7 +285,7 @@ export default function Accounts() {
               </div>
 
               {addTab === 'microsoft' && (
-                <div className="space-y-4">
+                <div key="microsoft" className="animate-in slide-up space-y-4">
                   {microsoftStep === 'idle' && (
                     <Button className="w-full" onClick={handleOAuth}>
                       <FontAwesomeIcon icon={faRightToBracket} className="h-4 w-4" />
@@ -344,7 +343,7 @@ export default function Accounts() {
               )}
 
               {addTab === 'offline' && (
-                <div className="space-y-4">
+                <div key="offline" className="animate-in slide-up space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="offline-name">玩家名称</Label>
                     <Input id="offline-name" value={offlineName} onChange={(e) => setOfflineName(e.target.value)} placeholder="输入离线模式用户名" />
@@ -357,7 +356,7 @@ export default function Accounts() {
               )}
 
               {addTab === 'yggdrasil' && (
-                <div className="space-y-4">
+                <div key="yggdrasil" className="animate-in slide-up space-y-4">
                   <div className="space-y-2">
                     <Label>预设服务器</Label>
                     <div className="flex flex-wrap gap-2">
@@ -398,7 +397,7 @@ export default function Accounts() {
               )}
 
               {addTab === 'tongyi' && (
-                <div className="space-y-4">
+                <div key="tongyi" className="animate-in slide-up space-y-4">
                   <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
                     统一通行证是部分 Minecraft 皮肤站使用的认证系统，需要输入服务器 ID。
                   </div>

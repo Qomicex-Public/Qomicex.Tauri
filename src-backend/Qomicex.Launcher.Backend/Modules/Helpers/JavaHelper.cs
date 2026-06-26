@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using static Qomicex.Launcher.Backend.DataModules;
 
@@ -42,6 +43,7 @@ namespace Qomicex.Launcher.Backend.Modules.Helpers
 
         public class JavaInfoExtended : DataDetails.Java
         {
+            [JsonConverter(typeof(JsonStringEnumConverter))]
             public JavaState State { get; set; } = JavaState.UnknownError;
             public string StateMessage { get; set; } = string.Empty;
             public string DiscoveredBy { get; set; } = string.Empty;

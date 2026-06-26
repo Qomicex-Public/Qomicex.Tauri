@@ -7,6 +7,7 @@ import { Badge } from '../components/ui/badge.tsx'
 import { Separator } from '../components/ui/separator.tsx'
 import { Textarea } from '../components/ui/textarea.tsx'
 import { analyzeLog } from '../api/logAnalysis.ts'
+import { PageHeader } from '../components/PageHeader.tsx'
 import type { LogAnalysisResult } from '../types/index.ts'
 
 export default function LogAnalysis() {
@@ -52,10 +53,8 @@ export default function LogAnalysis() {
   }
 
   return (
-    <div className="animate-in space-y-6 p-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">日志分析</h1>
-      </div>
+    <div className="animate-in slide-up space-y-6 p-8">
+      <PageHeader title="日志分析" />
 
       <Card>
         <CardHeader>

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
@@ -10,7 +11,25 @@ import ResourceDetailPage from './pages/ResourceDetail.tsx'
 import Settings from './pages/Settings.tsx'
 import { MessageBoxProvider } from './components/ui/message-box.tsx'
 
+function syncAnimSettings() {
+  try {
+    const raw = localStorage.getItem('qomicex-settings')
+    if (!raw) return
+    const s = JSON.parse(raw)
+    const enabled = s.animationsEnabled !== false
+    const speed = s.animationSpeed ?? 1
+    document.documentElement.dataset.animEnabled = String(enabled)
+    document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
+  } catch {}
+}
+
 function App() {
+  useEffect(() => {
+    syncAnimSettings()
+    window.addEventListener('storage', syncAnimSettings)
+    return () => window.removeEventListener('storage', syncAnimSettings)
+  }, [])
+
   return (
     <MessageBoxProvider>
       <BrowserRouter>
