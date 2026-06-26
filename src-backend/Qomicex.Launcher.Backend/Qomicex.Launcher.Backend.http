@@ -1,0 +1,6 @@
+@Qomicex.Launcher.Backend_HostAddress = http://localhost:5163
+
+GET {{Qomicex.Launcher.Backend_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

@@ -1,0 +1,260 @@
+export interface SystemInfo {
+  osName: string
+  os: string
+  osVersion: string
+  architecture: string
+  osVersionId: string
+  memory: number
+}
+
+export interface JavaRuntime {
+  name: string
+  path: string
+  version: string
+  versionID: number
+  type: string
+  arch: string
+  state: string
+}
+
+export interface LauncherRequest {
+  version: string
+  gameDir: string
+  maxMemory: string
+  additionalParam?: string
+  devideVersion: boolean
+  accountName?: string
+  accountUuid?: string
+  accessToken?: string
+  javaPath?: string
+  javaVersionId: number
+  launcherName?: string
+}
+
+export interface Account {
+  name: string
+  uuid: string
+  token: string
+  accessToken: string
+  refreshToken: string
+  loginMethod: string
+  lastUsed?: number
+  hasToken?: boolean
+}
+
+export interface MicrosoftOAuthResponse {
+  deviceCode: string
+  userCode: string
+  verificationUri: string
+  expiresIn: number
+  interval: number
+}
+
+export interface YggdrasilLoginRequest {
+  email: string
+  password: string
+  serverUrl: string
+}
+
+export interface YggdrasilAccount {
+  name: string
+  uuid: string
+  accessToken: string
+  clientToken: string
+}
+
+export interface SuggestedSolution {
+  title: string
+  description: string
+  action: string
+}
+
+export type IssueCategory =
+  | 'Memory'
+  | 'ModConflict'
+  | 'JavaRelated'
+  | 'Resource'
+  | 'Performance'
+  | 'Network'
+  | 'Unknown'
+
+export type IssueSeverity = 'Critical' | 'Error' | 'Warning' | 'Info'
+
+export interface DetectedIssue {
+  patternId: string
+  category: IssueCategory
+  severity: IssueSeverity
+  lineNumber: number
+  matchedText: string
+  capturedGroups: Record<string, string>
+  solutions: SuggestedSolution[]
+}
+
+export interface LogAnalysisResult {
+  isSuccess: boolean
+  minecraftVersion: string | null
+  modLoader: string | null
+  loadedMods: string[]
+  stackTrace: string | null
+  rawLogExcerpt: string | null
+  issues: DetectedIssue[]
+  errorMessage: string | null
+}
+
+export interface RoomCodeResponse {
+  code: string
+}
+
+export interface GameInstance {
+  id: string
+  name: string
+  gameVersion: string
+  loader: string | null
+  loaderVersion: string | null
+  javaPath: string | null
+  maxMemory: number
+  gameDir: string
+  accountName: string | null
+  accountUuid: string | null
+  accessToken: string | null
+  jvmArgs: string | null
+  lastPlayed: string | null
+  playTime: number
+  isHidden: boolean
+}
+
+export interface CreateInstanceRequest {
+  name: string
+  gameVersion: string
+  loader?: string
+  loaderVersion?: string
+  javaPath?: string
+  maxMemory: number
+  gameDir: string
+  accountName?: string
+  accountUuid?: string
+  accessToken?: string
+  jvmArgs?: string
+}
+
+export interface LaunchResult {
+  success: boolean
+  processId: number
+  error: string | null
+  arguments: string | null
+}
+
+export interface ScannedVersionLoader {
+  type: string
+  version: string
+}
+
+export interface ScannedVersion {
+  name: string
+  gameVersion: string
+  state: string
+  stateDescribe: string
+  loaders: ScannedVersionLoader[]
+}
+
+export interface LoaderVersionInfo {
+  type: number
+  version: string
+  minecraftVersion: string
+  downloadUrl: string
+  sha1: string
+  isRecommended: boolean
+  publishedAt: string | null
+}
+
+export interface LoaderAddonInfo {
+  id: string
+  label: string
+  recommended: boolean
+  description: string
+  iconUrl: string
+  projectUrl: string
+  downloads: number
+}
+
+export interface InstallProgressResponse {
+  instanceId: string
+  status: string
+  progress: number
+  error: string | null
+  totalFiles: number
+  completedFiles: number
+  failedFiles: number
+  currentFile: string
+  speed: number
+  isPaused: boolean
+}
+
+export interface DownloadTask {
+  id: string
+  name: string
+  type: 'game' | 'resource' | 'repair'
+  gameVersion: string
+  loader?: string
+  loaderVersion?: string
+  addons?: string[]
+  status: 'queued' | 'downloading' | 'paused' | 'completed' | 'failed' | 'cancelled'
+  stage?: string
+  progress: number
+  speed?: number
+  currentFile?: string
+  totalFiles?: number
+  completedFiles?: number
+  error?: string
+  createdAt: string
+  completedAt?: string
+  instanceId?: string
+}
+
+export interface RemoteVersionInfo {
+  id: string
+  type: string
+  releaseTime: string
+  url: string
+}
+
+export interface ResourceItem {
+  id: string
+  title: string
+  description: string
+  author: string
+  iconUrl: string
+  downloadCount: number
+  source: string
+  categories: string[]
+  projectUrl: string
+  slug: string
+  latestVersion: string
+}
+
+export interface ResourceDetail extends ResourceItem {
+  body: string
+}
+
+export interface ResourceSearchResponse {
+  items: ResourceItem[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface ResourceFile {
+  url: string
+  filename: string
+  size: number
+}
+
+export interface ResourceVersion {
+  id: string
+  name: string
+  versionNumber: string
+  gameVersions: string[]
+  loaders: string[]
+  downloads: ResourceFile[]
+  datePublished: string
+}

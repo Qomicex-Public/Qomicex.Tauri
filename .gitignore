@@ -1,0 +1,48 @@
+# Node
+node_modules/
+
+# Frontend build
+dist/
+
+# Rust (Tauri)
+src-tauri/target/
+
+# .NET build output
+src-backend/**/bin/
+src-backend/**/obj/
+
+# VS junk
+src-backend/**/.vs/
+.vs/
+
+# Runtime data
+data/
+
+# Minecraft runtime files
+.minecraft/
+
+# Test / scratch
+build-test/
+
+# Separate repo (Avalonia)
+Qomicex.Avalonia/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime stdout/stderr dumps
+stdout.txt
+stderr.txt
