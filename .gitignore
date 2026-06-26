@@ -28,7 +28,7 @@ build-test/
 Qomicex.Avalonia/
 
 # Editor
-.vscode/
+#.vscode/
 .idea/
 *.swp
 *.swo
