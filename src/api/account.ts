@@ -1,4 +1,4 @@
-import { get, post, del } from './client.ts'
+import { get, post, put, del } from './client.ts'
 import type {
   MicrosoftOAuthResponse,
   Account,
@@ -38,4 +38,20 @@ export function yggdrasilLogin(email: string, password: string, serverUrl = 'htt
 
 export function tongyiLogin(serverId: string, email: string, password: string): Promise<Account[]> {
   return post<Account[]>('/account/tongyi/login', { serverId, email, password })
+}
+
+export function getOfflineUuid(name: string): Promise<{ uuid: string }> {
+  return get<{ uuid: string }>(`/account/offline-uuid?name=${encodeURIComponent(name)}`)
+}
+
+export function getDefaultAccount(): Promise<Account> {
+  return get<Account>('/account/default')
+}
+
+export function setDefaultAccount(uuid: string): Promise<Account> {
+  return put<Account>(`/account/${uuid}/default`)
+}
+
+export function clearDefaultAccount(): Promise<void> {
+  return del('/account/default')
 }

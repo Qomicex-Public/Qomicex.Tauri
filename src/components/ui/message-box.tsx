@@ -35,12 +35,18 @@ const ICONS: Record<MessageBoxType, { icon: typeof faCircleInfo; className: stri
   success: { icon: faCheckCircle, className: "text-emerald-400" },
 }
 
+interface ToastState {
+  open: boolean
+  message: string
+  type: MessageBoxType
+}
 interface MessageBoxContextValue {
   alert: (message: string, title?: string) => Promise<void>
   confirm: (message: string, title?: string) => Promise<boolean>
   error: (message: string, title?: string) => Promise<void>
   success: (message: string, title?: string) => Promise<void>
   prompt: (message: string, title?: string, defaultValue?: string) => Promise<string | null>
+  notify: (message: string, type?: MessageBoxType) => void
 }
 
 const MessageBoxContext = React.createContext<MessageBoxContextValue>({
@@ -49,6 +55,7 @@ const MessageBoxContext = React.createContext<MessageBoxContextValue>({
   error: async () => {},
   success: async () => {},
   prompt: async () => null,
+  notify: () => {},
 })
 
 function MessageBoxProvider({ children }: { children: React.ReactNode }) {
@@ -60,6 +67,14 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
   })
   const promptInputRef = React.useRef<HTMLInputElement>(null)
   const [promptValue, setPromptValue] = React.useState("")
+  const [toast, setToast] = React.useState<ToastState>({ open: false, message: '', type: 'info' })
+  const toastTimer = React.useRef<number | undefined>(undefined)
+
+  const notify = React.useCallback((message: string, type: MessageBoxType = 'info') => {
+    if (toastTimer.current !== undefined) clearTimeout(toastTimer.current)
+    setToast({ open: true, message, type })
+    toastTimer.current = window.setTimeout(() => setToast((t) => ({ ...t, open: false })), 3000)
+  }, [])
 
   const show = React.useCallback((type: MessageBoxType, message: string, title?: string, confirmText = "确定", cancelText?: string): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -101,7 +116,7 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
     setPromptState((prev) => ({ ...prev, open: false, resolve: null }))
   }
 
-  const ctx = React.useMemo(() => ({ alert, confirm, error, success, prompt }), [alert, confirm, error, success, prompt])
+  const ctx = React.useMemo(() => ({ alert, confirm, error, success, prompt, notify }), [alert, confirm, error, success, prompt, notify])
 
   return (
     <MessageBoxContext.Provider value={ctx}>
@@ -159,6 +174,15 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
           </Button>
         </DialogFooter>
       </Dialog>
+      <div
+        className={cn(
+          'fixed bottom-6 right-6 z-[100] flex items-center gap-2.5 rounded-xl border bg-popover px-4 py-3 text-sm shadow-2xl backdrop-blur-md transition-all duration-300',
+          toast.open ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'
+        )}
+      >
+        <FontAwesomeIcon icon={ICONS[toast.type].icon} className={cn('h-4 w-4 shrink-0', ICONS[toast.type].className)} />
+        <span>{toast.message}</span>
+      </div>
     </MessageBoxContext.Provider>
   )
 }

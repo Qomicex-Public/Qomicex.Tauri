@@ -8,6 +8,8 @@ export function searchResources(params: {
   pageSize?: number
   sort?: string
   source?: string
+  gameVersion?: string
+  loader?: string
 }): Promise<ResourceSearchResponse> {
   const q = new URLSearchParams()
   if (params.category) q.set('category', params.category)
@@ -16,6 +18,8 @@ export function searchResources(params: {
   if (params.pageSize) q.set('pageSize', String(params.pageSize))
   if (params.sort) q.set('sort', params.sort)
   if (params.source) q.set('source', params.source)
+  if (params.gameVersion) q.set('gameVersion', params.gameVersion)
+  if (params.loader) q.set('loader', params.loader)
   return get<ResourceSearchResponse>(`/resources/search?${q}`)
 }
 

@@ -7,6 +7,7 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
 import { getInstallProgress, pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
+import { getResourceDownloadProgress, cancelResourceDownload } from '../api/resource-download.ts'
 import type { DownloadTask } from '../types/index.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
@@ -87,6 +88,25 @@ export default function DownloadCenter() {
       const ts = getTasks()
       const active = ts.filter((t) => (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused') && t.instanceId)
       for (const task of active) {
+        if (task.type === 'file' && task.taskId) {
+          try {
+            const progress = await getResourceDownloadProgress(task.taskId)
+            let newStatus: DownloadTask['status'] = 'downloading'
+            if (progress.status === 'completed') newStatus = 'completed'
+            else if (progress.status === 'cancelled') newStatus = 'cancelled'
+            else if (progress.status === 'failed') newStatus = 'failed'
+
+            updateTask(task.id, {
+              status: newStatus,
+              progress: Math.round(progress.progress),
+              speed: progress.speed,
+              error: progress.error || undefined,
+              currentFile: progress.fileName || undefined,
+              completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+            })
+          } catch { /* skip */ }
+          continue
+        }
         if (!task.instanceId) continue
         try {
           const progress = await getInstallProgress(task.instanceId)
@@ -197,7 +217,7 @@ export default function DownloadCenter() {
                         </span>
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground/70">
-                        <span>Minecraft {task.gameVersion}</span>
+                        {task.gameVersion && <span>Minecraft {task.gameVersion}</span>}
                         {task.loader && <span>{task.loader}{task.loaderVersion ? ` ${task.loaderVersion}` : ''}</span>}
                         {task.addons && task.addons.length > 0 && <span>+ {task.addons.length} 个附加</span>}
                         <span>创建于 {formatDate(task.createdAt)}</span>
@@ -206,7 +226,7 @@ export default function DownloadCenter() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    {isActive && (
+                    {isActive && task.type !== 'file' && (
                       <>
                         {task.status === 'paused' ? (
                           <Tooltip content="继续">
@@ -222,7 +242,13 @@ export default function DownloadCenter() {
                           </Tooltip>
                         )}
                         <Tooltip content="取消">
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => task.instanceId && cancelInstall(task.instanceId).then(() => removeTask(task.id))}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
+                            if (task.type === 'file' && task.taskId) {
+                              cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
+                            } else if (task.instanceId) {
+                              cancelInstall(task.instanceId).then(() => removeTask(task.id))
+                            }
+                          }}>
                             <FontAwesomeIcon icon={faStop} className="h-3.5 w-3.5" />
                           </Button>
                         </Tooltip>

@@ -2,9 +2,9 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Text.Json.Nodes;
-using Qomicex.Launcher.Backend.Downloader;
-using Qomicex.Launcher.Backend.Modules.Helpers;
-using Qomicex.Launcher.Backend.Modules.Helpers.Resources;
+using Qomicex.Downloader;
+using Qomicex.Core.Modules.Helpers;
+using Qomicex.Core.Modules.Helpers.Resources;
 
 namespace Qomicex.Launcher.Backend.Services;
 

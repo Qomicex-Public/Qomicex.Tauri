@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Qomicex.Launcher.Backend.Modules.Helpers.LogAnalysis;
-using Qomicex.Launcher.Backend.Modules.Helpers.LogAnalysis.Models;
+using Qomicex.Core.Modules.Helpers.LogAnalysis;
+using Qomicex.Core.Modules.Helpers.LogAnalysis.Models;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 

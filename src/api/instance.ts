@@ -9,6 +9,18 @@ export async function getInstance(id: string): Promise<GameInstance> {
   return get<GameInstance>(`/instance/${id}`)
 }
 
+export async function getDefaultInstance(): Promise<GameInstance | null> {
+  return get<GameInstance | null>('/instance/default')
+}
+
+export async function setDefaultInstance(id: string): Promise<GameInstance> {
+  return put<GameInstance>(`/instance/${id}/default`)
+}
+
+export async function clearDefaultInstance(id: string): Promise<void> {
+  await del(`/instance/${id}/default`)
+}
+
 export async function createInstance(data: CreateInstanceRequest): Promise<GameInstance> {
   return post<GameInstance>('/instance', data)
 }

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
 import Instances from './pages/Instances.tsx'
+import InstanceDetailPage from './pages/InstanceDetail.tsx'
 import DownloadCenter from './pages/DownloadCenter.tsx'
 import Accounts from './pages/Accounts.tsx'
 import LogAnalysis from './pages/LogAnalysis.tsx'
@@ -37,6 +38,7 @@ function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/instances" element={<Instances />} />
+            <Route path="/instances/:id" element={<InstanceDetailPage />} />
             <Route path="/downloads" element={<DownloadCenter />} />
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/log-analysis" element={<LogAnalysis />} />

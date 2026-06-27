@@ -1,8 +1,10 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Services;
-using MsAccount = Qomicex.Launcher.Backend.Modules.Helpers.Account.Microsoft;
-using YggdrasilAccount = Qomicex.Launcher.Backend.Modules.Helpers.Account.Yggdrasil;
-using TongyiAccount = Qomicex.Launcher.Backend.Modules.Helpers.Account.Tongyi;
+using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
+using YggdrasilAccount = Qomicex.Core.Modules.Helpers.Account.Yggdrasil;
+using TongyiAccount = Qomicex.Core.Modules.Helpers.Account.Tongyi;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -46,6 +48,42 @@ public class AccountController : ControllerBase
     {
         await _accountService.DeleteAccountAsync(uuid);
         return NoContent();
+    }
+
+    [HttpGet("default")]
+    public async Task<IActionResult> GetDefault()
+    {
+        var account = await _accountService.GetDefaultAsync();
+        if (account == null) return NotFound();
+        return Ok(account);
+    }
+
+    [HttpPut("{uuid}/default")]
+    public async Task<IActionResult> SetDefault(string uuid)
+    {
+        var account = await _accountService.GetAccountAsync(uuid);
+        if (account == null) return NotFound();
+        await _accountService.SetDefaultAsync(uuid);
+        return Ok(account);
+    }
+
+    [HttpDelete("default")]
+    public async Task<IActionResult> ClearDefault()
+    {
+        await _accountService.ClearDefaultAsync();
+        return NoContent();
+    }
+
+    [HttpGet("offline-uuid")]
+    public IActionResult GetOfflineUuid([FromQuery] string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return BadRequest(new { error = "name is required" });
+        var hash = MD5.HashData(Encoding.UTF8.GetBytes("OfflinePlayer:" + name));
+        hash[6] = (byte)((hash[6] & 0x0f) | 0x40);
+        hash[8] = (byte)((hash[8] & 0x3f) | 0x80);
+        var uuid = new Guid(hash).ToString("D");
+        return Ok(new { uuid });
     }
 
     [HttpPost("microsoft/oauth")]
@@ -104,6 +142,7 @@ public class AccountController : ControllerBase
                 AccessToken = ygg.AccessToken,
                 RefreshToken = ygg.ClientToken,
                 LoginMethod = "Yggdrasil",
+                ServerUrl = request.ServerUrl,
             };
             await _accountService.SaveAccountAsync(stored);
             saved.Add(stored);

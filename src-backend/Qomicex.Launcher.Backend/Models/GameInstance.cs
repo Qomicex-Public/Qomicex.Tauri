@@ -17,4 +17,6 @@ public class GameInstance
     public DateTime? LastPlayed { get; set; }
     public long PlayTime { get; set; }
     public bool IsHidden { get; set; }
+    public bool VersionIsolation { get; set; }
+    public bool IsDefault { get; set; }
 }

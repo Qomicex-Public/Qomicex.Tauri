@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Qomicex.Launcher.Backend.Modules.Helpers;
-using Qomicex.Launcher.Backend.Modules.Helpers.Resources;
+using Qomicex.Core.Modules.Helpers;
+using Qomicex.Core.Modules.Helpers.Resources;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 

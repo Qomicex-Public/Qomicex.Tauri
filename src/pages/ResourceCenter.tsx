@@ -1,20 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import {
-  faArrowUpRightFromSquare,
-  faDownload,
-  faMagnifyingGlass,
-  faRotate,
-  faTag,
-  faUser,
-} from '@fortawesome/free-solid-svg-icons'
+import { faArrowUpRightFromSquare, faDownload, faMagnifyingGlass, faRotate, faTag, faUser, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { Input } from '../components/ui/input.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Card } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { Select, SelectOption } from '../components/ui/select.tsx'
+import { Combobox } from '../components/ui/combobox.tsx'
 import { searchResources } from '../api/resource.ts'
 import type { ResourceItem } from '../types/index.ts'
 
@@ -30,6 +24,16 @@ const SOURCES = [
   { key: 'modrinth', label: 'Modrinth' },
   { key: 'curseforge', label: 'CurseForge' },
   { key: 'ftb', label: 'FTB' },
+]
+
+const GAME_VERSIONS = ['1.21.4', '1.21.3', '1.21.1', '1.21', '1.20.6', '1.20.4', '1.20.2', '1.20.1', '1.20', '1.19.4', '1.19.3', '1.19.2', '1.19.1', '1.19', '1.18.2', '1.18.1', '1.18', '1.17.1', '1.17', '1.16.5', '1.16.4', '1.16.3', '1.16.2', '1.16.1', '1.16']
+
+const LOADERS = [
+  { key: 'forge', label: 'Forge' },
+  { key: 'fabric', label: 'Fabric' },
+  { key: 'neoforge', label: 'NeoForge' },
+  { key: 'quilt', label: 'Quilt' },
+  { key: 'liteloader', label: 'LiteLoader' },
 ]
 
 const SORT_OPTIONS: Record<string, { key: string; label: string }[]> = {
@@ -65,34 +69,32 @@ function formatDownloads(n: number): string {
 }
 
 function getSourceLabel(source: string): string {
-  const map: Record<string, string> = {
-    modrinth: 'Modrinth',
-    curseforge: 'CurseForge',
-    ftb: 'FTB',
-  }
+  const map: Record<string, string> = { modrinth: 'Modrinth', curseforge: 'CurseForge', ftb: 'FTB' }
   return map[source] ?? source
 }
 
-function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string): string {
+function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string): string {
   const params = new URLSearchParams()
   params.set('source', item.source)
   params.set('category', category)
   params.set('sort', sort)
   if (keyword) params.set('keyword', keyword)
+  if (gameVersion) params.set('gameVersion', gameVersion)
+  if (loader) params.set('loader', loader)
+  if (instanceId) params.set('instanceId', instanceId)
   return `/resource-center/${encodeURIComponent(item.id)}?${params.toString()}`
 }
 
 function ResourceCard({
-  item,
-  category,
-  keyword,
-  sort,
-  onInstall,
+  item, category, keyword, sort, gameVersion, loader, instanceId, onInstall,
 }: {
   item: ResourceItem
   category: string
   keyword: string
   sort: string
+  gameVersion?: string
+  loader?: string
+  instanceId?: string
   onInstall: (item: ResourceItem) => void
 }) {
   return (
@@ -100,19 +102,12 @@ function ResourceCard({
       <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start">
         <div className="flex min-w-0 flex-1 gap-4">
           {item.iconUrl ? (
-            <img
-              src={item.iconUrl}
-              alt={item.title}
-              className="h-16 w-16 flex-shrink-0 rounded-2xl object-cover ring-1 ring-border/40"
-              loading="lazy"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-            />
+            <img src={item.iconUrl} alt={item.title} className="h-16 w-16 flex-shrink-0 rounded-2xl object-cover ring-1 ring-border/40" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
           ) : (
             <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
               <FontAwesomeIcon icon={faTag} className="h-5 w-5 opacity-50" />
             </div>
           )}
-
           <div className="min-w-0 flex-1 space-y-3">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -122,7 +117,6 @@ function ResourceCard({
               </div>
               <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">{item.description}</p>
             </div>
-
             <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1">
                 <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
@@ -133,28 +127,22 @@ function ResourceCard({
                 {formatDownloads(item.downloadCount)}
               </span>
             </div>
-
             {item.categories.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {item.categories.slice(0, 6).map((tag) => (
-                  <Badge key={tag} variant="outline" className="rounded-full px-2.5 py-0.5 text-[11px] font-medium">
-                    {tag}
-                  </Badge>
+                  <Badge key={tag} variant="outline" className="rounded-full px-2.5 py-0.5 text-[11px] font-medium">{tag}</Badge>
                 ))}
               </div>
             )}
           </div>
         </div>
-
         <div className="flex flex-row gap-2 sm:min-w-[148px] sm:flex-col sm:items-stretch sm:self-stretch">
           <Button className="flex-1 sm:w-full" onClick={() => onInstall(item)}>
             <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
             安装
           </Button>
           <Button asChild variant="outline" className="flex-1 sm:w-full">
-            <a href={buildDetailUrl(item, category, keyword, sort)}>
-              查看详情
-            </a>
+            <a href={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId) + '&expandBody=1'}>查看详情</a>
           </Button>
           {item.projectUrl && (
             <Button asChild variant="ghost" className="px-3 sm:w-full">
@@ -173,12 +161,14 @@ function ResourceCard({
 export default function ResourceCenter() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-
   const [category, setCategory] = useState(searchParams.get('category') ?? 'mod')
   const [source, setSource] = useState(searchParams.get('source') ?? 'modrinth')
   const [keyword, setKeyword] = useState(searchParams.get('keyword') ?? '')
   const [searchInput, setSearchInput] = useState(searchParams.get('keyword') ?? '')
   const [sort, setSort] = useState(searchParams.get('sort') ?? 'relevance')
+  const [gameVersion, setGameVersion] = useState(searchParams.get('gameVersion') ?? '')
+  const [loader, setLoader] = useState((searchParams.get('loader') ?? '').toLowerCase())
+  const instanceId = searchParams.get('instanceId') ?? ''
   const [items, setItems] = useState<ResourceItem[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -193,8 +183,10 @@ export default function ResourceCenter() {
     params.set('category', category)
     params.set('sort', sort)
     if (keyword) params.set('keyword', keyword)
+    if (gameVersion) params.set('gameVersion', gameVersion)
+    if (loader) params.set('loader', loader)
     setSearchParams(params, { replace: true })
-  }, [category, keyword, setSearchParams, sort, source])
+  }, [category, keyword, setSearchParams, sort, source, gameVersion, loader])
 
   const doSearch = useCallback(async (pageNum: number, append: boolean) => {
     setLoading(true)
@@ -207,6 +199,8 @@ export default function ResourceCenter() {
         pageSize,
         sort,
         source,
+        gameVersion: gameVersion || undefined,
+        loader: (loader || '').toLowerCase() || undefined,
       })
       setItems((prev) => append ? [...prev, ...res.items] : res.items)
       setTotal(res.total)
@@ -222,7 +216,7 @@ export default function ResourceCenter() {
     }
     setLoading(false)
     setInitialLoading(false)
-  }, [category, keyword, sort, source])
+  }, [category, keyword, sort, source, gameVersion, loader])
 
   useEffect(() => {
     setInitialLoading(true)
@@ -253,12 +247,15 @@ export default function ResourceCenter() {
   }
 
   const handleInstall = (item: ResourceItem) => {
-    navigate(buildDetailUrl(item, category, keyword, sort))
+    navigate(buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId))
   }
 
   const loadMore = () => {
     if (!loading && items.length < total) doSearch(page + 1, true)
   }
+
+  const clearVersion = () => setGameVersion('')
+  const clearLoader = () => setLoader('')
 
   const currentSortOptions = SORT_OPTIONS[source] ?? SORT_OPTIONS.modrinth
   const activeCategoryLabel = useMemo(() => CATEGORIES.find((item) => item.key === category)?.label ?? category, [category])
@@ -274,38 +271,17 @@ export default function ResourceCenter() {
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源源</p>
               <div className="flex flex-wrap gap-2">
                 {SOURCES.map((f) => (
-                  <button
-                    key={f.key}
-                    onClick={() => handleSourceChange(f.key)}
-                    className={cn(
-                      'h-9 rounded-md px-4 text-sm font-medium transition-all',
-                      source === f.key
-                        ? 'bg-primary text-primary-foreground shadow-sm'
-                        : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
-                    )}
-                  >
+                  <button key={f.key} onClick={() => handleSourceChange(f.key)} className={cn('h-9 rounded-md px-4 text-sm font-medium transition-all', source === f.key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground')}>
                     {f.label}
                   </button>
                 ))}
               </div>
             </div>
-
             <div className="space-y-2 xl:ml-auto">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源分类</p>
               <div className="flex flex-wrap gap-2">
                 {CATEGORIES.map((item) => (
-                  <button
-                    key={item.key}
-                    onClick={() => handleCategoryChange(item.key)}
-                    disabled={source === 'ftb' && item.key !== 'modpack'}
-                    className={cn(
-                      'h-9 rounded-md px-4 text-sm font-medium transition-all',
-                      category === item.key
-                        ? 'bg-primary text-primary-foreground shadow-sm'
-                        : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
-                      source === 'ftb' && item.key !== 'modpack' && 'cursor-not-allowed opacity-40 hover:bg-background hover:text-muted-foreground'
-                    )}
-                  >
+                  <button key={item.key} onClick={() => handleCategoryChange(item.key)} disabled={source === 'ftb' && item.key !== 'modpack'} className={cn('h-9 rounded-md px-4 text-sm font-medium transition-all', category === item.key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground', source === 'ftb' && item.key !== 'modpack' && 'cursor-not-allowed opacity-40 hover:bg-background hover:text-muted-foreground')}>
                     {item.label}
                   </button>
                 ))}
@@ -316,25 +292,46 @@ export default function ResourceCenter() {
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_110px]">
             <div className="relative">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
-              <Input
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={`搜索${activeCategoryLabel}...`}
-                className="h-10 rounded-xl border-border/60 bg-background pl-9"
-              />
+              <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={`搜索${activeCategoryLabel}...`} className="h-10 rounded-xl border-border/60 bg-background pl-9" />
             </div>
-
             <Select value={sort} onChange={setSort} className="h-10">
               {currentSortOptions.map((item) => (
                 <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
               ))}
             </Select>
-
             <Button onClick={handleSearch} className="h-10 rounded-xl">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="h-3.5 w-3.5" />
               搜索
             </Button>
+          </div>
+
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">游戏版本</p>
+              <div className="flex items-center gap-1">
+                <Combobox value={gameVersion} onChange={setGameVersion} options={GAME_VERSIONS.map((v) => ({ value: v, label: v }))} placeholder="全部版本" className="w-[150px]" />
+                {gameVersion && (
+                  <button onClick={clearVersion} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                    <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">加载器</p>
+              <div className="flex items-center gap-1">
+                <Select value={loader} onChange={(v) => setLoader(v.toLowerCase())} className="h-9 min-w-[120px]" placeholder="全部加载器">
+                  {LOADERS.map((l) => (
+                    <SelectOption key={l.key} value={l.key}>{l.label}</SelectOption>
+                  ))}
+                </Select>
+                {loader && (
+                  <button onClick={clearLoader} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                    <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </Card>
@@ -380,31 +377,19 @@ export default function ResourceCenter() {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-0.5">
               <p className="text-sm text-muted-foreground">
                 当前显示 <span className="font-medium text-foreground">{activeCategoryLabel}</span>，共 <span className="font-medium text-foreground">{total}</span> 个结果
+                {gameVersion && <span className="ml-1">（{gameVersion}）</span>}
               </p>
               {page > 1 && <p className="text-xs text-muted-foreground/70">已加载 {items.length} 个</p>}
             </div>
-
             <div className="flex flex-col gap-3">
               {items.map((item) => (
-                <ResourceCard
-                  key={`${item.source}-${item.id}`}
-                  item={item}
-                  category={category}
-                  keyword={keyword}
-                  sort={sort}
-                  onInstall={handleInstall}
-                />
+                <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} onInstall={handleInstall} />
               ))}
             </div>
-
             {items.length < total ? (
               <div className="mt-5 flex justify-center">
                 <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
-                  {loading ? (
-                    <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />加载中...</>
-                  ) : (
-                    <>加载更多（{items.length}/{total}）</>
-                  )}
+                  {loading ? <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />加载中...</> : <>加载更多（{items.length}/{total}）</>}
                 </Button>
               </div>
             ) : (
@@ -413,6 +398,8 @@ export default function ResourceCenter() {
           </>
         )}
       </div>
+
+
     </div>
   )
 }

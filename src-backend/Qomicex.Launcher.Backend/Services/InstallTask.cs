@@ -3,10 +3,10 @@ using System.Diagnostics;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Qomicex.Launcher.Backend.Downloader;
-using Qomicex.Launcher.Backend.Modules.Helpers;
-using Qomicex.Launcher.Backend.Modules.Helpers.Installers;
-using Qomicex.Launcher.Backend.Modules.Helpers.Resources;
+using Qomicex.Downloader;
+using Qomicex.Core.Modules.Helpers;
+using Qomicex.Core.Modules.Helpers.Installers;
+using Qomicex.Core.Modules.Helpers.Resources;
 
 namespace Qomicex.Launcher.Backend.Services;
 
@@ -20,7 +20,6 @@ public class InstallTask
     private readonly int _downloadThreads;
     private readonly bool _versionIsolation;
     private readonly int _downloadSourceId;
-    private readonly int _downloadTimeout;
     private readonly IHttpClientFactory _httpClientFactory;
 
     private readonly CancellationTokenSource _cts = new();
@@ -60,7 +59,6 @@ public class InstallTask
         _downloadThreads = downloadThreads;
         _versionIsolation = versionIsolation;
         _downloadSourceId = downloadSourceId;
-        _downloadTimeout = downloadTimeout;
         _httpClientFactory = httpClientFactory;
 
         _versionId = !string.IsNullOrEmpty(loader) && !string.IsNullOrEmpty(loaderVersion)
@@ -112,7 +110,7 @@ public class InstallTask
 
             if (!File.Exists(versionJsonPath))
             {
-                    var core = new Core(threadCount: 4, maxRetries: 3, _downloadTimeout);
+                    var core = new Qomicex.Downloader.Core(threadCount: 4, maxRetries: 3, ignoreRangeProbe200Ok: true);
                 await core.DownloadFileAsync(versionJsonUrl, versionJsonPath, null, _cts.Token);
             }
             SetState("downloading-json", 5);
@@ -143,7 +141,7 @@ public class InstallTask
             var missMainJar = await resourceHelper.GetMissMainJarAsync(_gameVersion, _gameDir);
             if (missMainJar != null && !string.IsNullOrEmpty(missMainJar.Path))
             {
-                var tid = _downloadManager.CreateTask(threadNum: 1, maxRetries: 3, attemptTimeout: _downloadTimeout);
+                var tid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
                 _downloadManager.AddFileToTask(tid, missMainJar.Url, missMainJar.Path);
                 await RunDownloadManagerStage(tid, 45, 50);
             }
@@ -170,7 +168,7 @@ public class InstallTask
 
                     if (!File.Exists(installerPath) || new FileInfo(installerPath).Length == 0)
                     {
-                        var jarTid = _downloadManager.CreateTask(threadNum: 1, maxRetries: 3, attemptTimeout: _downloadTimeout);
+                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
                         _downloadManager.AddFileToTask(jarTid, downloadUrl, installerPath);
                         await RunDownloadManagerStage(jarTid, 50, 55);
                     }
@@ -231,7 +229,7 @@ public class InstallTask
                     var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
                     if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
                     {
-                        var jarTid = _downloadManager.CreateTask(threadNum: 1, maxRetries: 3, attemptTimeout: _downloadTimeout);
+                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
                         _downloadManager.AddFileToTask(jarTid, loaderMainJar.Url, loaderMainJar.Path);
                         await RunDownloadManagerStage(jarTid, 75, 85);
                     }
@@ -254,7 +252,7 @@ public class InstallTask
                 var modsDir = Path.Combine(_effectiveGameDir, "mods");
                 Directory.CreateDirectory(modsDir);
 
-                var addonTid = _downloadManager.CreateTask(threadNum: 1, maxRetries: 3, attemptTimeout: _downloadTimeout);
+                var addonTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
                 foreach (var addonId in _addons)
                 {
                     _cts.Token.ThrowIfCancellationRequested();
@@ -290,7 +288,7 @@ public class InstallTask
     private async Task RunDownloadStage(int threadNum,
         List<LocalResourceHelper.MissFileData> files, double stageStart, double stageEnd)
     {
-        var tid = _downloadManager.CreateTask(threadNum, maxRetries: 3, attemptTimeout: _downloadTimeout);
+        var tid = _downloadManager.CreateTask(maxConcurrentFiles: threadNum, maxRetries: 3, ignoreRangeProbe200Ok: true);
         foreach (var f in files)
             _downloadManager.AddFileToTask(tid, f.Url, f.Path);
         await RunDownloadManagerStage(tid, stageStart, stageEnd);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import ReactMarkdown from 'react-markdown'
@@ -13,13 +13,19 @@ import {
   faRotate,
   faTag,
   faUser,
+  faChevronDown,
 } from '@fortawesome/free-solid-svg-icons'
 import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
+import { useMessageBox } from '../components/ui/message-box.tsx'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions } from '../api/resource.ts'
-import type { ResourceDetail, ResourceFile, ResourceVersion } from '../types/index.ts'
+import { startResourceDownload } from '../api/resource-download.ts'
+import { getDefaultInstance } from '../api/instance.ts'
+import { addTask } from '../stores/downloadStore.ts'
+import type { ResourceDetail, ResourceFile, ResourceVersion, DownloadTask } from '../types/index.ts'
+import { cn } from '../lib/utils.ts'
 
 function formatDownloads(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -56,10 +62,12 @@ function LoaderBadge({ loader }: { loader: string }) {
 export default function ResourceDetailPage() {
   const { resourceId } = useParams()
   const [searchParams] = useSearchParams()
+  const { notify } = useMessageBox()
   const source = searchParams.get('source') ?? 'modrinth'
   const category = searchParams.get('category') ?? 'mod'
   const keyword = searchParams.get('keyword') ?? ''
   const sort = searchParams.get('sort') ?? 'relevance'
+  const instanceIdParam = searchParams.get('instanceId') ?? ''
 
   const [detail, setDetail] = useState<ResourceDetail | null>(null)
   const [versions, setVersions] = useState<ResourceVersion[]>([])
@@ -67,10 +75,40 @@ export default function ResourceDetailPage() {
   const [loadingVersions, setLoadingVersions] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [versionsError, setVersionsError] = useState<string | null>(null)
-  const [selectedGameVersion, setSelectedGameVersion] = useState('all')
-  const [selectedLoader, setSelectedLoader] = useState('all')
+  const urlGameVersion = searchParams.get('gameVersion') || ''
+  const urlLoader = (searchParams.get('loader') || '').toLowerCase()
+  const [selectedGameVersion, setSelectedGameVersion] = useState(urlGameVersion || 'all')
+  const [selectedLoader, setSelectedLoader] = useState(urlLoader || 'all')
   const [downloadsByVersion, setDownloadsByVersion] = useState<Record<string, ResourceFile[]>>({})
   const [loadingDownloadsFor, setLoadingDownloadsFor] = useState<string | null>(null)
+  const [downloadingFor, setDownloadingFor] = useState<string | null>(null)
+
+  const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
+    setDownloadingFor(versionId)
+    try {
+      let instanceId = instanceIdParam
+      if (!instanceId) {
+        const def = await getDefaultInstance()
+        if (!def) { notify('未设置默认实例，请先在实例详情中固定一个实例', 'warning'); setDownloadingFor(null); return }
+        instanceId = def.id
+      }
+      const result = await startResourceDownload(instanceId, url, fileName, category)
+      const task: DownloadTask = {
+        id: `file-${result.taskId}`,
+        name: result.fileName,
+        type: 'file',
+        gameVersion: '',
+        status: 'queued',
+        progress: 0,
+        createdAt: new Date().toISOString(),
+        instanceId,
+        taskId: result.taskId,
+      }
+      addTask(task)
+      notify(`已加入下载列表：${result.fileName}`, 'success')
+    } catch { notify('下载失败', 'error') }
+    setDownloadingFor(null)
+  }, [instanceIdParam, category, notify])
 
   useEffect(() => {
     if (!resourceId) return
@@ -129,11 +167,16 @@ export default function ResourceDetailPage() {
     })
   }, [selectedGameVersion, selectedLoader, versions])
 
+  const expandBody = searchParams.get('expandBody') === '1'
+  const [bodyCollapsed, setBodyCollapsed] = useState(!expandBody)
+
   const backQuery = new URLSearchParams()
   backQuery.set('source', source)
   backQuery.set('category', category)
   if (keyword) backQuery.set('keyword', keyword)
   backQuery.set('sort', sort)
+  if (urlGameVersion) backQuery.set('gameVersion', urlGameVersion)
+  if (urlLoader) backQuery.set('loader', urlLoader)
 
   const handleLoadDownloads = async (versionId: string) => {
     if (!resourceId || source !== 'ftb' || downloadsByVersion[versionId]) return
@@ -240,11 +283,15 @@ export default function ResourceDetailPage() {
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
             <Card>
               <CardContent className="space-y-4 p-6">
-                <div className="space-y-1">
+                <div className="space-y-1 flex items-center justify-between">
                   <h3 className="text-lg font-semibold">详细介绍</h3>
-                  <p className="text-xs text-muted-foreground">支持 Markdown 标题、列表、链接和代码格式。</p>
+                  <button onClick={() => setBodyCollapsed(!bodyCollapsed)} className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                    {bodyCollapsed ? '展开' : '收起'}
+                    <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 transition-transform', !bodyCollapsed && 'rotate-180')} />
+                  </button>
                 </div>
-                <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
+                <div className={cn('rounded-xl border border-border/60 bg-muted/20 p-4 overflow-hidden transition-all', bodyCollapsed ? 'max-h-[180px] relative' : '')}>
+                  {bodyCollapsed && <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-muted/20 to-transparent pointer-events-none" />}
                   <article className="prose prose-invert prose-sm max-w-none prose-headings:mt-5 prose-headings:mb-3 prose-headings:font-semibold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-p:my-3 prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-3 prose-ol:pl-5 prose-li:my-1.5 prose-strong:text-foreground prose-code:rounded prose-code:bg-background prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-pre:rounded-xl prose-pre:border prose-pre:border-border/60 prose-pre:bg-background prose-a:text-primary hover:prose-a:text-primary/80 prose-img:rounded-xl prose-img:border prose-img:border-border/60 prose-img:shadow-sm prose-hr:border-border/60 prose-blockquote:border-l-primary prose-blockquote:text-muted-foreground break-words">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
                       {detail.body?.trim() || detail.description || '暂无更多介绍'}
@@ -258,7 +305,6 @@ export default function ResourceDetailPage() {
               <CardContent className="space-y-4 p-6">
                 <div className="space-y-1">
                   <h3 className="text-lg font-semibold">选择版本安装</h3>
-                  <p className="text-xs text-muted-foreground">详情先展示，版本列表随后异步加载，减少等待感。</p>
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -326,11 +372,14 @@ export default function ResourceDetailPage() {
 
                               {source === 'ftb' ? (
                                 downloadsByVersion[version.id]?.[0]?.url ? (
-                                  <Button asChild size="sm" className="shrink-0">
-                                    <a href={downloadsByVersion[version.id][0].url} target="_blank" rel="noopener noreferrer">
-                                      <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                                      下载
-                                    </a>
+                                  <Button
+                                    size="sm"
+                                    className="shrink-0"
+                                    disabled={downloadingFor === version.id}
+                                    onClick={() => handleDownload(version.id, downloadsByVersion[version.id][0].url, downloadsByVersion[version.id][0].filename)}
+                                  >
+                                    <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faDownload} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
+                                    {downloadingFor === version.id ? '安装中...' : '安装'}
                                   </Button>
                                 ) : (
                                   <Button
@@ -344,11 +393,18 @@ export default function ResourceDetailPage() {
                                   </Button>
                                 )
                               ) : (
-                                <Button asChild size="sm" className="shrink-0">
-                                  <a href={version.downloads[0]?.url} target="_blank" rel="noopener noreferrer">
-                                    <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                                    下载
-                                  </a>
+                                <Button
+                                  size="sm"
+                                  className="shrink-0"
+                                  disabled={!version.downloads[0]?.url || downloadingFor === version.id}
+                                  onClick={() => {
+                                    if (version.downloads[0]) {
+                                      handleDownload(version.id, version.downloads[0].url, version.downloads[0].filename)
+                                    }
+                                  }}
+                                >
+                                  <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faDownload} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
+                                  {downloadingFor === version.id ? '安装中...' : '安装'}
                                 </Button>
                               )}
                             </div>

@@ -41,6 +41,8 @@ export interface Account {
   loginMethod: string
   lastUsed?: number
   hasToken?: boolean
+  isDefault?: boolean
+  serverUrl?: string | null
 }
 
 export interface MicrosoftOAuthResponse {
@@ -122,6 +124,8 @@ export interface GameInstance {
   lastPlayed: string | null
   playTime: number
   isHidden: boolean
+  versionIsolation: boolean
+  isDefault: boolean
 }
 
 export interface CreateInstanceRequest {
@@ -136,12 +140,14 @@ export interface CreateInstanceRequest {
   accountUuid?: string
   accessToken?: string
   jvmArgs?: string
+  versionIsolation?: boolean
 }
 
 export interface LaunchResult {
   success: boolean
   processId: number
   error: string | null
+  detail?: string | null
   arguments: string | null
 }
 
@@ -194,7 +200,7 @@ export interface InstallProgressResponse {
 export interface DownloadTask {
   id: string
   name: string
-  type: 'game' | 'resource' | 'repair'
+  type: 'game' | 'resource' | 'repair' | 'file'
   gameVersion: string
   loader?: string
   loaderVersion?: string
@@ -210,6 +216,22 @@ export interface DownloadTask {
   createdAt: string
   completedAt?: string
   instanceId?: string
+  /** for file downloads */
+  taskId?: string
+}
+
+export interface ResourceDownloadState {
+  taskId: string
+  url: string
+  targetPath: string
+  fileName: string
+  progress: number
+  speed: number
+  status: string
+  error?: string
+  downloadedBytes: number
+  totalBytes: number
+  createdAt: string
 }
 
 export interface RemoteVersionInfo {
@@ -248,6 +270,33 @@ export interface ResourceFile {
   url: string
   filename: string
   size: number
+}
+
+export interface FileEntry {
+  name: string
+  size: number
+  lastModified: string
+  isDirectory: boolean
+  extension: string
+}
+
+export interface ServerEntry {
+  name: string
+  ip: string
+  iconBase64?: string | null
+  acceptTextures?: boolean
+}
+
+export interface ServerState {
+  name: string
+  address: string
+  isOnline: boolean
+  ping: number
+  onlinePlayers: number
+  maxPlayers: number
+  version: string
+  description: string
+  errorMessage: string
 }
 
 export interface ResourceVersion {

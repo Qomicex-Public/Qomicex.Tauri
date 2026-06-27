@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
-import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faCheckCircle } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faCheckCircle, faStar } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
@@ -9,6 +9,7 @@ import { useMessageBox } from '../components/ui/message-box.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { cn } from '../lib/utils.ts'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { ApiError } from '../api/client.ts'
 import * as accountApi from '../api/account.ts'
 import type { MicrosoftOAuthResponse, Account } from '../types/index.ts'
@@ -42,6 +43,20 @@ export default function Accounts() {
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [offlineName, setOfflineName] = useState('')
+  const [offlineUuid, setOfflineUuid] = useState('')
+  const uuidTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (!offlineName.trim()) { setOfflineUuid(''); return }
+    if (uuidTimer.current) clearTimeout(uuidTimer.current)
+    uuidTimer.current = setTimeout(async () => {
+      try {
+        const { uuid } = await accountApi.getOfflineUuid(offlineName.trim())
+        setOfflineUuid(uuid)
+      } catch { /* ignore */ }
+    }, 400)
+    return () => { if (uuidTimer.current) clearTimeout(uuidTimer.current) }
+  }, [offlineName])
 
   const [yggEmail, setYggEmail] = useState('')
   const [yggPwd, setYggPwd] = useState('')
@@ -53,6 +68,7 @@ export default function Accounts() {
   const [copied, setCopied] = useState(false)
 
   const selected = accounts.find((a) => a.uuid === selectedId)
+  const defaultUuid = accounts.find((a) => a.isDefault)?.uuid
 
   const refresh = useCallback(async () => {
     try {
@@ -60,6 +76,15 @@ export default function Accounts() {
       setAccounts(list)
     } catch { /* ignore */ }
   }, [])
+
+  async function handleSetDefault(uuid: string) {
+    try {
+      await accountApi.setDefaultAccount(uuid)
+      await refresh()
+    } catch (e: unknown) {
+      await msgError(fmtErr(e))
+    }
+  }
 
   useEffect(() => { refresh() }, [refresh])
 
@@ -80,6 +105,7 @@ export default function Accounts() {
     setMicrosoftStep('idle')
     setMicrosoftMsg('')
     setOfflineName('')
+    setOfflineUuid('')
     setTyServerId('')
     setTyEmail('')
     setTyPwd('')
@@ -131,9 +157,13 @@ export default function Accounts() {
 
   async function handleOfflineAdd() {
     if (!offlineName.trim()) return
+    let uuid = offlineUuid.trim()
+    if (!uuid) {
+      try { const r = await accountApi.getOfflineUuid(offlineName.trim()); uuid = r.uuid } catch { uuid = crypto.randomUUID() }
+    }
     const acc: Account = {
       name: offlineName.trim(),
-      uuid: crypto.randomUUID(),
+      uuid,
       token: '',
       accessToken: '',
       refreshToken: '',
@@ -145,6 +175,7 @@ export default function Accounts() {
       setSelectedId(saved.uuid)
       setAdding(false)
       setOfflineName('')
+      setOfflineUuid('')
     } catch (e: unknown) {
       await msgError(fmtErr(e))
     }
@@ -182,6 +213,7 @@ export default function Accounts() {
     const ok = await msgConfirm('确定要删除此账户吗？', '删除账户')
     if (!ok) return
     try {
+      if (uuid === defaultUuid) await accountApi.clearDefaultAccount()
       await accountApi.deleteAccount(uuid)
       setAccounts((prev) => {
         const next = prev.filter((a) => a.uuid !== uuid)
@@ -191,11 +223,6 @@ export default function Accounts() {
     } catch (e: unknown) {
       await msgError(fmtErr(e))
     }
-  }
-
-  function maskToken(t?: string) {
-    if (!t || t.length < 8) return '无'
-    return `${t.slice(0, 4)}...${t.slice(-4)}`
   }
 
   function StatusDot({ step, active }: { step: MicrosoftStep; active: MicrosoftStep }) {
@@ -220,6 +247,7 @@ export default function Accounts() {
         <div className="flex w-64 shrink-0 flex-col gap-1.5">
           {accounts.map((acc) => {
             const meta = TYPE_META[acc.loginMethod] || TYPE_META.Offline
+            const isDefault = acc.uuid === defaultUuid
             return (
               <button
                 key={acc.uuid}
@@ -231,9 +259,7 @@ export default function Accounts() {
                     : 'border-transparent bg-card hover:border-border'
                 )}
               >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary/20 to-primary/5 text-base font-bold text-primary ring-1 ring-primary/20">
-                  {acc.name.charAt(0).toUpperCase()}
-                </div>
+                <AccountAvatar account={acc} className="h-10 w-10 shrink-0" textClassName="text-base font-bold" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{acc.name}</div>
                   <div className="flex items-center gap-1">
@@ -241,12 +267,27 @@ export default function Accounts() {
                     <span className="text-[11px] text-muted-foreground">{meta.label}</span>
                   </div>
                 </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDelete(acc.uuid) }}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
-                >
-                  <FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  {isDefault ? (
+                    <span className="flex h-7 w-7 items-center justify-center">
+                      <FontAwesomeIcon icon={faStar} className="h-3 w-3 text-amber-400" />
+                    </span>
+                  ) : (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleSetDefault(acc.uuid) }}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-primary/10 hover:text-primary group-hover:opacity-100"
+                      title="设为默认"
+                    >
+                      <FontAwesomeIcon icon={faStar} className="h-3 w-3" />
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDelete(acc.uuid) }}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+                  >
+                    <FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" />
+                  </button>
+                </div>
               </button>
             )
           })}
@@ -348,6 +389,10 @@ export default function Accounts() {
                     <Label htmlFor="offline-name">玩家名称</Label>
                     <Input id="offline-name" value={offlineName} onChange={(e) => setOfflineName(e.target.value)} placeholder="输入离线模式用户名" />
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="offline-uuid">UUID（可选，留空自动生成）</Label>
+                    <Input id="offline-uuid" value={offlineUuid} onChange={(e) => setOfflineUuid(e.target.value)} placeholder="例如: 069a79f4-44e9-4726-a5be-fca90e38aaf5" />
+                  </div>
                   <Button className="w-full" onClick={handleOfflineAdd} disabled={!offlineName.trim()}>
                     <FontAwesomeIcon icon={faPlus} className="h-4 w-4" />
                     添加离线账户
@@ -423,16 +468,26 @@ export default function Accounts() {
           ) : selected ? (
             <div className="rounded-xl border bg-card p-6">
               <div className="flex items-center gap-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-2xl font-bold text-primary ring-1 ring-primary/20">
-                  {selected.name.charAt(0).toUpperCase()}
-                </div>
+                <AccountAvatar account={selected} className="h-16 w-16 shrink-0 rounded-2xl" textClassName="text-2xl font-bold" />
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold">{selected.name}</h3>
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    {selected.name}
+                    {selected.uuid === defaultUuid && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">
+                        <FontAwesomeIcon icon={faStar} className="h-2.5 w-2.5" />默认
+                      </span>
+                    )}
+                  </h3>
                   <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
                     <FontAwesomeIcon icon={TYPE_META[selected.loginMethod]?.icon || faUser} className={cn('h-3 w-3', TYPE_META[selected.loginMethod]?.color)} />
                     {TYPE_META[selected.loginMethod]?.label || selected.loginMethod}
                   </div>
                 </div>
+                {selected.uuid !== defaultUuid && (
+                  <Button size="sm" variant="outline" onClick={() => handleSetDefault(selected.uuid)} className="gap-1.5">
+                    <FontAwesomeIcon icon={faStar} className="h-3 w-3" />设为默认
+                  </Button>
+                )}
                 <Button variant="destructive" size="sm" onClick={() => handleDelete(selected.uuid)}>
                   <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
                   删除
@@ -443,8 +498,6 @@ export default function Accounts() {
                 {[
                   ['UUID', selected.uuid, true],
                   ['登录方式', TYPE_META[selected.loginMethod]?.label || selected.loginMethod],
-                  ['Access Token', maskToken(selected.accessToken)],
-                  ['Refresh Token', maskToken(selected.refreshToken)],
                 ].map((item) => {
                   const label = item[0] as string
                   const value = item[1] as string

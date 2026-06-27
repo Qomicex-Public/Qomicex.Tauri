@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Qomicex.Launcher.Backend.Modules.Helpers;
-using static Qomicex.Launcher.Backend.DataModules;
+using Qomicex.Core.Modules.Helpers;
+using static Qomicex.Core.DataModules;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -19,8 +19,8 @@ public class SystemInfoController : ControllerBase
             osVersion = info.OSVersion,
             architecture = info.Architecture,
             osVersionId = info.OSVersionID,
-            memory = Modules.Helpers.MultiPlatforms.SystemMemoryHelper.GetTotalPhysicalMemory(),
-            availableMemory = Modules.Helpers.MultiPlatforms.SystemMemoryHelper.GetAvailablePhysicalMemory() / (1024 * 1024)
+            memory = Qomicex.Core.Modules.Helpers.MultiPlatforms.SystemMemoryHelper.GetTotalPhysicalMemory(),
+            availableMemory = Qomicex.Core.Modules.Helpers.MultiPlatforms.SystemMemoryHelper.GetAvailablePhysicalMemory() / (1024 * 1024)
         });
     }
 }

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Qomicex.Launcher.Backend.Modules.Launcher;
-using static Qomicex.Launcher.Backend.DataModules;
-using static Qomicex.Launcher.Backend.DataModules.DataDetails;
+using Qomicex.Core.Modules.Launcher;
+using static Qomicex.Core.DataModules;
+using static Qomicex.Core.DataModules.DataDetails;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -12,8 +12,8 @@ public class LauncherController : ControllerBase
     [HttpPost("build-arguments")]
     public IActionResult BuildArguments([FromBody] LauncherRequest request)
     {
-        var launcher = new Modules.Launcher.Launcher();
-        var param = new Modules.Launcher.Launcher.LauncherParam
+        var launcher = new Qomicex.Core.Modules.Launcher.Launcher();
+        var param = new Qomicex.Core.Modules.Launcher.Launcher.LauncherParam
         {
             Version = request.Version,
             MaxMemory = request.MaxMemory,

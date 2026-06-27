@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { Button } from '../components/ui/button.tsx'
@@ -12,7 +12,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, repairInstance } from '../api/instance.ts'
+import { createInstance, startInstall, getInstances, repairInstance, launchInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx'
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance } from '../types/index.ts'
@@ -103,6 +103,7 @@ export default function Instances() {
   const [settingsVersion, setSettingsVersion] = useState<ScannedVersion | null>(null)
   const [settingsTab, setSettingsTab] = useState<'basic' | 'repair'>('basic')
   const [repairAdded, setRepairAdded] = useState(false)
+  const [defaultInstanceId, setDefaultInstanceId] = useState<string | null>(null)
 
   const [managedDirs, setManagedDirs] = useState<ManagedDir[]>(() => loadDirs())
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
@@ -136,9 +137,10 @@ export default function Instances() {
     async function init() {
       setLoading(true)
       try {
-        const [remote, instances] = await Promise.all([getRemoteVersions(), getInstances()])
+        const [remote, instances, def] = await Promise.all([getRemoteVersions(), getInstances(), getDefaultInstance()])
         setRemoteVersions(remote)
         setBackedInstances(instances)
+        setDefaultInstanceId(def?.id ?? null)
       } catch (e) { console.error(e) } finally { setLoading(false) }
     }
     init()
@@ -313,12 +315,42 @@ export default function Instances() {
     }
   }
 
-  function handleLaunch(versionName: string) {
-    setLaunching(versionName)
-    setTimeout(() => {
-      msgAlert(`启动 Minecraft ${versionName}\n启动功能待对接后端`)
-      setLaunching(null)
-    }, 500)
+  async function handleLaunch(v: ScannedVersion) {
+    setLaunching(v.name)
+    try {
+      let inst = getInstanceForVersion(v)
+      if (!inst) {
+        const req: CreateInstanceRequest = {
+          name: v.name,
+          gameVersion: v.gameVersion,
+          loader: v.loaders.find(l => l.type)?.type,
+          loaderVersion: v.loaders.find(l => l.version)?.version,
+          gameDir: currentDir!,
+          maxMemory: 4096,
+          versionIsolation: false,
+        }
+        inst = await createInstance(req)
+      }
+      const result = await launchInstance(inst.id)
+      if (!result.success) {
+        await msgAlert(`启动失败: ${result.error}\n${result.detail || ''}`)
+      }
+    } catch (e) {
+      await msgAlert(`启动失败: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    setLaunching(null)
+  }
+
+  async function handleToggleDefault(instanceId: string) {
+    try {
+      if (defaultInstanceId === instanceId) {
+        await clearDefaultInstance(instanceId)
+        setDefaultInstanceId(null)
+      } else {
+        await setDefaultInstance(instanceId)
+        setDefaultInstanceId(instanceId)
+      }
+    } catch {}
   }
 
   const filtered = scannedLocal.filter((v) =>
@@ -847,7 +879,7 @@ export default function Instances() {
         viewMode === 'grid' ? (
           <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
-              <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
+              <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => { const inst = getInstanceForVersion(v); if (inst) navigate(`/instances/${inst.id}`) }}>
                 <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-2xl font-bold text-primary ring-1 ring-primary/20">
                   {v.name.charAt(0).toUpperCase()}
                 </div>
@@ -867,14 +899,21 @@ export default function Instances() {
                 </div>
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
                   <Tooltip content="启动">
-                    <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={() => handleLaunch(v.name)} disabled={launching === v.name}>
+                    <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={() => handleLaunch(v)} disabled={!!launching}>
                       <FontAwesomeIcon icon={launching === v.name ? faRotate : faPlay} className={cn('h-5 w-5', launching === v.name && 'animate-spin')} />
                     </Button>
                   </Tooltip>
                   <div className="flex items-center gap-1">
                     <Tooltip content="设置">
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={() => setSettingsVersion(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); const inst = getInstanceForVersion(v); if (inst) navigate(`/instances/${inst.id}`) }}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
+                    {(() => { const inst = getInstanceForVersion(v); return inst ? (
+                      <Tooltip content={defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
+                        <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); handleToggleDefault(inst.id) }}>
+                          <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', defaultInstanceId === inst.id && 'text-yellow-400')} />
+                        </Button>
+                      </Tooltip>
+                    ) : null})()}
                     <Tooltip content="打开文件夹">
                       <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white"><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
@@ -916,13 +955,20 @@ export default function Instances() {
                 </div>
                 <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                   <Tooltip content="启动">
-                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLaunch(v.name)} disabled={launching === v.name}>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLaunch(v)} disabled={!!launching}>
                       <FontAwesomeIcon icon={launching === v.name ? faRotate : faPlay} className={cn('h-4 w-4', launching === v.name && 'animate-spin')} />
                     </Button>
                   </Tooltip>
                   <Tooltip content="设置">
-                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setSettingsVersion(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => { const inst = getInstanceForVersion(v); if (inst) navigate(`/instances/${inst.id}`) }}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                   </Tooltip>
+                  {(() => { const inst = getInstanceForVersion(v); return inst ? (
+                    <Tooltip content={defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
+                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleToggleDefault(inst.id)}>
+                        <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', defaultInstanceId === inst.id && 'text-yellow-400')} />
+                      </Button>
+                    </Tooltip>
+                  ) : null})()}
                   <Tooltip content="打开文件夹">
                     <Button size="icon" variant="ghost" className="h-8 w-8"><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                   </Tooltip>

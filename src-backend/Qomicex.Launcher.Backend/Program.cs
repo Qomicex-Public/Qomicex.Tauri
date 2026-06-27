@@ -1,10 +1,8 @@
 using System.Net.Http.Headers;
-using Qomicex.Launcher.Backend.Downloader;
+using Qomicex.Downloader;
 using Qomicex.Launcher.Backend.Middleware;
-using Qomicex.Launcher.Backend.ModRecommenderModelLib.Abstractions;
-using Qomicex.Launcher.Backend.ModRecommenderModelLib.Services;
 using Qomicex.Launcher.Backend.Services;
-using MsAccount = Qomicex.Launcher.Backend.Modules.Helpers.Account.Microsoft;
+using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,8 +30,9 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<FtbService>();
 builder.Services.AddSingleton<DownloadManager>();
 builder.Services.AddSingleton<InstanceInstallService>();
+builder.Services.AddSingleton<ResourceDownloadService>();
 builder.Services.AddSingleton(_ => new AccountService(AppContext.BaseDirectory));
-builder.Services.AddTransient<MsAccount>(_ => new MsAccount(builder.Configuration["Microsoft:ClientId"] ?? string.Empty));
+builder.Services.AddTransient<MsAccount>(_ => new MsAccount { ClientId = builder.Configuration["Microsoft:ClientId"] ?? string.Empty });
 
 builder.Services.AddCors(options =>
 {

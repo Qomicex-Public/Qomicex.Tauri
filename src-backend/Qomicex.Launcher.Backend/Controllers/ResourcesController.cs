@@ -31,13 +31,15 @@ public class ResourcesController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string sort = "relevance",
-        [FromQuery] string source = "modrinth")
+        [FromQuery] string source = "modrinth",
+        [FromQuery] string? gameVersion = null,
+        [FromQuery] string? loader = null)
     {
         return source.ToLowerInvariant() switch
         {
             "curseforge" => await SearchCurseForge(category, keyword, page, pageSize, sort),
             "ftb" => await SearchFtb(category, keyword, page, pageSize, sort),
-            _ => await SearchModrinth(category, keyword, page, pageSize, sort),
+            _ => await SearchModrinth(category, keyword, page, pageSize, sort, gameVersion, loader),
         };
     }
 
@@ -83,7 +85,7 @@ public class ResourcesController : ControllerBase
         }
     }
 
-    private async Task<IActionResult> SearchModrinth(string category, string? keyword, int page, int pageSize, string sort)
+    private async Task<IActionResult> SearchModrinth(string category, string? keyword, int page, int pageSize, string sort, string? gameVersion = null, string? loader = null)
     {
         var typeMap = new Dictionary<string, string>
         {
@@ -101,7 +103,12 @@ public class ResourcesController : ControllerBase
         };
 
         var offset = (page - 1) * pageSize;
-        var facets = JsonSerializer.Serialize(new[] { new[] { $"project_type:{projectType}" } });
+        var facetList = new List<List<string>> { new() { $"project_type:{projectType}" } };
+        if (!string.IsNullOrWhiteSpace(gameVersion))
+            facetList.Add(new() { $"versions:{gameVersion}" });
+        if (!string.IsNullOrWhiteSpace(loader))
+            facetList.Add(new() { $"categories:{loader}" });
+        var facets = JsonSerializer.Serialize(facetList);
         var url = $"https://api.modrinth.com/v2/search?query={Uri.EscapeDataString(keyword ?? "")}&facets={Uri.EscapeDataString(facets)}&limit={pageSize}&offset={offset}&index={sortIndex}";
 
         try

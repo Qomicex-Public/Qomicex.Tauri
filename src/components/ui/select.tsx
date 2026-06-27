@@ -33,6 +33,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const options: { value: string; label: string; disabled: boolean; isDivider: boolean }[] = []
   let selectedLabel = placeholder || '选择...'
@@ -72,16 +73,25 @@ export function Select({ value, onChange, children, className, placeholder, disa
 
   useEffect(() => {
     if (!open) return
-    function onScroll(e: Event) {
-      if (popupRef.current && !popupRef.current.contains(e.target as Node)) close()
+    function reposition() {
+      if (!triggerRef.current || !containerRef.current) return
+      const tr = triggerRef.current.getBoundingClientRect()
+      const cr = containerRef.current.getBoundingClientRect()
+      setPos({ top: tr.bottom - cr.top, left: tr.left - cr.left, width: tr.width })
     }
-    window.addEventListener('scroll', onScroll, true)
-    return () => window.removeEventListener('scroll', onScroll, true)
-  }, [open, close])
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [open])
 
   function openPopup() {
-    const rect = triggerRef.current!.getBoundingClientRect()
-    setPos({ top: rect.bottom + 4, left: rect.left, width: rect.width })
+    if (!triggerRef.current || !containerRef.current) return
+    const tr = triggerRef.current.getBoundingClientRect()
+    const cr = containerRef.current.getBoundingClientRect()
+    setPos({ top: tr.bottom - cr.top + 4, left: tr.left - cr.left, width: tr.width })
     setOpen(true)
     requestAnimationFrame(() => searchRef.current?.focus())
   }
@@ -93,7 +103,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
   }
 
   return (
-    <div className={cn('relative', className)}>
+    <div ref={containerRef} className={cn('relative', className)}>
       <button
         ref={triggerRef}
         type="button"
@@ -114,7 +124,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
       {open && (
         <div
           ref={popupRef}
-          style={{ position: 'fixed', top: pos.top, left: pos.left, width: Math.max(pos.width, 180) }}
+          style={{ position: 'absolute', top: pos.top, left: pos.left, width: Math.max(pos.width, 180) }}
           className="z-50 rounded-lg border border-border bg-popover p-1 shadow-xl animate-in fade-in zoom-in-95"
         >
           <div className="max-h-72 overflow-y-auto">

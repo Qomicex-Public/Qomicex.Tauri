@@ -53,6 +53,11 @@ public class InstanceRepository : IInstanceRepository
         lock (_lock) { return _instances.FirstOrDefault(i => i.Id == id); }
     }
 
+    public GameInstance? GetDefault()
+    {
+        lock (_lock) { return _instances.FirstOrDefault(i => i.IsDefault); }
+    }
+
     public GameInstance Create(GameInstance instance)
     {
         lock (_lock)

@@ -1,9 +1,12 @@
 using System.Diagnostics;
+using System.IO;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Models;
 using Qomicex.Launcher.Backend.Services;
-using static Qomicex.Launcher.Backend.DataModules;
-using static Qomicex.Launcher.Backend.DataModules.DataDetails;
+using Qomicex.Core.Modules.Helpers;
+using static Qomicex.Core.DataModules;
+using static Qomicex.Core.DataModules.DataDetails;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -13,17 +16,53 @@ public class InstanceController : ControllerBase
 {
     private readonly IInstanceRepository _repository;
     private readonly InstanceInstallService _installService;
+    private readonly AccountService _accountService;
 
-    public InstanceController(IInstanceRepository repository, InstanceInstallService installService)
+    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService)
     {
         _repository = repository;
         _installService = installService;
+        _accountService = accountService;
     }
 
     [HttpGet]
     public ActionResult<List<GameInstance>> GetAll()
     {
         return Ok(_repository.GetAll());
+    }
+
+    [HttpGet("default")]
+    public ActionResult<GameInstance?> GetDefault()
+    {
+        return Ok(_repository.GetDefault());
+    }
+
+    [HttpPut("{id}/default")]
+    public IActionResult SetDefault(string id)
+    {
+        var instance = _repository.GetById(id);
+        if (instance == null) return NotFound();
+        foreach (var inst in _repository.GetAll())
+        {
+            if (inst.IsDefault)
+            {
+                inst.IsDefault = false;
+                _repository.Update(inst.Id, inst);
+            }
+        }
+        instance.IsDefault = true;
+        _repository.Update(instance.Id, instance);
+        return Ok(instance);
+    }
+
+    [HttpDelete("{id}/default")]
+    public IActionResult ClearDefault(string id)
+    {
+        var instance = _repository.GetById(id);
+        if (instance == null) return NotFound();
+        instance.IsDefault = false;
+        _repository.Update(instance.Id, instance);
+        return NoContent();
     }
 
     [HttpGet("{id}")]
@@ -50,6 +89,7 @@ public class InstanceController : ControllerBase
             AccountUuid = request.AccountUuid,
             AccessToken = request.AccessToken,
             JvmArgs = request.JvmArgs,
+            VersionIsolation = request.VersionIsolation,
         };
         var created = _repository.Create(instance);
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
@@ -111,6 +151,8 @@ public class InstanceController : ControllerBase
     [HttpPut("{id}")]
     public ActionResult<GameInstance> Update(string id, [FromBody] CreateInstanceRequest request)
     {
+        var existing = _repository.GetById(id);
+        if (existing == null) return NotFound();
         var instance = new GameInstance
         {
             Name = request.Name,
@@ -124,9 +166,10 @@ public class InstanceController : ControllerBase
             AccountUuid = request.AccountUuid,
             AccessToken = request.AccessToken,
             JvmArgs = request.JvmArgs,
+            VersionIsolation = request.VersionIsolation,
+            IsDefault = existing.IsDefault,
         };
         var updated = _repository.Update(id, instance);
-        if (updated == null) return NotFound();
         return Ok(updated);
     }
 
@@ -156,38 +199,69 @@ public class InstanceController : ControllerBase
 
         try
         {
-            var launcher = new Modules.Launcher.Launcher();
-            var param = new Modules.Launcher.Launcher.LauncherParam
+            var versionId = !string.IsNullOrEmpty(instance.Loader) && !string.IsNullOrEmpty(instance.LoaderVersion)
+                ? $"{instance.GameVersion}-{instance.Loader}-{instance.LoaderVersion}"
+                : instance.GameVersion;
+
+            var launcher = new Qomicex.Core.Modules.Launcher.Launcher();
+            var param = new Qomicex.Core.Modules.Launcher.Launcher.LauncherParam
             {
-                Version = instance.GameVersion,
+                Version = versionId,
                 MaxMemory = instance.MaxMemory.ToString(),
                 AdditionalParam = instance.JvmArgs ?? "",
                 DevideVersion = false,
                 GameDir = instance.GameDir,
                 LauncherName = "qomicex",
             };
-            param.Account.Name = instance.AccountName ?? "Player";
-            param.Account.Uuid = instance.AccountUuid ?? "";
-            param.Account.AccessToken = instance.AccessToken ?? "faked-token-for-offline";
-            param.Java.Path = instance.JavaPath ?? "java";
 
-            var javaPath = instance.JavaPath ?? "java";
-
-            try
+            param.Account.Name = "Player";
+            param.Account.Uuid = "";
+            param.Account.AccessToken = "faked-token-for-offline";
+            var defaultAccount = _accountService.GetDefaultAsync().GetAwaiter().GetResult();
+            if (defaultAccount != null)
             {
-                var verStr = Modules.Helpers.GeneralHelper.GetMinecraftRequireJavaVersion(instance.GameVersion, instance.GameDir);
-                param.Java.VersionID = int.TryParse(verStr, out var vid) ? vid : 21;
+                param.Account.Name = defaultAccount.Name;
+                param.Account.Uuid = defaultAccount.Uuid;
+                param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken) ? "faked-token-for-offline" : defaultAccount.AccessToken;
             }
-            catch
+
+            string javaPath;
+            if (!string.IsNullOrEmpty(instance.JavaPath))
             {
-                param.Java.VersionID = 21;
+                javaPath = instance.JavaPath;
+            }
+            else
+            {
+                var javaList = JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions { Mode = JavaHelper.JavaSearchMode.Quick });
+                var recommended = JavaHelper.GetRecommendedJava(javaList, instance.GameVersion, instance.GameDir);
+                var chosen = recommended.FirstOrDefault();
+                javaPath = chosen?.Path ?? "java";
+                param.Java.Path = javaPath;
+                param.Java.VersionID = chosen?.VersionID ?? 21;
+            }
+
+            if (param.Java.VersionID == 0)
+            {
+                try
+                {
+                    var verStr = GeneralHelper.GetMinecraftRequireJavaVersion(instance.GameVersion, instance.GameDir);
+                    param.Java.VersionID = int.TryParse(verStr, out var vid) ? vid : 21;
+                }
+                catch
+                {
+                    param.Java.VersionID = 21;
+                }
             }
 
             var args = launcher.SelectParam(param, param.LauncherName);
 
-            var versionPath = Path.Combine(instance.GameDir, "versions", instance.GameVersion);
-            var jsonPath = Path.Combine(versionPath, $"{instance.GameVersion}.json");
+            var versionPath = Path.Combine(instance.GameDir, "versions", versionId);
+            var jsonPath = Path.Combine(versionPath, $"{versionId}.json");
             launcher.UnzipNatives(jsonPath, instance.GameDir, versionPath);
+
+            var logsDir = Path.Combine(instance.GameDir, "logs");
+            System.IO.Directory.CreateDirectory(logsDir);
+            var stderrPath = System.IO.Path.Combine(logsDir, "launcher-latest.log");
 
             var psi = new ProcessStartInfo
             {
@@ -196,25 +270,56 @@ public class InstanceController : ControllerBase
                 WorkingDirectory = instance.GameDir,
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                StandardErrorEncoding = Encoding.UTF8,
+                StandardOutputEncoding = Encoding.UTF8,
             };
 
-            var process = System.Diagnostics.Process.Start(psi);
+            using var process = System.Diagnostics.Process.Start(psi);
             if (process == null)
             {
                 return Ok(new LaunchResult
                 {
                     Success = false,
-                    Error = "Failed to start process",
+                    Error = "无法启动 Java 进程",
                 });
             }
 
-            instance.LastPlayed = DateTime.UtcNow;
-            _repository.Update(instance.Id, instance);
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data != null) System.IO.File.AppendAllText(stderrPath, e.Data + Environment.NewLine);
+            };
+            process.BeginErrorReadLine();
 
+            // Capture initial output for crash detection (wait briefly for immediate failures)
+            var stdout = new StringBuilder();
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data != null) stdout.AppendLine(e.Data);
+            };
+            process.BeginOutputReadLine();
+
+            if (!process.WaitForExit(5000))
+            {
+                instance.LastPlayed = DateTime.UtcNow;
+                _repository.Update(instance.Id, instance);
+                return Ok(new LaunchResult
+                {
+                    Success = true,
+                    ProcessId = process.Id,
+                    Arguments = args,
+                });
+            }
+
+            // Process exited within 5s — likely a crash
+            var stderr = System.IO.File.Exists(stderrPath) ? System.IO.File.ReadAllText(stderrPath) : "";
+            var output = stdout.ToString();
             return Ok(new LaunchResult
             {
-                Success = true,
-                ProcessId = process.Id,
+                Success = false,
+                Error = "游戏进程异常退出",
+                Detail = string.IsNullOrEmpty(stderr) ? output : stderr,
                 Arguments = args,
             });
         }
@@ -224,6 +329,7 @@ public class InstanceController : ControllerBase
             {
                 Success = false,
                 Error = ex.Message,
+                Detail = ex.ToString(),
             });
         }
     }
