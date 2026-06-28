@@ -1,11 +1,11 @@
 using System.Diagnostics;
+using System.Threading;
 
 namespace Qomicex.Launcher.Backend.Diagnostics;
 
 public sealed class BufferedTraceListener(TraceBufferStore store) : TraceListener
 {
-    private readonly object _gate = new();
-    private string _pendingLine = string.Empty;
+    private readonly ThreadLocal<string> _pendingLine = new(() => string.Empty);
 
     private string? Category => Attributes?["Category"];
 
@@ -16,23 +16,26 @@ public sealed class BufferedTraceListener(TraceBufferStore store) : TraceListene
             return;
         }
 
-        lock (_gate)
-        {
-            _pendingLine += message;
-        }
+        _pendingLine.Value += message;
     }
 
     public override void WriteLine(string? message)
     {
-        string entry;
+        var entry = _pendingLine.Value + (message ?? string.Empty);
+        _pendingLine.Value = string.Empty;
 
-        lock (_gate)
+        store.Add(Format(entry));
+    }
+
+    public override void Flush()
+    {
+        var entry = _pendingLine.Value;
+        if (string.IsNullOrEmpty(entry))
         {
-            _pendingLine += message ?? string.Empty;
-            entry = _pendingLine;
-            _pendingLine = string.Empty;
+            return;
         }
 
+        _pendingLine.Value = string.Empty;
         store.Add(Format(entry));
     }
 
