@@ -14,4 +14,5 @@ public class CreateInstanceRequest
     public string? AccessToken { get; set; }
     public string? JvmArgs { get; set; }
     public bool VersionIsolation { get; set; }
+    public string? Icon { get; set; }
 }

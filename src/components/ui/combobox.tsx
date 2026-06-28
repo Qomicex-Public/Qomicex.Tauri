@@ -76,7 +76,7 @@ export function Combobox({ value, onChange, options, placeholder, className }: C
       {open && (
         <div
           ref={popupRef}
-          className="absolute left-0 top-full z-50 mt-1 w-full min-w-[180px] rounded-lg border border-border bg-popover p-1 shadow-xl animate-in fade-in zoom-in-95"
+          className="absolute left-0 top-full z-50 mt-1 w-full min-w-[180px] rounded-lg border border-border/50 bg-popover/90 backdrop-blur-lg p-1 shadow-xl animate-in fade-in zoom-in-95"
           onMouseDown={(e) => e.preventDefault()}
         >
           <div className="max-h-60 overflow-y-auto">

@@ -16,6 +16,8 @@ import { createInstance, startInstall, getInstances, repairInstance, launchInsta
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx'
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance } from '../types/index.ts'
+import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange } from '../api/settings.ts'
+import { InstanceIcon } from '../components/InstanceIcon.tsx'
 
 interface ManagedDir {
   path: string
@@ -68,11 +70,12 @@ function loadDirs(): ManagedDir[] {
 function saveDirs(dirs: ManagedDir[]) { localStorage.setItem('qomicex-directories', JSON.stringify(dirs)) }
 
 function loadSettings() {
-  try { return JSON.parse(localStorage.getItem('qomicex-settings') || '{}') } catch { return {} }
+  return getSettings()
 }
 function saveSettings(s: Record<string, unknown>) {
-  const cur = loadSettings()
-  localStorage.setItem('qomicex-settings', JSON.stringify({ ...cur, ...s }))
+  apiLoadSettings().then((fresh) => {
+    apiSaveSettings({ ...fresh, ...s })
+  }).catch(() => {})
 }
 
 function formatDate(dateStr: string): string {
@@ -108,6 +111,12 @@ export default function Instances() {
   const [managedDirs, setManagedDirs] = useState<ManagedDir[]>(() => loadDirs())
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
   const [dirPopover, setDirPopover] = useState(false)
+
+  useEffect(() => {
+    return onSettingsChange((s) => {
+      if (s.gameDir && s.gameDir !== currentDir) setCurrentDir(s.gameDir)
+    })
+  }, [currentDir])
   const [dirManager, setDirManager] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
 
@@ -137,10 +146,11 @@ export default function Instances() {
     async function init() {
       setLoading(true)
       try {
-        const [remote, instances, def] = await Promise.all([getRemoteVersions(), getInstances(), getDefaultInstance()])
+        const [remote, instances, def, settings] = await Promise.all([getRemoteVersions(), getInstances(), getDefaultInstance(), apiLoadSettings()])
         setRemoteVersions(remote)
         setBackedInstances(instances)
         setDefaultInstanceId(def?.id ?? null)
+        if (settings.gameDir) setCurrentDir(settings.gameDir)
       } catch (e) { console.error(e) } finally { setLoading(false) }
     }
     init()
@@ -420,20 +430,9 @@ export default function Instances() {
               ))}
             </Select>
 
-            <div className="flex items-center gap-1 rounded-lg border border-input bg-background p-1">
-            <button
-              onClick={() => setRemoteViewMode('grid')}
-              className={cn('flex h-9 flex-1 items-center justify-center rounded-md transition-colors', remoteViewMode === 'grid' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
-              >
-                <FontAwesomeIcon icon={faGrip} className="h-3.5 w-3.5" />
-              </button>
-            <button
-              onClick={() => setRemoteViewMode('list')}
-              className={cn('flex h-9 flex-1 items-center justify-center rounded-md transition-colors', remoteViewMode === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
-              >
-                <FontAwesomeIcon icon={faList} className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <button onClick={() => setRemoteViewMode(remoteViewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', remoteViewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
+              <FontAwesomeIcon icon={remoteViewMode === 'grid' ? faGrip : faList} className="h-3.5 w-3.5" />
+            </button>
           </div>
 
           <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -866,9 +865,7 @@ export default function Instances() {
           <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
               <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => { const inst = getInstanceForVersion(v); if (inst) navigate(`/instances/${inst.id}`) }}>
-                <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-2xl font-bold text-primary ring-1 ring-primary/20">
-                  {v.name.charAt(0).toUpperCase()}
-                </div>
+                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} loader={v.loaders?.[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 {v.loaders && v.loaders.filter((l) => l.type).length > 0 && (
                   <div className="mt-1 flex flex-wrap justify-center gap-1">
@@ -912,9 +909,7 @@ export default function Instances() {
           <div className="space-y-3">
             {filtered.map((v) => (
               <div key={v.name} className="group flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 text-lg font-bold text-primary ring-1 ring-primary/20">
-                  {v.name.charAt(0).toUpperCase()}
-                </div>
+                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} loader={v.loaders?.[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="truncate text-sm font-medium">{v.name}</h3>

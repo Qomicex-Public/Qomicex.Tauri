@@ -1,19 +1,9 @@
 import { useGSAP } from '@gsap/react'
 import { gsap } from 'gsap'
 import { useRef } from 'react'
+import { getSettings } from '../api/settings.ts'
 
 gsap.registerPlugin(useGSAP)
-
-function getAnimSettings() {
-  try {
-    const raw = localStorage.getItem('qomicex-settings')
-    if (!raw) return { enabled: true, speed: 1 }
-    const s = JSON.parse(raw)
-    return { enabled: s.animationsEnabled !== false, speed: s.animationSpeed ?? 1 }
-  } catch {
-    return { enabled: true, speed: 1 }
-  }
-}
 
 export function usePageAnimation() {
   const ref = useRef<HTMLDivElement>(null)
@@ -21,7 +11,9 @@ export function usePageAnimation() {
   useGSAP(() => {
     const el = ref.current
     if (!el) return
-    const { enabled, speed } = getAnimSettings()
+    const s = getSettings()
+    const enabled = s.animationsEnabled !== false
+    const speed = s.animationSpeed ?? 1
     if (!enabled) return
 
     gsap.from(el, {
@@ -42,7 +34,9 @@ export function useStaggerAnimation(deps: unknown[] = []) {
   useGSAP(() => {
     const el = ref.current
     if (!el) return
-    const { enabled, speed } = getAnimSettings()
+    const s = getSettings()
+    const enabled = s.animationsEnabled !== false
+    const speed = s.animationSpeed ?? 1
     if (!enabled) return
 
     const children = el.children

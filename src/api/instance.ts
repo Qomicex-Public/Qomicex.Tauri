@@ -25,7 +25,7 @@ export async function createInstance(data: CreateInstanceRequest): Promise<GameI
   return post<GameInstance>('/instance', data)
 }
 
-export async function updateInstance(id: string, data: CreateInstanceRequest): Promise<GameInstance> {
+export async function updateInstance(id: string, data: Partial<CreateInstanceRequest>): Promise<GameInstance> {
   return put<GameInstance>(`/instance/${id}`, data)
 }
 

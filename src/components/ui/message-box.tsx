@@ -1,4 +1,5 @@
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { cn } from "../../lib/utils.ts"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import { faCircleInfo, faTriangleExclamation, faCheckCircle, faCircleXmark } from "@fortawesome/free-solid-svg-icons"
@@ -174,15 +175,18 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
           </Button>
         </DialogFooter>
       </Dialog>
-      <div
-        className={cn(
-          'fixed bottom-6 right-6 z-[100] flex items-center gap-2.5 rounded-xl border bg-popover px-4 py-3 text-sm shadow-2xl backdrop-blur-md transition-all duration-300',
-          toast.open ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'
-        )}
-      >
-        <FontAwesomeIcon icon={ICONS[toast.type].icon} className={cn('h-4 w-4 shrink-0', ICONS[toast.type].className)} />
-        <span>{toast.message}</span>
-      </div>
+      {createPortal(
+        <div
+          className={cn(
+            'fixed bottom-6 right-6 z-[100] flex items-center gap-2.5 rounded-xl border border-border/50 bg-popover/90 px-4 py-3 text-sm shadow-2xl backdrop-blur-lg transition-all duration-300',
+            toast.open ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'
+          )}
+        >
+          <FontAwesomeIcon icon={ICONS[toast.type].icon} className={cn('h-4 w-4 shrink-0', ICONS[toast.type].className)} />
+          <span>{toast.message}</span>
+        </div>,
+        document.body
+      )}
     </MessageBoxContext.Provider>
   )
 }

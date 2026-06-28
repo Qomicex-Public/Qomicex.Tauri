@@ -125,7 +125,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
         <div
           ref={popupRef}
           style={{ position: 'absolute', top: pos.top, left: pos.left, width: Math.max(pos.width, 180) }}
-          className="z-50 rounded-lg border border-border bg-popover p-1 shadow-xl animate-in fade-in zoom-in-95"
+          className="z-50 rounded-lg border border-border/50 bg-popover/90 backdrop-blur-lg p-1 shadow-xl animate-in fade-in zoom-in-95"
         >
           <div className="max-h-72 overflow-y-auto">
             {options.length > 6 && (
