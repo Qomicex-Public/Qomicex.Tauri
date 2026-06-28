@@ -45,3 +45,6 @@ npm-debug.log*
 stdout.txt
 stderr.txt
 docs/
+
+# Git worktrees
+.worktrees/
