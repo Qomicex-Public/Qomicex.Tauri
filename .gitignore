@@ -44,3 +44,4 @@ npm-debug.log*
 # Runtime stdout/stderr dumps
 stdout.txt
 stderr.txt
+docs/
