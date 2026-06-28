@@ -9,11 +9,12 @@ public sealed class TraceDumpService(TraceBufferStore bufferStore)
         var logDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
         Directory.CreateDirectory(logDirectory);
 
-        var filePath = Path.Combine(logDirectory, $"backend-trace-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+        var now = DateTime.Now;
+        var filePath = Path.Combine(logDirectory, $"backend-trace-{now:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}.log");
         var lines = new List<string>
         {
             $"Reason: {reason}",
-            $"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}",
+            $"Timestamp: {now:yyyy-MM-dd HH:mm:ss.fff}",
             string.Empty,
         };
 

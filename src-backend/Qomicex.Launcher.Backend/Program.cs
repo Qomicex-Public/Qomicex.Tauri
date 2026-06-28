@@ -62,6 +62,7 @@ AppDomain.CurrentDomain.UnhandledException += (_, args) =>
 {
     try
     {
+        Trace.Flush();
         traceDumpService.Dump($"unhandled-exception: terminating={args.IsTerminating}");
     }
     catch
@@ -73,6 +74,7 @@ TaskScheduler.UnobservedTaskException += (_, args) =>
 {
     try
     {
+        Trace.Flush();
         traceDumpService.Dump("unobserved-task-exception");
     }
     catch

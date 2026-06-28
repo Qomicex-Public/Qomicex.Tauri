@@ -4,22 +4,36 @@ namespace Qomicex.Launcher.Backend.Diagnostics;
 
 public sealed class BufferedTraceListener(TraceBufferStore store) : TraceListener
 {
+    private readonly object _gate = new();
+    private string _pendingLine = string.Empty;
+
     private string? Category => Attributes?["Category"];
 
     public override void Write(string? message)
     {
-        if (!string.IsNullOrEmpty(message))
+        if (string.IsNullOrEmpty(message))
         {
-            store.Add(Format(message));
+            return;
+        }
+
+        lock (_gate)
+        {
+            _pendingLine += message;
         }
     }
 
     public override void WriteLine(string? message)
     {
-        if (!string.IsNullOrEmpty(message))
+        string entry;
+
+        lock (_gate)
         {
-            store.Add(Format(message));
+            _pendingLine += message ?? string.Empty;
+            entry = _pendingLine;
+            _pendingLine = string.Empty;
         }
+
+        store.Add(Format(entry));
     }
 
     private string Format(string message)
