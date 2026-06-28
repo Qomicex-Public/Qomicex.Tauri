@@ -7,7 +7,6 @@ using Qomicex.Launcher.Backend.Services;
 using Qomicex.Core.Modules.Helpers;
 using static Qomicex.Core.DataModules;
 using static Qomicex.Core.DataModules.DataDetails;
-using Microsoft.Extensions.Logging;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -18,14 +17,12 @@ public class InstanceController : ControllerBase
     private readonly IInstanceRepository _repository;
     private readonly InstanceInstallService _installService;
     private readonly AccountService _accountService;
-    private readonly ILogger<InstanceController> _logger;
 
-    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService, ILogger<InstanceController> logger)
+    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService)
     {
         _repository = repository;
         _installService = installService;
         _accountService = accountService;
-        _logger = logger;
     }
 
     [HttpGet]
@@ -257,9 +254,6 @@ public class InstanceController : ControllerBase
             }
 
             var args = launcher.SelectParam(param, param.LauncherName);
-
-            _logger.LogInformation("Launch {Instance} versionId={VersionId} java={JavaPath} versionID={JavaVer} DevideVersion={Devide}", instance.Name, versionId, javaPath, param.Java.VersionID, instance.VersionIsolation);
-            _logger.LogInformation("Launch args: {Args}", args);
 
             var versionPath = Path.Combine(instance.GameDir, "versions", versionId);
             var jsonPath = Path.Combine(versionPath, $"{versionId}.json");
