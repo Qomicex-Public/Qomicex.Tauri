@@ -16,6 +16,7 @@ export interface JavaRuntime {
   type: string
   arch: string
   state: string
+  discoveredBy?: string
 }
 
 export interface LauncherRequest {

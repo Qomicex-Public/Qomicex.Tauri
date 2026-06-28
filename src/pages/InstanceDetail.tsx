@@ -11,7 +11,7 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
 import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
-import { searchJava } from '../api/java.ts'
+import { getJavaList } from '../api/java.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, FileEntry, ServerEntry, ServerState } from '../types/index.ts'
@@ -489,7 +489,7 @@ export default function InstanceDetailPage() {
     async function load() {
       setLoading(true)
       try {
-        const [inst, java, accts, sys, def] = await Promise.all([getInstance(id!), searchJava(), getAccounts(), getSystemInfo(), getDefaultInstance()])
+        const [inst, java, accts, sys, def] = await Promise.all([getInstance(id!), getJavaList('quick'), getAccounts(), getSystemInfo(), getDefaultInstance()])
         if (cancelled) return
         setInstance(inst)
         setForm({ ...inst })

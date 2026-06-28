@@ -15,7 +15,7 @@ import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
 import type { SystemInfo } from '../types/index.ts'
 import { generateRoomCode, validateRoomCode } from '../api/roomCode.ts'
-import { searchJava, validateJavaPath } from '../api/java.ts'
+import { getJavaList, addCustomJavaRuntime, removeCustomJavaRuntime } from '../api/java.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
@@ -97,6 +97,7 @@ export default function Settings() {
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [addPath, setAddPath] = useState('')
   const [adding, setAdding] = useState(false)
+  const [removingPath, setRemovingPath] = useState<string | null>(null)
   const autoScanRef = useRef(false)
 
   const [roomCode, setRoomCode] = useState('')
@@ -162,15 +163,9 @@ export default function Settings() {
     setScanning(mode)
     setJavaStatus(mode === 'quick' ? '正在快速扫描...' : '正在深度扫描...')
     try {
-      const result = await searchJava()
-      setRuntimes((prev) => {
-        const merged = [...prev]
-        for (const r of result) {
-          if (!merged.some((m) => m.path === r.path)) merged.push(r)
-        }
-        return merged
-      })
+      const result = await getJavaList(mode)
       const newCount = runtimes.length === 0 ? result.length : result.filter((r) => !runtimes.some((m) => m.path === r.path)).length
+      setRuntimes(result)
       setJavaStatus(newCount > 0 ? `扫描完成，发现 ${newCount} 个新版` : '扫描完成，无新版')
     } catch (e) {
       setJavaStatus('扫描失败')
@@ -212,11 +207,8 @@ export default function Settings() {
     if (!addPath) return
     setAdding(true)
     try {
-      const result = await validateJavaPath(addPath)
-      setRuntimes((prev) => {
-        const exists = prev.some((j) => j.path === result.path)
-        return exists ? prev : [...prev, result]
-      })
+      const result = await addCustomJavaRuntime(addPath)
+      setRuntimes((prev) => prev.some((j) => j.path === result.path) ? prev : [...prev, result])
       setJavaStatus(`已添加 ${result.name} ${result.version}`)
       setAddDialogOpen(false)
     } catch {
@@ -230,11 +222,19 @@ export default function Settings() {
     const name = runtimes.find((j) => j.path === path)?.name || ''
     const ok = await msgConfirm(`确定要删除 "${name}" 吗？`, '删除 Java')
     if (!ok) return
-    setRuntimes((prev) => prev.filter((j) => j.path !== path))
-    if (settings.defaultJavaPath === path) {
-      update('defaultJavaPath', '')
+    setRemovingPath(path)
+    try {
+      await removeCustomJavaRuntime(path)
+      setRuntimes((prev) => prev.filter((j) => j.path !== path))
+      if (settings.defaultJavaPath === path) {
+        update('defaultJavaPath', '')
+      }
+      setJavaStatus(`已删除 ${name}`)
+    } catch {
+      setJavaStatus('删除失败')
+    } finally {
+      setRemovingPath(null)
     }
-    setJavaStatus(`已删除 ${name}`)
   }
 
   async function handleGenerate() {
@@ -454,6 +454,7 @@ export default function Settings() {
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium">{j.name}</span>
                               <Badge variant="outline" className="h-5 px-1.5 text-[10px]">{j.type}</Badge>
+                              {j.discoveredBy === 'Custom' && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">手动添加</Badge>}
                               {j.state === 'Valid' ? (
                                 <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">可用</span>
                               ) : (
@@ -482,11 +483,13 @@ export default function Settings() {
                                 <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
-                            <Tooltip content="删除">
-                              <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive/70 hover:text-destructive" onClick={() => handleDelete(j.path)}>
-                                <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-                              </Button>
-                            </Tooltip>
+                            {j.discoveredBy === 'Custom' && (
+                              <Tooltip content="删除">
+                                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive/70 hover:text-destructive" onClick={() => handleDelete(j.path)} disabled={removingPath === j.path}>
+                                  <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                                </Button>
+                              </Tooltip>
+                            )}
                           </div>
                         </div>
                       ))}

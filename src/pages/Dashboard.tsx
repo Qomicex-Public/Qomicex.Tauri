@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { getSystemInfo } from '../api/system.ts'
-import { searchJava } from '../api/java.ts'
+import { getJavaList } from '../api/java.ts'
 import { getDefaultInstance, launchInstance } from '../api/instance.ts'
 import { getAccounts, getDefaultAccount, setDefaultAccount } from '../api/account.ts'
 import type { SystemInfo, JavaRuntime, GameInstance, Account } from '../types/index.ts'
@@ -35,7 +35,7 @@ export default function Dashboard() {
   const accountRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    Promise.all([getSystemInfo(), searchJava(), getDefaultInstance(), getDefaultAccount().catch(() => null)])
+    Promise.all([getSystemInfo(), getJavaList('quick'), getDefaultInstance(), getDefaultAccount().catch(() => null)])
       .then(([sys, java, inst, acc]) => {
         setSysInfo(sys)
         setJavaRuntimes(java)
