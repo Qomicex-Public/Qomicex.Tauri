@@ -19,4 +19,5 @@ public class GameInstance
     public bool IsHidden { get; set; }
     public bool VersionIsolation { get; set; }
     public bool IsDefault { get; set; }
+    public string? Icon { get; set; }
 }

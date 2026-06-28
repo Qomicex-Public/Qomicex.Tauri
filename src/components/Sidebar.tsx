@@ -14,7 +14,7 @@ const links = [
 
 export default function Sidebar() {
   return (
-    <nav className="flex w-16 flex-col items-center border-r border-border bg-card">
+    <nav className="flex w-16 flex-col items-center border-r border-border/50 bg-card/80 backdrop-blur-xl shadow-xl shadow-black/20">
       <div className="flex w-full flex-col items-center border-b border-border pb-3 pt-[18px]">
         <div className="flex h-8 w-8 items-center justify-center">
           <img src="/icon.png" alt="Qomicex" className="h-full w-full rounded-lg object-cover" />

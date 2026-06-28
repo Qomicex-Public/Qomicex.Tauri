@@ -17,6 +17,7 @@ import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, FileEntry, ServerEntry, ServerState } from '../types/index.ts'
 import { getSaves, getScreenshots, getMods, getResourcePacks, getShaderPacks, getServers, deleteSave, copySave, deleteScreenshot, deleteMod, deleteResourcePack, deleteShaderPack, addServer, deleteServer, pingServer } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
+import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -522,6 +523,7 @@ export default function InstanceDetailPage() {
         accessToken: form.accessToken || undefined,
         jvmArgs: form.jvmArgs || undefined,
         versionIsolation: form.versionIsolation,
+        icon: form.icon || undefined,
       })
       setInstance(updated)
     } catch {}
@@ -623,6 +625,7 @@ export default function InstanceDetailPage() {
         <Button variant="ghost" size="icon" onClick={() => navigate('/instances')}>
           <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
         </Button>
+        <InstanceIcon icon={instance.icon} loader={instance.loader} className="h-10 w-10 shrink-0 rounded-lg" imgClassName="rounded-lg" />
         <div className="flex-1">
           <h1 className="text-2xl font-semibold tracking-tight">{instance.name}</h1>
           <p className="text-xs text-muted-foreground">
@@ -720,6 +723,26 @@ export default function InstanceDetailPage() {
                 <div className="space-y-2">
                   <Label>实例名称</Label>
                   <Input value={form.name} onChange={(e) => update('name', e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>实例图标</Label>
+                  <div className="grid grid-cols-8 gap-2">
+                    {ICON_NAMES.map((name) => (
+                      <button
+                        key={name}
+                        onClick={async () => {
+                          if (!id) return
+                          update('icon', name)
+                          const updated = await updateInstance(id, { icon: name })
+                          setInstance(updated)
+                        }}
+                        className="flex items-center justify-center rounded-lg border border-transparent p-1 transition-colors hover:border-muted-foreground/30"
+                      >
+                        <InstanceIcon icon={name} className="h-8 w-8" />
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="space-y-2">

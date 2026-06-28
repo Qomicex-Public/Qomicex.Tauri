@@ -11,24 +11,19 @@ import ResourceCenter from './pages/ResourceCenter.tsx'
 import ResourceDetailPage from './pages/ResourceDetail.tsx'
 import Settings from './pages/Settings.tsx'
 import { MessageBoxProvider } from './components/ui/message-box.tsx'
-
-function syncAnimSettings() {
-  try {
-    const raw = localStorage.getItem('qomicex-settings')
-    if (!raw) return
-    const s = JSON.parse(raw)
-    const enabled = s.animationsEnabled !== false
-    const speed = s.animationSpeed ?? 1
-    document.documentElement.dataset.animEnabled = String(enabled)
-    document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
-  } catch {}
-}
+import { loadSettings, onSettingsChange } from './api/settings.ts'
 
 function App() {
   useEffect(() => {
-    syncAnimSettings()
-    window.addEventListener('storage', syncAnimSettings)
-    return () => window.removeEventListener('storage', syncAnimSettings)
+    loadSettings()
+    const unsub = onSettingsChange((s) => {
+      const enabled = s.animationsEnabled !== false
+      const speed = s.animationSpeed ?? 1
+      document.documentElement.dataset.animEnabled = String(enabled)
+      document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
+      window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
+    })
+    return unsub
   }, [])
 
   return (

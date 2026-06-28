@@ -127,6 +127,7 @@ export interface GameInstance {
   isHidden: boolean
   versionIsolation: boolean
   isDefault: boolean
+  icon: string | null
 }
 
 export interface CreateInstanceRequest {
@@ -142,6 +143,7 @@ export interface CreateInstanceRequest {
   accessToken?: string
   jvmArgs?: string
   versionIsolation?: boolean
+  icon?: string
 }
 
 export interface LaunchResult {

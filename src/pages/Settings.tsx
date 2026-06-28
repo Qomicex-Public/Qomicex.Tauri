@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faMicrochip, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faDownload, faRotate, faFolder, faTrashCan, faTag, faDesktop, faRobot } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faTag, faDesktop, faRobot } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -20,78 +20,42 @@ import { getSystemInfo } from '../api/system.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings } from '../api/settings.ts'
+import type { AppSettings } from '../api/settings.ts'
 
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
-  { id: 'java', label: 'Java 运行时', icon: faMicrochip },
-  { id: 'appearance', label: '显示', icon: faPalette },
+  { id: 'java', label: 'Java 运行时', icon: faCoffee },
+  { id: 'appearance', label: '外观', icon: faPalette },
   { id: 'roomcode', label: '联机房间码', icon: faKey },
   { id: 'about', label: '关于', icon: faInfoCircle },
 ]
-
-interface AppSettings {
-  gameDir: string
-  downloadThreads: number
-  versionIsolation: boolean
-  closeAfterLaunch: boolean
-  memoryMode: 'auto' | 'custom'
-  defaultMaxMemory: number
-  jvmArgs: string
-  language: string
-  defaultJavaPath: string
-  downloadSource: number
-  downloadTimeout: number
-  animationsEnabled: boolean
-  animationSpeed: number
-}
 
 const DOWNLOAD_SOURCES = [
   { value: 0, label: '官方源' },
   { value: 1, label: 'BMCLAPI 镜像' },
 ]
 
-const DEFAULT_SETTINGS: AppSettings = {
-  gameDir: '.minecraft',
-  downloadThreads: 4,
-  versionIsolation: true,
-  closeAfterLaunch: false,
-  memoryMode: 'auto',
-  defaultMaxMemory: 4096,
-  jvmArgs: '',
-  language: 'zh-CN',
-  defaultJavaPath: '',
-  downloadSource: 0,
-  downloadTimeout: 15,
-  animationsEnabled: true,
-  animationSpeed: 1,
-}
-
-function loadSettings(): AppSettings {
-  try {
-    const raw = localStorage.getItem('qomicex-settings')
-    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }
-  } catch {}
-  return DEFAULT_SETTINGS
-}
-
 function saveSettings(settings: AppSettings) {
-  localStorage.setItem('qomicex-settings', JSON.stringify(settings))
+  apiSaveSettings(settings)
   const enabled = settings.animationsEnabled !== false
   const speed = settings.animationSpeed ?? 1
   document.documentElement.dataset.animEnabled = String(enabled)
   document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
+  window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
 
 export default function Settings() {
   const { error: msgError, confirm: msgConfirm } = useMessageBox()
   const [category, setCategory] = useState('launcher')
-  const [settings, setSettings] = useState<AppSettings>(loadSettings)
+  const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
   const settingsRef = useRef(settings)
   settingsRef.current = settings
   const [saved, setSaved] = useState(false)
 
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [runtimes, setRuntimes] = useState<JavaRuntime[]>([])
+  const [customRuntimes, setCustomRuntimes] = useState<JavaRuntime[]>([])
   const [scanning, setScanning] = useState<'idle' | 'quick' | 'deep'>('idle')
   const [javaStatus, setJavaStatus] = useState('就绪')
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -99,6 +63,7 @@ export default function Settings() {
   const [adding, setAdding] = useState(false)
   const [removingPath, setRemovingPath] = useState<string | null>(null)
   const autoScanRef = useRef(false)
+  const loadedRef = useRef(false)
 
   const [roomCode, setRoomCode] = useState('')
   const [validationCode, setValidationCode] = useState('')
@@ -110,6 +75,17 @@ export default function Settings() {
       return () => clearTimeout(t)
     }
   }, [saved])
+
+  useEffect(() => {
+    apiLoadSettings().then((s) => {
+      setSettings(s)
+      loadedRef.current = true
+      if (s.customJavaRuntimes?.length) {
+        setCustomRuntimes(s.customJavaRuntimes)
+        setRuntimes(s.customJavaRuntimes)
+      }
+    }).catch(() => {})
+  }, [])
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     const next = { ...settings, [key]: value }
@@ -123,6 +99,7 @@ export default function Settings() {
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>
     function refresh() {
+      if (!loadedRef.current) return
       getSystemInfo().then((info) => {
         setSysInfo(info)
         const cur = settingsRef.current
@@ -142,6 +119,7 @@ export default function Settings() {
   }, [])
 
   useEffect(() => {
+    if (!loadedRef.current) return
     if (settings.memoryMode === 'auto') {
       const autoVal = Math.max(512, Math.floor((sysInfo?.availableMemory ?? 0) * 0.7))
       if (autoVal !== settings.defaultMaxMemory) {
@@ -291,26 +269,24 @@ export default function Settings() {
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="space-y-2">
-                  <Label htmlFor="gameDir">游戏目录</Label>
-                  <div className="flex gap-2">
-                    <Input id="gameDir" value={settings.gameDir} onChange={(e) => update('gameDir', e.target.value)} className="flex-1" />
-                    <Button variant="outline" size="icon">
-                      <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
+                  <Label htmlFor="downloadThreads">下载线程数</Label>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadThreads', Math.max(1, settings.downloadThreads - 1))} disabled={settings.downloadThreads <= 1}>
+                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                    </Button>
+                    <Input
+                      id="downloadThreads"
+                      type="number"
+                      min={1}
+                      max={512}
+                      value={settings.downloadThreads}
+                      onChange={(e) => update('downloadThreads', Math.max(1, Math.min(512, parseInt(e.target.value) || 1)))}
+                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadThreads', Math.min(512, settings.downloadThreads + 1))} disabled={settings.downloadThreads >= 512}>
+                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">Minecraft 游戏文件存储位置</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="downloadThreads">下载线程数</Label>
-                  <Input
-                    id="downloadThreads"
-                    type="number"
-                    min={1}
-                    max={512}
-                    value={settings.downloadThreads}
-                    onChange={(e) => update('downloadThreads', Math.max(1, Math.min(512, parseInt(e.target.value) || 1)))}
-                  />
                   <p className="text-xs text-muted-foreground">同时下载的文件数量（1-512），数值越大下载越快但占用带宽越多</p>
                 </div>
 
@@ -375,12 +351,12 @@ export default function Settings() {
           )}
 
           {category === 'java' && (
-            <div key="java" className="animate-in slide-up">
+            <div key="java" className="animate-in slide-up space-y-6">
               <Card>
                 <CardHeader className="flex-row items-center justify-between">
                   <div>
                     <CardTitle>
-                      <FontAwesomeIcon icon={faMicrochip} className="mr-2 h-4 w-4 text-primary" />
+                      <FontAwesomeIcon icon={faCoffee} className="mr-2 h-4 w-4 text-primary" />
                       Java 运行时
                     </CardTitle>
                   </div>
@@ -426,7 +402,7 @@ export default function Settings() {
                   {scanning === 'idle' && runtimes.length === 0 && (
                     <div className="flex flex-col items-center gap-4 py-12 text-center">
                       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
-                        <FontAwesomeIcon icon={faMicrochip} className="h-7 w-7 text-muted-foreground" />
+                        <FontAwesomeIcon icon={faCoffee} className="h-7 w-7 text-muted-foreground" />
                       </div>
                       <div>
                         <p className="text-sm font-medium text-foreground">尚未检测到 Java 运行时</p>
@@ -616,10 +592,10 @@ export default function Settings() {
             <div key="appearance" className="animate-in slide-up">
             <Card>
               <CardHeader>
-                <CardTitle>
-                  <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-primary" />
-                  显示设置
-                </CardTitle>
+                  <CardTitle>
+                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-primary" />
+                    外观设置
+                  </CardTitle>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="space-y-2">
@@ -665,6 +641,95 @@ export default function Settings() {
                         <span>正常</span>
                         <span>快</span>
                       </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>背景图片</Label>
+                  <div className="flex gap-2">
+                    <Input value={settings.backgroundImage} onChange={(e) => update('backgroundImage', e.target.value)} placeholder="图片 URL" className="flex-1" />
+                    <label className="flex cursor-pointer items-center justify-center rounded-lg border border-input bg-background px-3 text-muted-foreground hover:bg-accent hover:text-foreground">
+                      <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
+                      <input type="file" accept="image/png,image/jpeg,image/webp,image/bmp" className="hidden" onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        const reader = new FileReader()
+                        reader.onload = () => update('backgroundImage', reader.result as string)
+                        reader.readAsDataURL(file)
+                      }} />
+                    </label>
+                    {settings.backgroundImage && (
+                      <Button variant="ghost" size="icon" onClick={() => update('backgroundImage', '')}>
+                        <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {settings.backgroundImage && (
+                    <div className="relative h-32 overflow-hidden rounded-lg border">
+                      <img src={settings.backgroundImage} alt="" className="h-full w-full object-cover" />
+                    </div>
+                  )}
+                  {settings.backgroundImage && (<>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <Label>不透明度</Label>
+                        <span className="text-xs tabular-nums text-muted-foreground">{settings.bgOverlayOpacity}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={settings.bgOverlayOpacity}
+                        onChange={(e) => update('bgOverlayOpacity', parseInt(e.target.value))}
+                        className="w-full"
+                      />
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>透明</span>
+                        <span>不透明</span>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <Label>模糊</Label>
+                        <span className="text-xs tabular-nums text-muted-foreground">{settings.bgBlur}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={20}
+                        step={0.5}
+                        value={settings.bgBlur}
+                        onChange={(e) => update('bgBlur', parseFloat(e.target.value))}
+                        className="w-full"
+                      />
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>清晰</span>
+                        <span>模糊</span>
+                      </div>
+                    </div>
+                  </>)}
+                  <p className="text-xs text-muted-foreground">选择本地图片或粘贴网络图片 URL</p>
+                </div>
+
+                <div className="space-y-3">
+                  <Label>水印</Label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <Checkbox
+                      checked={settings.watermarkEnabled}
+                      onCheckedChange={(c) => update('watermarkEnabled', c === true)}
+                    />
+                    <div>
+                      <div className="text-sm font-medium">显示主页水印文字</div>
+                      <div className="text-xs text-muted-foreground">在主页中央显示可自定义的文字</div>
+                    </div>
+                  </label>
+                  {settings.watermarkEnabled && (
+                    <div className="space-y-2 pl-7">
+                      <Label htmlFor="watermarkText">水印内容</Label>
+                      <Input id="watermarkText" value={settings.watermarkText} onChange={(e) => update('watermarkText', e.target.value)} placeholder="Qomicex" />
+                      <Label htmlFor="watermarkSubtext">副标题</Label>
+                      <Input id="watermarkSubtext" value={settings.watermarkSubtext} onChange={(e) => update('watermarkSubtext', e.target.value)} placeholder="启动器" />
                     </div>
                   )}
                 </div>

@@ -12,9 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "qomicex-launcher",
+        "title": "Qomicex Launcher",
         "width": 1140,
-        "height": 790
+        "height": 790,
+        "decorations": false
       }
     ],
     "security": {

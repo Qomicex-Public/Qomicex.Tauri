@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBug, faTriangleExclamation, faXmark, faCopy } from '@fortawesome/free-solid-svg-icons'
 import { Button } from './ui/button.tsx'
@@ -17,7 +18,7 @@ export function ErrorReportDialog({ open, title, message, detail, args, onClose 
     navigator.clipboard.writeText(text)
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="w-full max-w-lg rounded-xl border bg-card shadow-2xl">
         <div className="flex items-center justify-between border-b px-5 py-4">
@@ -56,6 +57,7 @@ export function ErrorReportDialog({ open, title, message, detail, args, onClose 
           <Button size="sm" onClick={onClose} className="h-7 text-xs">关闭</Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

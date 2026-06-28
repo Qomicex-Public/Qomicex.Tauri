@@ -1,13 +1,13 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Models;
 using Qomicex.Launcher.Backend.Services;
 using Qomicex.Core.Modules.Helpers;
 using static Qomicex.Core.DataModules;
 using static Qomicex.Core.DataModules.DataDetails;
-using Microsoft.Extensions.Logging;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -18,14 +18,12 @@ public class InstanceController : ControllerBase
     private readonly IInstanceRepository _repository;
     private readonly InstanceInstallService _installService;
     private readonly AccountService _accountService;
-    private readonly ILogger<InstanceController> _logger;
 
-    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService, ILogger<InstanceController> logger)
+    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService)
     {
         _repository = repository;
         _installService = installService;
         _accountService = accountService;
-        _logger = logger;
     }
 
     [HttpGet]
@@ -93,6 +91,7 @@ public class InstanceController : ControllerBase
             AccessToken = request.AccessToken,
             JvmArgs = request.JvmArgs,
             VersionIsolation = request.VersionIsolation,
+            Icon = request.Icon ?? "Grass",
         };
         var created = _repository.Create(instance);
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
@@ -152,27 +151,26 @@ public class InstanceController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    public ActionResult<GameInstance> Update(string id, [FromBody] CreateInstanceRequest request)
+    public ActionResult<GameInstance> Update(string id, [FromBody] JsonElement body)
     {
         var existing = _repository.GetById(id);
         if (existing == null) return NotFound();
-        var instance = new GameInstance
-        {
-            Name = request.Name,
-            GameVersion = request.GameVersion,
-            Loader = request.Loader,
-            LoaderVersion = request.LoaderVersion,
-            JavaPath = request.JavaPath,
-            MaxMemory = request.MaxMemory,
-            GameDir = request.GameDir,
-            AccountName = request.AccountName,
-            AccountUuid = request.AccountUuid,
-            AccessToken = request.AccessToken,
-            JvmArgs = request.JvmArgs,
-            VersionIsolation = request.VersionIsolation,
-            IsDefault = existing.IsDefault,
-        };
-        var updated = _repository.Update(id, instance);
+
+        if (body.TryGetProperty("name", out var nameProp)) existing.Name = nameProp.GetString() ?? existing.Name;
+        if (body.TryGetProperty("gameVersion", out var gvProp)) existing.GameVersion = gvProp.GetString() ?? existing.GameVersion;
+        if (body.TryGetProperty("loader", out var loaderProp)) existing.Loader = loaderProp.GetString();
+        if (body.TryGetProperty("loaderVersion", out var lvProp)) existing.LoaderVersion = lvProp.GetString();
+        if (body.TryGetProperty("javaPath", out var jpProp)) existing.JavaPath = jpProp.GetString();
+        if (body.TryGetProperty("maxMemory", out var memProp)) existing.MaxMemory = (int)memProp.GetInt64();
+        if (body.TryGetProperty("gameDir", out var gdProp)) existing.GameDir = gdProp.GetString() ?? existing.GameDir;
+        if (body.TryGetProperty("accountName", out var anProp)) existing.AccountName = anProp.GetString();
+        if (body.TryGetProperty("accountUuid", out var auProp)) existing.AccountUuid = auProp.GetString();
+        if (body.TryGetProperty("accessToken", out var atProp)) existing.AccessToken = atProp.GetString();
+        if (body.TryGetProperty("jvmArgs", out var jaProp)) existing.JvmArgs = jaProp.GetString();
+        if (body.TryGetProperty("versionIsolation", out var viProp)) existing.VersionIsolation = viProp.GetBoolean();
+        if (body.TryGetProperty("icon", out var iconProp)) existing.Icon = iconProp.GetString();
+
+        var updated = _repository.Update(id, existing);
         return Ok(updated);
     }
 
@@ -257,9 +255,6 @@ public class InstanceController : ControllerBase
             }
 
             var args = launcher.SelectParam(param, param.LauncherName);
-
-            _logger.LogInformation("Launch {Instance} versionId={VersionId} java={JavaPath} versionID={JavaVer} DevideVersion={Devide}", instance.Name, versionId, javaPath, param.Java.VersionID, instance.VersionIsolation);
-            _logger.LogInformation("Launch args: {Args}", args);
 
             var versionPath = Path.Combine(instance.GameDir, "versions", versionId);
             var jsonPath = Path.Combine(versionPath, $"{versionId}.json");
