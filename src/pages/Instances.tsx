@@ -351,6 +351,30 @@ export default function Instances() {
     setLaunching(null)
   }
 
+  async function openVersionSettings(v: ScannedVersion) {
+    const existing = getInstanceForVersion(v)
+    if (existing) {
+      navigate(`/instances/${existing.id}`)
+      return
+    }
+
+    try {
+      const created = await createInstance({
+        name: v.name,
+        gameVersion: v.gameVersion,
+        loader: v.loaders.find((l) => l.type)?.type,
+        loaderVersion: v.loaders.find((l) => l.version)?.version,
+        maxMemory: 4096,
+        gameDir: currentDir,
+        versionIsolation: loadSettings().versionIsolation !== false,
+      })
+      setBackedInstances((prev) => [...prev, created])
+      navigate(`/instances/${created.id}`)
+    } catch (e) {
+      await msgAlert(`创建实例失败: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
   async function handleToggleDefault(instanceId: string) {
     try {
       if (defaultInstanceId === instanceId) {
@@ -864,7 +888,7 @@ export default function Instances() {
         viewMode === 'grid' ? (
           <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
-              <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => { const inst = getInstanceForVersion(v); if (inst) navigate(`/instances/${inst.id}`) }}>
+              <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} loader={v.loaders?.[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 {v.loaders && v.loaders.filter((l) => l.type).length > 0 && (
@@ -888,7 +912,7 @@ export default function Instances() {
                   </Tooltip>
                   <div className="flex items-center gap-1">
                     <Tooltip content="设置">
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); const inst = getInstanceForVersion(v); if (inst) navigate(`/instances/${inst.id}`) }}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openVersionSettings(v) }}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                     {(() => { const inst = getInstanceForVersion(v); return inst ? (
                       <Tooltip content={defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
@@ -941,7 +965,7 @@ export default function Instances() {
                     </Button>
                   </Tooltip>
                   <Tooltip content="设置">
-                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => { const inst = getInstanceForVersion(v); if (inst) navigate(`/instances/${inst.id}`) }}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openVersionSettings(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                   </Tooltip>
                   {(() => { const inst = getInstanceForVersion(v); return inst ? (
                     <Tooltip content={defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
