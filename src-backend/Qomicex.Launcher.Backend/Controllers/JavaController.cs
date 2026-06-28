@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Core.Modules.Helpers;
+using Qomicex.Launcher.Backend.Common;
+using Qomicex.Launcher.Backend.Services;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -9,10 +11,48 @@ namespace Qomicex.Launcher.Backend.Controllers;
 [Route("api/[controller]")]
 public class JavaController : ControllerBase
 {
-    [HttpGet("search")]
-    public IActionResult SearchJava()
+    private readonly JavaRuntimeStore _javaRuntimeStore;
+
+    public JavaController(JavaRuntimeStore javaRuntimeStore)
     {
-        var runtimes = JavaHelper.SearchJava();
+        _javaRuntimeStore = javaRuntimeStore;
+    }
+
+    [HttpGet("search")]
+    public IActionResult SearchJava([FromQuery] string? mode)
+    {
+        var runtimes = JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions
+        {
+            Mode = ParseSearchMode(mode)
+        });
+        return Ok(runtimes);
+    }
+
+    [HttpGet("custom")]
+    public async Task<IActionResult> GetCustomJava()
+    {
+        var runtimes = await _javaRuntimeStore.GetCustomAsync();
+        return Ok(runtimes);
+    }
+
+    [HttpPost("custom")]
+    public async Task<IActionResult> AddCustomJava([FromBody] JavaValidateRequest request)
+    {
+        var runtime = await _javaRuntimeStore.AddCustomAsync(request.Path);
+        return Ok(runtime);
+    }
+
+    [HttpDelete("custom")]
+    public async Task<IActionResult> RemoveCustomJava([FromBody] JavaValidateRequest request)
+    {
+        await _javaRuntimeStore.RemoveCustomAsync(request.Path);
+        return NoContent();
+    }
+
+    [HttpGet("list")]
+    public async Task<IActionResult> GetJavaList([FromQuery] string? mode)
+    {
+        var runtimes = await _javaRuntimeStore.GetMergedAsync(ParseSearchMode(mode));
         return Ok(runtimes);
     }
 
@@ -30,6 +70,21 @@ public class JavaController : ControllerBase
         var javaList = JavaHelper.SearchJava();
         var recommended = JavaHelper.GetRecommendedJava(javaList, request.MinecraftVersion, request.GameDir);
         return Ok(recommended);
+    }
+
+    private static JavaHelper.JavaSearchMode ParseSearchMode(string? mode)
+    {
+        if (string.IsNullOrWhiteSpace(mode) || string.Equals(mode, "quick", StringComparison.OrdinalIgnoreCase))
+        {
+            return JavaHelper.JavaSearchMode.Quick;
+        }
+
+        if (string.Equals(mode, "deep", StringComparison.OrdinalIgnoreCase))
+        {
+            return JavaHelper.JavaSearchMode.Deep;
+        }
+
+        throw ApiException.BadRequest("无效的 Java 搜索模式", "JAVA_SEARCH_MODE_INVALID");
     }
 
     private static JavaHelper.JavaInfoExtended? ValidatePath(string javaPath)
