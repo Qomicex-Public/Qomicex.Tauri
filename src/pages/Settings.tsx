@@ -15,7 +15,8 @@ import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
 import type { SystemInfo } from '../types/index.ts'
 import { generateRoomCode, validateRoomCode } from '../api/roomCode.ts'
-import { getJavaList, addCustomJavaRuntime, removeCustomJavaRuntime } from '../api/java.ts'
+import { addCustomJavaRuntime, removeCustomJavaRuntime } from '../api/java.ts'
+import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
@@ -54,8 +55,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
 
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
-  const [runtimes, setRuntimes] = useState<JavaRuntime[]>([])
-  const [customRuntimes, setCustomRuntimes] = useState<JavaRuntime[]>([])
+  const [runtimes, setRuntimesState] = useState<JavaRuntime[]>(() => getRuntimes())
   const [scanning, setScanning] = useState<'idle' | 'quick' | 'deep'>('idle')
   const [javaStatus, setJavaStatus] = useState('就绪')
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -80,11 +80,12 @@ export default function Settings() {
     apiLoadSettings().then((s) => {
       setSettings(s)
       loadedRef.current = true
-      if (s.customJavaRuntimes?.length) {
-        setCustomRuntimes(s.customJavaRuntimes)
-        setRuntimes(s.customJavaRuntimes)
-      }
     }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const unsub = subscribe(() => setRuntimesState([...getRuntimes()]))
+    return unsub
   }, [])
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
@@ -141,9 +142,9 @@ export default function Settings() {
     setScanning(mode)
     setJavaStatus(mode === 'quick' ? '正在快速扫描...' : '正在深度扫描...')
     try {
-      const result = await getJavaList(mode)
-      const newCount = runtimes.length === 0 ? result.length : result.filter((r) => !runtimes.some((m) => m.path === r.path)).length
-      setRuntimes(result)
+      const prev = getRuntimes()
+      const result = await scanRuntimes(mode)
+      const newCount = prev.length === 0 ? result.length : result.filter((r) => !prev.some((m) => m.path === r.path)).length
       setJavaStatus(newCount > 0 ? `扫描完成，发现 ${newCount} 个新版` : '扫描完成，无新版')
     } catch (e) {
       setJavaStatus('扫描失败')
@@ -151,7 +152,7 @@ export default function Settings() {
     } finally {
       setScanning('idle')
     }
-  }, [runtimes])
+  }, [])
 
   function handleRefresh() {
     setJavaStatus('正在刷新...')
@@ -186,7 +187,7 @@ export default function Settings() {
     setAdding(true)
     try {
       const result = await addCustomJavaRuntime(addPath)
-      setRuntimes((prev) => prev.some((j) => j.path === result.path) ? prev : [...prev, result])
+      addRuntime(result)
       setJavaStatus(`已添加 ${result.name} ${result.version}`)
       setAddDialogOpen(false)
     } catch {
@@ -203,7 +204,7 @@ export default function Settings() {
     setRemovingPath(path)
     try {
       await removeCustomJavaRuntime(path)
-      setRuntimes((prev) => prev.filter((j) => j.path !== path))
+      removeRuntime(path)
       if (settings.defaultJavaPath === path) {
         update('defaultJavaPath', '')
       }

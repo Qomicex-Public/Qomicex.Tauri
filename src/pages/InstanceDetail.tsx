@@ -11,7 +11,7 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
 import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
-import { getJavaList } from '../api/java.ts'
+import { getRuntimes, scanRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, FileEntry, ServerEntry, ServerState } from '../types/index.ts'
@@ -475,7 +475,7 @@ export default function InstanceDetailPage() {
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [runtimes, setRuntimes] = useState<JavaRuntime[]>([])
+  const [runtimes, setRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
   const [accounts, setAccounts] = useState<Account[]>([])
   const [form, setForm] = useState<GameInstance | null>(null)
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
@@ -485,22 +485,28 @@ export default function InstanceDetailPage() {
   const [isDefault, setIsDefault] = useState(false)
 
   useEffect(() => {
+    const unsub = subscribe(() => setRuntimes([...getRuntimes()]))
+    return unsub
+  }, [])
+
+  useEffect(() => {
     if (!id) return
     let cancelled = false
     async function load() {
       setLoading(true)
       try {
-        const [inst, java, accts, sys, def] = await Promise.all([getInstance(id!), getJavaList('quick'), getAccounts(), getSystemInfo(), getDefaultInstance()])
+        const [inst, accts, sys, def] = await Promise.all([getInstance(id!), getAccounts(), getSystemInfo(), getDefaultInstance()])
         if (cancelled) return
         setInstance(inst)
         setForm({ ...inst })
-        setRuntimes(java)
+        setRuntimes([...getRuntimes()])
         setAccounts(accts)
         setSysInfo(sys)
         setIsDefault(def?.id === id)
         setMemoryMode(sys ? 'auto' : 'custom')
       } catch { if (!cancelled) navigate('/instances') }
       if (!cancelled) setLoading(false)
+      scanRuntimes('quick').catch(() => {})
     }
     load()
     return () => { cancelled = true }

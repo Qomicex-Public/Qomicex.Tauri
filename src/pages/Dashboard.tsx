@@ -3,10 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlay, faRotate, faChevronDown, faUser, faCheck, faMemory, faCube } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
-import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
-import { Badge } from '../components/ui/badge.tsx'
-import { getSystemInfo } from '../api/system.ts'
-import { getJavaList } from '../api/java.ts'
+import { getRuntimes, scanRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getDefaultInstance, launchInstance } from '../api/instance.ts'
 import { getAccounts, getDefaultAccount, setDefaultAccount } from '../api/account.ts'
 import type { GameInstance, Account, JavaRuntime } from '../types/index.ts'
@@ -24,7 +21,7 @@ export default function Dashboard() {
   const [defaultAccount, setDefaultAccountState] = useState<Account | null>(null)
   const [allAccounts, setAllAccounts] = useState<Account[]>([])
   const [accountsOpen, setAccountsOpen] = useState(false)
-  const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>([])
+  const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
   const [watermarkEnabled, setWatermarkEnabled] = useState(true)
   const [watermarkText, setWatermarkText] = useState('Qomicex')
   const [watermarkSubtext, setWatermarkSubtext] = useState('启动器')
@@ -32,15 +29,19 @@ export default function Dashboard() {
   const accountRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    const unsub = subscribe(() => setJavaRuntimes([...getRuntimes()]))
+    return unsub
+  }, [])
+
+  useEffect(() => {
     Promise.all([
       getDefaultInstance(),
       getDefaultAccount().catch(() => null),
-      getJavaList('quick').catch(() => [] as JavaRuntime[]),
-    ]).then(([inst, acc, java]) => {
+    ]).then(([inst, acc]) => {
       setDefaultInstance(inst)
       setDefaultAccountState(acc)
-      setJavaRuntimes(java)
     })
+    scanRuntimes('quick').catch(() => {})
   }, [])
 
   useEffect(() => {
