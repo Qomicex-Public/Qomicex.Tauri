@@ -683,52 +683,47 @@ export default function Instances() {
       <div className="animate-in slide-up space-y-6 p-8">
         <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`} />
 
-      <div className="relative flex items-center gap-2" ref={popoverRef}>
-        <button
-          onClick={() => setDirPopover(!dirPopover)}
-          className={cn(
-            'flex items-center gap-2.5 rounded-lg border bg-card px-4 py-2.5 text-sm transition-all hover:bg-accent',
-            !currentDir && 'border-dashed text-muted-foreground'
-          )}
-        >
-          <FontAwesomeIcon icon={faFolder} className={cn('h-4 w-4', currentDir ? 'text-primary' : 'text-muted-foreground')} />
-          <div className="text-left">
-            <div className="font-medium">{currentDir ? dirName(currentDir) : '选择游戏目录'}</div>
-            {currentDir && <div className="max-w-[280px] truncate text-xs text-muted-foreground">{currentDir}</div>}
-          </div>
-          <FontAwesomeIcon icon={faChevronDown} className={cn('ml-2 h-3 w-3 text-muted-foreground transition-transform', dirPopover && 'rotate-180')} />
-        </button>
-        <Button variant="outline" size="sm" onClick={handlePickDir} className="gap-1.5">
-          <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />添加目录
-        </Button>
-        {scanning && <span className="text-xs text-muted-foreground animate-pulse">扫描中...</span>}
-
-        {dirPopover && (
-          <div className="absolute left-0 top-full z-50 mt-1 w-96 rounded-xl border bg-popover p-2 shadow-xl">
-            <div className="mb-1 flex items-center justify-between px-2 py-1">
-              <span className="text-xs font-medium text-muted-foreground">已保存的目录</span>
-              <button onClick={() => setDirManager(true)} className="text-xs text-muted-foreground hover:text-foreground">管理</button>
-            </div>
-            {managedDirs.length === 0 ? (
-              <div className="px-3 py-4 text-center text-sm text-muted-foreground">暂无目录，点击"添加目录"或浏览选择</div>
-            ) : (
-              <div className="max-h-56 space-y-0.5 overflow-y-auto">
-                {managedDirs.map((d) => (
-                  <button key={d.path} onClick={() => switchDir(d.path)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent', currentDir === d.path && 'bg-accent/80')}>
-                    <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', currentDir === d.path ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
-                      <FontAwesomeIcon icon={faFolder} className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1 truncate">
-                      <div className="text-sm font-medium">{d.name}</div>
-                      <div className="truncate text-xs text-muted-foreground">{d.path}</div>
-                    </div>
-                    {currentDir === d.path && <FontAwesomeIcon icon={faCheck} className="h-3 w-3 text-primary" />}
-                  </button>
-                ))}
-              </div>
+      <div className="flex items-center gap-3" ref={popoverRef}>
+        <div className="relative">
+          <button
+            onClick={() => setDirPopover(!dirPopover)}
+            className={cn(
+              'flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-xs transition-all hover:bg-accent',
+              !currentDir && 'border-dashed text-muted-foreground'
             )}
-          </div>
-        )}
+          >
+            <FontAwesomeIcon icon={faFolder} className={cn('h-3.5 w-3.5', currentDir ? 'text-primary' : 'text-muted-foreground')} />
+            <span className="max-w-[140px] truncate">{currentDir ? dirName(currentDir) : '选择游戏目录'}</span>
+            <FontAwesomeIcon icon={faChevronDown} className={cn('h-2.5 w-2.5 text-muted-foreground transition-transform', dirPopover && 'rotate-180')} />
+          </button>
+          {dirPopover && (
+            <div className="absolute left-0 top-full z-50 mt-1 w-96 rounded-xl border bg-popover p-2 shadow-xl">
+              <div className="mb-1 flex items-center justify-between px-2 py-1">
+                <span className="text-xs font-medium text-muted-foreground">已保存的目录</span>
+                <button onClick={() => setDirManager(true)} className="text-xs text-muted-foreground hover:text-foreground">管理</button>
+              </div>
+              {managedDirs.length === 0 ? (
+                <div className="px-3 py-4 text-center text-sm text-muted-foreground">暂无目录，可在管理中添加</div>
+              ) : (
+                <div className="max-h-56 space-y-0.5 overflow-y-auto">
+                  {managedDirs.map((d) => (
+                    <button key={d.path} onClick={() => switchDir(d.path)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent', currentDir === d.path && 'bg-accent/80')}>
+                      <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', currentDir === d.path ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
+                        <FontAwesomeIcon icon={faFolder} className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 truncate">
+                        <div className="text-sm font-medium">{d.name}</div>
+                        <div className="truncate text-xs text-muted-foreground">{d.path}</div>
+                      </div>
+                      {currentDir === d.path && <FontAwesomeIcon icon={faCheck} className="h-3 w-3 text-primary" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        {scanning && <span className="text-xs text-muted-foreground animate-pulse">扫描中...</span>}
       </div>
 
       <Dialog open={dirManager} onClose={() => setDirManager(false)} className="w-[540px]">
@@ -842,9 +837,9 @@ export default function Instances() {
           <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />下载新版本
         </Button>
         <Button variant="outline" disabled><FontAwesomeIcon icon={faFileImport} className="h-4 w-4" />导入</Button>
-        <Button variant="ghost" size="icon" onClick={() => currentDir && doScan(currentDir)}>
-          <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', scanning && 'animate-spin')} />
-        </Button>
+        <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', viewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
+          <FontAwesomeIcon icon={viewMode === 'grid' ? faGrip : faList} className="h-3.5 w-3.5" />
+        </button>
       </div>
 
       {!currentDir ? (
@@ -856,16 +851,7 @@ export default function Instances() {
             <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />浏览并选择
           </Button>
         </div>
-      ) : (
-        <div className="mb-4 flex items-center justify-end gap-1 rounded-lg border border-input bg-background p-1 w-fit">
-          <button onClick={() => setViewMode('grid')} className={cn('flex h-7 w-7 items-center justify-center rounded-md transition-colors', viewMode === 'grid' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}>
-            <FontAwesomeIcon icon={faGrip} className="h-3.5 w-3.5" />
-          </button>
-          <button onClick={() => setViewMode('list')} className={cn('flex h-7 w-7 items-center justify-center rounded-md transition-colors', viewMode === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}>
-            <FontAwesomeIcon icon={faList} className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
+      ) : null}
 
       {loading || scanning ? (
         <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">扫描版本中...</div>

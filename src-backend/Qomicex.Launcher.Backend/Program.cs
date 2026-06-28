@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Text.Json.Serialization;
 using Qomicex.Downloader;
 using Qomicex.Launcher.Backend.Middleware;
 using Qomicex.Launcher.Backend.Services;
@@ -7,7 +8,7 @@ using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
-builder.Services.AddControllers();
+builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddSingleton<IInstanceRepository, InstanceRepository>();
 builder.Services.AddHttpClient("Modrinth", client =>
 {

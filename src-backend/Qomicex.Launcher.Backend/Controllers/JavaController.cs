@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Core.Modules.Helpers;
 
@@ -31,7 +32,7 @@ public class JavaController : ControllerBase
         return Ok(recommended);
     }
 
-    private static Qomicex.Core.DataModules.DataDetails.Java? ValidatePath(string javaPath)
+    private static JavaHelper.JavaInfoExtended? ValidatePath(string javaPath)
     {
         if (!System.IO.File.Exists(javaPath)) return null;
         try
@@ -47,15 +48,18 @@ public class JavaController : ControllerBase
             proc.WaitForExit(3000);
             if (proc.ExitCode != 0 || string.IsNullOrEmpty(output)) return null;
 
-            var result = new Qomicex.Core.DataModules.DataDetails.Java();
+            var result = new JavaHelper.JavaInfoExtended();
             result.Path = javaPath;
-            var verMatch = System.Text.RegularExpressions.Regex.Match(output, @"(\d+)\.(\d+)\.(\d+)");
+            result.State = JavaHelper.JavaState.Valid;
+
+            var verMatch = Regex.Match(output, @"(\d+)\.(\d+)\.(\d+)");
             if (verMatch.Success)
             {
                 result.Version = verMatch.Value;
                 if (int.TryParse(verMatch.Groups[1].Value, out var major))
                     result.VersionID = major;
             }
+            result.Name = result.Version;
             if (output.Contains("64-Bit") || output.Contains("64-Bits"))
                 result.Arch = "x64";
             else

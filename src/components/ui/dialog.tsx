@@ -1,4 +1,5 @@
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { cn } from "../../lib/utils.ts"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import { faXmark } from "@fortawesome/free-solid-svg-icons"
@@ -24,7 +25,7 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
 
   if (!open) return null
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in"
@@ -38,7 +39,8 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
       >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

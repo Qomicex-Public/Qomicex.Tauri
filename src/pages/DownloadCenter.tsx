@@ -192,7 +192,7 @@ export default function DownloadCenter() {
         <div className="space-y-3">
           {filtered.map((task) => {
             const cfg = STATUS_CONFIG[task.status]
-            const isActive = task.status === 'downloading' || task.status === 'paused'
+            const isActive = task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'
             return (
               <div key={task.id} className="group rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
                 <div className="flex items-start justify-between gap-4">
@@ -226,7 +226,7 @@ export default function DownloadCenter() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    {isActive && task.type !== 'file' && (
+                    {isActive && task.type !== 'file' && task.status !== 'queued' && (
                       <>
                         {task.status === 'paused' ? (
                           <Tooltip content="继续">
@@ -243,7 +243,9 @@ export default function DownloadCenter() {
                         )}
                         <Tooltip content="取消">
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
-                            if (task.type === 'file' && task.taskId) {
+                            if (task.status === 'queued') {
+                              removeTask(task.id)
+                            } else if (task.type === 'file' && task.taskId) {
                               cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
                             } else if (task.instanceId) {
                               cancelInstall(task.instanceId).then(() => removeTask(task.id))
