@@ -1,12 +1,16 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json.Serialization;
 using Qomicex.Downloader;
+using Qomicex.Launcher.Backend.Diagnostics;
 using Qomicex.Launcher.Backend.Middleware;
 using Qomicex.Launcher.Backend.Services;
 using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddSingleton(new TraceBufferStore(capacity: 2000));
+builder.Services.AddSingleton<TraceDumpService>();
 builder.Services.AddOpenApi();
 builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddSingleton<IInstanceRepository, InstanceRepository>();
@@ -46,6 +50,38 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+var traceBufferStore = app.Services.GetRequiredService<TraceBufferStore>();
+var traceDumpService = app.Services.GetRequiredService<TraceDumpService>();
+
+Trace.Listeners.Add(new ConsoleTraceListener());
+Trace.Listeners.Add(new BufferedTraceListener(traceBufferStore));
+Trace.AutoFlush = true;
+
+AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+{
+    try
+    {
+        traceDumpService.Dump($"unhandled-exception: terminating={args.IsTerminating}");
+    }
+    catch
+    {
+    }
+};
+
+TaskScheduler.UnobservedTaskException += (_, args) =>
+{
+    try
+    {
+        traceDumpService.Dump("unobserved-task-exception");
+    }
+    catch
+    {
+    }
+};
+
+Trace.WriteLine("startup-check");
+Trace.WriteLine("backend trace listeners registered");
 
 app.UseErrorHandling();
 
