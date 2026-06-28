@@ -24,8 +24,6 @@ data/
 # Test / scratch
 build-test/
 
-# Separate repo (Avalonia)
-Qomicex.Avalonia/
 
 # Editor
 #.vscode/

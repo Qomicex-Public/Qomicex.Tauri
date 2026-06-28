@@ -1,0 +1,6 @@
+[submodule "Qomicex.Avalonia_tmp"]
+	path = Qomicex.Avalonia_tmp
+	url = https://github.com/Qomicex-Public/Qomicex.Avalonia.git
+[submodule "Qomicex.Avalonia"]
+	path = Qomicex.Avalonia
+	url = https://github.com/Qomicex-Public/Qomicex.Avalonia.git
