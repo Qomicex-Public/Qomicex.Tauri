@@ -271,7 +271,7 @@ export default function ResourceDetailPage() {
                 <div className="space-y-5 p-6">
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-2xl font-semibold leading-tight">{cnName || detail.title}</h2>
+                      <h2 className="text-2xl font-semibold leading-tight">{cnName ? `${cnName}（${detail.title}）` : detail.title}</h2>
                       <Badge variant="secondary">{getSourceLabel(detail.source)}</Badge>
                       {detail.latestVersion && <Badge variant="outline">最新 {detail.latestVersion}</Badge>}
                     </div>

@@ -114,7 +114,7 @@ function ResourceCard({
           <div className="min-w-0 flex-1 space-y-3">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base font-semibold text-foreground">{cnName || item.title}</h3>
+                <h3 className="text-base font-semibold text-foreground">{cnName ? `${cnName}（${item.title}）` : item.title}</h3>
                 <Badge variant="secondary" className="rounded-full px-2.5 py-0.5">{getSourceLabel(item.source)}</Badge>
                 {item.latestVersion && <Badge variant="outline" className="rounded-full px-2.5 py-0.5">{item.latestVersion}</Badge>}
               </div>
