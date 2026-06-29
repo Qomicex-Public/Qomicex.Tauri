@@ -52,3 +52,11 @@ export function getJavaDownloadProgress(taskId: string): Promise<JavaDownloadPro
 export function cancelJavaDownload(taskId: string): Promise<void> {
   return del<void>(`/java/download/${taskId}`)
 }
+
+export function pauseJavaDownload(taskId: string): Promise<void> {
+  return post<void>(`/java/download/${taskId}/pause`)
+}
+
+export function resumeJavaDownload(taskId: string): Promise<void> {
+  return post<void>(`/java/download/${taskId}/resume`)
+}
