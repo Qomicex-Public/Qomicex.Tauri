@@ -13,9 +13,16 @@ import { Checkbox } from '../components/ui/checkbox.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
-import type { SystemInfo } from '../types/index.ts'
+import type { SystemInfo, JavaDownloadVendorInfo, JavaDownloadProgressResponse } from '../types/index.ts'
 import { generateRoomCode, validateRoomCode } from '../api/roomCode.ts'
-import { addCustomJavaRuntime, removeCustomJavaRuntime } from '../api/java.ts'
+import {
+  addCustomJavaRuntime,
+  removeCustomJavaRuntime,
+  getJavaDownloadCatalog,
+  startJavaDownload,
+  getJavaDownloadProgress,
+  cancelJavaDownload,
+} from '../api/java.ts'
 import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { get } from '../api/client.ts'
@@ -62,6 +69,15 @@ export default function Settings() {
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [addPath, setAddPath] = useState('')
   const [adding, setAdding] = useState(false)
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false)
+  const [downloadVendors, setDownloadVendors] = useState<JavaDownloadVendorInfo[]>([])
+  const [downloadLoading, setDownloadLoading] = useState(false)
+  const [downloadTaskId, setDownloadTaskId] = useState<string | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState<JavaDownloadProgressResponse | null>(null)
+  const [downloadVendor, setDownloadVendor] = useState('temurin')
+  const [downloadVersion, setDownloadVersion] = useState('17')
+  const [downloadPlatform, setDownloadPlatform] = useState('windows')
+  const [downloadArch, setDownloadArch] = useState('x64')
   const [removingPath, setRemovingPath] = useState<string | null>(null)
   const autoScanRef = useRef(false)
   const loadedRef = useRef(false)
@@ -208,6 +224,65 @@ export default function Settings() {
       setAdding(false)
     }
   }
+
+  async function handleOpenJavaDownload() {
+    setDownloadLoading(true)
+    try {
+      const catalog = await getJavaDownloadCatalog()
+      setDownloadVendors(catalog.vendors)
+      setDownloadProgress(null)
+      if (catalog.vendors.length > 0) {
+        setDownloadVendor(catalog.vendors[0].id)
+        setDownloadVersion(String(catalog.vendors[0].versions[0] ?? 17))
+        setDownloadPlatform(catalog.vendors[0].platforms[0] ?? 'windows')
+        setDownloadArch(catalog.vendors[0].architectures[0] ?? 'x64')
+      }
+      setDownloadDialogOpen(true)
+    } finally {
+      setDownloadLoading(false)
+    }
+  }
+
+  async function handleStartJavaDownload() {
+    const task = await startJavaDownload({
+      vendor: downloadVendor,
+      version: parseInt(downloadVersion, 10),
+      platform: downloadPlatform,
+      architecture: downloadArch,
+    })
+    setDownloadProgress(null)
+    setDownloadTaskId(task.taskId)
+  }
+
+  async function handleCancelJavaDownload() {
+    if (!downloadTaskId) return
+    await cancelJavaDownload(downloadTaskId)
+    setDownloadTaskId(null)
+    setDownloadProgress(null)
+  }
+
+  useEffect(() => {
+    if (!downloadTaskId) return
+    const timer = setInterval(async () => {
+      try {
+        const progress = await getJavaDownloadProgress(downloadTaskId)
+        setDownloadProgress(progress)
+        if (progress.status === 'completed') {
+          clearInterval(timer)
+          setDownloadTaskId(null)
+          await handleScan('quick')
+        }
+        if (progress.status === 'failed' || progress.status === 'cancelled') {
+          clearInterval(timer)
+          setDownloadTaskId(null)
+        }
+      } catch {
+        clearInterval(timer)
+        setDownloadTaskId(null)
+      }
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [downloadTaskId, handleScan])
 
   async function handleDelete(path: string) {
     const name = runtimes.find((j) => j.path === path)?.name || ''
@@ -392,11 +467,9 @@ export default function Settings() {
                       <FontAwesomeIcon icon={faPlus} className="h-4 w-4" />
                       手动添加
                     </Button>
-                    <Button size="sm" variant="ghost" asChild>
-                      <a href="https://adoptium.net" target="_blank" rel="noreferrer">
-                        <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />
-                        下载 Java
-                      </a>
+                    <Button size="sm" variant="ghost" onClick={handleOpenJavaDownload} disabled={downloadLoading}>
+                      <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />
+                      下载 Java
                     </Button>
                     <Tooltip content="刷新列表">
                       <Button size="sm" variant="ghost" onClick={handleRefresh} disabled={scanning !== 'idle'}>
@@ -916,6 +989,70 @@ export default function Settings() {
               <Button onClick={confirmAddJava} disabled={!addPath || adding}>
                 {adding ? '验证中...' : '添加'}
               </Button>
+            </DialogFooter>
+          </Dialog>
+
+          <Dialog open={downloadDialogOpen} onClose={() => setDownloadDialogOpen(false)}>
+            <DialogHeader onClose={() => setDownloadDialogOpen(false)}>
+              <DialogTitle>下载 Java</DialogTitle>
+            </DialogHeader>
+            <DialogBody className="space-y-4">
+              <div className="space-y-2">
+                <Label>发行版</Label>
+                <Select value={downloadVendor} onChange={setDownloadVendor}>
+                  {downloadVendors.map((vendor) => (
+                    <SelectOption key={vendor.id} value={vendor.id}>{vendor.name}</SelectOption>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Java 主版本</Label>
+                <Select value={downloadVersion} onChange={setDownloadVersion}>
+                  {(downloadVendors.find((v) => v.id === downloadVendor)?.versions ?? []).map((version) => (
+                    <SelectOption key={version} value={String(version)}>{version}</SelectOption>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>平台</Label>
+                <Select value={downloadPlatform} onChange={setDownloadPlatform}>
+                  {(downloadVendors.find((v) => v.id === downloadVendor)?.platforms ?? []).map((platform) => (
+                    <SelectOption key={platform} value={platform}>{platform}</SelectOption>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>架构</Label>
+                <Select value={downloadArch} onChange={setDownloadArch}>
+                  {(downloadVendors.find((v) => v.id === downloadVendor)?.architectures ?? []).map((arch) => (
+                    <SelectOption key={arch} value={arch}>{arch}</SelectOption>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>目标目录</Label>
+                <Input value="QML/Runtime/Java" disabled />
+              </div>
+              {downloadProgress && (
+                <div className="space-y-2 rounded-lg border p-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>{downloadProgress.status}</span>
+                    <span>{Math.round(downloadProgress.progress)}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full bg-primary transition-all" style={{ width: `${downloadProgress.progress}%` }} />
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">{downloadProgress.fileName}</div>
+                  {downloadProgress.error && <div className="text-xs text-destructive">{downloadProgress.error}</div>}
+                </div>
+              )}
+            </DialogBody>
+            <DialogFooter>
+              {downloadTaskId ? (
+                <Button variant="outline" onClick={handleCancelJavaDownload}>取消下载</Button>
+              ) : (
+                <Button onClick={handleStartJavaDownload}>开始下载</Button>
+              )}
             </DialogFooter>
           </Dialog>
         </div>
