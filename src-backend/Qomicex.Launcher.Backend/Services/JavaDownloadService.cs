@@ -61,14 +61,6 @@ public class JavaDownloadService
                     Architectures = new() { "x64", "arm64" },
                     Versions = new() { 11, 17, 21 },
                 },
-                new()
-                {
-                    Id = "oracle",
-                    Name = "Oracle",
-                    Platforms = new() { "windows", "linux", "macos" },
-                    Architectures = new() { "x64", "arm64" },
-                    Versions = new() { 8, 17, 21 },
-                },
             }
         };
 
@@ -174,35 +166,62 @@ public class JavaDownloadService
             var api = "https://aka.ms/download-jdk/microsoft-jdk.json";
             var json = await http.GetStringAsync(api);
             using var doc = JsonDocument.Parse(json);
-            foreach (var release in doc.RootElement.GetProperty("releases").EnumerateArray())
+            if (!doc.RootElement.TryGetProperty("releases", out var releases)
+                || releases.ValueKind != JsonValueKind.Array)
             {
-                if (release.GetProperty("version").GetInt32() != request.Version)
+                throw ApiException.NotFound("未找到可用的 Java 下载包", "JAVA_DOWNLOAD_PACKAGE_NOT_FOUND");
+            }
+
+            foreach (var release in releases.EnumerateArray())
+            {
+                if (!release.TryGetProperty("version", out var versionElement)
+                    || versionElement.ValueKind != JsonValueKind.Number
+                    || !versionElement.TryGetInt32(out var version)
+                    || version != request.Version)
                 {
                     continue;
                 }
 
-                foreach (var file in release.GetProperty("files").EnumerateArray())
+                if (!release.TryGetProperty("files", out var files)
+                    || files.ValueKind != JsonValueKind.Array)
                 {
-                    var fileName = file.GetProperty("fileName").GetString() ?? string.Empty;
-                    if (file.GetProperty("platform").GetString() == MapMicrosoftPlatform(request.Platform)
-                        && file.GetProperty("arch").GetString() == MapMicrosoftArchitecture(request.Architecture)
+                    continue;
+                }
+
+                foreach (var file in files.EnumerateArray())
+                {
+                    if (!file.TryGetProperty("platform", out var platformElement)
+                        || !file.TryGetProperty("arch", out var archElement)
+                        || !file.TryGetProperty("fileName", out var fileNameElement)
+                        || !file.TryGetProperty("url", out var urlElement))
+                    {
+                        continue;
+                    }
+
+                    var platform = platformElement.GetString();
+                    var architecture = archElement.GetString();
+                    var fileName = fileNameElement.GetString();
+                    var url = urlElement.GetString();
+
+                    if (string.IsNullOrWhiteSpace(platform)
+                        || string.IsNullOrWhiteSpace(architecture)
+                        || string.IsNullOrWhiteSpace(fileName)
+                        || string.IsNullOrWhiteSpace(url))
+                    {
+                        continue;
+                    }
+
+                    if (platform == MapMicrosoftPlatform(request.Platform)
+                        && architecture == MapMicrosoftArchitecture(request.Architecture)
                         && (fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
                             || fileName.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase)))
                     {
-                        return (file.GetProperty("url").GetString() ?? string.Empty, fileName);
+                        return (url, fileName);
                     }
                 }
             }
 
             throw ApiException.NotFound("未找到可用的 Java 下载包", "JAVA_DOWNLOAD_PACKAGE_NOT_FOUND");
-        }
-
-        if (request.Vendor == "oracle")
-        {
-            var ext = request.Platform == "windows" ? "zip" : "tar.gz";
-            var api = $"https://download.oracle.com/java/{request.Version}/latest/jdk-{request.Version}_{MapOraclePlatform(request.Platform)}-{MapOracleArchitecture(request.Architecture)}_bin.{ext}";
-            var fileName = Path.GetFileName(new Uri(api).AbsolutePath);
-            return (api, fileName);
         }
 
         throw ApiException.NotFound("未找到可用的 Java 下载包", "JAVA_DOWNLOAD_PACKAGE_NOT_FOUND");
@@ -348,17 +367,4 @@ public class JavaDownloadService
         _ => throw ApiException.BadRequest("不支持的 CPU 架构", "JAVA_DOWNLOAD_ARCH_INVALID"),
     };
 
-    private static string MapOraclePlatform(string platform) => platform switch
-    {
-        "macos" => "macos",
-        "windows" or "linux" => platform,
-        _ => throw ApiException.BadRequest("不支持的操作系统平台", "JAVA_DOWNLOAD_PLATFORM_INVALID"),
-    };
-
-    private static string MapOracleArchitecture(string architecture) => architecture switch
-    {
-        "x64" => "x64",
-        "arm64" => "aarch64",
-        _ => throw ApiException.BadRequest("不支持的 CPU 架构", "JAVA_DOWNLOAD_ARCH_INVALID"),
-    };
 }
