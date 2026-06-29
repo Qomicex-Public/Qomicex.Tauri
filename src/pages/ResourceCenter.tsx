@@ -210,7 +210,7 @@ export default function ResourceCenter() {
       setItems((prev) => append ? [...prev, ...res.items] : res.items)
       setTotal(res.total)
       setPage(pageNum)
-      batchLookupChineseNames(res.items.map(i => i.title)).then(m => setCnNames(prev => ({ ...prev, ...m })))
+      batchLookupChineseNames(res.items.map(i => i.title)).then(m => category === 'mod' ? setCnNames(prev => ({ ...prev, ...m })) : setCnNames({}))
     } catch (e) {
       const msg = e instanceof Error ? e.message : '搜索失败'
       if (msg.includes('404') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {

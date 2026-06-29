@@ -149,7 +149,7 @@ export default function ResourceDetailPage() {
 
         if (cancelled) return
         setDetail(resourceDetail)
-        lookupChineseName(resourceDetail.title).then(setCnName)
+        if (category === 'mod') lookupChineseName(resourceDetail.title).then(setCnName)
         setVersions(versionList)
       } catch (e) {
         if (cancelled) return
