@@ -74,7 +74,21 @@ export default function DownloadCenter() {
   const pollingRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {
-    const activeCount = tasks.filter((t) => (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused') && t.instanceId).length
+    const javaTasks = tasks.filter((t) => t.type === 'java' && t.taskId && (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused'))
+    if (javaTasks.length === 0) return
+    Promise.all(javaTasks.map(async (t) => {
+      try {
+        await getJavaDownloadProgress(t.taskId!)
+      } catch (e: unknown) {
+        if (e instanceof ApiError && e.status === 404) {
+          updateTask(t.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
+        }
+      }
+    }))
+  }, [])
+
+  useEffect(() => {
+    const activeCount = tasks.filter((t) => (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused') && (t.instanceId || t.taskId)).length
 
     if (activeCount === 0) {
       if (pollingRef.current !== undefined) {
@@ -107,9 +121,13 @@ export default function DownloadCenter() {
               speed: progress.speed,
               currentFile: progress.fileName || undefined,
               error: progress.error || undefined,
-              completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
             })
-          } catch { /* skip */ }
+          } catch (e: unknown) {
+            if (e instanceof ApiError && (e.status === 404 || e.code === 'JAVA_DOWNLOAD_PACKAGE_NOT_FOUND')) {
+              updateTask(task.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
+            }
+          }
           continue
         }
 
