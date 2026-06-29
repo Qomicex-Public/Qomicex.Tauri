@@ -56,7 +56,10 @@ export function hasAnyRuntimes(): boolean {
 }
 
 export function setScannedRuntimes(list: JavaRuntime[], mode: JavaSearchMode | null = null) {
-  scannedRuntimes = [...list]
+  const map = new Map<string, JavaRuntime>()
+  for (const j of scannedRuntimes) map.set(j.path, j)
+  for (const j of list) map.set(j.path, j)
+  scannedRuntimes = [...map.values()]
   if (mode) scanMode = mode
   saveScanned()
   emitChange()

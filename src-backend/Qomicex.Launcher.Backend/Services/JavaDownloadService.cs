@@ -44,7 +44,7 @@ public class JavaDownloadService
                     Name = "Temurin",
                     Platforms = new() { hostPlatform },
                     Architectures = new() { "x64", "arm64", "x86" },
-                    Versions = new() { 8, 11, 17, 21 },
+                    Versions = new() { 8, 11, 17, 21, 25 },
                 },
                 new()
                 {
@@ -52,7 +52,7 @@ public class JavaDownloadService
                     Name = "Zulu",
                     Platforms = new() { hostPlatform },
                     Architectures = new() { "x64", "arm64", "x86" },
-                    Versions = new() { 8, 11, 17, 21 },
+                    Versions = new() { 8, 11, 17, 21, 25 },
                 },
                 new()
                 {
@@ -60,7 +60,7 @@ public class JavaDownloadService
                     Name = "Microsoft JDK",
                     Platforms = new() { hostPlatform },
                     Architectures = new() { "x64", "arm64" },
-                    Versions = new() { 11, 17, 21 },
+                    Versions = new() { 11, 17, 21, 25 },
                 },
             }
         };
@@ -75,19 +75,17 @@ public class JavaDownloadService
             throw ApiException.BadRequest("首版仅支持下载当前宿主平台的 Java 包", "JAVA_DOWNLOAD_PLATFORM_NOT_SUPPORTED");
         }
 
-        var (url, fileName) = await ResolvePackageAsync(request);
         var taskId = Guid.NewGuid().ToString("N")[..12];
         var targetDir = Path.Combine(GetBaseDir(), request.Vendor, request.Version.ToString(), $"{request.Platform}-{request.Architecture}");
         var state = new JavaDownloadTaskState
         {
             TaskId = taskId,
             Status = "queued",
-            FileName = fileName,
             TargetDir = targetDir,
         };
         _tasks[taskId] = state;
 
-        _ = Task.Run(() => RunTaskAsync(state, request, url, fileName));
+        _ = Task.Run(() => RunTaskAsync(state, request));
 
         return new JavaDownloadStartResponse
         {
@@ -233,10 +231,14 @@ public class JavaDownloadService
         throw ApiException.NotFound("未找到可用的 Java 下载包", "JAVA_DOWNLOAD_PACKAGE_NOT_FOUND");
     }
 
-    private async Task RunTaskAsync(JavaDownloadTaskState state, JavaDownloadStartRequest request, string url, string fileName)
+    private async Task RunTaskAsync(JavaDownloadTaskState state, JavaDownloadStartRequest request)
     {
         try
         {
+            state.Status = "resolving";
+            var (url, fileName) = await ResolvePackageAsync(request);
+            state.FileName = fileName;
+
             state.Status = "downloading";
             var tmpDir = Path.Combine(GetBaseDir(), ".tmp", state.TaskId);
             Directory.CreateDirectory(tmpDir);
