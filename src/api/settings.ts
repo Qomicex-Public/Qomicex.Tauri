@@ -25,6 +25,7 @@ export interface AppSettings {
   animationsEnabled: boolean
   animationSpeed: number
   backgroundImage: string
+  backgroundRandom: boolean
   bgOverlayOpacity: number
   bgBlur: number
   watermarkEnabled: boolean
@@ -49,6 +50,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   animationsEnabled: true,
   animationSpeed: 1,
   backgroundImage: '',
+  backgroundRandom: false,
   bgOverlayOpacity: 78,
   bgBlur: 0,
   watermarkEnabled: true,

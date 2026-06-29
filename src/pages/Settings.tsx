@@ -18,6 +18,7 @@ import { generateRoomCode, validateRoomCode } from '../api/roomCode.ts'
 import { addCustomJavaRuntime, removeCustomJavaRuntime } from '../api/java.ts'
 import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getSystemInfo } from '../api/system.ts'
+import { get } from '../api/client.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
@@ -64,6 +65,7 @@ export default function Settings() {
   const [removingPath, setRemovingPath] = useState<string | null>(null)
   const autoScanRef = useRef(false)
   const loadedRef = useRef(false)
+  const [backgrounds, setBackgrounds] = useState<string[]>([])
 
   const [roomCode, setRoomCode] = useState('')
   const [validationCode, setValidationCode] = useState('')
@@ -81,6 +83,7 @@ export default function Settings() {
       setSettings(s)
       loadedRef.current = true
     }).catch(() => {})
+    get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -164,6 +167,12 @@ export default function Settings() {
       const dir = path.replace(/[/\\][^/\\]+$/i, '')
       openPath(dir).catch(() => {})
     })
+  }
+
+  async function handleOpenBackgrounds() {
+    try {
+      await fetch('/api/settings/open-backgrounds', { method: 'POST' })
+    } catch {}
   }
 
   function handleManualAdd() {
@@ -590,131 +599,173 @@ export default function Settings() {
           )}
 
           {category === 'appearance' && (
-            <div key="appearance" className="animate-in slide-up">
-            <Card>
-              <CardHeader>
+            <div key="appearance" className="animate-in slide-up space-y-6">
+              <Card>
+                <CardHeader>
                   <CardTitle>
                     <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-primary" />
-                    外观设置
+                    界面
                   </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label>界面语言</Label>
-                  <Select value={settings.language} onChange={(v) => update('language', v)}>
-                    <SelectOption value="zh-CN">简体中文</SelectOption>
-                    <SelectOption value="en">English</SelectOption>
-                  </Select>
-                </div>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="space-y-2">
+                    <Label>界面语言</Label>
+                    <Select value={settings.language} onChange={(v) => update('language', v)} className="w-48">
+                      <SelectOption value="zh-CN">简体中文</SelectOption>
+                      <SelectOption value="en">English</SelectOption>
+                    </Select>
+                  </div>
 
-                <div className="space-y-3">
-                  <Label>动画</Label>
+                  <div className="space-y-3">
+                    <Label>页面动画</Label>
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <Checkbox
+                        checked={settings.animationsEnabled}
+                        onCheckedChange={(c) => update('animationsEnabled', c === true)}
+                      />
+                      <div>
+                        <div className="text-sm font-medium">启用页面动画</div>
+                        <div className="text-xs text-muted-foreground">开启后页面切换、弹窗等带有过渡动画效果</div>
+                      </div>
+                    </label>
+                    {settings.animationsEnabled && (
+                      <div className="space-y-2 pl-7">
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min={0.25}
+                            max={2}
+                            step={0.25}
+                            value={settings.animationSpeed}
+                            onChange={(e) => update('animationSpeed', parseFloat(e.target.value))}
+                            className="flex-1"
+                          />
+                          <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.animationSpeed}x</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-muted-foreground">
+                          <span>慢</span>
+                          <span>正常</span>
+                          <span>快</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-primary" />
+                    背景
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>背景图片</Label>
+                      <Button variant="ghost" size="sm" onClick={() => get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})}>
+                        <FontAwesomeIcon icon={faRotate} className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {backgrounds.length === 0 ? (
+                        <p className="w-full text-xs text-muted-foreground">暂无背景图片</p>
+                      ) : (
+                        backgrounds.map((name) => (
+                          <button
+                            key={name}
+                            onClick={() => {
+                              const next = { ...settings, backgroundImage: name, backgroundRandom: false }
+                              setSettings(next)
+                              saveSettings(next)
+                              setSaved(true)
+                            }}
+                            className={cn(
+                              'group relative h-16 w-28 overflow-hidden rounded-lg border-2 transition-colors',
+                              settings.backgroundImage === name
+                                ? 'border-primary'
+                                : 'border-border hover:border-muted-foreground/30'
+                            )}
+                          >
+                            <img
+                              src={`/api/settings/backgrounds/${encodeURIComponent(name)}`}
+                              alt={name}
+                              className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
+                            />
+                            <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-3 text-[10px] leading-tight text-white">
+                              {name}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <Button variant="outline" size="sm" onClick={handleOpenBackgrounds}>
+                        <FontAwesomeIcon icon={faFolderOpen} className="mr-1 h-3 w-3" /> 打开文件夹
+                      </Button>
+                      <p className="text-xs text-muted-foreground">放入图片即可出现在上方列表中</p>
+                    </div>
+                  </div>
+
                   <label className="flex items-center gap-3 cursor-pointer">
                     <Checkbox
-                      checked={settings.animationsEnabled}
-                      onCheckedChange={(c) => update('animationsEnabled', c === true)}
+                      checked={settings.backgroundRandom}
+                      onCheckedChange={(c) => {
+                        update('backgroundRandom', c === true)
+                        if (c && !settings.backgroundImage) update('backgroundImage', 'random')
+                      }}
                     />
                     <div>
-                      <div className="text-sm font-medium">启用页面动画</div>
-                      <div className="text-xs text-muted-foreground">开启后页面切换、弹窗等带有过渡动画效果</div>
+                      <div className="text-sm font-medium">每次启动随机挑选</div>
+                      <div className="text-xs text-muted-foreground">从背景文件夹中随机选择一张图片</div>
                     </div>
                   </label>
 
-                  {settings.animationsEnabled && (
-                    <div className="space-y-2 pl-7">
-                      <Label>动画速度</Label>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="range"
-                          min={0.25}
-                          max={2}
-                          step={0.25}
-                          value={settings.animationSpeed}
-                          onChange={(e) => update('animationSpeed', parseFloat(e.target.value))}
-                          className="flex-1"
-                        />
-                        <span className="w-14 shrink-0 text-right text-sm tabular-nums text-muted-foreground">
-                          {settings.animationSpeed}x
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-[11px] text-muted-foreground">
-                        <span>慢</span>
-                        <span>正常</span>
-                        <span>快</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label>背景图片</Label>
-                  <div className="flex gap-2">
-                    <Input value={settings.backgroundImage} onChange={(e) => update('backgroundImage', e.target.value)} placeholder="图片 URL" className="flex-1" />
-                    <label className="flex cursor-pointer items-center justify-center rounded-lg border border-input bg-background px-3 text-muted-foreground hover:bg-accent hover:text-foreground">
-                      <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
-                      <input type="file" accept="image/png,image/jpeg,image/webp,image/bmp" className="hidden" onChange={(e) => {
-                        const file = e.target.files?.[0]
-                        if (!file) return
-                        const reader = new FileReader()
-                        reader.onload = () => update('backgroundImage', reader.result as string)
-                        reader.readAsDataURL(file)
-                      }} />
-                    </label>
-                    {settings.backgroundImage && (
-                      <Button variant="ghost" size="icon" onClick={() => update('backgroundImage', '')}>
-                        <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
                   {settings.backgroundImage && (
-                    <div className="relative h-32 overflow-hidden rounded-lg border">
-                      <img src={settings.backgroundImage} alt="" className="h-full w-full object-cover" />
-                    </div>
+                    <>
+                      {!settings.backgroundRandom && (
+                        <Button variant="ghost" size="sm" onClick={() => update('backgroundImage', '')}>
+                          <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> 清除背景
+                        </Button>
+                      )}
+                      <div className="grid grid-cols-2 gap-4 pt-1">
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <Label>不透明度</Label>
+                            <span className="text-xs tabular-nums text-muted-foreground">{settings.bgOverlayOpacity}%</span>
+                          </div>
+                          <input type="range" min={0} max={100} value={settings.bgOverlayOpacity} onChange={(e) => update('bgOverlayOpacity', parseInt(e.target.value))} className="w-full" />
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>透明</span>
+                            <span>不透明</span>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <Label>模糊</Label>
+                            <span className="text-xs tabular-nums text-muted-foreground">{settings.bgBlur}px</span>
+                          </div>
+                          <input type="range" min={0} max={20} step={0.5} value={settings.bgBlur} onChange={(e) => update('bgBlur', parseFloat(e.target.value))} className="w-full" />
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>清晰</span>
+                            <span>模糊</span>
+                          </div>
+                        </div>
+                      </div>
+                    </>
                   )}
-                  {settings.backgroundImage && (<>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <Label>不透明度</Label>
-                        <span className="text-xs tabular-nums text-muted-foreground">{settings.bgOverlayOpacity}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={settings.bgOverlayOpacity}
-                        onChange={(e) => update('bgOverlayOpacity', parseInt(e.target.value))}
-                        className="w-full"
-                      />
-                      <div className="flex justify-between text-[11px] text-muted-foreground">
-                        <span>透明</span>
-                        <span>不透明</span>
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <Label>模糊</Label>
-                        <span className="text-xs tabular-nums text-muted-foreground">{settings.bgBlur}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={20}
-                        step={0.5}
-                        value={settings.bgBlur}
-                        onChange={(e) => update('bgBlur', parseFloat(e.target.value))}
-                        className="w-full"
-                      />
-                      <div className="flex justify-between text-[11px] text-muted-foreground">
-                        <span>清晰</span>
-                        <span>模糊</span>
-                      </div>
-                    </div>
-                  </>)}
-                  <p className="text-xs text-muted-foreground">选择本地图片或粘贴网络图片 URL</p>
-                </div>
+                </CardContent>
+              </Card>
 
-                <div className="space-y-3">
-                  <Label>水印</Label>
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-primary" />
+                    水印
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
                   <label className="flex items-center gap-3 cursor-pointer">
                     <Checkbox
                       checked={settings.watermarkEnabled}
@@ -733,9 +784,8 @@ export default function Settings() {
                       <Input id="watermarkSubtext" value={settings.watermarkSubtext} onChange={(e) => update('watermarkSubtext', e.target.value)} placeholder="启动器" />
                     </div>
                   )}
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
             </div>
           )}
 

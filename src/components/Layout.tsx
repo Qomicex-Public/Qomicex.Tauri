@@ -3,16 +3,30 @@ import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
+import { get } from '../api/client.ts'
 
 export default function Layout() {
-  const [bg, setBg] = useState(() => getSettings().backgroundImage || '')
+  const [bg, setBg] = useState('')
   const [opacity, setOpacity] = useState(() => getSettings().bgOverlayOpacity ?? 78)
   const [blur, setBlur] = useState(() => getSettings().bgBlur ?? 0)
+
+  async function resolveBg(s = getSettings()) {
+    let filename = s.backgroundImage || ''
+    if (s.backgroundRandom) {
+      try {
+        const list = await get<string[]>('/settings/backgrounds')
+        if (list.length > 0) filename = list[Math.floor(Math.random() * list.length)]
+      } catch { filename = '' }
+    }
+    setBg(filename ? `/api/settings/backgrounds/${encodeURIComponent(filename)}` : '')
+  }
+
   useEffect(() => {
+    resolveBg()
     return onSettingsChange((s) => {
-      setBg(s.backgroundImage || '')
       setOpacity(s.bgOverlayOpacity ?? 78)
       setBlur(s.bgBlur ?? 0)
+      resolveBg(s)
     })
   }, [])
 
