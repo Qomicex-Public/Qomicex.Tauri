@@ -9,6 +9,7 @@ import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../
 import { getInstallProgress, pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
 import { getResourceDownloadProgress, cancelResourceDownload } from '../api/resource-download.ts'
 import { getJavaDownloadProgress, cancelJavaDownload, pauseJavaDownload, resumeJavaDownload } from '../api/java.ts'
+import { ApiError } from '../api/client.ts'
 import type { DownloadTask } from '../types/index.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
@@ -128,7 +129,11 @@ export default function DownloadCenter() {
               currentFile: progress.fileName || undefined,
               completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
             })
-          } catch { /* skip */ }
+          } catch (e: unknown) {
+            if (e instanceof ApiError && (e.status === 404 || e.code === 'JAVA_DOWNLOAD_PACKAGE_NOT_FOUND')) {
+              updateTask(task.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
+            }
+          }
           continue
         }
         if (!task.instanceId) continue
@@ -254,13 +259,13 @@ export default function DownloadCenter() {
                       <>
                         {task.status === 'paused' ? (
                           <Tooltip content="继续">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => task.taskId && resumeJavaDownload(task.taskId)}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => task.taskId && resumeJavaDownload(task.taskId).catch(() => updateTask(task.id, { status: 'failed', error: '任务已失效' }))}>
                               <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                         ) : (
                           <Tooltip content="暂停">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-amber-400" onClick={() => task.taskId && pauseJavaDownload(task.taskId)}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-amber-400" onClick={() => task.taskId && pauseJavaDownload(task.taskId).catch(() => updateTask(task.id, { status: 'failed', error: '任务已失效' }))}>
                               <FontAwesomeIcon icon={faPause} className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
@@ -268,7 +273,7 @@ export default function DownloadCenter() {
                         <Tooltip content="取消">
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
                             if (task.type === 'java' && task.taskId) {
-                              cancelJavaDownload(task.taskId).then(() => removeTask(task.id))
+                              cancelJavaDownload(task.taskId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
                             } else if (task.status === 'queued') {
                               removeTask(task.id)
                             } else if (task.type === 'batch' && task.batchTaskIds && task.batchTaskIds.length > 0) {
