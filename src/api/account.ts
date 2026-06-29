@@ -55,3 +55,22 @@ export function setDefaultAccount(uuid: string): Promise<Account> {
 export function clearDefaultAccount(): Promise<void> {
   return del('/account/default')
 }
+
+const yggdrasilMetaCache = new Map<string, string>()
+
+export function getCachedMeta(serverUrl?: string | null): string {
+  if (!serverUrl) return ''
+  return yggdrasilMetaCache.get(serverUrl) ?? ''
+}
+
+export async function getYggdrasilMeta(serverUrl: string): Promise<string> {
+  const cached = yggdrasilMetaCache.get(serverUrl)
+  if (cached) return cached
+  try {
+    const result = await get<{ serverName: string }>(`/account/yggdrasil-meta?serverUrl=${encodeURIComponent(serverUrl)}`)
+    yggdrasilMetaCache.set(serverUrl, result.serverName)
+    return result.serverName
+  } catch {
+    return ''
+  }
+}
