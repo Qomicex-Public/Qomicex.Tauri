@@ -11,6 +11,7 @@ import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Combobox } from '../components/ui/combobox.tsx'
 import { searchResources } from '../api/resource.ts'
 import type { ResourceItem } from '../types/index.ts'
+import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 
 const CATEGORIES = [
   { key: 'mod', label: '模组' },
@@ -175,6 +176,7 @@ export default function ResourceCenter() {
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [installDialogItem, setInstallDialogItem] = useState<ResourceItem | null>(null)
   const pageSize = 20
 
   useEffect(() => {
@@ -247,7 +249,11 @@ export default function ResourceCenter() {
   }
 
   const handleInstall = (item: ResourceItem) => {
-    navigate(buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId))
+    if (category === 'modpack') {
+      navigate(buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId))
+    } else {
+      setInstallDialogItem(item)
+    }
   }
 
   const loadMore = () => {
@@ -399,6 +405,17 @@ export default function ResourceCenter() {
         )}
       </div>
 
+      {installDialogItem && (
+        <ResourceInstallDialog
+          open={true}
+          onClose={() => setInstallDialogItem(null)}
+          resourceId={installDialogItem.id}
+          resourceTitle={installDialogItem.title}
+          resourceIcon={installDialogItem.iconUrl}
+          source={installDialogItem.source}
+          category={category}
+        />
+      )}
 
     </div>
   )

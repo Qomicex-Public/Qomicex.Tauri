@@ -202,7 +202,7 @@ export default function DownloadCenter() {
                       task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : 'bg-primary/10'
                     )}>
                       <FontAwesomeIcon
-                        icon={task.type === 'resource' ? faBox : task.type === 'repair' ? faHammer : faCube}
+                        icon={task.type === 'resource' ? faBox : task.type === 'repair' ? faHammer : task.type === 'batch' ? faDownload : faCube}
                         className={cn(
                           'h-5 w-5',
                           task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-primary'
@@ -245,6 +245,8 @@ export default function DownloadCenter() {
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
                             if (task.status === 'queued') {
                               removeTask(task.id)
+                            } else if (task.type === 'batch' && task.batchTaskIds && task.batchTaskIds.length > 0) {
+                              import('../api/resource-download.ts').then(m => m.cancelBatch(task.batchTaskIds!)).then(() => removeTask(task.id))
                             } else if (task.type === 'file' && task.taskId) {
                               cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
                             } else if (task.instanceId) {

@@ -1,5 +1,5 @@
 import { get } from './client.ts'
-import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion } from '../types/index.ts'
+import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion, ResolvedDependency } from '../types/index.ts'
 
 export function searchResources(params: {
   category?: string
@@ -42,4 +42,13 @@ export function getResourceVersionDownloads(id: string, versionId: string, sourc
   if (source) q.set('source', source)
   const qs = q.toString()
   return get<ResourceFile[]>(`/resources/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/downloads${qs ? `?${qs}` : ''}`)
+}
+
+export function getResourceDependencies(id: string, source: string, versionId: string, gameVersion: string, loader: string): Promise<ResolvedDependency[]> {
+  const q = new URLSearchParams()
+  q.set('source', source)
+  if (versionId) q.set('versionId', versionId)
+  if (gameVersion) q.set('gameVersion', gameVersion)
+  if (loader) q.set('loader', loader)
+  return get<ResolvedDependency[]>(`/resources/${encodeURIComponent(id)}/dependencies?${q}`)
 }

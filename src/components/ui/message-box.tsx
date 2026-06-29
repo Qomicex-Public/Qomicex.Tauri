@@ -44,6 +44,7 @@ interface ToastState {
 interface MessageBoxContextValue {
   alert: (message: string, title?: string) => Promise<void>
   confirm: (message: string, title?: string) => Promise<boolean>
+  choose: (message: string, confirmText: string, cancelText: string, title?: string) => Promise<boolean>
   error: (message: string, title?: string) => Promise<void>
   success: (message: string, title?: string) => Promise<void>
   prompt: (message: string, title?: string, defaultValue?: string) => Promise<string | null>
@@ -53,6 +54,7 @@ interface MessageBoxContextValue {
 const MessageBoxContext = React.createContext<MessageBoxContextValue>({
   alert: async () => {},
   confirm: async () => false,
+  choose: async () => false,
   error: async () => {},
   success: async () => {},
   prompt: async () => null,
@@ -89,6 +91,7 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
 
   const alert = React.useCallback((message: string, title?: string) => show("info", message, title).then(() => {}), [show])
   const confirm = React.useCallback((message: string, title?: string) => show("warning", message, title, "确定", "取消"), [show])
+  const choose = React.useCallback((message: string, confirmText: string, cancelText: string, title?: string) => show("info", message, title, confirmText, cancelText), [show])
   const error = React.useCallback((message: string, title?: string) => show("error", message, title).then(() => {}), [show])
   const success = React.useCallback((message: string, title?: string) => show("success", message, title).then(() => {}), [show])
 
@@ -117,7 +120,7 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
     setPromptState((prev) => ({ ...prev, open: false, resolve: null }))
   }
 
-  const ctx = React.useMemo(() => ({ alert, confirm, error, success, prompt, notify }), [alert, confirm, error, success, prompt, notify])
+  const ctx = React.useMemo(() => ({ alert, confirm, choose, error, success, prompt, notify }), [alert, confirm, choose, error, success, prompt, notify])
 
   return (
     <MessageBoxContext.Provider value={ctx}>

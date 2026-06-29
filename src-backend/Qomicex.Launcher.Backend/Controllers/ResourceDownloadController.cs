@@ -10,11 +10,13 @@ public class ResourceDownloadController : ControllerBase
 {
     private readonly ResourceDownloadService _downloadService;
     private readonly IInstanceRepository _instanceRepository;
+    private readonly IHttpClientFactory _httpFactory;
 
-    public ResourceDownloadController(ResourceDownloadService downloadService, IInstanceRepository instanceRepository)
+    public ResourceDownloadController(ResourceDownloadService downloadService, IInstanceRepository instanceRepository, IHttpClientFactory httpFactory)
     {
         _downloadService = downloadService;
         _instanceRepository = instanceRepository;
+        _httpFactory = httpFactory;
     }
 
     [HttpPost("start")]
@@ -54,6 +56,27 @@ public class ResourceDownloadController : ControllerBase
         return Ok(new { taskId, fileName = request.FileName });
     }
 
+    [HttpPost("download-to")]
+    public async Task<IActionResult> DownloadTo([FromBody] DownloadToRequest request)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(request.TargetPath)!);
+            var http = _httpFactory.CreateClient();
+            var response = await http.GetAsync(request.Url);
+            if (!response.IsSuccessStatusCode)
+                return BadRequest(new { error = "下载失败" });
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var fileStream = System.IO.File.Create(request.TargetPath);
+            await stream.CopyToAsync(fileStream);
+            return Ok(new { path = request.TargetPath });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
     [HttpGet("{taskId}/progress")]
     public ActionResult<ResourceDownloadState> GetProgress(string taskId)
     {
@@ -69,6 +92,14 @@ public class ResourceDownloadController : ControllerBase
             return Ok(new { message = "已取消" });
         return NotFound();
     }
+
+    [HttpPost("cancel-batch")]
+    public IActionResult CancelBatch([FromBody] CancelBatchRequest request)
+    {
+        foreach (var taskId in request.TaskIds)
+            _downloadService.Cancel(taskId);
+        return Ok(new { message = "已取消" });
+    }
 }
 
 public class StartResourceDownloadRequest
@@ -77,4 +108,15 @@ public class StartResourceDownloadRequest
     public string Url { get; set; } = "";
     public string FileName { get; set; } = "";
     public string Category { get; set; } = "mods";
+}
+
+public class DownloadToRequest
+{
+    public string Url { get; set; } = "";
+    public string TargetPath { get; set; } = "";
+}
+
+public class CancelBatchRequest
+{
+    public List<string> TaskIds { get; set; } = [];
 }

@@ -221,7 +221,7 @@ export interface InstallProgressResponse {
 export interface DownloadTask {
   id: string
   name: string
-  type: 'game' | 'resource' | 'repair' | 'file'
+  type: 'game' | 'resource' | 'repair' | 'file' | 'batch'
   gameVersion: string
   loader?: string
   loaderVersion?: string
@@ -239,6 +239,8 @@ export interface DownloadTask {
   instanceId?: string
   /** for file downloads */
   taskId?: string
+  /** for batch tasks - all child taskIds */
+  batchTaskIds?: string[]
 }
 
 export interface ResourceDownloadState {
@@ -327,7 +329,26 @@ export interface ResourceVersion {
   gameVersions: string[]
   loaders: string[]
   downloads: ResourceFile[]
+  dependencies: ModrinthDependency[]
   datePublished: string
+}
+
+export interface ModrinthDependency {
+  versionId: string | null
+  projectId: string
+  fileName: string | null
+  dependencyType: string
+}
+
+export interface ResolvedDependency {
+  projectId: string
+  name: string
+  iconUrl: string
+  versionId: string
+  versionNumber: string
+  downloadUrl: string
+  fileName: string
+  category: string
 }
 
 export interface SkinProfile {

@@ -21,6 +21,23 @@ public class InstanceRepository : IInstanceRepository
         Directory.CreateDirectory(dataDir);
         _filePath = Path.Combine(dataDir, "instances.json");
         _instances = LoadFromFile();
+        DeduplicateAndSave();
+    }
+
+    private void DeduplicateAndSave()
+    {
+        var seen = new HashSet<string>();
+        var deduped = new List<GameInstance>(_instances.Count);
+        foreach (var inst in _instances)
+        {
+            if (seen.Add($"{inst.GameDir}|{inst.Name}"))
+                deduped.Add(inst);
+        }
+        if (deduped.Count < _instances.Count)
+        {
+            _instances = deduped;
+            SaveToFile();
+        }
     }
 
     private List<GameInstance> LoadFromFile()
@@ -57,7 +74,17 @@ public class InstanceRepository : IInstanceRepository
 
     public List<GameInstance> GetAll()
     {
-        lock (_lock) { return [.. _instances]; }
+        lock (_lock)
+        {
+            var seen = new HashSet<string>();
+            var deduped = new List<GameInstance>(_instances.Count);
+            foreach (var inst in _instances)
+            {
+                if (seen.Add($"{inst.GameDir}|{inst.Name}"))
+                    deduped.Add(inst);
+            }
+            return deduped;
+        }
     }
 
     public GameInstance? GetById(string id)
@@ -74,6 +101,8 @@ public class InstanceRepository : IInstanceRepository
     {
         lock (_lock)
         {
+            var existing = _instances.Find(i => i.GameDir == instance.GameDir && i.Name == instance.Name);
+            if (existing != null) return existing;
             _instances.Add(instance);
             SaveToFile();
             return instance;
