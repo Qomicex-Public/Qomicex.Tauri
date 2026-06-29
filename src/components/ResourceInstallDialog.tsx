@@ -41,6 +41,7 @@ export default function ResourceInstallDialog({
   const [depSelectedVersion, setDepSelectedVersion] = useState<Record<string, { downloadUrl: string; fileName: string }>>({})
   const [depPickerOpen, setDepPickerOpen] = useState<string | null>(null)
   const depPickerRef = useRef<HTMLDivElement>(null)
+  const [installError, setInstallError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -154,7 +155,7 @@ export default function ResourceInstallDialog({
       }
     }
     const mainFile = selectedVersion.downloads[0]
-    if (!mainFile) { notify('该版本没有可下载的文件', 'error'); setInstalling(false); return }
+    if (!mainFile) { setInstallError('该版本没有可下载的文件'); setInstalling(false); return }
     allItems.push({ url: mainFile.url, fileName: mainFile.filename, category, name: resourceTitle })
 
     const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -185,10 +186,12 @@ export default function ResourceInstallDialog({
           batchTaskIds: [...taskIds],
           status: i + 1 === allItems.length ? 'completed' : 'downloading',
         })
-      } catch {
-        updateTask(batchId, { status: 'failed', progress: (i / allItems.length) * 100, error: `${item.name} 下载失败` })
-        notify(`${item.name} 下载失败`, 'error')
-        setInstalling(false)
+      } catch (e) {
+        const errMsg = `${item.name} 下载失败: ${e instanceof Error ? e.message : '未知错误'}`
+        updateTask(batchId, { status: 'failed', progress: (i / allItems.length) * 100, error: errMsg })
+        setInstallError(errMsg)
+    setInstalling(false)
+    setInstallError(null)
         return
       }
     }
@@ -383,11 +386,23 @@ export default function ResourceInstallDialog({
         )}
       </DialogBody>
 
+      {installError && (
+        <div className="mx-5 mb-2 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+          <span className="flex-1">{installError}</span>
+          <Button
+            variant="ghost" size="sm" className="h-7 text-xs"
+            onClick={() => { setInstallError(null); handleInstall() }}
+          >
+            <FontAwesomeIcon icon={faRotate} className="mr-1 h-3 w-3" /> 重试
+          </Button>
+        </div>
+      )}
+
       <DialogFooter>
-        <Button variant="secondary" onClick={onClose} disabled={installing}>取消</Button>
+        <Button variant="secondary" onClick={onClose} disabled={installing}>{installError ? '关闭' : '取消'}</Button>
         <Button
           onClick={handleInstall}
-          disabled={!selectedVersion || installing || loadingDeps}
+          disabled={!selectedVersion || installing || loadingDeps || !!installError}
         >
           <FontAwesomeIcon icon={installing ? faRotate : faDownload} className={cn('mr-1.5 h-3.5 w-3.5', installing && 'animate-spin')} />
           {installing ? '安装中...' : '确认安装'}

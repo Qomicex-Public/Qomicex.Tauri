@@ -19,12 +19,15 @@ public class SkinController : ControllerBase
     {
         var profile = await _skin.FetchProfile(uuid, type, server);
         if (profile == null) return NotFound(new { error = "profile not found" });
+        if (_skin.GetLocalSkin(uuid) != null) profile.SkinSource = "local";
         return Ok(profile);
     }
 
     [HttpGet("texture/{uuid}")]
     public async Task<IActionResult> GetTexture(string uuid, [FromQuery] string type = "Microsoft", [FromQuery] string? server = null)
     {
+        var local = _skin.GetLocalSkin(uuid);
+        if (local != null) return File(local, "image/png");
         if (type == "Offline")
             return File(SkinService.GetDefaultSkinBytes(), "image/png");
         var profile = await _skin.FetchProfile(uuid, type, server);
@@ -40,5 +43,23 @@ public class SkinController : ControllerBase
         var data = await _skin.GetHeadAvatar(uuid, type, server, size);
         if (data == null) return NotFound();
         return File(data, "image/png");
+    }
+
+    [HttpPost("upload/{uuid}")]
+    public async Task<IActionResult> Upload(string uuid, IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { error = "No file uploaded" });
+        using var ms = new MemoryStream();
+        await file.CopyToAsync(ms);
+        _skin.SaveSkin(uuid, ms.ToArray());
+        return Ok(new { message = "Skin uploaded" });
+    }
+
+    [HttpDelete("upload/{uuid}")]
+    public IActionResult Reset(string uuid)
+    {
+        _skin.DeleteSkin(uuid);
+        return Ok(new { message = "Skin reset to default" });
     }
 }

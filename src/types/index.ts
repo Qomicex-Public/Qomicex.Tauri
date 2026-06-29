@@ -357,4 +357,5 @@ export interface SkinProfile {
   skinUrl: string
   capeUrl: string | null
   model: string
+  skinSource?: string
 }

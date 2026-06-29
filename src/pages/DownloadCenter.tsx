@@ -7,7 +7,7 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
 import { getInstallProgress, pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
-import { getResourceDownloadProgress, cancelResourceDownload } from '../api/resource-download.ts'
+import { getResourceDownloadProgress, cancelResourceDownload, startResourceDownload } from '../api/resource-download.ts'
 import type { DownloadTask } from '../types/index.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
@@ -260,7 +260,17 @@ export default function DownloadCenter() {
                     )}
                     {task.status === 'failed' && (
                       <Tooltip content="重试">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={async () => {
+                          if (task.type === 'file' && task.taskId && task.instanceId) {
+                            try {
+                              const progress = await getResourceDownloadProgress(task.taskId)
+                              if (progress.url) {
+                                await startResourceDownload(task.instanceId, progress.url, progress.fileName, 'mods')
+                              }
+                            } catch {}
+                          }
+                          removeTask(task.id)
+                        }}>
                           <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
