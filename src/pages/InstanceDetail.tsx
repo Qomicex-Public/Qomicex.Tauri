@@ -10,11 +10,11 @@ import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
-import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
-import { getRuntimes, scanRuntimes, subscribe } from '../stores/javaStore.ts'
+import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress } from '../api/instance.ts'
+import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, JavaRuntime, Account, SystemInfo, FileEntry, ServerEntry, ServerState } from '../types/index.ts'
+import type { GameInstance, JavaRuntime, Account, SystemInfo, FileEntry, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
 import { getSaves, getScreenshots, getMods, getResourcePacks, getShaderPacks, getServers, deleteSave, copySave, deleteScreenshot, deleteMod, deleteResourcePack, deleteShaderPack, addServer, deleteServer, pingServer } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
@@ -483,6 +483,10 @@ export default function InstanceDetailPage() {
   const [fileData, setFileData] = useState<Record<string, FileEntry[] | ServerEntry[] | null>>({})
   const [fileLoading, setFileLoading] = useState<Record<string, boolean>>({})
   const [isDefault, setIsDefault] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [verifyResult, setVerifyResult] = useState<{ complete: boolean; missingFiles: MissingFile[] } | null>(null)
+  const [repairing, setRepairing] = useState(false)
+  const [repairProgress, setRepairProgress] = useState(0)
 
   useEffect(() => {
     const unsub = subscribe(() => setRuntimes([...getRuntimes()]))
@@ -506,7 +510,10 @@ export default function InstanceDetailPage() {
         setMemoryMode(sys ? 'auto' : 'custom')
       } catch { if (!cancelled) navigate('/instances') }
       if (!cancelled) setLoading(false)
-      scanRuntimes('quick').catch(() => {})
+      loadCustomRuntimes().catch(() => {})
+      if (!hasAnyRuntimes()) {
+        scanRuntimes('quick').catch(() => {})
+      }
     }
     load()
     return () => { cancelled = true }
@@ -521,7 +528,7 @@ export default function InstanceDetailPage() {
         gameVersion: form.gameVersion,
         loader: form.loader || undefined,
         loaderVersion: form.loaderVersion || undefined,
-        javaPath: form.javaPath || undefined,
+        javaPath: form.javaPath,
         maxMemory: form.maxMemory,
         gameDir: form.gameDir,
         accountName: form.accountName || undefined,
@@ -552,6 +559,53 @@ export default function InstanceDetailPage() {
       }
     } catch (e) {
       setLaunchError({ title: '启动失败', message: e instanceof Error ? e.message : String(e) })
+    }
+  }, [id])
+
+  const handleVerifyResources = useCallback(async () => {
+    if (!id) return
+    setVerifying(true)
+    setVerifyResult(null)
+    try {
+      const result = await verifyResources(id)
+      setVerifyResult({ complete: result.complete, missingFiles: result.missingFiles })
+      if (!result.complete && result.missingFiles.length > 0) {
+        await handleRepairResources()
+      }
+    } catch {
+      setVerifyResult({ complete: true, missingFiles: [] })
+    } finally {
+      setVerifying(false)
+    }
+  }, [id])
+
+  const handleRepairResources = useCallback(async () => {
+    if (!id) return
+    setRepairing(true)
+    setRepairProgress(0)
+    try {
+      await repairResources(id)
+      const poll = setInterval(async () => {
+        try {
+          const progress = await getInstallProgress(id)
+          if (progress.status === 'completed') {
+            setRepairProgress(100)
+            clearInterval(poll)
+            setRepairing(false)
+            setVerifyResult(null)
+          } else if (progress.status === 'failed') {
+            clearInterval(poll)
+            setRepairing(false)
+          } else {
+            setRepairProgress(Math.round(progress.progress))
+          }
+        } catch {
+          clearInterval(poll)
+          setRepairing(false)
+        }
+      }, 1000)
+    } catch {
+      setRepairing(false)
     }
   }, [id])
 
@@ -764,6 +818,33 @@ export default function InstanceDetailPage() {
                       <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                     ))}
                   </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>资源完整性</Label>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing}>
+                      <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', verifying && 'animate-spin')} />
+                      检查资源完整性
+                    </Button>
+                    {repairing && (
+                      <span className="text-sm text-muted-foreground">正在补全 {repairProgress}%</span>
+                    )}
+                  </div>
+                  {verifyResult && !verifyResult.complete && (
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                      <p className="text-sm font-medium text-destructive">缺失 {verifyResult.missingFiles.length} 个文件</p>
+                      <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
+                        {verifyResult.missingFiles.map((f, i) => (
+                          <li key={i} className="truncate">{f.name}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-2 text-xs text-muted-foreground">正在自动补全...</p>
+                    </div>
+                  )}
+                  {verifyResult && verifyResult.complete && (
+                    <p className="text-xs text-muted-foreground">资源完整</p>
+                  )}
                 </div>
 
                 <div className="space-y-2">
