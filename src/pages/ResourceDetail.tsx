@@ -21,11 +21,13 @@ import { Card, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions } from '../api/resource.ts'
-import { startResourceDownload } from '../api/resource-download.ts'
-import { getDefaultInstance } from '../api/instance.ts'
+import { startResourceDownload, downloadTo } from '../api/resource-download.ts'
+import { getInstance, getDefaultInstance } from '../api/instance.ts'
 import { addTask } from '../stores/downloadStore.ts'
-import type { ResourceDetail, ResourceFile, ResourceVersion, DownloadTask } from '../types/index.ts'
+import type { ResourceDetail, ResourceFile, ResourceVersion, DownloadTask, GameInstance } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
+import { save } from '@tauri-apps/plugin-dialog'
+import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 
 function formatDownloads(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -62,7 +64,7 @@ function LoaderBadge({ loader }: { loader: string }) {
 export default function ResourceDetailPage() {
   const { resourceId } = useParams()
   const [searchParams] = useSearchParams()
-  const { notify } = useMessageBox()
+  const { choose, notify } = useMessageBox()
   const source = searchParams.get('source') ?? 'modrinth'
   const category = searchParams.get('category') ?? 'mod'
   const keyword = searchParams.get('keyword') ?? ''
@@ -71,6 +73,7 @@ export default function ResourceDetailPage() {
 
   const [detail, setDetail] = useState<ResourceDetail | null>(null)
   const [versions, setVersions] = useState<ResourceVersion[]>([])
+  const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingVersions, setLoadingVersions] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -82,33 +85,46 @@ export default function ResourceDetailPage() {
   const [downloadsByVersion, setDownloadsByVersion] = useState<Record<string, ResourceFile[]>>({})
   const [loadingDownloadsFor, setLoadingDownloadsFor] = useState<string | null>(null)
   const [downloadingFor, setDownloadingFor] = useState<string | null>(null)
+  const [showInstallDialog, setShowInstallDialog] = useState(false)
 
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
     setDownloadingFor(versionId)
     try {
-      let instanceId = instanceIdParam
-      if (!instanceId) {
-        const def = await getDefaultInstance()
-        if (!def) { notify('未设置默认实例，请先在实例详情中固定一个实例', 'warning'); setDownloadingFor(null); return }
-        instanceId = def.id
+      const auto = await choose('是否自动下载到对应实例目录？', '自动下载', '选择位置', '下载方式')
+      if (auto) {
+        let instanceId = instanceIdParam
+        if (!instanceId) {
+          const def = await getDefaultInstance()
+          if (!def) { notify('未设置默认实例，请先在实例详情中固定一个实例', 'warning'); setDownloadingFor(null); return }
+          instanceId = def.id
+        }
+        const result = await startResourceDownload(instanceId, url, fileName, category)
+        const task: DownloadTask = {
+          id: `file-${result.taskId}`,
+          name: result.fileName,
+          type: 'file',
+          gameVersion: '',
+          status: 'queued',
+          progress: 0,
+          createdAt: new Date().toISOString(),
+          instanceId,
+          taskId: result.taskId,
+        }
+        addTask(task)
+        notify(`已加入下载列表：${result.fileName}`, 'success')
+      } else {
+        const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shaderpack: 'shaderpacks', save: 'saves' }
+        const subDir = folderMap[category] || ''
+        const defaultDir = instance?.gameDir ? instance.gameDir + (subDir ? `/${subDir}` : '') : undefined
+        const defaultPath = defaultDir ? `${defaultDir}/${fileName}` : fileName
+        const targetPath = await save({ defaultPath })
+        if (!targetPath) { setDownloadingFor(null); return }
+        await downloadTo(url, targetPath)
+        notify(`已下载到：${targetPath}`, 'success')
       }
-      const result = await startResourceDownload(instanceId, url, fileName, category)
-      const task: DownloadTask = {
-        id: `file-${result.taskId}`,
-        name: result.fileName,
-        type: 'file',
-        gameVersion: '',
-        status: 'queued',
-        progress: 0,
-        createdAt: new Date().toISOString(),
-        instanceId,
-        taskId: result.taskId,
-      }
-      addTask(task)
-      notify(`已加入下载列表：${result.fileName}`, 'success')
     } catch { notify('下载失败', 'error') }
     setDownloadingFor(null)
-  }, [instanceIdParam, category, notify])
+  }, [instanceIdParam, category, notify, choose, instance])
 
   useEffect(() => {
     if (!resourceId) return
@@ -124,25 +140,33 @@ export default function ResourceDetailPage() {
       setDownloadsByVersion({})
       setLoadingDownloadsFor(null)
       try {
-        const resourceDetail = await getResourceDetail(id, source)
+        const [resourceDetail, versionList] = await Promise.all([
+          getResourceDetail(id, source),
+          getResourceVersions(id, source),
+        ])
 
         if (cancelled) return
         setDetail(resourceDetail)
+        setVersions(versionList)
       } catch (e) {
         if (cancelled) return
         setError(e instanceof Error ? e.message : '加载资源详情失败')
       }
-      if (!cancelled) setLoading(false)
+      if (!cancelled) { setLoading(false); setLoadingVersions(false) }
 
-      try {
-        const resourceVersions = await getResourceVersions(id, source)
-        if (cancelled) return
-        setVersions(resourceVersions)
-      } catch (e) {
-        if (cancelled) return
-        setVersionsError(e instanceof Error ? e.message : '加载版本失败')
+      // fetch instance to default version/loader filters and download path
+      if (!cancelled) {
+        try {
+          const inst = instanceIdParam
+            ? await getInstance(instanceIdParam)
+            : await getDefaultInstance()
+          if (inst && !cancelled) {
+            setInstance(inst)
+            if (!urlGameVersion && inst.gameVersion) setSelectedGameVersion(inst.gameVersion)
+            if (!urlLoader && inst.loader) setSelectedLoader(inst.loader)
+          }
+        } catch { /* no instance available */ }
       }
-      if (!cancelled) setLoadingVersions(false)
     }
 
     load()
@@ -396,15 +420,10 @@ export default function ResourceDetailPage() {
                                 <Button
                                   size="sm"
                                   className="shrink-0"
-                                  disabled={!version.downloads[0]?.url || downloadingFor === version.id}
-                                  onClick={() => {
-                                    if (version.downloads[0]) {
-                                      handleDownload(version.id, version.downloads[0].url, version.downloads[0].filename)
-                                    }
-                                  }}
+                                  onClick={() => setShowInstallDialog(true)}
                                 >
-                                  <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faDownload} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
-                                  {downloadingFor === version.id ? '安装中...' : '安装'}
+                                  <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                  安装
                                 </Button>
                               )}
                             </div>
@@ -418,6 +437,17 @@ export default function ResourceDetailPage() {
             </Card>
           </div>
         </>
+      )}
+      {detail && (
+        <ResourceInstallDialog
+          open={showInstallDialog}
+          onClose={() => setShowInstallDialog(false)}
+          resourceId={detail.id}
+          resourceTitle={detail.title}
+          resourceIcon={detail.iconUrl}
+          source={detail.source}
+          category={category}
+        />
       )}
     </div>
   )

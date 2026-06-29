@@ -211,6 +211,15 @@ public class InstanceFilesController : ControllerBase
         }).ToList());
     }
 
+    [HttpGet("installed-names")]
+    public ActionResult<List<string>> GetInstalledNames(string instanceId, [FromQuery] string category = "mods")
+    {
+        var dir = GetPath(instanceId, category, out var _);
+        if (dir == null) return Ok(new List<string>());
+        if (!Directory.Exists(dir)) return Ok(new List<string>());
+        return Ok(Directory.GetFiles(dir).Select(Path.GetFileName).ToList());
+    }
+
     [HttpDelete("shaderpacks")]
     public IActionResult DeleteShaderPack(string instanceId, [FromQuery] string name)
     {

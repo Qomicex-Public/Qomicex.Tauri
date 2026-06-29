@@ -416,9 +416,9 @@ export default function Instances() {
     } catch {}
   }
 
-  const filtered = scannedLocal.filter((v) =>
-    !search || v.name.toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = scannedLocal
+    .filter((v, i, arr) => arr.findIndex(x => x.name === v.name) === i)
+    .filter((v) => !search || v.name.toLowerCase().includes(search.toLowerCase()))
 
   const filteredRemote = remoteVersions
     .filter((v) => remoteCategory === 'all' || v.type === remoteCategory)

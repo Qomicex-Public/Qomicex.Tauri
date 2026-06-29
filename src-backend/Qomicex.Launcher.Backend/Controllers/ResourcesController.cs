@@ -355,6 +355,102 @@ public class ResourcesController : ControllerBase
         };
     }
 
+    [HttpGet("{id}/dependencies")]
+    public async Task<IActionResult> GetDependencies(string id,
+        [FromQuery] string source = "modrinth",
+        [FromQuery] string? versionId = null,
+        [FromQuery] string? gameVersion = null,
+        [FromQuery] string? loader = null)
+    {
+        if (source != "modrinth")
+            return Ok(Array.Empty<object>()); // ponytail: only Modrinth deps for now
+
+        try
+        {
+            var visited = new HashSet<string>();
+            var result = new List<ResolvedDependency>();
+
+            await ResolveModrinthDependencies(id, gameVersion, loader, visited, result, 0);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, new { error = $"Modrinth API error: {ex.Message}" });
+        }
+    }
+
+    private async Task ResolveModrinthDependencies(string projectId, string? gameVersion, string? loader,
+        HashSet<string> visited, List<ResolvedDependency> result, int depth)
+    {
+        // ponytail: hard limit at depth 5 to prevent runaway recursion
+        if (depth > 5 || !visited.Add(projectId)) return;
+
+        List<ModrinthVersion>? versions;
+        try
+        {
+            versions = await _modrinth.GetFromJsonAsync<List<ModrinthVersion>>(
+                $"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(projectId)}/version");
+        }
+        catch
+        {
+            return;
+        }
+
+        if (versions == null || versions.Count == 0) return;
+
+        var best = versions
+            .Where(v => (gameVersion == null || v.GameVersions?.Contains(gameVersion) == true)
+                     && (loader == null || v.Loaders?.Contains(loader) == true))
+            .MaxBy(v => v.DatePublished);
+
+        // fallback to latest overall
+        best ??= versions.MaxBy(v => v.DatePublished);
+        if (best == null) return;
+
+        var primaryFile = best.Files?.FirstOrDefault(f => f.Url != null);
+        if (primaryFile == null) return;
+
+        // fetch project info for name/icon (skip root — depth 0 is the mod itself)
+        string name = projectId, iconUrl = "";
+        if (depth > 0)
+        {
+            try
+            {
+                var proj = await _modrinth.GetFromJsonAsync<ModrinthProject>(
+                    $"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(projectId)}");
+                if (proj != null)
+                {
+                    name = proj.Title ?? projectId;
+                    iconUrl = proj.IconUrl ?? "";
+                    var pt = proj.ProjectType ?? "mod";
+                    var cat = pt switch { "mod" => "mods", "resourcepack" => "resourcepacks", "shader" => "shaderpacks", _ => "mods" };
+
+                    result.Add(new ResolvedDependency
+                    {
+                        ProjectId = projectId,
+                        Name = name,
+                        IconUrl = iconUrl,
+                        VersionId = best.Id ?? "",
+                        VersionNumber = best.VersionNumber ?? "",
+                        DownloadUrl = primaryFile.Url!,
+                        FileName = primaryFile.Filename ?? Path.GetFileName(primaryFile.Url) ?? "unknown",
+                        Category = cat,
+                    });
+                }
+            }
+            catch { /* skip if project info fails */ }
+        }
+
+        // recurse into required dependencies
+        if (best.Dependencies != null)
+        {
+            var tasks = best.Dependencies
+                .Where(d => d.DependencyType == "required" && d.ProjectId != null)
+                .Select(d => ResolveModrinthDependencies(d.ProjectId!, gameVersion, loader, visited, result, depth + 1));
+            await Task.WhenAll(tasks);
+        }
+    }
+
     private async Task<IActionResult> GetFtbVersions(string id)
     {
         if (!int.TryParse(id, out var packId))
@@ -470,6 +566,13 @@ public class ResourcesController : ControllerBase
                 Downloads = v.Files?.Select(f => new ResourceFile
                 {
                     Url = f.Url ?? "", Filename = f.Filename ?? "", Size = f.Size,
+                }).ToList() ?? [],
+                Dependencies = v.Dependencies?.Select(d => new ModrinthDependency
+                {
+                    VersionId = d.VersionId,
+                    ProjectId = d.ProjectId,
+                    FileName = d.FileName,
+                    DependencyType = d.DependencyType,
                 }).ToList() ?? [],
                 DatePublished = v.DatePublished,
             }).ToList();
@@ -646,6 +749,7 @@ public class ResourceVersion
     public List<string> GameVersions { get; set; } = [];
     public List<string> Loaders { get; set; } = [];
     public List<ResourceFile> Downloads { get; set; } = [];
+    public List<ModrinthDependency> Dependencies { get; set; } = [];
     public DateTime DatePublished { get; set; }
 }
 
@@ -701,7 +805,28 @@ public class ModrinthVersion
     [JsonPropertyName("game_versions")] public List<string>? GameVersions { get; set; }
     [JsonPropertyName("loaders")] public List<string>? Loaders { get; set; }
     [JsonPropertyName("files")] public List<ModrinthFile>? Files { get; set; }
+    [JsonPropertyName("dependencies")] public List<ModrinthDependency>? Dependencies { get; set; }
     [JsonPropertyName("date_published")] public DateTime DatePublished { get; set; }
+}
+
+public class ModrinthDependency
+{
+    [JsonPropertyName("version_id")] public string? VersionId { get; set; }
+    [JsonPropertyName("project_id")] public string? ProjectId { get; set; }
+    [JsonPropertyName("file_name")] public string? FileName { get; set; }
+    [JsonPropertyName("dependency_type")] public string? DependencyType { get; set; }
+}
+
+public class ResolvedDependency
+{
+    public string ProjectId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string IconUrl { get; set; } = "";
+    public string VersionId { get; set; } = "";
+    public string VersionNumber { get; set; } = "";
+    public string DownloadUrl { get; set; } = "";
+    public string FileName { get; set; } = "";
+    public string Category { get; set; } = "mods";
 }
 
 public class ModrinthFile

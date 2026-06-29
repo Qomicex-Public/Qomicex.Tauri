@@ -54,3 +54,7 @@ export function deleteServer(instanceId: string, ip: string): Promise<void> {
 export function pingServer(instanceId: string, address: string): Promise<ServerState> {
   return get<ServerState>(`/instance/${instanceId}/files/server-ping?address=${encodeURIComponent(address)}`)
 }
+
+export function getInstalledFileNames(instanceId: string, category: string = 'mods'): Promise<string[]> {
+  return get<string[]>(`/instance/${instanceId}/files/installed-names?category=${encodeURIComponent(category)}`)
+}
