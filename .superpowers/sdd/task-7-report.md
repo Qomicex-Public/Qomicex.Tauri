@@ -29,6 +29,14 @@ Completed.
 - Confirmed polling clears on completion, failure, cancellation, and fetch error.
 - Confirmed Java runtime list refresh happens after a completed download.
 
+## Review Fixes
+
+- Added a derived `selectedVendor` in `src/pages/Settings.tsx` so the dialog reads vendor-dependent options from one source of truth.
+- Added a `useEffect` that resets `downloadVersion`, `downloadPlatform`, and `downloadArch` to the first valid options whenever the selected vendor changes.
+- Updated the dialog to render version/platform/architecture options from `selectedVendor` instead of repeatedly searching the vendor list inline.
+- Disabled the "开始下载" button when `selectedVendor` is missing, covering empty or failed catalog loads.
+- Guarded `handleStartJavaDownload()` to return early when no valid vendor is selected, preventing stale state from starting a download.
+
 ## Environment Note
 
 - `AGENTS.md` says npm commands should run from `D:\qomicex-launcher`, but that directory does not exist in this environment, so verification was run in the current workspace instead.

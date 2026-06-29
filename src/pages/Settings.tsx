@@ -78,6 +78,7 @@ export default function Settings() {
   const [downloadVersion, setDownloadVersion] = useState('17')
   const [downloadPlatform, setDownloadPlatform] = useState('windows')
   const [downloadArch, setDownloadArch] = useState('x64')
+  const selectedVendor = downloadVendors.find((vendor) => vendor.id === downloadVendor)
   const [removingPath, setRemovingPath] = useState<string | null>(null)
   const autoScanRef = useRef(false)
   const loadedRef = useRef(false)
@@ -244,6 +245,8 @@ export default function Settings() {
   }
 
   async function handleStartJavaDownload() {
+    if (!selectedVendor) return
+
     const task = await startJavaDownload({
       vendor: downloadVendor,
       version: parseInt(downloadVersion, 10),
@@ -283,6 +286,14 @@ export default function Settings() {
     }, 1000)
     return () => clearInterval(timer)
   }, [downloadTaskId, handleScan])
+
+  useEffect(() => {
+    if (!selectedVendor) return
+
+    setDownloadVersion(String(selectedVendor.versions[0] ?? 17))
+    setDownloadPlatform(selectedVendor.platforms[0] ?? 'windows')
+    setDownloadArch(selectedVendor.architectures[0] ?? 'x64')
+  }, [selectedVendor])
 
   async function handleDelete(path: string) {
     const name = runtimes.find((j) => j.path === path)?.name || ''
@@ -1008,7 +1019,7 @@ export default function Settings() {
               <div className="space-y-2">
                 <Label>Java 主版本</Label>
                 <Select value={downloadVersion} onChange={setDownloadVersion}>
-                  {(downloadVendors.find((v) => v.id === downloadVendor)?.versions ?? []).map((version) => (
+                  {(selectedVendor?.versions ?? []).map((version) => (
                     <SelectOption key={version} value={String(version)}>{version}</SelectOption>
                   ))}
                 </Select>
@@ -1016,7 +1027,7 @@ export default function Settings() {
               <div className="space-y-2">
                 <Label>平台</Label>
                 <Select value={downloadPlatform} onChange={setDownloadPlatform}>
-                  {(downloadVendors.find((v) => v.id === downloadVendor)?.platforms ?? []).map((platform) => (
+                  {(selectedVendor?.platforms ?? []).map((platform) => (
                     <SelectOption key={platform} value={platform}>{platform}</SelectOption>
                   ))}
                 </Select>
@@ -1024,7 +1035,7 @@ export default function Settings() {
               <div className="space-y-2">
                 <Label>架构</Label>
                 <Select value={downloadArch} onChange={setDownloadArch}>
-                  {(downloadVendors.find((v) => v.id === downloadVendor)?.architectures ?? []).map((arch) => (
+                  {(selectedVendor?.architectures ?? []).map((arch) => (
                     <SelectOption key={arch} value={arch}>{arch}</SelectOption>
                   ))}
                 </Select>
@@ -1051,7 +1062,7 @@ export default function Settings() {
               {downloadTaskId ? (
                 <Button variant="outline" onClick={handleCancelJavaDownload}>取消下载</Button>
               ) : (
-                <Button onClick={handleStartJavaDownload}>开始下载</Button>
+                <Button onClick={handleStartJavaDownload} disabled={!selectedVendor}>开始下载</Button>
               )}
             </DialogFooter>
           </Dialog>
