@@ -19,6 +19,41 @@ export interface JavaRuntime {
   discoveredBy?: string
 }
 
+export interface JavaDownloadVendorInfo {
+  id: string
+  name: string
+  platforms: string[]
+  architectures: string[]
+  versions: number[]
+}
+
+export interface JavaDownloadCatalogResponse {
+  vendors: JavaDownloadVendorInfo[]
+}
+
+export interface JavaDownloadStartRequest {
+  vendor: string
+  version: number
+  platform: string
+  architecture: string
+}
+
+export interface JavaDownloadStartResponse {
+  taskId: string
+  status: string
+  targetDir: string
+}
+
+export interface JavaDownloadProgressResponse {
+  taskId: string
+  status: string
+  progress: number
+  speed: number
+  fileName: string
+  targetDir: string
+  error: string | null
+}
+
 export interface LauncherRequest {
   version: string
   gameDir: string

@@ -1,5 +1,11 @@
 import { del, get, post } from './client.ts'
-import type { JavaRuntime } from '../types/index.ts'
+import type {
+  JavaRuntime,
+  JavaDownloadCatalogResponse,
+  JavaDownloadStartRequest,
+  JavaDownloadStartResponse,
+  JavaDownloadProgressResponse,
+} from '../types/index.ts'
 
 export type JavaSearchMode = 'quick' | 'deep'
 
@@ -29,4 +35,20 @@ export function getRecommendedJava(minecraftVersion: string, gameDir: string): P
 
 export function validateJavaPath(path: string): Promise<JavaRuntime> {
   return post<JavaRuntime>('/java/validate', { path })
+}
+
+export function getJavaDownloadCatalog(): Promise<JavaDownloadCatalogResponse> {
+  return get<JavaDownloadCatalogResponse>('/java/download/catalog')
+}
+
+export function startJavaDownload(body: JavaDownloadStartRequest): Promise<JavaDownloadStartResponse> {
+  return post<JavaDownloadStartResponse>('/java/download/start', body)
+}
+
+export function getJavaDownloadProgress(taskId: string): Promise<JavaDownloadProgressResponse> {
+  return get<JavaDownloadProgressResponse>(`/java/download/progress/${taskId}`)
+}
+
+export function cancelJavaDownload(taskId: string): Promise<void> {
+  return del<void>(`/java/download/${taskId}`)
 }
