@@ -249,7 +249,7 @@ export default function DownloadCenter() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    {isActive && task.type !== 'file' && task.status !== 'queued' && (
+                    {isActive && task.type !== 'file' && task.type !== 'java' && task.status !== 'queued' && (
                       <>
                         {task.status === 'paused' ? (
                           <Tooltip content="继续">
@@ -266,12 +266,12 @@ export default function DownloadCenter() {
                         )}
                         <Tooltip content="取消">
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
-                            if (task.status === 'queued') {
+                            if (task.type === 'java' && task.taskId) {
+                              cancelJavaDownload(task.taskId).then(() => removeTask(task.id))
+                            } else if (task.status === 'queued') {
                               removeTask(task.id)
                             } else if (task.type === 'batch' && task.batchTaskIds && task.batchTaskIds.length > 0) {
                               import('../api/resource-download.ts').then(m => m.cancelBatch(task.batchTaskIds!)).then(() => removeTask(task.id))
-                            } else if (task.type === 'java' && task.taskId) {
-                              cancelJavaDownload(task.taskId).then(() => removeTask(task.id))
                             } else if (task.type === 'file' && task.taskId) {
                               cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
                             } else if (task.instanceId) {
