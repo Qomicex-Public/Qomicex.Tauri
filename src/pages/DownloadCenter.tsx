@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer } from '@fortawesome/free-solid-svg-icons'
+import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer, faCoffee } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
 import { getInstallProgress, pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
 import { getResourceDownloadProgress, cancelResourceDownload } from '../api/resource-download.ts'
-import { getJavaDownloadProgress, cancelJavaDownload } from '../api/java.ts'
+import { getJavaDownloadProgress, cancelJavaDownload, pauseJavaDownload, resumeJavaDownload } from '../api/java.ts'
 import type { DownloadTask } from '../types/index.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
@@ -96,6 +96,7 @@ export default function DownloadCenter() {
             if (progress.status === 'completed') newStatus = 'completed'
             else if (progress.status === 'cancelled') newStatus = 'cancelled'
             else if (progress.status === 'failed') newStatus = 'failed'
+            else if (progress.status === 'paused') newStatus = 'paused'
             else if (progress.status === 'queued' || progress.status === 'resolving') newStatus = 'queued'
 
             updateTask(task.id, {
@@ -225,7 +226,7 @@ export default function DownloadCenter() {
                       task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : 'bg-primary/10'
                     )}>
                       <FontAwesomeIcon
-                        icon={task.type === 'resource' ? faBox : task.type === 'repair' ? faHammer : task.type === 'batch' ? faDownload : faCube}
+                          icon={task.type === 'java' ? faCoffee : task.type === 'resource' ? faBox : task.type === 'repair' ? faHammer : task.type === 'batch' ? faDownload : faCube}
                         className={cn(
                           'h-5 w-5',
                           task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-primary'
@@ -249,6 +250,40 @@ export default function DownloadCenter() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
+                    {isActive && task.type === 'java' && task.status !== 'queued' && (
+                      <>
+                        {task.status === 'paused' ? (
+                          <Tooltip content="继续">
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => task.taskId && resumeJavaDownload(task.taskId)}>
+                              <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
+                            </Button>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip content="暂停">
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-amber-400" onClick={() => task.taskId && pauseJavaDownload(task.taskId)}>
+                              <FontAwesomeIcon icon={faPause} className="h-3.5 w-3.5" />
+                            </Button>
+                          </Tooltip>
+                        )}
+                        <Tooltip content="取消">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
+                            if (task.type === 'java' && task.taskId) {
+                              cancelJavaDownload(task.taskId).then(() => removeTask(task.id))
+                            } else if (task.status === 'queued') {
+                              removeTask(task.id)
+                            } else if (task.type === 'batch' && task.batchTaskIds && task.batchTaskIds.length > 0) {
+                              import('../api/resource-download.ts').then(m => m.cancelBatch(task.batchTaskIds!)).then(() => removeTask(task.id))
+                            } else if (task.type === 'file' && task.taskId) {
+                              cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
+                            } else if (task.instanceId) {
+                              cancelInstall(task.instanceId).then(() => removeTask(task.id))
+                            }
+                          }}>
+                            <FontAwesomeIcon icon={faStop} className="h-3.5 w-3.5" />
+                          </Button>
+                        </Tooltip>
+                      </>
+                    )}
                     {isActive && task.type !== 'file' && task.type !== 'java' && task.status !== 'queued' && (
                       <>
                         {task.status === 'paused' ? (
