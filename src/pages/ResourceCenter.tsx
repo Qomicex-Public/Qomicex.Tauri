@@ -10,6 +10,7 @@ import { Badge } from '../components/ui/badge.tsx'
 import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Combobox } from '../components/ui/combobox.tsx'
 import { searchResources } from '../api/resource.ts'
+import { batchLookupChineseNames } from '../api/mcmod.ts'
 import type { ResourceItem } from '../types/index.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 
@@ -87,7 +88,7 @@ function buildDetailUrl(item: ResourceItem, category: string, keyword: string, s
 }
 
 function ResourceCard({
-  item, category, keyword, sort, gameVersion, loader, instanceId, onInstall,
+  item, category, keyword, sort, gameVersion, loader, instanceId, onInstall, cnName,
 }: {
   item: ResourceItem
   category: string
@@ -97,6 +98,7 @@ function ResourceCard({
   loader?: string
   instanceId?: string
   onInstall: (item: ResourceItem) => void
+  cnName?: string | null
 }) {
   return (
     <Card className="group overflow-hidden border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5">
@@ -112,7 +114,7 @@ function ResourceCard({
           <div className="min-w-0 flex-1 space-y-3">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base font-semibold text-foreground">{item.title}</h3>
+                <h3 className="text-base font-semibold text-foreground">{cnName || item.title}</h3>
                 <Badge variant="secondary" className="rounded-full px-2.5 py-0.5">{getSourceLabel(item.source)}</Badge>
                 {item.latestVersion && <Badge variant="outline" className="rounded-full px-2.5 py-0.5">{item.latestVersion}</Badge>}
               </div>
@@ -177,6 +179,7 @@ export default function ResourceCenter() {
   const [initialLoading, setInitialLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [installDialogItem, setInstallDialogItem] = useState<ResourceItem | null>(null)
+  const [cnNames, setCnNames] = useState<Record<string, string | null>>({})
   const pageSize = 20
 
   useEffect(() => {
@@ -207,6 +210,7 @@ export default function ResourceCenter() {
       setItems((prev) => append ? [...prev, ...res.items] : res.items)
       setTotal(res.total)
       setPage(pageNum)
+      batchLookupChineseNames(res.items.map(i => i.title)).then(m => setCnNames(prev => ({ ...prev, ...m })))
     } catch (e) {
       const msg = e instanceof Error ? e.message : '搜索失败'
       if (msg.includes('404') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
@@ -389,7 +393,7 @@ export default function ResourceCenter() {
             </div>
             <div className="flex flex-col gap-3">
               {items.map((item) => (
-                <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} onInstall={handleInstall} />
+                <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} onInstall={handleInstall} cnName={cnNames[item.title]} />
               ))}
             </div>
             {items.length < total ? (

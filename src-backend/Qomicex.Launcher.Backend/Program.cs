@@ -38,6 +38,7 @@ builder.Services.AddSingleton<InstanceInstallService>();
 builder.Services.AddSingleton<ResourceDownloadService>();
 builder.Services.AddSingleton<JavaRuntimeStore>();
 builder.Services.AddSingleton<SkinService>();
+builder.Services.AddSingleton<McmodService>();
 builder.Services.AddSingleton(_ => new AccountService(AppContext.BaseDirectory));
 builder.Services.AddTransient<MsAccount>(_ => new MsAccount { ClientId = builder.Configuration["Microsoft:ClientId"] ?? string.Empty });
 
