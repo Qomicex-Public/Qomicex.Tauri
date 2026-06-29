@@ -107,7 +107,14 @@ public class AccountController : ControllerBase
     public async Task<IActionResult> MicrosoftOAuth()
     {
         var oauthResponse = await _msAccount.OAuthLogin();
-        return Ok(oauthResponse);
+        return Ok(new
+        {
+            deviceCode = oauthResponse.DeviceCode,
+            userCode = oauthResponse.UserCode,
+            verificationUri = oauthResponse.VerificationUri,
+            expiresIn = oauthResponse.ExpiresIn,
+            interval = oauthResponse.Interval,
+        });
     }
 
     [HttpPost("microsoft/poll")]
@@ -128,18 +135,31 @@ public class AccountController : ControllerBase
     [HttpPost("microsoft/info")]
     public async Task<IActionResult> MicrosoftUserInfo([FromBody] MicrosoftUserInfoRequest request)
     {
-        var account = await _msAccount.GetUserInfo(request.AccessToken, request.RefreshToken);
-        var stored = new StoredAccount
+        Exception? lastEx = null;
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            Name = account.Name,
-            Uuid = account.Uuid,
-            Token = account.Token,
-            AccessToken = account.AccessToken,
-            RefreshToken = account.RefreshToken,
-            LoginMethod = "Microsoft",
-        };
-        await _accountService.SaveAccountAsync(stored);
-        return Ok(stored);
+            try
+            {
+                var account = await _msAccount.GetUserInfo(request.AccessToken, request.RefreshToken);
+                var stored = new StoredAccount
+                {
+                    Name = account.Name,
+                    Uuid = account.Uuid,
+                    Token = account.Token,
+                    AccessToken = account.AccessToken,
+                    RefreshToken = account.RefreshToken,
+                    LoginMethod = "Microsoft",
+                };
+                await _accountService.SaveAccountAsync(stored);
+                return Ok(stored);
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                if (attempt < 2) await Task.Delay(3000 * (attempt + 1));
+            }
+        }
+        throw lastEx!;
     }
 
     [HttpPost("yggdrasil/login")]
