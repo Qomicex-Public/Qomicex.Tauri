@@ -1,5 +1,5 @@
 import { get, post, put, del } from './client.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, InstallProgressResponse } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
@@ -59,4 +59,12 @@ export async function cancelInstall(id: string): Promise<void> {
 
 export async function repairInstance(id: string, threads?: number): Promise<void> {
   await post(`/instance/${id}/repair${threads ? `?threads=${threads}` : ''}`)
+}
+
+export async function verifyResources(id: string): Promise<VerifyResourcesResult> {
+  return get<VerifyResourcesResult>(`/instance/${id}/verify-resources`)
+}
+
+export async function repairResources(id: string): Promise<RepairResourcesResult> {
+  return post<RepairResourcesResult>(`/instance/${id}/repair-resources`)
 }

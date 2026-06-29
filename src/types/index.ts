@@ -187,6 +187,24 @@ export interface LoaderAddonInfo {
   downloads: number
 }
 
+export interface MissingFile {
+  name: string
+  path: string
+  url: string
+  sha1: string
+}
+
+export interface VerifyResourcesResult {
+  complete: boolean
+  totalCount: number
+  missingFiles: MissingFile[]
+}
+
+export interface RepairResourcesResult {
+  status: string
+  missingCount: number
+}
+
 export interface InstallProgressResponse {
   instanceId: string
   status: string
