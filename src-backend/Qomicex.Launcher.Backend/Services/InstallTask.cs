@@ -201,6 +201,21 @@ public class InstallTask
                     else
                         SetState("downloading-loader-libs", 85);
 
+                    // Stage 7b: Core - ensure main jar for merged version (85-95%)
+                    _cts.Token.ThrowIfCancellationRequested();
+                    SetState("downloading-mainjar", 85, $"{_versionId}.jar");
+                    var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
+                    if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
+                    {
+                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                        _downloadManager.AddFileToTask(jarTid, loaderMainJar.Url, loaderMainJar.Path);
+                        await RunDownloadManagerStage(jarTid, 85, 95);
+                    }
+                    else
+                    {
+                        SetState("downloading-mainjar", 95);
+                    }
+
                     TryDelete(installerPath);
                 }
                 else
