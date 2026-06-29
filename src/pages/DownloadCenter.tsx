@@ -111,7 +111,13 @@ export default function DownloadCenter() {
         try {
           const progress = await getInstallProgress(task.instanceId)
 
-          if (progress.status === 'not-started') continue
+          if (progress.status === 'not-started') {
+            // ponytail: 30s timeout for tasks stuck in queued (backend crash / never processed)
+            if (task.status === 'queued' && Date.now() - new Date(task.createdAt).getTime() > 30000) {
+              updateTask(task.id, { status: 'failed', error: '安装超时：后端未响应' })
+            }
+            continue
+          }
 
           let newStatus: DownloadTask['status'] = 'downloading'
           if (progress.status === 'completed') newStatus = 'completed'
@@ -226,7 +232,7 @@ export default function DownloadCenter() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    {isActive && task.type !== 'file' && task.status !== 'queued' && (
+                    {isActive && task.type !== 'file' && (
                       <>
                         {task.status === 'paused' ? (
                           <Tooltip content="继续">
@@ -275,7 +281,7 @@ export default function DownloadCenter() {
                         </Button>
                       </Tooltip>
                     )}
-                    {(task.status === 'completed' || task.status === 'failed') && (
+                    {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'queued') && (
                       <Tooltip content="移除">
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => removeTask(task.id)}>
                           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
