@@ -29,7 +29,46 @@ public class JavaDownloadService
 
     public Task<JavaDownloadCatalogResponse> GetCatalogAsync()
     {
-        throw new NotImplementedException();
+        var response = new JavaDownloadCatalogResponse
+        {
+            Vendors = new List<JavaDownloadVendorInfo>
+            {
+                new()
+                {
+                    Id = "temurin",
+                    Name = "Temurin",
+                    Platforms = new() { "windows", "linux", "macos" },
+                    Architectures = new() { "x64", "arm64", "x86" },
+                    Versions = new() { 8, 11, 17, 21 },
+                },
+                new()
+                {
+                    Id = "zulu",
+                    Name = "Zulu",
+                    Platforms = new() { "windows", "linux", "macos" },
+                    Architectures = new() { "x64", "arm64", "x86" },
+                    Versions = new() { 8, 11, 17, 21 },
+                },
+                new()
+                {
+                    Id = "microsoft-jdk",
+                    Name = "Microsoft JDK",
+                    Platforms = new() { "windows", "linux", "macos" },
+                    Architectures = new() { "x64", "arm64" },
+                    Versions = new() { 11, 17, 21 },
+                },
+                new()
+                {
+                    Id = "oracle",
+                    Name = "Oracle",
+                    Platforms = new() { "windows", "linux", "macos" },
+                    Architectures = new() { "x64", "arm64" },
+                    Versions = new() { 8, 17, 21 },
+                },
+            }
+        };
+
+        return Task.FromResult(response);
     }
 
     public Task<JavaDownloadStartResponse> StartAsync(JavaDownloadStartRequest request)
