@@ -23,7 +23,9 @@ public class JavaDownloadService
         public string FileName { get; set; } = string.Empty;
         public string TargetDir { get; set; } = string.Empty;
         public string? Error { get; set; }
-        public CancellationTokenSource Cancellation { get; } = new();
+        public CancellationTokenSource Cancellation { get; set; } = new();
+        public JavaDownloadStartRequest? PendingRequest { get; set; }
+        public string DownloadUrl { get; set; } = string.Empty;
     }
 
     public JavaDownloadService(JavaRuntimeStore javaRuntimeStore)
@@ -116,6 +118,29 @@ public class JavaDownloadService
         {
             state.Cancellation.Cancel();
             state.Status = "cancelled";
+            return true;
+        }
+        return false;
+    }
+
+    public bool Pause(string taskId)
+    {
+        if (_tasks.TryGetValue(taskId, out var state) && state.Status == "downloading")
+        {
+            state.Status = "paused";
+            state.Cancellation.Cancel();
+            return true;
+        }
+        return false;
+    }
+
+    public bool Resume(string taskId)
+    {
+        if (_tasks.TryGetValue(taskId, out var state) && (state.Status == "paused" || state.Status == "queued"))
+        {
+            if (state.PendingRequest == null) return false;
+            state.Cancellation = new CancellationTokenSource();
+            _ = Task.Run(() => RunTaskAsync(state, state.PendingRequest, resumeFromDownload: state.Status == "paused"));
             return true;
         }
         return false;
@@ -231,22 +256,27 @@ public class JavaDownloadService
         throw ApiException.NotFound("未找到可用的 Java 下载包", "JAVA_DOWNLOAD_PACKAGE_NOT_FOUND");
     }
 
-    private async Task RunTaskAsync(JavaDownloadTaskState state, JavaDownloadStartRequest request)
+    private async Task RunTaskAsync(JavaDownloadTaskState state, JavaDownloadStartRequest request, bool resumeFromDownload = false)
     {
+        state.PendingRequest = request;
         try
         {
-            state.Status = "resolving";
-            var (url, fileName) = await ResolvePackageAsync(request);
-            state.FileName = fileName;
+            if (!resumeFromDownload)
+            {
+                state.Status = "resolving";
+                var (url, fileName) = await ResolvePackageAsync(request);
+                state.DownloadUrl = url;
+                state.FileName = fileName;
+            }
 
             state.Status = "downloading";
             var tmpDir = Path.Combine(GetBaseDir(), ".tmp", state.TaskId);
             Directory.CreateDirectory(tmpDir);
-            var archivePath = Path.Combine(tmpDir, fileName);
+            var archivePath = Path.Combine(tmpDir, state.FileName);
 
             using var manager = new DownloadManager(intervalMs: 500);
             var tid = manager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
-            manager.AddFileToTask(tid, url, archivePath);
+            manager.AddFileToTask(tid, state.DownloadUrl, archivePath);
             manager.OnTaskProgressUpdated += (_, info) =>
             {
                 state.Progress = info.Progress;
@@ -267,7 +297,7 @@ public class JavaDownloadService
         }
         catch (OperationCanceledException)
         {
-            state.Status = "cancelled";
+            state.Status = state.Status == "paused" ? "paused" : "cancelled";
         }
         catch (ApiException ex)
         {
