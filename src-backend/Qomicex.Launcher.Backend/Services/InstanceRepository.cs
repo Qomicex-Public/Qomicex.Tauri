@@ -30,7 +30,19 @@ public class InstanceRepository : IInstanceRepository
             if (File.Exists(_filePath))
             {
                 var json = File.ReadAllText(_filePath);
-                return JsonSerializer.Deserialize<List<GameInstance>>(json, JsonOptions) ?? [];
+                var instances = JsonSerializer.Deserialize<List<GameInstance>>(json, JsonOptions) ?? [];
+
+                var migratedPath = _filePath + ".migrated-vi";
+                if (!File.Exists(migratedPath))
+                {
+                    foreach (var inst in instances)
+                        inst.VersionIsolation = null;
+                    var migratedJson = JsonSerializer.Serialize(instances, JsonOptions);
+                    File.WriteAllText(_filePath, migratedJson);
+                    File.WriteAllText(migratedPath, "done");
+                }
+
+                return instances;
             }
         }
         catch { }

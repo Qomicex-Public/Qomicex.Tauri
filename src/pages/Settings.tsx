@@ -16,7 +16,7 @@ import { cn } from '../lib/utils.ts'
 import type { SystemInfo } from '../types/index.ts'
 import { generateRoomCode, validateRoomCode } from '../api/roomCode.ts'
 import { addCustomJavaRuntime, removeCustomJavaRuntime } from '../api/java.ts'
-import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, subscribe } from '../stores/javaStore.ts'
+import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
@@ -134,7 +134,10 @@ export default function Settings() {
   useEffect(() => {
     if (category === 'java' && !autoScanRef.current) {
       autoScanRef.current = true
-      handleScan('quick')
+      loadCustomRuntimes().catch(() => {})
+      if (getRuntimes().length === 0) {
+        handleScan('quick')
+      }
     }
   }, [category])
 

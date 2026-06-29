@@ -125,7 +125,7 @@ export interface GameInstance {
   lastPlayed: string | null
   playTime: number
   isHidden: boolean
-  versionIsolation: boolean
+  versionIsolation: boolean | null
   isDefault: boolean
   icon: string | null
 }
@@ -135,14 +135,14 @@ export interface CreateInstanceRequest {
   gameVersion: string
   loader?: string
   loaderVersion?: string
-  javaPath?: string
+  javaPath?: string | null
   maxMemory: number
   gameDir: string
   accountName?: string
   accountUuid?: string
   accessToken?: string
   jvmArgs?: string
-  versionIsolation?: boolean
+  versionIsolation?: boolean | null
   icon?: string
 }
 

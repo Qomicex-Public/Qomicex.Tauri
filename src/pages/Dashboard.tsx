@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlay, faRotate, faChevronDown, faUser, faCheck, faMemory, faCube } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
-import { getRuntimes, scanRuntimes, subscribe } from '../stores/javaStore.ts'
+import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getDefaultInstance, launchInstance } from '../api/instance.ts'
 import { getAccounts, getDefaultAccount, setDefaultAccount } from '../api/account.ts'
 import type { GameInstance, Account, JavaRuntime } from '../types/index.ts'
@@ -41,7 +41,10 @@ export default function Dashboard() {
       setDefaultInstance(inst)
       setDefaultAccountState(acc)
     })
-    scanRuntimes('quick').catch(() => {})
+    loadCustomRuntimes().catch(() => {})
+    if (!hasAnyRuntimes()) {
+      scanRuntimes('quick').catch(() => {})
+    }
   }, [])
 
   useEffect(() => {

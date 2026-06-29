@@ -173,7 +173,10 @@ public class InstanceController : ControllerBase
         if (body.TryGetProperty("accountUuid", out var auProp)) existing.AccountUuid = auProp.GetString();
         if (body.TryGetProperty("accessToken", out var atProp)) existing.AccessToken = atProp.GetString();
         if (body.TryGetProperty("jvmArgs", out var jaProp)) existing.JvmArgs = jaProp.GetString();
-        if (body.TryGetProperty("versionIsolation", out var viProp)) existing.VersionIsolation = viProp.GetBoolean();
+        if (body.TryGetProperty("versionIsolation", out var viProp))
+        {
+            existing.VersionIsolation = viProp.ValueKind == System.Text.Json.JsonValueKind.Null ? null : viProp.GetBoolean();
+        }
         if (body.TryGetProperty("icon", out var iconProp)) existing.Icon = iconProp.GetString();
 
         var updated = _repository.Update(id, existing);
@@ -206,7 +209,7 @@ public class InstanceController : ControllerBase
 
         var versionId = instance.Name;
         var resourceHelper = new LocalResourceHelper();
-        var missFiles = await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir);
+        var missFiles = FilterMissFiles(await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir));
 
         var result = new VerifyResourcesResult
         {
@@ -232,7 +235,7 @@ public class InstanceController : ControllerBase
 
         var versionId = instance.Name;
         var resourceHelper = new LocalResourceHelper();
-        var missFiles = await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir);
+        var missFiles = FilterMissFiles(await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir));
 
         if (missFiles.Count == 0)
         {
@@ -241,6 +244,32 @@ public class InstanceController : ControllerBase
 
         _installService.StartRepairResources(id, instance.GameDir, missFiles);
         return Ok(new { status = "repairing", missingCount = missFiles.Count });
+    }
+
+    private static List<LocalResourceHelper.MissFileData> FilterMissFiles(List<LocalResourceHelper.MissFileData> raw)
+    {
+        var comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        return raw
+            .Where(f => !string.IsNullOrEmpty(f.Path) && !string.IsNullOrEmpty(f.Url))
+            .DistinctBy(f => f.Path, comparer)
+            .ToList();
+    }
+
+    private static bool GetGlobalVersionIsolation()
+    {
+        try
+        {
+            var settingsPath = Path.Combine(AppContext.BaseDirectory, "QML", "settings.json");
+            if (!System.IO.File.Exists(settingsPath)) return true;
+            var json = System.IO.File.ReadAllText(settingsPath);
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("versionIsolation", out var prop) && prop.ValueKind == System.Text.Json.JsonValueKind.False)
+                return false;
+            return true;
+        }
+        catch { return true; }
     }
 
     [HttpPost("{id}/launch")]
@@ -252,6 +281,7 @@ public class InstanceController : ControllerBase
         try
         {
             var versionId = instance.Name;
+            var effectiveIsolation = instance.VersionIsolation ?? GetGlobalVersionIsolation();
 
             var launcher = new Qomicex.Core.Modules.Launcher.Launcher();
             var param = new Qomicex.Core.Modules.Launcher.Launcher.LauncherParam
@@ -259,7 +289,7 @@ public class InstanceController : ControllerBase
                 Version = versionId,
                 MaxMemory = instance.MaxMemory.ToString(),
                 AdditionalParam = instance.JvmArgs ?? "",
-                DevideVersion = instance.VersionIsolation,
+                DevideVersion = effectiveIsolation,
                 GameDir = instance.GameDir,
                 LauncherName = "qomicex",
             };
@@ -301,8 +331,9 @@ public class InstanceController : ControllerBase
             }
 
             _logger.LogInformation(
-                "[Launch] 实例={Name} 版本={VersionId} GameDir={GameDir}",
-                instance.Name, versionId, instance.GameDir);
+                "[Launch] 实例={Name} 版本={VersionId} GameDir={GameDir} 版本隔离={VersionIsolation}({IsolationSource})",
+                instance.Name, versionId, instance.GameDir, effectiveIsolation,
+                instance.VersionIsolation.HasValue ? "实例设置" : "全局设置");
             _logger.LogInformation(
                 "[Launch] Java: path={JavaPath} versionId={VersionId}",
                 javaPath, param.Java.VersionID);
@@ -327,6 +358,10 @@ public class InstanceController : ControllerBase
             }
 
             var args = launcher.SelectParam(param, param.LauncherName);
+
+            _logger.LogInformation(
+                "[Launch] 完整启动命令: {JavaPath} {Args}",
+                javaPath, args);
 
             var versionPath = Path.Combine(instance.GameDir, "versions", versionId);
             var jsonPath = Path.Combine(versionPath, $"{versionId}.json");

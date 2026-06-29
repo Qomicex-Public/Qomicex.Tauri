@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faFile, faImage, faGlobe, faFolder, faCopy, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi } from '@fortawesome/free-solid-svg-icons'
@@ -11,6 +11,7 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
 import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress } from '../api/instance.ts'
+import { openPath } from '@tauri-apps/plugin-opener'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
@@ -519,29 +520,38 @@ export default function InstanceDetailPage() {
     return () => { cancelled = true }
   }, [id, navigate])
 
-  const handleSave = useCallback(async () => {
-    if (!form || !id) return
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const doSave = useCallback(async (formToSave: GameInstance) => {
+    if (!id) return
     setSaving(true)
     try {
-      const updated = await updateInstance(id!, {
-        name: form.name,
-        gameVersion: form.gameVersion,
-        loader: form.loader || undefined,
-        loaderVersion: form.loaderVersion || undefined,
-        javaPath: form.javaPath,
-        maxMemory: form.maxMemory,
-        gameDir: form.gameDir,
-        accountName: form.accountName || undefined,
-        accountUuid: form.accountUuid || undefined,
-        accessToken: form.accessToken || undefined,
-        jvmArgs: form.jvmArgs || undefined,
-        versionIsolation: form.versionIsolation,
-        icon: form.icon || undefined,
+      const updated = await updateInstance(id, {
+        name: formToSave.name,
+        gameVersion: formToSave.gameVersion,
+        loader: formToSave.loader || undefined,
+        loaderVersion: formToSave.loaderVersion || undefined,
+        javaPath: formToSave.javaPath,
+        maxMemory: formToSave.maxMemory,
+        gameDir: formToSave.gameDir,
+        accountName: formToSave.accountName || undefined,
+        accountUuid: formToSave.accountUuid || undefined,
+        accessToken: formToSave.accessToken || undefined,
+        jvmArgs: formToSave.jvmArgs || undefined,
+        versionIsolation: formToSave.versionIsolation,
+        icon: formToSave.icon || undefined,
       })
       setInstance(updated)
     } catch {}
     setSaving(false)
-  }, [form, id])
+  }, [id])
+
+  const debouncedSave = useCallback((formToSave: GameInstance) => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => doSave(formToSave), 800)
+  }, [doSave])
+
+  useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
   const [launchError, setLaunchError] = useState<{ title: string; message: string; detail?: string | null; args?: string | null } | null>(null)
 
@@ -655,7 +665,12 @@ export default function InstanceDetailPage() {
   }, [id, tab, loadFiles])
 
   const update = useCallback((field: string, value: unknown) => {
-    setForm((f) => f ? { ...f, [field]: value } : f)
+    setForm((f) => {
+      if (!f) return f
+      const next = { ...f, [field]: value }
+      debouncedSave(next)
+      return next
+    })
   }, [])
 
   if (loading) {
@@ -702,7 +717,7 @@ export default function InstanceDetailPage() {
               <FontAwesomeIcon icon={faStar} className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />
             </Button>
           </Tooltip>
-          <Button variant="outline" size="icon" onClick={() => {/* open folder */}}>
+          <Button variant="outline" size="icon" onClick={() => openPath(instance.gameDir).catch(() => {})}>
             <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
           </Button>
         </div>
@@ -765,7 +780,13 @@ export default function InstanceDetailPage() {
                     <Button size="sm" variant="outline" onClick={() => setTab('settings')} className="gap-2">
                       <FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" />实例设置
                     </Button>
-                    <Button size="sm" variant="outline" className="gap-2">
+                    <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing} className="gap-2">
+                      <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', verifying && 'animate-spin')} />检查资源完整性
+                    </Button>
+                    {repairing && (
+                      <span className="self-center text-xs text-muted-foreground">正在补全 {repairProgress}%</span>
+                    )}
+                    <Button size="sm" variant="outline" className="gap-2" onClick={() => openPath(instance.gameDir).catch(() => {})}>
                       <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开游戏目录
                     </Button>
                     <Button size="sm" variant="outline" className="gap-2 text-destructive hover:text-destructive" onClick={handleDelete}>
@@ -836,7 +857,7 @@ export default function InstanceDetailPage() {
                       <p className="text-sm font-medium text-destructive">缺失 {verifyResult.missingFiles.length} 个文件</p>
                       <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
                         {verifyResult.missingFiles.map((f, i) => (
-                          <li key={i} className="truncate">{f.name}</li>
+                          <li key={i} className="truncate" title={f.url}>{f.name} — {f.url}</li>
                         ))}
                       </ul>
                       <p className="mt-2 text-xs text-muted-foreground">正在自动补全...</p>
@@ -845,6 +866,19 @@ export default function InstanceDetailPage() {
                   {verifyResult && verifyResult.complete && (
                     <p className="text-xs text-muted-foreground">资源完整</p>
                   )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>版本隔离</Label>
+                  <Select
+                    value={form.versionIsolation === null ? 'global' : form.versionIsolation ? 'on' : 'off'}
+                    onChange={(v) => update('versionIsolation', v === 'global' ? null : v === 'on')}
+                  >
+                    <SelectOption value="global">跟随全局设置</SelectOption>
+                    <SelectOption value="on">开启</SelectOption>
+                    <SelectOption value="off">关闭</SelectOption>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">每个版本使用独立的 mods/config/saves 目录</p>
                 </div>
 
                 <div className="space-y-2">
@@ -927,12 +961,11 @@ export default function InstanceDetailPage() {
                   </Select>
                 </div>
 
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button variant="outline" onClick={() => setForm({ ...instance })}>取消</Button>
-                  <Button onClick={handleSave} disabled={saving}>
-                    {saving ? '保存中...' : '保存设置'}
-                  </Button>
-                </div>
+                {saving && (
+                  <div className="flex justify-end pt-2">
+                    <span className="text-xs text-muted-foreground">保存中...</span>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

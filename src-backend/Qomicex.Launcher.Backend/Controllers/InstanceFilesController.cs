@@ -274,7 +274,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return (null, null);
         var gameDir = ResolveGameDir(instanceId);
         if (gameDir == null) return (null, null);
-        var versionSpecific = inst.VersionIsolation || Directory.Exists(Path.Combine(gameDir, "versions"));
+        var versionSpecific = (inst.VersionIsolation ?? true) || Directory.Exists(Path.Combine(gameDir, "versions"));
         var versionId = !string.IsNullOrEmpty(inst.Loader) && !string.IsNullOrEmpty(inst.LoaderVersion)
             ? $"{inst.GameVersion}-{inst.Loader}-{inst.LoaderVersion}"
             : inst.GameVersion;

@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
+import { openPath } from '@tauri-apps/plugin-opener'
 import { Button } from '../components/ui/button.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
@@ -139,6 +140,22 @@ export default function Instances() {
     try {
       const versions = await scanVersions(dir)
       setScannedLocal(versions)
+      const instances = await getInstances()
+      setBackedInstances(instances)
+      const existingNames = new Set(instances.filter((i) => i.gameDir === dir).map((i) => i.name))
+      const toCreate = versions.filter((v) => !existingNames.has(v.name))
+      if (toCreate.length > 0) {
+        const created = await Promise.all(toCreate.map((v) => createInstance({
+          name: v.name,
+          gameVersion: v.gameVersion,
+          loader: v.loaders.find((l) => l.type)?.type,
+          loaderVersion: v.loaders.find((l) => l.version)?.version,
+          gameDir: dir,
+          maxMemory: 4096,
+        }).catch(() => null)))
+        const valid = created.filter((c): c is GameInstance => c !== null)
+        if (valid.length > 0) setBackedInstances((prev) => [...prev, ...valid])
+      }
     } catch { setScannedLocal([]) } finally { setScanning(false) }
   }, [])
 
@@ -330,16 +347,15 @@ export default function Instances() {
     try {
       let inst = getInstanceForVersion(v)
       if (!inst) {
-        const req: CreateInstanceRequest = {
+        inst = await createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
           loader: v.loaders.find(l => l.type)?.type,
           loaderVersion: v.loaders.find(l => l.version)?.version,
           gameDir: currentDir!,
           maxMemory: 4096,
-          versionIsolation: false,
-        }
-        inst = await createInstance(req)
+        })
+        setBackedInstances((prev) => [...prev, inst!])
       }
       const result = await launchInstance(inst.id)
       if (!result.success) {
@@ -366,7 +382,6 @@ export default function Instances() {
         loaderVersion: v.loaders.find((l) => l.version)?.version,
         maxMemory: 4096,
         gameDir: currentDir,
-        versionIsolation: loadSettings().versionIsolation !== false,
       })
       setBackedInstances((prev) => [...prev, created])
       navigate(`/instances/${created.id}`)
@@ -375,14 +390,28 @@ export default function Instances() {
     }
   }
 
-  async function handleToggleDefault(instanceId: string) {
+  async function handleToggleDefault(v: ScannedVersion) {
+    let inst = getInstanceForVersion(v)
+    if (!inst) {
+      try {
+        inst = await createInstance({
+          name: v.name,
+          gameVersion: v.gameVersion,
+          loader: v.loaders.find((l) => l.type)?.type,
+          loaderVersion: v.loaders.find((l) => l.version)?.version,
+          gameDir: currentDir!,
+          maxMemory: 4096,
+        })
+        setBackedInstances((prev) => [...prev, inst!])
+      } catch { return }
+    }
     try {
-      if (defaultInstanceId === instanceId) {
-        await clearDefaultInstance(instanceId)
+      if (defaultInstanceId === inst.id) {
+        await clearDefaultInstance(inst.id)
         setDefaultInstanceId(null)
       } else {
-        await setDefaultInstance(instanceId)
-        setDefaultInstanceId(instanceId)
+        await setDefaultInstance(inst.id)
+        setDefaultInstanceId(inst.id)
       }
     } catch {}
   }
@@ -659,14 +688,7 @@ export default function Instances() {
   }
 
   function getInstanceForVersion(v: ScannedVersion): GameInstance | undefined {
-    return backedInstances.find((i) => {
-      if (i.gameDir !== currentDir) return false
-      // Build the expected versionId the same way the backend does
-      const expectedId = i.loader && i.loaderVersion
-        ? `${i.gameVersion}-${i.loader}-${i.loaderVersion}`
-        : i.gameVersion
-      return expectedId === v.gameVersion || expectedId === v.name
-    })
+    return backedInstances.find((i) => i.gameDir === currentDir && i.name === v.name)
   }
 
   async function handleRepairStart() {
@@ -914,15 +936,15 @@ export default function Instances() {
                     <Tooltip content="设置">
                       <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openVersionSettings(v) }}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
-                    {(() => { const inst = getInstanceForVersion(v); return inst ? (
-                      <Tooltip content={defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
-                        <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); handleToggleDefault(inst.id) }}>
-                          <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', defaultInstanceId === inst.id && 'text-yellow-400')} />
+                    {(() => { const inst = getInstanceForVersion(v); return (
+                      <Tooltip content={inst && defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
+                        <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); handleToggleDefault(v) }}>
+                          <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', inst && defaultInstanceId === inst.id && 'text-yellow-400')} />
                         </Button>
                       </Tooltip>
-                    ) : null})()}
+                    )})()}
                     <Tooltip content="打开文件夹">
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white"><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={() => openPath(`${currentDir}/versions/${v.name}`).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
                 </div>
@@ -967,16 +989,16 @@ export default function Instances() {
                   <Tooltip content="设置">
                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openVersionSettings(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                   </Tooltip>
-                  {(() => { const inst = getInstanceForVersion(v); return inst ? (
-                    <Tooltip content={defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
-                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleToggleDefault(inst.id)}>
-                        <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', defaultInstanceId === inst.id && 'text-yellow-400')} />
+                  {(() => { const inst = getInstanceForVersion(v); return (
+                    <Tooltip content={inst && defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
+                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleToggleDefault(v)}>
+                        <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', inst && defaultInstanceId === inst.id && 'text-yellow-400')} />
                       </Button>
                     </Tooltip>
-                  ) : null})()}
-                  <Tooltip content="打开文件夹">
-                    <Button size="icon" variant="ghost" className="h-8 w-8"><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
-                  </Tooltip>
+                  )})()}
+                   <Tooltip content="打开文件夹">
+                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openPath(`${currentDir}/versions/${v.name}`).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                   </Tooltip>
                 </div>
               </div>
             ))}
