@@ -6,7 +6,7 @@ namespace Qomicex.Launcher.Backend.Services;
 public sealed class McmodService
 {
     private readonly Dictionary<string, string> _map;
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
     public McmodService()
     {
