@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
 import { getInstallProgress, pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
 import { getResourceDownloadProgress, cancelResourceDownload } from '../api/resource-download.ts'
+import { getJavaDownloadProgress, cancelJavaDownload } from '../api/java.ts'
 import type { DownloadTask } from '../types/index.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
@@ -86,8 +87,30 @@ export default function DownloadCenter() {
 
     pollingRef.current = window.setInterval(async () => {
       const ts = getTasks()
-      const active = ts.filter((t) => (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused') && t.instanceId)
+      const active = ts.filter((t) => t.status === 'queued' || t.status === 'downloading' || t.status === 'paused')
       for (const task of active) {
+        if (task.type === 'java' && task.taskId) {
+          try {
+            const progress = await getJavaDownloadProgress(task.taskId)
+            let newStatus: DownloadTask['status'] = 'downloading'
+            if (progress.status === 'completed') newStatus = 'completed'
+            else if (progress.status === 'cancelled') newStatus = 'cancelled'
+            else if (progress.status === 'failed') newStatus = 'failed'
+            else if (progress.status === 'queued' || progress.status === 'resolving') newStatus = 'queued'
+
+            updateTask(task.id, {
+              status: newStatus,
+              stage: progress.status,
+              progress: Math.round(progress.progress),
+              speed: progress.speed,
+              currentFile: progress.fileName || undefined,
+              error: progress.error || undefined,
+              completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+            })
+          } catch { /* skip */ }
+          continue
+        }
+
         if (task.type === 'file' && task.taskId) {
           try {
             const progress = await getResourceDownloadProgress(task.taskId)
@@ -247,6 +270,8 @@ export default function DownloadCenter() {
                               removeTask(task.id)
                             } else if (task.type === 'batch' && task.batchTaskIds && task.batchTaskIds.length > 0) {
                               import('../api/resource-download.ts').then(m => m.cancelBatch(task.batchTaskIds!)).then(() => removeTask(task.id))
+                            } else if (task.type === 'java' && task.taskId) {
+                              cancelJavaDownload(task.taskId).then(() => removeTask(task.id))
                             } else if (task.type === 'file' && task.taskId) {
                               cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
                             } else if (task.instanceId) {

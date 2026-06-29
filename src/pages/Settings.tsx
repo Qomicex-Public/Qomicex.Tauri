@@ -13,7 +13,7 @@ import { Checkbox } from '../components/ui/checkbox.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
-import type { SystemInfo, JavaDownloadVendorInfo, JavaDownloadProgressResponse } from '../types/index.ts'
+import type { SystemInfo, JavaDownloadVendorInfo, DownloadTask } from '../types/index.ts'
 import { generateRoomCode, validateRoomCode } from '../api/roomCode.ts'
 import {
   addCustomJavaRuntime,
@@ -21,9 +21,9 @@ import {
   getJavaDownloadCatalog,
   startJavaDownload,
   getJavaDownloadProgress,
-  cancelJavaDownload,
 } from '../api/java.ts'
 import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, subscribe } from '../stores/javaStore.ts'
+import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get } from '../api/client.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
@@ -72,8 +72,6 @@ export default function Settings() {
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false)
   const [downloadVendors, setDownloadVendors] = useState<JavaDownloadVendorInfo[]>([])
   const [downloadLoading, setDownloadLoading] = useState(false)
-  const [downloadTaskId, setDownloadTaskId] = useState<string | null>(null)
-  const [downloadProgress, setDownloadProgress] = useState<JavaDownloadProgressResponse | null>(null)
   const [downloadVendor, setDownloadVendor] = useState('temurin')
   const [downloadVersion, setDownloadVersion] = useState('17')
   const [downloadPlatform, setDownloadPlatform] = useState('windows')
@@ -231,7 +229,6 @@ export default function Settings() {
     try {
       const catalog = await getJavaDownloadCatalog()
       setDownloadVendors(catalog.vendors)
-      setDownloadProgress(null)
       if (catalog.vendors.length > 0) {
         setDownloadVendor(catalog.vendors[0].id)
         setDownloadVersion(String(catalog.vendors[0].versions[0] ?? 17))
@@ -255,46 +252,53 @@ export default function Settings() {
         platform: downloadPlatform,
         architecture: downloadArch,
       })
-      setDownloadProgress(null)
-      setDownloadTaskId(task.taskId)
+      const dlTask: DownloadTask = {
+        id: task.taskId,
+        name: `${selectedVendor.name} ${downloadVersion} (${downloadPlatform}-${downloadArch})`,
+        type: 'java',
+        gameVersion: downloadVersion,
+        status: 'queued',
+        progress: 0,
+        createdAt: new Date().toISOString(),
+        taskId: task.taskId,
+      }
+      addTask(dlTask)
+      setDownloadDialogOpen(false)
+      setJavaStatus(`已加入下载中心: ${dlTask.name}`)
     } catch (e: unknown) {
       await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '启动 Java 下载失败')
     }
   }
 
-  async function handleCancelJavaDownload() {
-    if (!downloadTaskId) return
-    try {
-      await cancelJavaDownload(downloadTaskId)
-      setDownloadTaskId(null)
-      setDownloadProgress(null)
-    } catch (e: unknown) {
-      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '取消 Java 下载失败')
-    }
-  }
-
   useEffect(() => {
-    if (!downloadTaskId) return
+    const javaTasks = getTasks().filter((t) => t.type === 'java' && (t.status === 'queued' || t.status === 'downloading'))
+    if (javaTasks.length === 0) return
     const timer = setInterval(async () => {
-      try {
-        const progress = await getJavaDownloadProgress(downloadTaskId)
-        setDownloadProgress(progress)
-        if (progress.status === 'completed') {
-          clearInterval(timer)
-          setDownloadTaskId(null)
-          await handleScan('quick')
-        }
-        if (progress.status === 'failed' || progress.status === 'cancelled') {
-          clearInterval(timer)
-          setDownloadTaskId(null)
-        }
-      } catch {
-        clearInterval(timer)
-        setDownloadTaskId(null)
+      for (const t of javaTasks) {
+        if (!t.taskId) continue
+        try {
+          const progress = await getJavaDownloadProgress(t.taskId)
+          let newStatus: DownloadTask['status'] = 'downloading'
+          if (progress.status === 'completed') newStatus = 'completed'
+          else if (progress.status === 'failed') newStatus = 'failed'
+          else if (progress.status === 'cancelled') newStatus = 'cancelled'
+          else if (progress.status === 'queued' || progress.status === 'resolving') newStatus = 'queued'
+          updateTask(t.id, {
+            status: newStatus,
+            progress: Math.round(progress.progress),
+            speed: progress.speed,
+            currentFile: progress.fileName || undefined,
+            error: progress.error || undefined,
+            completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+          })
+          if (newStatus === 'completed') {
+            await scanRuntimes('quick').catch(() => {})
+          }
+        } catch { /* skip */ }
       }
     }, 1000)
     return () => clearInterval(timer)
-  }, [downloadTaskId, handleScan])
+  }, [])
 
   useEffect(() => {
     if (!selectedVendor) return
@@ -1053,26 +1057,9 @@ export default function Settings() {
                 <Label>目标目录</Label>
                 <Input value="QML/Runtime/Java" disabled />
               </div>
-              {downloadProgress && (
-                <div className="space-y-2 rounded-lg border p-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span>{downloadProgress.status}</span>
-                    <span>{Math.round(downloadProgress.progress)}%</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full bg-primary transition-all" style={{ width: `${downloadProgress.progress}%` }} />
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">{downloadProgress.fileName}</div>
-                  {downloadProgress.error && <div className="text-xs text-destructive">{downloadProgress.error}</div>}
-                </div>
-              )}
             </DialogBody>
             <DialogFooter>
-              {downloadTaskId ? (
-                <Button variant="outline" onClick={handleCancelJavaDownload}>取消下载</Button>
-              ) : (
-                <Button onClick={handleStartJavaDownload} disabled={!selectedVendor}>开始下载</Button>
-              )}
+              <Button onClick={handleStartJavaDownload} disabled={!selectedVendor}>开始下载</Button>
             </DialogFooter>
           </Dialog>
         </div>

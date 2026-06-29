@@ -256,7 +256,7 @@ export interface InstallProgressResponse {
 export interface DownloadTask {
   id: string
   name: string
-  type: 'game' | 'resource' | 'repair' | 'file' | 'batch'
+  type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java'
   gameVersion: string
   loader?: string
   loaderVersion?: string
