@@ -41,4 +41,18 @@ public class JavaDownloadController : ControllerBase
         if (_service.Cancel(taskId)) return NoContent();
         return NotFound();
     }
+
+    [HttpPost("{taskId}/pause")]
+    public IActionResult Pause(string taskId)
+    {
+        if (_service.Pause(taskId)) return NoContent();
+        return NotFound();
+    }
+
+    [HttpPost("{taskId}/resume")]
+    public IActionResult Resume(string taskId)
+    {
+        if (_service.Resume(taskId)) return NoContent();
+        return NotFound();
+    }
 }
