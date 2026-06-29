@@ -33,6 +33,7 @@ public class JavaDownloadService
 
     public Task<JavaDownloadCatalogResponse> GetCatalogAsync()
     {
+        var hostPlatform = GetHostPlatform();
         var response = new JavaDownloadCatalogResponse
         {
             Vendors = new List<JavaDownloadVendorInfo>
@@ -41,7 +42,7 @@ public class JavaDownloadService
                 {
                     Id = "temurin",
                     Name = "Temurin",
-                    Platforms = new() { "windows", "linux", "macos" },
+                    Platforms = new() { hostPlatform },
                     Architectures = new() { "x64", "arm64", "x86" },
                     Versions = new() { 8, 11, 17, 21 },
                 },
@@ -49,7 +50,7 @@ public class JavaDownloadService
                 {
                     Id = "zulu",
                     Name = "Zulu",
-                    Platforms = new() { "windows", "linux", "macos" },
+                    Platforms = new() { hostPlatform },
                     Architectures = new() { "x64", "arm64", "x86" },
                     Versions = new() { 8, 11, 17, 21 },
                 },
@@ -57,7 +58,7 @@ public class JavaDownloadService
                 {
                     Id = "microsoft-jdk",
                     Name = "Microsoft JDK",
-                    Platforms = new() { "windows", "linux", "macos" },
+                    Platforms = new() { hostPlatform },
                     Architectures = new() { "x64", "arm64" },
                     Versions = new() { 11, 17, 21 },
                 },
@@ -69,6 +70,11 @@ public class JavaDownloadService
 
     public async Task<JavaDownloadStartResponse> StartAsync(JavaDownloadStartRequest request)
     {
+        if (!string.Equals(request.Platform, GetHostPlatform(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw ApiException.BadRequest("首版仅支持下载当前宿主平台的 Java 包", "JAVA_DOWNLOAD_PLATFORM_NOT_SUPPORTED");
+        }
+
         var (url, fileName) = await ResolvePackageAsync(request);
         var taskId = Guid.NewGuid().ToString("N")[..12];
         var targetDir = Path.Combine(GetBaseDir(), request.Vendor, request.Version.ToString(), $"{request.Platform}-{request.Architecture}");
@@ -313,6 +319,14 @@ public class JavaDownloadService
         var javaName = OperatingSystem.IsWindows() ? "java.exe" : "java";
         var candidates = Directory.GetFiles(rootDir, javaName, SearchOption.AllDirectories);
         return candidates.FirstOrDefault(path => path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string GetHostPlatform()
+    {
+        if (OperatingSystem.IsWindows()) return "windows";
+        if (OperatingSystem.IsLinux()) return "linux";
+        if (OperatingSystem.IsMacOS()) return "macos";
+        throw ApiException.BadRequest("当前宿主平台不支持 Java 下载", "JAVA_DOWNLOAD_PLATFORM_INVALID");
     }
 
     private static bool IsPlainZuluPackage(JsonElement entry)

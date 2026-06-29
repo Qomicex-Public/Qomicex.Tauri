@@ -25,7 +25,7 @@ import {
 } from '../api/java.ts'
 import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getSystemInfo } from '../api/system.ts'
-import { get } from '../api/client.ts'
+import { ApiError, get } from '../api/client.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
@@ -239,6 +239,8 @@ export default function Settings() {
         setDownloadArch(catalog.vendors[0].architectures[0] ?? 'x64')
       }
       setDownloadDialogOpen(true)
+    } catch (e: unknown) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '加载 Java 下载目录失败')
     } finally {
       setDownloadLoading(false)
     }
@@ -246,22 +248,29 @@ export default function Settings() {
 
   async function handleStartJavaDownload() {
     if (!selectedVendor) return
-
-    const task = await startJavaDownload({
-      vendor: downloadVendor,
-      version: parseInt(downloadVersion, 10),
-      platform: downloadPlatform,
-      architecture: downloadArch,
-    })
-    setDownloadProgress(null)
-    setDownloadTaskId(task.taskId)
+    try {
+      const task = await startJavaDownload({
+        vendor: downloadVendor,
+        version: parseInt(downloadVersion, 10),
+        platform: downloadPlatform,
+        architecture: downloadArch,
+      })
+      setDownloadProgress(null)
+      setDownloadTaskId(task.taskId)
+    } catch (e: unknown) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '启动 Java 下载失败')
+    }
   }
 
   async function handleCancelJavaDownload() {
     if (!downloadTaskId) return
-    await cancelJavaDownload(downloadTaskId)
-    setDownloadTaskId(null)
-    setDownloadProgress(null)
+    try {
+      await cancelJavaDownload(downloadTaskId)
+      setDownloadTaskId(null)
+      setDownloadProgress(null)
+    } catch (e: unknown) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '取消 Java 下载失败')
+    }
   }
 
   useEffect(() => {
