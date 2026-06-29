@@ -10,7 +10,7 @@ using Qomicex.Core.Modules.Helpers.Resources;
 
 namespace Qomicex.Launcher.Backend.Services;
 
-public class InstallTask
+public class InstallTask : IInstallTask
 {
     private readonly string _gameVersion;
     private readonly string _gameDir;

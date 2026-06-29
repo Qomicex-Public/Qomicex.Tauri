@@ -8,10 +8,28 @@ using Qomicex.Core.Modules.Helpers.Resources;
 
 namespace Qomicex.Launcher.Backend.Services;
 
+public interface IInstallTask
+{
+    string InstanceId { get; }
+    string Stage { get; }
+    double Progress { get; }
+    string? Error { get; }
+    int TotalFiles { get; }
+    int CompletedFiles { get; }
+    int FailedFiles { get; }
+    string CurrentFile { get; }
+    double Speed { get; }
+    bool IsPaused { get; }
+    bool IsCompleted { get; }
+    void Pause();
+    void Resume();
+    void Cancel();
+}
+
 public class InstanceInstallService
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly ConcurrentDictionary<string, InstallTask> _tasks = new();
+    private readonly ConcurrentDictionary<string, IInstallTask> _tasks = new();
 
     public class InstallState
     {
@@ -114,6 +132,22 @@ public class InstanceInstallService
             loader, loaderVersion, null, downloadThreads, false,
             _httpClientFactory);
 
+        _tasks[instanceId] = task;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await task.StartAsync();
+            }
+            finally { }
+        });
+    }
+
+    public void StartRepairResources(string instanceId, string gameDir,
+        List<LocalResourceHelper.MissFileData> missingFiles)
+    {
+        var task = new RepairResourcesTask(instanceId, gameDir, missingFiles);
         _tasks[instanceId] = task;
 
         _ = Task.Run(async () =>

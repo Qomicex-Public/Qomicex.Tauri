@@ -4,7 +4,7 @@ using Qomicex.Core.Modules.Helpers.Resources;
 
 namespace Qomicex.Launcher.Backend.Services;
 
-public class RepairResourcesTask
+public class RepairResourcesTask : IInstallTask
 {
     private readonly string _gameDir;
     private readonly List<LocalResourceHelper.MissFileData> _missingFiles;
@@ -119,6 +119,9 @@ public class RepairResourcesTask
             _downloadManager.StopTask(-1);
         }
     }
+
+    public void Pause() { }
+    public void Resume() { }
 
     public void Cancel()
     {
