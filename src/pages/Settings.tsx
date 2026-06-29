@@ -20,10 +20,9 @@ import {
   removeCustomJavaRuntime,
   getJavaDownloadCatalog,
   startJavaDownload,
-  getJavaDownloadProgress,
 } from '../api/java.ts'
 import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, subscribe } from '../stores/javaStore.ts'
-import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
+import { addTask } from '../stores/downloadStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get } from '../api/client.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
@@ -270,35 +269,7 @@ export default function Settings() {
     }
   }
 
-  useEffect(() => {
-    const javaTasks = getTasks().filter((t) => t.type === 'java' && (t.status === 'queued' || t.status === 'downloading'))
-    if (javaTasks.length === 0) return
-    const timer = setInterval(async () => {
-      for (const t of javaTasks) {
-        if (!t.taskId) continue
-        try {
-          const progress = await getJavaDownloadProgress(t.taskId)
-          let newStatus: DownloadTask['status'] = 'downloading'
-          if (progress.status === 'completed') newStatus = 'completed'
-          else if (progress.status === 'failed') newStatus = 'failed'
-          else if (progress.status === 'cancelled') newStatus = 'cancelled'
-          else if (progress.status === 'queued' || progress.status === 'resolving') newStatus = 'queued'
-          updateTask(t.id, {
-            status: newStatus,
-            progress: Math.round(progress.progress),
-            speed: progress.speed,
-            currentFile: progress.fileName || undefined,
-            error: progress.error || undefined,
-            completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
-          })
-          if (newStatus === 'completed') {
-            await scanRuntimes('quick').catch(() => {})
-          }
-        } catch { /* skip */ }
-      }
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [])
+
 
   useEffect(() => {
     if (!selectedVendor) return
