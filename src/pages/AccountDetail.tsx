@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faRotate, faTrashCan } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo } from '@fortawesome/free-solid-svg-icons'
 import { getAccount, deleteAccount } from '../api/account.ts'
-import { getSkinProfile } from '../api/skin.ts'
+import { getSkinProfile, uploadSkin, resetSkin } from '../api/skin.ts'
 import { SkinViewer3D } from '../components/SkinViewer3D.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { Button } from '../components/ui/button.tsx'
@@ -12,10 +12,11 @@ import type { Account, SkinProfile } from '../types/index.ts'
 export default function AccountDetail() {
   const { uuid } = useParams<{ uuid: string }>()
   const navigate = useNavigate()
-  const { confirm: msgConfirm } = useMessageBox()
+  const { confirm: msgConfirm, notify } = useMessageBox()
   const [account, setAccount] = useState<Account | null>(null)
   const [profile, setProfile] = useState<SkinProfile | null>(null)
   const [loading, setLoading] = useState(true)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!uuid) return
@@ -31,6 +32,28 @@ export default function AccountDetail() {
     if (!uuid) return
     const prof = await getSkinProfile(uuid, account?.loginMethod ?? 'Microsoft', account?.serverUrl).catch(() => null)
     setProfile(prof)
+  }
+
+  async function handleSkinUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !uuid) return
+    try {
+      await uploadSkin(uuid, file)
+      notify('皮肤上传成功', 'success')
+      handleSkinRefresh()
+    } catch { notify('皮肤上传失败', 'error') }
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  async function handleSkinReset() {
+    if (!uuid) return
+    const ok = await msgConfirm('确定要重置为默认皮肤吗？')
+    if (!ok) return
+    try {
+      await resetSkin(uuid)
+      notify('皮肤已重置', 'success')
+      handleSkinRefresh()
+    } catch { notify('皮肤重置失败', 'error') }
   }
 
   async function handleDelete() {
@@ -102,10 +125,19 @@ export default function AccountDetail() {
             </dl>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={handleSkinRefresh}>
               <FontAwesomeIcon icon={faRotate} className="mr-1 h-3 w-3" /> 刷新皮肤
             </Button>
+            <input ref={fileRef} type="file" accept="image/png" className="hidden" onChange={handleSkinUpload} />
+            <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+              <FontAwesomeIcon icon={faUpload} className="mr-1 h-3 w-3" /> 上传皮肤
+            </Button>
+            {profile?.skinSource === 'local' && (
+              <Button variant="outline" size="sm" onClick={handleSkinReset}>
+                <FontAwesomeIcon icon={faUndo} className="mr-1 h-3 w-3" /> 重置皮肤
+              </Button>
+            )}
             <Button variant="destructive" size="sm" onClick={handleDelete}>
               <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> 删除账户
             </Button>

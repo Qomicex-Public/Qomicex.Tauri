@@ -21,6 +21,7 @@ import { Card, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions } from '../api/resource.ts'
+import { lookupChineseName } from '../api/mcmod.ts'
 import { startResourceDownload, downloadTo } from '../api/resource-download.ts'
 import { getInstance, getDefaultInstance } from '../api/instance.ts'
 import { addTask } from '../stores/downloadStore.ts'
@@ -86,6 +87,7 @@ export default function ResourceDetailPage() {
   const [loadingDownloadsFor, setLoadingDownloadsFor] = useState<string | null>(null)
   const [downloadingFor, setDownloadingFor] = useState<string | null>(null)
   const [showInstallDialog, setShowInstallDialog] = useState(false)
+  const [cnName, setCnName] = useState<string | null>(null)
 
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
     setDownloadingFor(versionId)
@@ -147,6 +149,7 @@ export default function ResourceDetailPage() {
 
         if (cancelled) return
         setDetail(resourceDetail)
+        if (category === 'mod') lookupChineseName(resourceDetail.title).then(setCnName)
         setVersions(versionList)
       } catch (e) {
         if (cancelled) return
@@ -268,7 +271,7 @@ export default function ResourceDetailPage() {
                 <div className="space-y-5 p-6">
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-2xl font-semibold leading-tight">{detail.title}</h2>
+                      <h2 className="text-2xl font-semibold leading-tight">{cnName ? <>{cnName}<span className="ml-1.5 text-sm font-normal text-muted-foreground/60">| {detail.title}</span></> : detail.title}</h2>
                       <Badge variant="secondary">{getSourceLabel(detail.source)}</Badge>
                       {detail.latestVersion && <Badge variant="outline">最新 {detail.latestVersion}</Badge>}
                     </div>
@@ -443,7 +446,7 @@ export default function ResourceDetailPage() {
           open={showInstallDialog}
           onClose={() => setShowInstallDialog(false)}
           resourceId={detail.id}
-          resourceTitle={detail.title}
+          resourceTitle={cnName || detail.title}
           resourceIcon={detail.iconUrl}
           source={detail.source}
           category={category}

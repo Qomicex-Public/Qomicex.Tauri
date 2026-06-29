@@ -17,6 +17,10 @@ public class SkinService
         _http = httpFactory.CreateClient();
     }
 
+    private static string SkinDir => Path.Combine(AppContext.BaseDirectory, "QML", "skins");
+
+    private static string SkinPath(string uuid) => Path.Combine(SkinDir, $"{uuid.Replace("-", "")}.png");
+
     private static byte[] GetDefaultSkin()
     {
         if (_defaultSkin != null) return _defaultSkin;
@@ -25,6 +29,24 @@ public class SkinService
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
         return _defaultSkin = ms.ToArray();
+    }
+
+    public byte[]? GetLocalSkin(string uuid)
+    {
+        var path = SkinPath(uuid);
+        return File.Exists(path) ? File.ReadAllBytes(path) : null;
+    }
+
+    public void SaveSkin(string uuid, byte[] data)
+    {
+        Directory.CreateDirectory(SkinDir);
+        File.WriteAllBytes(SkinPath(uuid), data);
+    }
+
+    public void DeleteSkin(string uuid)
+    {
+        var path = SkinPath(uuid);
+        if (File.Exists(path)) File.Delete(path);
     }
 
     public async Task<SkinProfile?> FetchProfile(string uuid, string loginMethod, string? serverUrl)
@@ -116,16 +138,19 @@ public class SkinService
 
     public async Task<byte[]?> GetHeadAvatar(string uuid, string loginMethod, string? serverUrl, int size = 64)
     {
-        byte[]? skinData = null;
-        if (loginMethod == "Offline")
+        byte[]? skinData = GetLocalSkin(uuid);
+        if (skinData == null)
         {
-            skinData = GetDefaultSkin();
-        }
-        else
-        {
-            var profile = await FetchProfile(uuid, loginMethod, serverUrl);
-            if (profile?.SkinUrl != null)
-                skinData = await DownloadSkin(profile.SkinUrl);
+            if (loginMethod == "Offline")
+            {
+                skinData = GetDefaultSkin();
+            }
+            else
+            {
+                var profile = await FetchProfile(uuid, loginMethod, serverUrl);
+                if (profile?.SkinUrl != null)
+                    skinData = await DownloadSkin(profile.SkinUrl);
+            }
         }
         if (skinData != null)
         {
@@ -167,4 +192,5 @@ public class SkinProfile
     public string SkinUrl { get; set; } = "";
     public string? CapeUrl { get; set; }
     public string Model { get; set; } = "classic";
+    public string SkinSource { get; set; } = "remote";
 }
