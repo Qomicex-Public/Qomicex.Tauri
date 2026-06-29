@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { getAvatarUrl } from '../lib/utils.ts'
+import { getAvatarUrl as getSkinAvatarUrl } from '../api/skin.ts'
 import type { Account } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 
@@ -9,6 +9,7 @@ export function AccountAvatar({ account, className, textClassName }: {
   textClassName?: string
 }) {
   const [failed, setFailed] = useState(false)
+  const proxyUrl = getSkinAvatarUrl(account.uuid, account.loginMethod, account.serverUrl)
 
   if (failed) {
     return (
@@ -20,9 +21,9 @@ export function AccountAvatar({ account, className, textClassName }: {
 
   return (
     <img
-      src={getAvatarUrl(account)}
+      src={proxyUrl}
       alt={account.name}
-      className={cn('rounded-full object-cover ring-1 ring-primary/20', className)}
+      className={cn('rounded-full object-cover', className)}
       onError={() => setFailed(true)}
     />
   )

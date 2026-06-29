@@ -1,0 +1,170 @@
+using System.Net.Http;
+using System.Reflection;
+using System.Text.Json;
+using SkiaSharp;
+using Qomicex.Core.Modules.Helpers;
+
+namespace Qomicex.Launcher.Backend.Services;
+
+public class SkinService
+{
+    private readonly HttpClient _http;
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static byte[]? _defaultSkin;
+
+    public SkinService(IHttpClientFactory httpFactory)
+    {
+        _http = httpFactory.CreateClient();
+    }
+
+    private static byte[] GetDefaultSkin()
+    {
+        if (_defaultSkin != null) return _defaultSkin;
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Qomicex.Launcher.Backend.Resources.Alex.png");
+        if (stream == null) throw new InvalidOperationException("Embedded Alex.png not found");
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        return _defaultSkin = ms.ToArray();
+    }
+
+    public async Task<SkinProfile?> FetchProfile(string uuid, string loginMethod, string? serverUrl)
+    {
+        return loginMethod switch
+        {
+            "Microsoft" => await FetchMojangProfile(uuid),
+            "Offline" => new SkinProfile { ProfileId = uuid, Model = "slim" },
+            "Yggdrasil" => await FetchYggdrasilProfile(uuid, serverUrl),
+            "统一通行证" => await FetchTongyiProfile(uuid, serverUrl),
+            _ => null,
+        };
+    }
+
+    private async Task<SkinProfile?> FetchMojangProfile(string uuid)
+    {
+        var url = $"https://sessionserver.mojang.com/session/minecraft/profile/{uuid.Replace("-", "")}";
+        return await FetchProfileFromUrl(url);
+    }
+
+    private async Task<SkinProfile?> FetchYggdrasilProfile(string uuid, string? serverUrl)
+    {
+        if (string.IsNullOrEmpty(serverUrl)) return null;
+        var baseUrl = serverUrl.TrimEnd('/');
+        var url = $"{baseUrl}/sessionserver/session/minecraft/profile/{uuid.Replace("-", "")}";
+        return await FetchProfileFromUrl(url);
+    }
+
+    private async Task<SkinProfile?> FetchTongyiProfile(string uuid, string? serverUrl)
+    {
+        if (string.IsNullOrEmpty(serverUrl)) return null;
+        var baseUrl = serverUrl.TrimEnd('/');
+        var url = $"{baseUrl}/sessionserver/session/minecraft/profile/{uuid.Replace("-", "")}";
+        return await FetchProfileFromUrl(url);
+    }
+
+    private async Task<SkinProfile?> FetchProfileFromUrl(string url)
+    {
+        try
+        {
+            var resp = await _http.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return null;
+            var json = await resp.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            return ParseProfile(json);
+        }
+        catch { return null; }
+    }
+
+    private static SkinProfile? ParseProfile(JsonElement json)
+    {
+        if (!json.TryGetProperty("properties", out var props)) return null;
+        foreach (var prop in props.EnumerateArray())
+        {
+            if (prop.GetProperty("name").GetString() != "textures") continue;
+            var value = prop.GetProperty("value").GetString();
+            if (value == null) continue;
+            var decoded = JsonSerializer.Deserialize<JsonElement>(Convert.FromBase64String(value));
+            var profile = new SkinProfile();
+            if (decoded.TryGetProperty("profileId", out var pid)) profile.ProfileId = pid.GetString();
+            if (decoded.TryGetProperty("profileName", out var pn)) profile.ProfileName = pn.GetString();
+            if (decoded.TryGetProperty("textures", out var textures))
+            {
+                if (textures.TryGetProperty("SKIN", out var skin))
+                {
+                    profile.SkinUrl = skin.GetProperty("url").GetString() ?? "";
+                    if (skin.TryGetProperty("metadata", out var meta) && meta.TryGetProperty("model", out var model))
+                        profile.Model = model.GetString() == "slim" ? "slim" : "classic";
+                }
+                if (textures.TryGetProperty("CAPE", out var cape))
+                    profile.CapeUrl = cape.GetProperty("url").GetString();
+            }
+            return profile;
+        }
+        return null;
+    }
+
+    public async Task<byte[]?> DownloadSkin(string url)
+    {
+        try
+        {
+            var resp = await _http.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content.ReadAsByteArrayAsync();
+        }
+        catch { return null; }
+    }
+
+    public static byte[] GetDefaultSkinBytes() => GetDefaultSkin();
+
+    public async Task<byte[]?> GetHeadAvatar(string uuid, string loginMethod, string? serverUrl, int size = 64)
+    {
+        byte[]? skinData = null;
+        if (loginMethod == "Offline")
+        {
+            skinData = GetDefaultSkin();
+        }
+        else
+        {
+            var profile = await FetchProfile(uuid, loginMethod, serverUrl);
+            if (profile?.SkinUrl != null)
+                skinData = await DownloadSkin(profile.SkinUrl);
+        }
+        if (skinData != null)
+        {
+            try
+            {
+                using var helper = new SkinHelper(skinData);
+                var head = helper.GetHeadAvatar(size);
+                if (head != null)
+                {
+                    using var img = SKImage.FromBitmap(head);
+                    using var data = img.Encode(SKEncodedImageFormat.Png, 100);
+                    return data.ToArray();
+                }
+            }
+            catch { }
+        }
+        return await GenerateFallbackAvatar(uuid, size);
+    }
+
+    private static async Task<byte[]?> GenerateFallbackAvatar(string uuid, int size)
+    {
+        var hash = 0;
+        foreach (var c in uuid.Replace("-", "")) hash = hash * 31 + c;
+        var r = (byte)((hash >> 16) & 0xFF);
+        var g = (byte)((hash >> 8) & 0xFF);
+        var b = (byte)(hash & 0xFF);
+        if (r < 80) r = 80; if (g < 80) g = 80; if (b < 80) b = 80;
+        using var surface = SKSurface.Create(new SKImageInfo(size, size));
+        var canvas = surface.Canvas;
+        canvas.Clear(new SKColor(r, g, b));
+        return await Task.FromResult(surface.Snapshot().Encode(SKEncodedImageFormat.Png, 100).ToArray());
+    }
+}
+
+public class SkinProfile
+{
+    public string? ProfileId { get; set; }
+    public string? ProfileName { get; set; }
+    public string SkinUrl { get; set; } = "";
+    public string? CapeUrl { get; set; }
+    public string Model { get; set; } = "classic";
+}

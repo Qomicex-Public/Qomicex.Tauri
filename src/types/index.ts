@@ -329,3 +329,11 @@ export interface ResourceVersion {
   downloads: ResourceFile[]
   datePublished: string
 }
+
+export interface SkinProfile {
+  profileId: string | null
+  profileName: string | null
+  skinUrl: string
+  capeUrl: string | null
+  model: string
+}

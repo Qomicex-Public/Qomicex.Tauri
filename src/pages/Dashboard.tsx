@@ -146,7 +146,7 @@ export default function Dashboard() {
                   return (
                     <button
                       key={acc.uuid}
-                      onClick={() => handleSwitchAccount(acc.uuid)}
+                      onMouseDown={() => handleSwitchAccount(acc.uuid)}
                       className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent"
                     >
                       <AccountAvatar account={acc} className="h-6 w-6 shrink-0" textClassName="text-[10px] font-bold" />
@@ -158,7 +158,7 @@ export default function Dashboard() {
               </div>
               <div className="border-t border-border pt-1 mt-1">
                 <button
-                  onClick={() => { navigate('/accounts'); setAccountsOpen(false) }}
+                  onMouseDown={() => { navigate('/accounts'); setAccountsOpen(false) }}
                   className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-muted-foreground hover:bg-accent"
                 >
                   <FontAwesomeIcon icon={faUser} className="h-3 w-3" />

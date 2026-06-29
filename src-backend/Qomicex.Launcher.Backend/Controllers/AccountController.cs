@@ -14,11 +14,13 @@ public class AccountController : ControllerBase
 {
     private readonly MsAccount _msAccount;
     private readonly AccountService _accountService;
+    private readonly IHttpClientFactory _httpFactory;
 
-    public AccountController(MsAccount msAccount, AccountService accountService)
+    public AccountController(MsAccount msAccount, AccountService accountService, IHttpClientFactory httpFactory)
     {
         _msAccount = msAccount;
         _accountService = accountService;
+        _httpFactory = httpFactory;
     }
 
     [HttpGet]
@@ -84,6 +86,21 @@ public class AccountController : ControllerBase
         hash[8] = (byte)((hash[8] & 0x3f) | 0x80);
         var uuid = new Guid(hash).ToString("D");
         return Ok(new { uuid });
+    }
+
+    [HttpGet("yggdrasil-meta")]
+    public async Task<IActionResult> GetYggdrasilMeta([FromQuery] string serverUrl)
+    {
+        if (string.IsNullOrWhiteSpace(serverUrl)) return BadRequest();
+        try
+        {
+            var http = _httpFactory.CreateClient();
+            var resp = await http.GetStringAsync(serverUrl);
+            var json = System.Text.Json.JsonDocument.Parse(resp);
+            var name = json.RootElement.GetProperty("meta").GetProperty("serverName").GetString();
+            return Ok(new { serverName = name ?? "" });
+        }
+        catch { return Ok(new { serverName = "" }); }
     }
 
     [HttpPost("microsoft/oauth")]

@@ -6,6 +6,7 @@ import Instances from './pages/Instances.tsx'
 import InstanceDetailPage from './pages/InstanceDetail.tsx'
 import DownloadCenter from './pages/DownloadCenter.tsx'
 import Accounts from './pages/Accounts.tsx'
+import AccountDetail from './pages/AccountDetail.tsx'
 import LogAnalysis from './pages/LogAnalysis.tsx'
 import ResourceCenter from './pages/ResourceCenter.tsx'
 import ResourceDetailPage from './pages/ResourceDetail.tsx'
@@ -36,6 +37,7 @@ function App() {
             <Route path="/instances/:id" element={<InstanceDetailPage />} />
             <Route path="/downloads" element={<DownloadCenter />} />
             <Route path="/accounts" element={<Accounts />} />
+            <Route path="/accounts/:uuid" element={<AccountDetail />} />
             <Route path="/log-analysis" element={<LogAnalysis />} />
             <Route path="/resource-center" element={<ResourceCenter />} />
             <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
