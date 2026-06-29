@@ -3,9 +3,11 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Qomicex.Launcher.Backend.Models;
 using Qomicex.Launcher.Backend.Services;
 using Qomicex.Core.Modules.Helpers;
+using Qomicex.Core.Modules.Helpers.Resources;
 using static Qomicex.Core.DataModules;
 using static Qomicex.Core.DataModules.DataDetails;
 
@@ -18,12 +20,16 @@ public class InstanceController : ControllerBase
     private readonly IInstanceRepository _repository;
     private readonly InstanceInstallService _installService;
     private readonly AccountService _accountService;
+    private readonly JavaRuntimeStore _javaRuntimeStore;
+    private readonly ILogger<InstanceController> _logger;
 
-    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService)
+    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService, JavaRuntimeStore javaRuntimeStore, ILogger<InstanceController> logger)
     {
         _repository = repository;
         _installService = installService;
         _accountService = accountService;
+        _javaRuntimeStore = javaRuntimeStore;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -192,6 +198,51 @@ public class InstanceController : ControllerBase
         return Ok(new { message = "文件补全已开始", instanceId = id });
     }
 
+    [HttpGet("{id}/verify-resources")]
+    public async Task<ActionResult<VerifyResourcesResult>> VerifyResources(string id)
+    {
+        var instance = _repository.GetById(id);
+        if (instance == null) return NotFound();
+
+        var versionId = instance.Name;
+        var resourceHelper = new LocalResourceHelper();
+        var missFiles = await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir);
+
+        var result = new VerifyResourcesResult
+        {
+            TotalCount = missFiles.Count,
+            Complete = missFiles.Count == 0,
+            MissingFiles = missFiles.Select(f => new MissingFileInfo
+            {
+                Name = f.Name,
+                Path = f.Path,
+                Url = f.Url,
+                Sha1 = f.Sha1,
+            }).ToList(),
+        };
+
+        return Ok(result);
+    }
+
+    [HttpPost("{id}/repair-resources")]
+    public async Task<IActionResult> RepairResources(string id)
+    {
+        var instance = _repository.GetById(id);
+        if (instance == null) return NotFound();
+
+        var versionId = instance.Name;
+        var resourceHelper = new LocalResourceHelper();
+        var missFiles = await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir);
+
+        if (missFiles.Count == 0)
+        {
+            return Ok(new { status = "complete", missingCount = 0 });
+        }
+
+        _installService.StartRepairResources(id, instance.GameDir, missFiles);
+        return Ok(new { status = "repairing", missingCount = missFiles.Count });
+    }
+
     [HttpPost("{id}/launch")]
     public ActionResult<LaunchResult> Launch(string id)
     {
@@ -200,9 +251,7 @@ public class InstanceController : ControllerBase
 
         try
         {
-            var versionId = !string.IsNullOrEmpty(instance.Loader) && !string.IsNullOrEmpty(instance.LoaderVersion)
-                ? $"{instance.GameVersion}-{instance.Loader}-{instance.LoaderVersion}"
-                : instance.GameVersion;
+            var versionId = instance.Name;
 
             var launcher = new Qomicex.Core.Modules.Launcher.Launcher();
             var param = new Qomicex.Core.Modules.Launcher.Launcher.LauncherParam
@@ -230,16 +279,39 @@ public class InstanceController : ControllerBase
             if (!string.IsNullOrEmpty(instance.JavaPath))
             {
                 javaPath = instance.JavaPath;
+                param.Java.Path = javaPath;
+                var javaInfo = JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions
+                {
+                    Mode = JavaHelper.JavaSearchMode.Custom,
+                    CustomRootPath = Path.GetDirectoryName(Path.GetDirectoryName(javaPath)) ?? "",
+                    MaxDepth = 2,
+                    MaxResults = 20,
+                    ScanHiddenFolders = true,
+                }).FirstOrDefault(j => string.Equals(j.Path, javaPath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+                param.Java.VersionID = javaInfo?.VersionID ?? 0;
             }
             else
             {
-                var javaList = JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions { Mode = JavaHelper.JavaSearchMode.Quick });
+                var javaList = _javaRuntimeStore.GetMergedAsync(JavaHelper.JavaSearchMode.Quick).GetAwaiter().GetResult();
                 var recommended = JavaHelper.GetRecommendedJava(javaList, instance.GameVersion, instance.GameDir);
                 var chosen = recommended.FirstOrDefault();
                 javaPath = chosen?.Path ?? "java";
                 param.Java.Path = javaPath;
-                param.Java.VersionID = chosen?.VersionID ?? 21;
+                param.Java.VersionID = chosen?.VersionID ?? 0;
             }
+
+            _logger.LogInformation(
+                "[Launch] 实例={Name} 版本={VersionId} GameDir={GameDir}",
+                instance.Name, versionId, instance.GameDir);
+            _logger.LogInformation(
+                "[Launch] Java: path={JavaPath} versionId={VersionId}",
+                javaPath, param.Java.VersionID);
+            _logger.LogInformation(
+                "[Launch] 内存: max={MaxMemory}MB",
+                instance.MaxMemory);
+            _logger.LogInformation(
+                "[Launch] 账户: name={AccountName} uuid={Uuid} method={LoginMethod}",
+                param.Account.Name, param.Account.Uuid, param.Account.LoginMethod);
 
             if (param.Java.VersionID == 0)
             {
