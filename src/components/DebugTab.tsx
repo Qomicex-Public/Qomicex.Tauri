@@ -9,20 +9,22 @@ import { useDebug } from './DebugContext.tsx'
 import { getSystemInfo } from '../api/system.ts'
 import { get, post, API_BASE } from '../api/client.ts'
 import type { SystemInfo } from '../types/index.ts'
+import { useMessageBox } from './ui/message-box.tsx'
 
 function LogCard() {
   const [logs, setLogs] = useState<string[]>([])
   const [autoScroll, setAutoScroll] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
+  const { notify } = useMessageBox()
 
   const fetchLogs = useCallback(async () => {
     try {
       const entries = await get<string[]>('/diagnostics/trace')
       setLogs(prev => {
-        if (entries.length <= prev.length) return entries
+        if (entries.length <= prev.length) return prev
         return entries
       })
-    } catch {}
+    } catch { console.warn('Failed to fetch logs') }
   }, [])
 
   useEffect(() => {
@@ -51,8 +53,8 @@ function LogCard() {
   const handleDump = async () => {
     try {
       const res = await post<{ path: string }>('/diagnostics/dump')
-      alert(`日志已导出到: ${res.path}`)
-    } catch {}
+      notify(`日志已导出到: ${res.path}`, 'success')
+    } catch { console.warn('Failed to dump logs') }
   }
 
   return (
@@ -101,6 +103,7 @@ function DiagnosticsCard() {
   const [health, setHealth] = useState<any>(null)
   const [apiTests, setApiTests] = useState<Record<string, { ok: boolean; latency: number }>>({})
   const [loading, setLoading] = useState(true)
+  const [backendOk, setBackendOk] = useState(true)
 
   useEffect(() => {
     let cancelled = false
@@ -114,7 +117,7 @@ function DiagnosticsCard() {
         if (cancelled) return
         setSysInfo(sys)
         setHealth(h)
-      } catch {}
+      } catch { setBackendOk(false); console.warn('Failed to fetch system info / health') }
       const endpoints = ['/instances', '/settings', '/resources/search?category=mod&pageSize=1']
       const results: typeof apiTests = {}
       for (const ep of endpoints) {
@@ -123,6 +126,7 @@ function DiagnosticsCard() {
           await get(ep)
           results[ep] = { ok: true, latency: Math.round(performance.now() - start) }
         } catch {
+          console.warn(`API health check failed for ${ep}`)
           results[ep] = { ok: false, latency: -1 }
         }
       }
@@ -156,7 +160,7 @@ function DiagnosticsCard() {
             <div>
               <p className="font-medium text-xs text-muted-foreground mb-1">连通状态</p>
               <p className="text-xs space-x-3">
-                <span><FontAwesomeIcon icon={faCircleCheck} className="h-3 w-3 text-green-500 mr-1" />Backend</span>
+                <span><FontAwesomeIcon icon={backendOk ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', backendOk ? 'text-green-500' : 'text-red-500')} />Backend</span>
                 {health && (
                   <>
                     <span><FontAwesomeIcon icon={health.modrinth?.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', health.modrinth?.ok ? 'text-green-500' : 'text-red-500')} />Modrinth ({health.modrinth?.latency ?? '?'}ms)</span>
