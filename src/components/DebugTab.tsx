@@ -20,10 +20,7 @@ function LogCard() {
   const fetchLogs = useCallback(async () => {
     try {
       const entries = await get<string[]>('/diagnostics/trace')
-      setLogs(prev => {
-        if (entries.length <= prev.length) return prev
-        return entries
-      })
+      setLogs(entries)
     } catch { console.warn('Failed to fetch logs') }
   }, [])
 
@@ -197,6 +194,7 @@ function TogglesCard() {
     { key: 'simulateApiErrors', label: '模拟 API 错误' },
     { key: 'networkLogging', label: '网络请求日志' },
     { key: 'disableCaching', label: '禁用缓存' },
+    { key: 'logOverlay', label: '日志浮层（全局）' },
   ]
 
   return (

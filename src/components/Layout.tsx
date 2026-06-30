@@ -6,6 +6,7 @@ import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { get, API_BASE } from '../api/client.ts'
 import { useMessageBox } from './ui/message-box.tsx'
 import { DebugProvider, useDebug } from './DebugContext.tsx'
+import LogOverlay from './LogOverlay.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 function DebugEffects() {
@@ -59,7 +60,7 @@ function DebugEffects() {
     }
   }, [state.showComponentBoundaries])
 
-  return null
+  return state.logOverlay ? <LogOverlay /> : null
 }
 
 export default function Layout() {

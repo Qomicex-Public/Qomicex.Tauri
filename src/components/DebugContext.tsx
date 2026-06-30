@@ -7,6 +7,7 @@ export interface DebugState {
   simulateApiErrors: boolean
   networkLogging: boolean
   disableCaching: boolean
+  logOverlay: boolean
 }
 
 const INITIAL: DebugState = {
@@ -16,6 +17,7 @@ const INITIAL: DebugState = {
   simulateApiErrors: false,
   networkLogging: false,
   disableCaching: false,
+  logOverlay: false,
 }
 
 interface DebugContextValue {
@@ -24,7 +26,7 @@ interface DebugContextValue {
   unlock: () => void
 }
 
-const ctx = createContext<DebugContextValue>({ state: INITIAL, toggle: () => {} })
+const ctx = createContext<DebugContextValue>({ state: INITIAL, toggle: () => {}, unlock: () => {} })
 
 declare global {
   interface Window {
