@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Models;
 using Qomicex.Launcher.Backend.Services;
 using Qomicex.Core.Modules.Helpers.GameSettings;
+using Qomicex.Core.Modules.Helpers.Resources.Expansion.Local;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -11,11 +12,19 @@ public class InstanceFilesController : ControllerBase
 {
     private readonly IInstanceRepository _repository;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly McmodService _mcmod;
+    private readonly IConfiguration _configuration;
 
-    public InstanceFilesController(IInstanceRepository repository, IHttpClientFactory httpClientFactory)
+    public InstanceFilesController(
+        IInstanceRepository repository,
+        IHttpClientFactory httpClientFactory,
+        McmodService mcmod,
+        IConfiguration configuration)
     {
         _repository = repository;
         _httpClientFactory = httpClientFactory;
+        _mcmod = mcmod;
+        _configuration = configuration;
     }
 
     private string? ResolveGameDir(string instanceId)
@@ -152,6 +161,117 @@ public class InstanceFilesController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("mods/metadata")]
+    public async Task<ActionResult<List<ModMetadataDto>>> GetModsMetadata(string instanceId)
+    {
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+
+        var versionSegmented = inst.VersionIsolation ?? true;
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        var modList = await mods.GetModList();
+
+        var names = modList.Select(m => m.Name).Distinct().ToList();
+        var lookupResult = _mcmod.BatchLookupWithIds(names);
+
+        var result = modList.Select(m =>
+        {
+            var (cnName, mcmodId) = lookupResult.GetValueOrDefault(m.Name, (null, null));
+            string? source = null;
+            if (m.CurseForgeId > 0) source = "curseforge";
+            else if (!string.IsNullOrEmpty(m.ModrinthId)) source = "modrinth";
+
+            return new ModMetadataDto
+            {
+                FileName = Path.GetFileName(m.FilePath),
+                Name = m.Name,
+                Version = m.Version,
+                Description = m.Description ?? "",
+                Authors = m.Authors ?? [],
+                IconUrl = m.ModrinthMeta?.IconUrl,
+                CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
+                ModrinthId = m.ModrinthId,
+                Source = source,
+                McmodId = mcmodId,
+                ChineseName = cnName,
+                Active = m.Active,
+            };
+        }).ToList();
+
+        return Ok(result);
+    }
+
+    [HttpPost("mods/enable")]
+    public IActionResult EnableMod(string instanceId, [FromQuery] string name)
+    {
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+        var modsDir = Path.Combine(gameDir, "mods");
+        var fileName = name.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase) ? name : name + ".disabled";
+        var filePath = Path.Combine(modsDir, fileName);
+        if (!System.IO.File.Exists(filePath))
+        {
+            var altPath = Path.Combine(modsDir, name);
+            if (!System.IO.File.Exists(altPath)) return NotFound();
+            return NoContent();
+        }
+
+        var versionSegmented = _repository.GetById(instanceId)?.VersionIsolation ?? true;
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+        var inst = _repository.GetById(instanceId)!;
+        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        mods.EnableMod(filePath);
+        return NoContent();
+    }
+
+    [HttpPost("mods/disable")]
+    public IActionResult DisableMod(string instanceId, [FromQuery] string name)
+    {
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+        var modsDir = Path.Combine(gameDir, "mods");
+        var filePath = Path.Combine(modsDir, name);
+        if (!System.IO.File.Exists(filePath)) return NotFound();
+
+        var versionSegmented = _repository.GetById(instanceId)?.VersionIsolation ?? true;
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+        var inst = _repository.GetById(instanceId)!;
+        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        mods.DisableMod(filePath);
+        return NoContent();
+    }
+
+    [HttpPost("mods/change-version")]
+    public async Task<IActionResult> ChangeModVersion(string instanceId, [FromBody] ChangeModVersionRequest request)
+    {
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+        var modsDir = Path.Combine(gameDir, "mods");
+
+        var oldPath = Path.Combine(modsDir, request.FileName);
+        if (System.IO.File.Exists(oldPath))
+            System.IO.File.Delete(oldPath);
+        var disabledPath = Path.Combine(modsDir, request.FileName + ".disabled");
+        if (System.IO.File.Exists(disabledPath))
+            System.IO.File.Delete(disabledPath);
+
+        var newPath = Path.Combine(modsDir, request.NewFileName);
+        using var client = _httpClientFactory.CreateClient();
+        var response = await client.GetAsync(request.DownloadUrl);
+        if (!response.IsSuccessStatusCode)
+            return BadRequest(new { error = "下载失败" });
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        await using var file = System.IO.File.Create(newPath);
+        await stream.CopyToAsync(file);
+
+        return NoContent();
+    }
+
     [HttpPost("mods/install")]
     public async Task<IActionResult> InstallMod(string instanceId, [FromBody] InstallModRequest request)
     {
@@ -166,6 +286,65 @@ public class InstanceFilesController : ControllerBase
         await using var file = System.IO.File.Create(path);
         await stream.CopyToAsync(file);
         return Ok(new { name = request.FileName });
+    }
+
+    [HttpPost("mods/batch-enable")]
+    public IActionResult BatchEnableMods(string instanceId, [FromBody] List<string> names)
+    {
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+        var modsDir = Path.Combine(gameDir, "mods");
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+        var inst = _repository.GetById(instanceId)!;
+        var versionSegmented = inst.VersionIsolation ?? true;
+        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+
+        foreach (var name in names)
+        {
+            var fileName = name.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase) ? name : name + ".disabled";
+            var path = Path.Combine(modsDir, fileName);
+            if (System.IO.File.Exists(path))
+                mods.EnableMod(path);
+        }
+        return NoContent();
+    }
+
+    [HttpPost("mods/batch-disable")]
+    public IActionResult BatchDisableMods(string instanceId, [FromBody] List<string> names)
+    {
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+        var modsDir = Path.Combine(gameDir, "mods");
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+        var inst = _repository.GetById(instanceId)!;
+        var versionSegmented = inst.VersionIsolation ?? true;
+        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+
+        foreach (var name in names)
+        {
+            var path = Path.Combine(modsDir, name);
+            if (System.IO.File.Exists(path))
+                mods.DisableMod(path);
+        }
+        return NoContent();
+    }
+
+    [HttpPost("mods/batch-delete")]
+    public IActionResult BatchDeleteMods(string instanceId, [FromBody] List<string> names)
+    {
+        var modsDir = GetPath(instanceId, "mods", out var _);
+        if (modsDir == null) return NotFound();
+
+        foreach (var name in names)
+        {
+            var path = Path.Combine(modsDir, name);
+            if (System.IO.File.Exists(path))
+                System.IO.File.Delete(path);
+            var disabledPath = Path.Combine(modsDir, name + ".disabled");
+            if (System.IO.File.Exists(disabledPath))
+                System.IO.File.Delete(disabledPath);
+        }
+        return NoContent();
     }
 
     [HttpGet("resourcepacks")]
