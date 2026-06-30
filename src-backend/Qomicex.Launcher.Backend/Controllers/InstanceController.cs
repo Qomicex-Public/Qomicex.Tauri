@@ -97,7 +97,7 @@ public class InstanceController : ControllerBase
             AccessToken = request.AccessToken,
             JvmArgs = request.JvmArgs,
             VersionIsolation = request.VersionIsolation,
-            Icon = request.Icon ?? "Grass",
+            Icon = request.Icon ?? GetDefaultIcon(request.Loader),
         };
         var created = _repository.Create(instance);
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
@@ -271,6 +271,18 @@ public class InstanceController : ControllerBase
         }
         catch { return true; }
     }
+
+    private static string GetDefaultIcon(string? loader) => loader?.ToLowerInvariant() switch
+    {
+        "forge" => "Anvil",
+        "neoforge" => "NeoForge",
+        "fabric" => "Fabric",
+        "quilt" => "Quilt",
+        "optifabric" => "OptiFabric",
+        "labymod" => "LabyMod",
+        "cleanroom" => "Cleanroom",
+        _ => "Grass",
+    };
 
     [HttpPost("{id}/launch")]
     public ActionResult<LaunchResult> Launch(string id)

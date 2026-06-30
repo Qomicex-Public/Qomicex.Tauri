@@ -86,4 +86,24 @@ public class SettingsController : ControllerBase
         catch { }
         return Ok();
     }
+
+    [HttpPost("open-folder")]
+    public IActionResult OpenFolder([FromBody] JsonElement body)
+    {
+        var path = body.GetProperty("path").GetString() ?? "";
+        if (string.IsNullOrEmpty(path)) return BadRequest();
+        if (!Path.IsPathRooted(path))
+            path = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), path));
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true,
+                Verb = "open"
+            });
+        }
+        catch { }
+        return Ok();
+    }
 }
