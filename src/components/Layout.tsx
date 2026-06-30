@@ -9,7 +9,7 @@ import { DebugProvider, useDebug } from './DebugContext.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 function DebugEffects() {
-  const { state } = useDebug()
+  const { state, unlock } = useDebug()
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -22,6 +22,7 @@ function DebugEffects() {
         if (count >= 8) {
           count = 0
           if (timer) clearTimeout(timer)
+          unlock()
           navigate('/settings?tab=debug')
           return
         }
@@ -34,7 +35,7 @@ function DebugEffects() {
       document.removeEventListener('keydown', handler)
       if (timer) clearTimeout(timer)
     }
-  }, [navigate])
+  }, [navigate, unlock])
 
   useEffect(() => {
     document.documentElement.style.setProperty(

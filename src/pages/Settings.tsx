@@ -12,6 +12,7 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Checkbox } from '../components/ui/checkbox.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import DebugTab from '../components/DebugTab.tsx'
+import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
 import type { SystemInfo, JavaDownloadVendorInfo, DownloadTask } from '../types/index.ts'
@@ -39,6 +40,7 @@ const CATEGORIES = [
   { id: 'roomcode', label: '联机房间码', icon: faKey },
   { id: 'about', label: '关于', icon: faInfoCircle },
   { id: 'debug', label: '调试', icon: faBug },
+
 ]
 
 const DOWNLOAD_SOURCES = [
@@ -57,7 +59,11 @@ function saveSettings(settings: AppSettings) {
 
 export default function Settings() {
   const { error: msgError, confirm: msgConfirm } = useMessageBox()
-  const [category, setCategory] = useState('launcher')
+  const { state: debugState } = useDebug()
+  const [category, setCategory] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('tab') ?? 'launcher'
+  })
   const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
   const settingsRef = useRef(settings)
   settingsRef.current = settings
@@ -327,7 +333,7 @@ export default function Settings() {
 
       <div className="flex gap-4">
         <div className="flex w-48 shrink-0 flex-col gap-0.5">
-          {CATEGORIES.map((cat) => (
+          {CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map((cat) => (
             <button
               key={cat.id}
               onClick={() => setCategory(cat.id)}

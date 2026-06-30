@@ -2,10 +2,13 @@ use std::sync::Mutex;
 use tauri::Manager;
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 
-#[cfg(windows)]
+#[cfg(all(windows, not(debug_assertions)))]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend.exe");
-#[cfg(unix)]
+#[cfg(all(unix, not(debug_assertions)))]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend");
+
+#[cfg(debug_assertions)]
+const BACKEND: &[u8] = &[];
 
 #[cfg(windows)]
 const BACKEND_EXE: &str = "qomicex-backend.exe";

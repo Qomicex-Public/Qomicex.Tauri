@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 
 export interface DebugState {
+  unlocked: boolean
   disableAnimations: boolean
   showComponentBoundaries: boolean
   simulateApiErrors: boolean
@@ -9,6 +10,7 @@ export interface DebugState {
 }
 
 const INITIAL: DebugState = {
+  unlocked: false,
   disableAnimations: false,
   showComponentBoundaries: false,
   simulateApiErrors: false,
@@ -19,6 +21,7 @@ const INITIAL: DebugState = {
 interface DebugContextValue {
   state: DebugState
   toggle: (key: keyof DebugState) => void
+  unlock: () => void
 }
 
 const ctx = createContext<DebugContextValue>({ state: INITIAL, toggle: () => {} })
@@ -41,7 +44,16 @@ export function DebugProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  return <ctx.Provider value={{ state, toggle }}>{children}</ctx.Provider>
+  const unlock = useCallback(() => {
+    setState(prev => {
+      if (prev.unlocked) return prev
+      const next = { ...prev, unlocked: true }
+      window.__DEBUG__ = next
+      return next
+    })
+  }, [])
+
+  return <ctx.Provider value={{ state, toggle, unlock }}>{children}</ctx.Provider>
 }
 
 export function useDebug() {
