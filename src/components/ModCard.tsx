@@ -44,10 +44,9 @@ export default function ModCard({
         const disabledName = mod.fileName.endsWith('.disabled') ? mod.fileName : mod.fileName + '.disabled'
         await enableMod(instanceId, disabledName)
       }
-      onRefresh()
     } catch (e) { console.error('Toggle mod failed:', e) }
     setToggling(false)
-  }, [instanceId, mod, onRefresh])
+  }, [instanceId, mod])
 
   const handleDelete = useCallback(async () => {
     setDeleting(true)

@@ -201,7 +201,7 @@ public class InstanceFilesController : ControllerBase
                 Version = m.Version,
                 Description = m.Description ?? "",
                 Authors = m.Authors ?? [],
-                IconUrl = m.ModrinthMeta?.IconUrl,
+                //IconUrl = m.ModrinthMeta?.,
                 IconBase64 = m.Icon,
                 CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
                 ModrinthId = m.ModrinthId,

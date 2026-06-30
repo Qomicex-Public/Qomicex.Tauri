@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faDownload } from '@fortawesome/free-solid-svg-icons'
+import { faRotate, faArrowRightArrowLeft } from '@fortawesome/free-solid-svg-icons'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import { Button } from './ui/button.tsx'
 import { cn } from '../lib/utils.ts'
@@ -38,17 +38,22 @@ export default function VersionPickerDialog({
   }, [open, mod, gameVersion, loader])
 
   const handleInstall = useCallback(async (version: ResourceVersion) => {
-    if (!mod || !mod.source) return
+    if (!mod || !mod.source) { console.error('VersionPicker: no mod or source', mod); return }
     const id = mod.curseForgeId?.toString() ?? mod.modrinthId
-    if (!id) return
+    if (!id) { console.error('VersionPicker: no project ID', mod); return }
+    console.log('VersionPicker: downloading version', version.versionNumber, 'for project', id, 'source', mod.source)
     setInstalling(version.id)
     try {
       const files = await getResourceVersionDownloads(id, version.id, mod.source)
+      console.log('VersionPicker: got files', files)
       const jarFile = files.find(f => f.filename.endsWith('.jar'))
       if (jarFile) {
+        console.log('VersionPicker: installing', jarFile.filename, jarFile.url)
         await changeModVersion(instanceId, mod.fileName, jarFile.url, jarFile.filename)
         onDone()
         onClose()
+      } else {
+        console.error('VersionPicker: no .jar file in downloads', files)
       }
     } catch (e) { console.error('Version install failed:', e) }
     setInstalling(null)
@@ -86,9 +91,9 @@ export default function VersionPickerDialog({
                   disabled={installing !== null}
                 >
                   {installing === v.id ? (
-                    <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />下载中...</>
+                    <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />更换中...</>
                   ) : (
-                    <><FontAwesomeIcon icon={faDownload} className="h-3 w-3" />安装</>
+                    <><FontAwesomeIcon icon={faArrowRightArrowLeft} className="h-3 w-3" />更换</>
                   )}
                 </Button>
               </div>
