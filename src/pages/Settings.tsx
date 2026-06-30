@@ -754,7 +754,7 @@ export default function Settings() {
                             }}
                             className={cn(
                               'group relative h-16 w-28 overflow-hidden rounded-lg border-2 transition-colors',
-                              settings.backgroundImage === name
+                              !settings.backgroundRandom && settings.backgroundImage === name
                                 ? 'border-primary'
                                 : 'border-border hover:border-muted-foreground/30'
                             )}
