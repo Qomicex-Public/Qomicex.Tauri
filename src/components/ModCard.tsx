@@ -27,6 +27,7 @@ export default function ModCard({
   mod, instanceId, gameVersion, loader, onRefresh, onChangeVersion,
   batchMode, selected, onSelect,
 }: ModCardProps) {
+  console.log('[ModCard]', mod.name, '| mcmodId:', mod.mcmodId, '| curseForgeId:', mod.curseForgeId, '| modrinthId:', mod.modrinthId, '| full:', mod)
   const navigate = useNavigate()
   const [toggling, setToggling] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -96,7 +97,9 @@ export default function ModCard({
         >
           <CardContent className="flex items-center gap-4 p-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
-              {mod.iconUrl && !imgError ? (
+              {mod.iconBase64 ? (
+                <img src={`data:image/png;base64,${mod.iconBase64}`} alt={mod.name} className="h-full w-full object-cover" loading="lazy" />
+              ) : mod.iconUrl && !imgError ? (
                 <img src={mod.iconUrl} alt={mod.name} className="h-full w-full object-cover" loading="lazy" onError={() => setImgError(true)} />
               ) : (
                 <FontAwesomeIcon icon={faCube} className="h-5 w-5 opacity-50" />

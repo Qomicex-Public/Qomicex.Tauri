@@ -201,8 +201,8 @@ public class InstanceFilesController : ControllerBase
                 Version = m.Version,
                 Description = m.Description ?? "",
                 Authors = m.Authors ?? [],
-                // CurseForgeFilesMeta (from fingerprint hash lookup) does not include IconUrl; only Modrinth provides it
                 IconUrl = m.ModrinthMeta?.IconUrl,
+                IconBase64 = null, // ModInfo does not expose Base64 icon yet
                 CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
                 ModrinthId = m.ModrinthId,
                 Source = source,

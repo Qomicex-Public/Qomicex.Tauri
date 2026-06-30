@@ -57,6 +57,7 @@ public class ModMetadataDto
     public string Description { get; set; } = string.Empty;
     public string[] Authors { get; set; } = [];
     public string? IconUrl { get; set; }
+    public string? IconBase64 { get; set; }
     public int? CurseForgeId { get; set; }
     public string? ModrinthId { get; set; }
     public string? Source { get; set; }

@@ -345,6 +345,7 @@ export interface ModMetadata {
   description: string
   authors: string[]
   iconUrl?: string | null
+  iconBase64?: string | null
   curseForgeId?: number | null
   modrinthId?: string | null
   source?: string | null
