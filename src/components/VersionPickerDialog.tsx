@@ -4,7 +4,7 @@ import { faRotate, faArrowRightArrowLeft } from '@fortawesome/free-solid-svg-ico
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import { Button } from './ui/button.tsx'
 import { cn } from '../lib/utils.ts'
-import { getResourceVersions, getResourceVersionDownloads } from '../api/resource.ts'
+import { getResourceVersions } from '../api/resource.ts'
 import { changeModVersion } from '../api/instance-files.ts'
 import type { ModMetadata, ResourceVersion } from '../types/index.ts'
 
@@ -41,19 +41,17 @@ export default function VersionPickerDialog({
     if (!mod || !mod.source) { console.error('VersionPicker: no mod or source', mod); return }
     const id = mod.curseForgeId?.toString() ?? mod.modrinthId
     if (!id) { console.error('VersionPicker: no project ID', mod); return }
-    console.log('VersionPicker: downloading version', version.versionNumber, 'for project', id, 'source', mod.source)
+    console.log('VersionPicker: installing version', version.versionNumber, 'downloads:', version.downloads)
     setInstalling(version.id)
     try {
-      const files = await getResourceVersionDownloads(id, version.id, mod.source)
-      console.log('VersionPicker: got files', files)
-      const jarFile = files.find(f => f.filename.endsWith('.jar'))
+      const jarFile = version.downloads.find(f => f.filename.endsWith('.jar'))
       if (jarFile) {
         console.log('VersionPicker: installing', jarFile.filename, jarFile.url)
         await changeModVersion(instanceId, mod.fileName, jarFile.url, jarFile.filename)
         onDone()
         onClose()
       } else {
-        console.error('VersionPicker: no .jar file in downloads', files)
+        console.error('VersionPicker: no .jar in downloads', version.downloads)
       }
     } catch (e) { console.error('Version install failed:', e) }
     setInstalling(null)
