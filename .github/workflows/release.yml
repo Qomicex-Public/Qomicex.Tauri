@@ -7,40 +7,45 @@ on:
         description: 'Release tag (e.g. v0.2.0)'
         required: true
         default: 'v0.1.0'
-      windows:
-        description: 'Windows (NSIS)'
-        type: boolean
-        default: true
-      linux:
-        description: 'Linux'
-        type: boolean
-        default: true
-      linux-appimage:
-        type: boolean
-        default: true
-      linux-deb:
-        type: boolean
-        default: true
-      linux-rpm:
-        type: boolean
-        default: true
-      macos:
-        description: 'macOS'
-        type: boolean
-        default: true
-      macos-arm64:
-        type: boolean
-        default: true
-      macos-x64:
-        type: boolean
-        default: true
+      buildPlatform:
+        description: '构建平台'
+        required: true
+        default: 'linux'
+        type: choice
+        options:
+          - windows
+          - linux
+          - macos
+          - all
+      linuxBundles:
+        description: 'Linux 打包格式（仅 linux/all 时有效）'
+        required: false
+        default: 'appimage,deb,rpm'
+        type: choice
+        options:
+          - appimage,deb,rpm
+          - appimage,deb
+          - appimage,rpm
+          - deb,rpm
+          - appimage
+          - deb
+          - rpm
+      macosArch:
+        description: 'macOS 架构（仅 macos/all 时有效）'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - arm64
+          - x64
 
 env:
   CARGO_TERM_COLORS: always
 
 jobs:
   windows-x64:
-    if: ${{ github.event.inputs.windows == 'true' }}
+    if: ${{ github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +71,7 @@ jobs:
         with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
 
   linux-x64:
-    if: ${{ github.event.inputs.linux == 'true' }}
+    if: ${{ github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,21 +94,12 @@ jobs:
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
-      - name: Build all linux bundles
-        run: |
-          bundles=""
-          [ "${{ github.event.inputs.linux-appimage }}" = "true" ] && bundles="${bundles}appimage,"
-          [ "${{ github.event.inputs.linux-deb }}" = "true" ] && bundles="${bundles}deb,"
-          [ "${{ github.event.inputs.linux-rpm }}" = "true" ] && bundles="${bundles}rpm,"
-          bundles="${bundles%,}"
-          if [ -n "$bundles" ]; then
-            npm run tauri -- build --bundles "$bundles"
-          fi
+      - run: npm run tauri -- build --bundles ${{ github.event.inputs.linuxBundles }}
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-linux-x64, path: src-tauri/target/release/bundle/ }
 
   macos-arm64:
-    if: ${{ github.event.inputs.macos == 'true' && github.event.inputs.macos-arm64 == 'true' }}
+    if: ${{ (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') && (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'arm64') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,7 +124,7 @@ jobs:
         with: { name: qomicex-launcher-macos-arm64, path: src-tauri/target/release/bundle/ }
 
   macos-x64:
-    if: ${{ github.event.inputs.macos == 'true' && github.event.inputs.macos-x64 == 'true' }}
+    if: ${{ (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') && (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'x64') }}
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
