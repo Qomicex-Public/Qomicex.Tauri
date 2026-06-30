@@ -28,7 +28,6 @@ export default function ModCard({
   mod, instanceId, gameVersion, loader, onRefresh, onChangeVersion,
   batchMode, selected, onSelect,
 }: ModCardProps) {
-  console.log('[ModCard]', mod.name, '| mcmodId:', mod.mcmodId, '| curseForgeId:', mod.curseForgeId, '| modrinthId:', mod.modrinthId, '| full:', mod)
   const navigate = useNavigate()
   const [toggling, setToggling] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
