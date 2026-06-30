@@ -202,7 +202,9 @@ export default function Settings() {
       const selected: unknown = await tauriOpen({
         multiple: false,
         title: '选择 Java 可执行文件',
-        filters: [{ name: 'Java', extensions: ['exe', ''] }],
+        filters: navigator.platform?.includes('Win')
+          ? [{ name: 'Java', extensions: ['exe'] }]
+          : [{ name: 'Java', extensions: ['*'] }],
       })
       if (typeof selected === 'string') setAddPath(selected)
     } catch {}
