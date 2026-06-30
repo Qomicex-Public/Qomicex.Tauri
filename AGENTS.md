@@ -51,6 +51,8 @@ No test framework exists in this repo.
 
 构建成功后自动上传 artifact 并创建 GitHub Release。
 
+**注意：** `Qomicex.Avalonia` 是私有子模块。CI 需要在 repo 设置中添加 `QOMICEX_PAT` secret（一个有子模块访问权限的 GitHub Personal Access Token）。
+
 Tauri v2 → React → ASP.NET Core，后端通过 `include_bytes!` 嵌入 Rust exe，启动时解压到 `%TEMP%`。`QOMICEX_HOME` 环境变量指向启动器 exe 所在目录（由 Rust 在 spawn 前设置），后端据此存取持久化数据。
 
 ## Import rules (critical)
