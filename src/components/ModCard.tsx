@@ -9,6 +9,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './u
 import { Button } from './ui/button.tsx'
 import { cn } from '../lib/utils.ts'
 import { enableMod, disableMod, deleteMod } from '../api/instance-files.ts'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import type { ModMetadata } from '../types/index.ts'
 
 interface ModCardProps {
@@ -63,7 +64,7 @@ export default function ModCard({
   if (mod.mcmodId) {
     contextItems.push({
       label: 'MC百科',
-      onClick: () => window.open(`https://www.mcmod.cn/class/${mod.mcmodId}`, '_blank'),
+      onClick: () => openUrl(`https://www.mcmod.cn/class/${mod.mcmodId}`),
     })
   }
   if (mod.curseForgeId || mod.modrinthId) {
