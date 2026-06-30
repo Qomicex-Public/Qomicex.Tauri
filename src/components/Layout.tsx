@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { get, API_BASE } from '../api/client.ts'
 import { useMessageBox } from './ui/message-box.tsx'
+import { DebugProvider, useDebug } from './DebugContext.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 export default function Layout() {
@@ -64,8 +65,63 @@ export default function Layout() {
     return () => document.removeEventListener('click', handleClick)
   }, [msgConfirm])
 
+  function DebugEffects() {
+    const { state } = useDebug()
+    const navigate = useNavigate()
+
+    useEffect(() => {
+      let count = 0
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const handler = (e: KeyboardEvent) => {
+        if (e.key === 'F8') {
+          e.preventDefault()
+          count++
+          if (count >= 8) {
+            count = 0
+            if (timer) clearTimeout(timer)
+            navigate('/settings?tab=debug')
+            return
+          }
+          if (timer) clearTimeout(timer)
+          timer = setTimeout(() => { count = 0 }, 2000)
+        }
+      }
+      document.addEventListener('keydown', handler)
+      return () => {
+        document.removeEventListener('keydown', handler)
+        if (timer) clearTimeout(timer)
+      }
+    }, [navigate])
+
+    useEffect(() => {
+      document.documentElement.style.setProperty(
+        '--anim-duration-multiplier',
+        state.disableAnimations ? '0' : ''
+      )
+    }, [state.disableAnimations])
+
+    useEffect(() => {
+      const id = 'debug-component-boundaries'
+      if (state.showComponentBoundaries) {
+        if (!document.getElementById(id)) {
+          const style = document.createElement('style')
+          style.id = id
+          style.textContent = '* { outline: 1px solid rgba(255,0,0,0.3) !important }'
+          document.head.appendChild(style)
+        }
+      } else {
+        const el = document.getElementById(id)
+        if (el) el.remove()
+      }
+    }, [state.showComponentBoundaries])
+
+    return null
+  }
+
   return (
+    <DebugProvider>
     <div className="flex h-screen">
+      <DebugEffects />
       {bg && (
         <>
           <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: `blur(${blur}px)` }} />
@@ -82,5 +138,6 @@ export default function Layout() {
         </div>
       </div>
     </div>
+    </DebugProvider>
   )
 }
