@@ -230,6 +230,18 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
     setLoading(false)
   }, [instanceId])
 
+  const toggleModLocal = useCallback((fileName: string) => {
+    setMods(prev => prev.map(m => {
+      if (m.fileName !== fileName) return m
+      if (m.active) {
+        return { ...m, fileName: m.fileName + '.disabled', active: false }
+      } else {
+        const newName = m.fileName.endsWith('.disabled') ? m.fileName.slice(0, -9) : m.fileName
+        return { ...m, fileName: newName, active: true }
+      }
+    }))
+  }, [])
+
   useEffect(() => {
     loadMods()
   }, [loadMods])
@@ -359,6 +371,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
                   gameVersion={gameVersion}
                   loader={loader}
                   onRefresh={loadMods}
+                  onToggle={toggleModLocal}
                   onChangeVersion={setVersionDialogMod}
                   batchMode={batchMode}
                   selected={selected.has(mod.fileName)}

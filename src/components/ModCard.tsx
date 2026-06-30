@@ -18,6 +18,7 @@ interface ModCardProps {
   gameVersion?: string
   loader?: string
   onRefresh: () => void
+  onToggle: (fileName: string) => void
   onChangeVersion: (mod: ModMetadata) => void
   batchMode?: boolean
   selected?: boolean
@@ -25,7 +26,7 @@ interface ModCardProps {
 }
 
 export default function ModCard({
-  mod, instanceId, gameVersion, loader, onRefresh, onChangeVersion,
+  mod, instanceId, gameVersion, loader, onRefresh, onToggle, onChangeVersion,
   batchMode, selected, onSelect,
 }: ModCardProps) {
   const navigate = useNavigate()
@@ -44,9 +45,10 @@ export default function ModCard({
         const disabledName = mod.fileName.endsWith('.disabled') ? mod.fileName : mod.fileName + '.disabled'
         await enableMod(instanceId, disabledName)
       }
+      onToggle(mod.fileName)
     } catch (e) { console.error('Toggle mod failed:', e) }
     setToggling(false)
-  }, [instanceId, mod])
+  }, [instanceId, mod, onToggle])
 
   const handleDelete = useCallback(async () => {
     setDeleting(true)
