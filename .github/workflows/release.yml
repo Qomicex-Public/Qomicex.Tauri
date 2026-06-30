@@ -13,6 +13,15 @@ on:
       linux-x64:
         type: boolean
         default: true
+      linux-appimage:
+        type: boolean
+        default: true
+      linux-deb:
+        type: boolean
+        default: true
+      linux-rpm:
+        type: boolean
+        default: true
       macos-arm64:
         type: boolean
         default: true
@@ -65,14 +74,23 @@ jobs:
         with: { node-version: '20', cache: npm }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime linux-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=embedded -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
-      - run: npm run tauri -- build --bundles appimage
+      - name: Build all linux bundles
+        run: |
+          bundles=""
+          [ "${{ github.event.inputs.linux-appimage }}" = "true" ] && bundles="${bundles}appimage,"
+          [ "${{ github.event.inputs.linux-deb }}" = "true" ] && bundles="${bundles}deb,"
+          [ "${{ github.event.inputs.linux-rpm }}" = "true" ] && bundles="${bundles}rpm,"
+          bundles="${bundles%,}"
+          if [ -n "$bundles" ]; then
+            npm run tauri -- build --bundles "$bundles"
+          fi
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-linux-x64, path: src-tauri/target/release/bundle/ }
 

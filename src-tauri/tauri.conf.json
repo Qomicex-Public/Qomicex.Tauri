@@ -33,8 +33,15 @@
       "icons/icon.ico"
     ],
     "linux": {
-      "webviewInstallMode": {
-        "type": "skip"
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "libwebkit2gtk-4.1-0"
+        ]
       }
     }
   }
