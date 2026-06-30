@@ -6,7 +6,7 @@ public sealed class TraceDumpService(TraceBufferStore bufferStore)
 {
     public string Dump(string reason)
     {
-        var logDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
+        var logDirectory = Path.Combine(AppPaths.BaseDir, "logs");
         Directory.CreateDirectory(logDirectory);
 
         var now = DateTime.Now;

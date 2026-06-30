@@ -148,7 +148,7 @@ public class JavaDownloadService
 
     private static string GetBaseDir()
     {
-        var dir = Path.Combine(AppContext.BaseDirectory, "QML", "Runtime", "Java");
+        var dir = Path.Combine(AppPaths.BaseDir, "QML", "Runtime", "Java");
         Directory.CreateDirectory(dir);
         return dir;
     }

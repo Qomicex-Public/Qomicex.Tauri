@@ -16,7 +16,7 @@ public class SettingsController : ControllerBase
 
     static SettingsController()
     {
-        SettingsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "QML");
+        SettingsDir = Path.Combine(AppPaths.BaseDir, "QML");
         SettingsPath = Path.Combine(SettingsDir, "settings.json");
         BackgroundsDir = Path.Combine(SettingsDir, "backgrounds");
     }

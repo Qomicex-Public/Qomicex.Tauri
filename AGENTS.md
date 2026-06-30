@@ -38,6 +38,21 @@ npm run build
 
 No test framework exists in this repo.
 
+## CI/CD (GitHub Actions)
+
+`.github/workflows/release.yml` — **手动触发** (`workflow_dispatch`)，可选单个或多个目标：
+
+| Job | Runner | 产物 | 打包 |
+|-----|--------|------|------|
+| `windows-x64` | windows-latest | `qomicex-launcher-windows-x64` | NSIS |
+| `linux-x64` | ubuntu-latest | `qomicex-launcher-linux-x64` | AppImage |
+| `macos-arm64` | macos-latest | `qomicex-launcher-macos-arm64` | DMG |
+| `macos-x64` | macos-13 | `qomicex-launcher-macos-x64` | DMG |
+
+构建成功后自动上传 artifact 并创建 GitHub Release。
+
+Tauri v2 → React → ASP.NET Core，后端通过 `include_bytes!` 嵌入 Rust exe，启动时解压到 `%TEMP%`。`QOMICEX_HOME` 环境变量指向启动器 exe 所在目录（由 Rust 在 spawn 前设置），后端据此存取持久化数据。
+
 ## Import rules (critical)
 
 All local imports **must** include the file extension — Vite path bug:

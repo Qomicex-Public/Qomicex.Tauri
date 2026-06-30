@@ -1,4 +1,4 @@
-import { get } from './client.ts'
+import { get, post } from './client.ts'
 
 export async function lookupChineseName(name: string): Promise<string | null> {
   try {
@@ -10,10 +10,6 @@ export async function lookupChineseName(name: string): Promise<string | null> {
 export async function batchLookupChineseNames(names: string[]): Promise<Record<string, string | null>> {
   if (names.length === 0) return {}
   try {
-    return await fetch('/api/mcmod/batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(names),
-    }).then(r => r.json())
+    return await post<Record<string, string | null>>('/mcmod/batch', names)
   } catch { return {} }
 }

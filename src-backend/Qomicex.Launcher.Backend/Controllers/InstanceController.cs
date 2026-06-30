@@ -266,7 +266,7 @@ public class InstanceController : ControllerBase
     {
         try
         {
-            var settingsPath = Path.Combine(AppContext.BaseDirectory, "QML", "settings.json");
+            var settingsPath = Path.Combine(AppPaths.BaseDir, "QML", "settings.json");
             if (!System.IO.File.Exists(settingsPath)) return true;
             var json = System.IO.File.ReadAllText(settingsPath);
             var doc = System.Text.Json.JsonDocument.Parse(json);
@@ -476,7 +476,7 @@ public class InstanceController : ControllerBase
                 state.Stage = "authlib"; state.Message = "正在配置外置登录..."; state.Progress = 40;
                 _launchService.Set(id, state);
 
-                var aiDir = Path.Combine(AppContext.BaseDirectory, "QML");
+                var aiDir = Path.Combine(AppPaths.BaseDir, "QML");
                 var aiPath = Path.Combine(aiDir, "authlib-injector.jar");
                 System.IO.Directory.CreateDirectory(aiDir);
 

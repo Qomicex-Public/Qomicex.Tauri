@@ -17,7 +17,7 @@ public class SkinService
         _http = httpFactory.CreateClient();
     }
 
-    private static string SkinDir => Path.Combine(AppContext.BaseDirectory, "QML", "skins");
+    private static string SkinDir => Path.Combine(AppPaths.BaseDir, "QML", "skins");
 
     private static string SkinPath(string uuid) => Path.Combine(SkinDir, $"{uuid.Replace("-", "")}.png");
 

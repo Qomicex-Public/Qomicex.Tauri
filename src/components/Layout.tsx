@@ -3,7 +3,7 @@ import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
-import { get } from '../api/client.ts'
+import { get, API_BASE } from '../api/client.ts'
 import { useMessageBox } from './ui/message-box.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
@@ -26,7 +26,7 @@ export default function Layout() {
         }
       } catch { filename = '' }
     }
-    setBg(filename ? `/api/settings/backgrounds/${encodeURIComponent(filename)}` : '')
+    setBg(filename ? `${API_BASE}/settings/backgrounds/${encodeURIComponent(filename)}` : '')
   }
 
   useEffect(() => {

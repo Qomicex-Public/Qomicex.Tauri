@@ -17,7 +17,7 @@ public class InstanceRepository : IInstanceRepository
 
     public InstanceRepository()
     {
-        var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
+        var dataDir = Path.Combine(AppPaths.BaseDir, "data");
         Directory.CreateDirectory(dataDir);
         _filePath = Path.Combine(dataDir, "instances.json");
         _instances = LoadFromFile();

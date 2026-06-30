@@ -30,7 +30,7 @@ public sealed class McmodService
 
     private static byte[]? TryLoadRuntimeOverride()
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "QML", "mcmod_data.json");
+        var path = Path.Combine(AppPaths.BaseDir, "QML", "mcmod_data.json");
         return File.Exists(path) ? File.ReadAllBytes(path) : null;
     }
 
