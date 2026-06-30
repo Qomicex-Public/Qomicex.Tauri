@@ -19,9 +19,9 @@
 
 ## 触发方式
 
-- **快捷键**: 连按 8 次 F8，5 秒内完成
+- **快捷键**: 连按 8 次 F8，2 秒内完成（每次按下重置 2 秒定时器）
 - **目标**: 导航到 `/settings?tab=debug`
-- **实现**: `Layout.tsx` 中添加 `keydown` 监听，维护 `pressCount` + 5 秒超时定时器
+- **实现**: `Layout.tsx` 中添加 `keydown` 监听，维护 `pressCount` + 2 秒超时定时器（每次 F8 重置）
 
 ---
 
@@ -155,7 +155,7 @@ useEffect(() => {
         return
       }
       if (timer) clearTimeout(timer)
-      timer = setTimeout(() => { count = 0 }, 5000)
+      timer = setTimeout(() => { count = 0 }, 2000)
     }
   }
 
