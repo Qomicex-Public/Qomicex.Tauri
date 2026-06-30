@@ -5,7 +5,7 @@ namespace Qomicex.Launcher.Backend.Services;
 
 public sealed class McmodService
 {
-    private readonly Dictionary<string, string> _map;
+    private readonly Dictionary<string, (string CnName, int? Id)> _map;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
     public McmodService()
@@ -22,7 +22,7 @@ public sealed class McmodService
             {
                 var key = Normalize(entry.EnName ?? "");
                 if (key.Length > 0 && !_map.ContainsKey(key))
-                    _map[key] = entry.CnName ?? entry.EnName ?? "";
+                    _map[key] = (entry.CnName ?? entry.EnName ?? "", entry.Id);
             }
         }
         catch { /* data unavailable, skip */ }
@@ -50,17 +50,17 @@ public sealed class McmodService
         var key = Normalize(enName);
         if (key.Length == 0) return null;
 
-        if (_map.TryGetValue(key, out var cn)) return cn;
+        if (_map.TryGetValue(key, out var entry)) return entry.CnName;
 
         foreach (var (k, v) in _map)
             if (k.Contains(key) || key.Contains(k))
-                return v;
+                return v.CnName;
 
         var words = key.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         foreach (var (k, v) in _map)
             foreach (var w in words)
                 if (w.Length > 2 && k.Contains(w))
-                    return v;
+                    return v.CnName;
 
         return null;
     }
@@ -73,6 +73,20 @@ public sealed class McmodService
         return result;
     }
 
+    public Dictionary<string, (string? CnName, int? Id)> BatchLookupWithIds(List<string> names)
+    {
+        var result = new Dictionary<string, (string? CnName, int? Id)>(names.Count);
+        foreach (var name in names)
+        {
+            var key = Normalize(name);
+            if (key.Length > 0 && _map.TryGetValue(key, out var entry))
+                result[name] = (entry.CnName, entry.Id);
+            else
+                result[name] = (null, null);
+        }
+        return result;
+    }
+
     private sealed class McmodData
     {
         public List<McmodEntry>? Mods { get; set; }
@@ -80,6 +94,7 @@ public sealed class McmodService
 
     private sealed class McmodEntry
     {
+        public int? Id { get; set; }
         public string? EnName { get; set; }
         public string? CnName { get; set; }
     }
