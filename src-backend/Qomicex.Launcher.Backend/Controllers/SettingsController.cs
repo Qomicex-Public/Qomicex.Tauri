@@ -81,7 +81,8 @@ public class SettingsController : ControllerBase
         System.IO.Directory.CreateDirectory(BackgroundsDir);
         try
         {
-            System.Diagnostics.Process.Start("explorer.exe", BackgroundsDir);
+            var psi = new System.Diagnostics.ProcessStartInfo(BackgroundsDir) { UseShellExecute = true };
+            System.Diagnostics.Process.Start(psi);
         }
         catch { }
         return Ok();

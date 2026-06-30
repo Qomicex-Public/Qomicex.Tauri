@@ -973,10 +973,10 @@ export default function Settings() {
               <div className="space-y-1.5">
                 <Label>Java 可执行文件路径</Label>
                 <div className="flex gap-2">
-                  <Input value={addPath} onChange={(e) => setAddPath(e.target.value)} placeholder="C:\Program Files\Java\jdk-17\bin\java.exe" className="flex-1" />
+                  <Input value={addPath} onChange={(e) => setAddPath(e.target.value)} placeholder={navigator.platform?.includes('Win') ? 'C:\\Program Files\\Java\\jdk-17\\bin\\java.exe' : '/usr/lib/jvm/java-17-openjdk/bin/java'} className="flex-1" />
                   <Button variant="outline" onClick={handleBrowseJava}>浏览</Button>
                 </div>
-                <p className="text-xs text-muted-foreground">选择或输入 java.exe 的完整路径</p>
+                <p className="text-xs text-muted-foreground">选择或输入 Java 可执行文件的完整路径</p>
               </div>
             </DialogBody>
             <DialogFooter>

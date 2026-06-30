@@ -1038,7 +1038,7 @@ export default function Instances() {
                       </Tooltip>
                     )})()}
                     <Tooltip content="打开文件夹">
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); fetch(`${API_BASE}/settings/open-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: `${currentDir}/versions/${v.name}` }) }).catch(() => {}) }}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); fetch(`${API_BASE}/settings/open-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: `${currentDir.replace(/\\/g, '/')}/versions/${v.name}` }) }).catch(() => {}) }}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
                 </div>
@@ -1091,7 +1091,7 @@ export default function Instances() {
                     </Tooltip>
                   )})()}
                    <Tooltip content="打开文件夹">
-                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => fetch(`${API_BASE}/settings/open-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: `${currentDir}/versions/${v.name}` }) }).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => fetch(`${API_BASE}/settings/open-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: `${currentDir.replace(/\\/g, '/')}/versions/${v.name}` }) }).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                    </Tooltip>
                 </div>
               </div>

@@ -4,12 +4,12 @@ use tauri::Manager;
 
 #[cfg(windows)]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend.exe");
-#[cfg(not(windows))]
+#[cfg(unix)]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend");
 
 #[cfg(windows)]
 const BACKEND_EXE: &str = "qomicex-backend.exe";
-#[cfg(not(windows))]
+#[cfg(unix)]
 const BACKEND_EXE: &str = "qomicex-backend";
 
 struct BackendChild(Mutex<Option<std::process::Child>>);

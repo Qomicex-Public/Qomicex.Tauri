@@ -117,7 +117,7 @@ export default function ResourceDetailPage() {
       } else {
         const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shaderpack: 'shaderpacks', save: 'saves' }
         const subDir = folderMap[category] || ''
-        const defaultDir = instance?.gameDir ? instance.gameDir + (subDir ? `/${subDir}` : '') : undefined
+        const defaultDir = instance?.gameDir ? instance.gameDir.replace(/\\/g, '/') + (subDir ? `/${subDir}` : '') : undefined
         const defaultPath = defaultDir ? `${defaultDir}/${fileName}` : fileName
         const targetPath = await save({ defaultPath })
         if (!targetPath) { setDownloadingFor(null); return }
