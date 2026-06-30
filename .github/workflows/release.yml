@@ -7,10 +7,12 @@ on:
         description: 'Release tag (e.g. v0.2.0)'
         required: true
         default: 'v0.1.0'
-      windows-x64:
+      windows:
+        description: 'Windows (NSIS)'
         type: boolean
         default: true
-      linux-x64:
+      linux:
+        description: 'Linux'
         type: boolean
         default: true
       linux-appimage:
@@ -20,6 +22,10 @@ on:
         type: boolean
         default: true
       linux-rpm:
+        type: boolean
+        default: true
+      macos:
+        description: 'macOS'
         type: boolean
         default: true
       macos-arm64:
@@ -34,7 +40,7 @@ env:
 
 jobs:
   windows-x64:
-    if: ${{ github.event.inputs.windows-x64 == 'true' }}
+    if: ${{ github.event.inputs.windows == 'true' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +66,7 @@ jobs:
         with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
 
   linux-x64:
-    if: ${{ github.event.inputs.linux-x64 == 'true' }}
+    if: ${{ github.event.inputs.linux == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +103,7 @@ jobs:
         with: { name: qomicex-launcher-linux-x64, path: src-tauri/target/release/bundle/ }
 
   macos-arm64:
-    if: ${{ github.event.inputs.macos-arm64 == 'true' }}
+    if: ${{ github.event.inputs.macos == 'true' && github.event.inputs.macos-arm64 == 'true' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -122,7 +128,7 @@ jobs:
         with: { name: qomicex-launcher-macos-arm64, path: src-tauri/target/release/bundle/ }
 
   macos-x64:
-    if: ${{ github.event.inputs.macos-x64 == 'true' }}
+    if: ${{ github.event.inputs.macos == 'true' && github.event.inputs.macos-x64 == 'true' }}
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
