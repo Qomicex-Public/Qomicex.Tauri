@@ -112,7 +112,7 @@ public class RepairResourcesTask : IInstallTask
         {
             Error = ex.Message;
             SetState("failed", Progress);
-            Debug.WriteLine($"[RepairResourcesTask] 补全失败: {ex}");
+            Trace.WriteLine($"[RepairResourcesTask] 补全失败: {ex}");
         }
         finally
         {

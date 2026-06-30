@@ -292,7 +292,7 @@ public class InstallTask : IInstallTask
         {
             Error = ex.Message;
             SetState("failed", Progress);
-            Debug.WriteLine($"[InstallTask] 安装失败: {ex}");
+            Trace.WriteLine($"[InstallTask] 安装失败: {ex}");
         }
         finally
         {
@@ -395,7 +395,7 @@ public class InstallTask : IInstallTask
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[InstallTask] 加载器安装失败: {ex.Message}");
+            Trace.WriteLine($"[InstallTask] 加载器安装失败: {ex.Message}");
             throw; // ponytail: let caller handle it so install shows as failed
         }
     }
@@ -475,7 +475,7 @@ public class InstallTask : IInstallTask
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[InstallTask] 解析附加内容失败 ({addonId}): {ex.Message}");
+            Trace.WriteLine($"[InstallTask] 解析附加内容失败 ({addonId}): {ex.Message}");
         }
         return (null, null);
     }
