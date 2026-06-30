@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 
 export interface DebugState {
   disableAnimations: boolean
@@ -29,23 +29,17 @@ declare global {
   }
 }
 
-const globalState: DebugState = window.__DEBUG__ ?? { ...INITIAL }
-window.__DEBUG__ = globalState
 
 export function DebugProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<DebugState>(globalState)
+  const [state, setState] = useState<DebugState>(window.__DEBUG__ ?? { ...INITIAL })
 
   const toggle = useCallback((key: keyof DebugState) => {
     setState(prev => {
       const next = { ...prev, [key]: !prev[key] }
-      Object.assign(globalState, next)
+      window.__DEBUG__ = next
       return next
     })
   }, [])
-
-  useEffect(() => {
-    window.__DEBUG__ = { ...state }
-  }, [state])
 
   return <ctx.Provider value={{ state, toggle }}>{children}</ctx.Provider>
 }
