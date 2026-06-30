@@ -43,6 +43,7 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
+      - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
@@ -68,6 +69,7 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-unknown-linux-gnu }
+      - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
@@ -104,6 +106,7 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-apple-darwin }
+      - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
@@ -128,6 +131,7 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-apple-darwin }
+      - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
