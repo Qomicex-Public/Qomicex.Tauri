@@ -112,7 +112,8 @@ F8 触发导航时设置 URL search param `tab=debug`。
 ```
 
 - 通过 React Context (`DebugContext`) 管理状态
-- 不写入 `AppSettings`，刷新页面后重置
+- 不写入 `AppSettings`，不持久化到磁盘
+- 模块级单例存储（`window.__DEBUG__`），路由切换不丢失，重启启动器归零
 
 ### 3. DebugContext.tsx — 调试状态 Context
 
@@ -187,7 +188,7 @@ useEffect(() => {
 
 ## 不涉及的范围
 
-- 不持久化调试开关（刷新归零）
+- 不持久化调试开关（重启归零，路由切换保留）
 - 不修改现有 Settings 数据模型
 - 不新增路由
 - LogAnalysis 页面保持不变（不嵌入调试页）
