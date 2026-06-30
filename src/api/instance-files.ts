@@ -1,5 +1,5 @@
 import { get, del, post } from './client.ts'
-import type { FileEntry, ServerEntry, ServerState } from '../types/index.ts'
+import type { FileEntry, ModMetadata, ServerEntry, ServerState } from '../types/index.ts'
 
 export function getSaves(instanceId: string): Promise<FileEntry[]> {
   return get<FileEntry[]>(`/instance/${instanceId}/files/saves`)
@@ -57,4 +57,32 @@ export function pingServer(instanceId: string, address: string): Promise<ServerS
 
 export function getInstalledFileNames(instanceId: string, category: string = 'mods'): Promise<string[]> {
   return get<string[]>(`/instance/${instanceId}/files/installed-names?category=${encodeURIComponent(category)}`)
+}
+
+export function getModsMetadata(instanceId: string): Promise<ModMetadata[]> {
+  return get<ModMetadata[]>(`/instance/${instanceId}/files/mods/metadata`)
+}
+
+export function enableMod(instanceId: string, name: string): Promise<void> {
+  return post(`/instance/${instanceId}/files/mods/enable?name=${encodeURIComponent(name)}`)
+}
+
+export function disableMod(instanceId: string, name: string): Promise<void> {
+  return post(`/instance/${instanceId}/files/mods/disable?name=${encodeURIComponent(name)}`)
+}
+
+export function changeModVersion(instanceId: string, fileName: string, downloadUrl: string, newFileName: string): Promise<void> {
+  return post(`/instance/${instanceId}/files/mods/change-version`, { fileName, downloadUrl, newFileName })
+}
+
+export function batchEnableMods(instanceId: string, names: string[]): Promise<void> {
+  return post(`/instance/${instanceId}/files/mods/batch-enable`, names)
+}
+
+export function batchDisableMods(instanceId: string, names: string[]): Promise<void> {
+  return post(`/instance/${instanceId}/files/mods/batch-disable`, names)
+}
+
+export function batchDeleteMods(instanceId: string, names: string[]): Promise<void> {
+  return post(`/instance/${instanceId}/files/mods/batch-delete`, names)
 }
