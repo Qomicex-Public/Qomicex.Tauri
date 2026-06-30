@@ -265,22 +265,47 @@ public class InstanceFilesController : ControllerBase
         var modsDir = Path.Combine(gameDir, "mods");
 
         var oldPath = Path.Combine(modsDir, request.FileName);
+        var oldBak = oldPath + ".bak";
         if (System.IO.File.Exists(oldPath))
-            System.IO.File.Delete(oldPath);
+            System.IO.File.Move(oldPath, oldBak);
+
         var disabledPath = Path.Combine(modsDir, request.FileName + ".disabled");
+        var disabledBak = disabledPath + ".bak";
         if (System.IO.File.Exists(disabledPath))
-            System.IO.File.Delete(disabledPath);
+            System.IO.File.Move(disabledPath, disabledBak);
 
         var newPath = Path.Combine(modsDir, request.NewFileName);
-        using var client = _httpClientFactory.CreateClient();
-        var response = await client.GetAsync(request.DownloadUrl);
-        if (!response.IsSuccessStatusCode)
-            return BadRequest(new { error = "下载失败" });
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        await using var file = System.IO.File.Create(newPath);
-        await stream.CopyToAsync(file);
+        try
+        {
+            using var client = _httpClientFactory.CreateClient();
+            var response = await client.GetAsync(request.DownloadUrl);
+            if (!response.IsSuccessStatusCode)
+            {
+                RollbackBackups(oldBak, oldPath, disabledBak, disabledPath);
+                return BadRequest(new { error = "下载失败" });
+            }
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            await using var file = System.IO.File.Create(newPath);
+            await stream.CopyToAsync(file);
 
-        return NoContent();
+            if (System.IO.File.Exists(oldBak)) System.IO.File.Delete(oldBak);
+            if (System.IO.File.Exists(disabledBak)) System.IO.File.Delete(disabledBak);
+
+            return NoContent();
+        }
+        catch
+        {
+            RollbackBackups(oldBak, oldPath, disabledBak, disabledPath);
+            throw;
+        }
+    }
+
+    private static void RollbackBackups(string oldBak, string oldPath, string disabledBak, string disabledPath)
+    {
+        if (System.IO.File.Exists(oldBak))
+            System.IO.File.Move(oldBak, oldPath);
+        if (System.IO.File.Exists(disabledBak))
+            System.IO.File.Move(disabledBak, disabledPath);
     }
 
     [HttpPost("mods/install")]
