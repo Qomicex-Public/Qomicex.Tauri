@@ -16,9 +16,12 @@ import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscrib
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, FileEntry, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
-import { getSaves, getScreenshots, getMods, getResourcePacks, getShaderPacks, getServers, deleteSave, copySave, deleteScreenshot, deleteMod, deleteResourcePack, deleteShaderPack, addServer, deleteServer, pingServer } from '../api/instance-files.ts'
+import { getSaves, getScreenshots, getResourcePacks, getShaderPacks, getServers, deleteSave, copySave, deleteScreenshot, deleteResourcePack, deleteShaderPack, addServer, deleteServer, pingServer, getModsMetadata, batchEnableMods, batchDisableMods, batchDeleteMods } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
+import ModCard from '../components/ModCard.tsx'
+import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
+import type { ModMetadata } from '../types/index.ts'
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -201,32 +204,73 @@ function ScreenshotsTab({ instanceId, files, loading, onRefresh }: {
   )
 }
 
-function ModsTab({ instanceId, files, loading, onRefresh, gameVersion, loader }: {
+function ModsTab({ instanceId, gameVersion, loader }: {
   instanceId: string
-  files?: FileEntry[] | null
-  loading?: boolean
-  onRefresh: () => void
   gameVersion?: string
   loader?: string
 }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
-  const [deleting, setDeleting] = useState<string | null>(null)
-  const [confirmName, setConfirmName] = useState<string | null>(null)
+  const [mods, setMods] = useState<ModMetadata[]>([])
+  const [loading, setLoading] = useState(true)
+  const [versionDialogMod, setVersionDialogMod] = useState<ModMetadata | null>(null)
+
+  const [batchMode, setBatchMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [batchConfirm, setBatchConfirm] = useState<{ type: 'enable' | 'disable' | 'delete' } | null>(null)
+  const [batchProcessing, setBatchProcessing] = useState(false)
+
+  const loadMods = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await getModsMetadata(instanceId)
+      setMods(data)
+    } catch { setMods([]) }
+    setLoading(false)
+  }, [instanceId])
+
+  useEffect(() => {
+    loadMods()
+  }, [loadMods])
 
   const filtered = useMemo(() => {
-    if (!files) return []
-    if (!search) return files as FileEntry[]
+    if (!search) return mods
     const q = search.toLowerCase()
-    return (files as FileEntry[]).filter((f) => f.name.toLowerCase().includes(q))
-  }, [files, search])
+    return mods.filter(m =>
+      m.name.toLowerCase().includes(q) ||
+      (m.chineseName && m.chineseName.includes(q)) ||
+      m.fileName.toLowerCase().includes(q)
+    )
+  }, [mods, search])
 
-  const handleDelete = useCallback(async (name: string) => {
-    setDeleting(name)
-    setConfirmName(null)
-    try { await deleteMod(instanceId, name); onRefresh() } catch {}
-    setDeleting(null)
-  }, [instanceId, onRefresh])
+  const toggleSelect = useCallback((fileName: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(fileName)) next.delete(fileName)
+      else next.add(fileName)
+      return next
+    })
+  }, [])
+
+  const exitBatchMode = useCallback(() => {
+    setBatchMode(false)
+    setSelected(new Set())
+  }, [])
+
+  const handleBatchAction = useCallback(async () => {
+    if (!batchConfirm) return
+    setBatchProcessing(true)
+    const names = Array.from(selected)
+    try {
+      if (batchConfirm.type === 'enable') await batchEnableMods(instanceId, names)
+      else if (batchConfirm.type === 'disable') await batchDisableMods(instanceId, names)
+      else if (batchConfirm.type === 'delete') await batchDeleteMods(instanceId, names)
+      await loadMods()
+      exitBatchMode()
+    } catch {}
+    setBatchProcessing(false)
+    setBatchConfirm(null)
+  }, [batchConfirm, selected, instanceId, loadMods, exitBatchMode])
 
   if (!loader) {
     return (
@@ -251,7 +295,10 @@ function ModsTab({ instanceId, files, loading, onRefresh, gameVersion, loader }:
       <Card>
         <CardContent className="p-5">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-medium shrink-0"><FontAwesomeIcon icon={faCube} className="mr-2 h-4 w-4 text-primary" />Mod</h3>
+            <h3 className="text-sm font-medium shrink-0">
+              <FontAwesomeIcon icon={faCube} className="mr-2 h-4 w-4 text-primary" />Mod
+              {mods.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({mods.length})</span>}
+            </h3>
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
                 <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -259,43 +306,91 @@ function ModsTab({ instanceId, files, loading, onRefresh, gameVersion, loader }:
               </div>
             </div>
             <div className="flex items-center gap-1.5">
-              <Button size="sm" variant="ghost" onClick={() => {/* open mods folder */}} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
-              </Button>
-              <Button size="sm" onClick={() => {
-                const p = new URLSearchParams({ category: 'mod', source: 'modrinth' })
-                if (gameVersion) p.set('gameVersion', gameVersion)
-                if (loader) p.set('loader', loader.toLowerCase())
-                if (instanceId) p.set('instanceId', instanceId)
-                navigate(`/resource-center?${p.toString()}`)
-              }} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装 Mod
-              </Button>
+              {batchMode ? (
+                <>
+                  <Button size="sm" variant="outline" onClick={exitBatchMode} className="gap-1.5 h-7 text-xs">取消</Button>
+                  <Button size="sm" variant="outline" onClick={() => setBatchConfirm({ type: 'enable' })} disabled={selected.size === 0} className="gap-1.5 h-7 text-xs">启用</Button>
+                  <Button size="sm" variant="outline" onClick={() => setBatchConfirm({ type: 'disable' })} disabled={selected.size === 0} className="gap-1.5 h-7 text-xs">禁用</Button>
+                  <Button size="sm" variant="outline" onClick={() => setBatchConfirm({ type: 'delete' })} disabled={selected.size === 0} className="gap-1.5 h-7 text-xs text-destructive hover:text-destructive">删除</Button>
+                </>
+              ) : (
+                <>
+                  <Button size="sm" variant="ghost" onClick={() => {/* open mods folder */}} className="gap-1.5 h-7 text-xs">
+                    <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+                  </Button>
+                  <Button size="sm" onClick={() => {
+                    const p = new URLSearchParams({ category: 'mod', source: 'modrinth' })
+                    if (gameVersion) p.set('gameVersion', gameVersion)
+                    if (loader) p.set('loader', loader.toLowerCase())
+                    if (instanceId) p.set('instanceId', instanceId)
+                    navigate(`/resource-center?${p.toString()}`)
+                  }} className="gap-1.5 h-7 text-xs">
+                    <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装 Mod
+                  </Button>
+                </>
+              )}
             </div>
           </div>
+
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
               <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
             </div>
           ) : filtered.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">{search ? '无匹配 Mod' : '暂无 Mod'}</div>
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              {search ? '无匹配 Mod' : '暂无 Mod'}
+            </div>
           ) : (
-            <div className="space-y-1">
-              {filtered.map((f) => (
-                <div key={f.name} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-accent group">
-                  <FontAwesomeIcon icon={faFile} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="flex-1 truncate min-w-0">{f.name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">{formatSize(f.size)}</span>
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Tooltip content="删除"><button onClick={() => setConfirmName(f.name)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" /></button></Tooltip>
-                  </div>
-                </div>
+            <div className="flex flex-col gap-2">
+              {filtered.map((mod) => (
+                <ModCard
+                  key={mod.fileName}
+                  mod={mod}
+                  instanceId={instanceId}
+                  gameVersion={gameVersion}
+                  loader={loader}
+                  onRefresh={loadMods}
+                  onChangeVersion={setVersionDialogMod}
+                  batchMode={batchMode}
+                  selected={selected.has(mod.fileName)}
+                  onSelect={toggleSelect}
+                />
               ))}
             </div>
           )}
         </CardContent>
       </Card>
-      <ConfirmDialog open={confirmName !== null} title="删除 Mod" message={`确定要删除 Mod「${confirmName}」吗？此操作不可撤销。`} onConfirm={() => confirmName && handleDelete(confirmName)} onCancel={() => setConfirmName(null)} loading={deleting !== null} />
+
+      <Dialog open={batchConfirm !== null} onClose={() => setBatchConfirm(null)}>
+        <DialogHeader onClose={() => setBatchConfirm(null)}>
+          <DialogTitle>
+            {batchConfirm?.type === 'enable' ? '批量启用' : batchConfirm?.type === 'disable' ? '批量禁用' : '批量删除'}
+          </DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">
+            确定要
+            {batchConfirm?.type === 'enable' ? '启用' : batchConfirm?.type === 'disable' ? '禁用' : '删除'}
+            {selected.size} 个 Mod 吗？
+          </p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setBatchConfirm(null)}>取消</Button>
+          <Button size="sm" variant={batchConfirm?.type === 'delete' ? 'destructive' : 'default'} onClick={handleBatchAction} disabled={batchProcessing}>
+            {batchProcessing ? '处理中...' : '确定'}
+          </Button>
+        </DialogFooter>
+      </Dialog>
+
+      <VersionPickerDialog
+        open={versionDialogMod !== null}
+        onClose={() => setVersionDialogMod(null)}
+        mod={versionDialogMod}
+        instanceId={instanceId}
+        gameVersion={gameVersion}
+        loader={loader}
+        onDone={loadMods}
+      />
     </>
   )
 }
@@ -643,7 +738,7 @@ export default function InstanceDetailPage() {
   const loadFiles = useCallback((t: string) => {
     if (!id) return
     const loaders: Record<string, (id: string) => Promise<FileEntry[] | ServerEntry[]>> = {
-      saves: getSaves, screenshots: getScreenshots, mods: getMods,
+      saves: getSaves, screenshots: getScreenshots,
       resourcepacks: getResourcePacks, shaderpacks: getShaderPacks, servers: getServers,
     }
     const fn = loaders[t]
@@ -972,7 +1067,7 @@ export default function InstanceDetailPage() {
 
           {tab === 'saves' && <SavesTab instanceId={id!} files={fileData['saves'] as FileEntry[] | null} loading={fileLoading['saves']} onRefresh={() => loadFiles('saves')} />}
           {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} files={fileData['screenshots'] as FileEntry[] | null} loading={fileLoading['screenshots']} onRefresh={() => loadFiles('screenshots')} />}
-          {tab === 'mods' && <ModsTab instanceId={id!} files={fileData['mods'] as FileEntry[] | null} loading={fileLoading['mods']} onRefresh={() => loadFiles('mods')} gameVersion={instance.gameVersion} loader={instance.loader || undefined} />}
+          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} />}
           {tab === 'resourcepacks' && <GenericFileTab instanceId={id!} type="resourcepacks" icon={faBox} label="资源包" files={fileData['resourcepacks'] as FileEntry[] | null} loading={fileLoading['resourcepacks']} onRefresh={() => loadFiles('resourcepacks')} showSize emptyText="暂无资源包" />}
           {tab === 'shaderpacks' && <GenericFileTab instanceId={id!} type="shaderpacks" icon={faSun} label="光影包" files={fileData['shaderpacks'] as FileEntry[] | null} loading={fileLoading['shaderpacks']} onRefresh={() => loadFiles('shaderpacks')} showSize emptyText="暂无光影包" />}
           {tab === 'servers' && <ServersTab instanceId={id!} servers={fileData['servers'] as ServerEntry[] | null} loading={fileLoading['servers']} onRefresh={() => loadFiles('servers')} />}
