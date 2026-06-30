@@ -167,13 +167,21 @@ public class InstanceFilesController : ControllerBase
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
+        var baseDir = inst.GameDir;
+        if (!Path.IsPathRooted(baseDir))
+            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
 
         var versionSegmented = inst.VersionIsolation ?? true;
+        var versionId = inst.GameVersion;
+        if (versionSegmented)
+        {
+            if (!string.IsNullOrEmpty(inst.Loader) && !string.IsNullOrEmpty(inst.LoaderVersion))
+                versionId = $"{inst.GameVersion}-{inst.Loader}-{inst.LoaderVersion}";
+        }
+
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
 
-        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        var mods = new Mods(baseDir, versionId, versionSegmented, apiKey);
         var modList = await mods.GetModList();
 
         var names = modList.Select(m => m.Name).Distinct().ToList();
