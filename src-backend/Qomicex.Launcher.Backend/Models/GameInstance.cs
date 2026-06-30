@@ -20,4 +20,5 @@ public class GameInstance
     public bool? VersionIsolation { get; set; }
     public bool IsDefault { get; set; }
     public string? Icon { get; set; }
+    public bool SkipIntegrityCheck { get; set; }
 }

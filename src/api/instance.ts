@@ -1,5 +1,5 @@
 import { get, post, put, del } from './client.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
@@ -35,6 +35,14 @@ export async function deleteInstance(id: string): Promise<void> {
 
 export async function launchInstance(id: string): Promise<LaunchResult> {
   return post<LaunchResult>(`/instance/${id}/launch`)
+}
+
+export async function getLaunchProgress(id: string): Promise<LaunchProgress> {
+  return get<LaunchProgress>(`/instance/${id}/launch/progress`)
+}
+
+export async function cancelLaunch(id: string): Promise<void> {
+  await post(`/instance/${id}/launch/cancel`)
 }
 
 export async function startInstall(id: string, loader?: string, loaderVersion?: string, addons?: string[], downloadThreads?: number, versionIsolation?: boolean, downloadSource?: number, downloadTimeout?: number): Promise<void> {

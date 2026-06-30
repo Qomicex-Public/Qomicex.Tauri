@@ -32,6 +32,12 @@ builder.Services.AddHttpClient("FTB", client =>
     client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("QomicexLauncher", "1.0"));
 });
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("AuthlibInjector", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("QomicexLauncher", "1.0"));
+    client.Timeout = TimeSpan.FromSeconds(60);
+});
+builder.Services.AddSingleton<LaunchService>();
 builder.Services.AddSingleton<FtbService>();
 builder.Services.AddSingleton<DownloadManager>();
 builder.Services.AddSingleton<InstanceInstallService>();

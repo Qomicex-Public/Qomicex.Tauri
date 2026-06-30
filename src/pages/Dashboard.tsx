@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlay, faRotate, faChevronDown, faUser, faCheck, faMemory, faCube } from '@fortawesome/free-solid-svg-icons'
+import { faPlay, faStop, faChevronDown, faUser, faCheck, faMemory, faCube } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
+import { useMessageBox } from '../components/ui/message-box.tsx'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
-import { getDefaultInstance, launchInstance } from '../api/instance.ts'
+import { getDefaultInstance, launchInstance, getLaunchProgress, cancelLaunch } from '../api/instance.ts'
 import { getAccounts, getDefaultAccount, setDefaultAccount } from '../api/account.ts'
-import type { GameInstance, Account, JavaRuntime } from '../types/index.ts'
+import type { GameInstance, Account, JavaRuntime, LaunchProgress } from '../types/index.ts'
 import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
@@ -15,10 +16,12 @@ import { getSettings, onSettingsChange } from '../api/settings.ts'
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const { notify } = useMessageBox()
   const [defaultInstance, setDefaultInstance] = useState<GameInstance | null>(null)
-  const [launching, setLaunching] = useState(false)
+  const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [launchError, setLaunchError] = useState<{ title: string; message: string; detail?: string | null; args?: string | null } | null>(null)
   const [defaultAccount, setDefaultAccountState] = useState<Account | null>(null)
+  const launchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [allAccounts, setAllAccounts] = useState<Account[]>([])
   const [accountsOpen, setAccountsOpen] = useState(false)
   const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
@@ -84,7 +87,6 @@ export default function Dashboard() {
 
   const handleLaunch = async () => {
     if (!defaultInstance) return
-    setLaunching(true)
     try {
       const result = await launchInstance(defaultInstance.id)
       if (!result.success) {
@@ -94,11 +96,39 @@ export default function Dashboard() {
           detail: result.detail,
           args: result.arguments,
         })
+        return
       }
     } catch (e) {
       setLaunchError({ title: '启动失败', message: e instanceof Error ? e.message : String(e) })
+      return
     }
-    setLaunching(false)
+
+    setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
+    if (launchPollRef.current) clearInterval(launchPollRef.current)
+    launchPollRef.current = setInterval(async () => {
+      try {
+        const p = await getLaunchProgress(defaultInstance!.id)
+        if (p.stage === 'running' || p.stage === 'completed') {
+          setLaunchProgress(null)
+          if (p.stage === 'running') notify('游戏已启动', 'success')
+          if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+        } else if (p.stage === 'crashed' || p.stage === 'failed') {
+          setLaunchProgress(p)
+          setLaunchError({ title: '启动失败', message: p.error || '游戏异常退出' })
+          if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+        } else {
+          setLaunchProgress(p)
+        }
+      } catch { }
+    }, 500)
+  }
+
+  const handleCancelLaunch = async () => {
+    if (defaultInstance) {
+      try { await cancelLaunch(defaultInstance.id) } catch { }
+    }
+    setLaunchProgress(null)
+    if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
   }
 
   const validJava = javaRuntimes.filter((j) => j.state === 'Valid')
@@ -210,17 +240,35 @@ export default function Dashboard() {
           </div>
           <div className="flex items-center gap-4">
             <div className="hidden text-right md:block">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">状态</p>
-              <p className="text-sm text-muted-foreground">{launching ? '启动中...' : '准备就绪'}</p>
+              {launchProgress ? (
+                <>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/60">进度</p>
+                  <p className="text-sm text-muted-foreground animate-pulse">{launchProgress.message}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">状态</p>
+                  <p className="text-sm text-muted-foreground">准备就绪</p>
+                </>
+              )}
             </div>
-            <Button
-              onClick={handleLaunch}
-              disabled={launching}
-              className="flex h-14 items-center gap-3 rounded-xl px-10 text-lg font-bold tracking-widest transition-all hover:brightness-110 active:scale-95"
-            >
-              <FontAwesomeIcon icon={launching ? faRotate : faPlay} className={cn('h-5 w-5', launching && 'animate-spin')} />
-              {launching ? '启动中' : '启动'}
-            </Button>
+            {launchProgress ? (
+              <Button
+                onClick={handleCancelLaunch}
+                className="flex h-14 items-center gap-3 rounded-xl px-10 text-lg font-bold tracking-widest transition-all hover:brightness-110 active:scale-95 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                <FontAwesomeIcon icon={faStop} className="h-5 w-5" />
+                取消
+              </Button>
+            ) : (
+              <Button
+                onClick={handleLaunch}
+                className="flex h-14 items-center gap-3 rounded-xl px-10 text-lg font-bold tracking-widest transition-all hover:brightness-110 active:scale-95"
+              >
+                <FontAwesomeIcon icon={faPlay} className="h-5 w-5" />
+                启动
+              </Button>
+            )}
           </div>
         </div>
       ) : (
@@ -245,6 +293,4 @@ export default function Dashboard() {
   )
 }
 
-function cn(...classes: (string | boolean | undefined | null)[]): string {
-  return classes.filter(Boolean).join(' ')
-}
+

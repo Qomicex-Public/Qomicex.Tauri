@@ -13,10 +13,10 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, repairInstance, launchInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
+import { createInstance, startInstall, getInstances, repairInstance, launchInstance, getLaunchProgress, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx'
-import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance } from '../types/index.ts'
+import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance, LaunchProgress } from '../types/index.ts'
 import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange } from '../api/settings.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 
@@ -102,12 +102,13 @@ export default function Instances() {
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [search, setSearch] = useState('')
-  const [launching, setLaunching] = useState<string | null>(null)
   const [backedInstances, setBackedInstances] = useState<GameInstance[]>([])
   const [settingsVersion, setSettingsVersion] = useState<ScannedVersion | null>(null)
   const [settingsTab, setSettingsTab] = useState<'basic' | 'repair'>('basic')
   const [repairAdded, setRepairAdded] = useState(false)
   const [defaultInstanceId, setDefaultInstanceId] = useState<string | null>(null)
+  const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
+  const launchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [managedDirs, setManagedDirs] = useState<ManagedDir[]>(() => loadDirs())
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
@@ -343,10 +344,9 @@ export default function Instances() {
   }
 
   async function handleLaunch(v: ScannedVersion) {
-    setLaunching(v.name)
-    try {
-      let inst = getInstanceForVersion(v)
-      if (!inst) {
+    let inst = getInstanceForVersion(v)
+    if (!inst) {
+      try {
         inst = await createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
@@ -356,15 +356,40 @@ export default function Instances() {
           maxMemory: 4096,
         })
         setBackedInstances((prev) => [...prev, inst!])
+      } catch (e) {
+        await msgAlert(`创建实例失败: ${e instanceof Error ? e.message : String(e)}`)
+        return
       }
-      const result = await launchInstance(inst.id)
+    }
+
+    try {
+      const result = await launchInstance(inst!.id)
       if (!result.success) {
         await msgAlert(`启动失败: ${result.error}\n${result.detail || ''}`)
+        return
       }
     } catch (e) {
       await msgAlert(`启动失败: ${e instanceof Error ? e.message : String(e)}`)
+      return
     }
-    setLaunching(null)
+
+    setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
+    if (launchPollRef.current) clearInterval(launchPollRef.current)
+
+    launchPollRef.current = setInterval(async () => {
+      try {
+        const p = await getLaunchProgress(inst!.id)
+        if (p.stage === 'running' || p.stage === 'completed') {
+          setLaunchProgress(null)
+          if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+        } else if (p.stage === 'crashed' || p.stage === 'failed') {
+          setLaunchProgress(p)
+          if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+        } else {
+          setLaunchProgress(p)
+        }
+      } catch { }
+    }, 500)
   }
 
   async function openVersionSettings(v: ScannedVersion) {
@@ -873,6 +898,74 @@ export default function Instances() {
         </DialogBody>
       </Dialog>
 
+      <Dialog open={!!launchProgress} onClose={() => setLaunchProgress(null)} className="w-[480px]">
+        <DialogHeader onClose={() => setLaunchProgress(null)}>
+          <DialogTitle>启动失败</DialogTitle>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          {launchProgress && (() => {
+            const stageLabels: Record<string, string> = {
+              starting: '准备中',
+              checking: '检查文件完整性',
+              repairing: '补全文件',
+              'logging-in': '验证账户',
+              authlib: '配置外置登录',
+              natives: '解压原生库',
+              building: '构建启动参数',
+              launching: '启动游戏',
+              running: '游戏运行中',
+              crashed: '游戏异常退出',
+              failed: '启动失败',
+              completed: '游戏已退出',
+            }
+            const isFinal = ['completed', 'crashed', 'failed'].includes(launchProgress.stage)
+            const isError = ['crashed', 'failed'].includes(launchProgress.stage)
+            return (
+              <>
+                <div className="flex items-center justify-between text-sm">
+                  <span className={cn('font-medium', isError && 'text-destructive')}>
+                    {stageLabels[launchProgress.stage] || launchProgress.stage}
+                  </span>
+                  <span className="text-muted-foreground">{Math.round(launchProgress.progress)}%</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={cn('h-full rounded-full transition-all', isError ? 'bg-destructive' : 'bg-primary')}
+                    style={{ width: `${launchProgress.progress}%` }}
+                  />
+                </div>
+                <p className="text-sm text-muted-foreground">{launchProgress.message}</p>
+                {launchProgress.error && (
+                  <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{launchProgress.error}</p>
+                )}
+                {launchProgress.crashReport && (
+                  <details className="rounded-lg border border-border bg-muted/30">
+                    <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">查看崩溃报告</summary>
+                    <pre className="max-h-48 overflow-auto px-3 pb-3 text-[11px] text-muted-foreground">{launchProgress.crashReport}</pre>
+                  </details>
+                )}
+                {launchProgress.stage === 'running' && launchProgress.processId && (
+                  <p className="text-xs text-muted-foreground">进程 ID: {launchProgress.processId}</p>
+                )}
+                {!isFinal && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+                    正在启动...
+                  </div>
+                )}
+                {isFinal && (
+                  <div className="flex justify-end">
+                    <Button variant="secondary" size="sm" onClick={() => setLaunchProgress(null)}>
+                      关闭
+                    </Button>
+                  </div>
+                )}
+              </>
+            )
+          })()}
+        </DialogBody>
+      </Dialog>
+
       <div className="flex items-center gap-3">
         <div className="relative max-w-sm flex-1">
           <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -928,8 +1021,8 @@ export default function Instances() {
                 </div>
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
                     <Tooltip content="启动">
-                    <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={(e) => { e.stopPropagation(); handleLaunch(v) }} disabled={!!launching}>
-                      <FontAwesomeIcon icon={launching === v.name ? faRotate : faPlay} className={cn('h-5 w-5', launching === v.name && 'animate-spin')} />
+                    <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={(e) => { e.stopPropagation(); handleLaunch(v) }}>
+                      <FontAwesomeIcon icon={faPlay} className="h-5 w-5" />
                     </Button>
                   </Tooltip>
                   <div className="flex items-center gap-1">
@@ -962,7 +1055,7 @@ export default function Instances() {
                     {v.loaders && v.loaders.filter((l) => l.type).length > 0 && v.loaders.filter((l) => l.type).map((l) => (
                       <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
                     ))}
-                    <span className={cn('inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
+                    <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
                       <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
                       {v.state === 'Available' ? '可用' : '异常'}
                     </span>
@@ -982,8 +1075,8 @@ export default function Instances() {
                 </div>
                 <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                   <Tooltip content="启动">
-                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLaunch(v)} disabled={!!launching}>
-                      <FontAwesomeIcon icon={launching === v.name ? faRotate : faPlay} className={cn('h-4 w-4', launching === v.name && 'animate-spin')} />
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLaunch(v)}>
+                      <FontAwesomeIcon icon={faPlay} className="h-4 w-4" />
                     </Button>
                   </Tooltip>
                   <Tooltip content="设置">

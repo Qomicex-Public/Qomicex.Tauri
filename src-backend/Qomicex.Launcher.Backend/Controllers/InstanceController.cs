@@ -21,14 +21,18 @@ public class InstanceController : ControllerBase
     private readonly InstanceInstallService _installService;
     private readonly AccountService _accountService;
     private readonly JavaRuntimeStore _javaRuntimeStore;
+    private readonly LaunchService _launchService;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<InstanceController> _logger;
 
-    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService, JavaRuntimeStore javaRuntimeStore, ILogger<InstanceController> logger)
+    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService, JavaRuntimeStore javaRuntimeStore, LaunchService launchService, IHttpClientFactory httpClientFactory, ILogger<InstanceController> logger)
     {
         _repository = repository;
         _installService = installService;
         _accountService = accountService;
         _javaRuntimeStore = javaRuntimeStore;
+        _launchService = launchService;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -178,6 +182,7 @@ public class InstanceController : ControllerBase
             existing.VersionIsolation = viProp.ValueKind == System.Text.Json.JsonValueKind.Null ? null : viProp.GetBoolean();
         }
         if (body.TryGetProperty("icon", out var iconProp)) existing.Icon = iconProp.GetString();
+        if (body.TryGetProperty("skipIntegrityCheck", out var sicProp)) existing.SkipIntegrityCheck = sicProp.GetBoolean();
 
         var updated = _repository.Update(id, existing);
         return Ok(updated);
@@ -290,12 +295,99 @@ public class InstanceController : ControllerBase
         var instance = _repository.GetById(id);
         if (instance == null) return NotFound();
 
+        // Clear previous state
+        _launchService.Set(id, new LaunchProgress { Stage = "starting", Message = "准备启动...", Progress = 0 });
+
+        _ = RunLaunchAsync(id);
+
+            return Ok(new LaunchResult { Success = true, Stage = "starting" });
+        }
+
+        [HttpPost("{id}/launch/cancel")]
+        public IActionResult CancelLaunch(string id)
+        {
+            _launchService.Cancel(id);
+            return Ok(new { status = "cancelled" });
+        }
+
+        [HttpGet("{id}/launch/progress")]
+    public ActionResult<LaunchProgress?> GetLaunchProgress(string id)
+    {
+        return Ok(_launchService.Get(id));
+    }
+
+    private async Task RunLaunchAsync(string id)
+    {
+        var instance = _repository.GetById(id);
+        if (instance == null)
+        {
+            _launchService.Set(id, new LaunchProgress { Stage = "failed", Error = "实例不存在" });
+            return;
+        }
+
+        var state = _launchService.Get(id) ?? new LaunchProgress();
+        var versionId = instance.Name;
+        var effectiveIsolation = instance.VersionIsolation ?? GetGlobalVersionIsolation();
+
+        var cancelToken = _launchService.GetCancellationToken(id);
+
         try
         {
-            var versionId = instance.Name;
-            var effectiveIsolation = instance.VersionIsolation ?? GetGlobalVersionIsolation();
+            // ─── Step 1: File integrity check ───
+            if (!instance.SkipIntegrityCheck)
+            {
+                cancelToken.ThrowIfCancellationRequested();
+                state.Stage = "checking"; state.Message = "正在检查文件完整性..."; state.Progress = 5;
+                _launchService.Set(id, state);
 
-            var launcher = new Qomicex.Core.Modules.Launcher.Launcher();
+                var resourceHelper = new LocalResourceHelper();
+                var missFiles = FilterMissFiles(await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir));
+
+                if (missFiles.Count > 0)
+                {
+                    cancelToken.ThrowIfCancellationRequested();
+                    state.Stage = "repairing"; state.Message = $"正在补全 {missFiles.Count} 个缺失文件..."; state.Progress = 10;
+                    state.MissingFiles = missFiles.Select(f => f.Name).ToList();
+                    _launchService.Set(id, state);
+
+                    _installService.StartRepairResources(id, instance.GameDir, missFiles);
+
+                    // Poll repair progress
+                    while (true)
+                    {
+                        cancelToken.ThrowIfCancellationRequested();
+                        var repairState = _installService.GetState(id);
+                        if (repairState == null || repairState.Stage == "completed" || repairState.Stage == "done")
+                        {
+                            state.Progress = 25;
+                            break;
+                        }
+                        if (repairState.Stage == "failed" || repairState.Stage == "error")
+                        {
+                            throw new Exception($"文件补全失败: {repairState.Error}");
+                        }
+                        state.Progress = 10 + repairState.Progress * 0.15;
+                        state.Message = $"正在补全: {repairState.CurrentFile ?? ""} ({Math.Round(repairState.Progress)}%)";
+                        _launchService.Set(id, state);
+                        await Task.Delay(500);
+                    }
+                }
+            }
+
+            // ─── Step 2: Environment setup ───
+            cancelToken.ThrowIfCancellationRequested();
+            state.Stage = "preparing"; state.Message = "正在准备环境..."; state.Progress = 25;
+            _launchService.Set(id, state);
+
+            var logsDir = Path.Combine(instance.GameDir, "logs");
+            System.IO.Directory.CreateDirectory(logsDir);
+            System.IO.Directory.CreateDirectory(Path.Combine(instance.GameDir, "assets", "indexes"));
+
+            // ─── Step 3: Account login ───
+            cancelToken.ThrowIfCancellationRequested();
+            state.Stage = "logging-in"; state.Message = "正在验证账户..."; state.Progress = 30;
+            _launchService.Set(id, state);
+
             var param = new Qomicex.Core.Modules.Launcher.Launcher.LauncherParam
             {
                 Version = versionId,
@@ -309,13 +401,130 @@ public class InstanceController : ControllerBase
             param.Account.Name = "Player";
             param.Account.Uuid = "";
             param.Account.AccessToken = "faked-token-for-offline";
+            param.Account.LoginMethod = "Legacy";
+
             var defaultAccount = _accountService.GetDefaultAsync().GetAwaiter().GetResult();
             if (defaultAccount != null)
             {
                 param.Account.Name = defaultAccount.Name;
                 param.Account.Uuid = defaultAccount.Uuid;
-                param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken) ? "faked-token-for-offline" : defaultAccount.AccessToken;
+
+                if (defaultAccount.LoginMethod == "Yggdrasil" && !string.IsNullOrEmpty(defaultAccount.ServerUrl))
+                {
+                    param.Account.LoginMethod = "Yggdrasil";
+                    try
+                    {
+                        var yggdrasil = new Qomicex.Core.Modules.Helpers.Account.Yggdrasil(defaultAccount.ServerUrl, "", "");
+                        var yggAccount = new Qomicex.Core.Modules.Helpers.Account.Yggdrasil.YggdrasilAccount
+                        {
+                            AccessToken = defaultAccount.AccessToken,
+                            ClientToken = defaultAccount.Token,
+                            Uuid = defaultAccount.Uuid,
+                            Name = defaultAccount.Name,
+                        };
+                        if (!string.IsNullOrEmpty(yggAccount.AccessToken))
+                        {
+                            var refreshed = await yggdrasil.RefreshTokenAsync(yggAccount);
+                            defaultAccount.AccessToken = refreshed.AccessToken ?? defaultAccount.AccessToken;
+                            defaultAccount.Token = refreshed.ClientToken ?? defaultAccount.Token;
+                            await _accountService.SaveAccountAsync(defaultAccount);
+                        }
+                        param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken) ? "faked-token-for-offline" : defaultAccount.AccessToken;
+                    }
+                    catch
+                    {
+                        param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken) ? "faked-token-for-offline" : defaultAccount.AccessToken;
+                    }
+                }
+                else if (defaultAccount.LoginMethod == "统一通行证")
+                {
+                    param.Account.LoginMethod = "Yggdrasil";
+                    try
+                    {
+                        var tongyi = new Qomicex.Core.Modules.Helpers.Account.Tongyi(defaultAccount.ServerUrl ?? "", "", "");
+                        var tongyiAccount = new Qomicex.Core.Modules.Helpers.Account.Tongyi.TongyiAccount
+                        {
+                            AccessToken = defaultAccount.AccessToken,
+                            ClientToken = defaultAccount.Token,
+                            Uuid = defaultAccount.Uuid,
+                            Name = defaultAccount.Name,
+                        };
+                        if (!string.IsNullOrEmpty(tongyiAccount.AccessToken))
+                        {
+                            var refreshed = await tongyi.RefreshTokenAsync(tongyiAccount);
+                            defaultAccount.AccessToken = refreshed.AccessToken ?? defaultAccount.AccessToken;
+                            defaultAccount.Token = refreshed.ClientToken ?? defaultAccount.Token;
+                            await _accountService.SaveAccountAsync(defaultAccount);
+                        }
+                        param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken) ? "faked-token-for-offline" : defaultAccount.AccessToken;
+                    }
+                    catch
+                    {
+                        param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken) ? "faked-token-for-offline" : defaultAccount.AccessToken;
+                    }
+                }
+                else
+                {
+                    param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken) ? "faked-token-for-offline" : defaultAccount.AccessToken;
+                }
             }
+
+            // ─── Step 4: Authlib-injector ───
+            cancelToken.ThrowIfCancellationRequested();
+            if (defaultAccount?.LoginMethod == "Yggdrasil" || defaultAccount?.LoginMethod == "统一通行证")
+            {
+                state.Stage = "authlib"; state.Message = "正在配置外置登录..."; state.Progress = 40;
+                _launchService.Set(id, state);
+
+                var aiDir = Path.Combine(AppContext.BaseDirectory, "QML");
+                var aiPath = Path.Combine(aiDir, "authlib-injector.jar");
+                System.IO.Directory.CreateDirectory(aiDir);
+
+                if (!System.IO.File.Exists(aiPath))
+                {
+                    try
+                    {
+                        cancelToken.ThrowIfCancellationRequested();
+                        var client = _httpClientFactory.CreateClient("AuthlibInjector");
+                        var mirrorUrls = new[]
+                        {
+                            "https://bmclapi2.bangbang93.com/mirrors/authlib-injector/artifact/latest.json",
+                            "https://authlib-injector.yushi.moe/artifact/latest.json"
+                        };
+                        string? downloadUrl = null;
+                        foreach (var url in mirrorUrls)
+                        {
+                            try
+                            {
+                                var json = await client.GetStringAsync(url);
+                                var doc = System.Text.Json.JsonDocument.Parse(json);
+                                downloadUrl = doc.RootElement.GetProperty("download_url").GetString();
+                                if (!string.IsNullOrEmpty(downloadUrl)) break;
+                            }
+                            catch { }
+                        }
+                        if (string.IsNullOrEmpty(downloadUrl))
+                            throw new Exception("无法获取 authlib-injector 下载地址");
+                        var bytes = await client.GetByteArrayAsync(downloadUrl);
+                        await System.IO.File.WriteAllBytesAsync(aiPath, bytes);
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new Exception($"authlib-injector 下载失败: {ex.Message}");
+                    }
+                }
+
+                var serverUrl = defaultAccount.ServerUrl ?? "";
+                var authlibArg = $"-javaagent:\"{aiPath}\"={serverUrl}";
+                param.AdditionalParam = string.IsNullOrEmpty(param.AdditionalParam)
+                    ? authlibArg
+                    : param.AdditionalParam + " " + authlibArg;
+            }
+
+            // ─── Step 5: Resolve Java ───
+            cancelToken.ThrowIfCancellationRequested();
+            state.Stage = "preparing"; state.Message = "正在选择 Java 运行时..."; state.Progress = 50;
+            _launchService.Set(id, state);
 
             string javaPath;
             if (!string.IsNullOrEmpty(instance.JavaPath))
@@ -342,19 +551,10 @@ public class InstanceController : ControllerBase
                 param.Java.VersionID = chosen?.VersionID ?? 0;
             }
 
-            _logger.LogInformation(
-                "[Launch] 实例={Name} 版本={VersionId} GameDir={GameDir} 版本隔离={VersionIsolation}({IsolationSource})",
-                instance.Name, versionId, instance.GameDir, effectiveIsolation,
-                instance.VersionIsolation.HasValue ? "实例设置" : "全局设置");
-            _logger.LogInformation(
-                "[Launch] Java: path={JavaPath} versionId={VersionId}",
-                javaPath, param.Java.VersionID);
-            _logger.LogInformation(
-                "[Launch] 内存: max={MaxMemory}MB",
-                instance.MaxMemory);
-            _logger.LogInformation(
-                "[Launch] 账户: name={AccountName} uuid={Uuid} method={LoginMethod}",
-                param.Account.Name, param.Account.Uuid, param.Account.LoginMethod);
+            _logger.LogInformation("[Launch] 实例={Name} 版本={VersionId} GameDir={GameDir}", instance.Name, versionId, instance.GameDir);
+            _logger.LogInformation("[Launch] Java: path={JavaPath} versionId={VersionId}", javaPath, param.Java.VersionID);
+            _logger.LogInformation("[Launch] 内存: max={MaxMemory}MB", instance.MaxMemory);
+            _logger.LogInformation("[Launch] 账户: name={AccountName} uuid={Uuid} method={LoginMethod}", param.Account.Name, param.Account.Uuid, param.Account.LoginMethod);
 
             if (param.Java.VersionID == 0)
             {
@@ -363,27 +563,37 @@ public class InstanceController : ControllerBase
                     var verStr = GeneralHelper.GetMinecraftRequireJavaVersion(instance.GameVersion, instance.GameDir);
                     param.Java.VersionID = int.TryParse(verStr, out var vid) ? vid : 21;
                 }
-                catch
-                {
-                    param.Java.VersionID = 21;
-                }
+                catch { param.Java.VersionID = 21; }
             }
 
-            var args = launcher.SelectParam(param, param.LauncherName);
+            // ─── Step 6: Build arguments + Natives ───
+            cancelToken.ThrowIfCancellationRequested();
+            state.Stage = "natives"; state.Message = "正在解压原生库..."; state.Progress = 60;
+            _launchService.Set(id, state);
 
-            _logger.LogInformation(
-                "[Launch] 完整启动命令: {JavaPath} {Args}",
-                javaPath, args);
-
+            var launcher = new Qomicex.Core.Modules.Launcher.Launcher();
             var versionPath = Path.Combine(instance.GameDir, "versions", versionId);
             var jsonPath = Path.Combine(versionPath, $"{versionId}.json");
+
+            if (!System.IO.File.Exists(jsonPath))
+                throw new Exception($"版本文件缺失: {jsonPath}");
+
             launcher.UnzipNatives(jsonPath, instance.GameDir, versionPath);
 
-            var logsDir = Path.Combine(instance.GameDir, "logs");
-            System.IO.Directory.CreateDirectory(logsDir);
+            state.Stage = "building"; state.Message = "正在构建启动参数..."; state.Progress = 70;
+            _launchService.Set(id, state);
+
+            var args = launcher.SelectParam(param, param.LauncherName);
+            _logger.LogInformation("[Launch] 完整启动命令: {JavaPath} {Args}", javaPath, args);
+
+            // ─── Step 7: Launch ───
+            cancelToken.ThrowIfCancellationRequested();
+            state.Stage = "launching"; state.Message = "正在启动游戏..."; state.Progress = 85;
+            _launchService.Set(id, state);
+
             var stderrPath = System.IO.Path.Combine(logsDir, "launcher-latest.log");
 
-            var psi = new ProcessStartInfo
+            var process = System.Diagnostics.Process.Start(new ProcessStartInfo
             {
                 FileName = javaPath,
                 Arguments = args,
@@ -394,25 +604,18 @@ public class InstanceController : ControllerBase
                 RedirectStandardOutput = true,
                 StandardErrorEncoding = Encoding.UTF8,
                 StandardOutputEncoding = Encoding.UTF8,
-            };
+            });
 
-            using var process = System.Diagnostics.Process.Start(psi);
             if (process == null)
-            {
-                return Ok(new LaunchResult
-                {
-                    Success = false,
-                    Error = "无法启动 Java 进程",
-                });
-            }
+                throw new Exception("无法启动 Java 进程");
 
             process.ErrorDataReceived += (_, e) =>
             {
-                if (e.Data != null) System.IO.File.AppendAllText(stderrPath, e.Data + Environment.NewLine);
+                if (e.Data != null)
+                    System.IO.File.AppendAllText(stderrPath, e.Data + Environment.NewLine);
             };
             process.BeginErrorReadLine();
 
-            // Capture initial output for crash detection (wait briefly for immediate failures)
             var stdout = new StringBuilder();
             process.OutputDataReceived += (_, e) =>
             {
@@ -420,37 +623,83 @@ public class InstanceController : ControllerBase
             };
             process.BeginOutputReadLine();
 
-            if (!process.WaitForExit(5000))
+            // ─── Step 8: Wait for game window ───
+            cancelToken.ThrowIfCancellationRequested();
+            state.Stage = "waiting-window"; state.Message = "等待游戏窗口..."; state.Progress = 90;
+            _launchService.Set(id, state);
+
+            // Try WaitForInputIdle first (works for GUI processes)
+            try { process.WaitForInputIdle(30_000); } catch { }
+
+            // Poll for window handle (max 30s)
+            for (var i = 0; i < 60; i++)
             {
-                instance.LastPlayed = DateTime.UtcNow;
-                _repository.Update(instance.Id, instance);
-                return Ok(new LaunchResult
-                {
-                    Success = true,
-                    ProcessId = process.Id,
-                    Arguments = args,
-                });
+                cancelToken.ThrowIfCancellationRequested();
+                if (process.HasExited) break;
+                process.Refresh();
+                if (process.MainWindowHandle != IntPtr.Zero) break;
+                await Task.Delay(500);
             }
 
-            // Process exited within 5s — likely a crash
-            var stderr = System.IO.File.Exists(stderrPath) ? System.IO.File.ReadAllText(stderrPath) : "";
-            var output = stdout.ToString();
-            return Ok(new LaunchResult
+            // Mark as launched successfully
+            instance.LastPlayed = DateTime.UtcNow;
+            _repository.Update(instance.Id, instance);
+
+            _launchService.RegisterProcess(id, process.Id);
+            state.Stage = "running"; state.Message = "游戏运行中"; state.Progress = 100;
+            state.ProcessId = process.Id;
+            state.Arguments = args;
+            state.IsRunning = true;
+            _launchService.Set(id, state);
+
+            // ─── Step 9: Lightweight crash detection (background) ───
+            _ = Task.Run(() =>
             {
-                Success = false,
-                Error = "游戏进程异常退出",
-                Detail = string.IsNullOrEmpty(stderr) ? output : stderr,
-                Arguments = args,
+                try
+                {
+                    process.WaitForExit();
+                    state.ExitCode = process.ExitCode;
+
+                    // Check crash-reports
+                    var crashDir = Path.Combine(instance.GameDir, "crash-reports");
+                    if (System.IO.Directory.Exists(crashDir))
+                    {
+                        var latest = System.IO.Directory.GetFiles(crashDir, "*.txt")
+                            .OrderByDescending(f => System.IO.File.GetLastWriteTime(f))
+                            .FirstOrDefault();
+                        if (latest != null)
+                        {
+                            var content = System.IO.File.ReadAllText(latest);
+                            state.CrashReport = content.Length > 5000 ? content[..5000] + "..." : content;
+                        }
+                    }
+
+                    if (process.ExitCode != 0)
+                    {
+                        state.Stage = "crashed"; state.Message = $"游戏异常退出 (代码: {process.ExitCode})";
+                    }
+                    else
+                    {
+                        state.Stage = "completed"; state.Message = "游戏已退出";
+                    }
+                    state.IsRunning = false;
+                    _launchService.Set(id, state);
+                }
+                catch (Exception ex)
+                {
+                    state.Stage = "failed"; state.Error = ex.Message; state.IsRunning = false;
+                    _launchService.Set(id, state);
+                }
+                finally
+                {
+                    process.Dispose();
+                }
             });
         }
         catch (Exception ex)
         {
-            return Ok(new LaunchResult
-            {
-                Success = false,
-                Error = ex.Message,
-                Detail = ex.ToString(),
-            });
+            state.Stage = "failed"; state.Error = ex.Message;
+            _launchService.Set(id, state);
         }
     }
 }
