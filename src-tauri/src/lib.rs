@@ -30,14 +30,15 @@ fn spawn_backend(app: &tauri::App) {
         let _ = std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755));
     }
     let mut cmd = std::process::Command::new(&exe_path);
-    cmd.stderr(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::inherit());
+    cmd.stderr(std::process::Stdio::inherit());
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             cmd.env("QOMICEX_HOME", dir);
         }
     }
     #[cfg(windows)] { const CREATE_NO_WINDOW: u32 = 0x08000000; cmd.creation_flags(CREATE_NO_WINDOW); }
-    let mut child = match cmd.spawn() {
+    let child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("[backend] spawn failed: {e}");
@@ -45,13 +46,6 @@ fn spawn_backend(app: &tauri::App) {
             return;
         }
     };
-    let stderr = child.stderr.take();
-    std::thread::spawn(move || {
-        use std::io::Read;
-        let mut buf = String::new();
-        if let Some(mut r) = stderr { let _ = r.read_to_string(&mut buf); }
-        if !buf.is_empty() { eprintln!("[backend stderr]\n{buf}"); }
-    });
     let state = app.state::<BackendChild>();
     *state.0.lock().unwrap() = Some(child);
     eprintln!("[backend] spawned: {} ({} bytes)", exe_path.display(), BACKEND.len());
