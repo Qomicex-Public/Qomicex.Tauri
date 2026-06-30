@@ -24,6 +24,11 @@ fn spawn_backend(app: &tauri::App) {
         eprintln!("[backend] write to {} failed: {e}", exe_path.display());
         return;
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755));
+    }
     let mut cmd = std::process::Command::new(&exe_path);
     cmd.stderr(std::process::Stdio::piped());
     if let Ok(exe) = std::env::current_exe() {
