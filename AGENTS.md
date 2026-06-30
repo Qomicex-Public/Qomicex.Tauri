@@ -53,7 +53,7 @@ No test framework exists in this repo.
 
 **注意：** `Qomicex.Avalonia` 是私有子模块。CI 需要在 repo 设置中添加 `QOMICEX_PAT` secret（一个有子模块访问权限的 GitHub Personal Access Token）。
 
-Tauri v2 → React → ASP.NET Core，后端通过 `include_bytes!` 嵌入 Rust exe，启动时解压到 `%TEMP%`。`QOMICEX_HOME` 环境变量指向启动器 exe 所在目录（由 Rust 在 spawn 前设置），后端据此存取持久化数据。
+Tauri v2 → React → ASP.NET Core，后端通过 `include_bytes!` 嵌入 Rust exe，启动时解压到临时目录。持久化数据默认存储在 `Environment.SpecialFolder.LocalApplicationData/qomicex-launcher/`（Linux: `~/.local/share/qomicex-launcher/`，Windows: `%LOCALAPPDATA%/qomicex-launcher/`，macOS: `~/Library/Application Support/qomicex-launcher/`）。设置 `QOMICEX_HOME` 环境变量可覆盖为便携模式（由 Rust 在 spawn 前设置）。
 
 ## Import rules (critical)
 
@@ -132,6 +132,7 @@ The launcher ships on **Windows, Linux, macOS**. Never assume Windows.
 - **UNC/Windows-only path logic** (e.g. `StartsWith("\\\\")`) must be wrapped in `OperatingSystem.IsWindows()`.
 - **Shell default** — `/bin/bash` is not guaranteed; fallback to `/bin/sh`.
 - **Native library embedding** — `dotnet publish` must include `-p:IncludeNativeLibrariesForSelfExtract=true` (SkiaSharp etc.).
+- **Data directory** — never write to `AppContext.BaseDirectory`; use `LocalApplicationData` + app name, with `QOMICEX_HOME` env var override for portable mode.
 
 ### Qomicex.Core (submodule, cross-target)
 
