@@ -1,4 +1,4 @@
-const API_BASE = '/api'
+export const API_BASE = 'http://localhost:5000/api'
 
 /** 后端统一错误响应结构 */
 export interface ApiErrorResponse {

@@ -24,7 +24,7 @@ import {
 import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, subscribe } from '../stores/javaStore.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { getSystemInfo } from '../api/system.ts'
-import { ApiError, get } from '../api/client.ts'
+import { ApiError, get, API_BASE } from '../api/client.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
@@ -188,7 +188,7 @@ export default function Settings() {
 
   async function handleOpenBackgrounds() {
     try {
-      await fetch('/api/settings/open-backgrounds', { method: 'POST' })
+      await fetch(`${API_BASE}/settings/open-backgrounds`, { method: 'POST' })
     } catch {}
   }
 
@@ -754,13 +754,13 @@ export default function Settings() {
                             }}
                             className={cn(
                               'group relative h-16 w-28 overflow-hidden rounded-lg border-2 transition-colors',
-                              settings.backgroundImage === name
+                              !settings.backgroundRandom && settings.backgroundImage === name
                                 ? 'border-primary'
                                 : 'border-border hover:border-muted-foreground/30'
                             )}
                           >
                             <img
-                              src={`/api/settings/backgrounds/${encodeURIComponent(name)}`}
+                              src={`${API_BASE}/settings/backgrounds/${encodeURIComponent(name)}`}
                               alt={name}
                               className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
                             />

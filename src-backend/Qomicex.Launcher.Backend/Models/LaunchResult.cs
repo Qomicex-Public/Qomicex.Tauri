@@ -7,4 +7,8 @@ public class LaunchResult
     public string? Error { get; set; }
     public string? Detail { get; set; }
     public string? Arguments { get; set; }
+    public string? Stage { get; set; }
+    public List<string>? MissingFiles { get; set; }
+    public int? ExitCode { get; set; }
+    public string? CrashReport { get; set; }
 }

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json.Serialization;
 using Qomicex.Downloader;
+using Qomicex.Launcher.Backend;
 using Qomicex.Launcher.Backend.Diagnostics;
 using Qomicex.Launcher.Backend.Middleware;
 using Qomicex.Launcher.Backend.Services;
@@ -32,6 +33,12 @@ builder.Services.AddHttpClient("FTB", client =>
     client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("QomicexLauncher", "1.0"));
 });
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("AuthlibInjector", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("QomicexLauncher", "1.0"));
+    client.Timeout = TimeSpan.FromSeconds(60);
+});
+builder.Services.AddSingleton<LaunchService>();
 builder.Services.AddSingleton<FtbService>();
 builder.Services.AddSingleton<DownloadManager>();
 builder.Services.AddSingleton<InstanceInstallService>();
@@ -40,7 +47,7 @@ builder.Services.AddSingleton<JavaRuntimeStore>();
 builder.Services.AddSingleton<JavaDownloadService>();
 builder.Services.AddSingleton<SkinService>();
 builder.Services.AddSingleton<McmodService>();
-builder.Services.AddSingleton(_ => new AccountService(AppContext.BaseDirectory));
+builder.Services.AddSingleton(_ => new AccountService(AppPaths.BaseDir));
 builder.Services.AddTransient<MsAccount>(_ => new MsAccount { ClientId = builder.Configuration["Microsoft:ClientId"] ?? string.Empty });
 
 builder.Services.AddCors(options =>

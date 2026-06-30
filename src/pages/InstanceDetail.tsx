@@ -6,6 +6,7 @@ import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
+import { Checkbox } from '../components/ui/checkbox.tsx'
 import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
@@ -657,6 +658,7 @@ export default function InstanceDetailPage() {
         jvmArgs: formToSave.jvmArgs || undefined,
         versionIsolation: formToSave.versionIsolation,
         icon: formToSave.icon || undefined,
+        skipIntegrityCheck: formToSave.skipIntegrityCheck,
       })
       setInstance(updated)
     } catch {}
@@ -997,6 +999,17 @@ export default function InstanceDetailPage() {
                   </Select>
                   <p className="text-xs text-muted-foreground">每个版本使用独立的 mods/config/saves 目录</p>
                 </div>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <Checkbox
+                    checked={form.skipIntegrityCheck === true}
+                    onCheckedChange={(c) => update('skipIntegrityCheck', c === true)}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">跳过资源完整性检查</div>
+                    <div className="text-xs text-muted-foreground">启动时跳过文件完整性检查，可能因缺少文件导致游戏崩溃</div>
+                  </div>
+                </label>
 
                 <div className="space-y-2">
                   <Label>内存分配</Label>

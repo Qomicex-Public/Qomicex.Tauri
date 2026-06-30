@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo } from '@fortawesome/free-solid-svg-icons'
 import { getAccount, deleteAccount } from '../api/account.ts'
 import { getSkinProfile, uploadSkin, resetSkin } from '../api/skin.ts'
+import { API_BASE } from '../api/client.ts'
 import { SkinViewer3D } from '../components/SkinViewer3D.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { Button } from '../components/ui/button.tsx'
@@ -68,7 +69,7 @@ export default function AccountDetail() {
     return <div className="flex h-full items-center justify-center text-muted-foreground">加载中...</div>
   }
 
-  const textureUrl = `/api/skin/texture/${uuid}?type=${account.loginMethod}${account.serverUrl ? `&server=${encodeURIComponent(account.serverUrl)}` : ''}`
+  const textureUrl = `${API_BASE}/skin/texture/${uuid}?type=${account.loginMethod}${account.serverUrl ? `&server=${encodeURIComponent(account.serverUrl)}` : ''}`
 
   return (
     <div className="space-y-6 p-8">

@@ -21,7 +21,7 @@ public sealed class JavaRuntimeStore
 
     public JavaRuntimeStore()
     {
-        var dataDir = Path.Combine(AppContext.BaseDirectory, "QML");
+        var dataDir = Path.Combine(AppPaths.BaseDir, "QML");
         Directory.CreateDirectory(dataDir);
         _filePath = Path.Combine(dataDir, "java-runtimes.json");
     }

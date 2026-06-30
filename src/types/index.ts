@@ -163,6 +163,7 @@ export interface GameInstance {
   versionIsolation: boolean | null
   isDefault: boolean
   icon: string | null
+  skipIntegrityCheck?: boolean
 }
 
 export interface CreateInstanceRequest {
@@ -179,14 +180,32 @@ export interface CreateInstanceRequest {
   jvmArgs?: string
   versionIsolation?: boolean | null
   icon?: string
+  skipIntegrityCheck?: boolean
 }
 
 export interface LaunchResult {
   success: boolean
   processId: number
-  error: string | null
+  error?: string | null
   detail?: string | null
-  arguments: string | null
+  arguments?: string | null
+  stage?: string | null
+  missingFiles?: string[]
+  exitCode?: number | null
+  crashReport?: string | null
+}
+
+export interface LaunchProgress {
+  stage: string
+  message: string
+  progress: number
+  error?: string | null
+  processId?: number | null
+  exitCode?: number | null
+  crashReport?: string | null
+  missingFiles?: string[]
+  arguments?: string | null
+  isRunning: boolean
 }
 
 export interface ScannedVersionLoader {

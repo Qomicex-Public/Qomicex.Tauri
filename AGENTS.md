@@ -38,6 +38,23 @@ npm run build
 
 No test framework exists in this repo.
 
+## CI/CD (GitHub Actions)
+
+`.github/workflows/release.yml` — **手动触发** (`workflow_dispatch`)，可选单个或多个目标：
+
+| Job | Runner | 产物 | 打包 |
+|-----|--------|------|------|
+| `windows-x64` | windows-latest | `qomicex-launcher-windows-x64` | NSIS |
+| `linux-x64` | ubuntu-latest | `qomicex-launcher-linux-x64` | AppImage |
+| `macos-arm64` | macos-latest | `qomicex-launcher-macos-arm64` | DMG |
+| `macos-x64` | macos-13 | `qomicex-launcher-macos-x64` | DMG |
+
+构建成功后自动上传 artifact 并创建 GitHub Release。
+
+**注意：** `Qomicex.Avalonia` 是私有子模块。CI 需要在 repo 设置中添加 `QOMICEX_PAT` secret（一个有子模块访问权限的 GitHub Personal Access Token）。
+
+Tauri v2 → React → ASP.NET Core，后端通过 `include_bytes!` 嵌入 Rust exe，启动时解压到 `%TEMP%`。`QOMICEX_HOME` 环境变量指向启动器 exe 所在目录（由 Rust 在 spawn 前设置），后端据此存取持久化数据。
+
 ## Import rules (critical)
 
 All local imports **must** include the file extension — Vite path bug:
@@ -53,6 +70,7 @@ import { x } from './baz'                  // WRONG — Vite will error
 - Dark mode via CSS variables in `src/index.css`, Tailwind `darkMode: "class"`.
 - Strict TS: `noUnusedLocals`, `noUnusedParameters`, `strict: true`. Fix all before committing.
 - Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` sidebar → 9 registered routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/settings`.
+- **Internal navigation must use `<Link>` not `<a>`** — plain `<a>` causes full page reload, which remounts `Layout.tsx`, resets random background selection, and loses other persistent state. External links (different origin) should use `<a target="_blank">`.
 - UI components in `src/components/ui/`: badge, button, card, checkbox, combobox, dialog, input, label, message-box, select, separator, table, textarea, tooltip.
   - **Tooltip** (`tooltip.tsx`) — use instead of native `title` attribute. Always wrap icon-only buttons.
   - **Select** (`select.tsx`) — use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>` or third‑party dropdowns.
