@@ -35,7 +35,29 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const debug = (window as any).__DEBUG__
+
+  if (debug?.networkLogging) {
+    console.log(`[API] ${options?.method ?? 'GET'} ${path}`)
+  }
+
+  if (debug?.simulateApiErrors && Math.random() < 0.3) {
+    const fakeError: ApiErrorResponse = {
+      code: 'DEBUG_SIMULATED',
+      message: `[调试模拟] 请求失败: ${options?.method ?? 'GET'} ${path}`,
+      detail: null,
+      traceId: 'debug-trace-id',
+      timestamp: new Date().toISOString(),
+      status: 500,
+    }
+    throw new ApiError(fakeError)
+  }
+
+  const url = debug?.disableCaching
+    ? `${API_BASE}${path}${path.includes('?') ? '&' : '?'}_t=${Date.now()}`
+    : `${API_BASE}${path}`
+
+  const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   })
@@ -46,22 +68,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       if (json && typeof json.code === 'string' && typeof json.message === 'string') {
         parsed = json as ApiErrorResponse
       }
-    } catch { /* 无法解析 JSON，走 fallback */ }
-
-    if (parsed) {
-      throw new ApiError(parsed)
-    }
-    // 兜底：非标准错误响应
+    } catch { }
+    if (parsed) throw new ApiError(parsed)
     throw new ApiError({
-      code: 'UNKNOWN_ERROR',
-      message: `请求失败 (${res.status})`,
-      detail: null,
-      traceId: '',
-      timestamp: new Date().toISOString(),
-      status: res.status,
+      code: 'UNKNOWN_ERROR', message: `请求失败 (${res.status})`,
+      detail: null, traceId: '', timestamp: new Date().toISOString(), status: res.status,
     })
   }
-  // 204 No Content
   if (res.status === 204) return undefined as T
   return res.json()
 }
