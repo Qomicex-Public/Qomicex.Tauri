@@ -18,7 +18,7 @@ import type { MicrosoftOAuthResponse, Account } from '../types/index.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 function fmtErr(e: unknown): string {
-  if (e instanceof ApiError) return e.message
+  if (e instanceof ApiError) return e.displayMessage
   if (e instanceof Error) return e.message
   return String(e)
 }
