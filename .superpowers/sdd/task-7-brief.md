@@ -1,3 +1,17 @@
+### Task 7: 前端 — ModCard 组件
+
+**Files:**
+- Create: `src/components/ModCard.tsx`
+
+**Interfaces:**
+- Consumes: `ModMetadata` (Task 4); `ContextMenu` (Task 6); `Tooltip` (existing in `components/ui/tooltip.tsx`)
+- Produces: `<ModCard mod instanceId gameVersion loader onRefresh onNavigate batchMode selected onSelect>` — 单个模组卡片
+
+- [ ] **Step 1: 创建 ModCard 组件**
+
+创建文件 `src/components/ModCard.tsx`：
+
+```tsx
 import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -31,7 +45,6 @@ export default function ModCard({
   const [toggling, setToggling] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [imgError, setImgError] = useState(false)
 
   const handleToggle = useCallback(async () => {
     const wasActive = mod.active
@@ -44,7 +57,8 @@ export default function ModCard({
         await enableMod(instanceId, disabledName)
       }
       onRefresh()
-    } catch (e) { console.error('Toggle mod failed:', e) }
+    } catch {
+    }
     setToggling(false)
   }, [instanceId, mod, onRefresh])
 
@@ -54,7 +68,7 @@ export default function ModCard({
     try {
       await deleteMod(instanceId, mod.fileName)
       onRefresh()
-    } catch (e) { console.error('Delete mod failed:', e) }
+    } catch {}
     setDeleting(false)
   }, [instanceId, mod, onRefresh])
 
@@ -96,8 +110,8 @@ export default function ModCard({
         >
           <CardContent className="flex items-center gap-4 p-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
-              {mod.iconUrl && !imgError ? (
-                <img src={mod.iconUrl} alt={mod.name} className="h-full w-full object-cover" loading="lazy" onError={() => setImgError(true)} />
+              {mod.iconUrl ? (
+                <img src={mod.iconUrl} alt={mod.name} className="h-full w-full object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               ) : (
                 <FontAwesomeIcon icon={faCube} className="h-5 w-5 opacity-50" />
               )}
@@ -162,3 +176,16 @@ export default function ModCard({
     </>
   )
 }
+```
+
+- [ ] **Step 2: 类型检查**
+
+Run: `npx tsc --noEmit`
+Expected: No errors
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/components/ModCard.tsx
+git commit -m "feat: add ModCard component with toggle, context menu, delete"
+```

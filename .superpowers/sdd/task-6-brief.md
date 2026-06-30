@@ -1,9 +1,21 @@
+### Task 6: 前端 — ContextMenu 右键菜单组件
+
+**Files:**
+- Create: `src/components/ContextMenu.tsx`
+
+**Interfaces:**
+- Produces: `<ContextMenu items targetRef>` — 在元素上右键时显示菜单，点击外部关闭
+
+- [ ] **Step 1: 创建 ContextMenu 组件**
+
+```tsx
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../lib/utils.ts'
 
 export interface ContextMenuItem {
   label: string
+  icon?: any
   onClick: () => void
   disabled?: boolean
   danger?: boolean
@@ -77,3 +89,16 @@ export function ContextMenu({ items, children }: ContextMenuProps) {
     </>
   )
 }
+```
+
+- [ ] **Step 2: 类型检查**
+
+Run: `npx tsc --noEmit`
+Expected: No errors
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/components/ContextMenu.tsx
+git commit -m "feat: add ContextMenu right-click menu component"
+```

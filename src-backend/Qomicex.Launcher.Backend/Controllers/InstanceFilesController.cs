@@ -193,6 +193,7 @@ public class InstanceFilesController : ControllerBase
                 Version = m.Version,
                 Description = m.Description ?? "",
                 Authors = m.Authors ?? [],
+                // CurseForgeFilesMeta (from fingerprint hash lookup) does not include IconUrl; only Modrinth provides it
                 IconUrl = m.ModrinthMeta?.IconUrl,
                 CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
                 ModrinthId = m.ModrinthId,
@@ -221,9 +222,10 @@ public class InstanceFilesController : ControllerBase
             return NoContent();
         }
 
-        var versionSegmented = _repository.GetById(instanceId)?.VersionIsolation ?? true;
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var versionSegmented = inst.VersionIsolation ?? true;
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var inst = _repository.GetById(instanceId)!;
         var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
         mods.EnableMod(filePath);
         return NoContent();
@@ -238,9 +240,10 @@ public class InstanceFilesController : ControllerBase
         var filePath = Path.Combine(modsDir, name);
         if (!System.IO.File.Exists(filePath)) return NotFound();
 
-        var versionSegmented = _repository.GetById(instanceId)?.VersionIsolation ?? true;
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var versionSegmented = inst.VersionIsolation ?? true;
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var inst = _repository.GetById(instanceId)!;
         var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
         mods.DisableMod(filePath);
         return NoContent();

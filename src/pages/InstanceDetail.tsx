@@ -204,10 +204,11 @@ function ScreenshotsTab({ instanceId, files, loading, onRefresh }: {
   )
 }
 
-function ModsTab({ instanceId, gameVersion, loader }: {
+function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
   instanceId: string
   gameVersion?: string
   loader?: string
+  gameDir: string
 }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
@@ -225,7 +226,7 @@ function ModsTab({ instanceId, gameVersion, loader }: {
     try {
       const data = await getModsMetadata(instanceId)
       setMods(data)
-    } catch { setMods([]) }
+    } catch (e) { console.error('Load mods failed:', e); setMods([]) }
     setLoading(false)
   }, [instanceId])
 
@@ -272,7 +273,7 @@ function ModsTab({ instanceId, gameVersion, loader }: {
       else if (batchConfirm.type === 'delete') await batchDeleteMods(instanceId, names)
       await loadMods()
       exitBatchMode()
-    } catch {}
+    } catch (e) { console.error('Batch action failed:', e) }
     setBatchProcessing(false)
     setBatchConfirm(null)
   }, [batchConfirm, selected, instanceId, loadMods, exitBatchMode])
@@ -320,7 +321,7 @@ function ModsTab({ instanceId, gameVersion, loader }: {
                 </>
               ) : (
                 <>
-                  <Button size="sm" variant="ghost" onClick={() => {/* open mods folder */}} className="gap-1.5 h-7 text-xs">
+                  <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
                     <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
                   </Button>
                   <Button size="sm" variant="outline" onClick={enterBatchMode} className="gap-1.5 h-7 text-xs">
@@ -1075,7 +1076,7 @@ export default function InstanceDetailPage() {
 
           {tab === 'saves' && <SavesTab instanceId={id!} files={fileData['saves'] as FileEntry[] | null} loading={fileLoading['saves']} onRefresh={() => loadFiles('saves')} />}
           {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} files={fileData['screenshots'] as FileEntry[] | null} loading={fileLoading['screenshots']} onRefresh={() => loadFiles('screenshots')} />}
-          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} />}
+          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.gameDir} />}
           {tab === 'resourcepacks' && <GenericFileTab instanceId={id!} type="resourcepacks" icon={faBox} label="资源包" files={fileData['resourcepacks'] as FileEntry[] | null} loading={fileLoading['resourcepacks']} onRefresh={() => loadFiles('resourcepacks')} showSize emptyText="暂无资源包" />}
           {tab === 'shaderpacks' && <GenericFileTab instanceId={id!} type="shaderpacks" icon={faSun} label="光影包" files={fileData['shaderpacks'] as FileEntry[] | null} loading={fileLoading['shaderpacks']} onRefresh={() => loadFiles('shaderpacks')} showSize emptyText="暂无光影包" />}
           {tab === 'servers' && <ServersTab instanceId={id!} servers={fileData['servers'] as ServerEntry[] | null} loading={fileLoading['servers']} onRefresh={() => loadFiles('servers')} />}

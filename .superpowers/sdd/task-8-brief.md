@@ -1,3 +1,17 @@
+### Task 8: 前端 — VersionPickerDialog 组件
+
+**Files:**
+- Create: `src/components/VersionPickerDialog.tsx`
+
+**Interfaces:**
+- Consumes: `ModMetadata` (Task 4); `getResourceVersions`, `getResourceVersionDownloads` (existing `resource.ts`); `changeModVersion` (Task 5)
+- Produces: `<VersionPickerDialog open onClose mod instanceId onDone>` — 版本选择并下载
+
+- [ ] **Step 1: 创建 VersionPickerDialog 组件**
+
+创建 `src/components/VersionPickerDialog.tsx`：
+
+```tsx
 import { useEffect, useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faRotate, faDownload } from '@fortawesome/free-solid-svg-icons'
@@ -6,7 +20,7 @@ import { Button } from './ui/button.tsx'
 import { cn } from '../lib/utils.ts'
 import { getResourceVersions, getResourceVersionDownloads } from '../api/resource.ts'
 import { changeModVersion } from '../api/instance-files.ts'
-import type { ModMetadata, ResourceVersion } from '../types/index.ts'
+import type { ModMetadata, ResourceVersion, ResourceFile } from '../types/index.ts'
 
 interface VersionPickerDialogProps {
   open: boolean
@@ -24,6 +38,7 @@ export default function VersionPickerDialog({
   const [versions, setVersions] = useState<ResourceVersion[]>([])
   const [loading, setLoading] = useState(false)
   const [installing, setInstalling] = useState<string | null>(null)
+  const [downloadFile, setDownloadFile] = useState<ResourceFile | null>(null)
 
   useEffect(() => {
     if (!open || !mod || !mod.source) return
@@ -37,6 +52,21 @@ export default function VersionPickerDialog({
       .finally(() => setLoading(false))
   }, [open, mod, gameVersion, loader])
 
+  useEffect(() => {
+    if (!downloadFile || !mod) return
+    const doDownload = async () => {
+      const newFileName = downloadFile.filename
+      try {
+        await changeModVersion(instanceId, mod.fileName, downloadFile.url, newFileName)
+        onDone()
+        onClose()
+      } catch {}
+      setInstalling(null)
+      setDownloadFile(null)
+    }
+    doDownload()
+  }, [downloadFile])
+
   const handleInstall = useCallback(async (version: ResourceVersion) => {
     if (!mod || !mod.source) return
     const id = mod.curseForgeId?.toString() ?? mod.modrinthId
@@ -46,12 +76,13 @@ export default function VersionPickerDialog({
       const files = await getResourceVersionDownloads(id, version.id, mod.source)
       const jarFile = files.find(f => f.filename.endsWith('.jar'))
       if (jarFile) {
-        await changeModVersion(instanceId, mod.fileName, jarFile.url, jarFile.filename)
-        onDone()
-        onClose()
+        setDownloadFile(jarFile)
+      } else {
+        setInstalling(null)
       }
-    } catch (e) { console.error('Version install failed:', e) }
-    setInstalling(null)
+    } catch {
+      setInstalling(null)
+    }
   }, [mod, instanceId, onDone, onClose])
 
   return (
@@ -102,3 +133,16 @@ export default function VersionPickerDialog({
     </Dialog>
   )
 }
+```
+
+- [ ] **Step 2: 类型检查**
+
+Run: `npx tsc --noEmit`
+Expected: No errors
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/components/VersionPickerDialog.tsx
+git commit -m "feat: add VersionPickerDialog for mod version switching"
+```
