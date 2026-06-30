@@ -16,6 +16,8 @@ Three-layer Minecraft desktop launcher:
 
 Vite proxies `/api/*` → `http://localhost:5000` (see `vite.config.ts`).
 
+`src-backend/` contains 3 projects: `Qomicex.Launcher.Backend` (main API), `Qomicex.Core` (shared launcher logic), `Qomicex.Downloader` (download library). Backend references both Core and Downloader.
+
 `Qomicex.Avalonia/` is a **separate repo** (own `.git`). Do not assume shared toolchain.
 
 ## Commands
@@ -50,16 +52,17 @@ import { x } from './baz'                  // WRONG — Vite will error
 - Tailwind + shadcn/ui style (`class-variance-authority`, `radix-ui`). Use `cn()` from `src/lib/utils.ts`.
 - Dark mode via CSS variables in `src/index.css`, Tailwind `darkMode: "class"`.
 - Strict TS: `noUnusedLocals`, `noUnusedParameters`, `strict: true`. Fix all before committing.
-- Router: `BrowserRouter` → `Layout.tsx` sidebar → 8 route pages.
-- UI components in `src/components/ui/`:
+- Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` sidebar → 9 registered routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/settings`.
+- UI components in `src/components/ui/`: badge, button, card, checkbox, combobox, dialog, input, label, message-box, select, separator, table, textarea, tooltip.
   - **Tooltip** (`tooltip.tsx`) — use instead of native `title` attribute. Always wrap icon-only buttons.
   - **Select** (`select.tsx`) — use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>` or third‑party dropdowns.
   - Import via `'../components/ui/<name>.tsx'` (file extension required).
+- `src/pages/LogAnalysis.tsx` exists but is **not registered** in the router.
 
 ## Backend conventions
 
-- `Program.cs` registers: controllers, CORS (any origin), 4 named `HttpClient`s (Modrinth, CurseForge, FTB, default), `DownloadManager`, `InstanceInstallService`, `FtbService`, ML.NET recommender.
-- Controllers map to `api/<name>` routes.
+- `Program.cs` registers: controllers, CORS (any origin), 4 named `HttpClient`s (Modrinth, CurseForge, FTB, default), `DownloadManager`, `InstanceInstallService`, `FtbService`, `ResourceDownloadService`, `JavaRuntimeStore`, `JavaDownloadService`, `SkinService`, `McmodService`, `AccountService`, `MsAccount`, `TraceBufferStore`/`TraceDumpService`.
+- Controllers in `Controllers/` map to `api/<name>` routes. 16 controllers total (Account, Instance, InstanceFiles, Java, JavaDownload, Launcher, Loaders, LogAnalysis, Mcmod, ResourceDownload, Resources, RoomCode, Settings, Skin, SystemInfo, Versions).
 - Embedded resources: `error-patterns.json`, `java_launch_wrapper-1.4.4.jar`.
 - `appsettings.json` `CurseForge:ApiKey` is empty by default.
 
@@ -82,11 +85,11 @@ InstallTask  (Services/InstallTask.cs)
 
 **Backend** — all unhandled exceptions are caught by `Middleware/ErrorHandlingMiddleware.cs` and returned as:
 ```json
-{ "code": "INSTALL_FAILED", "message": "...", "detail": "...", "traceId": "...", "timestamp": "...", "status": 500 }
+{ "code": "ERROR_CODE", "message": "...", "detail": "...", "traceId": "...", "timestamp": "...", "status": 500 }
 ```
 - Do NOT add try/catch in controllers just to return errors — let exceptions bubble to the middleware.
 - For expected business errors, throw `ApiException`: `throw ApiException.BadRequest("...")`, `throw ApiException.NotFound("...")`, etc. (`Common/ApiError.cs`)
-- Exception → HTTP status mapping lives in `ErrorHandlingMiddleware.MapException`. Add new mappings there, not in controllers.
+- Exception → HTTP status mapping in `ErrorHandlingMiddleware.MapException`: `ApiException` → its own StatusCode, `ArgumentNullException` → 400, `FileNotFoundException` → 404, `HttpRequestException` → 502, `TaskCanceledException` → 499, `JsonException` → 400, default → 500. Add new mappings there, not in controllers.
 - Errors are logged via `ILogger` (visible in `dotnet run` console output).
 
 **Frontend** — `src/api/client.ts` exports `ApiError` class. All API errors throw `ApiError` with `.code`, `.status`, `.detail`, `.traceId`, `.displayMessage`.

@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
-import { openPath } from '@tauri-apps/plugin-opener'
+
 import { Button } from '../components/ui/button.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
@@ -927,8 +927,8 @@ export default function Instances() {
                   </span>
                 </div>
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
-                  <Tooltip content="启动">
-                    <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={() => handleLaunch(v)} disabled={!!launching}>
+                    <Tooltip content="启动">
+                    <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={(e) => { e.stopPropagation(); handleLaunch(v) }} disabled={!!launching}>
                       <FontAwesomeIcon icon={launching === v.name ? faRotate : faPlay} className={cn('h-5 w-5', launching === v.name && 'animate-spin')} />
                     </Button>
                   </Tooltip>
@@ -944,7 +944,7 @@ export default function Instances() {
                       </Tooltip>
                     )})()}
                     <Tooltip content="打开文件夹">
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={() => openPath(`${currentDir}/versions/${v.name}`).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); fetch('/api/settings/open-folder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: `${currentDir}/versions/${v.name}` }) }).catch(() => {}) }}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
                 </div>
@@ -997,7 +997,7 @@ export default function Instances() {
                     </Tooltip>
                   )})()}
                    <Tooltip content="打开文件夹">
-                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openPath(`${currentDir}/versions/${v.name}`).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => fetch('/api/settings/open-folder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: `${currentDir}/versions/${v.name}` }) }).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                    </Tooltip>
                 </div>
               </div>

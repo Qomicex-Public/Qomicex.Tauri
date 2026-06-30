@@ -71,6 +71,25 @@ export default function DownloadCenter() {
     return unsub
   }, [])
 
+  function applyJavaProgress(id: string, progress: { status: string; progress: number; speed: number; fileName: string; error: string | null }) {
+    let newStatus: DownloadTask['status'] = 'downloading'
+    if (progress.status === 'completed') newStatus = 'completed'
+    else if (progress.status === 'cancelled') newStatus = 'cancelled'
+    else if (progress.status === 'failed') newStatus = 'failed'
+    else if (progress.status === 'paused') newStatus = 'paused'
+    else if (progress.status === 'queued' || progress.status === 'resolving') newStatus = 'queued'
+
+    updateTask(id, {
+      status: newStatus,
+      stage: progress.status,
+      progress: Math.round(progress.progress),
+      speed: progress.speed,
+      currentFile: progress.fileName || undefined,
+      error: progress.error || undefined,
+      completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+    })
+  }
+
   const pollingRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {
@@ -78,11 +97,10 @@ export default function DownloadCenter() {
     if (javaTasks.length === 0) return
     Promise.all(javaTasks.map(async (t) => {
       try {
-        await getJavaDownloadProgress(t.taskId!)
-      } catch (e: unknown) {
-        if (e instanceof ApiError && e.status === 404) {
-          updateTask(t.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
-        }
+        const progress = await getJavaDownloadProgress(t.taskId!)
+        applyJavaProgress(t.id, progress)
+      } catch {
+        updateTask(t.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
       }
     }))
   }, [])
@@ -105,28 +123,15 @@ export default function DownloadCenter() {
       const active = ts.filter((t) => t.status === 'queued' || t.status === 'downloading' || t.status === 'paused')
       for (const task of active) {
         if (task.type === 'java' && task.taskId) {
+          if (task.status === 'queued' && Date.now() - new Date(task.createdAt).getTime() > 120000) {
+            updateTask(task.id, { status: 'failed', error: '下载超时：后端未响应' })
+            continue
+          }
           try {
             const progress = await getJavaDownloadProgress(task.taskId)
-            let newStatus: DownloadTask['status'] = 'downloading'
-            if (progress.status === 'completed') newStatus = 'completed'
-            else if (progress.status === 'cancelled') newStatus = 'cancelled'
-            else if (progress.status === 'failed') newStatus = 'failed'
-            else if (progress.status === 'paused') newStatus = 'paused'
-            else if (progress.status === 'queued' || progress.status === 'resolving') newStatus = 'queued'
-
-            updateTask(task.id, {
-              status: newStatus,
-              stage: progress.status,
-              progress: Math.round(progress.progress),
-              speed: progress.speed,
-              currentFile: progress.fileName || undefined,
-              error: progress.error || undefined,
-             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
-            })
-          } catch (e: unknown) {
-            if (e instanceof ApiError && (e.status === 404 || e.code === 'JAVA_DOWNLOAD_PACKAGE_NOT_FOUND')) {
-              updateTask(task.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
-            }
+            applyJavaProgress(task.id, progress)
+          } catch {
+            updateTask(task.id, { status: 'failed', error: '获取 Java 下载进度失败' })
           }
           continue
         }
@@ -270,7 +275,7 @@ export default function DownloadCenter() {
                         </span>
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground/70">
-                        {task.gameVersion && <span>Minecraft {task.gameVersion}</span>}
+                        {task.gameVersion && <span>{task.type === 'java' ? 'Java' : 'Minecraft'} {task.gameVersion}</span>}
                         {task.loader && <span>{task.loader}{task.loaderVersion ? ` ${task.loaderVersion}` : ''}</span>}
                         {task.addons && task.addons.length > 0 && <span>+ {task.addons.length} 个附加</span>}
                         <span>创建于 {formatDate(task.createdAt)}</span>
