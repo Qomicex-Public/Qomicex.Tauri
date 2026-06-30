@@ -7,25 +7,45 @@ on:
         description: 'Release tag (e.g. v0.2.0)'
         required: true
         default: 'v0.1.0'
-      windows-x64:
-        type: boolean
-        default: true
-      linux-x64:
-        type: boolean
-        default: true
-      macos-arm64:
-        type: boolean
-        default: true
-      macos-x64:
-        type: boolean
-        default: true
+      buildPlatform:
+        description: '构建平台'
+        required: true
+        default: 'linux'
+        type: choice
+        options:
+          - windows
+          - linux
+          - macos
+          - all
+      linuxBundles:
+        description: 'Linux 打包格式（仅 linux/all 时有效）'
+        required: false
+        default: 'appimage,deb,rpm'
+        type: choice
+        options:
+          - appimage,deb,rpm
+          - appimage,deb
+          - appimage,rpm
+          - deb,rpm
+          - appimage
+          - deb
+          - rpm
+      macosArch:
+        description: 'macOS 架构（仅 macos/all 时有效）'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - arm64
+          - x64
 
 env:
   CARGO_TERM_COLORS: always
 
 jobs:
   windows-x64:
-    if: ${{ github.event.inputs.windows-x64 == 'true' }}
+    if: ${{ github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,11 +54,12 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
+      - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=embedded -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.exe src-tauri/binaries/backend.exe
@@ -50,7 +71,7 @@ jobs:
         with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
 
   linux-x64:
-    if: ${{ github.event.inputs.linux-x64 == 'true' }}
+    if: ${{ github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,25 +80,26 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-unknown-linux-gnu }
+      - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime linux-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=embedded -o src-tauri/binaries/tmp
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime linux-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
-      - run: npm run tauri -- build --bundles appimage
+      - run: npm run tauri -- build --bundles ${{ github.event.inputs.linuxBundles }}
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-linux-x64, path: src-tauri/target/release/bundle/ }
 
   macos-arm64:
-    if: ${{ github.event.inputs.macos-arm64 == 'true' }}
+    if: ${{ (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') && (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'arm64') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,11 +108,12 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-apple-darwin }
+      - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime osx-arm64 --self-contained false -p:PublishSingleFile=true -p:DebugType=embedded -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime osx-arm64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
@@ -101,7 +124,7 @@ jobs:
         with: { name: qomicex-launcher-macos-arm64, path: src-tauri/target/release/bundle/ }
 
   macos-x64:
-    if: ${{ github.event.inputs.macos-x64 == 'true' }}
+    if: ${{ (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') && (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'x64') }}
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
@@ -110,11 +133,12 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-apple-darwin }
+      - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime osx-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=embedded -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime osx-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend

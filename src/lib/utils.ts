@@ -15,7 +15,7 @@ export async function resolveBgUrl(path: string): Promise<string> {
     _convertFileSrc = mod.convertFileSrc
     return mod.convertFileSrc(path)
   } catch {
-    return 'file:///' + path.replace(/\\/g, '/')
+    return 'file:///' + path.replace(/\\/g, '/').replace(/^\/+/, '')
   }
 }
 

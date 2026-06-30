@@ -334,7 +334,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
                 </>
               ) : (
                 <>
-                  <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '\\mods').catch(e => console.error('Open mods folder failed:', e))} className="gap-1.5 h-7 text-xs">
+                  <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '/mods').catch(e => console.error('Open mods folder failed:', e))} className="gap-1.5 h-7 text-xs">
                     <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
                   </Button>
                   <Button size="sm" variant="outline" onClick={enterBatchMode} className="gap-1.5 h-7 text-xs">

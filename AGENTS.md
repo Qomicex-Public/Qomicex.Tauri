@@ -120,6 +120,44 @@ try {
 }
 ```
 
+## Cross-platform rules (C#, Rust, TS)
+
+The launcher ships on **Windows, Linux, macOS**. Never assume Windows.
+
+### Backend / Core (C#)
+
+- **No hardcoded drive letters or path separators** — use `Path.Combine(...)` and `Environment.GetFolderPath(SpecialFolder.ProgramFiles)` (not `@"C:\..."`).
+- **No hardcoded exe names** — `Process.Start("explorer.exe", ...)` → `Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })`.
+- **Platform guards** — use `OperatingSystem.IsWindows()` / `IsLinux()` / `IsMacOS()` over deprecated `PlatformID.Win32NT`.
+- **UNC/Windows-only path logic** (e.g. `StartsWith("\\\\")`) must be wrapped in `OperatingSystem.IsWindows()`.
+- **Shell default** — `/bin/bash` is not guaranteed; fallback to `/bin/sh`.
+- **Native library embedding** — `dotnet publish` must include `-p:IncludeNativeLibrariesForSelfExtract=true` (SkiaSharp etc.).
+
+### Qomicex.Core (submodule, cross-target)
+
+- **Path.Combine over string interpolation** — `$"{dir}/versions/{v}.json"` → `Path.Combine(dir, "versions", v, $"{v}.json")`.
+- **`obj["natives"]` access** — always check `ContainsKey(osName)` before indexing; the `natives` dict may not contain the current OS.
+- **Architecture detection** — check for `"aarch64"` / `"ARM64"` before falling through to `"x86"`.
+- **OS-specific search paths** — SDKMAN/JENV/JABBA/ASDF are Linux/macOS-only tools; keep out of `HighPriorityPaths` (Windows).
+
+### Frontend (TS)
+
+- **No `\\` path separators** — replace all `path + '\\sub'` with `path + '/sub'`.
+- **Normalize paths from backend** — always `.replace(/\\/g, '/')` before passing to dialogs or constructing URLs.
+- **File picker filters** — use `['exe']` on Windows, `['*']` on other platforms (Java binary, etc.):
+  ```ts
+  filters: navigator.platform?.includes('Win')
+    ? [{ name: 'Java', extensions: ['exe'] }]
+    : [{ name: 'Java', extensions: ['*'] }]
+  ```
+- **`file://` URI** — strip leading `/` on Unix: `'file:///' + path.replace(/\\/g, '/').replace(/^\/+/, '')`.
+
+### Rust (Tauri)
+
+- **`cfg(not(windows))` → `cfg(unix)`** — `not(windows)` is broader than intended.
+- **Always `set_permissions` (0o755) on Unix** after writing a binary — `std::fs::write` does not preserve `+x`.
+- **No hardcoded extension** — use `#[cfg(windows)]` / `#[cfg(unix)]` for binary file names.
+
 ## Known issues / next steps
 
 - Frontend does not yet handle the `failed` install stage gracefully.

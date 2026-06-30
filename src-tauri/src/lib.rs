@@ -4,12 +4,12 @@ use tauri::Manager;
 
 #[cfg(windows)]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend.exe");
-#[cfg(not(windows))]
+#[cfg(unix)]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend");
 
 #[cfg(windows)]
 const BACKEND_EXE: &str = "qomicex-backend.exe";
-#[cfg(not(windows))]
+#[cfg(unix)]
 const BACKEND_EXE: &str = "qomicex-backend";
 
 struct BackendChild(Mutex<Option<std::process::Child>>);
@@ -23,6 +23,11 @@ fn spawn_backend(app: &tauri::App) {
     if let Err(e) = std::fs::write(&exe_path, BACKEND) {
         eprintln!("[backend] write to {} failed: {e}", exe_path.display());
         return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755));
     }
     let mut cmd = std::process::Command::new(&exe_path);
     cmd.stderr(std::process::Stdio::piped());

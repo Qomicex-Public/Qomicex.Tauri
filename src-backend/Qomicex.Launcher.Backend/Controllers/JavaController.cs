@@ -115,7 +115,9 @@ public class JavaController : ControllerBase
                     result.VersionID = major;
             }
             result.Name = result.Version;
-            if (output.Contains("64-Bit") || output.Contains("64-Bits"))
+            if (output.Contains("aarch64") || output.Contains("ARM64"))
+                result.Arch = "arm64";
+            else if (output.Contains("64-Bit") || output.Contains("64-Bits"))
                 result.Arch = "x64";
             else
                 result.Arch = "x86";
