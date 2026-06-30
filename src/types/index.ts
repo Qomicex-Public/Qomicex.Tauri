@@ -338,6 +338,21 @@ export interface FileEntry {
   extension: string
 }
 
+export interface ModMetadata {
+  fileName: string
+  name: string
+  version: string
+  description: string
+  authors: string[]
+  iconUrl?: string | null
+  curseForgeId?: number | null
+  modrinthId?: string | null
+  source?: string | null
+  mcmodId?: number | null
+  chineseName?: string | null
+  active: boolean
+}
+
 export interface ServerEntry {
   name: string
   ip: string
