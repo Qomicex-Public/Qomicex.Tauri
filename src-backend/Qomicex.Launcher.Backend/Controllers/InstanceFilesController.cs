@@ -202,7 +202,7 @@ public class InstanceFilesController : ControllerBase
                 Description = m.Description ?? "",
                 Authors = m.Authors ?? [],
                 IconUrl = m.ModrinthMeta?.IconUrl,
-                IconBase64 = null, // ModInfo does not expose Base64 icon yet
+                IconBase64 = m.Icon,
                 CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
                 ModrinthId = m.ModrinthId,
                 Source = source,
