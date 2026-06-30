@@ -252,6 +252,11 @@ function ModsTab({ instanceId, gameVersion, loader }: {
     })
   }, [])
 
+  const enterBatchMode = useCallback(() => {
+    setBatchMode(true)
+    setSelected(new Set())
+  }, [])
+
   const exitBatchMode = useCallback(() => {
     setBatchMode(false)
     setSelected(new Set())
@@ -317,6 +322,9 @@ function ModsTab({ instanceId, gameVersion, loader }: {
                 <>
                   <Button size="sm" variant="ghost" onClick={() => {/* open mods folder */}} className="gap-1.5 h-7 text-xs">
                     <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={enterBatchMode} className="gap-1.5 h-7 text-xs">
+                    批量操作
                   </Button>
                   <Button size="sm" onClick={() => {
                     const p = new URLSearchParams({ category: 'mod', source: 'modrinth' })
