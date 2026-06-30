@@ -48,3 +48,26 @@ public class AddServerRequest
     public string Name { get; set; } = string.Empty;
     public string Ip { get; set; } = string.Empty;
 }
+
+public class ModMetadataDto
+{
+    public string FileName { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Version { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string[] Authors { get; set; } = [];
+    public string? IconUrl { get; set; }
+    public int? CurseForgeId { get; set; }
+    public string? ModrinthId { get; set; }
+    public string? Source { get; set; }
+    public int? McmodId { get; set; }
+    public string? ChineseName { get; set; }
+    public bool Active { get; set; }
+}
+
+public class ChangeModVersionRequest
+{
+    public string FileName { get; set; } = string.Empty;
+    public string DownloadUrl { get; set; } = string.Empty;
+    public string NewFileName { get; set; } = string.Empty;
+}
