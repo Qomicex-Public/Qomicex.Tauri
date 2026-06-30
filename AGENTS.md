@@ -53,6 +53,7 @@ import { x } from './baz'                  // WRONG — Vite will error
 - Dark mode via CSS variables in `src/index.css`, Tailwind `darkMode: "class"`.
 - Strict TS: `noUnusedLocals`, `noUnusedParameters`, `strict: true`. Fix all before committing.
 - Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` sidebar → 9 registered routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/settings`.
+- **Internal navigation must use `<Link>` not `<a>`** — plain `<a>` causes full page reload, which remounts `Layout.tsx`, resets random background selection, and loses other persistent state. External links (different origin) should use `<a target="_blank">`.
 - UI components in `src/components/ui/`: badge, button, card, checkbox, combobox, dialog, input, label, message-box, select, separator, table, textarea, tooltip.
   - **Tooltip** (`tooltip.tsx`) — use instead of native `title` attribute. Always wrap icon-only buttons.
   - **Select** (`select.tsx`) — use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>` or third‑party dropdowns.
