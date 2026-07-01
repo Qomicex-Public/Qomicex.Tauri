@@ -55,6 +55,7 @@ public class InstanceFilesController : ControllerBase
             "saves" => "saves",
             "screenshots" => "screenshots",
             "mods" => "mods",
+            "datapacks" => "datapacks",
             "resourcepacks" => "resourcepacks",
             "shaderpacks" => "shaderpacks",
             _ => null,
@@ -573,6 +574,72 @@ public class InstanceFilesController : ControllerBase
         }).ToList();
 
         return Ok(result);
+    }
+
+    [HttpGet("datapacks")]
+    public ActionResult<List<FileEntry>> GetDataPacks(string instanceId)
+    {
+        var dir = GetPath(instanceId, "datapacks", out var _);
+        if (dir == null) return NotFound();
+        if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
+        return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
+        {
+            Name = Path.GetFileName(f),
+            Size = new FileInfo(f).Length,
+            LastModified = System.IO.Directory.GetLastWriteTime(f),
+            Extension = Path.GetExtension(f).ToLower(),
+        }).ToList());
+    }
+
+    [HttpGet("datapacks/metadata")]
+    public async Task<ActionResult<List<DataPackMetadataDto>>> GetDataPacksMetadata(string instanceId)
+    {
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+
+        var baseDir = inst.GameDir;
+        if (!Path.IsPathRooted(baseDir))
+            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
+
+        var versionSegmented = inst.VersionIsolation ?? true;
+        var versionId = inst.GameVersion;
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var dp = new DataPacks(baseDir, versionId, versionSegmented, apiKey);
+        var list = await dp.GetDataPackList();
+
+        var result = list.Select(m =>
+        {
+            string? source = null;
+            if (m.CurseForgeId > 0) source = "curseforge";
+            else if (!string.IsNullOrEmpty(m.ModrinthId)) source = "modrinth";
+
+            return new DataPackMetadataDto
+            {
+                FileName = Path.GetFileName(m.FilePath),
+                Name = m.Name,
+                Description = m.Description ?? string.Empty,
+                Version = m.Version ?? string.Empty,
+                PackFormat = m.PackFormat,
+                IconBase64 = string.IsNullOrEmpty(m.Icon) ? null : m.Icon,
+                CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
+                ModrinthId = string.IsNullOrEmpty(m.ModrinthId) ? null : m.ModrinthId,
+                Source = source,
+            };
+        }).ToList();
+
+        return Ok(result);
+    }
+
+    [HttpDelete("datapacks")]
+    public IActionResult DeleteDataPack(string instanceId, [FromQuery] string name)
+    {
+        var dir = GetPath(instanceId, "datapacks", out var _);
+        if (dir == null) return NotFound();
+        var path = Path.Combine(dir, name);
+        if (!System.IO.File.Exists(path)) return NotFound();
+        System.IO.File.Delete(path);
+        return NoContent();
     }
 
     [HttpGet("shaderpacks")]
