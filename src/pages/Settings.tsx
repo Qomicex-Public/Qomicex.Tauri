@@ -507,20 +507,20 @@ export default function Settings() {
                     <div className="flex items-center gap-1.5">
                       <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
                       <span className="text-sm font-medium">自动选择最快下载源</span>
-                      <span className="text-xs text-muted-foreground">启动时和每次安装前自动检测并选择延迟最低的源</span>
                     </div>
                   </label>
+                  <p className="text-xs text-muted-foreground">启动时和每次安装前自动检测并选择延迟最低的下载源</p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Mod API 镜像</Label>
+                  <Label>资源下载源</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {[
                       { value: 0, label: 'Modrinth/CurseForge 官方' },
                       { value: 1, label: 'MCIM 镜像' },
                     ].map((s) => {
                       const ping = modPings.find(p => p.id === s.value)
-                      const showLatency = ping && ping.modrinthLatency >= 0 && ping.modrinthOk
+                      const showLatency = ping && ping.modrinthLatency >= 0
                       const latencyColor = !ping?.available ? 'text-destructive'
                         : ping.modrinthLatency < 100 ? 'text-emerald-400'
                         : ping.modrinthLatency < 300 ? 'text-amber-400'
@@ -564,10 +564,10 @@ export default function Settings() {
                     />
                     <div className="flex items-center gap-1.5">
                       <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
-                      <span className="text-sm font-medium">自动选择最快 Mod API</span>
-                      <span className="text-xs text-muted-foreground">自动检测 Modrinth/CurseForge API 镜像并选择延迟最低的</span>
+                      <span className="text-sm font-medium">自动选择最快资源下载源</span>
                     </div>
                   </label>
+                  <p className="text-xs text-muted-foreground">自动检测 Modrinth/CurseForge API 镜像并选择延迟最低的</p>
                 </div>
 
                 <div className="space-y-2">

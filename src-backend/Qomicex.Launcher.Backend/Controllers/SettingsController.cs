@@ -124,7 +124,7 @@ public class SettingsController : ControllerBase
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 var sw = Stopwatch.StartNew();
-                using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, modrinthUrl), cts.Token);
+                using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, modrinthUrl), cts.Token);
                 sw.Stop();
                 modrinthOk = response.IsSuccessStatusCode;
                 modrinthLatency = (int)sw.ElapsedMilliseconds;
@@ -149,7 +149,7 @@ public class SettingsController : ControllerBase
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 var sw = Stopwatch.StartNew();
-                using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, modrinthUrl), cts.Token);
+                using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, modrinthUrl), cts.Token);
                 sw.Stop();
                 if (response.IsSuccessStatusCode && sw.ElapsedMilliseconds < bestLatency)
                 {
