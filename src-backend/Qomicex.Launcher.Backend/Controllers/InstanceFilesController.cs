@@ -38,10 +38,7 @@ public class InstanceFilesController : ControllerBase
         var versionsDir = Path.Combine(dir, "versions");
         if (Directory.Exists(versionsDir))
         {
-            var expectedId = !string.IsNullOrEmpty(inst.Loader) && !string.IsNullOrEmpty(inst.LoaderVersion)
-                ? $"{inst.GameVersion}-{inst.Loader}-{inst.LoaderVersion}"
-                : inst.GameVersion;
-            var expectedDir = Path.Combine(versionsDir, expectedId);
+            var expectedDir = Path.Combine(versionsDir, inst.GameVersion);
             if (Directory.Exists(expectedDir))
                 return expectedDir;
         }
@@ -173,11 +170,6 @@ public class InstanceFilesController : ControllerBase
 
         var versionSegmented = inst.VersionIsolation ?? true;
         var versionId = inst.GameVersion;
-        if (versionSegmented)
-        {
-            if (!string.IsNullOrEmpty(inst.Loader) && !string.IsNullOrEmpty(inst.LoaderVersion))
-                versionId = $"{inst.GameVersion}-{inst.Loader}-{inst.LoaderVersion}";
-        }
 
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
 
@@ -499,10 +491,7 @@ public class InstanceFilesController : ControllerBase
         var gameDir = ResolveGameDir(instanceId);
         if (gameDir == null) return (null, null);
         var versionSpecific = (inst.VersionIsolation ?? true) || Directory.Exists(Path.Combine(gameDir, "versions"));
-        var versionId = !string.IsNullOrEmpty(inst.Loader) && !string.IsNullOrEmpty(inst.LoaderVersion)
-            ? $"{inst.GameVersion}-{inst.Loader}-{inst.LoaderVersion}"
-            : inst.GameVersion;
-        return (new ServersHelper(gameDir, versionId, versionSpecific), gameDir);
+        return (new ServersHelper(gameDir, inst.GameVersion, versionSpecific), gameDir);
     }
 
     private static Models.ServerEntry MapServerEntry(Qomicex.Core.Modules.Helpers.GameSettings.ServerEntry s)
