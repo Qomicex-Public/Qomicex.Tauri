@@ -81,7 +81,7 @@ public class InstanceInstallService
 
     public void StartInstall(string instanceId, string gameVersion, string gameDir,
         string? loader, string? loaderVersion, string[]? addons,
-        int downloadThreads = 3, bool versionIsolation = true, int downloadSourceId = 0, int downloadTimeout = 15,
+        int downloadThreads = 64, bool versionIsolation = true, int downloadSourceId = 0, int downloadTimeout = 15,
         string? javaPath = null)
     {
         if (string.IsNullOrEmpty(javaPath))
@@ -136,7 +136,7 @@ public class InstanceInstallService
     }
 
     public void StartRepair(string instanceId, string gameVersion, string gameDir,
-        string? loader = null, string? loaderVersion = null, int downloadThreads = 3)
+        string? loader = null, string? loaderVersion = null, int downloadThreads = 64)
     {
         // Repair reuses InstallTask with loader info so it scans the correct versionId
         var task = new InstallTask(instanceId, gameVersion, gameDir,

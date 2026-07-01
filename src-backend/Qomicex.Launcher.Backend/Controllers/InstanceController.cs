@@ -113,7 +113,7 @@ public class InstanceController : ControllerBase
         var instance = _repository.GetById(id);
         if (instance == null) return NotFound();
 
-        _installService.StartInstall(id, instance.GameVersion, instance.GameDir, request.Loader, request.LoaderVersion, request.Addons, request.DownloadThreads ?? 3, request.VersionIsolation, request.DownloadSourceId, request.DownloadTimeout, instance.JavaPath);
+        _installService.StartInstall(id, instance.GameVersion, instance.GameDir, request.Loader, request.LoaderVersion, request.Addons, request.DownloadThreads ?? 64, request.VersionIsolation, request.DownloadSourceId, request.DownloadTimeout, instance.JavaPath);
 
         return Ok(new { message = "安装已开始", instanceId = id });
     }
