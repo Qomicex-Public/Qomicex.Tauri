@@ -108,7 +108,7 @@ public class SettingsController : ControllerBase
     private static readonly (int Id, string Name, string ModrinthUrl, string CurseForgeUrl)[] ModSources =
     [
         (0, "Modrinth/CurseForge 官方", "https://api.modrinth.com/v2/statistics", "https://api.curseforge.com"),
-        (1, "MCIM 镜像", "https://mod.mcimirror.top/modrinth/v2/statistics", "https://mod.mcimirror.top/curseforge"),
+        (1, "MCIM 镜像", "https://mod.mcimirror.top/statistics?modrinth=true", "https://mod.mcimirror.top/curseforge"),
     ];
 
     [HttpGet("mod-sources/ping")]

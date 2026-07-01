@@ -630,7 +630,7 @@ public class ResourcesController : ControllerBase
     {
         try
         {
-            var members = await _modrinth.GetFromJsonAsync<List<ModrinthTeamMember>>(ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/team/{Uri.EscapeDataString(teamId)}/members"));
+            var members = await _modrinth.GetFromJsonAsync<List<ModrinthTeamMember>>($"https://api.modrinth.com/v2/team/{Uri.EscapeDataString(teamId)}/members");
             return members?.Select(member => member.User?.Username)
                 .FirstOrDefault(username => !string.IsNullOrWhiteSpace(username)) ?? "";
         }

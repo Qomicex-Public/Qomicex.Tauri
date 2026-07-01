@@ -464,8 +464,8 @@ export default function Settings() {
                       const ping = sourcePings.find(p => p.id === s.value)
                       const showLatency = ping && ping.latencyMs >= 0
                       const latencyColor = !ping?.available ? 'text-destructive'
-                        : ping.latencyMs < 100 ? 'text-emerald-400'
-                        : ping.latencyMs < 300 ? 'text-amber-400'
+                        : ping.latencyMs < 200 ? 'text-emerald-400'
+                        : ping.latencyMs < 400 ? 'text-amber-400'
                         : 'text-destructive'
                       return (
                         <button
@@ -522,8 +522,8 @@ export default function Settings() {
                       const ping = modPings.find(p => p.id === s.value)
                       const showLatency = ping && ping.modrinthLatency >= 0
                       const latencyColor = !ping?.available ? 'text-destructive'
-                        : ping.modrinthLatency < 100 ? 'text-emerald-400'
-                        : ping.modrinthLatency < 300 ? 'text-amber-400'
+                        : ping.modrinthLatency < 200 ? 'text-emerald-400'
+                        : ping.modrinthLatency < 400 ? 'text-amber-400'
                         : 'text-destructive'
                       return (
                         <button
