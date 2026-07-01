@@ -72,3 +72,63 @@ public class ChangeModVersionRequest
     public string DownloadUrl { get; set; } = string.Empty;
     public string NewFileName { get; set; } = string.Empty;
 }
+
+public class ResourcePackMetadataDto
+{
+    public string FileName { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Version { get; set; } = string.Empty;
+    public int PackFormat { get; set; }
+    public string? IconBase64 { get; set; }
+    public int? CurseForgeId { get; set; }
+    public string? ModrinthId { get; set; }
+    public string? Source { get; set; }
+}
+
+public class ShaderMetadataDto
+{
+    public string FileName { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Version { get; set; } = string.Empty;
+    public string? IconBase64 { get; set; }
+    public int? CurseForgeId { get; set; }
+    public string? ModrinthId { get; set; }
+    public string? Source { get; set; }
+}
+
+public class SaveMetadataDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string FilePath { get; set; } = string.Empty;
+    public long LastPlayed { get; set; }
+    public string? IconBase64 { get; set; }
+}
+
+public class ScreenshotMetadataDto
+{
+    public string FileName { get; set; } = string.Empty;
+    public string FilePath { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public long FileSize { get; set; }
+}
+
+public class DataPackMetadataDto
+{
+    public string FileName { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Version { get; set; } = string.Empty;
+    public int PackFormat { get; set; }
+    public string? IconBase64 { get; set; }
+    public int? CurseForgeId { get; set; }
+    public string? ModrinthId { get; set; }
+    public string? Source { get; set; }
+}
+
+public class RenameSaveRequest
+{
+    public string OldName { get; set; } = string.Empty;
+    public string NewName { get; set; } = string.Empty;
+}
