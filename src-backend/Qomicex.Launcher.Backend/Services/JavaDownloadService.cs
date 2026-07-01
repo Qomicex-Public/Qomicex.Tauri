@@ -26,6 +26,7 @@ public class JavaDownloadService
         public CancellationTokenSource Cancellation { get; set; } = new();
         public JavaDownloadStartRequest? PendingRequest { get; set; }
         public string DownloadUrl { get; set; } = string.Empty;
+        public DownloadManager? Manager { get; set; }
     }
 
     public JavaDownloadService(JavaRuntimeStore javaRuntimeStore)
@@ -128,7 +129,7 @@ public class JavaDownloadService
         if (_tasks.TryGetValue(taskId, out var state) && state.Status == "downloading")
         {
             state.Status = "paused";
-            state.Cancellation.Cancel();
+            state.Manager?.PauseTask(-1);
             return true;
         }
         return false;
@@ -136,11 +137,10 @@ public class JavaDownloadService
 
     public bool Resume(string taskId)
     {
-        if (_tasks.TryGetValue(taskId, out var state) && (state.Status == "paused" || state.Status == "queued"))
+        if (_tasks.TryGetValue(taskId, out var state) && state.Status == "paused")
         {
-            if (state.PendingRequest == null) return false;
-            state.Cancellation = new CancellationTokenSource();
-            _ = Task.Run(() => RunTaskAsync(state, state.PendingRequest, resumeFromDownload: state.Status == "paused"));
+            state.Status = "downloading";
+            state.Manager?.ContinueTask(-1);
             return true;
         }
         return false;
@@ -256,25 +256,24 @@ public class JavaDownloadService
         throw ApiException.NotFound("未找到可用的 Java 下载包", "JAVA_DOWNLOAD_PACKAGE_NOT_FOUND");
     }
 
-    private async Task RunTaskAsync(JavaDownloadTaskState state, JavaDownloadStartRequest request, bool resumeFromDownload = false)
+    private async Task RunTaskAsync(JavaDownloadTaskState state, JavaDownloadStartRequest request)
     {
         state.PendingRequest = request;
+        string? tmpDir = null;
         try
         {
-            if (!resumeFromDownload)
-            {
-                state.Status = "resolving";
-                var (url, fileName) = await ResolvePackageAsync(request);
-                state.DownloadUrl = url;
-                state.FileName = fileName;
-            }
+            state.Status = "resolving";
+            var (url, fileName) = await ResolvePackageAsync(request);
+            state.DownloadUrl = url;
+            state.FileName = fileName;
 
             state.Status = "downloading";
-            var tmpDir = Path.Combine(GetBaseDir(), ".tmp", state.TaskId);
+            tmpDir = Path.Combine(GetBaseDir(), ".tmp", state.TaskId);
             Directory.CreateDirectory(tmpDir);
             var archivePath = Path.Combine(tmpDir, state.FileName);
 
             using var manager = new DownloadManager(intervalMs: 500);
+            state.Manager = manager;
             var tid = manager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
             manager.AddFileToTask(tid, state.DownloadUrl, archivePath);
             manager.OnTaskProgressUpdated += (_, info) =>
@@ -297,7 +296,7 @@ public class JavaDownloadService
         }
         catch (OperationCanceledException)
         {
-            state.Status = state.Status == "paused" ? "paused" : "cancelled";
+            state.Status = "cancelled";
         }
         catch (ApiException ex)
         {
@@ -308,6 +307,14 @@ public class JavaDownloadService
         {
             state.Status = "failed";
             state.Error = ex.Message;
+        }
+        finally
+        {
+            state.Manager = null;
+            if (tmpDir != null)
+            {
+                try { Directory.Delete(tmpDir, recursive: true); } catch { }
+            }
         }
     }
 
@@ -340,10 +347,28 @@ public class JavaDownloadService
             }
 
             await Task.CompletedTask;
+            SetExecutablePermissions(state.TargetDir);
             return state.TargetDir;
         }
 
         throw ApiException.BadRequest("当前仅支持 zip / tar.gz 自动解压", "JAVA_DOWNLOAD_EXTRACT_FAILED");
+    }
+
+    private static void SetExecutablePermissions(string rootDir)
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+            return;
+        var javaName = OperatingSystem.IsWindows() ? "java.exe" : "java";
+        var candidates = Directory.GetFiles(rootDir, javaName, SearchOption.AllDirectories);
+        foreach (var path in candidates)
+        {
+            try
+            {
+                var mode = UnixFileMode.UserRead | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+                File.SetUnixFileMode(path, mode);
+            }
+            catch { }
+        }
     }
 
     private static string? FindJavaExecutable(string rootDir)

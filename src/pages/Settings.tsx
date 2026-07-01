@@ -212,7 +212,7 @@ export default function Settings() {
         title: '选择 Java 可执行文件',
         filters: navigator.platform?.includes('Win')
           ? [{ name: 'Java', extensions: ['exe'] }]
-          : [{ name: 'Java', extensions: ['*'] }],
+          : undefined,
       })
       if (typeof selected === 'string') setAddPath(selected)
     } catch {}

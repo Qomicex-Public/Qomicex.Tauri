@@ -140,6 +140,8 @@ The launcher ships on **Windows, Linux, macOS**. Never assume Windows.
 - **`obj["natives"]` access** — always check `ContainsKey(osName)` before indexing; the `natives` dict may not contain the current OS.
 - **Architecture detection** — check for `"aarch64"` / `"ARM64"` before falling through to `"x86"`.
 - **OS-specific search paths** — SDKMAN/JENV/JABBA/ASDF are Linux/macOS-only tools; keep out of `HighPriorityPaths` (Windows).
+- **OS detection** — `RuntimeInformation.OSDescription` may not contain `"Linux"` on some distros (e.g. AnduinOS → `"AnduinOS 2.0.0"`). Use `OperatingSystem.IsLinux()` / `IsWindows()` / `IsMacOS()` (available in .NET 5+) before falling back to string matching. `SystemInfoHelper.GetSystemInfo()` now uses this approach.
+- **Natives extraction** — `GetNativesInfo` relies on `SystemInfoHelper.OsName` to pick the right classifier key (`"natives-linux"` etc.). If `OsName` is wrong, all natives are silently skipped.
 
 ### Frontend (TS)
 

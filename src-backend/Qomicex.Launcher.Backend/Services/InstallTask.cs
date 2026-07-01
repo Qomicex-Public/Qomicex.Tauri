@@ -21,6 +21,7 @@ public class InstallTask : IInstallTask
     private readonly bool _versionIsolation;
     private readonly int _downloadSourceId;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly string? _javaPath;
 
     private readonly CancellationTokenSource _cts = new();
     private readonly DownloadManager _downloadManager = new(intervalMs: 500);
@@ -48,7 +49,8 @@ public class InstallTask : IInstallTask
     public InstallTask(string instanceId, string gameVersion, string gameDir,
         string? loader, string? loaderVersion, string[]? addons,
         int downloadThreads, bool versionIsolation,
-        IHttpClientFactory httpClientFactory, int downloadSourceId = 0, int downloadTimeout = 15)
+        IHttpClientFactory httpClientFactory, int downloadSourceId = 0, int downloadTimeout = 15,
+        string? javaPath = null)
     {
         InstanceId = instanceId;
         _gameVersion = gameVersion;
@@ -60,6 +62,7 @@ public class InstallTask : IInstallTask
         _versionIsolation = versionIsolation;
         _downloadSourceId = downloadSourceId;
         _httpClientFactory = httpClientFactory;
+        _javaPath = javaPath;
 
         _versionId = !string.IsNullOrEmpty(loader) && !string.IsNullOrEmpty(loaderVersion)
             ? $"{gameVersion}-{loader}-{loaderVersion}"
@@ -95,6 +98,12 @@ public class InstallTask : IInstallTask
     {
         try
         {
+            // Early Java check for loaders that need a runtime
+            if (_loader is "forge" or "neoforge")
+            {
+                FindJavaExecutable();
+            }
+
             var httpClient = _httpClientFactory.CreateClient();
 
             // Stage 1: Core - download version JSON (0-5%)
@@ -480,8 +489,14 @@ public class InstallTask : IInstallTask
         return (null, null);
     }
 
-    private static string FindJavaExecutable()
+    private string FindJavaExecutable()
     {
+        if (!string.IsNullOrEmpty(_javaPath))
+        {
+            if (File.Exists(_javaPath))
+                return _javaPath;
+            throw new Exception($"Java 运行时不存在: {_javaPath}");
+        }
         var javas = JavaHelper.SearchJava();
         var valid = javas.FirstOrDefault(j => j.State == JavaHelper.JavaState.Valid);
         if (valid == null)

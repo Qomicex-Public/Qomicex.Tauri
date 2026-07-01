@@ -113,7 +113,7 @@ public class InstanceController : ControllerBase
         var instance = _repository.GetById(id);
         if (instance == null) return NotFound();
 
-        _installService.StartInstall(id, instance.GameVersion, instance.GameDir, request.Loader, request.LoaderVersion, request.Addons, request.DownloadThreads ?? 3, request.VersionIsolation, request.DownloadSourceId, request.DownloadTimeout);
+        _installService.StartInstall(id, instance.GameVersion, instance.GameDir, request.Loader, request.LoaderVersion, request.Addons, request.DownloadThreads ?? 3, request.VersionIsolation, request.DownloadSourceId, request.DownloadTimeout, instance.JavaPath);
 
         return Ok(new { message = "安装已开始", instanceId = id });
     }
@@ -551,6 +551,14 @@ public class InstanceController : ControllerBase
                 param.Java.VersionID = chosen?.VersionID ?? 0;
             }
 
+            // Validate Java path
+            if (!System.IO.File.Exists(javaPath))
+                throw new Exception($"Java 运行时不存在: {javaPath}");
+
+            // Validate memory allocation
+            if (instance.MaxMemory < 512)
+                throw new Exception($"内存分配不能小于 512MB（当前: {instance.MaxMemory}MB）");
+
             _logger.LogInformation("[Launch] 实例={Name} 版本={VersionId} GameDir={GameDir}", instance.Name, versionId, instance.GameDir);
             _logger.LogInformation("[Launch] Java: path={JavaPath} versionId={VersionId}", javaPath, param.Java.VersionID);
             _logger.LogInformation("[Launch] 内存: max={MaxMemory}MB", instance.MaxMemory);
@@ -592,6 +600,7 @@ public class InstanceController : ControllerBase
             _launchService.Set(id, state);
 
             var stderrPath = System.IO.Path.Combine(logsDir, "launcher-latest.log");
+            var stdoutPath = System.IO.Path.Combine(logsDir, "launcher-stdout.log");
 
             var process = System.Diagnostics.Process.Start(new ProcessStartInfo
             {
@@ -616,10 +625,10 @@ public class InstanceController : ControllerBase
             };
             process.BeginErrorReadLine();
 
-            var stdout = new StringBuilder();
             process.OutputDataReceived += (_, e) =>
             {
-                if (e.Data != null) stdout.AppendLine(e.Data);
+                if (e.Data != null)
+                    System.IO.File.AppendAllText(stdoutPath, e.Data + Environment.NewLine);
             };
             process.BeginOutputReadLine();
 
@@ -628,17 +637,31 @@ public class InstanceController : ControllerBase
             state.Stage = "waiting-window"; state.Message = "等待游戏窗口..."; state.Progress = 90;
             _launchService.Set(id, state);
 
-            // Try WaitForInputIdle first (works for GUI processes)
-            try { process.WaitForInputIdle(30_000); } catch { }
-
-            // Poll for window handle (max 30s)
-            for (var i = 0; i < 60; i++)
+            if (OperatingSystem.IsWindows())
             {
-                cancelToken.ThrowIfCancellationRequested();
-                if (process.HasExited) break;
-                process.Refresh();
-                if (process.MainWindowHandle != IntPtr.Zero) break;
-                await Task.Delay(500);
+                // Try WaitForInputIdle first (works for GUI processes)
+                try { process.WaitForInputIdle(30_000); } catch { }
+
+                // Poll for window handle (max 30s)
+                for (var i = 0; i < 60; i++)
+                {
+                    cancelToken.ThrowIfCancellationRequested();
+                    if (process.HasExited) break;
+                    process.Refresh();
+                    if (process.MainWindowHandle != IntPtr.Zero) break;
+                    await Task.Delay(500);
+                }
+            }
+            else
+            {
+                // On Linux/macOS, MainWindowHandle is always Zero — wait a brief moment
+                // then mark as running if the process hasn't exited
+                for (var i = 0; i < 6; i++)
+                {
+                    cancelToken.ThrowIfCancellationRequested();
+                    if (process.HasExited) break;
+                    await Task.Delay(500);
+                }
             }
 
             // Mark as launched successfully
@@ -660,7 +683,10 @@ public class InstanceController : ControllerBase
                     process.WaitForExit();
                     state.ExitCode = process.ExitCode;
 
-                    // Check crash-reports
+                    // Collect crash diagnostics
+                    var diagnostics = new List<string>();
+
+                    // Check crash-reports (Minecraft)
                     var crashDir = Path.Combine(instance.GameDir, "crash-reports");
                     if (System.IO.Directory.Exists(crashDir))
                     {
@@ -670,9 +696,39 @@ public class InstanceController : ControllerBase
                         if (latest != null)
                         {
                             var content = System.IO.File.ReadAllText(latest);
-                            state.CrashReport = content.Length > 5000 ? content[..5000] + "..." : content;
+                            diagnostics.Add("=== Crash Report ===");
+                            diagnostics.Add(content.Length > 5000 ? content[..5000] + "..." : content);
                         }
                     }
+
+                    // Check JVM hs_err crash logs
+                    var hsErrDir = instance.GameDir;
+                    for (var d = hsErrDir; d != null && Directory.Exists(d); d = Path.GetDirectoryName(d))
+                    {
+                        var hsErrFiles = Directory.GetFiles(d, "hs_err_pid*.log")
+                            .OrderByDescending(f => System.IO.File.GetLastWriteTime(f))
+                            .Take(3)
+                            .ToArray();
+                        if (hsErrFiles.Length > 0)
+                        {
+                            foreach (var hf in hsErrFiles)
+                                diagnostics.Add($"=== {Path.GetFileName(hf)} ===" + Environment.NewLine + (System.IO.File.ReadAllText(hf).Length > 3000 ? System.IO.File.ReadAllText(hf)[..3000] + "..." : System.IO.File.ReadAllText(hf)));
+                            break;
+                        }
+                    }
+
+                    // Attach stderr if no crash report found
+                    if (diagnostics.Count == 0 && System.IO.File.Exists(stderrPath))
+                    {
+                        var stderrContent = System.IO.File.ReadAllText(stderrPath);
+                        if (!string.IsNullOrWhiteSpace(stderrContent))
+                        {
+                            diagnostics.Add("=== stderr ===");
+                            diagnostics.Add(stderrContent.Length > 3000 ? stderrContent[..3000] + "..." : stderrContent);
+                        }
+                    }
+
+                    state.CrashReport = diagnostics.Count > 0 ? string.Join(Environment.NewLine + Environment.NewLine, diagnostics) : null;
 
                     if (process.ExitCode != 0)
                     {

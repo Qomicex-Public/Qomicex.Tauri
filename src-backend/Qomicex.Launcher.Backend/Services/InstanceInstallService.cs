@@ -29,6 +29,7 @@ public interface IInstallTask
 public class InstanceInstallService
 {
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly JavaRuntimeStore _javaRuntimeStore;
     private readonly ConcurrentDictionary<string, IInstallTask> _tasks = new();
 
     public class InstallState
@@ -46,14 +47,15 @@ public class InstanceInstallService
         public bool IsPaused { get; set; }
     }
 
-    public InstanceInstallService(IHttpClientFactory httpClientFactory)
+    public InstanceInstallService(IHttpClientFactory httpClientFactory, JavaRuntimeStore javaRuntimeStore)
     {
         _httpClientFactory = httpClientFactory;
+        _javaRuntimeStore = javaRuntimeStore;
     }
 
     [Obsolete("Use constructor without DownloadManager — InstallTask creates its own")]
-    public InstanceInstallService(IHttpClientFactory httpClientFactory, DownloadManager _)
-        : this(httpClientFactory) { }
+    public InstanceInstallService(IHttpClientFactory httpClientFactory, DownloadManager _, JavaRuntimeStore javaRuntimeStore)
+        : this(httpClientFactory, javaRuntimeStore) { }
 
     public InstallState? GetState(string instanceId)
     {
@@ -79,11 +81,20 @@ public class InstanceInstallService
 
     public void StartInstall(string instanceId, string gameVersion, string gameDir,
         string? loader, string? loaderVersion, string[]? addons,
-        int downloadThreads = 3, bool versionIsolation = true, int downloadSourceId = 0, int downloadTimeout = 15)
+        int downloadThreads = 3, bool versionIsolation = true, int downloadSourceId = 0, int downloadTimeout = 15,
+        string? javaPath = null)
     {
+        if (string.IsNullOrEmpty(javaPath))
+        {
+            var customJavas = _javaRuntimeStore.GetCustomAsync().GetAwaiter().GetResult();
+            var valid = customJavas.FirstOrDefault(j => j.State == JavaHelper.JavaState.Valid);
+            if (valid != null)
+                javaPath = valid.Path;
+        }
+
         var task = new InstallTask(instanceId, gameVersion, gameDir,
             loader, loaderVersion, addons, downloadThreads, versionIsolation,
-            _httpClientFactory, downloadSourceId, downloadTimeout);
+            _httpClientFactory, downloadSourceId, downloadTimeout, javaPath);
 
         _tasks[instanceId] = task;
 
