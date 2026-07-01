@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faFile, faImage, faGlobe, faFolder, faCopy, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -17,12 +17,17 @@ import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscrib
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, FileEntry, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
-import { getSaves, getScreenshots, getResourcePacks, getShaderPacks, getServers, deleteSave, copySave, deleteScreenshot, deleteResourcePack, deleteShaderPack, addServer, deleteServer, pingServer, getModsMetadata, batchEnableMods, batchDisableMods, batchDeleteMods } from '../api/instance-files.ts'
+import { getServers, addServer, deleteServer, pingServer, getModsMetadata, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
 import ModCard from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
-import type { ModMetadata } from '../types/index.ts'
+import type { ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata } from '../types/index.ts'
+import ResourcePackCard from '../components/ResourcePackCard.tsx'
+import ShaderCard from '../components/ShaderCard.tsx'
+import SaveCard from '../components/SaveCard.tsx'
+import ScreenshotCard from '../components/ScreenshotCard.tsx'
+import DataPackCard from '../components/DataPackCard.tsx'
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -39,6 +44,7 @@ const TABS = [
   { id: 'mods', label: 'Mod', icon: faCube },
   { id: 'resourcepacks', label: '资源包', icon: faBox },
   { id: 'shaderpacks', label: '光影包', icon: faSun },
+  { id: 'datapacks', label: '数据包', icon: faDatabase },
   { id: 'servers', label: '服务器', icon: faServer },
 ]
 
@@ -62,19 +68,6 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
 }
 
-function formatSize(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${bytes} B`
-}
-
-function formatDateTime(iso: string | Date | null | undefined): string {
-  if (!iso) return ''
-  const d = typeof iso === 'string' ? new Date(iso) : iso
-  return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
-
 function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   open: boolean
   title: string
@@ -95,113 +88,113 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   )
 }
 
-function SavesTab({ instanceId, files, loading, onRefresh }: {
-  instanceId: string
-  files?: FileEntry[] | null
-  loading?: boolean
-  onRefresh: () => void
-}) {
-  const [deleting, setDeleting] = useState<string | null>(null)
-  const [confirmName, setConfirmName] = useState<string | null>(null)
-  const handleDelete = useCallback(async (name: string) => {
-    setDeleting(name)
-    setConfirmName(null)
-    try { await deleteSave(instanceId, name); onRefresh() } catch {}
-    setDeleting(null)
-  }, [instanceId, onRefresh])
-  const handleCopy = useCallback(async (name: string) => {
-    try { await copySave(instanceId, name, `${name} 副本`); onRefresh() } catch {}
-  }, [instanceId, onRefresh])
+function SavesTab({ instanceId }: { instanceId: string }) {
+  const [search, setSearch] = useState('')
+  const [saves, setSaves] = useState<SaveMetadata[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { const data = await getSavesMetadata(instanceId); setSaves(data) }
+    catch { setSaves([]) }
+    setLoading(false)
+  }, [instanceId])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = useMemo(() => {
+    if (!search) return saves
+    const q = search.toLowerCase()
+    return saves.filter(s => s.name.toLowerCase().includes(q))
+  }, [saves, search])
+
   return (
-    <>
-      <Card>
-        <CardContent className="p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-medium"><FontAwesomeIcon icon={faSave} className="mr-2 h-4 w-4 text-primary" />存档</h3>
-            <Button size="sm" variant="ghost" onClick={() => {/* open saves folder */}} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
-            </Button>
+    <Card>
+      <CardContent className="p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium shrink-0">
+            <FontAwesomeIcon icon={faSave} className="mr-2 h-4 w-4 text-primary" />存档
+            {saves.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({saves.length})</span>}
+          </h3>
+          <div className="flex items-center gap-2 flex-1 max-w-sm">
+            <div className="relative flex-1">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索存档..." className="h-8 pl-8 text-xs" />
+            </div>
           </div>
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
-            </div>
-          ) : !files || files.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">暂无存档</div>
-          ) : (
-            <div className="space-y-1">
-              {files.map((f) => (
-                <div key={f.name} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-accent group">
-                  <FontAwesomeIcon icon={faFolder} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="flex-1 truncate min-w-0">{f.name}</span>
-                  <span className="shrink-0 text-[11px] text-muted-foreground hidden sm:block">{formatDateTime(f.lastModified)}</span>
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Tooltip content="复制存档"><button onClick={() => handleCopy(f.name)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><FontAwesomeIcon icon={faCopy} className="h-3.5 w-3.5" /></button></Tooltip>
-                    <Tooltip content="删除"><button onClick={() => setConfirmName(f.name)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" /></button></Tooltip>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      <ConfirmDialog open={confirmName !== null} title="删除存档" message={`确定要删除存档「${confirmName}」吗？此操作不可撤销。`} onConfirm={() => confirmName && handleDelete(confirmName)} onCancel={() => setConfirmName(null)} loading={deleting !== null} />
-    </>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {search ? '无匹配存档' : '暂无存档'}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {filtered.map((save) => (
+              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
-function ScreenshotsTab({ instanceId, files, loading, onRefresh }: {
-  instanceId: string
-  files?: FileEntry[] | null
-  loading?: boolean
-  onRefresh: () => void
-}) {
-  const [deleting, setDeleting] = useState<string | null>(null)
-  const [confirmName, setConfirmName] = useState<string | null>(null)
-  const handleDelete = useCallback(async (name: string) => {
-    setDeleting(name)
-    setConfirmName(null)
-    try { await deleteScreenshot(instanceId, name); onRefresh() } catch {}
-    setDeleting(null)
-  }, [instanceId, onRefresh])
+function ScreenshotsTab({ instanceId }: { instanceId: string }) {
+  const [search, setSearch] = useState('')
+  const [screenshots, setScreenshots] = useState<ScreenshotMetadata[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { const data = await getScreenshotsMetadata(instanceId); setScreenshots(data) }
+    catch { setScreenshots([]) }
+    setLoading(false)
+  }, [instanceId])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = useMemo(() => {
+    if (!search) return screenshots
+    const q = search.toLowerCase()
+    return screenshots.filter(s => s.fileName.toLowerCase().includes(q))
+  }, [screenshots, search])
+
   return (
-    <>
-      <Card>
-        <CardContent className="p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-medium"><FontAwesomeIcon icon={faCamera} className="mr-2 h-4 w-4 text-primary" />截图</h3>
-            <Button size="sm" variant="ghost" onClick={() => {/* open screenshots folder */}} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
-            </Button>
+    <Card>
+      <CardContent className="p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium shrink-0">
+            <FontAwesomeIcon icon={faCamera} className="mr-2 h-4 w-4 text-primary" />截图
+            {screenshots.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({screenshots.length})</span>}
+          </h3>
+          <div className="flex items-center gap-2 flex-1 max-w-sm">
+            <div className="relative flex-1">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索截图..." className="h-8 pl-8 text-xs" />
+            </div>
           </div>
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
-            </div>
-          ) : !files || files.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">暂无截图</div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {files.map((f) => (
-                <div key={f.name} className="group relative overflow-hidden rounded-lg border bg-muted">
-                  <div className="aspect-video flex items-center justify-center text-muted-foreground/40">
-                    <FontAwesomeIcon icon={faImage} className="h-10 w-10" />
-                  </div>
-                  <div className="p-2">
-                    <p className="truncate text-xs">{f.name}</p>
-                    <p className="text-[11px] text-muted-foreground">{formatSize(f.size)}</p>
-                  </div>
-                  <div className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Tooltip content="删除"><button onClick={() => setConfirmName(f.name)} className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"><FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" /></button></Tooltip>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      <ConfirmDialog open={confirmName !== null} title="删除截图" message={`确定要删除截图「${confirmName}」吗？此操作不可撤销。`} onConfirm={() => confirmName && handleDelete(confirmName)} onCancel={() => setConfirmName(null)} loading={deleting !== null} />
-    </>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {search ? '无匹配截图' : '暂无截图'}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {filtered.map((s) => (
+              <ScreenshotCard key={s.filePath} screenshot={s} instanceId={instanceId} onRefresh={load} />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -418,63 +411,195 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
   )
 }
 
-function GenericFileTab({ instanceId, type, icon, label, files, loading, onRefresh, showSize, emptyText }: {
-  instanceId: string
-  type: string
-  icon: any
-  label: string
-  files?: FileEntry[] | null
-  loading?: boolean
-  onRefresh: () => void
-  showSize?: boolean
-  emptyText: string
-}) {
-  const [deleting, setDeleting] = useState<string | null>(null)
-  const [confirmName, setConfirmName] = useState<string | null>(null)
-  const handleDelete = useCallback(async (name: string) => {
-    setDeleting(name)
-    setConfirmName(null)
-    try {
-      if (type === 'resourcepacks') { await deleteResourcePack(instanceId, name) }
-      else if (type === 'shaderpacks') { await deleteShaderPack(instanceId, name) }
-      onRefresh()
-    } catch {}
-    setDeleting(null)
-  }, [instanceId, type, onRefresh])
+function ResourcePacksTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
+  const [search, setSearch] = useState('')
+  const [packs, setPacks] = useState<ResourcePackMetadata[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { const data = await getResourcePacksMetadata(instanceId); setPacks(data) }
+    catch { setPacks([]) }
+    setLoading(false)
+  }, [instanceId])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = useMemo(() => {
+    if (!search) return packs
+    const q = search.toLowerCase()
+    return packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
+  }, [packs, search])
+
+  const handleDelete = useCallback((fileName: string) => {
+    setPacks(prev => prev.filter(p => p.fileName !== fileName))
+  }, [])
+
   return (
-    <>
-      <Card>
-        <CardContent className="p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-medium"><FontAwesomeIcon icon={icon} className="mr-2 h-4 w-4 text-primary" />{label}</h3>
-            <Button size="sm" variant="ghost" onClick={() => {/* open folder */}} className="gap-1.5 h-7 text-xs">
+    <Card>
+      <CardContent className="p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium shrink-0">
+            <FontAwesomeIcon icon={faBox} className="mr-2 h-4 w-4 text-primary" />资源包
+            {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
+          </h3>
+          <div className="flex items-center gap-2 flex-1 max-w-sm">
+            <div className="relative flex-1">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索资源包..." className="h-8 pl-8 text-xs" />
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
           </div>
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {search ? '无匹配资源包' : '暂无资源包'}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {filtered.map((pack) => (
+              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} onDelete={handleDelete} />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ShadersTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
+  const [search, setSearch] = useState('')
+  const [shaders, setShaders] = useState<ShaderMetadata[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { const data = await getShadersMetadata(instanceId); setShaders(data) }
+    catch { setShaders([]) }
+    setLoading(false)
+  }, [instanceId])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = useMemo(() => {
+    if (!search) return shaders
+    const q = search.toLowerCase()
+    return shaders.filter(s => s.name.toLowerCase().includes(q) || s.fileName.toLowerCase().includes(q))
+  }, [shaders, search])
+
+  const handleDelete = useCallback((fileName: string) => {
+    setShaders(prev => prev.filter(s => s.fileName !== fileName))
+  }, [])
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium shrink-0">
+            <FontAwesomeIcon icon={faSun} className="mr-2 h-4 w-4 text-primary" />光影包
+            {shaders.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({shaders.length})</span>}
+          </h3>
+          <div className="flex items-center gap-2 flex-1 max-w-sm">
+            <div className="relative flex-1">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索光影包..." className="h-8 pl-8 text-xs" />
             </div>
-          ) : !files || files.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">{emptyText}</div>
-          ) : (
-            <div className="space-y-1">
-              {files.map((f) => (
-                <div key={f.name} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-accent group">
-                  <FontAwesomeIcon icon={faFile} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="flex-1 truncate min-w-0">{f.name}</span>
-                  {showSize && <span className="shrink-0 text-xs text-muted-foreground">{formatSize(f.size)}</span>}
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Tooltip content="删除"><button onClick={() => setConfirmName(f.name)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" /></button></Tooltip>
-                  </div>
-                </div>
-              ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+            </Button>
+          </div>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {search ? '无匹配光影包' : '暂无光影包'}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {filtered.map((shader) => (
+              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} onDelete={handleDelete} />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function DataPacksTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
+  const [search, setSearch] = useState('')
+  const [packs, setPacks] = useState<DataPackMetadata[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { const data = await getDataPacksMetadata(instanceId); setPacks(data) }
+    catch { setPacks([]) }
+    setLoading(false)
+  }, [instanceId])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = useMemo(() => {
+    if (!search) return packs
+    const q = search.toLowerCase()
+    return packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
+  }, [packs, search])
+
+  const handleDelete = useCallback((fileName: string) => {
+    setPacks(prev => prev.filter(p => p.fileName !== fileName))
+  }, [])
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium shrink-0">
+            <FontAwesomeIcon icon={faDatabase} className="mr-2 h-4 w-4 text-primary" />数据包
+            {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
+          </h3>
+          <div className="flex items-center gap-2 flex-1 max-w-sm">
+            <div className="relative flex-1">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索数据包..." className="h-8 pl-8 text-xs" />
             </div>
-          )}
-        </CardContent>
-      </Card>
-      <ConfirmDialog open={confirmName !== null} title={`删除${label}`} message={`确定要删除${label}「${confirmName}」吗？此操作不可撤销。`} onConfirm={() => confirmName && handleDelete(confirmName)} onCancel={() => setConfirmName(null)} loading={deleting !== null} />
-    </>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+            </Button>
+          </div>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {search ? '无匹配数据包' : '暂无数据包'}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {filtered.map((pack) => (
+              <DataPackCard key={pack.fileName} pack={pack} instanceId={instanceId} onDelete={handleDelete} />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -762,8 +887,7 @@ export default function InstanceDetailPage() {
   const loadFiles = useCallback((t: string) => {
     if (!id) return
     const loaders: Record<string, (id: string) => Promise<FileEntry[] | ServerEntry[]>> = {
-      saves: getSaves, screenshots: getScreenshots,
-      resourcepacks: getResourcePacks, shaderpacks: getShaderPacks, servers: getServers,
+      servers: getServers,
     }
     const fn = loaders[t]
     if (!fn) return
@@ -1100,11 +1224,12 @@ export default function InstanceDetailPage() {
             </Card>
           )}
 
-          {tab === 'saves' && <SavesTab instanceId={id!} files={fileData['saves'] as FileEntry[] | null} loading={fileLoading['saves']} onRefresh={() => loadFiles('saves')} />}
-          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} files={fileData['screenshots'] as FileEntry[] | null} loading={fileLoading['screenshots']} onRefresh={() => loadFiles('screenshots')} />}
+          {tab === 'saves' && <SavesTab instanceId={id!} />}
+          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} />}
           {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.gameDir} />}
-          {tab === 'resourcepacks' && <GenericFileTab instanceId={id!} type="resourcepacks" icon={faBox} label="资源包" files={fileData['resourcepacks'] as FileEntry[] | null} loading={fileLoading['resourcepacks']} onRefresh={() => loadFiles('resourcepacks')} showSize emptyText="暂无资源包" />}
-          {tab === 'shaderpacks' && <GenericFileTab instanceId={id!} type="shaderpacks" icon={faSun} label="光影包" files={fileData['shaderpacks'] as FileEntry[] | null} loading={fileLoading['shaderpacks']} onRefresh={() => loadFiles('shaderpacks')} showSize emptyText="暂无光影包" />}
+          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.gameDir} />}
+          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.gameDir} />}
+          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.gameDir} />}
           {tab === 'servers' && <ServersTab instanceId={id!} servers={fileData['servers'] as ServerEntry[] | null} loading={fileLoading['servers']} onRefresh={() => loadFiles('servers')} />}
         </div>
       </div>
