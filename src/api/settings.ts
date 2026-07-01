@@ -37,7 +37,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   gameDir: '.minecraft',
-  downloadThreads: 4,
+  downloadThreads: 64,
   versionIsolation: true,
   closeAfterLaunch: false,
   memoryMode: 'auto',

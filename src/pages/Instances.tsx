@@ -325,7 +325,7 @@ export default function Instances() {
       }
       addTask(task)
 
-      const threads = loadSettings().downloadThreads || 4
+      const threads = loadSettings().downloadThreads || 64
       const versionIsolation = loadSettings().versionIsolation !== false
       const downloadSource = loadSettings().downloadSource ?? 0
       const downloadTimeout = loadSettings().downloadTimeout ?? 15
@@ -737,7 +737,7 @@ export default function Instances() {
     setRepairAdded(true)
 
     try {
-      const threads = loadSettings().downloadThreads || 4
+      const threads = loadSettings().downloadThreads || 64
       await repairInstance(instance.id, threads)
     } catch (e) {
       updateTask(task.id, { status: 'failed', error: e instanceof Error ? e.message : String(e) })
