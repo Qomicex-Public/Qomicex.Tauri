@@ -9,6 +9,7 @@ import {
   faArrowLeft,
   faArrowUpRightFromSquare,
   faDownload,
+  faLanguage,
   faLayerGroup,
   faRotate,
   faTag,
@@ -20,6 +21,7 @@ import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
+import { get } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions } from '../api/resource.ts'
 import { lookupChineseName } from '../api/mcmod.ts'
 import { startResourceDownload, downloadTo } from '../api/resource-download.ts'
@@ -88,6 +90,8 @@ export default function ResourceDetailPage() {
   const [downloadingFor, setDownloadingFor] = useState<string | null>(null)
   const [showInstallDialog, setShowInstallDialog] = useState(false)
   const [cnName, setCnName] = useState<string | null>(null)
+  const [translation, setTranslation] = useState<{ original: string; translated: string; translatedAt: string } | null>(null)
+  const [translating, setTranslating] = useState(false)
 
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
     setDownloadingFor(versionId)
@@ -141,6 +145,7 @@ export default function ResourceDetailPage() {
       setVersionsError(null)
       setDownloadsByVersion({})
       setLoadingDownloadsFor(null)
+      setTranslation(null)
       try {
         const [resourceDetail, versionList] = await Promise.all([
           getResourceDetail(id, source),
@@ -276,6 +281,36 @@ export default function ResourceDetailPage() {
                       {detail.latestVersion && <Badge variant="outline">最新 {detail.latestVersion}</Badge>}
                     </div>
                     <p className="text-sm leading-7 text-muted-foreground">{detail.description || '暂无简介'}</p>
+                    {detail.source !== 'ftb' && (
+                      <div className="space-y-2">
+                        <button
+                          onClick={async () => {
+                            if (translation) {
+                              setTranslation(null)
+                              return
+                            }
+                            setTranslating(true)
+                            try {
+                              const data = await get<{ original: string; translated: string; translatedAt: string }>(`/resources/${resourceId}/translate?source=${detail.source}`)
+                              setTranslation(data)
+                            } catch {
+                              setTranslation(null)
+                            }
+                            setTranslating(false)
+                          }}
+                          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <FontAwesomeIcon icon={faLanguage} className="h-3 w-3" />
+                          {translating ? '翻译中...' : translation ? '收起翻译' : '翻译简介'}
+                        </button>
+                        {translation && (
+                          <div className="rounded-lg border border-border/60 bg-muted/20 p-3 text-sm leading-7 text-foreground">
+                            <span className="mr-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">译</span>
+                            {translation.translated}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">

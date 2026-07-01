@@ -355,6 +355,31 @@ public class ResourcesController : ControllerBase
         };
     }
 
+    [HttpGet("{id}/translate")]
+    public async Task<IActionResult> GetTranslate(string id, [FromQuery] string source = "modrinth")
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
+            var url = source.ToLowerInvariant() switch
+            {
+                "curseforge" => $"https://mod.mcimirror.top/translate/curseforge/{id}",
+                _ => $"https://mod.mcimirror.top/translate/modrinth/{id}",
+            };
+            var response = await client.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+                return NotFound(new { code = "TRANSLATE_NOT_FOUND", message = "Translation not found" });
+
+            var json = await response.Content.ReadFromJsonAsync<JsonObject>();
+            return Ok(json);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, new { code = "TRANSLATE_ERROR", message = $"Translation API error: {ex.Message}" });
+        }
+    }
+
     [HttpGet("{id}/dependencies")]
     public async Task<IActionResult> GetDependencies(string id,
         [FromQuery] string source = "modrinth",
