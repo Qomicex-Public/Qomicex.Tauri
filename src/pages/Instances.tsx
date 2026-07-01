@@ -18,7 +18,7 @@ import { createInstance, startInstall, getInstances, repairInstance, launchInsta
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx'
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance, LaunchProgress } from '../types/index.ts'
-import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange } from '../api/settings.ts'
+import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, autoSelectDownloadSource } from '../api/settings.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 
 interface ManagedDir {
@@ -325,10 +325,19 @@ export default function Instances() {
       }
       addTask(task)
 
-      const threads = loadSettings().downloadThreads || 64
-      const versionIsolation = loadSettings().versionIsolation !== false
-      const downloadSource = loadSettings().downloadSource ?? 0
-      const downloadTimeout = loadSettings().downloadTimeout ?? 15
+      const settings = loadSettings()
+      const threads = settings.downloadThreads || 64
+      const versionIsolation = settings.versionIsolation !== false
+      let downloadSource = settings.downloadSource ?? 0
+      const downloadTimeout = settings.downloadTimeout ?? 15
+
+      if (settings.autoSelectDownloadSource) {
+        try {
+          const result = await autoSelectDownloadSource()
+          downloadSource = result.id
+        } catch {}
+      }
+
       startInstall(instance.id, data.loader, data.loaderVersion, selectedAddons.length > 0 ? selectedAddons : undefined, threads, versionIsolation, downloadSource, downloadTimeout).catch((e) => {
         const ts = getTasks()
         const existing = ts.find((t) => t.id === instance.id)
