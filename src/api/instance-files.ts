@@ -1,5 +1,5 @@
 import { get, del, post } from './client.ts'
-import type { FileEntry, ModMetadata, ServerEntry, ServerState } from '../types/index.ts'
+import type { FileEntry, ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState } from '../types/index.ts'
 
 export function getSaves(instanceId: string): Promise<FileEntry[]> {
   return get<FileEntry[]>(`/instance/${instanceId}/files/saves`)
@@ -85,4 +85,40 @@ export function batchDisableMods(instanceId: string, names: string[]): Promise<v
 
 export function batchDeleteMods(instanceId: string, names: string[]): Promise<void> {
   return post(`/instance/${instanceId}/files/mods/batch-delete`, names)
+}
+
+export async function getResourcePacksMetadata(instanceId: string): Promise<ResourcePackMetadata[]> {
+  return get<ResourcePackMetadata[]>(`/instance/${instanceId}/files/resourcepacks/metadata`)
+}
+
+export async function getShadersMetadata(instanceId: string): Promise<ShaderMetadata[]> {
+  return get<ShaderMetadata[]>(`/instance/${instanceId}/files/shaderpacks/metadata`)
+}
+
+export async function getSavesMetadata(instanceId: string): Promise<SaveMetadata[]> {
+  return get<SaveMetadata[]>(`/instance/${instanceId}/files/saves/metadata`)
+}
+
+export async function renameSave(instanceId: string, oldName: string, newName: string): Promise<void> {
+  await post(`/instance/${instanceId}/files/saves/rename`, { oldName, newName })
+}
+
+export async function backupSave(instanceId: string, name: string): Promise<void> {
+  await post(`/instance/${instanceId}/files/saves/backup?name=${encodeURIComponent(name)}`)
+}
+
+export async function getScreenshotsMetadata(instanceId: string): Promise<ScreenshotMetadata[]> {
+  return get<ScreenshotMetadata[]>(`/instance/${instanceId}/files/screenshots/metadata`)
+}
+
+export async function getDataPacks(instanceId: string): Promise<FileEntry[]> {
+  return get<FileEntry[]>(`/instance/${instanceId}/files/datapacks`)
+}
+
+export async function getDataPacksMetadata(instanceId: string): Promise<DataPackMetadata[]> {
+  return get<DataPackMetadata[]>(`/instance/${instanceId}/files/datapacks/metadata`)
+}
+
+export async function deleteDataPack(instanceId: string, name: string): Promise<void> {
+  await del(`/instance/${instanceId}/files/datapacks?name=${encodeURIComponent(name)}`)
 }
