@@ -16,7 +16,7 @@ import { openPath } from '@tauri-apps/plugin-opener'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, JavaRuntime, Account, SystemInfo, FileEntry, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
+import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getModsMetadata, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
@@ -603,12 +603,10 @@ function DataPacksTab({ instanceId, gameDir }: { instanceId: string; gameDir: st
   )
 }
 
-function ServersTab({ instanceId, servers, loading, onRefresh }: {
-  instanceId: string
-  servers?: ServerEntry[] | null
-  loading?: boolean
-  onRefresh: () => void
-}) {
+function ServersTab({ instanceId }: { instanceId: string }) {
+  const [search, setSearch] = useState('')
+  const [servers, setServers] = useState<ServerEntry[]>([])
+  const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [addName, setAddName] = useState('')
   const [addIp, setAddIp] = useState('')
@@ -617,17 +615,32 @@ function ServersTab({ instanceId, servers, loading, onRefresh }: {
   const [pingStates, setPingStates] = useState<Record<string, ServerState>>({})
   const [pinging, setPinging] = useState<Record<string, boolean>>({})
 
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { const data = await getServers(instanceId); setServers(data) }
+    catch { setServers([]) }
+    setLoading(false)
+  }, [instanceId])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = useMemo(() => {
+    if (!search) return servers
+    const q = search.toLowerCase()
+    return servers.filter(s => s.name.toLowerCase().includes(q) || s.ip.toLowerCase().includes(q))
+  }, [servers, search])
+
   const handleDelete = useCallback(async (ip: string) => {
     setConfirmIp(null)
-    try { await deleteServer(instanceId, ip); onRefresh() } catch {}
-  }, [instanceId, onRefresh])
+    try { await deleteServer(instanceId, ip); load() } catch {}
+  }, [instanceId, load])
 
   const handleAdd = useCallback(async () => {
     if (!addName || !addIp) return
     setAdding(true)
-    try { await addServer(instanceId, addName, addIp); onRefresh(); setShowAdd(false); setAddName(''); setAddIp('') } catch {}
+    try { await addServer(instanceId, addName, addIp); load(); setShowAdd(false); setAddName(''); setAddIp('') } catch {}
     setAdding(false)
-  }, [instanceId, addName, addIp, onRefresh])
+  }, [instanceId, addName, addIp, load])
 
   const handleCopyIp = useCallback(async (ip: string) => {
     try { await navigator.clipboard.writeText(ip) } catch {}
@@ -646,8 +659,17 @@ function ServersTab({ instanceId, servers, loading, onRefresh }: {
     <>
       <Card>
         <CardContent className="p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-medium"><FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-primary" />服务器</h3>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-medium shrink-0">
+              <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-primary" />服务器
+              {servers.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({servers.length})</span>}
+            </h3>
+            <div className="flex items-center gap-2 flex-1 max-w-sm">
+              <div className="relative flex-1">
+                <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索服务器..." className="h-8 pl-8 text-xs" />
+              </div>
+            </div>
             <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />添加服务器
             </Button>
@@ -656,11 +678,13 @@ function ServersTab({ instanceId, servers, loading, onRefresh }: {
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
               <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
             </div>
-          ) : !servers || servers.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">暂无服务器</div>
+          ) : filtered.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              {search ? '无匹配服务器' : '暂无服务器'}
+            </div>
           ) : (
             <div className="space-y-1">
-              {servers.map((s, i) => {
+              {filtered.map((s, i) => {
                 const ps = pingStates[s.ip]
                 return (
                   <div key={i} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-accent group">
@@ -724,8 +748,6 @@ export default function InstanceDetailPage() {
   const [form, setForm] = useState<GameInstance | null>(null)
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [memoryMode, setMemoryMode] = useState<'auto' | 'custom'>('auto')
-  const [fileData, setFileData] = useState<Record<string, FileEntry[] | ServerEntry[] | null>>({})
-  const [fileLoading, setFileLoading] = useState<Record<string, boolean>>({})
   const [isDefault, setIsDefault] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [verifyResult, setVerifyResult] = useState<{ complete: boolean; missingFiles: MissingFile[] } | null>(null)
@@ -883,29 +905,6 @@ export default function InstanceDetailPage() {
       }
     } catch {}
   }, [id, isDefault])
-
-  const loadFiles = useCallback((t: string) => {
-    if (!id) return
-    const loaders: Record<string, (id: string) => Promise<FileEntry[] | ServerEntry[]>> = {
-      servers: getServers,
-    }
-    const fn = loaders[t]
-    if (!fn) return
-    setFileLoading((f) => ({ ...f, [t]: true }))
-    fn(id).then((data) => {
-      setFileData((f) => ({ ...f, [t]: data }))
-    }).catch(() => {
-      setFileData((f) => ({ ...f, [t]: [] }))
-    }).finally(() => {
-      setFileLoading((f) => ({ ...f, [t]: false }))
-    })
-  }, [id])
-
-  // load on tab change
-  useEffect(() => {
-    if (!id || tab === 'overview' || tab === 'settings') return
-    loadFiles(tab)
-  }, [id, tab, loadFiles])
 
   const update = useCallback((field: string, value: unknown) => {
     setForm((f) => {
@@ -1230,7 +1229,7 @@ export default function InstanceDetailPage() {
           {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.gameDir} />}
           {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.gameDir} />}
           {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.gameDir} />}
-          {tab === 'servers' && <ServersTab instanceId={id!} servers={fileData['servers'] as ServerEntry[] | null} loading={fileLoading['servers']} onRefresh={() => loadFiles('servers')} />}
+          {tab === 'servers' && <ServersTab instanceId={id!} />}
         </div>
       </div>
       <ErrorReportDialog
