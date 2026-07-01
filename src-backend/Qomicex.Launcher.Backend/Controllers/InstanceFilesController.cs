@@ -481,6 +481,72 @@ public class InstanceFilesController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("saves/metadata")]
+    public ActionResult<List<SaveMetadataDto>> GetSavesMetadata(string instanceId)
+    {
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+
+        var baseDir = inst.GameDir;
+        if (!Path.IsPathRooted(baseDir))
+            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
+
+        var versionSegmented = inst.VersionIsolation ?? true;
+        var versionId = inst.GameVersion;
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var saves = new Saves(baseDir, versionId, versionSegmented, apiKey);
+        var list = saves.GetSaveList();
+
+        var result = list.Select(s => new SaveMetadataDto
+        {
+            Name = s.Name,
+            FilePath = s.FilePath,
+            LastPlayed = s.LastPlayed,
+            IconBase64 = string.IsNullOrEmpty(s.Icon) ? null : s.Icon,
+        }).ToList();
+
+        return Ok(result);
+    }
+
+    [HttpPost("saves/rename")]
+    public IActionResult RenameSave(string instanceId, [FromBody] RenameSaveRequest request)
+    {
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+        var savesDir = Path.Combine(gameDir, "saves");
+
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var versionSegmented = inst.VersionIsolation ?? true;
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+        var saves = new Saves(gameDir, inst.GameVersion, versionSegmented, apiKey);
+
+        var savePath = Path.Combine(savesDir, request.OldName);
+        if (!Directory.Exists(savePath)) return NotFound();
+        saves.RenameSave(savePath, request.NewName);
+        return NoContent();
+    }
+
+    [HttpPost("saves/backup")]
+    public IActionResult BackupSave(string instanceId, [FromQuery] string name)
+    {
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+        var savesDir = Path.Combine(gameDir, "saves");
+
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var versionSegmented = inst.VersionIsolation ?? true;
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+        var saves = new Saves(gameDir, inst.GameVersion, versionSegmented, apiKey);
+
+        var savePath = Path.Combine(savesDir, name);
+        if (!Directory.Exists(savePath)) return NotFound();
+        saves.BackupSave(savePath);
+        return NoContent();
+    }
+
     [HttpGet("shaderpacks")]
     public ActionResult<List<FileEntry>> GetShaderPacks(string instanceId)
     {
