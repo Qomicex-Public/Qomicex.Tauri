@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Models;
 using Qomicex.Launcher.Backend.Services;
@@ -10,6 +11,8 @@ namespace Qomicex.Launcher.Backend.Controllers;
 [Route("api/instance/{instanceId}/files")]
 public class InstanceFilesController : ControllerBase
 {
+    private static readonly ConcurrentDictionary<string, ModLoadProgress> ModLoadProgressStore = new();
+
     private readonly IInstanceRepository _repository;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly McmodService _mcmod;
@@ -35,15 +38,38 @@ public class InstanceFilesController : ControllerBase
         if (!Path.IsPathRooted(dir))
             dir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), dir));
 
-        var versionsDir = Path.Combine(dir, "versions");
-        if (Directory.Exists(versionsDir))
+        if (string.IsNullOrEmpty(inst.VersionDirName))
         {
-            var expectedDir = Path.Combine(versionsDir, inst.GameVersion);
-            if (Directory.Exists(expectedDir))
-                return expectedDir;
+            var versionsDir = Path.Combine(dir, "versions");
+            if (Directory.Exists(versionsDir))
+            {
+                var candidates = Directory.GetDirectories(versionsDir)
+                    .Where(d => System.IO.File.Exists(Path.Combine(d, $"{Path.GetFileName(d)}.json")))
+                    .ToList();
+
+                var filtered = candidates
+                    .Where(d => !string.Equals(Path.GetFileName(d), inst.GameVersion, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (filtered.Count == 1)
+                    return filtered[0];
+
+                if (filtered.Count > 1)
+                {
+                    var expected = !string.IsNullOrEmpty(inst.Loader) && !string.IsNullOrEmpty(inst.LoaderVersion)
+                        ? $"{inst.GameVersion}-{inst.Loader}-{inst.LoaderVersion}"
+                        : inst.GameVersion;
+                    var match = filtered.FirstOrDefault(d =>
+                        string.Equals(Path.GetFileName(d), expected, StringComparison.OrdinalIgnoreCase));
+                    if (match != null)
+                        return match;
+                }
+            }
+            return dir;
         }
 
-        return dir;
+        var versionDir = Path.Combine(dir, "versions", inst.VersionDirName);
+        return Directory.Exists(versionDir) ? versionDir : dir;
     }
 
     private string? GetPath(string instanceId, string category, out string? dir)
@@ -159,30 +185,55 @@ public class InstanceFilesController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("mods/count")]
+    public ActionResult<int> GetModsCount(string instanceId)
+    {
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+        var modsDir = Path.Combine(gameDir, "mods");
+        if (!Directory.Exists(modsDir)) return Ok(0);
+        var count = Directory.GetFiles(modsDir, "*.jar").Length + Directory.GetFiles(modsDir, "*.disabled").Length;
+        return Ok(count);
+    }
+
+    [HttpGet("mods/progress")]
+    public ActionResult<ModLoadProgress?> GetModsProgress(string instanceId)
+    {
+        return Ok(ModLoadProgressStore.GetValueOrDefault(instanceId));
+    }
+
     [HttpGet("mods/metadata")]
     public async Task<ActionResult<List<ModMetadataDto>>> GetModsMetadata(string instanceId)
     {
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var baseDir = inst.GameDir;
-        if (!Path.IsPathRooted(baseDir))
-            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
-
-        var versionSegmented = inst.VersionIsolation ?? true;
-        var versionId = inst.GameVersion;
-
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
 
-        var mods = new Mods(baseDir, versionId, versionSegmented, apiKey);
-        var modList = await mods.GetModList();
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
 
-        var names = modList.Select(m => m.Name).Distinct().ToList();
+        var modsDir = Path.Combine(gameDir, "mods");
+        var totalCount = Directory.Exists(modsDir)
+            ? Directory.GetFiles(modsDir, "*.jar").Length + Directory.GetFiles(modsDir, "*.disabled").Length
+            : 0;
+        var progress = new ModLoadProgress(0, totalCount);
+        ModLoadProgressStore[instanceId] = progress;
+
+        try
+        {
+            var mods = new Mods(gameDir, inst.GameVersion, false, apiKey);
+            var modList = await mods.GetModList((current, total) =>
+            {
+                progress.Current = current;
+                progress.Total = total;
+            });
+            var names = modList.Select(m => m.Name).Where(n => n != null).Distinct().ToList();
         var lookupResult = _mcmod.BatchLookupWithIds(names);
 
         var result = modList.Select(m =>
         {
-            var (cnName, mcmodId) = lookupResult.GetValueOrDefault(m.Name, (null, null));
+            var (cnName, mcmodId) = m.Name != null ? lookupResult.GetValueOrDefault(m.Name, (null, null)) : (null, null);
             string? source = null;
             if (m.CurseForgeId > 0) source = "curseforge";
             else if (!string.IsNullOrEmpty(m.ModrinthId)) source = "modrinth";
@@ -205,7 +256,12 @@ public class InstanceFilesController : ControllerBase
             };
         }).ToList();
 
-        return Ok(result);
+            return Ok(result);
+        }
+        finally
+        {
+            ModLoadProgressStore.TryRemove(instanceId, out _);
+        }
     }
 
     [HttpPost("mods/enable")]
@@ -406,18 +462,15 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("resourcepacks/metadata")]
     public async Task<ActionResult<List<ResourcePackMetadataDto>>> GetResourcePacksMetadata(string instanceId)
     {
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var baseDir = inst.GameDir;
-        if (!Path.IsPathRooted(baseDir))
-            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
-
-        var versionSegmented = inst.VersionIsolation ?? true;
-        var versionId = inst.GameVersion;
-        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-
-        var rp = new Resourcepack(baseDir, versionId, versionSegmented, apiKey);
+        var rp = new Resourcepack(gameDir, inst.GameVersion, false, apiKey);
         var list = await rp.GetResourcePackList();
 
         var result = list.Select(m =>
@@ -446,18 +499,15 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("shaderpacks/metadata")]
     public async Task<ActionResult<List<ShaderMetadataDto>>> GetShaderPacksMetadata(string instanceId)
     {
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var baseDir = inst.GameDir;
-        if (!Path.IsPathRooted(baseDir))
-            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
-
-        var versionSegmented = inst.VersionIsolation ?? true;
-        var versionId = inst.GameVersion;
-        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-
-        var shaders = new Shaders(baseDir, versionId, versionSegmented, apiKey);
+        var shaders = new Shaders(gameDir, inst.GameVersion, false, apiKey);
         var list = await shaders.GetShaderList();
 
         var result = list.Select(m =>
@@ -485,18 +535,15 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("saves/metadata")]
     public ActionResult<List<SaveMetadataDto>> GetSavesMetadata(string instanceId)
     {
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var baseDir = inst.GameDir;
-        if (!Path.IsPathRooted(baseDir))
-            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
-
-        var versionSegmented = inst.VersionIsolation ?? true;
-        var versionId = inst.GameVersion;
-        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-
-        var saves = new Saves(baseDir, versionId, versionSegmented, apiKey);
+        var saves = new Saves(gameDir, inst.GameVersion, false, apiKey);
         var list = saves.GetSaveList();
 
         var result = list.Select(s => new SaveMetadataDto
@@ -515,15 +562,13 @@ public class InstanceFilesController : ControllerBase
     {
         var gameDir = ResolveGameDir(instanceId);
         if (gameDir == null) return NotFound();
-        var savesDir = Path.Combine(gameDir, "saves");
 
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
-        var versionSegmented = inst.VersionIsolation ?? true;
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var saves = new Saves(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        var saves = new Saves(gameDir, inst.GameVersion, false, apiKey);
 
-        var savePath = Path.Combine(savesDir, request.OldName);
+        var savePath = Path.Combine(gameDir, "saves", request.OldName);
         if (!Directory.Exists(savePath)) return NotFound();
         saves.RenameSave(savePath, request.NewName);
         return NoContent();
@@ -534,15 +579,13 @@ public class InstanceFilesController : ControllerBase
     {
         var gameDir = ResolveGameDir(instanceId);
         if (gameDir == null) return NotFound();
-        var savesDir = Path.Combine(gameDir, "saves");
 
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
-        var versionSegmented = inst.VersionIsolation ?? true;
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var saves = new Saves(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        var saves = new Saves(gameDir, inst.GameVersion, false, apiKey);
 
-        var savePath = Path.Combine(savesDir, name);
+        var savePath = Path.Combine(gameDir, "saves", name);
         if (!Directory.Exists(savePath)) return NotFound();
         saves.BackupSave(savePath);
         return NoContent();
@@ -551,18 +594,15 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("screenshots/metadata")]
     public ActionResult<List<ScreenshotMetadataDto>> GetScreenshotsMetadata(string instanceId)
     {
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var baseDir = inst.GameDir;
-        if (!Path.IsPathRooted(baseDir))
-            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
-
-        var versionSegmented = inst.VersionIsolation ?? true;
-        var versionId = inst.GameVersion;
-        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-
-        var screenshots = new Screenshots(baseDir, versionId, versionSegmented, apiKey);
+        var screenshots = new Screenshots(gameDir, inst.GameVersion, false, apiKey);
         var list = screenshots.GetScreenshotList();
 
         var result = list.Select(s => new ScreenshotMetadataDto
@@ -594,18 +634,15 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("datapacks/metadata")]
     public async Task<ActionResult<List<DataPackMetadataDto>>> GetDataPacksMetadata(string instanceId)
     {
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var gameDir = ResolveGameDir(instanceId);
+        if (gameDir == null) return NotFound();
+
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var baseDir = inst.GameDir;
-        if (!Path.IsPathRooted(baseDir))
-            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
-
-        var versionSegmented = inst.VersionIsolation ?? true;
-        var versionId = inst.GameVersion;
-        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-
-        var dp = new DataPacks(baseDir, versionId, versionSegmented, apiKey);
+        var dp = new DataPacks(gameDir, inst.GameVersion, false, apiKey);
         var list = await dp.GetDataPackList();
 
         var result = list.Select(m =>
@@ -753,4 +790,11 @@ public class InstanceFilesController : ControllerBase
         foreach (var d in Directory.GetDirectories(src))
             CopyDirectory(d, Path.Combine(dst, Path.GetFileName(d)));
     }
+}
+
+public class ModLoadProgress
+{
+    public int Current { get; set; }
+    public int Total { get; set; }
+    public ModLoadProgress(int current, int total) { Current = current; Total = total; }
 }

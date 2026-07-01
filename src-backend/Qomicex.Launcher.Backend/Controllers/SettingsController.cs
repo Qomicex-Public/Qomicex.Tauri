@@ -232,6 +232,7 @@ public class SettingsController : ControllerBase
             path = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), path));
         try
         {
+            Directory.CreateDirectory(path);
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = path,

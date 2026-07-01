@@ -161,6 +161,23 @@ The launcher ships on **Windows, Linux, macOS**. Never assume Windows.
 - **Always `set_permissions` (0o755) on Unix** after writing a binary — `std::fs::write` does not preserve `+x`.
 - **No hardcoded extension** — use `#[cfg(windows)]` / `#[cfg(unix)]` for binary file names.
 
+## Version isolation directory resolution
+
+`VersionDirName` is stored at install time in `InstanceController.StartInstall` using the formula `{GameVersion}-{Loader}-{LoaderVersion}` (or just `GameVersion` for vanilla). All path resolvers read the stored value directly — never reconstruct via formula.
+
+**Migration for existing instances** (no `VersionDirName`): scan `versions/` for directories containing `{dir}/{dir}.json`. Exclude the vanilla `{GameVersion}` directory (`string.Equals(name, inst.GameVersion, OrdinalIgnoreCase)`), then:
+
+- 1 candidate → use it as `VersionDirName` (also persists in `GetById`)
+- >1 candidates → match by formula `{GameVersion}-{Loader}-{LoaderVersion}` against remaining candidates
+- 0 or no match → fallback to base `gameDir`
+
+Three places implement this logic (keep in sync):
+- `InstanceFilesController.cs:ResolveGameDir` — read-only resolution
+- `InstanceController.cs:GetById` — migration + persist
+- `ResourceDownloadController.cs:StartDownload` — read-only resolution
+
+`InstallTask._versionId` uses the same `{GameVersion}-{Loader}-{LoaderVersion}` formula. The vanilla `{GameVersion}/{GameVersion}.json` is always created at `InstallTask.StartAsync()` line 116–118, which is why migration must exclude it.
+
 ## Known issues / next steps
 
 - Frontend does not yet handle the `failed` install stage gracefully.

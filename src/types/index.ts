@@ -161,9 +161,11 @@ export interface GameInstance {
   playTime: number
   isHidden: boolean
   versionIsolation: boolean | null
+  versionDirName: string | null
   isDefault: boolean
   icon: string | null
   skipIntegrityCheck?: boolean
+  resolvedGameDir: string | null
 }
 
 export interface CreateInstanceRequest {

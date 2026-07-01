@@ -40,16 +40,43 @@ public class ResourceDownloadController : ControllerBase
         };
 
         // version isolation
-        var versionsDir = Path.Combine(gameDir, "versions");
-        if (Directory.Exists(versionsDir))
+        var resolvedDir = gameDir;
+        if (!string.IsNullOrEmpty(instance.VersionDirName))
         {
-            var expectedId = !string.IsNullOrEmpty(instance.Loader) && !string.IsNullOrEmpty(instance.LoaderVersion)
-                ? $"{instance.GameVersion}-{instance.Loader}-{instance.LoaderVersion}"
-                : instance.GameVersion;
-            var expectedDir = Path.Combine(versionsDir, expectedId);
-            if (Directory.Exists(expectedDir))
-                gameDir = expectedDir;
+            var versionDir = Path.Combine(gameDir, "versions", instance.VersionDirName);
+            if (Directory.Exists(versionDir))
+                resolvedDir = versionDir;
         }
+        else
+        {
+            var versionsDir = Path.Combine(gameDir, "versions");
+            if (Directory.Exists(versionsDir))
+            {
+                var candidates = Directory.GetDirectories(versionsDir)
+                    .Where(d => System.IO.File.Exists(Path.Combine(d, $"{Path.GetFileName(d)}.json")))
+                    .ToList();
+
+                var filtered = candidates
+                    .Where(d => !string.Equals(Path.GetFileName(d), instance.GameVersion, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (filtered.Count == 1)
+                {
+                    resolvedDir = filtered[0];
+                }
+                else if (filtered.Count > 1)
+                {
+                    var expected = !string.IsNullOrEmpty(instance.Loader) && !string.IsNullOrEmpty(instance.LoaderVersion)
+                        ? $"{instance.GameVersion}-{instance.Loader}-{instance.LoaderVersion}"
+                        : instance.GameVersion;
+                    var match = filtered.FirstOrDefault(d =>
+                        string.Equals(Path.GetFileName(d), expected, StringComparison.OrdinalIgnoreCase));
+                    if (match != null)
+                        resolvedDir = match;
+                }
+            }
+        }
+        gameDir = resolvedDir;
 
         var targetDir = Path.Combine(gameDir, category);
         var taskId = _downloadService.StartDownload(request.Url, targetDir, request.FileName);

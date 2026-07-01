@@ -43,7 +43,7 @@ public sealed class McmodService
         return ms.ToArray();
     }
 
-    private static string Normalize(string s) => s.Trim().ToLowerInvariant();
+    private static string Normalize(string s) => (s ?? "").Trim().ToLowerInvariant();
 
     public string? Lookup(string enName)
     {
@@ -78,6 +78,7 @@ public sealed class McmodService
         var result = new Dictionary<string, (string? CnName, int? Id)>(names.Count);
         foreach (var name in names)
         {
+            if (name == null) continue;
             var key = Normalize(name);
             if (key.Length > 0 && _map.TryGetValue(key, out var entry))
                 result[name] = (entry.CnName, entry.Id);

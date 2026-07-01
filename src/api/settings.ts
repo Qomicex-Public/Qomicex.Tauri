@@ -1,4 +1,4 @@
-import { get, put } from './client.ts'
+import { get, put, post } from './client.ts'
 
 interface CustomJavaEntry {
   name: string
@@ -138,6 +138,10 @@ export async function autoSelectDownloadSource(): Promise<{ id: number; latencyM
   const result = await get<{ id: number; latencyMs: number }>('/settings/download-source/auto-select')
   cached = { ...cached, downloadSource: result.id }
   return result
+}
+
+export function openFolder(path: string): Promise<void> {
+  return post('/settings/open-folder', { path })
 }
 
 

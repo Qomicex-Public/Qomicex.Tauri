@@ -81,6 +81,52 @@ public class InstanceController : ControllerBase
     {
         var instance = _repository.GetById(id);
         if (instance == null) return NotFound();
+
+        var gameDir = instance.GameDir;
+        if (!Path.IsPathRooted(gameDir))
+            gameDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), gameDir));
+
+        var versionsDir = Path.Combine(gameDir, "versions");
+        if (string.IsNullOrEmpty(instance.VersionDirName) && Directory.Exists(versionsDir))
+        {
+            var candidates = Directory.GetDirectories(versionsDir)
+                .Where(d => System.IO.File.Exists(Path.Combine(d, $"{Path.GetFileName(d)}.json")))
+                .ToList();
+
+            var filtered = candidates
+                .Where(d => !string.Equals(Path.GetFileName(d), instance.GameVersion, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            string? match = null;
+            if (filtered.Count == 1)
+            {
+                match = Path.GetFileName(filtered[0]);
+            }
+            else if (filtered.Count > 1)
+            {
+                var expected = !string.IsNullOrEmpty(instance.Loader) && !string.IsNullOrEmpty(instance.LoaderVersion)
+                    ? $"{instance.GameVersion}-{instance.Loader}-{instance.LoaderVersion}"
+                    : instance.GameVersion;
+                var found = filtered.FirstOrDefault(d =>
+                    string.Equals(Path.GetFileName(d), expected, StringComparison.OrdinalIgnoreCase));
+                if (found != null)
+                    match = Path.GetFileName(found);
+            }
+
+            if (match != null)
+            {
+                instance.VersionDirName = match;
+                _repository.Update(instance.Id, instance);
+            }
+        }
+
+        if (!string.IsNullOrEmpty(instance.VersionDirName))
+        {
+            var versionDir = Path.Combine(gameDir, "versions", instance.VersionDirName);
+            if (Directory.Exists(versionDir))
+                instance.ResolvedGameDir = versionDir;
+        }
+
         return Ok(instance);
     }
 
@@ -112,6 +158,14 @@ public class InstanceController : ControllerBase
     {
         var instance = _repository.GetById(id);
         if (instance == null) return NotFound();
+
+        if (request.VersionIsolation == true && string.IsNullOrEmpty(instance.VersionDirName))
+        {
+            instance.VersionDirName = !string.IsNullOrEmpty(request.Loader) && !string.IsNullOrEmpty(request.LoaderVersion)
+                ? $"{instance.GameVersion}-{request.Loader}-{request.LoaderVersion}"
+                : instance.GameVersion;
+            _repository.Update(instance.Id, instance);
+        }
 
         _installService.StartInstall(id, instance.GameVersion, instance.GameDir, request.Loader, request.LoaderVersion, request.Addons, request.DownloadThreads ?? 64, request.VersionIsolation, request.DownloadSourceId, request.DownloadTimeout, instance.JavaPath);
 

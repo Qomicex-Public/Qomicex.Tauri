@@ -18,7 +18,11 @@ public class GameInstance
     public long PlayTime { get; set; }
     public bool IsHidden { get; set; }
     public bool? VersionIsolation { get; set; }
+    public string? VersionDirName { get; set; }
     public bool IsDefault { get; set; }
     public string? Icon { get; set; }
     public bool SkipIntegrityCheck { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? ResolvedGameDir { get; set; }
 }

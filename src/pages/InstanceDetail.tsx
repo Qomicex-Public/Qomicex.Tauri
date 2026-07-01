@@ -12,12 +12,12 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
 import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress } from '../api/instance.ts'
-import { openPath } from '@tauri-apps/plugin-opener'
+import { openFolder } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
-import { getServers, addServer, deleteServer, pingServer, getModsMetadata, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
+import { getServers, addServer, deleteServer, pingServer, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
 import ModCard from '../components/ModCard.tsx'
@@ -88,7 +88,7 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   )
 }
 
-function SavesTab({ instanceId }: { instanceId: string }) {
+function SavesTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
   const [search, setSearch] = useState('')
   const [saves, setSaves] = useState<SaveMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -121,6 +121,9 @@ function SavesTab({ instanceId }: { instanceId: string }) {
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索存档..." className="h-8 pl-8 text-xs" />
             </div>
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch(() => {})} className="gap-1.5 h-7 text-xs">
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+            </Button>
           </div>
         </div>
         {loading ? (
@@ -143,7 +146,7 @@ function SavesTab({ instanceId }: { instanceId: string }) {
   )
 }
 
-function ScreenshotsTab({ instanceId }: { instanceId: string }) {
+function ScreenshotsTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
   const [search, setSearch] = useState('')
   const [screenshots, setScreenshots] = useState<ScreenshotMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -176,6 +179,9 @@ function ScreenshotsTab({ instanceId }: { instanceId: string }) {
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索截图..." className="h-8 pl-8 text-xs" />
             </div>
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch(() => {})} className="gap-1.5 h-7 text-xs">
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+            </Button>
           </div>
         </div>
         {loading ? (
@@ -208,6 +214,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
   const [search, setSearch] = useState('')
   const [mods, setMods] = useState<ModMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadProgress, setLoadProgress] = useState<{ current: number; total: number } | null>(null)
   const [versionDialogMod, setVersionDialogMod] = useState<ModMetadata | null>(null)
 
   const [batchMode, setBatchMode] = useState(false)
@@ -217,8 +224,18 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
 
   const loadMods = useCallback(async () => {
     setLoading(true)
+    setLoadProgress(null)
     try {
+      getModsCount(instanceId).then(count => setLoadProgress({ current: 0, total: count })).catch(() => {})
+      const pollId = setInterval(async () => {
+        try {
+          const p = await getModsProgress(instanceId)
+          if (p) setLoadProgress(p)
+        } catch {}
+      }, 300)
       const data = await getModsMetadata(instanceId)
+      clearInterval(pollId)
+      setLoadProgress(null)
       setMods(data)
     } catch (e) { console.error('Load mods failed:', e); setMods([]) }
     setLoading(false)
@@ -327,7 +344,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
                 </>
               ) : (
                 <>
-                  <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '/mods').catch(e => console.error('Open mods folder failed:', e))} className="gap-1.5 h-7 text-xs">
+                  <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
                     <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
                   </Button>
                   <Button size="sm" variant="outline" onClick={enterBatchMode} className="gap-1.5 h-7 text-xs">
@@ -349,7 +366,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
 
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+              <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />
+              加载中{loadProgress && loadProgress.total > 0 ? ` ${loadProgress.current}/${loadProgress.total}` : '...'}
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
@@ -448,9 +466,7 @@ function ResourcePacksTab({ instanceId, gameDir }: { instanceId: string; gameDir
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索资源包..." className="h-8 pl-8 text-xs" />
             </div>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
           </div>
@@ -514,7 +530,7 @@ function ShadersTab({ instanceId, gameDir }: { instanceId: string; gameDir: stri
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
           </div>
@@ -578,7 +594,7 @@ function DataPacksTab({ instanceId, gameDir }: { instanceId: string; gameDir: st
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button size="sm" variant="ghost" onClick={() => openPath(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
           </div>
@@ -959,7 +975,7 @@ export default function InstanceDetailPage() {
               <FontAwesomeIcon icon={faStar} className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />
             </Button>
           </Tooltip>
-          <Button variant="outline" size="icon" onClick={() => openPath(instance.gameDir).catch(() => {})}>
+          <Button variant="outline" size="icon" onClick={() => openFolder(instance.resolvedGameDir ?? instance.gameDir).catch(() => {})}>
             <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
           </Button>
         </div>
@@ -1028,7 +1044,7 @@ export default function InstanceDetailPage() {
                     {repairing && (
                       <span className="self-center text-xs text-muted-foreground">正在补全 {repairProgress}%</span>
                     )}
-                    <Button size="sm" variant="outline" className="gap-2" onClick={() => openPath(instance.gameDir).catch(() => {})}>
+                    <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(instance.resolvedGameDir ?? instance.gameDir).catch(() => {})}>
                       <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开游戏目录
                     </Button>
                     <Button size="sm" variant="outline" className="gap-2 text-destructive hover:text-destructive" onClick={handleDelete}>
@@ -1223,12 +1239,12 @@ export default function InstanceDetailPage() {
             </Card>
           )}
 
-          {tab === 'saves' && <SavesTab instanceId={id!} />}
-          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} />}
-          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.gameDir} />}
-          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.gameDir} />}
-          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.gameDir} />}
-          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.gameDir} />}
+          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
+          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
+          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
+          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
+          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
+          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
           {tab === 'servers' && <ServersTab instanceId={id!} />}
         </div>
       </div>

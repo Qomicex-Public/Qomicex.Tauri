@@ -59,6 +59,14 @@ export function getInstalledFileNames(instanceId: string, category: string = 'mo
   return get<string[]>(`/instance/${instanceId}/files/installed-names?category=${encodeURIComponent(category)}`)
 }
 
+export function getModsCount(instanceId: string): Promise<number> {
+  return get<number>(`/instance/${instanceId}/files/mods/count`)
+}
+
+export function getModsProgress(instanceId: string): Promise<{ current: number; total: number } | null> {
+  return get<{ current: number; total: number } | null>(`/instance/${instanceId}/files/mods/progress`)
+}
+
 export function getModsMetadata(instanceId: string): Promise<ModMetadata[]> {
   return get<ModMetadata[]>(`/instance/${instanceId}/files/mods/metadata`)
 }

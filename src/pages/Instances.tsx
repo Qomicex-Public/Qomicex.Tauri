@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { API_BASE } from '../api/client.ts'
+
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
@@ -18,7 +18,7 @@ import { createInstance, startInstall, getInstances, repairInstance, launchInsta
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx'
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance, LaunchProgress } from '../types/index.ts'
-import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, autoSelectDownloadSource } from '../api/settings.ts'
+import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, autoSelectDownloadSource, openFolder } from '../api/settings.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 
 interface ManagedDir {
@@ -1047,7 +1047,7 @@ export default function Instances() {
                       </Tooltip>
                     )})()}
                     <Tooltip content="打开文件夹">
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); fetch(`${API_BASE}/settings/open-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: `${currentDir.replace(/\\/g, '/')}/versions/${v.name}` }) }).catch(() => {}) }}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {}) }}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
                 </div>
@@ -1100,7 +1100,7 @@ export default function Instances() {
                     </Tooltip>
                   )})()}
                    <Tooltip content="打开文件夹">
-                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => fetch(`${API_BASE}/settings/open-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: `${currentDir.replace(/\\/g, '/')}/versions/${v.name}` }) }).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                       <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                    </Tooltip>
                 </div>
               </div>
