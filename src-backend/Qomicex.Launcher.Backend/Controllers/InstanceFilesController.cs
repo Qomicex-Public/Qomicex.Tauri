@@ -442,6 +442,45 @@ public class InstanceFilesController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("shaderpacks/metadata")]
+    public async Task<ActionResult<List<ShaderMetadataDto>>> GetShaderPacksMetadata(string instanceId)
+    {
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+
+        var baseDir = inst.GameDir;
+        if (!Path.IsPathRooted(baseDir))
+            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
+
+        var versionSegmented = inst.VersionIsolation ?? true;
+        var versionId = inst.GameVersion;
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var shaders = new Shaders(baseDir, versionId, versionSegmented, apiKey);
+        var list = await shaders.GetShaderList();
+
+        var result = list.Select(m =>
+        {
+            string? source = null;
+            if (m.CurseForgeId > 0) source = "curseforge";
+            else if (!string.IsNullOrEmpty(m.ModrinthId)) source = "modrinth";
+
+            return new ShaderMetadataDto
+            {
+                FileName = Path.GetFileName(m.FilePath),
+                Name = m.Name ?? string.Empty,
+                Description = m.Description ?? string.Empty,
+                Version = m.Version ?? string.Empty,
+                IconBase64 = string.IsNullOrEmpty(m.Icon) ? null : m.Icon,
+                CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
+                ModrinthId = string.IsNullOrEmpty(m.ModrinthId) ? null : m.ModrinthId,
+                Source = source,
+            };
+        }).ToList();
+
+        return Ok(result);
+    }
+
     [HttpGet("shaderpacks")]
     public ActionResult<List<FileEntry>> GetShaderPacks(string instanceId)
     {
