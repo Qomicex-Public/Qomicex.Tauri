@@ -373,6 +373,55 @@ export interface ModMetadata {
   active: boolean
 }
 
+export interface ResourcePackMetadata {
+  fileName: string
+  name: string
+  description: string
+  version: string
+  packFormat: number
+  iconBase64?: string | null
+  curseForgeId?: number | null
+  modrinthId?: string | null
+  source?: string | null
+}
+
+export interface ShaderMetadata {
+  fileName: string
+  name: string
+  description: string
+  version: string
+  iconBase64?: string | null
+  curseForgeId?: number | null
+  modrinthId?: string | null
+  source?: string | null
+}
+
+export interface SaveMetadata {
+  name: string
+  filePath: string
+  lastPlayed: number
+  iconBase64?: string | null
+}
+
+export interface ScreenshotMetadata {
+  fileName: string
+  filePath: string
+  createdAt: string
+  fileSize: number
+}
+
+export interface DataPackMetadata {
+  fileName: string
+  name: string
+  description: string
+  version: string
+  packFormat: number
+  iconBase64?: string | null
+  curseForgeId?: number | null
+  modrinthId?: string | null
+  source?: string | null
+}
+
 export interface ServerEntry {
   name: string
   ip: string
