@@ -109,7 +109,7 @@ public class ResourcesController : ControllerBase
         if (!string.IsNullOrWhiteSpace(loader))
             facetList.Add(new() { $"categories:{loader}" });
         var facets = JsonSerializer.Serialize(facetList);
-        var url = $"https://api.modrinth.com/v2/search?query={Uri.EscapeDataString(keyword ?? "")}&facets={Uri.EscapeDataString(facets)}&limit={pageSize}&offset={offset}&index={sortIndex}";
+        var url = ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/search?query={Uri.EscapeDataString(keyword ?? "")}&facets={Uri.EscapeDataString(facets)}&limit={pageSize}&offset={offset}&index={sortIndex}");
 
         try
         {
@@ -160,7 +160,7 @@ public class ResourcesController : ControllerBase
         };
 
         var index = (page - 1) * pageSize;
-        var url = $"/v1/mods/search?gameId=432&classId={classId}&searchFilter={Uri.EscapeDataString(keyword ?? "")}&sortOrder=desc&pageSize={pageSize}&index={index}&sortField={sortField}";
+        var url = ModApiMirror.MirrorCurseForge($"/v1/mods/search?gameId=432&classId={classId}&searchFilter={Uri.EscapeDataString(keyword ?? "")}&sortOrder=desc&pageSize={pageSize}&index={index}&sortField={sortField}");
 
         try
         {
@@ -228,7 +228,7 @@ public class ResourcesController : ControllerBase
 
     private async Task<IActionResult> GetModrinthById(string id)
     {
-        var url = $"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(id)}";
+        var url = ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(id)}");
         try
         {
             var project = await _modrinth.GetFromJsonAsync<ModrinthProject>(url);
@@ -270,7 +270,7 @@ public class ResourcesController : ControllerBase
 
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/mods/{Uri.EscapeDataString(id)}");
+            var request = new HttpRequestMessage(HttpMethod.Get, ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(id)}"));
             request.Headers.Add("x-api-key", _cfApiKey);
             var httpResponse = await _curseforge.SendAsync(request);
             httpResponse.EnsureSuccessStatusCode();
@@ -389,7 +389,7 @@ public class ResourcesController : ControllerBase
         try
         {
             versions = await _modrinth.GetFromJsonAsync<List<ModrinthVersion>>(
-                $"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(projectId)}/version");
+                ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(projectId)}/version"));
         }
         catch
         {
@@ -417,7 +417,7 @@ public class ResourcesController : ControllerBase
             try
             {
                 var proj = await _modrinth.GetFromJsonAsync<ModrinthProject>(
-                    $"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(projectId)}");
+                    ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(projectId)}"));
                 if (proj != null)
                 {
                     name = proj.Title ?? projectId;
@@ -543,7 +543,7 @@ public class ResourcesController : ControllerBase
 
     private async Task<IActionResult> GetModrinthVersions(string id, string? gameVersion, string? loader)
     {
-        var url = $"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(id)}/version";
+        var url = ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(id)}/version");
         try
         {
             var versions = await _modrinth.GetFromJsonAsync<List<ModrinthVersion>>(url);
@@ -589,7 +589,7 @@ public class ResourcesController : ControllerBase
     {
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/mods/{Uri.EscapeDataString(id)}/files?pageSize=20");
+            var request = new HttpRequestMessage(HttpMethod.Get, ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(id)}/files?pageSize=20"));
             request.Headers.Add("x-api-key", _cfApiKey);
             var httpResponse = await _curseforge.SendAsync(request);
             httpResponse.EnsureSuccessStatusCode();
@@ -630,7 +630,7 @@ public class ResourcesController : ControllerBase
     {
         try
         {
-            var members = await _modrinth.GetFromJsonAsync<List<ModrinthTeamMember>>($"https://api.modrinth.com/v2/team/{Uri.EscapeDataString(teamId)}/members");
+            var members = await _modrinth.GetFromJsonAsync<List<ModrinthTeamMember>>(ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/team/{Uri.EscapeDataString(teamId)}/members"));
             return members?.Select(member => member.User?.Username)
                 .FirstOrDefault(username => !string.IsNullOrWhiteSpace(username)) ?? "";
         }

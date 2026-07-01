@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faTag, faDesktop, faRobot, faBug } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faTag, faDesktop, faRobot, faBug, faBolt as faLightning } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -30,8 +30,8 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings } from '../api/settings.ts'
-import type { AppSettings } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources } from '../api/settings.ts'
+import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
@@ -88,6 +88,10 @@ export default function Settings() {
   const autoScanRef = useRef(false)
   const loadedRef = useRef(false)
   const [backgrounds, setBackgrounds] = useState<string[]>([])
+  const [sourcePings, setSourcePings] = useState<DownloadSourcePing[]>([])
+  const [pingLoading, setPingLoading] = useState(false)
+  const [modPings, setModPings] = useState<ModSourcePing[]>([])
+  const [modPingLoading, setModPingLoading] = useState(false)
 
   const [roomCode, setRoomCode] = useState('')
   const [validationCode, setValidationCode] = useState('')
@@ -104,6 +108,8 @@ export default function Settings() {
     apiLoadSettings().then((s) => {
       setSettings(s)
       loadedRef.current = true
+      pingDownloadSources().then(setSourcePings).catch(() => {})
+      pingModSources().then(setModPings).catch(() => {})
     }).catch(() => {})
     get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})
   }, [])
@@ -112,6 +118,16 @@ export default function Settings() {
     const unsub = subscribe(() => setRuntimesState([...getRuntimes()]))
     return unsub
   }, [])
+
+  useEffect(() => {
+    if (!loadedRef.current) return
+    refreshPings()
+  }, [settings.autoSelectDownloadSource])
+
+  useEffect(() => {
+    if (!loadedRef.current) return
+    refreshModPings()
+  }, [settings.autoSelectModMirror])
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     const next = { ...settings, [key]: value }
@@ -192,6 +208,42 @@ export default function Settings() {
       const dir = path.replace(/[/\\][^/\\]+$/i, '')
       openPath(dir).catch(() => {})
     })
+  }
+
+  async function refreshPings() {
+    setPingLoading(true)
+    try {
+      const pings = await pingDownloadSources()
+      setSourcePings(pings)
+      if (settings.autoSelectDownloadSource) {
+        const best = pings.filter(p => p.available).sort((a, b) => a.latencyMs - b.latencyMs)[0]
+        if (best && best.id !== settings.downloadSource) {
+          update('downloadSource', best.id)
+        }
+      }
+    } catch {
+      setSourcePings([])
+    } finally {
+      setPingLoading(false)
+    }
+  }
+
+  async function refreshModPings() {
+    setModPingLoading(true)
+    try {
+      const pings = await pingModSources()
+      setModPings(pings)
+      if (settings.autoSelectModMirror) {
+        const best = pings.filter(p => p.available).sort((a, b) => a.modrinthLatency - b.modrinthLatency)[0]
+        if (best && best.id !== settings.modMirror) {
+          update('modMirror', best.id)
+        }
+      }
+    } catch {
+      setModPings([])
+    } finally {
+      setModPingLoading(false)
+    }
   }
 
   async function handleOpenBackgrounds() {
@@ -407,23 +459,115 @@ export default function Settings() {
 
                 <div className="space-y-2">
                   <Label>下载源</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {DOWNLOAD_SOURCES.map((s) => (
-                      <button
-                        key={s.value}
-                        onClick={() => update('downloadSource', s.value)}
-                        className={cn(
-                          'rounded-lg border px-4 py-2 text-sm transition-colors',
-                          settings.downloadSource === s.value
-                            ? 'border-primary bg-primary/10 font-medium text-primary'
-                            : 'border-border hover:border-muted-foreground/30'
-                        )}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {DOWNLOAD_SOURCES.map((s) => {
+                      const ping = sourcePings.find(p => p.id === s.value)
+                      const showLatency = ping && ping.latencyMs >= 0
+                      const latencyColor = !ping?.available ? 'text-destructive'
+                        : ping.latencyMs < 100 ? 'text-emerald-400'
+                        : ping.latencyMs < 300 ? 'text-amber-400'
+                        : 'text-destructive'
+                      return (
+                        <button
+                          key={s.value}
+                          disabled={settings.autoSelectDownloadSource}
+                          onClick={() => update('downloadSource', s.value)}
+                          className={cn(
+                            'flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm transition-colors',
+                            settings.autoSelectDownloadSource && 'pointer-events-none opacity-60',
+                            settings.downloadSource === s.value && !settings.autoSelectDownloadSource
+                              ? 'border-primary bg-primary/10 font-medium text-primary'
+                              : 'border-border hover:border-muted-foreground/30'
+                          )}
+                        >
+                          {s.label}
+                          {pingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
+                          {!pingLoading && showLatency && (
+                            <span className={cn('text-xs tabular-nums', latencyColor)}>
+                              {ping.latencyMs}ms
+                            </span>
+                          )}
+                          {!pingLoading && !showLatency && (
+                            <span className="text-xs text-muted-foreground">--</span>
+                          )}
+                        </button>
+                      )
+                    })}
+                    <Tooltip content="刷新延迟">
+                      <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshPings} disabled={pingLoading}>
+                        <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', pingLoading && 'animate-spin')} />
+                      </Button>
+                    </Tooltip>
                   </div>
-                  <p className="text-xs text-muted-foreground">官方源更新最快，镜像源国内速度较快</p>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <Checkbox
+                      checked={settings.autoSelectDownloadSource}
+                      onCheckedChange={(c) => update('autoSelectDownloadSource', c === true)}
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
+                      <span className="text-sm font-medium">自动选择最快下载源</span>
+                      <span className="text-xs text-muted-foreground">启动时和每次安装前自动检测并选择延迟最低的源</span>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Mod API 镜像</Label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[
+                      { value: 0, label: 'Modrinth/CurseForge 官方' },
+                      { value: 1, label: 'MCIM 镜像' },
+                    ].map((s) => {
+                      const ping = modPings.find(p => p.id === s.value)
+                      const showLatency = ping && ping.modrinthLatency >= 0 && ping.modrinthOk
+                      const latencyColor = !ping?.available ? 'text-destructive'
+                        : ping.modrinthLatency < 100 ? 'text-emerald-400'
+                        : ping.modrinthLatency < 300 ? 'text-amber-400'
+                        : 'text-destructive'
+                      return (
+                        <button
+                          key={s.value}
+                          disabled={settings.autoSelectModMirror}
+                          onClick={() => update('modMirror', s.value)}
+                          className={cn(
+                            'flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm transition-colors',
+                            settings.autoSelectModMirror && 'pointer-events-none opacity-60',
+                            settings.modMirror === s.value && !settings.autoSelectModMirror
+                              ? 'border-primary bg-primary/10 font-medium text-primary'
+                              : 'border-border hover:border-muted-foreground/30'
+                          )}
+                        >
+                          {s.label}
+                          {modPingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
+                          {!modPingLoading && showLatency && (
+                            <span className={cn('text-xs tabular-nums', latencyColor)}>
+                              {ping.modrinthLatency}ms
+                            </span>
+                          )}
+                          {!modPingLoading && !showLatency && (
+                            <span className="text-xs text-muted-foreground">--</span>
+                          )}
+                        </button>
+                      )
+                    })}
+                    <Tooltip content="刷新延迟">
+                      <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshModPings} disabled={modPingLoading}>
+                        <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', modPingLoading && 'animate-spin')} />
+                      </Button>
+                    </Tooltip>
+                  </div>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <Checkbox
+                      checked={settings.autoSelectModMirror}
+                      onCheckedChange={(c) => update('autoSelectModMirror', c === true)}
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
+                      <span className="text-sm font-medium">自动选择最快 Mod API</span>
+                      <span className="text-xs text-muted-foreground">自动检测 Modrinth/CurseForge API 镜像并选择延迟最低的</span>
+                    </div>
+                  </label>
                 </div>
 
                 <div className="space-y-2">

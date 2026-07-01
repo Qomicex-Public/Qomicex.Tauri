@@ -461,7 +461,7 @@ public class InstallTask : IInstallTask
         try
         {
             var response = await httpClient.GetAsync(
-                $"https://api.modrinth.com/v2/project/{addonId}/version");
+                ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/project/{addonId}/version"));
             if (!response.IsSuccessStatusCode) return (null, null);
 
             var versionsJson = await response.Content.ReadAsStringAsync();

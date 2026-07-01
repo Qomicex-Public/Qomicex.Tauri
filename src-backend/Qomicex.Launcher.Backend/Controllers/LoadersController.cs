@@ -100,7 +100,7 @@ public class LoadersController : ControllerBase
     {
         try
         {
-            var response = await _httpClient.GetAsync($"https://api.modrinth.com/v2/project/{slug}");
+            var response = await _httpClient.GetAsync(ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/project/{slug}"));
             if (!response.IsSuccessStatusCode) return null;
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<ModrinthProject>(json, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });

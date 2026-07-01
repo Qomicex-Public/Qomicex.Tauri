@@ -21,6 +21,9 @@ export interface AppSettings {
   language: string
   defaultJavaPath: string
   downloadSource: number
+  autoSelectDownloadSource: boolean
+  modMirror: number
+  autoSelectModMirror: boolean
   downloadTimeout: number
   animationsEnabled: boolean
   animationSpeed: number
@@ -46,6 +49,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   language: 'zh-CN',
   defaultJavaPath: '',
   downloadSource: 0,
+  autoSelectDownloadSource: false,
+  modMirror: 0,
+  autoSelectModMirror: false,
   downloadTimeout: 15,
   animationsEnabled: true,
   animationSpeed: 1,
@@ -95,6 +101,43 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
 export function onSettingsChange(fn: (s: AppSettings) => void): () => void {
   listeners.add(fn)
   return () => listeners.delete(fn)
+}
+
+export interface DownloadSourcePing {
+  id: number
+  name: string
+  url: string
+  latencyMs: number
+  available: boolean
+}
+
+export async function pingDownloadSources(): Promise<DownloadSourcePing[]> {
+  return get<DownloadSourcePing[]>('/settings/download-sources/ping')
+}
+
+export interface ModSourcePing {
+  id: number
+  name: string
+  modrinthUrl: string
+  modrinthOk: boolean
+  modrinthLatency: number
+  available: boolean
+}
+
+export async function pingModSources(): Promise<ModSourcePing[]> {
+  return get<ModSourcePing[]>('/settings/mod-sources/ping')
+}
+
+export async function autoSelectModSource(): Promise<{ id: number; latencyMs: number }> {
+  const result = await get<{ id: number; latencyMs: number }>('/settings/mod-source/auto-select')
+  cached = { ...cached, modMirror: result.id }
+  return result
+}
+
+export async function autoSelectDownloadSource(): Promise<{ id: number; latencyMs: number }> {
+  const result = await get<{ id: number; latencyMs: number }>('/settings/download-source/auto-select')
+  cached = { ...cached, downloadSource: result.id }
+  return result
 }
 
 
