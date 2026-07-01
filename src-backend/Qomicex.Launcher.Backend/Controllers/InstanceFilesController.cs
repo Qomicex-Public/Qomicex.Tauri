@@ -547,6 +547,34 @@ public class InstanceFilesController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("screenshots/metadata")]
+    public ActionResult<List<ScreenshotMetadataDto>> GetScreenshotsMetadata(string instanceId)
+    {
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+
+        var baseDir = inst.GameDir;
+        if (!Path.IsPathRooted(baseDir))
+            baseDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), baseDir));
+
+        var versionSegmented = inst.VersionIsolation ?? true;
+        var versionId = inst.GameVersion;
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+
+        var screenshots = new Screenshots(baseDir, versionId, versionSegmented, apiKey);
+        var list = screenshots.GetScreenshotList();
+
+        var result = list.Select(s => new ScreenshotMetadataDto
+        {
+            FileName = s.FileName,
+            FilePath = s.FilePath,
+            CreatedAt = s.CreatedAt,
+            FileSize = s.FileSize,
+        }).ToList();
+
+        return Ok(result);
+    }
+
     [HttpGet("shaderpacks")]
     public ActionResult<List<FileEntry>> GetShaderPacks(string instanceId)
     {
