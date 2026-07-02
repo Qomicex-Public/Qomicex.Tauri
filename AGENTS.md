@@ -182,7 +182,21 @@ Minecraft 游戏文件系统的三种目录概念：
 
 ### 版本隔离的资源目录
 
-以下目录受 `VersionIsolation` 标志控制，隔离时路径为 `GameDir\versions\{GameVersion}\{subdir}`：
+**`inst.Name` 始终等于版本文件夹名**（如 `"1.12.2"`、`"1.12.2-Forge-14.xxx"`、`"ATM9"`）。安装 loader 时 `StartInstall` 会将 `Name` 同步更新为 `VersionDirName`。所有版本隔离路径统一使用 `inst.Name`：
+
+```
+正确模式：
+  var versionFolder = inst.Name;    // 版本文件夹名，Name == VersionDirName ?? GameVersion
+  var modsDir = isolation
+      ? Path.Combine(gameDir, "versions", versionFolder, "mods")
+      : Path.Combine(gameDir, "mods");
+  new Mods(gameDir, inst.Name, isolation, apiKey);  // Core 也用 inst.Name
+
+错误模式（禁止）：
+  var versionFolder = inst.GameVersion;   // ← 扫描时 Core 会设错，非文件夹名
+```
+
+以下目录受 `VersionIsolation` 标志控制，隔离时路径为 `GameDir\versions\{inst.Name}\{subdir}`：
 
 `mods`、`saves`、`resourcepacks`、`shaderpacks`、`screenshots`、`datapacks`、`crash-reports`、`servers.dat`
 
@@ -197,7 +211,7 @@ Minecraft 游戏文件系统的三种目录概念：
   var gameDir = inst.GameDir;        // .minecraft 根目录
   var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
   var modsDir = isolation
-      ? Path.Combine(gameDir, "versions", inst.GameVersion, "mods")     // 隔离
+      ? Path.Combine(gameDir, "versions", inst.Name, "mods")     // 隔离
       : Path.Combine(gameDir, "mods");                                   // 不隔离
 
 错误模式（禁止）：
@@ -216,7 +230,7 @@ constructor(gameDirectory, version, versionSegmented, apiKey)
 //   versionSegmented=false → Path.Combine(gameDirectory, "mods")
 ```
 
-**`gameDirectory` 必须是 GameDir 根目录**，Core 类不接受 VersionDir。不要手动预拼接版本隔离路径再传入——传 `inst.GameDir` + `inst.GameVersion` + `isolation` 即可。
+**`gameDirectory` 必须是 GameDir 根目录**，`version` 参数传 `inst.Name`（版本文件夹名）。不要手动预拼接版本隔离路径再传入——传 `inst.GameDir` + `inst.Name` + `isolation` 即可。
 
 ### InstallTask 的区分
 
