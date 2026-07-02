@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace Qomicex.Launcher.Backend.Services;
 
@@ -191,6 +190,12 @@ public class AccountService
             var plaintext = ProtectData.Unprotect(encrypted);
             return JsonSerializer.Deserialize<List<StoredAccount>>(plaintext) ?? new();
         }
+        catch (CryptographicException)
+        {
+            // 机器码不匹配或数据被篡改 → 自毁
+            try { File.Delete(_filePath); } catch { }
+            return new();
+        }
         catch { return new(); }
     }
 
@@ -213,60 +218,9 @@ internal static class ProtectData
 
     public static byte[] Unprotect(byte[] ciphertext)
     {
-        try
-        {
-            var base64 = Encoding.UTF8.GetString(ciphertext);
-            var json = CryptHelper.DecryptFromBase64(base64);
-            return Encoding.UTF8.GetBytes(json);
-        }
-        catch (CryptographicException)
-        {
-            // CryptHelper failed — try old SecureCrypto format (non-Windows legacy)
-            try
-            {
-                var base64 = Encoding.UTF8.GetString(ciphertext);
-                return AesDecryptLegacy(ciphertext);
-            }
-            catch { /* fall through to DPAPI */ }
-        }
-        catch (FormatException)
-        {
-            // Not Base64 → old raw AES format (non-Windows legacy)
-            return AesDecryptLegacy(ciphertext);
-        }
-        catch (NotSupportedException)
-        {
-            // Unsupported version → old format
-        }
-
-        // Windows legacy: try DPAPI
-        if (OperatingSystem.IsWindows())
-        {
-            try
-            {
-                return ProtectedData.Unprotect(ciphertext, null, DataProtectionScope.CurrentUser);
-            }
-            catch { /* not DPAPI data */ }
-        }
-
-        // Last resort: old raw AES
-        return AesDecryptLegacy(ciphertext);
-    }
-
-    private static byte[] AesDecryptLegacy(byte[] ciphertext)
-    {
-        using var sha256 = SHA256.Create();
-        var machine = Environment.MachineName ?? "unknown";
-        var user = Environment.UserName ?? "unknown";
-        var key = sha256.ComputeHash(Encoding.UTF8.GetBytes($"{machine}::{user}::QomicexLauncher"));
-
-        using var aes = Aes.Create();
-        aes.Key = key;
-        var iv = new byte[aes.IV.Length];
-        Buffer.BlockCopy(ciphertext, 0, iv, 0, iv.Length);
-        aes.IV = iv;
-        using var decryptor = aes.CreateDecryptor();
-        return decryptor.TransformFinalBlock(ciphertext, iv.Length, ciphertext.Length - iv.Length);
+        var base64 = Encoding.UTF8.GetString(ciphertext);
+        var json = CryptHelper.DecryptFromBase64(base64);
+        return Encoding.UTF8.GetBytes(json);
     }
 }
 
