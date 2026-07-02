@@ -183,8 +183,8 @@ export default function Accounts() {
       loginMethod: 'Offline',
     }
     try {
-      const saved = await accountApi.saveAccount(acc)
-      setAccounts((prev) => [...prev.filter((a) => a.uuid !== saved.uuid), saved])
+      await accountApi.saveAccount(acc)
+      await refresh()
       setAddOpen(false)
       setOfflineName('')
       setOfflineUuid('')
@@ -226,7 +226,7 @@ export default function Accounts() {
     if (!ok) return
     try {
       await accountApi.deleteAccount(uuid)
-      setAccounts((prev) => prev.filter((a) => a.uuid !== uuid))
+      await refresh()
     } catch (e: unknown) {
       await msgError(fmtErr(e))
     }
