@@ -93,7 +93,7 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   )
 }
 
-function SavesTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
+function SavesTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
   const [search, setSearch] = useState('')
   const [saves, setSaves] = useState<SaveMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -105,7 +105,7 @@ function SavesTab({ instanceId, gameDir }: { instanceId: string; gameDir: string
     setLoading(false)
   }, [instanceId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, refreshKey])
 
   const filtered = useMemo(() => {
     if (!search) return saves
@@ -151,7 +151,7 @@ function SavesTab({ instanceId, gameDir }: { instanceId: string; gameDir: string
   )
 }
 
-function ScreenshotsTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
+function ScreenshotsTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
   const [search, setSearch] = useState('')
   const [screenshots, setScreenshots] = useState<ScreenshotMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -163,7 +163,7 @@ function ScreenshotsTab({ instanceId, gameDir }: { instanceId: string; gameDir: 
     setLoading(false)
   }, [instanceId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, refreshKey])
 
   const filtered = useMemo(() => {
     if (!search) return screenshots
@@ -217,11 +217,12 @@ function ScreenshotsTab({ instanceId, gameDir }: { instanceId: string; gameDir: 
   )
 }
 
-function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
+function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey }: {
   instanceId: string
   gameVersion?: string
   loader?: string
   gameDir: string
+  refreshKey: number
 }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
@@ -268,7 +269,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
 
   useEffect(() => {
     loadMods()
-  }, [loadMods])
+  }, [loadMods, refreshKey])
 
   const filtered = useMemo(() => {
     if (!search) return mods
@@ -461,7 +462,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
   )
 }
 
-function ResourcePacksTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
+function ResourcePacksTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<ResourcePackMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -473,7 +474,7 @@ function ResourcePacksTab({ instanceId, gameDir }: { instanceId: string; gameDir
     setLoading(false)
   }, [instanceId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, refreshKey])
 
   const filtered = useMemo(() => {
     if (!search) return packs
@@ -532,7 +533,7 @@ function ResourcePacksTab({ instanceId, gameDir }: { instanceId: string; gameDir
   )
 }
 
-function ShadersTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
+function ShadersTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
   const [search, setSearch] = useState('')
   const [shaders, setShaders] = useState<ShaderMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -544,7 +545,7 @@ function ShadersTab({ instanceId, gameDir }: { instanceId: string; gameDir: stri
     setLoading(false)
   }, [instanceId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, refreshKey])
 
   const filtered = useMemo(() => {
     if (!search) return shaders
@@ -605,7 +606,7 @@ function ShadersTab({ instanceId, gameDir }: { instanceId: string; gameDir: stri
   )
 }
 
-function DataPacksTab({ instanceId, gameDir }: { instanceId: string; gameDir: string }) {
+function DataPacksTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<DataPackMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -617,7 +618,7 @@ function DataPacksTab({ instanceId, gameDir }: { instanceId: string; gameDir: st
     setLoading(false)
   }, [instanceId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, refreshKey])
 
   const filtered = useMemo(() => {
     if (!search) return packs
@@ -678,7 +679,7 @@ function DataPacksTab({ instanceId, gameDir }: { instanceId: string; gameDir: st
   )
 }
 
-function ServersTab({ instanceId }: { instanceId: string }) {
+function ServersTab({ instanceId, refreshKey }: { instanceId: string; refreshKey: number }) {
   const [search, setSearch] = useState('')
   const [servers, setServers] = useState<ServerEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -697,7 +698,7 @@ function ServersTab({ instanceId }: { instanceId: string }) {
     setLoading(false)
   }, [instanceId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, refreshKey])
 
   const filtered = useMemo(() => {
     if (!search) return servers
@@ -843,6 +844,7 @@ export default function InstanceDetailPage() {
   const [repairing, setRepairing] = useState(false)
   const [repairProgress, setRepairProgress] = useState(0)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     const unsub = subscribe(() => setRuntimes([...getRuntimes()]))
@@ -1038,7 +1040,7 @@ export default function InstanceDetailPage() {
 
   return (
     <div className="animate-in slide-up space-y-6 p-8">
-      <div className="flex items-center gap-3">
+      <div className="group flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/instances')}>
           <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
         </Button>
@@ -1051,6 +1053,11 @@ export default function InstanceDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Tooltip content="刷新数据">
+            <Button variant="ghost" size="icon" onClick={() => setRefreshKey(k => k + 1)} className="opacity-0 group-hover:opacity-100 transition-opacity h-9 w-9">
+              <FontAwesomeIcon icon={faRotate} className="h-4 w-4" />
+            </Button>
+          </Tooltip>
           <Button onClick={handleLaunch} className="gap-2">
             <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />启动
           </Button>
@@ -1323,13 +1330,13 @@ export default function InstanceDetailPage() {
             </Card>
           )}
 
-          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
-          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
-          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
-          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
-          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
-          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} />}
-          {tab === 'servers' && <ServersTab instanceId={id!} />}
+          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
+          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
+          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
+          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
+          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
+          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
+          {tab === 'servers' && <ServersTab instanceId={id!} refreshKey={refreshKey} />}
         </div>
       </div>
       <ErrorReportDialog
