@@ -208,14 +208,35 @@ internal static class ProtectData
     {
         if (OperatingSystem.IsWindows())
             return ProtectedData.Protect(plaintext, null, DataProtectionScope.CurrentUser);
-        return AesEncrypt(plaintext);
+
+        // Non-Windows: use SecureCrypto (new format)
+        var json = Encoding.UTF8.GetString(plaintext);
+        var encrypted = SecureCrypto.Encrypt(json);
+        return Encoding.UTF8.GetBytes(encrypted);
     }
 
     public static byte[] Unprotect(byte[] ciphertext)
     {
         if (OperatingSystem.IsWindows())
             return ProtectedData.Unprotect(ciphertext, null, DataProtectionScope.CurrentUser);
-        return AesDecrypt(ciphertext);
+
+        // Non-Windows: try new format first (SecureCrypto)
+        try
+        {
+            var base64 = Encoding.UTF8.GetString(ciphertext);
+            var json = SecureCrypto.Decrypt(base64);
+            return Encoding.UTF8.GetBytes(json);
+        }
+        catch (CryptographicException)
+        {
+            // HMAC verification failed -> old format data
+            return AesDecrypt(ciphertext);
+        }
+        catch (FormatException)
+        {
+            // Not Base64 -> old format data
+            return AesDecrypt(ciphertext);
+        }
     }
 
     private static byte[] DeriveKey()
