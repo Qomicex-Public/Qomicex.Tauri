@@ -17,7 +17,7 @@ import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscrib
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
-import { getServers, addServer, deleteServer, pingServer, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
+import { getServers, addServer, deleteServer, pingServer, getModsMetadata, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -190,8 +190,16 @@ function ScreenshotsTab({ instanceId, gameDir }: { instanceId: string; gameDir: 
           </div>
         </div>
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="animate-pulse rounded-xl border bg-card overflow-hidden">
+                <div className="aspect-video bg-muted" />
+                <div className="p-3 space-y-2">
+                  <div className="h-3 w-2/3 rounded bg-muted" />
+                  <div className="h-2.5 w-1/3 rounded bg-muted" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
@@ -219,7 +227,6 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
   const [search, setSearch] = useState('')
   const [mods, setMods] = useState<ModMetadata[]>([])
   const [loading, setLoading] = useState(true)
-  const [loadProgress, setLoadProgress] = useState<{ current: number; total: number } | null>(null)
   const [versionDialogMod, setVersionDialogMod] = useState<ModMetadata | null>(null)
 
   const [batchMode, setBatchMode] = useState(false)
@@ -229,18 +236,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
 
   const loadMods = useCallback(async () => {
     setLoading(true)
-    setLoadProgress(null)
     try {
-      getModsCount(instanceId).then(count => setLoadProgress({ current: 0, total: count })).catch(() => {})
-      const pollId = setInterval(async () => {
-        try {
-          const p = await getModsProgress(instanceId)
-          if (p) setLoadProgress(p)
-        } catch {}
-      }, 300)
       const data = await getModsMetadata(instanceId)
-      clearInterval(pollId)
-      setLoadProgress(null)
       setMods(data)
     } catch (e) { console.error('Load mods failed:', e); setMods([]) }
     setLoading(false)
@@ -370,9 +367,20 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir }: {
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />
-              加载中{loadProgress && loadProgress.total > 0 ? ` ${loadProgress.current}/${loadProgress.total}` : '...'}
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
+                  <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 w-2/5 rounded bg-muted" />
+                    <div className="h-3 w-3/5 rounded bg-muted" />
+                  </div>
+                  <div className="flex gap-1.5">
+                    <div className="h-6 w-14 rounded bg-muted" />
+                    <div className="h-6 w-14 rounded bg-muted" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
@@ -477,8 +485,17 @@ function ResourcePacksTab({ instanceId, gameDir }: { instanceId: string; gameDir
           </div>
         </div>
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+          <div className="flex flex-col gap-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
+                <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-1/3 rounded bg-muted" />
+                  <div className="h-3 w-1/2 rounded bg-muted" />
+                </div>
+                <div className="h-6 w-16 rounded bg-muted" />
+              </div>
+            ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
@@ -541,8 +558,17 @@ function ShadersTab({ instanceId, gameDir }: { instanceId: string; gameDir: stri
           </div>
         </div>
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+          <div className="flex flex-col gap-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
+                <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-1/3 rounded bg-muted" />
+                  <div className="h-3 w-1/2 rounded bg-muted" />
+                </div>
+                <div className="h-6 w-16 rounded bg-muted" />
+              </div>
+            ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
@@ -605,8 +631,17 @@ function DataPacksTab({ instanceId, gameDir }: { instanceId: string; gameDir: st
           </div>
         </div>
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+          <div className="flex flex-col gap-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
+                <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-1/3 rounded bg-muted" />
+                  <div className="h-3 w-1/2 rounded bg-muted" />
+                </div>
+                <div className="h-6 w-16 rounded bg-muted" />
+              </div>
+            ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
@@ -696,8 +731,21 @@ function ServersTab({ instanceId }: { instanceId: string }) {
             </Button>
           </div>
           {loading ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+            <div className="flex flex-col gap-1">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="animate-pulse flex items-center gap-3 rounded-lg px-3 py-2.5">
+                  <div className="h-4 w-4 shrink-0 rounded bg-muted" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3.5 w-1/3 rounded bg-muted" />
+                    <div className="h-2.5 w-1/4 rounded bg-muted" />
+                  </div>
+                  <div className="flex gap-1">
+                    <div className="h-7 w-7 rounded bg-muted" />
+                    <div className="h-7 w-7 rounded bg-muted" />
+                    <div className="h-7 w-7 rounded bg-muted" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
