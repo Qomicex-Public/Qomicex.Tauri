@@ -4,6 +4,7 @@ using Qomicex.Launcher.Backend.Models;
 using Qomicex.Launcher.Backend.Services;
 using Qomicex.Core.Modules.Helpers.GameSettings;
 using Qomicex.Core.Modules.Helpers.Resources.Expansion.Local;
+using System.Diagnostics;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -30,52 +31,16 @@ public class InstanceFilesController : ControllerBase
         _configuration = configuration;
     }
 
-    private string? ResolveGameDir(string instanceId)
+    private static string ResolveGameDir(GameInstance inst)
     {
-        var inst = _repository.GetById(instanceId);
-        if (inst == null) return null;
         var dir = inst.GameDir;
         if (!Path.IsPathRooted(dir))
             dir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), dir));
-
-        if (string.IsNullOrEmpty(inst.VersionDirName))
-        {
-            var versionsDir = Path.Combine(dir, "versions");
-            if (Directory.Exists(versionsDir))
-            {
-                var candidates = Directory.GetDirectories(versionsDir)
-                    .Where(d => System.IO.File.Exists(Path.Combine(d, $"{Path.GetFileName(d)}.json")))
-                    .ToList();
-
-                var filtered = candidates
-                    .Where(d => !string.Equals(Path.GetFileName(d), inst.GameVersion, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                if (filtered.Count == 1)
-                    return filtered[0];
-
-                if (filtered.Count > 1)
-                {
-                    var expected = !string.IsNullOrEmpty(inst.Loader) && !string.IsNullOrEmpty(inst.LoaderVersion)
-                        ? $"{inst.GameVersion}-{inst.Loader}-{inst.LoaderVersion}"
-                        : inst.GameVersion;
-                    var match = filtered.FirstOrDefault(d =>
-                        string.Equals(Path.GetFileName(d), expected, StringComparison.OrdinalIgnoreCase));
-                    if (match != null)
-                        return match;
-                }
-            }
-            return dir;
-        }
-
-        var versionDir = Path.Combine(dir, "versions", inst.VersionDirName);
-        return Directory.Exists(versionDir) ? versionDir : dir;
+        return dir;
     }
 
-    private string? GetPath(string instanceId, string category, out string? dir)
+    private static string GetCategoryDir(string gameDir, string gameVersion, bool versionIsolation, string category)
     {
-        dir = ResolveGameDir(instanceId);
-        if (dir == null) return null;
         var sub = category switch
         {
             "saves" => "saves",
@@ -86,8 +51,10 @@ public class InstanceFilesController : ControllerBase
             "shaderpacks" => "shaderpacks",
             _ => null,
         };
-        if (sub == null) return null;
-        var full = Path.Combine(dir, sub);
+        if (sub == null) return string.Empty;
+        var full = versionIsolation
+            ? Path.Combine(gameDir, "versions", gameVersion, sub)
+            : Path.Combine(gameDir, sub);
         if (!Directory.Exists(full)) Directory.CreateDirectory(full);
         return full;
     }
@@ -95,9 +62,11 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("saves")]
     public ActionResult<List<FileEntry>> GetSaves(string instanceId)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var savesDir = Path.Combine(gameDir, "saves");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
         if (!Directory.Exists(savesDir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetDirectories(savesDir).Select(d => new FileEntry
         {
@@ -111,9 +80,12 @@ public class InstanceFilesController : ControllerBase
     [HttpDelete("saves")]
     public IActionResult DeleteSave(string instanceId, [FromQuery] string name)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var path = Path.Combine(gameDir, "saves", name);
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
+        var path = Path.Combine(savesDir, name);
         if (!Directory.Exists(path)) return NotFound();
         Directory.Delete(path, true);
         return NoContent();
@@ -122,11 +94,14 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("saves/copy")]
     public IActionResult CopySave(string instanceId, [FromBody] CopySaveRequest request)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var src = Path.Combine(gameDir, "saves", request.Name);
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
+        var src = Path.Combine(savesDir, request.Name);
         if (!Directory.Exists(src)) return NotFound();
-        var dst = Path.Combine(gameDir, "saves", request.NewName);
+        var dst = Path.Combine(savesDir, request.NewName);
         CopyDirectory(src, dst);
         return Ok();
     }
@@ -134,9 +109,11 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("screenshots")]
     public ActionResult<List<FileEntry>> GetScreenshots(string instanceId)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var dir = Path.Combine(gameDir, "screenshots");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "screenshots");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -150,8 +127,11 @@ public class InstanceFilesController : ControllerBase
     [HttpDelete("screenshots")]
     public IActionResult DeleteScreenshot(string instanceId, [FromQuery] string name)
     {
-        var dir = GetPath(instanceId, "screenshots", out var _);
-        if (dir == null) return NotFound();
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "screenshots");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -161,9 +141,11 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("mods")]
     public ActionResult<List<FileEntry>> GetMods(string instanceId)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var dir = Path.Combine(gameDir, "mods");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -177,8 +159,11 @@ public class InstanceFilesController : ControllerBase
     [HttpDelete("mods")]
     public IActionResult DeleteMod(string instanceId, [FromQuery] string name)
     {
-        var dir = GetPath(instanceId, "mods", out var _);
-        if (dir == null) return NotFound();
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -188,9 +173,11 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("mods/count")]
     public ActionResult<int> GetModsCount(string instanceId)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var modsDir = Path.Combine(gameDir, "mods");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
         if (!Directory.Exists(modsDir)) return Ok(0);
         var count = Directory.GetFiles(modsDir, "*.jar").Length + Directory.GetFiles(modsDir, "*.disabled").Length;
         return Ok(count);
@@ -210,10 +197,10 @@ public class InstanceFilesController : ControllerBase
 
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
 
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
 
-        var modsDir = Path.Combine(gameDir, "mods");
         var totalCount = Directory.Exists(modsDir)
             ? Directory.GetFiles(modsDir, "*.jar").Length + Directory.GetFiles(modsDir, "*.disabled").Length
             : 0;
@@ -222,39 +209,39 @@ public class InstanceFilesController : ControllerBase
 
         try
         {
-            var mods = new Mods(gameDir, inst.GameVersion, false, apiKey);
+            Trace.WriteLine(new { instanceId, inst.GameVersion, inst.VersionDirName, inst.Loader, inst.LoaderVersion, apiKey, modsDir, totalCount, inst.Id, inst.VersionIsolation });
+            var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
             var modList = await mods.GetModList((current, total) =>
             {
                 progress.Current = current;
                 progress.Total = total;
             });
             var names = modList.Select(m => m.Name).Where(n => n != null).Distinct().ToList();
-        var lookupResult = _mcmod.BatchLookupWithIds(names);
+            var lookupResult = _mcmod.BatchLookupWithIds(names);
 
-        var result = modList.Select(m =>
-        {
-            var (cnName, mcmodId) = m.Name != null ? lookupResult.GetValueOrDefault(m.Name, (null, null)) : (null, null);
-            string? source = null;
-            if (m.CurseForgeId > 0) source = "curseforge";
-            else if (!string.IsNullOrEmpty(m.ModrinthId)) source = "modrinth";
-
-            return new ModMetadataDto
+            var result = modList.Select(m =>
             {
-                FileName = Path.GetFileName(m.FilePath),
-                Name = m.Name,
-                Version = m.Version,
-                Description = m.Description ?? "",
-                Authors = m.Authors ?? [],
-                //IconUrl = m.ModrinthMeta?.,
-                IconBase64 = m.Icon,
-                CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
-                ModrinthId = m.ModrinthId,
-                Source = source,
-                McmodId = mcmodId,
-                ChineseName = cnName,
-                Active = m.Active,
-            };
-        }).ToList();
+                var (cnName, mcmodId) = m.Name != null ? lookupResult.GetValueOrDefault(m.Name, (null, null)) : (null, null);
+                string? source = null;
+                if (m.CurseForgeId > 0) source = "curseforge";
+                else if (!string.IsNullOrEmpty(m.ModrinthId)) source = "modrinth";
+
+                return new ModMetadataDto
+                {
+                    FileName = Path.GetFileName(m.FilePath),
+                    Name = m.Name,
+                    Version = m.Version,
+                    Description = m.Description ?? "",
+                    Authors = m.Authors ?? [],
+                    IconBase64 = m.Icon,
+                    CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
+                    ModrinthId = m.ModrinthId,
+                    Source = source,
+                    McmodId = mcmodId,
+                    ChineseName = cnName,
+                    Active = m.Active,
+                };
+            }).ToList();
 
             return Ok(result);
         }
@@ -267,9 +254,11 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("mods/enable")]
     public IActionResult EnableMod(string instanceId, [FromQuery] string name)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var modsDir = Path.Combine(gameDir, "mods");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
         var fileName = name.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase) ? name : name + ".disabled";
         var filePath = Path.Combine(modsDir, fileName);
         if (!System.IO.File.Exists(filePath))
@@ -279,11 +268,8 @@ public class InstanceFilesController : ControllerBase
             return NoContent();
         }
 
-        var inst = _repository.GetById(instanceId);
-        if (inst == null) return NotFound();
-        var versionSegmented = inst.VersionIsolation ?? true;
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
         mods.EnableMod(filePath);
         return NoContent();
     }
@@ -291,17 +277,16 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("mods/disable")]
     public IActionResult DisableMod(string instanceId, [FromQuery] string name)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var modsDir = Path.Combine(gameDir, "mods");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
         var filePath = Path.Combine(modsDir, name);
         if (!System.IO.File.Exists(filePath)) return NotFound();
 
-        var inst = _repository.GetById(instanceId);
-        if (inst == null) return NotFound();
-        var versionSegmented = inst.VersionIsolation ?? true;
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
         mods.DisableMod(filePath);
         return NoContent();
     }
@@ -309,9 +294,11 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("mods/change-version")]
     public async Task<IActionResult> ChangeModVersion(string instanceId, [FromBody] ChangeModVersionRequest request)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var modsDir = Path.Combine(gameDir, "mods");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
 
         var oldPath = Path.Combine(modsDir, request.FileName);
         var oldBak = oldPath + ".bak";
@@ -360,8 +347,11 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("mods/install")]
     public async Task<IActionResult> InstallMod(string instanceId, [FromBody] InstallModRequest request)
     {
-        var dir = GetPath(instanceId, "mods", out var _);
-        if (dir == null) return NotFound();
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
         var path = Path.Combine(dir, request.FileName);
         using var client = _httpClientFactory.CreateClient();
         var response = await client.GetAsync(request.DownloadUrl);
@@ -376,13 +366,13 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("mods/batch-enable")]
     public IActionResult BatchEnableMods(string instanceId, [FromBody] List<string> names)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var modsDir = Path.Combine(gameDir, "mods");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var inst = _repository.GetById(instanceId)!;
-        var versionSegmented = inst.VersionIsolation ?? true;
-        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
 
         foreach (var name in names)
         {
@@ -397,13 +387,13 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("mods/batch-disable")]
     public IActionResult BatchDisableMods(string instanceId, [FromBody] List<string> names)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var modsDir = Path.Combine(gameDir, "mods");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var inst = _repository.GetById(instanceId)!;
-        var versionSegmented = inst.VersionIsolation ?? true;
-        var mods = new Mods(gameDir, inst.GameVersion, versionSegmented, apiKey);
+        var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
 
         foreach (var name in names)
         {
@@ -417,8 +407,11 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("mods/batch-delete")]
     public IActionResult BatchDeleteMods(string instanceId, [FromBody] List<string> names)
     {
-        var modsDir = GetPath(instanceId, "mods", out var _);
-        if (modsDir == null) return NotFound();
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
 
         foreach (var name in names)
         {
@@ -435,9 +428,11 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("resourcepacks")]
     public ActionResult<List<FileEntry>> GetResourcePacks(string instanceId)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var dir = Path.Combine(gameDir, "resourcepacks");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "resourcepacks");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -451,8 +446,11 @@ public class InstanceFilesController : ControllerBase
     [HttpDelete("resourcepacks")]
     public IActionResult DeleteResourcePack(string instanceId, [FromQuery] string name)
     {
-        var dir = GetPath(instanceId, "resourcepacks", out var _);
-        if (dir == null) return NotFound();
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "resourcepacks");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -464,13 +462,13 @@ public class InstanceFilesController : ControllerBase
     {
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
 
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var rp = new Resourcepack(gameDir, inst.GameVersion, false, apiKey);
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+
+        var rp = new Resourcepack(gameDir, inst.GameVersion, isolation, apiKey);
         var list = await rp.GetResourcePackList();
 
         var result = list.Select(m =>
@@ -501,13 +499,13 @@ public class InstanceFilesController : ControllerBase
     {
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
 
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var shaders = new Shaders(gameDir, inst.GameVersion, false, apiKey);
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+
+        var shaders = new Shaders(gameDir, inst.GameVersion, isolation, apiKey);
         var list = await shaders.GetShaderList();
 
         var result = list.Select(m =>
@@ -537,13 +535,13 @@ public class InstanceFilesController : ControllerBase
     {
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
 
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var saves = new Saves(gameDir, inst.GameVersion, false, apiKey);
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+
+        var saves = new Saves(gameDir, inst.GameVersion, isolation, apiKey);
         var list = saves.GetSaveList();
 
         var result = list.Select(s => new SaveMetadataDto
@@ -560,15 +558,15 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("saves/rename")]
     public IActionResult RenameSave(string instanceId, [FromBody] RenameSaveRequest request)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var saves = new Saves(gameDir, inst.GameVersion, false, apiKey);
+        var saves = new Saves(gameDir, inst.GameVersion, isolation, apiKey);
 
-        var savePath = Path.Combine(gameDir, "saves", request.OldName);
+        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
+        var savePath = Path.Combine(savesDir, request.OldName);
         if (!Directory.Exists(savePath)) return NotFound();
         saves.RenameSave(savePath, request.NewName);
         return NoContent();
@@ -577,15 +575,15 @@ public class InstanceFilesController : ControllerBase
     [HttpPost("saves/backup")]
     public IActionResult BackupSave(string instanceId, [FromQuery] string name)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var saves = new Saves(gameDir, inst.GameVersion, false, apiKey);
+        var saves = new Saves(gameDir, inst.GameVersion, isolation, apiKey);
 
-        var savePath = Path.Combine(gameDir, "saves", name);
+        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
+        var savePath = Path.Combine(savesDir, name);
         if (!Directory.Exists(savePath)) return NotFound();
         saves.BackupSave(savePath);
         return NoContent();
@@ -596,13 +594,13 @@ public class InstanceFilesController : ControllerBase
     {
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
 
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var screenshots = new Screenshots(gameDir, inst.GameVersion, false, apiKey);
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+
+        var screenshots = new Screenshots(gameDir, inst.GameVersion, isolation, apiKey);
         var list = screenshots.GetScreenshotList();
 
         var result = list.Select(s => new ScreenshotMetadataDto
@@ -619,8 +617,11 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("datapacks")]
     public ActionResult<List<FileEntry>> GetDataPacks(string instanceId)
     {
-        var dir = GetPath(instanceId, "datapacks", out var _);
-        if (dir == null) return NotFound();
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "datapacks");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -636,13 +637,13 @@ public class InstanceFilesController : ControllerBase
     {
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
 
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-
         var inst = _repository.GetById(instanceId);
         if (inst == null) return NotFound();
 
-        var dp = new DataPacks(gameDir, inst.GameVersion, false, apiKey);
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+
+        var dp = new DataPacks(gameDir, inst.GameVersion, isolation, apiKey);
         var list = await dp.GetDataPackList();
 
         var result = list.Select(m =>
@@ -671,8 +672,11 @@ public class InstanceFilesController : ControllerBase
     [HttpDelete("datapacks")]
     public IActionResult DeleteDataPack(string instanceId, [FromQuery] string name)
     {
-        var dir = GetPath(instanceId, "datapacks", out var _);
-        if (dir == null) return NotFound();
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "datapacks");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -682,9 +686,11 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("shaderpacks")]
     public ActionResult<List<FileEntry>> GetShaderPacks(string instanceId)
     {
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return NotFound();
-        var dir = Path.Combine(gameDir, "shaderpacks");
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "shaderpacks");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -698,8 +704,12 @@ public class InstanceFilesController : ControllerBase
     [HttpGet("installed-names")]
     public ActionResult<List<string>> GetInstalledNames(string instanceId, [FromQuery] string category = "mods")
     {
-        var dir = GetPath(instanceId, category, out var _);
-        if (dir == null) return Ok(new List<string>());
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, category);
+        if (string.IsNullOrEmpty(dir)) return Ok(new List<string>());
         if (!Directory.Exists(dir)) return Ok(new List<string>());
         return Ok(Directory.GetFiles(dir).Select(Path.GetFileName).ToList());
     }
@@ -707,8 +717,11 @@ public class InstanceFilesController : ControllerBase
     [HttpDelete("shaderpacks")]
     public IActionResult DeleteShaderPack(string instanceId, [FromQuery] string name)
     {
-        var dir = GetPath(instanceId, "shaderpacks", out var _);
-        if (dir == null) return NotFound();
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "shaderpacks");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -765,9 +778,8 @@ public class InstanceFilesController : ControllerBase
     {
         var inst = _repository.GetById(instanceId);
         if (inst == null) return (null, null);
-        var gameDir = ResolveGameDir(instanceId);
-        if (gameDir == null) return (null, null);
-        var versionSpecific = (inst.VersionIsolation ?? true) || Directory.Exists(Path.Combine(gameDir, "versions"));
+        var gameDir = ResolveGameDir(inst);
+        var versionSpecific = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
         return (new ServersHelper(gameDir, inst.GameVersion, versionSpecific), gameDir);
     }
 

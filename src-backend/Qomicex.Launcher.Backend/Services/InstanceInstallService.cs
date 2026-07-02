@@ -136,11 +136,11 @@ public class InstanceInstallService
     }
 
     public void StartRepair(string instanceId, string gameVersion, string gameDir,
-        string? loader = null, string? loaderVersion = null, int downloadThreads = 64)
+        string? loader = null, string? loaderVersion = null, int downloadThreads = 64,
+        bool versionIsolation = true)
     {
-        // Repair reuses InstallTask with loader info so it scans the correct versionId
         var task = new InstallTask(instanceId, gameVersion, gameDir,
-            loader, loaderVersion, null, downloadThreads, false,
+            loader, loaderVersion, null, downloadThreads, versionIsolation,
             _httpClientFactory);
 
         _tasks[instanceId] = task;

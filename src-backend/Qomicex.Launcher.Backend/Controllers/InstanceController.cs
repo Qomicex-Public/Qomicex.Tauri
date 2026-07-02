@@ -255,8 +255,9 @@ public class InstanceController : ControllerBase
         var instance = _repository.GetById(id);
         if (instance == null) return NotFound();
 
+        var isolation = instance.VersionIsolation ?? GetGlobalVersionIsolation();
         _installService.StartRepair(id, instance.GameVersion, instance.GameDir, 
-            instance.Loader, instance.LoaderVersion, threads ?? 3);
+            instance.Loader, instance.LoaderVersion, threads ?? 3, isolation);
         return Ok(new { message = "文件补全已开始", instanceId = id });
     }
 
@@ -316,7 +317,7 @@ public class InstanceController : ControllerBase
             .ToList();
     }
 
-    private static bool GetGlobalVersionIsolation()
+    public static bool GetGlobalVersionIsolation()
     {
         try
         {
@@ -741,7 +742,9 @@ public class InstanceController : ControllerBase
                     var diagnostics = new List<string>();
 
                     // Check crash-reports (Minecraft)
-                    var crashDir = Path.Combine(instance.GameDir, "crash-reports");
+                    var crashDir = effectiveIsolation
+                        ? Path.Combine(instance.GameDir, "versions", instance.GameVersion, "crash-reports")
+                        : Path.Combine(instance.GameDir, "crash-reports");
                     if (System.IO.Directory.Exists(crashDir))
                     {
                         var latest = System.IO.Directory.GetFiles(crashDir, "*.txt")
