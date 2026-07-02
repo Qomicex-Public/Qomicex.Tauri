@@ -161,22 +161,85 @@ The launcher ships on **Windows, Linux, macOS**. Never assume Windows.
 - **Always `set_permissions` (0o755) on Unix** after writing a binary — `std::fs::write` does not preserve `+x`.
 - **No hardcoded extension** — use `#[cfg(windows)]` / `#[cfg(unix)]` for binary file names.
 
-## Version isolation directory resolution
+## Path system & version isolation (critical)
 
-`VersionDirName` is stored at install time in `InstanceController.StartInstall` using the formula `{GameVersion}-{Loader}-{LoaderVersion}` (or just `GameVersion` for vanilla). All path resolvers read the stored value directly — never reconstruct via formula.
+### Directory semantics
 
-**Migration for existing instances** (no `VersionDirName`): scan `versions/` for directories containing `{dir}/{dir}.json`. Exclude the vanilla `{GameVersion}` directory (`string.Equals(name, inst.GameVersion, OrdinalIgnoreCase)`), then:
+Minecraft 游戏文件系统的三种目录概念：
 
-- 1 candidate → use it as `VersionDirName` (also persists in `GetById`)
-- >1 candidates → match by formula `{GameVersion}-{Loader}-{LoaderVersion}` against remaining candidates
-- 0 or no match → fallback to base `gameDir`
+| 目录 | 含义 | 示例 |
+|------|------|------|
+| **GameDir** | `.minecraft` 根目录，所有路径的起点 | `D:\mc\.minecraft` |
+| **VersionDir** | 版本 JSON / jar / libraries 所在目录 | `GameDir\versions\1.20.1-Forge-47.1.0` |
+| **ModDir 等资源目录** | 受版本隔离影响的游戏资源目录 | 见下文 |
 
-Three places implement this logic (keep in sync):
-- `InstanceFilesController.cs:ResolveGameDir` — read-only resolution
-- `InstanceController.cs:GetById` — migration + persist
-- `ResourceDownloadController.cs:StartDownload` — read-only resolution
+### VersionDirName vs GameVersion
 
-`InstallTask._versionId` uses the same `{GameVersion}-{Loader}-{LoaderVersion}` formula. The vanilla `{GameVersion}/{GameVersion}.json` is always created at `InstallTask.StartAsync()` line 116–118, which is why migration must exclude it.
+- `VersionDirName` = `{GameVersion}-{Loader}-{LoaderVersion}`（例如 `1.20.1-Forge-47.1.0`），**仅用于 VersionDir 定位**
+- `GameVersion` = 纯游戏版本号（例如 `1.20.1`），**用于版本隔离的资源目录路径**
+- 原版实例：`VersionDirName` == `GameVersion`，路径碰巧一致
+- 带 loader 实例：`VersionDirName` ≠ `GameVersion`，**绝不能混用**
+
+### 版本隔离的资源目录
+
+以下目录受 `VersionIsolation` 标志控制，隔离时路径为 `GameDir\versions\{GameVersion}\{subdir}`：
+
+`mods`、`saves`、`resourcepacks`、`shaderpacks`、`screenshots`、`datapacks`、`crash-reports`、`servers.dat`
+
+以下目录始终在 GameDir 根层级，不受版本隔离影响：
+
+`versions`、`assets`、`libraries`、`logs`、`temp`、`hs_err_pid*.log`
+
+### 路径构造规则（后端必须遵循）
+
+```
+正确模式：
+  var gameDir = inst.GameDir;        // .minecraft 根目录
+  var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+  var modsDir = isolation
+      ? Path.Combine(gameDir, "versions", inst.GameVersion, "mods")     // 隔离
+      : Path.Combine(gameDir, "mods");                                   // 不隔离
+
+错误模式（禁止）：
+  var gameDir = ResolveGameDir(instanceId);   // ← 返回 VersionDir，不是 GameDir！
+  var dir = Path.Combine(gameDir, "mods");    // ← 路径变成 versions/1.20.1-Forge/mods
+```
+
+### Core 库（Qomicex.Core）的路径约定
+
+`Mods`、`Saves`、`Resourcepack`、`Shaders`、`Screenshots`、`DataPacks`、`ServersHelper` 全部遵循相同模式：
+
+```csharp
+constructor(gameDirectory, version, versionSegmented, apiKey)
+// 内部自行拼接：
+//   versionSegmented=true  → Path.Combine(gameDirectory, "versions", version, "mods")
+//   versionSegmented=false → Path.Combine(gameDirectory, "mods")
+```
+
+**`gameDirectory` 必须是 GameDir 根目录**，Core 类不接受 VersionDir。不要手动预拼接版本隔离路径再传入——传 `inst.GameDir` + `inst.GameVersion` + `isolation` 即可。
+
+### InstallTask 的区分
+
+`InstallTask` 维护两个字段：
+- `_gameDir`：GameDir 根，用于资源下载（versions、assets、libraries）
+- `_effectiveGameDir`：`versionIsolation ? Path.Combine(gameDir, "versions", _versionId) : gameDir`，用于 mods/addons 安装
+
+### VersionDirName 迁移逻辑
+
+`VersionDirName` 在安装时存入，公式 `{GameVersion}-{Loader}-{LoaderVersion}`。旧实例迁移逻辑（扫描 `versions/` 自动匹配）仅在以下一处实现：
+
+- `InstanceController.cs:GetById` — 迁移 + 持久化到 `VersionDirName`
+
+`InstallTask._versionId` 使用同名公式。原版 `{GameVersion}/{GameVersion}.json` 始终由 `InstallTask.StartAsync()` 创建，迁移时必须排除。
+
+### 全局版本隔离设置
+
+`InstanceController.GetGlobalVersionIsolation()` 读取 `QML/settings.json` 中的 `versionIsolation`，默认返回 `true`。实例级别设置优先于全局设置：
+
+```csharp
+var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+```
+
 
 ## Known issues / next steps
 
