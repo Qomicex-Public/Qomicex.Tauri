@@ -206,64 +206,60 @@ internal static class ProtectData
 {
     public static byte[] Protect(byte[] plaintext)
     {
-        if (OperatingSystem.IsWindows())
-            return ProtectedData.Protect(plaintext, null, DataProtectionScope.CurrentUser);
-
-        // Non-Windows: use SecureCrypto (new format)
         var json = Encoding.UTF8.GetString(plaintext);
-        var encrypted = SecureCrypto.Encrypt(json);
+        var encrypted = CryptHelper.EncryptToBase64(json);
         return Encoding.UTF8.GetBytes(encrypted);
     }
 
     public static byte[] Unprotect(byte[] ciphertext)
     {
-        if (OperatingSystem.IsWindows())
-            return ProtectedData.Unprotect(ciphertext, null, DataProtectionScope.CurrentUser);
-
-        // Non-Windows: try new format first (SecureCrypto)
         try
         {
             var base64 = Encoding.UTF8.GetString(ciphertext);
-            var json = SecureCrypto.Decrypt(base64);
+            var json = CryptHelper.DecryptFromBase64(base64);
             return Encoding.UTF8.GetBytes(json);
         }
         catch (CryptographicException)
         {
-            // HMAC verification failed -> old format data
-            return AesDecrypt(ciphertext);
+            // CryptHelper failed — try old SecureCrypto format (non-Windows legacy)
+            try
+            {
+                var base64 = Encoding.UTF8.GetString(ciphertext);
+                return AesDecryptLegacy(ciphertext);
+            }
+            catch { /* fall through to DPAPI */ }
         }
         catch (FormatException)
         {
-            // Not Base64 -> old format data
-            return AesDecrypt(ciphertext);
+            // Not Base64 → old raw AES format (non-Windows legacy)
+            return AesDecryptLegacy(ciphertext);
         }
+        catch (NotSupportedException)
+        {
+            // Unsupported version → old format
+        }
+
+        // Windows legacy: try DPAPI
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                return ProtectedData.Unprotect(ciphertext, null, DataProtectionScope.CurrentUser);
+            }
+            catch { /* not DPAPI data */ }
+        }
+
+        // Last resort: old raw AES
+        return AesDecryptLegacy(ciphertext);
     }
 
-    private static byte[] DeriveKey()
+    private static byte[] AesDecryptLegacy(byte[] ciphertext)
     {
         using var sha256 = SHA256.Create();
         var machine = Environment.MachineName ?? "unknown";
         var user = Environment.UserName ?? "unknown";
-        return sha256.ComputeHash(Encoding.UTF8.GetBytes($"{machine}::{user}::QomicexLauncher"));
-    }
+        var key = sha256.ComputeHash(Encoding.UTF8.GetBytes($"{machine}::{user}::QomicexLauncher"));
 
-    private static byte[] AesEncrypt(byte[] plaintext)
-    {
-        var key = DeriveKey();
-        using var aes = Aes.Create();
-        aes.Key = key;
-        aes.GenerateIV();
-        using var encryptor = aes.CreateEncryptor();
-        var ciphertext = encryptor.TransformFinalBlock(plaintext, 0, plaintext.Length);
-        var result = new byte[aes.IV.Length + ciphertext.Length];
-        Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
-        Buffer.BlockCopy(ciphertext, 0, result, aes.IV.Length, ciphertext.Length);
-        return result;
-    }
-
-    private static byte[] AesDecrypt(byte[] ciphertext)
-    {
-        var key = DeriveKey();
         using var aes = Aes.Create();
         aes.Key = key;
         var iv = new byte[aes.IV.Length];
