@@ -266,7 +266,7 @@ public class InstanceController : ControllerBase
         var instance = _repository.GetById(id);
         if (instance == null) return NotFound();
 
-        var versionId = instance.Name;
+        var versionId = !string.IsNullOrEmpty(instance.VersionDirName) ? instance.VersionDirName : instance.Name;
         var resourceHelper = new LocalResourceHelper();
         var missFiles = FilterMissFiles(await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir));
 
@@ -292,7 +292,7 @@ public class InstanceController : ControllerBase
         var instance = _repository.GetById(id);
         if (instance == null) return NotFound();
 
-        var versionId = instance.Name;
+        var versionId = !string.IsNullOrEmpty(instance.VersionDirName) ? instance.VersionDirName : instance.Name;
         var resourceHelper = new LocalResourceHelper();
         var missFiles = FilterMissFiles(await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir));
 
@@ -380,7 +380,7 @@ public class InstanceController : ControllerBase
         }
 
         var state = _launchService.Get(id) ?? new LaunchProgress();
-        var versionId = instance.Name;
+        var versionId = !string.IsNullOrEmpty(instance.VersionDirName) ? instance.VersionDirName : instance.Name;
         var effectiveIsolation = instance.VersionIsolation ?? GetGlobalVersionIsolation();
 
         var cancelToken = _launchService.GetCancellationToken(id);
