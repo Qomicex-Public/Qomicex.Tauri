@@ -10,6 +10,7 @@ using Qomicex.Core.Modules.Helpers;
 using Qomicex.Core.Modules.Helpers.Resources;
 using static Qomicex.Core.DataModules;
 using static Qomicex.Core.DataModules.DataDetails;
+using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -24,8 +25,9 @@ public class InstanceController : ControllerBase
     private readonly LaunchService _launchService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<InstanceController> _logger;
+    private readonly MsAccount _msAccount;
 
-    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService, JavaRuntimeStore javaRuntimeStore, LaunchService launchService, IHttpClientFactory httpClientFactory, ILogger<InstanceController> logger)
+    public InstanceController(IInstanceRepository repository, InstanceInstallService installService, AccountService accountService, JavaRuntimeStore javaRuntimeStore, LaunchService launchService, IHttpClientFactory httpClientFactory, ILogger<InstanceController> logger, MsAccount msAccount)
     {
         _repository = repository;
         _installService = installService;
@@ -34,6 +36,7 @@ public class InstanceController : ControllerBase
         _launchService = launchService;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _msAccount = msAccount;
     }
 
     [HttpGet]
@@ -519,8 +522,47 @@ public class InstanceController : ControllerBase
                         param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken) ? "faked-token-for-offline" : defaultAccount.AccessToken;
                     }
                 }
+                else if (defaultAccount.LoginMethod == "Microsoft")
+                {
+                    param.Account.LoginMethod = "Microsoft";
+                    if (!string.IsNullOrEmpty(defaultAccount.RefreshToken))
+                    {
+                        try
+                        {
+                            var refreshed = await _msAccount.RefreshUserInfo(defaultAccount.RefreshToken);
+                            defaultAccount.AccessToken = refreshed.Token;
+                            defaultAccount.RefreshToken = refreshed.RefreshToken;
+                            defaultAccount.Name = refreshed.Name;
+                            defaultAccount.Uuid = refreshed.Uuid;
+                            await _accountService.SaveAccountAsync(defaultAccount);
+
+                            param.Account.AccessToken = defaultAccount.AccessToken;
+                            param.Account.Name = defaultAccount.Name;
+                            param.Account.Uuid = defaultAccount.Uuid;
+                        }
+                        catch (Exception ex) when (ex.Message.Contains("invalid_grant") || ex.Message.Contains("AADSTS70008"))
+                        {
+                            param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken)
+                                ? "faked-token-for-offline"
+                                : defaultAccount.AccessToken;
+                        }
+                        catch
+                        {
+                            param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken)
+                                ? "faked-token-for-offline"
+                                : defaultAccount.AccessToken;
+                        }
+                    }
+                    else
+                    {
+                        param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken)
+                            ? "faked-token-for-offline"
+                            : defaultAccount.AccessToken;
+                    }
+                }
                 else
                 {
+                    // Offline 账户
                     param.Account.AccessToken = string.IsNullOrEmpty(defaultAccount.AccessToken) ? "faked-token-for-offline" : defaultAccount.AccessToken;
                 }
             }
