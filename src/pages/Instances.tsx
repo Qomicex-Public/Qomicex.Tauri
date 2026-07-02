@@ -1041,7 +1041,32 @@ export default function Instances() {
       ) : null}
 
       {loading || scanning ? (
-        <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">扫描版本中...</div>
+        viewMode === 'grid' ? (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className="animate-pulse rounded-xl border bg-card p-5 text-center">
+                <div className="mx-auto mb-3 h-16 w-16 rounded-2xl bg-muted" />
+                <div className="mx-auto h-4 w-2/3 rounded bg-muted" />
+                <div className="mx-auto mt-2 h-3 w-1/3 rounded bg-muted" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <div key={index} className="animate-pulse flex items-center gap-4 rounded-xl border bg-card px-5 py-4">
+                <div className="h-12 w-12 shrink-0 rounded-xl bg-muted" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-1/4 rounded bg-muted" />
+                  <div className="flex gap-2">
+                    <div className="h-3 w-1/6 rounded bg-muted" />
+                    <div className="h-3 w-1/8 rounded bg-muted" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
       ) : scannedLocal.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
           <FontAwesomeIcon icon={faCube} className="h-10 w-10 opacity-30" />
