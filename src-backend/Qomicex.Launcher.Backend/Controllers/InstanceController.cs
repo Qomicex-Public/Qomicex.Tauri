@@ -672,6 +672,9 @@ public class InstanceController : ControllerBase
             if (process == null)
                 throw new Exception("无法启动 Java 进程");
 
+            // 注册进程PID，以便 Cancel 能立即kill
+            _launchService.RegisterProcess(id, process.Id);
+
             process.ErrorDataReceived += (_, e) =>
             {
                 if (e.Data != null)
@@ -722,7 +725,6 @@ public class InstanceController : ControllerBase
             instance.LastPlayed = DateTime.UtcNow;
             _repository.Update(instance.Id, instance);
 
-            _launchService.RegisterProcess(id, process.Id);
             state.Stage = "running"; state.Message = "游戏运行中"; state.Progress = 100;
             state.ProcessId = process.Id;
             state.Arguments = args;

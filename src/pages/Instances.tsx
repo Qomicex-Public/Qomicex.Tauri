@@ -14,7 +14,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, repairInstance, launchInstance, getLaunchProgress, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
+import { createInstance, startInstall, getInstances, repairInstance, launchInstance, getLaunchProgress, cancelLaunch, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx'
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance, LaunchProgress } from '../types/index.ts'
@@ -96,7 +96,7 @@ type PageStep = 'list' | 'select-version' | 'configure'
 
 export default function Instances() {
   const navigate = useNavigate()
-  const { alert: msgAlert, prompt: msgPrompt } = useMessageBox()
+  const { alert: msgAlert, prompt: msgPrompt, notify } = useMessageBox()
 
   const [scannedLocal, setScannedLocal] = useState<ScannedVersion[]>([])
   const [remoteVersions, setRemoteVersions] = useState<RemoteVersionInfo[]>([])
@@ -110,6 +110,7 @@ export default function Instances() {
   const [defaultInstanceId, setDefaultInstanceId] = useState<string | null>(null)
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const launchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const launchingInstanceIdRef = useRef<string | null>(null)
 
   const [managedDirs, setManagedDirs] = useState<ManagedDir[]>(() => loadDirs())
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
@@ -383,6 +384,7 @@ export default function Instances() {
       return
     }
 
+    launchingInstanceIdRef.current = inst!.id
     setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
     if (launchPollRef.current) clearInterval(launchPollRef.current)
 
@@ -391,6 +393,8 @@ export default function Instances() {
         const p = await getLaunchProgress(inst!.id)
         if (p.stage === 'running' || p.stage === 'completed') {
           setLaunchProgress(null)
+          launchingInstanceIdRef.current = null
+          if (p.stage === 'running') notify('游戏已启动', 'success')
           if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
         } else if (p.stage === 'crashed' || p.stage === 'failed') {
           setLaunchProgress(p)
@@ -400,6 +404,17 @@ export default function Instances() {
         }
       } catch { }
     }, 500)
+  }
+
+  async function handleCancelLaunch() {
+    const id = launchingInstanceIdRef.current
+    if (id) {
+      try { await cancelLaunch(id) } catch { }
+    }
+    if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+    launchingInstanceIdRef.current = null
+    setLaunchProgress(null)
+    notify('已取消启动', 'info')
   }
 
   async function openVersionSettings(v: ScannedVersion) {
@@ -910,9 +925,13 @@ export default function Instances() {
         </DialogBody>
       </Dialog>
 
-      <Dialog open={!!launchProgress} onClose={() => setLaunchProgress(null)} className="w-[480px]">
-        <DialogHeader onClose={() => setLaunchProgress(null)}>
-          <DialogTitle>启动失败</DialogTitle>
+      <Dialog open={!!launchProgress} onClose={handleCancelLaunch} className="w-[480px]">
+        <DialogHeader onClose={handleCancelLaunch}>
+          <DialogTitle>
+            {launchProgress && ['crashed', 'failed'].includes(launchProgress.stage)
+              ? '启动失败'
+              : '启动游戏'}
+          </DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-4">
           {launchProgress && (() => {
