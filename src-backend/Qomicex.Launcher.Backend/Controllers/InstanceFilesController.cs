@@ -66,7 +66,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
+        var savesDir = GetCategoryDir(gameDir, inst.Name, isolation, "saves");
         if (!Directory.Exists(savesDir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetDirectories(savesDir).Select(d => new FileEntry
         {
@@ -84,7 +84,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
+        var savesDir = GetCategoryDir(gameDir, inst.Name, isolation, "saves");
         var path = Path.Combine(savesDir, name);
         if (!Directory.Exists(path)) return NotFound();
         Directory.Delete(path, true);
@@ -98,7 +98,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
+        var savesDir = GetCategoryDir(gameDir, inst.Name, isolation, "saves");
         var src = Path.Combine(savesDir, request.Name);
         if (!Directory.Exists(src)) return NotFound();
         var dst = Path.Combine(savesDir, request.NewName);
@@ -113,7 +113,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "screenshots");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "screenshots");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -131,7 +131,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "screenshots");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "screenshots");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -145,7 +145,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -163,7 +163,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -177,7 +177,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         if (!Directory.Exists(modsDir)) return Ok(0);
         var count = Directory.GetFiles(modsDir, "*.jar").Length + Directory.GetFiles(modsDir, "*.disabled").Length;
         return Ok(count);
@@ -199,7 +199,7 @@ public class InstanceFilesController : ControllerBase
 
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
 
         var totalCount = Directory.Exists(modsDir)
             ? Directory.GetFiles(modsDir, "*.jar").Length + Directory.GetFiles(modsDir, "*.disabled").Length
@@ -209,8 +209,8 @@ public class InstanceFilesController : ControllerBase
 
         try
         {
-            Trace.WriteLine(new { instanceId, inst.GameVersion, inst.VersionDirName, inst.Loader, inst.LoaderVersion, apiKey, modsDir, totalCount, inst.Id, inst.VersionIsolation });
-            var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
+            Trace.WriteLine(new { instanceId, inst.Name, inst.VersionDirName, inst.Loader, inst.LoaderVersion, apiKey, modsDir, totalCount, inst.Id, inst.VersionIsolation });
+            var mods = new Mods(gameDir, inst.Name, isolation, apiKey);
             var modList = await mods.GetModList((current, total) =>
             {
                 progress.Current = current;
@@ -258,7 +258,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         var fileName = name.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase) ? name : name + ".disabled";
         var filePath = Path.Combine(modsDir, fileName);
         if (!System.IO.File.Exists(filePath))
@@ -269,7 +269,7 @@ public class InstanceFilesController : ControllerBase
         }
 
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
+        var mods = new Mods(gameDir, inst.Name, isolation, apiKey);
         mods.EnableMod(filePath);
         return NoContent();
     }
@@ -281,12 +281,12 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         var filePath = Path.Combine(modsDir, name);
         if (!System.IO.File.Exists(filePath)) return NotFound();
 
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
+        var mods = new Mods(gameDir, inst.Name, isolation, apiKey);
         mods.DisableMod(filePath);
         return NoContent();
     }
@@ -298,7 +298,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
 
         var oldPath = Path.Combine(modsDir, request.FileName);
         var oldBak = oldPath + ".bak";
@@ -351,7 +351,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         var path = Path.Combine(dir, request.FileName);
         using var client = _httpClientFactory.CreateClient();
         var response = await client.GetAsync(request.DownloadUrl);
@@ -370,9 +370,9 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
+        var mods = new Mods(gameDir, inst.Name, isolation, apiKey);
 
         foreach (var name in names)
         {
@@ -391,9 +391,9 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var mods = new Mods(gameDir, inst.GameVersion, isolation, apiKey);
+        var mods = new Mods(gameDir, inst.Name, isolation, apiKey);
 
         foreach (var name in names)
         {
@@ -411,7 +411,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var modsDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "mods");
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
 
         foreach (var name in names)
         {
@@ -432,7 +432,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "resourcepacks");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "resourcepacks");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -450,7 +450,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "resourcepacks");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "resourcepacks");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -468,7 +468,7 @@ public class InstanceFilesController : ControllerBase
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
 
-        var rp = new Resourcepack(gameDir, inst.GameVersion, isolation, apiKey);
+        var rp = new Resourcepack(gameDir, inst.Name, isolation, apiKey);
         var list = await rp.GetResourcePackList();
 
         var result = list.Select(m =>
@@ -505,7 +505,7 @@ public class InstanceFilesController : ControllerBase
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
 
-        var shaders = new Shaders(gameDir, inst.GameVersion, isolation, apiKey);
+        var shaders = new Shaders(gameDir, inst.Name, isolation, apiKey);
         var list = await shaders.GetShaderList();
 
         var result = list.Select(m =>
@@ -541,7 +541,7 @@ public class InstanceFilesController : ControllerBase
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
 
-        var saves = new Saves(gameDir, inst.GameVersion, isolation, apiKey);
+        var saves = new Saves(gameDir, inst.Name, isolation, apiKey);
         var list = saves.GetSaveList();
 
         var result = list.Select(s => new SaveMetadataDto
@@ -563,9 +563,9 @@ public class InstanceFilesController : ControllerBase
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var saves = new Saves(gameDir, inst.GameVersion, isolation, apiKey);
+        var saves = new Saves(gameDir, inst.Name, isolation, apiKey);
 
-        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
+        var savesDir = GetCategoryDir(gameDir, inst.Name, isolation, "saves");
         var savePath = Path.Combine(savesDir, request.OldName);
         if (!Directory.Exists(savePath)) return NotFound();
         saves.RenameSave(savePath, request.NewName);
@@ -580,9 +580,9 @@ public class InstanceFilesController : ControllerBase
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
         var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
-        var saves = new Saves(gameDir, inst.GameVersion, isolation, apiKey);
+        var saves = new Saves(gameDir, inst.Name, isolation, apiKey);
 
-        var savesDir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "saves");
+        var savesDir = GetCategoryDir(gameDir, inst.Name, isolation, "saves");
         var savePath = Path.Combine(savesDir, name);
         if (!Directory.Exists(savePath)) return NotFound();
         saves.BackupSave(savePath);
@@ -600,7 +600,7 @@ public class InstanceFilesController : ControllerBase
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
 
-        var screenshots = new Screenshots(gameDir, inst.GameVersion, isolation, apiKey);
+        var screenshots = new Screenshots(gameDir, inst.Name, isolation, apiKey);
         var list = screenshots.GetScreenshotList();
 
         var result = list.Select(s => new ScreenshotMetadataDto
@@ -621,7 +621,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "datapacks");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "datapacks");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -643,7 +643,7 @@ public class InstanceFilesController : ControllerBase
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
 
-        var dp = new DataPacks(gameDir, inst.GameVersion, isolation, apiKey);
+        var dp = new DataPacks(gameDir, inst.Name, isolation, apiKey);
         var list = await dp.GetDataPackList();
 
         var result = list.Select(m =>
@@ -676,7 +676,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "datapacks");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "datapacks");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -690,7 +690,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "shaderpacks");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "shaderpacks");
         if (!Directory.Exists(dir)) return Ok(new List<FileEntry>());
         return Ok(Directory.GetFiles(dir).Select(f => new FileEntry
         {
@@ -708,7 +708,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, category);
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, category);
         if (string.IsNullOrEmpty(dir)) return Ok(new List<string>());
         if (!Directory.Exists(dir)) return Ok(new List<string>());
         return Ok(Directory.GetFiles(dir).Select(Path.GetFileName).ToList());
@@ -721,7 +721,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return NotFound();
         var gameDir = ResolveGameDir(inst);
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        var dir = GetCategoryDir(gameDir, inst.GameVersion, isolation, "shaderpacks");
+        var dir = GetCategoryDir(gameDir, inst.Name, isolation, "shaderpacks");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
         System.IO.File.Delete(path);
@@ -780,7 +780,7 @@ public class InstanceFilesController : ControllerBase
         if (inst == null) return (null, null);
         var gameDir = ResolveGameDir(inst);
         var versionSpecific = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-        return (new ServersHelper(gameDir, inst.GameVersion, versionSpecific), gameDir);
+        return (new ServersHelper(gameDir, inst.Name, versionSpecific), gameDir);
     }
 
     private static Models.ServerEntry MapServerEntry(Qomicex.Core.Modules.Helpers.GameSettings.ServerEntry s)

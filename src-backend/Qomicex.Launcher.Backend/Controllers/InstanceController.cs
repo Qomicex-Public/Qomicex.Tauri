@@ -164,6 +164,7 @@ public class InstanceController : ControllerBase
             instance.VersionDirName = !string.IsNullOrEmpty(request.Loader) && !string.IsNullOrEmpty(request.LoaderVersion)
                 ? $"{instance.GameVersion}-{request.Loader}-{request.LoaderVersion}"
                 : instance.GameVersion;
+            instance.Name = instance.VersionDirName;
             _repository.Update(instance.Id, instance);
         }
 
@@ -745,7 +746,7 @@ public class InstanceController : ControllerBase
 
                     // Check crash-reports (Minecraft)
                     var crashDir = effectiveIsolation
-                        ? Path.Combine(instance.GameDir, "versions", instance.GameVersion, "crash-reports")
+                        ? Path.Combine(instance.GameDir, "versions", instance.Name, "crash-reports")
                         : Path.Combine(instance.GameDir, "crash-reports");
                     if (System.IO.Directory.Exists(crashDir))
                     {
