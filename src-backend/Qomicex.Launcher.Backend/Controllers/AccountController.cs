@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Qomicex.Launcher.Backend.Common;
 using Qomicex.Launcher.Backend.Services;
 using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
 using YggdrasilAccount = Qomicex.Core.Modules.Helpers.Account.Yggdrasil;
@@ -15,12 +17,14 @@ public class AccountController : ControllerBase
     private readonly MsAccount _msAccount;
     private readonly AccountService _accountService;
     private readonly IHttpClientFactory _httpFactory;
+    private readonly ILogger<AccountController> _logger;
 
-    public AccountController(MsAccount msAccount, AccountService accountService, IHttpClientFactory httpFactory)
+    public AccountController(MsAccount msAccount, AccountService accountService, IHttpClientFactory httpFactory, ILogger<AccountController> logger)
     {
         _msAccount = msAccount;
         _accountService = accountService;
         _httpFactory = httpFactory;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -218,6 +222,43 @@ public class AccountController : ControllerBase
         }
         return Ok(saved);
     }
+
+    [HttpPost("microsoft/refresh")]
+    public async Task<IActionResult> RefreshMicrosoftToken([FromBody] MicrosoftRefreshRequest request)
+    {
+        var account = await _accountService.GetAccountAsync(request.AccountUuid);
+        if (account == null)
+            return NotFound(ApiError.Create(404, "ACCOUNT_NOT_FOUND", "账户不存在", HttpContext.TraceIdentifier));
+        
+        if (account.LoginMethod != "Microsoft")
+            return BadRequest(ApiError.Create(400, "INVALID_ACCOUNT_TYPE", "该账户不是 Microsoft 类型", HttpContext.TraceIdentifier));
+        
+        if (string.IsNullOrEmpty(account.RefreshToken))
+            return BadRequest(ApiError.Create(400, "MISSING_REFRESH_TOKEN", "账户缺少 RefreshToken", HttpContext.TraceIdentifier));
+
+        try
+        {
+            var refreshedAccount = await _msAccount.RefreshUserInfo(account.RefreshToken);
+            
+            account.AccessToken = refreshedAccount.Token;
+            account.RefreshToken = refreshedAccount.RefreshToken;
+            account.Name = refreshedAccount.Name;
+            account.Uuid = refreshedAccount.Uuid;
+            
+            await _accountService.SaveAccountAsync(account);
+            
+            return Ok(new { success = true });
+        }
+        catch (Exception ex) when (ex.Message.Contains("invalid_grant") || ex.Message.Contains("AADSTS70008"))
+        {
+            return Ok(new { success = false, needReauth = true, error = "TOKEN_EXPIRED" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Microsoft token refresh failed for account {Uuid}", account.Uuid);
+            return BadRequest(ApiError.Create(400, "REFRESH_FAILED", $"Token 刷新失败: {ex.Message}", HttpContext.TraceIdentifier));
+        }
+    }
 }
 
 public class TongyiLoginRequest
@@ -247,4 +288,9 @@ public class YggdrasilLoginRequest
     public string Email { get; set; } = "";
     public string Password { get; set; } = "";
     public string ServerUrl { get; set; } = "https://authserver.mojang.com";
+}
+
+public class MicrosoftRefreshRequest
+{
+    public string AccountUuid { get; set; } = "";
 }
