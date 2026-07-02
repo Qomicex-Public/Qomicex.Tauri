@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faTrashCan } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui/tooltip.tsx'
@@ -13,6 +13,16 @@ interface Props {
 export default function ScreenshotCard({ screenshot, instanceId, onRefresh }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [preview, setPreview] = useState(false)
+  const [imgSrc, setImgSrc] = useState('')
+  const imgInited = useRef(false)
+
+  useEffect(() => {
+    if (imgInited.current) return
+    imgInited.current = true
+    const filePath = screenshot.filePath.replace(/\\/g, '/')
+    const fallback = `file:///${filePath.replace(/^\//, '')}`
+    import('@tauri-apps/api/core').then(mod => setImgSrc(mod.convertFileSrc(filePath))).catch(() => setImgSrc(fallback))
+  }, [screenshot.filePath])
 
   const handleDelete = useCallback(async () => {
     setDeleting(true)
@@ -22,9 +32,6 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh }: Pr
       onRefresh()
     } catch { setDeleting(false) }
   }, [instanceId, screenshot.fileName, onRefresh])
-
-  const filePath = screenshot.filePath.replace(/\\/g, '/')
-  const imgSrc = `file:///${filePath.replace(/^\//, '')}`
 
   return (
     <>

@@ -183,3 +183,32 @@ Three places implement this logic (keep in sync):
 - Frontend does not yet handle the `failed` install stage gracefully.
 - `Core.DownloadFileAsync` uses a static `HttpClient`.
 - Forge/Fabric/Quilt install paths need end-to-end testing.
+
+## Debugging workflow
+
+When debugging any backend-endpoint or filter functionality, run the test script before and after changes:
+
+```bash
+# Start backend if not already running
+cd src-backend/Qomicex.Launcher.Backend && nohup dotnet run > /tmp/backend.log 2>&1 &
+# Wait for it (check with curl localhost:5000/api/diagnostics/health)
+bash scripts/test-api-filters.sh
+```
+
+The test script (`scripts/test-api-filters.sh`) covers CurseForge local loader filtering, streaming version fetch, and Modrinth empty-loader inclusion. Add new test cases there as functionality grows.
+
+## Testing API filters
+
+`scripts/test-api-filters.sh` — tests the CurseForge/Modrinth version filter fixes interactively. Requires `curl` and `jq`:
+
+```bash
+# Start backend first
+cd src-backend/Qomicex.Launcher.Backend && dotnet run &
+sleep 5
+bash scripts/test-api-filters.sh
+
+# Override base URL for non-localhost
+BASE=http://10.0.0.5:5000/api/resources bash scripts/test-api-filters.sh
+```
+
+Tests local loader filtering on CurseForge (older mods without `modLoaderType` field), the streaming version fetch (`start-fetch` → `fetch-progress` → `fetch-result`), Modrinth empty `Loaders: []` inclusion in version and dependency resolution.

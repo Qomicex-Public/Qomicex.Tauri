@@ -277,13 +277,14 @@ export default function Accounts() {
                     <FontAwesomeIcon icon={faStar} className="h-3 w-3 text-amber-400" />
                   </span>
                 ) : (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleSetDefault(acc.uuid) }}
-                    className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-primary/10 hover:text-primary group-hover:opacity-100"
-                    title="设为默认"
-                  >
-                    <FontAwesomeIcon icon={faStar} className="h-3 w-3" />
-                  </button>
+                  <Tooltip content="设为默认">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleSetDefault(acc.uuid) }}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-primary/10 hover:text-primary group-hover:opacity-100"
+                    >
+                      <FontAwesomeIcon icon={faStar} className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
                 )}
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDelete(acc.uuid) }}

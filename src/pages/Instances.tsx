@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -451,15 +451,17 @@ export default function Instances() {
     } catch {}
   }
 
-  const filtered = scannedLocal
+  const filtered = useMemo(() => scannedLocal
     .filter((v, i, arr) => arr.findIndex(x => x.name === v.name) === i)
-    .filter((v) => !search || v.name.toLowerCase().includes(search.toLowerCase()))
+    .filter((v) => !search || v.name.toLowerCase().includes(search.toLowerCase())),
+    [scannedLocal, search])
 
-  const filteredRemote = remoteVersions
+  const filteredRemote = useMemo(() => remoteVersions
     .filter((v) => remoteCategory === 'all' || v.type === remoteCategory)
-    .filter((v) => !versionSearch || v.id.toLowerCase().includes(versionSearch.toLowerCase()))
+    .filter((v) => !versionSearch || v.id.toLowerCase().includes(versionSearch.toLowerCase())),
+    [remoteVersions, remoteCategory, versionSearch])
 
-  const sortedRemote = [...filteredRemote].sort((a, b) => {
+  const sortedRemote = useMemo(() => [...filteredRemote].sort((a, b) => {
     if (remoteSort === 'newest') {
       return new Date(b.releaseTime).getTime() - new Date(a.releaseTime).getTime()
     }
@@ -476,7 +478,7 @@ export default function Instances() {
     const ta = TYPE_ORDER[a.type] ?? 99
     const tb = TYPE_ORDER[b.type] ?? 99
     return ta !== tb ? ta - tb : new Date(b.releaseTime).getTime() - new Date(a.releaseTime).getTime()
-  })
+  }), [filteredRemote, remoteSort])
 
   if (step === 'select-version') {
     return (
@@ -1047,7 +1049,7 @@ export default function Instances() {
                       </Tooltip>
                     )})()}
                     <Tooltip content="打开文件夹">
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {}) }}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {}) }}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
                 </div>
@@ -1100,7 +1102,7 @@ export default function Instances() {
                     </Tooltip>
                   )})()}
                    <Tooltip content="打开文件夹">
-                       <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                    </Tooltip>
                 </div>
               </div>

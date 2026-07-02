@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Services;
 using System.Net.Http.Json;
@@ -15,6 +16,17 @@ public class ResourcesController : ControllerBase
     private readonly HttpClient _curseforge;
     private readonly string _cfApiKey;
     private readonly FtbService _ftbService;
+
+    private static readonly ConcurrentDictionary<string, CurseForgeVersionFetchState> CfFetchStates = new();
+
+    private class CurseForgeVersionFetchState
+    {
+        public int TotalVersionCount { get; set; }
+        public int LoadedVersionCount { get; set; }
+        public bool Done { get; set; }
+        public List<ResourceVersion>? Results { get; set; }
+        public string? Error { get; set; }
+    }
 
     public ResourcesController(IHttpClientFactory httpClientFactory, IConfiguration config, FtbService ftbService)
     {
@@ -339,7 +351,7 @@ public class ResourcesController : ControllerBase
     {
         return source.ToLowerInvariant() switch
         {
-            "curseforge" => await GetCurseForgeVersions(id),
+            "curseforge" => await GetCurseForgeVersions(id, gameVersion, loader),
             "ftb" => await GetFtbVersions(id),
             _ => await GetModrinthVersions(id, gameVersion, loader),
         };
@@ -353,6 +365,138 @@ public class ResourcesController : ControllerBase
             "ftb" => await GetFtbVersionDownloads(id, versionId),
             _ => NotFound(new { error = "Version downloads endpoint is only implemented for FTB." }),
         };
+    }
+
+    [HttpPost("{id}/versions/start-fetch")]
+    public async Task<IActionResult> StartCurseForgeVersionFetch(string id,
+        [FromQuery] string? gameVersion = null, [FromQuery] string? loader = null)
+    {
+        try
+        {
+            var query = $"/v1/mods/{Uri.EscapeDataString(id)}/files?pageSize=50";
+            if (!string.IsNullOrWhiteSpace(gameVersion))
+                query += $"&gameVersion={Uri.EscapeDataString(gameVersion)}";
+
+            var normalizedLoader = !string.IsNullOrWhiteSpace(loader) ? loader.Trim().ToLowerInvariant() : null;
+
+            async Task<JsonObject?> FetchJson(int index)
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, ModApiMirror.MirrorCurseForge($"{query}&index={index}"));
+                req.Headers.Add("x-api-key", _cfApiKey);
+                var resp = await _curseforge.SendAsync(req);
+                resp.EnsureSuccessStatusCode();
+                return await resp.Content.ReadFromJsonAsync<JsonObject>();
+            }
+
+            var firstJson = await FetchJson(0);
+            var firstData = firstJson?["data"]?.AsArray();
+            var totalCount = firstJson?["pagination"]?["totalCount"]?.GetValue<int>() ?? 0;
+
+            var taskId = Guid.NewGuid().ToString();
+            if (firstData == null || firstData.Count == 0 || totalCount == 0)
+            {
+                CfFetchStates[taskId] = new CurseForgeVersionFetchState
+                { TotalVersionCount = 0, LoadedVersionCount = 0, Done = true, Results = [] };
+                return Ok(new { taskId, totalVersionCount = 0, loadedVersionCount = 0 });
+            }
+
+            var parsedResults = new List<ResourceVersion>();
+            foreach (var f in firstData)
+                parsedResults.Add(ParseCurseForgeFile(id, f));
+            if (normalizedLoader != null)
+            {
+                parsedResults = parsedResults.Where(v =>
+                    v.Loaders.Count == 0 ||
+                    v.Loaders.Any(l => l.Equals(normalizedLoader, StringComparison.OrdinalIgnoreCase))
+                ).ToList();
+            }
+            var loadedCount = parsedResults.Count;
+            var estimatedTotal = totalCount;
+            if (normalizedLoader != null && firstData.Count > 0)
+            {
+                estimatedTotal = (int)Math.Ceiling((double)totalCount * loadedCount / firstData.Count);
+            }
+
+            var state = new CurseForgeVersionFetchState
+            {
+                TotalVersionCount = estimatedTotal,
+                LoadedVersionCount = loadedCount,
+                Results = parsedResults,
+            };
+            CfFetchStates[taskId] = state;
+
+            var pageSize = 50;
+            var totalPages = (totalCount + pageSize - 1) / pageSize;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var pageIndices = Enumerable.Range(1, totalPages - 1).Select(p => p * pageSize).ToArray();
+                    var semaphore = new SemaphoreSlim(5);
+                    var fetchTasks = pageIndices.Select(async index =>
+                    {
+                        await semaphore.WaitAsync();
+                        try
+                        {
+                            var json = await FetchJson(index);
+                            var data = json?["data"]?.AsArray();
+                            if (data == null) return;
+                            var batch = new List<ResourceVersion>();
+                            foreach (var f in data)
+                                batch.Add(ParseCurseForgeFile(id, f));
+                            if (normalizedLoader != null)
+                            {
+                                batch = batch.Where(v =>
+                                    v.Loaders.Count == 0 ||
+                                    v.Loaders.Any(l => l.Equals(normalizedLoader, StringComparison.OrdinalIgnoreCase))
+                                ).ToList();
+                            }
+                            lock (state)
+                            {
+                                state.Results!.AddRange(batch);
+                                state.LoadedVersionCount += batch.Count;
+                            }
+                        }
+                        finally { semaphore.Release(); }
+                    }).ToList();
+
+                    await Task.WhenAll(fetchTasks);
+                    state.Done = true;
+                }
+                catch (Exception ex)
+                {
+                    state.Error = ex.Message;
+                    state.Done = true;
+                }
+            });
+
+            return Ok(new { taskId, totalVersionCount = estimatedTotal, loadedVersionCount = loadedCount });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, new { error = $"CurseForge API error: {ex.Message}" });
+        }
+    }
+
+    [HttpGet("versions/fetch-progress/{taskId}")]
+    public IActionResult GetCurseForgeVersionFetchProgress(string taskId)
+    {
+        if (CfFetchStates.TryGetValue(taskId, out var state))
+            return Ok(new { loadedVersionCount = state.LoadedVersionCount, totalVersionCount = state.TotalVersionCount, done = state.Done });
+        return NotFound();
+    }
+
+    [HttpGet("versions/fetch-result/{taskId}")]
+    public IActionResult GetCurseForgeVersionFetchResult(string taskId)
+    {
+        if (CfFetchStates.TryGetValue(taskId, out var state) && state.Done)
+        {
+            var results = state.Results ?? [];
+            CfFetchStates.TryRemove(taskId, out _);
+            return Ok(results);
+        }
+        return NotFound();
     }
 
     [HttpGet("{id}/translate")]
@@ -425,7 +569,7 @@ public class ResourcesController : ControllerBase
 
         var best = versions
             .Where(v => (gameVersion == null || v.GameVersions?.Contains(gameVersion) == true)
-                     && (loader == null || v.Loaders?.Contains(loader) == true))
+                     && (loader == null || v.Loaders == null || v.Loaders.Count == 0 || v.Loaders.Contains(loader)))
             .MaxBy(v => v.DatePublished);
 
         // fallback to latest overall
@@ -579,7 +723,7 @@ public class ResourcesController : ControllerBase
             if (!string.IsNullOrWhiteSpace(gameVersion))
                 filtered = filtered.Where(v => v.GameVersions?.Contains(gameVersion) == true);
             if (!string.IsNullOrWhiteSpace(loader))
-                filtered = filtered.Where(v => v.Loaders?.Contains(loader) == true);
+                filtered = filtered.Where(v => v.Loaders == null || v.Loaders.Count == 0 || v.Loaders.Contains(loader));
 
             var result = filtered.Select(v => new ResourceVersion
             {
@@ -610,45 +754,100 @@ public class ResourcesController : ControllerBase
         }
     }
 
-    private async Task<IActionResult> GetCurseForgeVersions(string id)
+    private async Task<IActionResult> GetCurseForgeVersions(string id, string? gameVersion, string? loader)
     {
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(id)}/files?pageSize=20"));
-            request.Headers.Add("x-api-key", _cfApiKey);
-            var httpResponse = await _curseforge.SendAsync(request);
-            httpResponse.EnsureSuccessStatusCode();
+            var query = $"/v1/mods/{Uri.EscapeDataString(id)}/files?pageSize=50";
+            if (!string.IsNullOrWhiteSpace(gameVersion))
+                query += $"&gameVersion={Uri.EscapeDataString(gameVersion)}";
 
-            var json = await httpResponse.Content.ReadFromJsonAsync<JsonObject>();
-            var data = json?["data"]?.AsArray();
-            if (data == null)
+            async Task<(JsonArray? Data, int TotalCount)> FetchPage(int index)
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, ModApiMirror.MirrorCurseForge($"{query}&index={index}"));
+                req.Headers.Add("x-api-key", _cfApiKey);
+                var resp = await _curseforge.SendAsync(req);
+                resp.EnsureSuccessStatusCode();
+                var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
+                var totalCount = json?["pagination"]?["totalCount"]?.GetValue<int>() ?? 0;
+                return (json?["data"]?.AsArray(), totalCount);
+            }
+
+            var (firstData, totalCount) = await FetchPage(0);
+            if (firstData == null || firstData.Count == 0 || totalCount == 0)
                 return Ok(Array.Empty<ResourceVersion>());
 
-            var result = data.Select(f => new ResourceVersion
+            var allResults = new List<ResourceVersion>();
+            var pageSize = 50;
+            var totalPages = (totalCount + pageSize - 1) / pageSize;
+            var pageIndices = Enumerable.Range(0, totalPages).Select(p => p * pageSize).ToArray();
+
+            var semaphore = new SemaphoreSlim(5);
+            var fetchTasks = pageIndices.Select(async index =>
             {
-                Id = f?["id"]?.GetValue<int>().ToString() ?? "",
-                Name = f?["displayName"]?.GetValue<string>() ?? "",
-                VersionNumber = f?["fileName"]?.GetValue<string>() ?? "",
-                GameVersions = ExtractCurseForgeGameVersions(f?["gameVersions"]?.AsArray()),
-                Loaders = ExtractCurseForgeLoaders(
-                    f?["gameVersions"]?.AsArray(),
-                    f?["sortableGameVersions"]?.AsArray(),
-                    f?["modLoader"]?.GetValue<int?>()),
-                Downloads = [new ResourceFile
-                {
-                    Url = $"https://www.curseforge.com/minecraft/mc-mods/{id}/files/{f?["id"]}",
-                    Filename = f?["fileName"]?.GetValue<string>() ?? "",
-                    Size = f?["fileLength"]?.GetValue<long>() ?? 0,
-                }],
-                DatePublished = f?["fileDate"]?.GetValue<DateTime>() ?? DateTime.MinValue,
+                await semaphore.WaitAsync();
+                try { return await FetchPage(index); }
+                finally { semaphore.Release(); }
             }).ToList();
 
-            return Ok(result);
+            var pages = await Task.WhenAll(fetchTasks);
+            foreach (var (data, _) in pages)
+            {
+                if (data == null) continue;
+                foreach (var f in data)
+                    allResults.Add(ParseCurseForgeFile(id, f));
+            }
+
+            if (!string.IsNullOrWhiteSpace(loader))
+            {
+                var normalized = loader.Trim().ToLowerInvariant();
+                allResults = allResults.Where(v =>
+                    v.Loaders.Count == 0 ||
+                    v.Loaders.Any(l => l.Equals(normalized, StringComparison.OrdinalIgnoreCase))
+                ).ToList();
+            }
+
+            return Ok(allResults);
         }
         catch (Exception ex)
         {
             return StatusCode(502, new { error = $"CurseForge API error: {ex.Message}" });
         }
+    }
+
+    private static int? CurseForgeLoaderToId(string loader)
+    {
+        return loader.Trim().ToLowerInvariant() switch
+        {
+            "forge" => 1,
+            "liteloader" => 3,
+            "fabric" => 4,
+            "quilt" => 5,
+            "neoforge" => 6,
+            _ => null,
+        };
+    }
+
+    private static ResourceVersion ParseCurseForgeFile(string modId, JsonNode? f)
+    {
+        return new ResourceVersion
+        {
+            Id = f?["id"]?.GetValue<int>().ToString() ?? "",
+            Name = f?["displayName"]?.GetValue<string>() ?? "",
+            VersionNumber = f?["fileName"]?.GetValue<string>() ?? "",
+            GameVersions = ExtractCurseForgeGameVersions(f?["gameVersions"]?.AsArray()),
+            Loaders = ExtractCurseForgeLoaders(
+                f?["gameVersions"]?.AsArray(),
+                f?["sortableGameVersions"]?.AsArray(),
+                f?["modLoader"]?.GetValue<int?>()),
+            Downloads = [new ResourceFile
+            {
+                Url = f?["downloadUrl"]?.GetValue<string>() ?? "",
+                Filename = f?["fileName"]?.GetValue<string>() ?? "",
+                Size = f?["fileLength"]?.GetValue<long>() ?? 0,
+            }],
+            DatePublished = f?["fileDate"]?.GetValue<DateTime>() ?? DateTime.MinValue,
+        };
     }
 
     private async Task<string> GetModrinthPrimaryAuthorAsync(string teamId)

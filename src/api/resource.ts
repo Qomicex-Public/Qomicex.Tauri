@@ -1,4 +1,4 @@
-import { get } from './client.ts'
+import { get, post } from './client.ts'
 import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion, ResolvedDependency } from '../types/index.ts'
 
 export function searchResources(params: {
@@ -35,6 +35,24 @@ export function getResourceVersions(id: string, source?: string, gameVersion?: s
   if (loader) q.set('loader', loader)
   const qs = q.toString()
   return get<ResourceVersion[]>(`/resources/${encodeURIComponent(id)}/versions${qs ? `?${qs}` : ''}`)
+}
+
+export function startCurseForgeVersionFetch(id: string, gameVersion?: string, loader?: string): Promise<{ taskId: string; totalVersionCount: number; loadedVersionCount: number }> {
+  const q = new URLSearchParams()
+  if (gameVersion) q.set('gameVersion', gameVersion)
+  if (loader) q.set('loader', loader)
+  return post<{ taskId: string; totalVersionCount: number; loadedVersionCount: number }>(
+    `/resources/${encodeURIComponent(id)}/versions/start-fetch${q.toString() ? `?${q}` : ''}`,
+    {},
+  )
+}
+
+export function getCurseForgeVersionFetchProgress(taskId: string): Promise<{ loadedVersionCount: number; totalVersionCount: number; done: boolean }> {
+  return get<{ loadedVersionCount: number; totalVersionCount: number; done: boolean }>(`/resources/versions/fetch-progress/${taskId}`)
+}
+
+export function getCurseForgeVersionFetchResult(taskId: string): Promise<ResourceVersion[]> {
+  return get<ResourceVersion[]>(`/resources/versions/fetch-result/${taskId}`)
 }
 
 export function getResourceVersionDownloads(id: string, versionId: string, source?: string): Promise<ResourceFile[]> {

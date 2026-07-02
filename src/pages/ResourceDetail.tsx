@@ -22,15 +22,14 @@ import { Card, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { get } from '../api/client.ts'
-import { getResourceDetail, getResourceVersionDownloads, getResourceVersions } from '../api/resource.ts'
+import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
 import { lookupChineseName } from '../api/mcmod.ts'
-import { startResourceDownload, downloadTo } from '../api/resource-download.ts'
+import { downloadTo } from '../api/resource-download.ts'
 import { getInstance, getDefaultInstance } from '../api/instance.ts'
-import { addTask } from '../stores/downloadStore.ts'
-import type { ResourceDetail, ResourceFile, ResourceVersion, DownloadTask, GameInstance } from '../types/index.ts'
+import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 import { save } from '@tauri-apps/plugin-dialog'
-import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
+
 
 function formatDownloads(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -67,7 +66,7 @@ function LoaderBadge({ loader }: { loader: string }) {
 export default function ResourceDetailPage() {
   const { resourceId } = useParams()
   const [searchParams] = useSearchParams()
-  const { choose, notify } = useMessageBox()
+  const { notify } = useMessageBox()
   const source = searchParams.get('source') ?? 'modrinth'
   const category = searchParams.get('category') ?? 'mod'
   const keyword = searchParams.get('keyword') ?? ''
@@ -81,6 +80,7 @@ export default function ResourceDetailPage() {
   const [loadingVersions, setLoadingVersions] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [versionsError, setVersionsError] = useState<string | null>(null)
+  const [versionFetchProgress, setVersionFetchProgress] = useState<{ loaded: number; total: number } | null>(null)
   const urlGameVersion = searchParams.get('gameVersion') || ''
   const urlLoader = (searchParams.get('loader') || '').toLowerCase()
   const [selectedGameVersion, setSelectedGameVersion] = useState(urlGameVersion || 'all')
@@ -88,49 +88,27 @@ export default function ResourceDetailPage() {
   const [downloadsByVersion, setDownloadsByVersion] = useState<Record<string, ResourceFile[]>>({})
   const [loadingDownloadsFor, setLoadingDownloadsFor] = useState<string | null>(null)
   const [downloadingFor, setDownloadingFor] = useState<string | null>(null)
-  const [showInstallDialog, setShowInstallDialog] = useState(false)
+
   const [cnName, setCnName] = useState<string | null>(null)
   const [translation, setTranslation] = useState<{ original: string; translated: string; translatedAt: string } | null>(null)
   const [translating, setTranslating] = useState(false)
+  const [visibleCount, setVisibleCount] = useState(0)
+  const PAGE_SIZE = 30
 
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
     setDownloadingFor(versionId)
     try {
-      const auto = await choose('是否自动下载到对应实例目录？', '自动下载', '选择位置', '下载方式')
-      if (auto) {
-        let instanceId = instanceIdParam
-        if (!instanceId) {
-          const def = await getDefaultInstance()
-          if (!def) { notify('未设置默认实例，请先在实例详情中固定一个实例', 'warning'); setDownloadingFor(null); return }
-          instanceId = def.id
-        }
-        const result = await startResourceDownload(instanceId, url, fileName, category)
-        const task: DownloadTask = {
-          id: `file-${result.taskId}`,
-          name: result.fileName,
-          type: 'file',
-          gameVersion: '',
-          status: 'queued',
-          progress: 0,
-          createdAt: new Date().toISOString(),
-          instanceId,
-          taskId: result.taskId,
-        }
-        addTask(task)
-        notify(`已加入下载列表：${result.fileName}`, 'success')
-      } else {
-        const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shaderpack: 'shaderpacks', save: 'saves' }
-        const subDir = folderMap[category] || ''
-        const defaultDir = instance?.gameDir ? instance.gameDir.replace(/\\/g, '/') + (subDir ? `/${subDir}` : '') : undefined
-        const defaultPath = defaultDir ? `${defaultDir}/${fileName}` : fileName
-        const targetPath = await save({ defaultPath })
-        if (!targetPath) { setDownloadingFor(null); return }
-        await downloadTo(url, targetPath)
-        notify(`已下载到：${targetPath}`, 'success')
-      }
+      const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shaderpack: 'shaderpacks', save: 'saves' }
+      const subDir = folderMap[category] || ''
+      const defaultDir = instance?.gameDir ? instance.gameDir.replace(/\\/g, '/') + (subDir ? `/${subDir}` : '') : undefined
+      const defaultPath = defaultDir ? `${defaultDir}/${fileName}` : fileName
+      const targetPath = await save({ defaultPath })
+      if (!targetPath) { setDownloadingFor(null); return }
+      await downloadTo(url, targetPath)
+      notify(`已下载到：${targetPath}`, 'success')
     } catch { notify('下载失败', 'error') }
     setDownloadingFor(null)
-  }, [instanceIdParam, category, notify, choose, instance])
+  }, [category, instance, notify])
 
   useEffect(() => {
     if (!resourceId) return
@@ -146,21 +124,63 @@ export default function ResourceDetailPage() {
       setDownloadsByVersion({})
       setLoadingDownloadsFor(null)
       setTranslation(null)
-      try {
-        const [resourceDetail, versionList] = await Promise.all([
-          getResourceDetail(id, source),
-          getResourceVersions(id, source),
-        ])
 
+      // Phase 1: load detail only — show page ASAP
+      try {
+        const resourceDetail = await getResourceDetail(id, source)
         if (cancelled) return
         setDetail(resourceDetail)
         if (category === 'mod') lookupChineseName(resourceDetail.title).then(setCnName)
-        setVersions(versionList)
+        setLoading(false)
       } catch (e) {
         if (cancelled) return
         setError(e instanceof Error ? e.message : '加载资源详情失败')
+        setLoading(false)
+        setLoadingVersions(false)
+        return
       }
-      if (!cancelled) { setLoading(false); setLoadingVersions(false) }
+
+      // Phase 2: load versions in background
+      if (source === 'curseforge') {
+        try {
+          const { taskId, totalVersionCount, loadedVersionCount } = await startCurseForgeVersionFetch(id)
+          if (cancelled) return
+          setVersionFetchProgress({ loaded: loadedVersionCount, total: totalVersionCount })
+
+          // poll progress every 500ms
+          const pollMs = 500
+          const poll = async (): Promise<ResourceVersion[]> => {
+            while (true) {
+              await new Promise(r => setTimeout(r, pollMs))
+              if (cancelled) throw new Error('cancelled')
+              const p = await getCurseForgeVersionFetchProgress(taskId)
+              if (cancelled) throw new Error('cancelled')
+              setVersionFetchProgress({ loaded: p.loadedVersionCount, total: p.totalVersionCount })
+              if (p.done) {
+                return getCurseForgeVersionFetchResult(taskId)
+              }
+            }
+          }
+          const versionList = await poll()
+          if (cancelled) return
+          setVersions(versionList)
+        } catch (e) {
+          if (cancelled) return
+          setVersionsError(e instanceof Error ? e.message : '加载版本列表失败')
+        }
+        setVersionFetchProgress(null)
+        if (!cancelled) setLoadingVersions(false)
+      } else {
+        try {
+          const versionList = await getResourceVersions(id, source)
+          if (cancelled) return
+          setVersions(versionList)
+        } catch (e) {
+          if (cancelled) return
+          setVersionsError(e instanceof Error ? e.message : '加载版本列表失败')
+        }
+        if (!cancelled) setLoadingVersions(false)
+      }
 
       // fetch instance to default version/loader filters and download path
       if (!cancelled) {
@@ -170,8 +190,13 @@ export default function ResourceDetailPage() {
             : await getDefaultInstance()
           if (inst && !cancelled) {
             setInstance(inst)
-            if (!urlGameVersion && inst.gameVersion) setSelectedGameVersion(inst.gameVersion)
-            if (!urlLoader && inst.loader) setSelectedLoader(inst.loader)
+            if (inst.loader) {
+              const loader = inst.loader.toLowerCase().trim()
+              const hasVersion = !inst.gameVersion || versions.some(v => v.gameVersions.includes(inst.gameVersion))
+              const hasLoader = versions.some(v => v.loaders.length === 0 || v.loaders.includes(loader))
+              if (!urlGameVersion && inst.gameVersion && hasVersion) setSelectedGameVersion(inst.gameVersion)
+              if (!urlLoader && hasLoader) setSelectedLoader(loader)
+            }
           }
         } catch { /* no instance available */ }
       }
@@ -194,10 +219,16 @@ export default function ResourceDetailPage() {
   const filteredVersions = useMemo(() => {
     return versions.filter((version) => {
       const matchesGameVersion = selectedGameVersion === 'all' || version.gameVersions.includes(selectedGameVersion)
-      const matchesLoader = selectedLoader === 'all' || version.loaders.includes(selectedLoader)
+      const matchesLoader = selectedLoader === 'all' || version.loaders.length === 0 || version.loaders.includes(selectedLoader)
       return matchesGameVersion && matchesLoader
     })
   }, [selectedGameVersion, selectedLoader, versions])
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [versions, selectedGameVersion, selectedLoader])
+
+  const displayedVersions = filteredVersions.slice(0, visibleCount)
 
   const expandBody = searchParams.get('expandBody') === '1'
   const [bodyCollapsed, setBodyCollapsed] = useState(!expandBody)
@@ -391,9 +422,32 @@ export default function ResourceDetailPage() {
 
                 <div className="max-h-[540px] space-y-2 overflow-y-auto pr-1">
                   {loadingVersions ? (
-                    <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 p-6 text-xs text-muted-foreground">
-                      <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin" />
-                      正在加载版本列表...
+                    <div className="space-y-2">
+                      {versionFetchProgress && (
+                        <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                          <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+                          正在获取版本列表
+                          <span className="font-medium text-foreground/80">
+                            {versionFetchProgress.loaded} / {versionFetchProgress.total}
+                          </span>
+                        </div>
+                      )}
+                      {Array.from({ length: 4 }).map((_, i) => (
+                        <div key={i} className="animate-pulse rounded-xl border border-border/60 bg-background p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1 space-y-2">
+                              <div className="h-4 w-3/5 rounded bg-muted" />
+                              <div className="h-3 w-2/5 rounded bg-muted" />
+                              <div className="flex gap-1.5">
+                                <div className="h-5 w-14 rounded-full bg-muted" />
+                                <div className="h-5 w-16 rounded-full bg-muted" />
+                                <div className="h-5 w-12 rounded-full bg-muted" />
+                              </div>
+                            </div>
+                            <div className="h-8 w-16 shrink-0 rounded-lg bg-muted" />
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   ) : versionsError ? (
                     <div className="rounded-xl border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
@@ -411,7 +465,8 @@ export default function ResourceDetailPage() {
                           当前筛选条件下没有可用版本
                         </div>
                       ) : (
-                        filteredVersions.map((version) => (
+                        <>
+                        {displayedVersions.map((version) => (
                           <div key={version.id} className="rounded-xl border border-border/60 bg-background p-3 transition-colors hover:bg-accent/30">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0 flex-1 space-y-2">
@@ -454,19 +509,39 @@ export default function ResourceDetailPage() {
                                     {loadingDownloadsFor === version.id ? '加载中...' : '获取下载'}
                                   </Button>
                                 )
+                              ) : version.downloads?.[0]?.url ? (
+                                <Button
+                                  size="sm"
+                                  className="shrink-0"
+                                  disabled={downloadingFor === version.id}
+                                  onClick={() => handleDownload(version.id, version.downloads[0].url, version.downloads[0].filename)}
+                                >
+                                  <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faDownload} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
+                                  {downloadingFor === version.id ? '下载中...' : '安装'}
+                                </Button>
                               ) : (
                                 <Button
                                   size="sm"
                                   className="shrink-0"
-                                  onClick={() => setShowInstallDialog(true)}
+                                  disabled
                                 >
                                   <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                                  安装
+                                  暂无下载
                                 </Button>
                               )}
                             </div>
                           </div>
-                        ))
+                        ))}
+                        {visibleCount < filteredVersions.length && (
+                          <button
+                            onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
+                            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 p-3 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
+                          >
+                            <FontAwesomeIcon icon={faChevronDown} className="h-3 w-3" />
+                            加载更多 ({filteredVersions.length - visibleCount} 个)
+                          </button>
+                        )}
+                        </>
                       )}
                     </>
                   )}
@@ -476,17 +551,7 @@ export default function ResourceDetailPage() {
           </div>
         </>
       )}
-      {detail && (
-        <ResourceInstallDialog
-          open={showInstallDialog}
-          onClose={() => setShowInstallDialog(false)}
-          resourceId={detail.id}
-          resourceTitle={cnName || detail.title}
-          resourceIcon={detail.iconUrl}
-          source={detail.source}
-          category={category}
-        />
-      )}
+
     </div>
   )
 }

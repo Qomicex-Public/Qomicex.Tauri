@@ -35,7 +35,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const debug = (window as any).__DEBUG__
+  const debug = window.__DEBUG__
 
   if (debug?.networkLogging) {
     console.log(`[API] ${options?.method ?? 'GET'} ${path}`)

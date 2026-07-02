@@ -12,12 +12,13 @@ export default function LogOverlay() {
   const containerRef = useRef<HTMLDivElement>(null)
 
   const fetchLogs = useCallback(async () => {
+    if (collapsed) return
     try {
       const entries = await get<string[]>('/diagnostics/trace')
-      setLogs(entries)
+      setLogs(entries.length > 500 ? entries.slice(-500) : entries)
       setLatest(entries.length > 0 ? entries[entries.length - 1] : '')
     } catch { /* ignore */ }
-  }, [])
+  }, [collapsed])
 
   useEffect(() => {
     fetchLogs()

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer, faCoffee } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
@@ -202,10 +202,10 @@ export default function DownloadCenter() {
     }
   }, [tasks.length, tasks.filter((t) => (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused')).length])
 
-  const filtered = tasks.filter((t) => {
+  const filtered = useMemo(() => tasks.filter((t) => {
     if (filter === 'all') return true
     return t.status === filter
-  })
+  }), [tasks, filter])
 
   return (
     <div className="animate-in slide-up space-y-6 p-8">

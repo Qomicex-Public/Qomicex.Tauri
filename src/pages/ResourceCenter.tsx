@@ -14,6 +14,18 @@ import { batchLookupChineseNames } from '../api/mcmod.ts'
 import type { ResourceItem } from '../types/index.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 
+interface PageCache {
+  items: ResourceItem[]
+  total: number
+  timestamp: number
+}
+const searchCache = new Map<string, Map<number, PageCache>>()
+const CACHE_TTL = 5 * 60 * 1000
+
+function cacheKey(category: string, keyword: string, sort: string, source: string, gameVersion: string, loader: string): string {
+  return `${source}|${category}|${keyword}|${sort}|${gameVersion}|${loader}`
+}
+
 const CATEGORIES = [
   { key: 'mod', label: '模组' },
   { key: 'modpack', label: '整合包' },
@@ -196,6 +208,16 @@ export default function ResourceCenter() {
   const doSearch = useCallback(async (pageNum: number, append: boolean) => {
     setLoading(true)
     setError(null)
+    const key = cacheKey(category, keyword, sort, source, gameVersion, loader)
+    const cached = searchCache.get(key)?.get(pageNum)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      setItems((prev) => append ? [...prev, ...cached.items] : cached.items)
+      setTotal(cached.total)
+      setPage(pageNum)
+      setLoading(false)
+      setInitialLoading(false)
+      return
+    }
     try {
       const res = await searchResources({
         category,
@@ -207,7 +229,10 @@ export default function ResourceCenter() {
         gameVersion: gameVersion || undefined,
         loader: (loader || '').toLowerCase() || undefined,
       })
-      setItems((prev) => append ? [...prev, ...res.items] : res.items)
+      const pageItems = res.items
+      if (!searchCache.has(key)) searchCache.set(key, new Map())
+      searchCache.get(key)!.set(pageNum, { items: pageItems, total: res.total, timestamp: Date.now() })
+      setItems((prev) => append ? [...prev, ...pageItems] : pageItems)
       setTotal(res.total)
       setPage(pageNum)
       batchLookupChineseNames(res.items.map(i => i.title)).then(m => category === 'mod' ? setCnNames(prev => ({ ...prev, ...m })) : setCnNames({}))
@@ -389,7 +414,20 @@ export default function ResourceCenter() {
                 当前显示 <span className="font-medium text-foreground">{activeCategoryLabel}</span>，共 <span className="font-medium text-foreground">{total}</span> 个结果
                 {gameVersion && <span className="ml-1">（{gameVersion}）</span>}
               </p>
-              {page > 1 && <p className="text-xs text-muted-foreground/70">已加载 {items.length} 个</p>}
+              <div className="flex items-center gap-2">
+                {page > 1 && <p className="text-xs text-muted-foreground/70">已加载 {items.length} 个</p>}
+                <button
+                  onClick={() => {
+                    const key = cacheKey(category, keyword, sort, source, gameVersion, loader)
+                    searchCache.delete(key)
+                    doSearch(1, false)
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  title="刷新"
+                >
+                  <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                </button>
+              </div>
             </div>
             <div className="flex flex-col gap-3">
               {items.map((item) => (

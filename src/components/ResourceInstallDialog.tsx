@@ -24,6 +24,18 @@ interface ResourceInstallDialogProps {
   category: string
 }
 
+interface InstallProgress {
+  step: number
+  total: number
+  name: string
+}
+
+const versionCache = new Map<string, ResourceVersion[]>()
+
+function versionCacheKey(resourceId: string, gameVersion: string, loader: string): string {
+  return `${resourceId}|${gameVersion}|${loader.toLowerCase()}`
+}
+
 export default function ResourceInstallDialog({
   open, onClose, resourceId, resourceTitle, resourceIcon, source, category,
 }: ResourceInstallDialogProps) {
@@ -35,6 +47,7 @@ export default function ResourceInstallDialog({
   const [deps, setDeps] = useState<ResolvedDependency[]>([])
   const [installedNames, setInstalledNames] = useState<Set<string>>(new Set())
   const [loadingInstance, setLoadingInstance] = useState(false)
+  const [loadingVersions, setLoadingVersions] = useState(false)
   const [loadingDeps, setLoadingDeps] = useState(false)
   const [installing, setInstalling] = useState(false)
   const [depVersionOptions, setDepVersionOptions] = useState<Record<string, ResourceVersion[]>>({})
@@ -42,69 +55,97 @@ export default function ResourceInstallDialog({
   const [depPickerOpen, setDepPickerOpen] = useState<string | null>(null)
   const depPickerRef = useRef<HTMLDivElement>(null)
   const [installError, setInstallError] = useState<string | null>(null)
+  const [loadStage, setLoadStage] = useState('')
+  const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null)
 
   useEffect(() => {
     if (!open) return
+    versionCache.clear()
     setSelectedInstance(null)
     setSelectedVersion(null)
     setDeps([])
     setInstalledNames(new Set())
     setVersions([])
     setInstalling(false)
+    setInstallError(null)
+    setInstallProgress(null)
     ;(async () => {
       setLoadingInstance(true)
+      setLoadStage('加载实例列表中...')
       try {
         const all = await getInstances()
         setInstances(all)
-
-        const vlist = await getResourceVersions(resourceId, source)
-        setVersions(vlist)
-
-        if (all.length > 0 && vlist.length > 0) {
-          const compat = findCompatibleInstances(all, vlist)
-          if (compat.length > 0) {
-            setSelectedInstance(compat.find(i => i.isDefault) ?? compat[0])
-          }
+        if (all.length > 0) {
+          const def = all.find(i => i.isDefault) ?? all[0]
+          setSelectedInstance(def)
         }
       } catch { notify('加载实例列表失败', 'error') }
       setLoadingInstance(false)
+      setLoadStage('')
     })()
-  }, [open, resourceId, source, notify])
+  }, [open, notify])
 
-  const compatibleInstances = useMemo(() => {
-    if (versions.length === 0) return instances
-    return findCompatibleInstances(instances, versions)
-  }, [instances, versions])
+  // on instance change, fetch versions filtered by gameVersion + loader
+  useEffect(() => {
+    if (!selectedInstance) { setVersions([]); return }
+    const key = versionCacheKey(resourceId, selectedInstance.gameVersion, selectedInstance.loader || '')
+    const cached = versionCache.get(key)
+    if (cached) {
+      setVersions(cached)
+      return
+    }
+    setLoadingVersions(true)
+    setSelectedVersion(null)
+    setDeps([])
+    setDepSelectedVersion({})
+    setDepVersionOptions({})
+    let cancelled = false
+    ;(async () => {
+      try {
+        const vlist = await getResourceVersions(
+          resourceId, source,
+          selectedInstance.gameVersion,
+          (selectedInstance.loader || '').toLowerCase() || undefined
+        )
+        if (cancelled) return
+        versionCache.set(key, vlist)
+        setVersions(vlist)
+      } catch { notify('加载版本列表失败', 'error') }
+      if (!cancelled) setLoadingVersions(false)
+    })()
+    return () => { cancelled = true }
+  }, [selectedInstance, resourceId, source, notify])
 
   const versionOptions = useMemo(() => {
-    if (!selectedInstance) return versions
-    const instLoader = (selectedInstance.loader || '').toLowerCase()
-    return versions.filter(v =>
-      v.gameVersions.includes(selectedInstance.gameVersion) &&
-      (v.loaders.length === 0 || v.loaders.some(l => l.toLowerCase() === instLoader))
-    ).sort((a, b) => new Date(b.datePublished).getTime() - new Date(a.datePublished).getTime())
-  }, [versions, selectedInstance])
+    return [...versions].sort((a, b) => new Date(b.datePublished).getTime() - new Date(a.datePublished).getTime())
+  }, [versions])
 
   useEffect(() => {
     if (!selectedInstance || !selectedVersion) { setDeps([]); return }
     setLoadingDeps(true)
+    let cancelled = false
     ;(async () => {
       try {
         const resolved = await getResourceDependencies(
           resourceId, source, selectedVersion.id,
           selectedInstance.gameVersion, (selectedInstance.loader || '').toLowerCase()
         )
+        if (cancelled) return
         setDeps(resolved)
-        const cats = new Set(resolved.map(d => d.category))
+        const cats = [...new Set(resolved.map(d => d.category))]
+        const results = await Promise.allSettled(
+          cats.map(cat => getInstalledFileNames(selectedInstance.id, cat))
+        )
+        if (cancelled) return
         const nameMap: Record<string, string[]> = {}
-        for (const cat of cats) {
-          try { nameMap[cat] = await getInstalledFileNames(selectedInstance.id, cat) }
-          catch { nameMap[cat] = [] }
-        }
+        cats.forEach((cat, i) => {
+          nameMap[cat] = results[i].status === 'fulfilled' ? results[i].value : []
+        })
         setInstalledNames(new Set(Object.values(nameMap).flat()))
       } catch { notify('加载前置模组失败', 'error') }
-      setLoadingDeps(false)
+      if (!cancelled) setLoadingDeps(false)
     })()
+    return () => { cancelled = true }
   }, [selectedInstance, selectedVersion, source, resourceId, notify])
 
   useEffect(() => {
@@ -112,14 +153,18 @@ export default function ResourceInstallDialog({
     if (pending.length === 0 || !selectedInstance) { setDepVersionOptions({}); return }
     let cancelled = false
     ;(async () => {
+      const results = await Promise.allSettled(
+        pending.map(dep =>
+          getResourceVersions(dep.projectId, 'modrinth', selectedInstance.gameVersion, (selectedInstance.loader || '').toLowerCase() || undefined)
+            .then(vers => ({ projectId: dep.projectId, vers }))
+        )
+      )
+      if (cancelled) return
       const map: Record<string, ResourceVersion[]> = {}
-      for (const dep of pending) {
-        try {
-          const vers = await getResourceVersions(dep.projectId, 'modrinth', selectedInstance.gameVersion, (selectedInstance.loader || '').toLowerCase() || undefined)
-          if (!cancelled) map[dep.projectId] = vers
-        } catch { /* skip failed dep version fetch */ }
+      for (const r of results) {
+        if (r.status === 'fulfilled') map[r.value.projectId] = r.value.vers
       }
-      if (!cancelled) setDepVersionOptions(map)
+      setDepVersionOptions(map)
     })()
     return () => { cancelled = true }
   }, [deps, installedNames, selectedInstance])
@@ -144,6 +189,7 @@ export default function ResourceInstallDialog({
   const handleInstall = useCallback(async () => {
     if (!selectedInstance || !selectedVersion) return
     setInstalling(true)
+    setInstallProgress(null)
     const allItems: { url: string; fileName: string; category: string; name: string }[] = []
 
     for (const dep of deps) {
@@ -176,6 +222,7 @@ export default function ResourceInstallDialog({
 
     for (let i = 0; i < allItems.length; i++) {
       const item = allItems[i]
+      setInstallProgress({ step: i + 1, total: allItems.length, name: item.name })
       try {
         const result = await startResourceDownload(selectedInstance.id, item.url, item.fileName, item.category)
         taskIds.push(result.taskId)
@@ -190,17 +237,16 @@ export default function ResourceInstallDialog({
         const errMsg = `${item.name} 下载失败: ${e instanceof Error ? e.message : '未知错误'}`
         updateTask(batchId, { status: 'failed', progress: (i / allItems.length) * 100, error: errMsg })
         setInstallError(errMsg)
-    setInstalling(false)
-    setInstallError(null)
+        setInstalling(false)
+        setInstallProgress(null)
         return
       }
     }
+    setInstallProgress(null)
     notify(`安装完成：${resourceTitle}`, 'success')
     setInstalling(false)
     onClose()
   }, [selectedInstance, selectedVersion, deps, installedNames, category, resourceTitle, notify, onClose])
-
-  const noCompatible = !loadingInstance && instances.length > 0 && compatibleInstances.length === 0
 
   return (
     <Dialog open={open} onClose={onClose}>
@@ -221,19 +267,15 @@ export default function ResourceInstallDialog({
           {loadingInstance ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-              加载中...
+              {loadStage || '加载中...'}
             </div>
-          ) : noCompatible ? (
-            <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
-              没有兼容的实例（版本/加载器不匹配）
-            </div>
-          ) : compatibleInstances.length === 0 ? (
+          ) : instances.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
               暂无实例，请先创建实例
             </div>
           ) : (
             <div className="grid gap-1.5 max-h-[180px] overflow-y-auto">
-              {compatibleInstances.map(inst => (
+              {instances.map(inst => (
                 <button
                   key={inst.id}
                   onClick={() => setSelectedInstance(inst)}
@@ -262,7 +304,16 @@ export default function ResourceInstallDialog({
 
         <div className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">选择版本</span>
-          {selectedInstance ? (
+          {!selectedInstance ? (
+            <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
+              请先选择一个实例
+            </div>
+          ) : loadingVersions ? (
+            <div className="flex items-center gap-2 rounded-lg border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
+              <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+              正在加载版本列表...
+            </div>
+          ) : (
             <Select
               value={selectedVersion?.id ?? ''}
               onChange={(val) => {
@@ -279,10 +330,6 @@ export default function ResourceInstallDialog({
                 ))
               )}
             </Select>
-          ) : (
-            <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
-              请先选择一个实例
-            </div>
           )}
         </div>
 
@@ -384,6 +431,25 @@ export default function ResourceInstallDialog({
             )}
           </div>
         )}
+
+        {installing && installProgress && (
+          <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-4">
+            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+                正在下载
+              </span>
+              <span className="font-medium text-foreground/80">{installProgress.step} / {installProgress.total}</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-300"
+                style={{ width: `${(installProgress.step / installProgress.total) * 100}%` }}
+              />
+            </div>
+            <p className="truncate text-xs text-muted-foreground">{installProgress.name}</p>
+          </div>
+        )}
       </DialogBody>
 
       {installError && (
@@ -405,20 +471,9 @@ export default function ResourceInstallDialog({
           disabled={!selectedVersion || installing || loadingDeps || !!installError}
         >
           <FontAwesomeIcon icon={installing ? faRotate : faDownload} className={cn('mr-1.5 h-3.5 w-3.5', installing && 'animate-spin')} />
-          {installing ? '安装中...' : '确认安装'}
+          {installing && installProgress ? `正在下载 ${installProgress.name} (${installProgress.step}/${installProgress.total})` : installing ? '安装中...' : '确认安装'}
         </Button>
       </DialogFooter>
     </Dialog>
   )
-}
-
-function findCompatibleInstances(insts: GameInstance[], vers: ResourceVersion[]): GameInstance[] {
-  return insts.filter(inst => {
-    const instLoader = (inst.loader || '').toLowerCase()
-    if (!instLoader) return false
-    return vers.some(v =>
-      v.gameVersions.includes(inst.gameVersion) &&
-      (v.loaders.length === 0 || v.loaders.some(l => l.toLowerCase() === instLoader))
-    )
-  })
 }

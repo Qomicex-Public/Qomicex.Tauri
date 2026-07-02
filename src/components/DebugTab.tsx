@@ -20,13 +20,13 @@ function LogCard() {
   const fetchLogs = useCallback(async () => {
     try {
       const entries = await get<string[]>('/diagnostics/trace')
-      setLogs(entries)
+      setLogs(entries.length > 500 ? entries.slice(-500) : entries)
     } catch { console.warn('Failed to fetch logs') }
   }, [])
 
   useEffect(() => {
     fetchLogs()
-    const timer = setInterval(fetchLogs, 1000)
+    const timer = setInterval(fetchLogs, 3000)
     return () => clearInterval(timer)
   }, [fetchLogs])
 
