@@ -20,6 +20,8 @@ import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance, LaunchProgress } from '../types/index.ts'
 import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, autoSelectDownloadSource, openFolder } from '../api/settings.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
+import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
+import { ApiError } from '../api/client.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
@@ -113,6 +115,7 @@ export default function Instances() {
   const [repairAdded, setRepairAdded] = useState(false)
   const [defaultInstanceId, setDefaultInstanceId] = useState<string | null>(null)
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
+  const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const launchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const launchingInstanceIdRef = useRef<string | null>(null)
 
@@ -389,6 +392,12 @@ export default function Instances() {
         return
       }
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const code = e instanceof ApiError ? e.code : ''
+      if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
+        setShowMicrosoftReauth(true)
+        return
+      }
       await msgAlert(`启动失败: ${e instanceof Error ? e.message : String(e)}`)
       return
     }
@@ -1148,6 +1157,14 @@ export default function Instances() {
         onClose={handleCancelNoAccount}
         onAddAccount={handleAddAccount}
         onGoToAccounts={handleGoToAccounts}
+      />
+      <MicrosoftReauthDialog
+        open={showMicrosoftReauth}
+        onClose={() => setShowMicrosoftReauth(false)}
+        onReauth={() => {
+          setShowMicrosoftReauth(false)
+          navigate('/accounts')
+        }}
       />
       </div>
     )

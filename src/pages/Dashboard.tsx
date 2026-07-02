@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlay, faStop, faChevronDown, faUser, faCheck, faMemory, faCube } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
+import { ApiError } from '../api/client.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getDefaultInstance, launchInstance, getLaunchProgress, cancelLaunch } from '../api/instance.ts'
 import { getAccounts, getDefaultAccount, setDefaultAccount } from '../api/account.ts'
@@ -12,6 +13,7 @@ import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
+import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
@@ -32,6 +34,7 @@ export default function Dashboard() {
   const [watermarkEnabled, setWatermarkEnabled] = useState(true)
   const [watermarkText, setWatermarkText] = useState('Qomicex')
   const [watermarkSubtext, setWatermarkSubtext] = useState('启动器')
+  const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const pageRef = usePageAnimation()
   const accountRef = useRef<HTMLDivElement>(null)
 
@@ -107,6 +110,12 @@ export default function Dashboard() {
         return
       }
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const code = e instanceof ApiError ? e.code : ''
+      if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
+        setShowMicrosoftReauth(true)
+        return
+      }
       setLaunchError({ title: '启动失败', message: e instanceof Error ? e.message : String(e) })
       return
     }
@@ -307,6 +316,14 @@ export default function Dashboard() {
         detail={launchError?.detail}
         args={launchError?.args}
         onClose={() => setLaunchError(null)}
+      />
+      <MicrosoftReauthDialog
+        open={showMicrosoftReauth}
+        onClose={() => setShowMicrosoftReauth(false)}
+        onReauth={() => {
+          setShowMicrosoftReauth(false)
+          navigate('/accounts')
+        }}
       />
     </div>
   )

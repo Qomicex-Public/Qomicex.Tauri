@@ -19,6 +19,8 @@ import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
+import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
+import { ApiError } from '../api/client.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
@@ -773,6 +775,7 @@ export default function InstanceDetailPage() {
   const [verifyResult, setVerifyResult] = useState<{ complete: boolean; missingFiles: MissingFile[] } | null>(null)
   const [repairing, setRepairing] = useState(false)
   const [repairProgress, setRepairProgress] = useState(0)
+  const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
 
   useEffect(() => {
     const unsub = subscribe(() => setRuntimes([...getRuntimes()]))
@@ -858,6 +861,12 @@ export default function InstanceDetailPage() {
         })
       }
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const code = e instanceof ApiError ? e.code : ''
+      if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
+        setShowMicrosoftReauth(true)
+        return
+      }
       setLaunchError({ title: '启动失败', message: e instanceof Error ? e.message : String(e) })
     }
   }, [id])
@@ -1274,6 +1283,14 @@ export default function InstanceDetailPage() {
         onClose={handleCancelNoAccount}
         onAddAccount={handleAddAccount}
         onGoToAccounts={handleGoToAccounts}
+      />
+      <MicrosoftReauthDialog
+        open={showMicrosoftReauth}
+        onClose={() => setShowMicrosoftReauth(false)}
+        onReauth={() => {
+          setShowMicrosoftReauth(false)
+          navigate('/accounts')
+        }}
       />
     </div>
   )
