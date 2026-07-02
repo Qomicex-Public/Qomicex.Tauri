@@ -448,7 +448,7 @@ export default function Accounts() {
           {addTab === 'tongyi' && (
             <div key="tongyi" className="animate-in slide-up space-y-4">
               <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                统一通行证是部分 Minecraft 皮肤站使用的认证系统，需要输入服务器 ID。
+                统一通行证是部分 Minecraft 服务器使用的认证系统，需要输入服务器 ID。
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ty-sid">服务器 ID</Label>
