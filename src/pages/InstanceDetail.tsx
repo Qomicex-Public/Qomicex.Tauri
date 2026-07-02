@@ -19,6 +19,8 @@ import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
+import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
+import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
 import ModCard from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
@@ -28,6 +30,7 @@ import ShaderCard from '../components/ShaderCard.tsx'
 import SaveCard from '../components/SaveCard.tsx'
 import ScreenshotCard from '../components/ScreenshotCard.tsx'
 import DataPackCard from '../components/DataPackCard.tsx'
+import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -755,6 +758,7 @@ function ServersTab({ instanceId }: { instanceId: string }) {
 export default function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
   const [tab, setTab] = useState<TabId>('overview')
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
@@ -839,6 +843,10 @@ export default function InstanceDetailPage() {
 
   const handleLaunch = useCallback(async () => {
     if (!id) return
+    if (needsAccount) {
+      const ok = await resolveAccountCheck()
+      if (!ok) return
+    }
     try {
       const result = await launchInstance(id)
       if (!result.success) {
@@ -1255,6 +1263,17 @@ export default function InstanceDetailPage() {
         detail={launchError?.detail}
         args={launchError?.args}
         onClose={() => setLaunchError(null)}
+      />
+      <AccountSelectDialog
+        open={showSelectAccount}
+        onClose={handleCancelSelect}
+        onSelect={handleSelectAccount}
+      />
+      <NoAccountDialog
+        open={showNoAccount}
+        onClose={handleCancelNoAccount}
+        onAddAccount={handleAddAccount}
+        onGoToAccounts={handleGoToAccounts}
       />
     </div>
   )

@@ -52,8 +52,73 @@ public class AccountService
         try
         {
             var accounts = _cache ?? await ReadFileAsync();
+            var account = accounts.FirstOrDefault(a => a.Uuid == uuid);
+            if (account == null) return;
             foreach (var a in accounts)
                 a.IsDefault = a.Uuid == uuid;
+            _cache = accounts;
+            await WriteFileAsync(accounts);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task EnsureDefaultAsync()
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            var accounts = _cache ?? await ReadFileAsync();
+            var hasDefault = accounts.Any(a => a.IsDefault);
+            if (!hasDefault && accounts.Count > 0)
+            {
+                accounts[0].IsDefault = true;
+                _cache = accounts;
+                await WriteFileAsync(accounts);
+            }
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task AutoSetDefaultOnSaveAsync(StoredAccount account)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            var accounts = _cache ?? await ReadFileAsync();
+            var isNew = !accounts.Any(a => a.Uuid == account.Uuid);
+            var hasDefault = accounts.Any(a => a.IsDefault);
+            account.LastUsed = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (isNew)
+            {
+                account.IsDefault = true;
+                accounts.Add(account);
+            }
+            else
+            {
+                var idx = accounts.FindIndex(a => a.Uuid == account.Uuid);
+                if (idx >= 0)
+                {
+                    accounts[idx] = account;
+                }
+            }
+            _cache = accounts;
+            await WriteFileAsync(accounts);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task AutoReassignDefaultOnDeleteAsync(string deletedUuid)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            var accounts = _cache ?? await ReadFileAsync();
+            accounts.RemoveAll(a => a.Uuid == deletedUuid);
+            var stillHasDefault = accounts.Any(a => a.IsDefault);
+            if (!stillHasDefault && accounts.Count > 0)
+            {
+                accounts[0].IsDefault = true;
+            }
             _cache = accounts;
             await WriteFileAsync(accounts);
         }

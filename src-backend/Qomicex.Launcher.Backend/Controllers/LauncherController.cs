@@ -20,7 +20,7 @@ public class LauncherController : ControllerBase
             AdditionalParam = request.AdditionalParam ?? "",
             DevideVersion = request.DevideVersion,
             GameDir = request.GameDir,
-            LauncherName = request.LauncherName ?? "qomicex"
+            LauncherName = request.LauncherName ?? "Qomicex"
         };
         param.Account.Name = request.AccountName ?? "Player";
         param.Account.Uuid = request.AccountUuid ?? "";

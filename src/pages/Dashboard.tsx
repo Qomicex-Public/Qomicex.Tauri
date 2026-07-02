@@ -12,11 +12,15 @@ import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
+import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
+import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
+import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 
 export default function Dashboard() {
   const navigate = useNavigate()
   const { notify } = useMessageBox()
+  const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
   const [defaultInstance, setDefaultInstance] = useState<GameInstance | null>(null)
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [launchError, setLaunchError] = useState<{ title: string; message: string; detail?: string | null; args?: string | null } | null>(null)
@@ -87,6 +91,10 @@ export default function Dashboard() {
 
   const handleLaunch = async () => {
     if (!defaultInstance) return
+    if (needsAccount) {
+      const ok = await resolveAccountCheck()
+      if (!ok) return
+    }
     try {
       const result = await launchInstance(defaultInstance.id)
       if (!result.success) {
@@ -281,6 +289,17 @@ export default function Dashboard() {
         </div>
       )}
 
+      <AccountSelectDialog
+        open={showSelectAccount}
+        onClose={handleCancelSelect}
+        onSelect={handleSelectAccount}
+      />
+      <NoAccountDialog
+        open={showNoAccount}
+        onClose={handleCancelNoAccount}
+        onAddAccount={handleAddAccount}
+        onGoToAccounts={handleGoToAccounts}
+      />
       <ErrorReportDialog
         open={!!launchError}
         title={launchError?.title || ''}

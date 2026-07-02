@@ -225,7 +225,6 @@ export default function Accounts() {
     const ok = await msgConfirm('确定要删除此账户吗？', '删除账户')
     if (!ok) return
     try {
-      if (uuid === defaultUuid) await accountApi.clearDefaultAccount()
       await accountApi.deleteAccount(uuid)
       setAccounts((prev) => prev.filter((a) => a.uuid !== uuid))
     } catch (e: unknown) {

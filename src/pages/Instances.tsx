@@ -20,6 +20,9 @@ import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance, LaunchProgress } from '../types/index.ts'
 import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, autoSelectDownloadSource, openFolder } from '../api/settings.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
+import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
+import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
+import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 
 interface ManagedDir {
   path: string
@@ -97,6 +100,7 @@ type PageStep = 'list' | 'select-version' | 'configure'
 export default function Instances() {
   const navigate = useNavigate()
   const { alert: msgAlert, prompt: msgPrompt, notify } = useMessageBox()
+  const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
 
   const [scannedLocal, setScannedLocal] = useState<ScannedVersion[]>([])
   const [remoteVersions, setRemoteVersions] = useState<RemoteVersionInfo[]>([])
@@ -371,6 +375,11 @@ export default function Instances() {
         await msgAlert(`创建实例失败: ${e instanceof Error ? e.message : String(e)}`)
         return
       }
+    }
+
+    if (needsAccount) {
+      const ok = await resolveAccountCheck()
+      if (!ok) return
     }
 
     try {
@@ -1129,6 +1138,17 @@ export default function Instances() {
           </div>
         )
       )}
-    </div>
-  )
-}
+      <AccountSelectDialog
+        open={showSelectAccount}
+        onClose={handleCancelSelect}
+        onSelect={handleSelectAccount}
+      />
+      <NoAccountDialog
+        open={showNoAccount}
+        onClose={handleCancelNoAccount}
+        onAddAccount={handleAddAccount}
+        onGoToAccounts={handleGoToAccounts}
+      />
+      </div>
+    )
+  }

@@ -41,14 +41,22 @@ public class AccountController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Save([FromBody] StoredAccount account)
     {
-        await _accountService.SaveAccountAsync(account);
+        await _accountService.AutoSetDefaultOnSaveAsync(account);
         return Ok(account);
     }
 
     [HttpDelete("{uuid}")]
     public async Task<IActionResult> Delete(string uuid)
     {
-        await _accountService.DeleteAccountAsync(uuid);
+        var account = await _accountService.GetAccountAsync(uuid);
+        if (account != null && account.IsDefault)
+        {
+            await _accountService.AutoReassignDefaultOnDeleteAsync(uuid);
+        }
+        else
+        {
+            await _accountService.DeleteAccountAsync(uuid);
+        }
         return NoContent();
     }
 
