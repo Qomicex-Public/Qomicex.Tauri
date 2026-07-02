@@ -93,7 +93,7 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   )
 }
 
-function SavesTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
+function SavesTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [saves, setSaves] = useState<SaveMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -126,6 +126,11 @@ function SavesTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gam
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索存档..." className="h-8 pl-8 text-xs" />
             </div>
+            <Tooltip content="刷新">
+              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
+                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
@@ -151,7 +156,7 @@ function SavesTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gam
   )
 }
 
-function ScreenshotsTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
+function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [screenshots, setScreenshots] = useState<ScreenshotMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -184,6 +189,11 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey }: { instanceId: strin
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索截图..." className="h-8 pl-8 text-xs" />
             </div>
+            <Tooltip content="刷新">
+              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
+                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
@@ -217,12 +227,13 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey }: { instanceId: strin
   )
 }
 
-function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey }: {
+function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefresh }: {
   instanceId: string
   gameVersion?: string
   loader?: string
   gameDir: string
   refreshKey: number
+  onRefresh: () => void
 }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
@@ -358,6 +369,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey }: {
                 </>
               ) : (
                 <>
+                  <Tooltip content="刷新">
+                    <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
+                      <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
                   <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
                     <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
                   </Button>
@@ -462,7 +478,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey }: {
   )
 }
 
-function ResourcePacksTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
+function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<ResourcePackMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -499,6 +515,11 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey }: { instanceId: str
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索资源包..." className="h-8 pl-8 text-xs" />
             </div>
+            <Tooltip content="刷新">
+              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
+                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
@@ -533,7 +554,7 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey }: { instanceId: str
   )
 }
 
-function ShadersTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
+function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [shaders, setShaders] = useState<ShaderMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -572,6 +593,11 @@ function ShadersTab({ instanceId, gameDir, refreshKey }: { instanceId: string; g
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            <Tooltip content="刷新">
+              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
+                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
@@ -606,7 +632,7 @@ function ShadersTab({ instanceId, gameDir, refreshKey }: { instanceId: string; g
   )
 }
 
-function DataPacksTab({ instanceId, gameDir, refreshKey }: { instanceId: string; gameDir: string; refreshKey: number }) {
+function DataPacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<DataPackMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -645,6 +671,11 @@ function DataPacksTab({ instanceId, gameDir, refreshKey }: { instanceId: string;
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            <Tooltip content="刷新">
+              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
+                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
@@ -679,7 +710,7 @@ function DataPacksTab({ instanceId, gameDir, refreshKey }: { instanceId: string;
   )
 }
 
-function ServersTab({ instanceId, refreshKey }: { instanceId: string; refreshKey: number }) {
+function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [servers, setServers] = useState<ServerEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -746,9 +777,16 @@ function ServersTab({ instanceId, refreshKey }: { instanceId: string; refreshKey
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索服务器..." className="h-8 pl-8 text-xs" />
               </div>
             </div>
-            <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />添加服务器
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Tooltip content="刷新">
+                <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
+                  <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+                </Button>
+              </Tooltip>
+              <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5 h-7 text-xs">
+                <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />添加服务器
+              </Button>
+            </div>
           </div>
           {loading ? (
             <div className="flex flex-col gap-1">
@@ -844,7 +882,13 @@ export default function InstanceDetailPage() {
   const [repairing, setRepairing] = useState(false)
   const [repairProgress, setRepairProgress] = useState(0)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
-  const [refreshKey, setRefreshKey] = useState(0)
+  const [savesRefresh, setSavesRefresh] = useState(0)
+  const [screenshotsRefresh, setScreenshotsRefresh] = useState(0)
+  const [modsRefresh, setModsRefresh] = useState(0)
+  const [resourcePacksRefresh, setResourcePacksRefresh] = useState(0)
+  const [shadersRefresh, setShadersRefresh] = useState(0)
+  const [dataPacksRefresh, setDataPacksRefresh] = useState(0)
+  const [serversRefresh, setServersRefresh] = useState(0)
 
   useEffect(() => {
     const unsub = subscribe(() => setRuntimes([...getRuntimes()]))
@@ -1040,7 +1084,7 @@ export default function InstanceDetailPage() {
 
   return (
     <div className="animate-in slide-up space-y-6 p-8">
-      <div className="group flex items-center gap-3">
+      <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/instances')}>
           <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
         </Button>
@@ -1053,11 +1097,6 @@ export default function InstanceDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Tooltip content="刷新数据">
-            <Button variant="ghost" size="icon" onClick={() => setRefreshKey(k => k + 1)} className="opacity-0 group-hover:opacity-100 transition-opacity h-9 w-9">
-              <FontAwesomeIcon icon={faRotate} className="h-4 w-4" />
-            </Button>
-          </Tooltip>
           <Button onClick={handleLaunch} className="gap-2">
             <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />启动
           </Button>
@@ -1330,13 +1369,13 @@ export default function InstanceDetailPage() {
             </Card>
           )}
 
-          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
-          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
-          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
-          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
-          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
-          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={refreshKey} />}
-          {tab === 'servers' && <ServersTab instanceId={id!} refreshKey={refreshKey} />}
+          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} />}
+          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} />}
+          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={modsRefresh} onRefresh={() => setModsRefresh(k => k + 1)} />}
+          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={resourcePacksRefresh} onRefresh={() => setResourcePacksRefresh(k => k + 1)} />}
+          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={shadersRefresh} onRefresh={() => setShadersRefresh(k => k + 1)} />}
+          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={dataPacksRefresh} onRefresh={() => setDataPacksRefresh(k => k + 1)} />}
+          {tab === 'servers' && <ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} />}
         </div>
       </div>
       <ErrorReportDialog
