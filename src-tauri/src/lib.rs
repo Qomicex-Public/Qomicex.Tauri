@@ -81,7 +81,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(BackendChild(Mutex::new(None)))
-        .setup(|app| { spawn_backend(app); Ok(()) })
+        .setup(|app| {
+            #[cfg(target_os = "linux")]
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_decorations(true);
+            }
+            spawn_backend(app);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![greet])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
