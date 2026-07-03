@@ -553,7 +553,7 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { inst
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((pack) => (
-              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} onDelete={handleDelete} />
+              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
             ))}
           </div>
         )}
