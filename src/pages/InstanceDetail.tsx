@@ -1852,9 +1852,9 @@ export default function InstanceDetailPage() {
                 {saving && (
                   <div className="flex justify-end pt-2">
                     <span className="text-xs text-muted-foreground">保存中...</span>
-            </div>
-          )}
-        </CardContent>
+                  </div>
+                )}
+              </CardContent>
             </Card>
           )}
 
