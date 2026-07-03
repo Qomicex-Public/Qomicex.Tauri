@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faList, faGrip } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -486,7 +486,18 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { inst
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<ResourcePackMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(
+    () => (localStorage.getItem('rp-view-mode') as 'grid' | 'list') || 'grid'
+  )
   const { notify } = useMessageBox()
+
+  const toggleView = useCallback(() => {
+    setViewMode(prev => {
+      const next = prev === 'grid' ? 'list' : 'grid'
+      localStorage.setItem('rp-view-mode', next)
+      return next
+    })
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -531,6 +542,11 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { inst
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
+            <Tooltip content={viewMode === 'grid' ? '切换列表' : '切换网格'}>
+              <Button size="sm" variant="ghost" onClick={toggleView} className="h-7 w-7 px-0">
+                <FontAwesomeIcon icon={viewMode === 'grid' ? faList : faGrip} className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
           </div>
         </div>
         {loading ? (
@@ -550,6 +566,12 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { inst
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? '无匹配资源包' : '暂无资源包'}
           </div>
+        ) : viewMode === 'grid' ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {filtered.map((pack) => (
+              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} compact />
+            ))}
+          </div>
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((pack) => (
@@ -566,7 +588,18 @@ function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId
   const [search, setSearch] = useState('')
   const [shaders, setShaders] = useState<ShaderMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(
+    () => (localStorage.getItem('shader-view-mode') as 'grid' | 'list') || 'grid'
+  )
   const { notify } = useMessageBox()
+
+  const toggleView = useCallback(() => {
+    setViewMode(prev => {
+      const next = prev === 'grid' ? 'list' : 'grid'
+      localStorage.setItem('shader-view-mode', next)
+      return next
+    })
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -613,6 +646,11 @@ function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
+            <Tooltip content={viewMode === 'grid' ? '切换列表' : '切换网格'}>
+              <Button size="sm" variant="ghost" onClick={toggleView} className="h-7 w-7 px-0">
+                <FontAwesomeIcon icon={viewMode === 'grid' ? faList : faGrip} className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
           </div>
         </div>
         {loading ? (
@@ -631,6 +669,12 @@ function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? '无匹配光影包' : '暂无光影包'}
+          </div>
+        ) : viewMode === 'grid' ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {filtered.map((shader) => (
+              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} compact />
+            ))}
           </div>
         ) : (
           <div className="flex flex-col gap-2">
