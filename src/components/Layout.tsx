@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar.tsx'
 import { TitleBar } from './TitleBar.tsx'
@@ -120,6 +120,8 @@ export default function Layout() {
     return () => document.removeEventListener('click', handleClick)
   }, [msgConfirm])
 
+  const isLinux = useMemo(() => navigator.userAgent.includes('Linux'), [])
+
   return (
     <DebugProvider>
     <div className="flex h-screen">
@@ -133,7 +135,7 @@ export default function Layout() {
       <div className="relative z-10 flex flex-1 min-w-0">
         <Sidebar />
         <div className="flex flex-1 flex-col min-w-0">
-          <TitleBar />
+          {!isLinux && <TitleBar />}
           <main className="flex-1 overflow-y-auto overflow-x-hidden bg-background/50 backdrop-blur-sm">
             <Outlet />
           </main>
