@@ -75,9 +75,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary font-bold text-2xl text-primary-foreground shadow-lg shadow-primary/30">
-              Q
-            </div>
+            <img src="/icon.png" alt={APP_INFO.name} className="h-14 w-14 rounded-2xl shadow-lg shadow-primary/40" />
             <div>
               <div className="text-lg font-semibold">{APP_INFO.name}</div>
               <div className="text-sm text-muted-foreground">版本 {APP_INFO.version}</div>
