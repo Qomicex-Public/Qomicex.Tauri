@@ -183,7 +183,11 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
                 onClick={() => openUrl(svc.url).catch(() => window.open(svc.url, '_blank'))}
                 className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2.5 text-left text-sm hover:bg-accent"
               >
-                <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                {svc.icon ? (
+                  <img src={svc.icon} alt={svc.name} className="h-6 w-6 shrink-0 rounded object-contain" />
+                ) : (
+                  <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{svc.name}</div>
                   <div className="truncate text-xs text-muted-foreground">{svc.description}</div>

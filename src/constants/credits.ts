@@ -16,6 +16,7 @@ export interface CreditService {
   name: string
   description: string
   url: string
+  icon?: string
 }
 
 export interface LicenseInfo {
@@ -32,7 +33,7 @@ export const APP_INFO = {
 
 export const CONTRIBUTORS: Contributor[] = [
   { name: 'lenmei233', role: '项目发起人 / 主要开发者', url: 'https://github.com/lenmei233', avatar: '/avatars/lenmei233.png' },
-  { name: 'TheMyceliumOfAntan', role: '贡献者', url: 'https://github.com/TheMyceliumOfAntan', avatar: '/avatars/TheMyceliumOfAntan.png' },
+  { name: 'TheMyceliumOfAntan', role: '项目发起人 / 主要开发者', url: 'https://github.com/TheMyceliumOfAntan', avatar: '/avatars/TheMyceliumOfAntan.png' },
 ]
 
 export const DEPENDENCIES: Record<string, Dependency[]> = {
@@ -70,12 +71,12 @@ export const DEPENDENCIES: Record<string, Dependency[]> = {
 }
 
 export const SERVICES: CreditService[] = [
-  { name: 'Modrinth', description: 'Mod 和资源搜索 API', url: 'https://modrinth.com' },
-  { name: 'CurseForge', description: 'Mod 和资源搜索 API', url: 'https://www.curseforge.com' },
-  { name: 'FTB', description: '整合包 API', url: 'https://www.feed-the-beast.com' },
-  { name: 'BMCLAPI', description: 'BMCLAPI 下载镜像服务', url: 'https://bmclapi2.bangbang93.com' },
-  { name: 'mcmod', description: '中文 Mod 数据库', url: 'https://www.mcmod.cn' },
-  { name: 'Mojang', description: 'Minecraft 官方', url: 'https://www.minecraft.net' },
+  { name: 'Modrinth', description: 'Mod 和资源搜索 API', url: 'https://modrinth.com', icon: '/services/modrinth.svg' },
+  { name: 'CurseForge', description: 'Mod 和资源搜索 API', url: 'https://www.curseforge.com', icon: '/services/curseforge.svg' },
+  { name: 'FTB', description: '整合包 API', url: 'https://www.feed-the-beast.com', icon: '/services/ftb.png' },
+  { name: 'BMCLAPI', description: '下载镜像服务', url: 'https://bmclapi2.bangbang93.com', icon: '/services/bmclapi.png' },
+  { name: 'mcmod', description: '中文 Mod 数据库', url: 'https://www.mcmod.cn', icon: '/services/mcmod.png' },
+  { name: 'Mojang', description: 'Minecraft 官方', url: 'https://www.minecraft.net', icon: '/services/mojang.png' },
 ]
 
 export const LICENSE: LicenseInfo = {
