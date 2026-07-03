@@ -16,7 +16,7 @@ Expand the existing "About" tab in `Settings.tsx` to include a comprehensive abo
 
 ## Architecture
 
-### Data File: `src/data/credits.ts`
+### Data File: `src/constants/credits.ts`
 
 Centralized, typed data structure for all about page content. Adding a new contributor/dependency/service = adding one entry to the appropriate array.
 
@@ -25,7 +25,7 @@ export interface Contributor {
   name: string
   role: string
   url: string          // GitHub/profile URL
-  avatar?: string      // path in public/
+  github?: string      // GitHub username for avatar API lookup
 }
 
 export interface Dependency {
@@ -55,6 +55,15 @@ export const SERVICES: CreditService[] = [...]
 export const LICENSE: LicenseInfo = {...}
 ```
 
+### GitHub Avatar Fetch
+
+- Endpoint: `https://api.github.com/repos/lenmei233/Qomicex.Tauri/contributors`
+- Trigger: when user enters the About tab
+- Cache: module-level variable, persists for entire runtime session
+- Matching: match `github` field against API response `login` field → get `avatar_url`
+- Fallback chain: GitHub avatar → initial letter circle
+- API rate limit: 60 requests/hour (unauthenticated), more than enough for one call per session
+
 ### UI Component: expanded About tab in `Settings.tsx`
 
 Replace the current hardcoded `<Card>` (Settings.tsx:1072-1113) with a vertical scroll of sections:
@@ -74,12 +83,13 @@ Replace the current hardcoded `<Card>` (Settings.tsx:1072-1113) with a vertical 
 - System info fetched once on about tab mount via `getSystemInfo()` (existing API, already called by Settings.tsx)
 - Dependency categories are collapsible (click to expand/collapse) to avoid overwhelming the user
 - All text centralized in `credits.ts` — no JSX text literals beyond labels
+- Contributor avatars fetched from GitHub API on About tab mount, cached for runtime session
 
 ### Files Changed
 
 | File | Action |
 |------|--------|
-| `src/data/credits.ts` | New — all about page data |
+| `src/constants/credits.ts` | New — all about page data |
 | `src/pages/Settings.tsx` | Modify — replace current About tab content with new sections |
 | `src/components/ui/` | None — reuse existing Card, Badge, Separator |
 
@@ -115,7 +125,7 @@ Replace the current hardcoded `<Card>` (Settings.tsx:1072-1113) with a vertical 
 - i18n (user said "后续完善i18n")
 - Animated transitions between sections
 - Update checker (not yet implemented in backend)
-- Contributor avatars loaded from local files (use placeholder circles with initials for now)
+- Bundled local avatar files (avatars come from GitHub API)
 - Clickable license text viewer
 
 ## Test Plan
@@ -124,5 +134,6 @@ Replace the current hardcoded `<Card>` (Settings.tsx:1072-1113) with a vertical 
 2. Click each external link — should open in system browser
 3. Expand/collapse dependency categories — should toggle visibility
 4. System info section should display OS/arch/memory from API
-5. No console errors
-6. Pass `npx tsc --noEmit` with 0 errors
+5. Contributor avatars load from GitHub API (online) or fall back to initial letter circle (offline)
+6. No console errors
+7. Pass `npx tsc --noEmit` with 0 errors

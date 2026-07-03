@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faTag, faDesktop, faRobot, faBug, faBolt as faLightning } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart } from '@fortawesome/free-solid-svg-icons'
+import { faGithub } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { Badge } from '../components/ui/badge.tsx'
+import { Separator } from '../components/ui/separator.tsx'
 import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Checkbox } from '../components/ui/checkbox.tsx'
@@ -28,10 +30,11 @@ import { addTask } from '../stores/downloadStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
-import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
+import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
+import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, SERVICES, LICENSE } from '../constants/credits.ts'
 
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
@@ -55,6 +58,156 @@ function saveSettings(settings: AppSettings) {
   document.documentElement.dataset.animEnabled = String(enabled)
   document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
+}
+
+function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
+  const [expandedDep, setExpandedDep] = useState<string | null>('核心框架')
+
+  return (
+    <div key="about" className="animate-in slide-up space-y-4">
+      {/* Header */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <FontAwesomeIcon icon={faInfoCircle} className="mr-2 h-4 w-4 text-primary" />
+            关于 {APP_INFO.name}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary font-bold text-2xl text-primary-foreground shadow-lg shadow-primary/30">
+              Q
+            </div>
+            <div>
+              <div className="text-lg font-semibold">{APP_INFO.name}</div>
+              <div className="text-sm text-muted-foreground">版本 {APP_INFO.version}</div>
+            </div>
+          </div>
+          <p className="text-sm leading-relaxed text-muted-foreground">{APP_INFO.description}</p>
+        </CardContent>
+      </Card>
+
+      {/* Version Info */}
+      <Card>
+        <CardHeader><CardTitle>版本信息</CardTitle></CardHeader>
+        <CardContent>
+          <div className="rounded-lg bg-background p-4 text-sm">
+            <div className="grid grid-cols-2 gap-3">
+              <div><div className="text-xs text-muted-foreground">应用版本</div><div className="mt-0.5 font-medium">{APP_INFO.version}</div></div>
+              <div><div className="text-xs text-muted-foreground">技术栈</div><div className="mt-0.5 font-medium">{APP_INFO.techStack}</div></div>
+              <div><div className="text-xs text-muted-foreground">前端框架</div><div className="mt-0.5 font-medium">React {React.version}</div></div>
+              <div><div className="text-xs text-muted-foreground">操作系统</div><div className="mt-0.5 font-medium">{sysInfo ? `${sysInfo.osName} ${sysInfo.osVersion}` : '加载中...'}</div></div>
+              <div><div className="text-xs text-muted-foreground">系统架构</div><div className="mt-0.5 font-medium">{sysInfo?.architecture ?? '加载中...'}</div></div>
+              <div><div className="text-xs text-muted-foreground">内存</div><div className="mt-0.5 font-medium">{sysInfo ? `${(sysInfo.memory / 1024).toFixed(1)} GB` : '加载中...'}</div></div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Contributors */}
+      <Card>
+        <CardHeader><CardTitle>开发者</CardTitle></CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {CONTRIBUTORS.map((c) => (
+              <div key={c.name} className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
+                  {c.name.slice(0, 1).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm">{c.name}</div>
+                  <div className="text-xs text-muted-foreground">{c.role}</div>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => openUrl(c.url).catch(() => window.open(c.url, '_blank'))} className="gap-1.5 h-7 text-xs">
+                  <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />GitHub
+                </Button>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Dependencies */}
+      <Card>
+        <CardHeader><CardTitle>前端依赖</CardTitle></CardHeader>
+        <CardContent>
+          <div className="space-y-1">
+            {Object.entries(DEPENDENCIES).map(([category, deps]) => (
+              <div key={category}>
+                <button
+                  onClick={() => setExpandedDep(expandedDep === category ? null : category)}
+                  className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent"
+                >
+                  <span>{category}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="h-5 text-[10px]">{deps.length}</Badge>
+                    <FontAwesomeIcon icon={expandedDep === category ? faChevronDown : faChevronRight} className="h-3 w-3 text-muted-foreground" />
+                  </div>
+                </button>
+                {expandedDep === category && (
+                  <div className="mt-1 space-y-1 pl-2">
+                    {deps.map((dep) => (
+                      <button
+                        key={dep.name}
+                        onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))}
+                        className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs hover:bg-accent"
+                      >
+                        <span className="text-muted-foreground">{dep.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground/70">{dep.license}</span>
+                          <FontAwesomeIcon icon={faExternalLinkAlt} className="h-2.5 w-2.5 text-muted-foreground/50" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <Separator className="my-1" />
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Services Credits */}
+      <Card>
+        <CardHeader><CardTitle><FontAwesomeIcon icon={faHeart} className="mr-2 h-4 w-4 text-destructive" />鸣谢</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {SERVICES.map((svc) => (
+              <button
+                key={svc.name}
+                onClick={() => openUrl(svc.url).catch(() => window.open(svc.url, '_blank'))}
+                className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2.5 text-left text-sm hover:bg-accent"
+              >
+                <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">{svc.name}</div>
+                  <div className="truncate text-xs text-muted-foreground">{svc.description}</div>
+                </div>
+                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* License */}
+      <Card>
+        <CardHeader><CardTitle>开源协议</CardTitle></CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium">{LICENSE.name}</div>
+              <div className="text-xs text-muted-foreground">本程序基于 {LICENSE.name} 开源协议发布</div>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => openUrl(LICENSE.url).catch(() => window.open(LICENSE.url, '_blank'))} className="gap-1.5 h-8 text-xs">
+              <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3" />查看协议
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
 }
 
 export default function Settings() {
@@ -1070,46 +1223,7 @@ export default function Settings() {
           )}
 
           {category === 'about' && (
-            <div key="about" className="animate-in slide-up">
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <FontAwesomeIcon icon={faInfoCircle} className="mr-2 h-4 w-4 text-primary" />
-                  关于 Qomicex Launcher
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary font-bold text-2xl text-primary-foreground shadow-lg shadow-primary/30">
-                    Q
-                  </div>
-                  <div>
-                    <div className="text-lg font-semibold">Qomicex Launcher</div>
-                    <div className="text-sm text-muted-foreground">版本 0.1.0</div>
-                  </div>
-                </div>
-
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  一个现代化的 Minecraft 启动器，支持多版本管理、模组加载器兼容、账户管理等功能。
-                </p>
-
-                <div className="rounded-lg bg-background p-4 text-sm">
-                  <div className="grid grid-cols-2 gap-3">
-                    {[
-                      ['技术栈', 'ASP.NET Core + React + Tauri'],
-                      ['前端', `React ${React.version}`],
-                      ['协议', 'MIT License'],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <div className="text-xs text-muted-foreground">{label}</div>
-                        <div className="mt-0.5 font-medium text-sm">{value}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            </div>
+            <AboutTab sysInfo={sysInfo} />
           )}
 
           {category === 'debug' && <DebugTab />}
