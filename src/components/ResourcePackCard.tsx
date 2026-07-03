@@ -4,6 +4,8 @@ import { faBox } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui/card.tsx'
 import { Tooltip } from './ui/tooltip.tsx'
 import type { ResourcePackMetadata } from '../types/index.ts'
+import { ApiError } from '../api/client.ts'
+import { useMessageBox } from './ui/message-box.tsx'
 
 interface Props {
   pack: ResourcePackMetadata
@@ -13,15 +15,20 @@ interface Props {
 
 export default function ResourcePackCard({ pack, instanceId, onDelete }: Props) {
   const [deleting, setDeleting] = useState(false)
+  const { notify } = useMessageBox()
 
   const handleDelete = useCallback(async () => {
     setDeleting(true)
     try {
       const { deleteResourcePack } = await import('../api/instance-files.ts')
       await deleteResourcePack(instanceId, pack.fileName)
+      notify(`已删除「${pack.name}」`, 'success')
       onDelete(pack.fileName)
-    } catch { setDeleting(false) }
-  }, [instanceId, pack.fileName, onDelete])
+    } catch (e) {
+      setDeleting(false)
+      notify(`删除失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+    }
+  }, [instanceId, pack.fileName, onDelete, notify])
 
   return (
     <Card className="group border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">

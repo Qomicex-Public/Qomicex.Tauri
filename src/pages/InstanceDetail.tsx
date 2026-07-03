@@ -11,6 +11,7 @@ import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
+import { useMessageBox } from '../components/ui/message-box.tsx'
 import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting } from '../api/instance.ts'
 import { openFolder } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
@@ -484,13 +485,17 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { inst
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<ResourcePackMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const { notify } = useMessageBox()
 
   const load = useCallback(async () => {
     setLoading(true)
     try { const data = await getResourcePacksMetadata(instanceId); setPacks(data) }
-    catch { setPacks([]) }
+    catch (e) {
+      setPacks([])
+      notify(`加载资源包失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+    }
     setLoading(false)
-  }, [instanceId])
+  }, [instanceId, notify])
 
   useEffect(() => { load() }, [load, refreshKey])
 
@@ -560,13 +565,17 @@ function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId
   const [search, setSearch] = useState('')
   const [shaders, setShaders] = useState<ShaderMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const { notify } = useMessageBox()
 
   const load = useCallback(async () => {
     setLoading(true)
     try { const data = await getShadersMetadata(instanceId); setShaders(data) }
-    catch { setShaders([]) }
+    catch (e) {
+      setShaders([])
+      notify(`加载光影包失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+    }
     setLoading(false)
-  }, [instanceId])
+  }, [instanceId, notify])
 
   useEffect(() => { load() }, [load, refreshKey])
 
@@ -723,13 +732,17 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
   const [confirmIp, setConfirmIp] = useState<string | null>(null)
   const [pingStates, setPingStates] = useState<Record<string, ServerState>>({})
   const [pinging, setPinging] = useState<Record<string, boolean>>({})
+  const { notify } = useMessageBox()
 
   const load = useCallback(async () => {
     setLoading(true)
     try { const data = await getServers(instanceId); setServers(data) }
-    catch { setServers([]) }
+    catch (e) {
+      setServers([])
+      notify(`加载服务器列表失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+    }
     setLoading(false)
-  }, [instanceId])
+  }, [instanceId, notify])
 
   useEffect(() => { load() }, [load, refreshKey])
 
@@ -741,28 +754,48 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
 
   const handleDelete = useCallback(async (ip: string) => {
     setConfirmIp(null)
-    try { await deleteServer(instanceId, ip); load() } catch {}
-  }, [instanceId, load])
+    try {
+      await deleteServer(instanceId, ip)
+      notify('已删除服务器', 'success')
+      load()
+    } catch (e) {
+      notify(`删除失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+    }
+  }, [instanceId, load, notify])
 
   const handleAdd = useCallback(async () => {
     if (!addName || !addIp) return
     setAdding(true)
-    try { await addServer(instanceId, addName, addIp); load(); setShowAdd(false); setAddName(''); setAddIp('') } catch {}
+    try {
+      await addServer(instanceId, addName, addIp)
+      notify(`已添加服务器「${addName}」`, 'success')
+      load(); setShowAdd(false); setAddName(''); setAddIp('')
+    } catch (e) {
+      notify(`添加失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+    }
     setAdding(false)
-  }, [instanceId, addName, addIp, load])
+  }, [instanceId, addName, addIp, load, notify])
 
   const handleCopyIp = useCallback(async (ip: string) => {
-    try { await navigator.clipboard.writeText(ip) } catch {}
-  }, [])
+    try {
+      await navigator.clipboard.writeText(ip)
+      notify('已复制 IP 地址', 'success')
+    } catch {
+      notify('复制失败', 'error')
+    }
+  }, [notify])
 
   const handlePing = useCallback(async (address: string) => {
     setPinging(p => ({ ...p, [address]: true }))
     try {
       const state = await pingServer(instanceId, address)
       setPingStates(p => ({ ...p, [address]: state }))
-    } catch {}
+      notify(state.isOnline ? `测速完成: ${state.ping}ms` : `${address} 离线`, state.isOnline ? 'success' : 'warning')
+    } catch (e) {
+      notify('测速失败', 'error')
+    }
     setPinging(p => ({ ...p, [address]: false }))
-  }, [instanceId])
+  }, [instanceId, notify])
 
   return (
     <>
