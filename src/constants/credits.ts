@@ -27,7 +27,7 @@ export interface LicenseInfo {
 export const APP_INFO = {
   name: 'Qomicex Launcher',
   version: '0.1.0',
-  description: '一个现代化的 Minecraft 启动器，支持多版本管理、模组加载器兼容、账户管理等功能。',
+  description: '现代化的 Minecraft 游戏启动器',
   techStack: 'ASP.NET Core + React + Tauri',
 }
 
@@ -35,6 +35,17 @@ export const CONTRIBUTORS: Contributor[] = [
   { name: 'lenmei233', role: '项目发起人 / 主要开发者', url: 'https://github.com/lenmei233', avatar: '/avatars/lenmei233.png' },
   { name: 'TheMyceliumOfAntan', role: '项目发起人 / 主要开发者', url: 'https://github.com/TheMyceliumOfAntan', avatar: '/avatars/TheMyceliumOfAntan.png' },
 ]
+
+export const BACKEND_DEPENDENCIES: Record<string, Dependency[]> = {
+  '.NET 与运行时': [
+    { name: '.NET 10', version: '10.x', url: 'https://dotnet.microsoft.com', license: 'MIT' },
+    { name: 'ASP.NET Core', version: '10.x', url: 'https://learn.microsoft.com/aspnet/core', license: 'MIT' },
+  ],
+  '核心库': [
+    { name: 'Qomicex.Core', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Tauri', license: '自研' },
+    { name: 'Qomicex.Downloader', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Tauri', license: '自研' },
+  ],
+}
 
 export const DEPENDENCIES: Record<string, Dependency[]> = {
   '核心框架': [
@@ -72,14 +83,15 @@ export const DEPENDENCIES: Record<string, Dependency[]> = {
 
 export const SERVICES: CreditService[] = [
   { name: 'Modrinth', description: 'Mod 和资源搜索 API', url: 'https://modrinth.com', icon: '/services/modrinth.svg' },
-  { name: 'CurseForge', description: 'Mod 和资源搜索 API', url: 'https://www.curseforge.com', icon: '/services/curseforge.svg' },
+  { name: 'CurseForge', description: 'Mod 和资源搜索 API', url: 'https://www.curseforge.com', icon: '/services/curseforge.png' },
   { name: 'FTB', description: '整合包 API', url: 'https://www.feed-the-beast.com', icon: '/services/ftb.png' },
-  { name: 'BMCLAPI', description: '下载镜像服务', url: 'https://bmclapi2.bangbang93.com', icon: '/services/bmclapi.png' },
+  { name: 'bangbang93', description: '提供BMCLAPI下载镜像服务', url: 'https://bmclapi2.bangbang93.com', icon: '/services/bangbang93.png' },
   { name: 'mcmod', description: '中文 Mod 数据库', url: 'https://www.mcmod.cn', icon: '/services/mcmod.png' },
-  { name: 'Mojang', description: 'Minecraft 官方', url: 'https://www.minecraft.net', icon: '/services/mojang.png' },
+  { name: 'Minecraft官网', description: 'Minecraft 官方网站,支持正版!', url: 'https://www.minecraft.net', icon: '/services/minecraft.png' },
 ]
 
 export const LICENSE: LicenseInfo = {
   name: 'MIT License',
   url: 'https://opensource.org/licenses/MIT',
 }
+
