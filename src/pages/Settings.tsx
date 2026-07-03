@@ -34,7 +34,7 @@ import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
-import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL } from '../constants/credits.ts'
+import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS } from '../constants/credits.ts'
 
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
@@ -240,6 +240,29 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
                 )}
                 <Separator className="my-1" />
               </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Reference Projects */}
+      <Card>
+        <CardHeader><CardTitle>参考项目</CardTitle></CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {REFERENCE_PROJECTS.map((proj) => (
+              <button
+                key={proj.name}
+                onClick={() => openUrl(proj.url).catch(() => window.open(proj.url, '_blank'))}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent"
+              >
+                <FontAwesomeIcon icon={faGithub} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium">{proj.name}</div>
+                  <div className="truncate text-xs text-muted-foreground">{proj.description}</div>
+                </div>
+                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+              </button>
             ))}
           </div>
         </CardContent>

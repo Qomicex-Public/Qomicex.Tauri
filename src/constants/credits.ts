@@ -97,3 +97,15 @@ export const LICENSE: LicenseInfo = {
 
 export const REPOSITORY_URL = 'https://github.com/lenmei233/Qomicex.Tauri'
 
+export interface ReferenceProject {
+  name: string
+  url: string
+  description: string
+}
+
+export const REFERENCE_PROJECTS: ReferenceProject[] = [
+  { name: 'HMCL', url: 'https://github.com/HMCL-dev/HMCL/tree/main', description: '版本检测参考' },
+  { name: 'ProjBobcat', url: 'https://github.com/Corona-Studio/ProjBobcat', description: 'ModLoader 安装器参考' },
+  { name: 'PCL', url: 'https://github.com/Meloong-Git/PCL', description: '启动流程参考' },
+]
+
