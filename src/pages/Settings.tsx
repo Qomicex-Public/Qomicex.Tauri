@@ -131,6 +131,33 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         </CardContent>
       </Card>
 
+      {/* Services Credits */}
+      <Card>
+        <CardHeader><CardTitle><FontAwesomeIcon icon={faHeart} className="mr-2 h-4 w-4 text-destructive" />鸣谢</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {SERVICES.map((svc) => (
+              <button
+                key={svc.name}
+                onClick={() => openUrl(svc.url).catch(() => window.open(svc.url, '_blank'))}
+                className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2.5 text-left text-sm hover:bg-accent"
+              >
+                {svc.icon ? (
+                  <img src={svc.icon} alt={svc.name} className="h-6 w-6 shrink-0 rounded object-contain" />
+                ) : (
+                  <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">{svc.name}</div>
+                  <div className="truncate text-xs text-muted-foreground">{svc.description}</div>
+                </div>
+                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Dependencies */}
       <Card>
         <CardHeader><CardTitle>前端依赖</CardTitle></CardHeader>
@@ -167,33 +194,6 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
                 )}
                 <Separator className="my-1" />
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Services Credits */}
-      <Card>
-        <CardHeader><CardTitle><FontAwesomeIcon icon={faHeart} className="mr-2 h-4 w-4 text-destructive" />鸣谢</CardTitle></CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {SERVICES.map((svc) => (
-              <button
-                key={svc.name}
-                onClick={() => openUrl(svc.url).catch(() => window.open(svc.url, '_blank'))}
-                className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2.5 text-left text-sm hover:bg-accent"
-              >
-                {svc.icon ? (
-                  <img src={svc.icon} alt={svc.name} className="h-6 w-6 shrink-0 rounded object-contain" />
-                ) : (
-                  <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium">{svc.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{svc.description}</div>
-                </div>
-                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-              </button>
             ))}
           </div>
         </CardContent>
