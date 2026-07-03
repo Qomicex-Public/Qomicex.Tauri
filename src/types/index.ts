@@ -4,6 +4,8 @@ export interface SystemInfo {
   osVersion: string
   architecture: string
   osVersionId: string
+  osDisplayName: string
+  gitCommit: string
   memory: number
   availableMemory: number
 }

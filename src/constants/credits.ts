@@ -27,8 +27,7 @@ export interface LicenseInfo {
 export const APP_INFO = {
   name: 'Qomicex Launcher',
   version: '0.1.0',
-  description: '现代化的 Minecraft 游戏启动器',
-  techStack: 'ASP.NET Core + React + Tauri',
+  description: '一个现代化的 Minecraft 启动器，支持多版本管理、模组加载器兼容、账户管理等功能。',
 }
 
 export const CONTRIBUTORS: Contributor[] = [

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart } from '@fortawesome/free-solid-svg-icons'
 import { faGithub } from '@fortawesome/free-brands-svg-icons'
@@ -95,9 +95,8 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
           <div className="rounded-lg bg-background p-4 text-sm">
             <div className="grid grid-cols-2 gap-3">
               <div><div className="text-xs text-muted-foreground">应用版本</div><div className="mt-0.5 font-medium">{APP_INFO.version}</div></div>
-              <div><div className="text-xs text-muted-foreground">技术栈</div><div className="mt-0.5 font-medium">{APP_INFO.techStack}</div></div>
-              <div><div className="text-xs text-muted-foreground">前端框架</div><div className="mt-0.5 font-medium">React {React.version}</div></div>
-              <div><div className="text-xs text-muted-foreground">操作系统</div><div className="mt-0.5 font-medium">{sysInfo ? `${sysInfo.osName} ${sysInfo.osVersion}` : '加载中...'}</div></div>
+              <div><div className="text-xs text-muted-foreground">版本哈希</div><div className="mt-0.5 font-medium text-xs font-mono">{sysInfo?.gitCommit ?? '加载中...'}</div></div>
+              <div><div className="text-xs text-muted-foreground">操作系统</div><div className="mt-0.5 font-medium">{sysInfo?.osDisplayName || (sysInfo ? `${sysInfo.osName} ${sysInfo.osVersion}` : '加载中...')}</div></div>
               <div><div className="text-xs text-muted-foreground">系统架构</div><div className="mt-0.5 font-medium">{sysInfo?.architecture ?? '加载中...'}</div></div>
               <div><div className="text-xs text-muted-foreground">内存</div><div className="mt-0.5 font-medium">{sysInfo ? `${(sysInfo.memory / 1024).toFixed(1)} GB` : '加载中...'}</div></div>
             </div>
