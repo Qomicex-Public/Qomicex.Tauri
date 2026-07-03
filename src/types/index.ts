@@ -472,6 +472,17 @@ export interface ResolvedDependency {
   category: string
 }
 
+export interface GameSettingDto {
+  name: string
+  defaultValue: string
+  currentValue: string
+  description: string
+  validValues: string
+  introducedVersion: string
+  isAvailableInCurrentVersion: boolean
+  valueKind: string
+}
+
 export interface SkinProfile {
   profileId: string | null
   profileName: string | null

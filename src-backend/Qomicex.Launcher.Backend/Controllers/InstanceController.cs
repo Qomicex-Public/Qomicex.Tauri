@@ -7,10 +7,12 @@ using Microsoft.Extensions.Logging;
 using Qomicex.Launcher.Backend.Models;
 using Qomicex.Launcher.Backend.Services;
 using Qomicex.Core.Modules.Helpers;
+using Qomicex.Core.Modules.Helpers.GameSettings;
 using Qomicex.Core.Modules.Helpers.Resources;
 using static Qomicex.Core.DataModules;
 using static Qomicex.Core.DataModules.DataDetails;
 using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
+using System.Net.Http;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -334,6 +336,91 @@ public class InstanceController : ControllerBase
             return true;
         }
         catch { return true; }
+    }
+
+    private static readonly string GameSettingsResourcesDir =
+        Path.Combine(AppContext.BaseDirectory, "Resources", "GameSettings");
+
+    private static readonly string ManifestCachePath =
+        Path.Combine(GameSettingsResourcesDir, "version_manifest.json");
+
+    private static readonly SemaphoreSlim ManifestLock = new(1, 1);
+    private static string? _cachedManifest;
+
+    private static async Task<string> GetVersionManifestAsync()
+    {
+        if (_cachedManifest != null) return _cachedManifest;
+
+        await ManifestLock.WaitAsync();
+        try
+        {
+            if (_cachedManifest != null) return _cachedManifest;
+
+            if (System.IO.File.Exists(ManifestCachePath))
+            {
+                _cachedManifest = await System.IO.File.ReadAllTextAsync(ManifestCachePath);
+                return _cachedManifest;
+            }
+
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            _cachedManifest = await client.GetStringAsync("https://launchermeta.mojang.com/mc/game/version_manifest.json");
+            System.IO.Directory.CreateDirectory(GameSettingsResourcesDir);
+            await System.IO.File.WriteAllTextAsync(ManifestCachePath, _cachedManifest);
+            return _cachedManifest;
+        }
+        finally
+        {
+            ManifestLock.Release();
+        }
+    }
+
+    private static async Task<OptionsHelper> CreateGameSettingsOptions(GameInstance inst)
+    {
+        var optionsPath = Path.Combine(GameSettingsResourcesDir, "options.json");
+        var descriptionsPath = Path.Combine(GameSettingsResourcesDir, "descriptions.json");
+        var gameDir = inst.GameDir;
+        if (!Path.IsPathRooted(gameDir))
+            gameDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), gameDir));
+        var isolation = inst.VersionIsolation ?? GetGlobalVersionIsolation();
+        var manifest = await GetVersionManifestAsync();
+        return new OptionsHelper(optionsPath, descriptionsPath, manifest, gameDir, inst.Name, isolation);
+    }
+
+    [HttpGet("{id}/game-settings")]
+    public async Task<ActionResult<List<GameSettingDto>>> GetGameSettings(string id)
+    {
+        var inst = _repository.GetById(id);
+        if (inst == null) return NotFound();
+
+        var helper = await CreateGameSettingsOptions(inst);
+        var items = helper.GetOptionViewItems("zh-CN");
+
+        var result = items.Select(o => new GameSettingDto
+        {
+            Name = o.Name,
+            DefaultValue = o.DefaultValue,
+            CurrentValue = o.CurrentValue,
+            Description = o.Description,
+            ValidValues = o.ValidValuesRaw,
+            IntroducedVersion = o.IntroducedVersion,
+            IsAvailableInCurrentVersion = o.IsAvailableInCurrentVersion,
+            ValueKind = o.ValueKind,
+        }).ToList();
+
+        return Ok(result);
+    }
+
+    [HttpPut("{id}/game-settings/{optionName}")]
+    public async Task<IActionResult> SetGameSetting(string id, string optionName, [FromBody] JsonElement body)
+    {
+        var inst = _repository.GetById(id);
+        if (inst == null) return NotFound();
+
+        var value = body.ValueKind == JsonValueKind.String ? body.GetString()! : body.GetRawText();
+
+        var helper = await CreateGameSettingsOptions(inst);
+        helper.SetOption(optionName, value);
+        return NoContent();
     }
 
     private static string GetDefaultIcon(string? loader) => loader?.ToLowerInvariant() switch

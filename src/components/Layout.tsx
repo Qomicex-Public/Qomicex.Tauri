@@ -130,11 +130,11 @@ export default function Layout() {
           <div className="fixed inset-0 z-0" style={{ backgroundColor: `rgba(19,19,19,${(opacity / 100).toFixed(2)})` }} />
         </>
       )}
-      <div className="relative z-10 flex flex-1">
+      <div className="relative z-10 flex flex-1 min-w-0">
         <Sidebar />
-        <div className="flex flex-1 flex-col">
+        <div className="flex flex-1 flex-col min-w-0">
           <TitleBar />
-          <main className="flex-1 overflow-y-auto bg-background/50 backdrop-blur-sm">
+          <main className="flex-1 overflow-y-auto overflow-x-hidden bg-background/50 backdrop-blur-sm">
             <Outlet />
           </main>
         </div>

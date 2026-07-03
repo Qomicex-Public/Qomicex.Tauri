@@ -1,5 +1,5 @@
 import { get, post, put, del } from './client.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
@@ -75,4 +75,12 @@ export async function verifyResources(id: string): Promise<VerifyResourcesResult
 
 export async function repairResources(id: string): Promise<RepairResourcesResult> {
   return post<RepairResourcesResult>(`/instance/${id}/repair-resources`)
+}
+
+export async function getGameSettings(id: string): Promise<GameSettingDto[]> {
+  return get<GameSettingDto[]>(`/instance/${id}/game-settings`)
+}
+
+export async function setGameSetting(id: string, name: string, value: string): Promise<void> {
+  await put(`/instance/${id}/game-settings/` + encodeURIComponent(name), value)
 }

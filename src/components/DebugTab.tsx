@@ -195,6 +195,7 @@ function TogglesCard() {
     { key: 'networkLogging', label: '网络请求日志' },
     { key: 'disableCaching', label: '禁用缓存' },
     { key: 'logOverlay', label: '日志浮层（全局）' },
+    { key: 'showGameSettings', label: '显示游戏设置入口' },
   ]
 
   return (

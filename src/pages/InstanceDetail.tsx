@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -11,12 +11,12 @@ import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
-import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress } from '../api/instance.ts'
+import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting } from '../api/instance.ts'
 import { openFolder } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, MissingFile } from '../types/index.ts'
+import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, MissingFile, GameSettingDto } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
@@ -33,6 +33,7 @@ import SaveCard from '../components/SaveCard.tsx'
 import ScreenshotCard from '../components/ScreenshotCard.tsx'
 import DataPackCard from '../components/DataPackCard.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { useDebug } from '../components/DebugContext.tsx'
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -44,6 +45,7 @@ const LOADER_COLORS: Record<string, string> = {
 const TABS = [
   { id: 'overview', label: '概况', icon: faInfoCircle },
   { id: 'settings', label: '设置', icon: faSliders },
+  { id: 'gamesettings', label: '游戏设置', icon: faGamepad },
   { id: 'saves', label: '存档', icon: faSave },
   { id: 'screenshots', label: '截图', icon: faCamera },
   { id: 'mods', label: 'Mod', icon: faCube },
@@ -51,7 +53,7 @@ const TABS = [
   { id: 'shaderpacks', label: '光影包', icon: faSun },
   { id: 'datapacks', label: '数据包', icon: faDatabase },
   { id: 'servers', label: '服务器', icon: faServer },
-]
+] as const
 
 type TabId = typeof TABS[number]['id']
 
@@ -863,10 +865,307 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
   )
 }
 
+const KEY_DISPLAY_MAP: Record<string, string> = {
+  'key.keyboard.unknown': '未绑定',
+  'key.keyboard.space': '空格',
+  'key.keyboard.apostrophe': "'",
+  'key.keyboard.comma': ',',
+  'key.keyboard.minus': '-',
+  'key.keyboard.period': '.',
+  'key.keyboard.slash': '/',
+  'key.keyboard.semicolon': ';',
+  'key.keyboard.equal': '=',
+  'key.keyboard.grave.accent': '`',
+  'key.keyboard.left.bracket': '[',
+  'key.keyboard.right.bracket': ']',
+  'key.keyboard.backslash': '\\',
+  'key.keyboard.escape': 'Esc',
+  'key.keyboard.enter': '回车',
+  'key.keyboard.tab': 'Tab',
+  'key.keyboard.backspace': '退格',
+  'key.keyboard.insert': 'Insert',
+  'key.keyboard.delete': 'Delete',
+  'key.keyboard.right': '→',
+  'key.keyboard.left': '←',
+  'key.keyboard.down': '↓',
+  'key.keyboard.up': '↑',
+  'key.keyboard.page.up': 'Page Up',
+  'key.keyboard.page.down': 'Page Down',
+  'key.keyboard.home': 'Home',
+  'key.keyboard.end': 'End',
+  'key.keyboard.caps.lock': 'Caps Lock',
+  'key.keyboard.scroll.lock': 'Scroll Lock',
+  'key.keyboard.num.lock': 'Num Lock',
+  'key.keyboard.print.screen': 'Print Screen',
+  'key.keyboard.pause': 'Pause',
+  'key.keyboard.left.shift': '左 Shift',
+  'key.keyboard.right.shift': '右 Shift',
+  'key.keyboard.left.control': '左 Ctrl',
+  'key.keyboard.right.control': '右 Ctrl',
+  'key.keyboard.left.alt': '左 Alt',
+  'key.keyboard.right.alt': '右 Alt',
+  'key.keyboard.left.super': '左 Win',
+  'key.keyboard.right.super': '右 Win',
+  'key.keyboard.menu': '菜单键',
+  'key.mouse.0': '鼠标左键',
+  'key.mouse.1': '鼠标右键',
+  'key.mouse.2': '鼠标中键',
+  'key.mouse.3': '鼠标按键 3',
+  'key.mouse.4': '鼠标按键 4',
+  'key.mouse.5': '鼠标按键 5',
+}
+
+for (let i = 0; i <= 9; i++) KEY_DISPLAY_MAP[`key.keyboard.${i}`] = `${i}`
+for (let i = 1; i <= 25; i++) KEY_DISPLAY_MAP[`key.keyboard.f${i}`] = `F${i}`
+for (const c of 'abcdefghijklmnopqrstuvwxyz') KEY_DISPLAY_MAP[`key.keyboard.${c}`] = c.toUpperCase()
+for (let i = 0; i <= 9; i++) KEY_DISPLAY_MAP[`key.keyboard.kp.${i}`] = `小键盘 ${i}`
+KEY_DISPLAY_MAP['key.keyboard.kp.add'] = '小键盘 +'
+KEY_DISPLAY_MAP['key.keyboard.kp.subtract'] = '小键盘 -'
+KEY_DISPLAY_MAP['key.keyboard.kp.multiply'] = '小键盘 *'
+KEY_DISPLAY_MAP['key.keyboard.kp.divide'] = '小键盘 /'
+KEY_DISPLAY_MAP['key.keyboard.kp.decimal'] = '小键盘 .'
+KEY_DISPLAY_MAP['key.keyboard.kp.enter'] = '小键盘 回车'
+
+function mapJSCodeToMinecraft(code: string): string | null {
+  const m: Record<string, string> = {
+    Space: 'key.keyboard.space',
+    Escape: 'key.keyboard.escape',
+    Enter: 'key.keyboard.enter',
+    Tab: 'key.keyboard.tab',
+    Backspace: 'key.keyboard.backspace',
+    Insert: 'key.keyboard.insert',
+    Delete: 'key.keyboard.delete',
+    ArrowRight: 'key.keyboard.right', ArrowLeft: 'key.keyboard.left',
+    ArrowDown: 'key.keyboard.down', ArrowUp: 'key.keyboard.up',
+    PageUp: 'key.keyboard.page.up', PageDown: 'key.keyboard.page.down',
+    Home: 'key.keyboard.home', End: 'key.keyboard.end',
+    CapsLock: 'key.keyboard.caps.lock',
+    ScrollLock: 'key.keyboard.scroll.lock',
+    NumLock: 'key.keyboard.num.lock',
+    PrintScreen: 'key.keyboard.print.screen',
+    Pause: 'key.keyboard.pause',
+    ShiftLeft: 'key.keyboard.left.shift', ShiftRight: 'key.keyboard.right.shift',
+    ControlLeft: 'key.keyboard.left.control', ControlRight: 'key.keyboard.right.control',
+    AltLeft: 'key.keyboard.left.alt', AltRight: 'key.keyboard.right.alt',
+    MetaLeft: 'key.keyboard.left.super', MetaRight: 'key.keyboard.right.super',
+    ContextMenu: 'key.keyboard.menu',
+    Semicolon: 'key.keyboard.semicolon', Quote: 'key.keyboard.apostrophe',
+    Comma: 'key.keyboard.comma', Minus: 'key.keyboard.minus',
+    Period: 'key.keyboard.period', Slash: 'key.keyboard.slash',
+    BracketLeft: 'key.keyboard.left.bracket', BracketRight: 'key.keyboard.right.bracket',
+    Backslash: 'key.keyboard.backslash',
+    Backquote: 'key.keyboard.grave.accent',
+    Equal: 'key.keyboard.equal',
+  }
+  if (m[code]) return m[code]
+  if (code.startsWith('Key')) return `key.keyboard.${code.slice(3).toLowerCase()}`
+  if (code.startsWith('Digit')) return `key.keyboard.${code.slice(5)}`
+  if (code.startsWith('Numpad')) { const n = code.slice(6); return isNaN(Number(n)) ? null : `key.keyboard.kp.${n}` }
+  if (code.startsWith('F') && code.length <= 4) { const n = parseInt(code.slice(1)); return n >= 1 && n <= 25 ? `key.keyboard.f${n}` : null }
+  return null
+}
+
+function GameSettingsTab({ instanceId, refreshKey, onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
+  const [search, setSearch] = useState('')
+  const [settings, setSettings] = useState<GameSettingDto[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState<Set<string>>(new Set())
+  const [listeningKey, setListeningKey] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { const data = await getGameSettings(instanceId); setSettings(data) }
+    catch { setSettings([]) }
+    setLoading(false)
+  }, [instanceId])
+
+  useEffect(() => { load() }, [load, refreshKey])
+
+  const filtered = useMemo(() => {
+    if (!search) return settings
+    const q = search.toLowerCase()
+    return settings.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      s.description.toLowerCase().includes(q)
+    )
+  }, [settings, search])
+
+  const handleChange = useCallback(async (name: string, value: string) => {
+    setSettings(prev => prev.map(s => s.name === name ? { ...s, currentValue: value } : s))
+    setSaving(prev => new Set(prev).add(name))
+    try { await setGameSetting(instanceId, name, value) } catch {}
+    setSaving(prev => {
+      const next = new Set(prev)
+      next.delete(name)
+      return next
+    })
+  }, [instanceId])
+
+  const parseRange = (vv: string): [number, number, number, boolean] | null => {
+    const m = vv.match(/^(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)$/)
+    if (!m) return null
+    const min = parseFloat(m[1])
+    const max = parseFloat(m[2])
+    const step = m[1].includes('.') || m[2].includes('.') ? 0.1 : 1
+    const isPercent = min === 0 && Math.abs(max - 1.0) < 0.001
+    return isPercent ? [0, 100, 1, true] : [min, max, step, false]
+  }
+
+  const parseEnum = (vv: string): string[] => vv.split(',').map(v => v.trim()).filter(Boolean)
+  const isKeybinding = (name: string) => name.startsWith('key_')
+
+  const formatKeyDisplay = (code: string): string => {
+    const name = KEY_DISPLAY_MAP[code]
+    if (name) return name
+    if (code.startsWith('key.keyboard.')) return code.slice('key.keyboard.'.length).toUpperCase()
+    if (code.startsWith('key.mouse.')) return `鼠标按键 ${code.slice('key.mouse.'.length)}`
+    return code
+  }
+
+  useEffect(() => {
+    if (!listeningKey) return
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const key = mapJSCodeToMinecraft(e.code)
+      if (key) { handleChange(listeningKey, key); setListeningKey(null) }
+    }
+    const onMouse = (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const btn = e.button
+      const mc = btn === 0 ? 0 : btn === 2 ? 1 : btn === 1 ? 2 : btn
+      handleChange(listeningKey, `key.mouse.${mc}`)
+      setListeningKey(null)
+    }
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('mousedown', onMouse, true)
+    return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('mousedown', onMouse, true) }
+  }, [listeningKey, handleChange])
+
+  return (
+    <Card>
+      <CardContent className="p-5 overflow-hidden">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium shrink-0">
+            <FontAwesomeIcon icon={faGamepad} className="mr-2 h-4 w-4 text-primary" />游戏设置
+            {!loading && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({settings.length})</span>}
+          </h3>
+          <div className="flex items-center gap-2 flex-1 max-w-sm">
+            <div className="relative flex-1">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索设置项..." className="h-8 pl-8 text-xs" />
+            </div>
+            <Tooltip content="刷新">
+              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
+                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
+          </div>
+        </div>
+        {loading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="animate-pulse flex items-center gap-3">
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-4 w-1/4 rounded bg-muted" />
+                  <div className="h-3 w-1/2 rounded bg-muted" />
+                </div>
+                <div className="h-8 w-32 rounded bg-muted" />
+              </div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {search ? '无匹配设置项' : '暂无游戏设置'}
+          </div>
+        ) : (
+          <div className="space-y-1 overflow-hidden">
+            {filtered.map((s) => {
+              const range = parseRange(s.validValues)
+              const enumOpts = parseEnum(s.validValues)
+              const keybind = isKeybinding(s.name)
+              return (
+                <div key={s.name} className="flex items-center justify-between gap-3 rounded-lg px-3 py-1.5 transition-colors hover:bg-accent/50 min-w-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-sm font-medium truncate">{s.name}</span>
+                      {saving.has(s.name) && <span className="shrink-0 text-[10px] text-muted-foreground">...</span>}
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate">{s.description}</p>
+                  </div>
+                  <div className="shrink-0 max-w-40 min-w-0">
+                    {s.valueKind === 'Boolean' && (
+                      <Checkbox
+                        checked={s.currentValue === 'true'}
+                        onCheckedChange={(c) => handleChange(s.name, c === true ? 'true' : 'false')}
+                      />
+                    )}
+                    {keybind && (
+                      <button
+                        onClick={() => setListeningKey(s.name)}
+                        className={cn(
+                          'h-7 rounded-md border px-2.5 text-xs font-medium transition-colors min-w-[60px]',
+                          listeningKey === s.name
+                            ? 'border-primary bg-primary/10 text-primary animate-pulse'
+                            : 'border-input bg-background hover:bg-accent hover:text-accent-foreground'
+                        )}
+                      >
+                        {listeningKey === s.name ? '按下按键...' : formatKeyDisplay(s.currentValue)}
+                      </button>
+                    )}
+                    {!keybind && s.valueKind === 'Enum' && enumOpts.length > 0 && (
+                      <Select value={s.currentValue} onChange={(v) => handleChange(s.name, v)} className="w-full">
+                        {enumOpts.map((opt) => (
+                          <SelectOption key={opt} value={opt}>{opt}</SelectOption>
+                        ))}
+                      </Select>
+                    )}
+                    {!keybind && s.valueKind === 'Range' && range && (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="range"
+                          min={range[0]}
+                          max={range[1]}
+                          step={range[2]}
+                          value={range[3] ? Math.round(parseFloat(s.currentValue || '0') * 100) : parseFloat(s.currentValue) || range[0]}
+                          onChange={(e) => {
+                            const raw = parseFloat(e.target.value)
+                            handleChange(s.name, range[3] ? (raw / 100).toString() : raw.toString())
+                          }}
+                          className="w-24"
+                        />
+                        <span className="w-12 text-right text-xs tabular-nums text-muted-foreground truncate">
+                          {range[3] ? `${Math.round(parseFloat(s.currentValue || '0') * 100)}%` : s.currentValue}
+                        </span>
+                      </div>
+                    )}
+                    {!keybind && s.valueKind === 'Text' && (
+                      <Input
+                        value={s.currentValue}
+                        onChange={(e) => handleChange(s.name, e.target.value)}
+                        className="h-7 w-full text-xs"
+                      />
+                    )}
+                    {!keybind && s.valueKind !== 'Boolean' && s.valueKind !== 'Enum' && s.valueKind !== 'Range' && s.valueKind !== 'Text' && (
+                      <span className="text-xs text-muted-foreground truncate block">{s.currentValue}</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
+  const { state: debugState } = useDebug()
   const [tab, setTab] = useState<TabId>('overview')
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
@@ -889,6 +1188,7 @@ export default function InstanceDetailPage() {
   const [shadersRefresh, setShadersRefresh] = useState(0)
   const [dataPacksRefresh, setDataPacksRefresh] = useState(0)
   const [serversRefresh, setServersRefresh] = useState(0)
+  const [gameSettingsRefresh, setGameSettingsRefresh] = useState(0)
 
   useEffect(() => {
     const unsub = subscribe(() => setRuntimes([...getRuntimes()]))
@@ -1111,9 +1411,9 @@ export default function InstanceDetailPage() {
         </div>
       </div>
 
-      <div className="flex gap-4">
+      <div className="flex gap-4 min-w-0">
         <div className="flex w-44 shrink-0 flex-col gap-0.5">
-          {TABS.map((t) => (
+          {TABS.filter(t => t.id !== 'gamesettings' || debugState.showGameSettings).map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -1376,6 +1676,7 @@ export default function InstanceDetailPage() {
           {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={shadersRefresh} onRefresh={() => setShadersRefresh(k => k + 1)} />}
           {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={dataPacksRefresh} onRefresh={() => setDataPacksRefresh(k => k + 1)} />}
           {tab === 'servers' && <ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} />}
+          {tab === 'gamesettings' && <GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} />}
         </div>
       </div>
       <ErrorReportDialog
