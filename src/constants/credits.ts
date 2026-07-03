@@ -2,6 +2,7 @@ export interface Contributor {
   name: string
   role: string
   url: string
+  github?: string
 }
 
 export interface Dependency {
@@ -30,9 +31,37 @@ export const APP_INFO = {
 }
 
 export const CONTRIBUTORS: Contributor[] = [
-  { name: 'lenmei233', role: '项目发起人 / 主要开发者', url: 'https://github.com/lenmei233' },
-  { name: 'TheMyceliumOfAntan', role: '贡献者', url: 'https://github.com/TheMyceliumOfAntan' },
+  { name: 'lenmei233', role: '项目发起人 / 主要开发者', url: 'https://github.com/lenmei233', github: 'lenmei233' },
+  { name: 'TheMyceliumOfAntan', role: '贡献者', url: 'https://github.com/TheMyceliumOfAntan', github: 'TheMyceliumOfAntan' },
 ]
+
+const GITHUB_REPO = 'lenmei233/Qomicex.Tauri'
+
+let avatarCache: Record<string, string> | null = null
+
+async function fetchGitHubAvatars(): Promise<Record<string, string>> {
+  if (avatarCache) return avatarCache
+  try {
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/contributors`)
+    if (!res.ok) return {}
+    const data: Array<{ login: string; avatar_url: string }> = await res.json()
+    avatarCache = {}
+    for (const c of data) {
+      avatarCache[c.login] = c.avatar_url
+    }
+    return avatarCache
+  } catch {
+    return {}
+  }
+}
+
+export async function getContributorAvatars(): Promise<Record<string, string>> {
+  return fetchGitHubAvatars()
+}
+
+export function getCachedAvatar(github: string): string | undefined {
+  return avatarCache?.[github]
+}
 
 export const DEPENDENCIES: Record<string, Dependency[]> = {
   '核心框架': [
