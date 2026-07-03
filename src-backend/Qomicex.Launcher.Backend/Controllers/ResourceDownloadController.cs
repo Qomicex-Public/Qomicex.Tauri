@@ -41,7 +41,7 @@ public class ResourceDownloadController : ControllerBase
 
         var isolation = instance.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
         var targetDir = isolation
-            ? Path.Combine(gameDir, "versions", instance.GameVersion, category)
+            ? Path.Combine(gameDir, "versions", instance.Name, category)
             : Path.Combine(gameDir, category);
         var taskId = _downloadService.StartDownload(request.Url, targetDir, request.FileName);
         return Ok(new { taskId, fileName = request.FileName });

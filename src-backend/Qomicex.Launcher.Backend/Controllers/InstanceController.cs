@@ -123,6 +123,17 @@ public class InstanceController : ControllerBase
                 instance.VersionDirName = match;
                 _repository.Update(instance.Id, instance);
             }
+
+            // Fix GameVersion if it still uses the directory name
+            // (Core previously set GameVersion = directory name, e.g. "1.20.1-Forge-47.1.0")
+            var versionToCheck = !string.IsNullOrEmpty(instance.VersionDirName) ? instance.VersionDirName : instance.Name;
+            var helper = new GeneralHelper();
+            var realVersion = helper.GetVanillaVersion(versionToCheck, gameDir);
+            if (realVersion != "Unknown" && !string.Equals(instance.GameVersion, realVersion, StringComparison.Ordinal))
+            {
+                instance.GameVersion = realVersion;
+                _repository.Update(instance.Id, instance);
+            }
         }
 
         if (!string.IsNullOrEmpty(instance.VersionDirName))
