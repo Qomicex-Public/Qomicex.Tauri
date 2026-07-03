@@ -12,4 +12,5 @@ public class LaunchProgress
     public List<string>? MissingFiles { get; set; }
     public string? Arguments { get; set; }
     public bool IsRunning { get; set; }
+    public DateTime? StartTime { get; set; }
 }

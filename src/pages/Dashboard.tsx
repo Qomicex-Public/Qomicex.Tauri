@@ -21,13 +21,13 @@ import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { notify } = useMessageBox()
+  useMessageBox()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
   const [defaultInstance, setDefaultInstance] = useState<GameInstance | null>(null)
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [launchError, setLaunchError] = useState<{ title: string; message: string; detail?: string | null; args?: string | null } | null>(null)
   const [defaultAccount, setDefaultAccountState] = useState<Account | null>(null)
-  const launchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const launchPollRef = useRef<number | null>(null)
   const [allAccounts, setAllAccounts] = useState<Account[]>([])
   const [accountsOpen, setAccountsOpen] = useState(false)
   const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
@@ -43,19 +43,27 @@ export default function Dashboard() {
     return unsub
   }, [])
 
+  const loadDefaultInstance = useCallback(async () => {
+    try {
+      const inst = await getDefaultInstance()
+      setDefaultInstance(inst)
+    } catch { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     Promise.all([
-      getDefaultInstance(),
+      loadDefaultInstance(),
       getDefaultAccount().catch(() => null),
-    ]).then(([inst, acc]) => {
-      setDefaultInstance(inst)
-      setDefaultAccountState(acc)
+    ]).then(([, acc]) => {
+      setDefaultAccountState(acc as Account | null)
     })
     loadCustomRuntimes().catch(() => {})
     if (!hasAnyRuntimes()) {
       scanRuntimes('quick').catch(() => {})
     }
   }, [])
+
+  useEffect(() => () => { if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null } }, [])
 
   useEffect(() => {
     function load(s = getSettings()) {
@@ -121,23 +129,26 @@ export default function Dashboard() {
     }
 
     setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
-    if (launchPollRef.current) clearInterval(launchPollRef.current)
-    launchPollRef.current = setInterval(async () => {
+    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
+    const poll = async () => {
       try {
         const p = await getLaunchProgress(defaultInstance!.id)
-        if (p.stage === 'running' || p.stage === 'completed') {
+        if (p.stage === 'completed') {
           setLaunchProgress(null)
-          if (p.stage === 'running') notify('游戏已启动', 'success')
-          if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+          launchPollRef.current = null
+          loadDefaultInstance()
         } else if (p.stage === 'crashed' || p.stage === 'failed') {
           setLaunchProgress(p)
           setLaunchError({ title: '启动失败', message: p.error || '游戏异常退出' })
-          if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+          launchPollRef.current = null
+          loadDefaultInstance()
         } else {
           setLaunchProgress(p)
+          launchPollRef.current = window.setTimeout(poll, p.stage === 'running' ? 2000 : 500)
         }
       } catch { }
-    }, 500)
+    }
+    launchPollRef.current = window.setTimeout(poll, 500)
   }
 
   const handleCancelLaunch = async () => {
@@ -145,7 +156,7 @@ export default function Dashboard() {
       try { await cancelLaunch(defaultInstance.id) } catch { }
     }
     setLaunchProgress(null)
-    if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
   }
 
   const validJava = javaRuntimes.filter((j) => j.state === 'Valid')

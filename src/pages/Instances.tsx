@@ -116,7 +116,7 @@ export default function Instances() {
   const [defaultInstanceId, setDefaultInstanceId] = useState<string | null>(null)
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
-  const launchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const launchPollRef = useRef<number | null>(null)
   const launchingInstanceIdRef = useRef<string | null>(null)
 
   const [managedDirs, setManagedDirs] = useState<ManagedDir[]>(() => loadDirs())
@@ -169,6 +169,13 @@ export default function Instances() {
     } catch { setScannedLocal([]) } finally { setScanning(false) }
   }, [])
 
+  const loadInstances = useCallback(async () => {
+    try {
+      const instances = await getInstances()
+      setBackedInstances(instances)
+    } catch { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     async function init() {
       setLoading(true)
@@ -182,6 +189,8 @@ export default function Instances() {
     }
     init()
   }, [])
+
+  useEffect(() => () => { if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null } }, [])
 
   useEffect(() => { if (currentDir) doScan(currentDir) }, [currentDir, doScan])
 
@@ -404,24 +413,27 @@ export default function Instances() {
 
     launchingInstanceIdRef.current = inst!.id
     setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
-    if (launchPollRef.current) clearInterval(launchPollRef.current)
-
-    launchPollRef.current = setInterval(async () => {
+    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
+    const poll = async () => {
       try {
         const p = await getLaunchProgress(inst!.id)
-        if (p.stage === 'running' || p.stage === 'completed') {
+        if (p.stage === 'completed') {
           setLaunchProgress(null)
           launchingInstanceIdRef.current = null
-          if (p.stage === 'running') notify('游戏已启动', 'success')
-          if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+          launchPollRef.current = null
+          loadInstances()
         } else if (p.stage === 'crashed' || p.stage === 'failed') {
           setLaunchProgress(p)
-          if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+          launchingInstanceIdRef.current = null
+          launchPollRef.current = null
+          loadInstances()
         } else {
           setLaunchProgress(p)
+          launchPollRef.current = window.setTimeout(poll, p.stage === 'running' ? 2000 : 500)
         }
       } catch { }
-    }, 500)
+    }
+    launchPollRef.current = window.setTimeout(poll, 500)
   }
 
   async function handleCancelLaunch() {
@@ -429,7 +441,7 @@ export default function Instances() {
     if (id) {
       try { await cancelLaunch(id) } catch { }
     }
-    if (launchPollRef.current) { clearInterval(launchPollRef.current); launchPollRef.current = null }
+    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
     launchingInstanceIdRef.current = null
     setLaunchProgress(null)
     notify('已取消启动', 'info')
