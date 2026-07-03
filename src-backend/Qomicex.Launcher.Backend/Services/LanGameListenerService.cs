@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using Microsoft.Extensions.Logging;
 
 namespace Qomicex.Launcher.Backend.Services;
 
@@ -12,7 +13,10 @@ public record LanGameEntry(
     int OnlinePlayers,
     int MaxPlayers,
     string GameVersion
-);
+)
+{
+    public DateTime LastSeen { get; set; } = DateTime.UtcNow;
+}
 
 public class LanGameListenerService : IDisposable
 {
@@ -22,10 +26,12 @@ public class LanGameListenerService : IDisposable
     private readonly UdpClient _udp;
     private readonly List<LanGameEntry> _games = new();
     private readonly object _lock = new();
+    private readonly ILogger<LanGameListenerService> _logger;
     private CancellationTokenSource? _cts;
 
-    public LanGameListenerService()
+    public LanGameListenerService(ILogger<LanGameListenerService> logger)
     {
+        _logger = logger;
         _udp = new UdpClient();
         _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
         _udp.Client.Bind(new IPEndPoint(IPAddress.Any, MulticastPort));
@@ -36,7 +42,7 @@ public class LanGameListenerService : IDisposable
     {
         _cts?.Cancel();
         _cts = new CancellationTokenSource();
-        _ = ListenLoop(_cts.Token);
+        _ = Task.Run(() => RunListenLoop(_cts.Token));
     }
 
     public void Stop()
@@ -46,7 +52,32 @@ public class LanGameListenerService : IDisposable
 
     public List<LanGameEntry> GetGames()
     {
-        lock (_lock) return new List<LanGameEntry>(_games);
+        var cutoff = DateTime.UtcNow.AddSeconds(-30);
+        lock (_lock)
+        {
+            _games.RemoveAll(g => g.LastSeen < cutoff);
+            return new List<LanGameEntry>(_games);
+        }
+    }
+
+    private async Task RunListenLoop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await ListenLoop(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "LAN listener loop crashed, restarting in 5s");
+                try { await Task.Delay(5000, ct); } catch (OperationCanceledException) { break; }
+            }
+        }
     }
 
     private async Task ListenLoop(CancellationToken ct)
@@ -63,8 +94,8 @@ public class LanGameListenerService : IDisposable
                 var result = await _udp.ReceiveAsync(timeoutCts.Token);
                 var message = Encoding.UTF8.GetString(result.Buffer);
 
-                var motd = ExtractTag(message, "MOTD", "[MOTD]", "[/MOTD]");
-                var portStr = ExtractTag(message, "AD", "[AD]", "[/AD]");
+                var motd = ExtractTag(message, "[MOTD]", "[/MOTD]");
+                var portStr = ExtractTag(message, "[AD]", "[/AD]");
                 var worldName = motd ?? "Unknown";
 
                 if (!int.TryParse(portStr, out var port)) port = 25565;
@@ -77,12 +108,17 @@ public class LanGameListenerService : IDisposable
                     OnlinePlayers: 1,
                     MaxPlayers: 8,
                     GameVersion: "Unknown"
-                );
+                )
+                {
+                    LastSeen = DateTime.UtcNow
+                };
 
                 lock (_lock)
                 {
-                    var existing = _games.FirstOrDefault(g => g.Ip == game.Ip && g.Port == game.Port);
-                    if (existing == null)
+                    var idx = _games.FindIndex(g => g.Ip == game.Ip && g.Port == game.Port);
+                    if (idx >= 0)
+                        _games[idx] = game;
+                    else
                         _games.Add(game);
                 }
             }
@@ -91,7 +127,7 @@ public class LanGameListenerService : IDisposable
         }
     }
 
-    private static string? ExtractTag(string input, string tagName, string openTag, string closeTag)
+    private static string? ExtractTag(string input, string openTag, string closeTag)
     {
         var start = input.IndexOf(openTag, StringComparison.OrdinalIgnoreCase);
         if (start < 0) return null;
