@@ -1,5 +1,5 @@
 import { get, del, post } from './client.ts'
-import type { FileEntry, ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState } from '../types/index.ts'
+import type { FileEntry, ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState, LanGameEntry } from '../types/index.ts'
 
 export function getSaves(instanceId: string): Promise<FileEntry[]> {
   return get<FileEntry[]>(`/instance/${instanceId}/files/saves`)
@@ -129,4 +129,8 @@ export async function getDataPacksMetadata(instanceId: string): Promise<DataPack
 
 export async function deleteDataPack(instanceId: string, name: string): Promise<void> {
   await del(`/instance/${instanceId}/files/datapacks?name=${encodeURIComponent(name)}`)
+}
+
+export function getLanGames(instanceId: string): Promise<LanGameEntry[]> {
+  return get<LanGameEntry[]>(`/instance/${instanceId}/files/lan-games`)
 }

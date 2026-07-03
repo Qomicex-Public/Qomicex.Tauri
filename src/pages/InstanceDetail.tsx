@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faList, faGrip } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
+import { Separator } from '../components/ui/separator.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
 import { Checkbox } from '../components/ui/checkbox.tsx'
@@ -17,8 +18,8 @@ import { openFolder } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, MissingFile, GameSettingDto } from '../types/index.ts'
-import { getServers, addServer, deleteServer, pingServer, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
+import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto } from '../types/index.ts'
+import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
@@ -769,6 +770,7 @@ function DataPacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { instance
 function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [servers, setServers] = useState<ServerEntry[]>([])
+  const [lanGames, setLanGames] = useState<LanGameEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [addName, setAddName] = useState('')
@@ -805,6 +807,17 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
     }
     pingAll()
   }, [servers, loading, instanceId])
+
+  useEffect(() => {
+    if (loading) return
+    const fetchLan = async () => {
+      try {
+        const games = await getLanGames(instanceId)
+        setLanGames(games)
+      } catch {}
+    }
+    fetchLan()
+  }, [loading, instanceId])
 
   const filtered = useMemo(() => {
     if (!search) return servers
@@ -983,6 +996,39 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
                 )
               })}
             </div>
+          )}
+          {lanGames.length > 0 && (
+            <>
+              <Separator className="my-3" />
+              <div className="mb-2 flex items-center gap-2">
+                <FontAwesomeIcon icon={faWifi} className="h-3.5 w-3.5 text-primary" />
+                <span className="text-xs font-medium text-muted-foreground">局域网游戏 ({lanGames.length})</span>
+              </div>
+              <div className="space-y-2">
+                {lanGames.map((g, i) => (
+                  <Card key={`${g.ip}:${g.port}-${i}`} className="group border-dashed border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
+                    <CardContent className="flex items-start gap-3 p-4">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <FontAwesomeIcon icon={faWifi} className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-semibold text-sm">{g.worldName || '局域网游戏'}</h3>
+                        <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>{g.ip}:{g.port}</span>
+                          {g.gameVersion !== 'Unknown' && <><span className="text-border">·</span><span>{g.gameVersion}</span></>}
+                        </div>
+                        {g.motd && (
+                          <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1">{g.motd}</p>
+                        )}
+                      </div>
+                      <Button size="sm" className="shrink-0 gap-1.5 h-7 text-xs">
+                        <FontAwesomeIcon icon={faPlay} className="h-3 w-3" />加入
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -1806,9 +1852,9 @@ export default function InstanceDetailPage() {
                 {saving && (
                   <div className="flex justify-end pt-2">
                     <span className="text-xs text-muted-foreground">保存中...</span>
-                  </div>
-                )}
-              </CardContent>
+            </div>
+          )}
+        </CardContent>
             </Card>
           )}
 

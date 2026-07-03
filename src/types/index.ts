@@ -431,6 +431,16 @@ export interface ServerEntry {
   acceptTextures?: boolean
 }
 
+export interface LanGameEntry {
+  ip: string
+  port: number
+  motd: string
+  worldName: string
+  onlinePlayers: number
+  maxPlayers: number
+  gameVersion: string
+}
+
 export interface ServerState {
   name: string
   address: string
