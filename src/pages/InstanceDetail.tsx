@@ -635,7 +635,7 @@ function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((shader) => (
-              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} onDelete={handleDelete} />
+              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
             ))}
           </div>
         )}
