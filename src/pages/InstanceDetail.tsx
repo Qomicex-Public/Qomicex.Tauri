@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -731,7 +731,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
   const [adding, setAdding] = useState(false)
   const [confirmIp, setConfirmIp] = useState<string | null>(null)
   const [pingStates, setPingStates] = useState<Record<string, ServerState>>({})
-  const [pinging, setPinging] = useState<Record<string, boolean>>({})
+  const [editServer, setEditServer] = useState<ServerEntry | null>(null)
   const { notify } = useMessageBox()
 
   const load = useCallback(async () => {
@@ -745,6 +745,21 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
   }, [instanceId, notify])
 
   useEffect(() => { load() }, [load, refreshKey])
+
+  useEffect(() => {
+    if (loading || servers.length === 0) return
+    const pingAll = async () => {
+      const results: Record<string, ServerState> = {}
+      for (const s of servers) {
+        try {
+          const state = await pingServer(instanceId, s.ip)
+          results[s.ip] = state
+        } catch {}
+      }
+      setPingStates(results)
+    }
+    pingAll()
+  }, [servers, loading, instanceId])
 
   const filtered = useMemo(() => {
     if (!search) return servers
@@ -768,13 +783,20 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
     setAdding(true)
     try {
       await addServer(instanceId, addName, addIp)
-      notify(`已添加服务器「${addName}」`, 'success')
-      load(); setShowAdd(false); setAddName(''); setAddIp('')
+      notify(editServer ? `已更新「${addName}」` : `已添加「${addName}」`, 'success')
+      load(); setShowAdd(false); setAddName(''); setAddIp(''); setEditServer(null)
     } catch (e) {
-      notify(`添加失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+      notify(`操作失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
     }
     setAdding(false)
-  }, [instanceId, addName, addIp, load, notify])
+  }, [instanceId, addName, addIp, load, notify, editServer])
+
+  const handleEdit = useCallback((s: ServerEntry) => {
+    setEditServer(s)
+    setAddName(s.name)
+    setAddIp(s.ip)
+    setShowAdd(true)
+  }, [])
 
   const handleCopyIp = useCallback(async (ip: string) => {
     try {
@@ -786,7 +808,6 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
   }, [notify])
 
   const handlePing = useCallback(async (address: string) => {
-    setPinging(p => ({ ...p, [address]: true }))
     try {
       const state = await pingServer(instanceId, address)
       setPingStates(p => ({ ...p, [address]: state }))
@@ -794,7 +815,6 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
     } catch (e) {
       notify('测速失败', 'error')
     }
-    setPinging(p => ({ ...p, [address]: false }))
   }, [instanceId, notify])
 
   return (
@@ -816,6 +836,13 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
               <Tooltip content="刷新">
                 <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
                   <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+                </Button>
+              </Tooltip>
+              <Tooltip content="全部测速">
+                <Button size="sm" variant="ghost" onClick={() => {
+                  servers.forEach(s => handlePing(s.ip))
+                }} className="h-7 w-7 px-0">
+                  <FontAwesomeIcon icon={faWifi} className="h-3.5 w-3.5" />
                 </Button>
               </Tooltip>
               <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5 h-7 text-xs">
@@ -845,31 +872,61 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
               {search ? '无匹配服务器' : '暂无服务器'}
             </div>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-2">
               {filtered.map((s, i) => {
                 const ps = pingStates[s.ip]
                 return (
-                  <div key={i} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-accent group">
-                    <FontAwesomeIcon icon={faServer} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="flex-1 truncate min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{s.name}</span>
-                        {ps && <span className={`text-xs font-medium ${ps.isOnline ? 'text-green-500' : 'text-red-500'}`}>
-                          {ps.isOnline ? `${ps.ping}ms` : '离线'}
-                        </span>}
+                  <Card key={i} className="group border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
+                    <CardContent className="flex items-start gap-3 p-4">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
+                        {s.iconBase64 ? (
+                          <img src={`data:image/png;base64,${s.iconBase64}`} alt={s.name} className="h-full w-full object-cover" loading="lazy" />
+                        ) : (
+                          <FontAwesomeIcon icon={faServer} className="h-5 w-5 opacity-50" />
+                        )}
                       </div>
-                      <span className="text-xs text-muted-foreground">{s.ip}</span>
-                    </div>
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Tooltip content="测速">
-                        <button onClick={() => handlePing(s.ip)} disabled={pinging[s.ip]} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                          <FontAwesomeIcon icon={pinging[s.ip] ? faRotate : faWifi} className={`h-3.5 w-3.5 ${pinging[s.ip] ? 'animate-spin' : ''}`} />
-                        </button>
-                      </Tooltip>
-                      <Tooltip content="复制 IP"><button onClick={() => handleCopyIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><FontAwesomeIcon icon={faClipboard} className="h-3.5 w-3.5" /></button></Tooltip>
-                      <Tooltip content="删除"><button onClick={() => setConfirmIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" /></button></Tooltip>
-                    </div>
-                  </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-sm">{s.name}</h3>
+                          {ps && (
+                            <span className={`inline-flex items-center gap-1 text-xs font-medium ${ps.isOnline ? 'text-green-500' : 'text-red-500'}`}>
+                              <span className={`inline-block w-2 h-2 rounded-full ${ps.isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
+                              {ps.isOnline ? `${ps.ping}ms` : '离线'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>{s.ip}</span>
+                          {ps?.version && <><span className="text-border">·</span><span>{ps.version}</span></>}
+                          {ps?.isOnline && <>
+                            <span className="text-border">·</span>
+                            <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
+                            <span>{ps.onlinePlayers}/{ps.maxPlayers}</span>
+                          </>}
+                        </div>
+                        {ps?.description && (
+                          <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1">{ps.description.replace(/§[0-9a-fk-or]/gi, '')}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <Tooltip content="编辑">
+                          <button onClick={() => handleEdit(s)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                            <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="复制 IP">
+                          <button onClick={() => handleCopyIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                            <FontAwesomeIcon icon={faClipboard} className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="删除">
+                          <button onClick={() => setConfirmIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </CardContent>
+                  </Card>
                 )
               })}
             </div>
@@ -877,8 +934,8 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
         </CardContent>
       </Card>
       <ConfirmDialog open={confirmIp !== null} title="删除服务器" message={`确定要删除服务器「${confirmIp}」吗？`} onConfirm={() => confirmIp && handleDelete(confirmIp)} onCancel={() => setConfirmIp(null)} />
-      <Dialog open={showAdd} onClose={() => setShowAdd(false)}>
-        <DialogHeader onClose={() => setShowAdd(false)}><DialogTitle>添加服务器</DialogTitle></DialogHeader>
+      <Dialog open={showAdd} onClose={() => { setShowAdd(false); setEditServer(null) }}>
+        <DialogHeader onClose={() => { setShowAdd(false); setEditServer(null) }}><DialogTitle>{editServer ? '编辑服务器' : '添加服务器'}</DialogTitle></DialogHeader>
         <DialogBody className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs">服务器名称</Label>
@@ -890,8 +947,8 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
           </div>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setShowAdd(false)}>取消</Button>
-          <Button size="sm" onClick={handleAdd} disabled={adding || !addName || !addIp}>{adding ? '添加中...' : '添加'}</Button>
+          <Button variant="outline" size="sm" onClick={() => { setShowAdd(false); setEditServer(null) }}>取消</Button>
+          <Button size="sm" onClick={handleAdd} disabled={adding || !addName || !addIp}>{adding ? (editServer ? '更新中...' : '添加中...') : (editServer ? '保存' : '添加')}</Button>
         </DialogFooter>
       </Dialog>
     </>
