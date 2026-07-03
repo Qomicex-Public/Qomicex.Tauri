@@ -34,7 +34,7 @@ import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
-import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE } from '../constants/credits.ts'
+import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL } from '../constants/credits.ts'
 
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
@@ -76,10 +76,13 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         <CardContent className="space-y-4">
           <div className="flex items-center gap-4">
             <img src="/icon.png" alt={APP_INFO.name} className="h-14 w-14 rounded-2xl" />
-            <div>
+            <div className="flex-1 min-w-0">
               <div className="text-lg font-semibold">{APP_INFO.name}</div>
               <div className="text-sm text-muted-foreground">版本 {APP_INFO.version}</div>
             </div>
+            <Button size="sm" variant="ghost" onClick={() => openUrl(REPOSITORY_URL).catch(() => window.open(REPOSITORY_URL, '_blank'))} className="gap-1.5 h-7 text-xs shrink-0">
+              <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />查看仓库
+            </Button>
           </div>
           <p className="text-sm leading-relaxed text-muted-foreground">{APP_INFO.description}</p>
         </CardContent>

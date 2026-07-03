@@ -91,7 +91,9 @@ export const SERVICES: CreditService[] = [
 ]
 
 export const LICENSE: LicenseInfo = {
-  name: 'MIT License',
-  url: 'https://opensource.org/licenses/MIT',
+  name: 'GPL-3.0 License',
+  url: 'https://www.gnu.org/licenses/gpl-3.0.en.html',
 }
+
+export const REPOSITORY_URL = 'https://github.com/lenmei233/Qomicex.Tauri'
 
