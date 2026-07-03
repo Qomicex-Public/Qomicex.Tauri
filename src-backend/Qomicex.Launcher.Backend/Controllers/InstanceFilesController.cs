@@ -18,17 +18,20 @@ public class InstanceFilesController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly McmodService _mcmod;
     private readonly IConfiguration _configuration;
+    private readonly LanGameListenerService _lanListener;
 
     public InstanceFilesController(
         IInstanceRepository repository,
         IHttpClientFactory httpClientFactory,
         McmodService mcmod,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        LanGameListenerService lanListener)
     {
         _repository = repository;
         _httpClientFactory = httpClientFactory;
         _mcmod = mcmod;
         _configuration = configuration;
+        _lanListener = lanListener;
     }
 
     private static string ResolveGameDir(GameInstance inst)
@@ -752,6 +755,14 @@ public class InstanceFilesController : ControllerBase
         if (helper == null) return NotFound();
         if (!helper.RemoveServer(ip)) return NotFound();
         return NoContent();
+    }
+
+    [HttpGet("lan-games")]
+    public ActionResult<List<LanGameEntry>> GetLanGames(string instanceId)
+    {
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        return Ok(_lanListener.GetGames());
     }
 
     [HttpGet("server-ping")]

@@ -47,6 +47,7 @@ builder.Services.AddSingleton<JavaRuntimeStore>();
 builder.Services.AddSingleton<JavaDownloadService>();
 builder.Services.AddSingleton<SkinService>();
 builder.Services.AddSingleton<McmodService>();
+builder.Services.AddSingleton<LanGameListenerService>();
 builder.Services.AddSingleton(_ => new AccountService(AppPaths.BaseDir));
 builder.Services.AddTransient<MsAccount>(_ => new MsAccount { ClientId = builder.Configuration["Microsoft:ClientId"] ?? string.Empty });
 
@@ -105,5 +106,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors();
 app.MapControllers();
+
+var lanService = app.Services.GetRequiredService<LanGameListenerService>();
+lanService.Start();
+app.Lifetime.ApplicationStopping.Register(() => lanService.Stop());
 
 app.Run();
