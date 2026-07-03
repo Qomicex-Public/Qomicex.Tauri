@@ -34,7 +34,7 @@ import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
-import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, SERVICES, LICENSE } from '../constants/credits.ts'
+import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE } from '../constants/credits.ts'
 
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
@@ -61,7 +61,7 @@ function saveSettings(settings: AppSettings) {
 }
 
 function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
-  const [expandedDep, setExpandedDep] = useState<string | null>('核心框架')
+  const [expandedDep, setExpandedDep] = useState<string | null>(null)
 
   return (
     <div key="about" className="animate-in slide-up space-y-4">
@@ -75,9 +75,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary font-bold text-2xl text-primary-foreground shadow-lg shadow-primary/30">
-              Q
-            </div>
+            <img src="/icon.png" alt={APP_INFO.name} className="h-14 w-14 rounded-2xl" />
             <div>
               <div className="text-lg font-semibold">{APP_INFO.name}</div>
               <div className="text-sm text-muted-foreground">版本 {APP_INFO.version}</div>
@@ -131,7 +129,79 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         </CardContent>
       </Card>
 
-      {/* Dependencies */}
+      {/* Services Credits */}
+      <Card>
+        <CardHeader><CardTitle><FontAwesomeIcon icon={faHeart} className="mr-2 h-4 w-4 text-destructive" />鸣谢</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {SERVICES.map((svc) => (
+              <button
+                key={svc.name}
+                onClick={() => openUrl(svc.url).catch(() => window.open(svc.url, '_blank'))}
+                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
+              >
+                {svc.icon ? (
+                  <img src={svc.icon} alt={svc.name} className="h-6 w-6 shrink-0 rounded object-contain" />
+                ) : (
+                  <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">{svc.name}</div>
+                  <div className="truncate text-xs text-muted-foreground">{svc.description}</div>
+                </div>
+                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Backend Dependencies */}
+      <Card>
+        <CardHeader><CardTitle>后端依赖</CardTitle></CardHeader>
+        <CardContent>
+          <div className="space-y-1">
+            {Object.entries(BACKEND_DEPENDENCIES).map(([category, deps]) => (
+              <div key={category}>
+                <button
+                  onClick={() => setExpandedDep(expandedDep === category ? null : category)}
+                  className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent"
+                >
+                  <span>{category}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="h-5 text-[10px]">{deps.length}</Badge>
+                    <FontAwesomeIcon icon={expandedDep === category ? faChevronDown : faChevronRight} className="h-3 w-3 text-muted-foreground" />
+                  </div>
+                </button>
+                {expandedDep === category && (
+                  <div className="mt-1 space-y-1 pl-2">
+                    {deps.map((dep) => (
+                      <div
+                        key={dep.name}
+                        className={cn(
+                          'flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs',
+                          dep.license === '自研' ? 'bg-primary/5' : 'hover:bg-accent'
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground">{dep.name}</span>
+                          {dep.license === '自研' && <Badge variant="outline" className="h-4 px-1 text-[9px] border-primary/30 text-primary">自研</Badge>}
+                        </div>
+                        {dep.url.startsWith('http') ? (
+                          <FontAwesomeIcon icon={faExternalLinkAlt} className="h-2.5 w-2.5 text-muted-foreground/50 cursor-pointer" onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))} />
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <Separator className="my-1" />
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Frontend Dependencies */}
       <Card>
         <CardHeader><CardTitle>前端依赖</CardTitle></CardHeader>
         <CardContent>
@@ -167,33 +237,6 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
                 )}
                 <Separator className="my-1" />
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Services Credits */}
-      <Card>
-        <CardHeader><CardTitle><FontAwesomeIcon icon={faHeart} className="mr-2 h-4 w-4 text-destructive" />鸣谢</CardTitle></CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {SERVICES.map((svc) => (
-              <button
-                key={svc.name}
-                onClick={() => openUrl(svc.url).catch(() => window.open(svc.url, '_blank'))}
-                className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2.5 text-left text-sm hover:bg-accent"
-              >
-                {svc.icon ? (
-                  <img src={svc.icon} alt={svc.name} className="h-6 w-6 shrink-0 rounded object-contain" />
-                ) : (
-                  <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium">{svc.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{svc.description}</div>
-                </div>
-                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-              </button>
             ))}
           </div>
         </CardContent>
