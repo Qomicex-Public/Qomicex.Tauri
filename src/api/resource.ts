@@ -62,7 +62,7 @@ export function getResourceVersionDownloads(id: string, versionId: string, sourc
   return get<ResourceFile[]>(`/resources/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/downloads${qs ? `?${qs}` : ''}`)
 }
 
-export function getResourceDependencies(id: string, source: string, versionId: string, gameVersion: string, loader: string): Promise<ResolvedDependency[]> {
+export function getResourceDependencies(id: string, source: string, versionId: string, gameVersion: string, loader?: string): Promise<ResolvedDependency[]> {
   const q = new URLSearchParams()
   q.set('source', source)
   if (versionId) q.set('versionId', versionId)

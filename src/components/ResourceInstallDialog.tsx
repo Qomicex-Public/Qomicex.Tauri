@@ -105,7 +105,7 @@ export default function ResourceInstallDialog({
         const vlist = await getResourceVersions(
           resourceId, source,
           selectedInstance.gameVersion,
-          (selectedInstance.loader || '').toLowerCase() || undefined
+          category === 'mod' ? (selectedInstance.loader || '').toLowerCase() || undefined : undefined
         )
         if (cancelled) return
         versionCache.set(key, vlist)
@@ -128,7 +128,8 @@ export default function ResourceInstallDialog({
       try {
         const resolved = await getResourceDependencies(
           resourceId, source, selectedVersion.id,
-          selectedInstance.gameVersion, (selectedInstance.loader || '').toLowerCase()
+          selectedInstance.gameVersion,
+          category === 'mod' ? (selectedInstance.loader || '').toLowerCase() : undefined
         )
         if (cancelled) return
         setDeps(resolved)

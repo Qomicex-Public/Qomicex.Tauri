@@ -863,14 +863,11 @@ public class InstanceController : ControllerBase
                 }
             }
 
-            // Mark as launched successfully
-            instance.LastPlayed = DateTime.UtcNow;
-            _repository.Update(instance.Id, instance);
-
             state.Stage = "running"; state.Message = "游戏运行中"; state.Progress = 100;
             state.ProcessId = process.Id;
             state.Arguments = args;
             state.IsRunning = true;
+            state.StartTime = DateTime.UtcNow;
             _launchService.Set(id, state);
 
             // ─── Step 9: Lightweight crash detection (background) ───
@@ -939,6 +936,14 @@ public class InstanceController : ControllerBase
                         state.Stage = "completed"; state.Message = "游戏已退出";
                     }
                     state.IsRunning = false;
+                    if (state.StartTime is DateTime st)
+                    {
+                        var elapsed = (DateTime.UtcNow - st).TotalMinutes;
+                        if (elapsed < 0) elapsed = 0;
+                        instance.PlayTime += (long)elapsed;
+                        instance.LastPlayed = DateTime.UtcNow;
+                        _repository.Update(instance.Id, instance);
+                    }
                     _launchService.Set(id, state);
                 }
                 catch (Exception ex)
