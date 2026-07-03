@@ -19,6 +19,7 @@ import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, MissingFile, GameSettingDto } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
+import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -875,58 +876,66 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
             <div className="space-y-2">
               {filtered.map((s, i) => {
                 const ps = pingStates[s.ip]
+                const contextItems: ContextMenuItem[] = [
+                  { label: '编辑', onClick: () => handleEdit(s) },
+                  { label: '测速', onClick: () => handlePing(s.ip) },
+                  { label: '复制 IP', onClick: () => handleCopyIp(s.ip) },
+                  { label: '删除', onClick: () => setConfirmIp(s.ip), danger: true },
+                ]
                 return (
-                  <Card key={i} className="group border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
-                    <CardContent className="flex items-start gap-3 p-4">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
-                        {s.iconBase64 ? (
-                          <img src={`data:image/png;base64,${s.iconBase64}`} alt={s.name} className="h-full w-full object-cover" loading="lazy" />
-                        ) : (
-                          <FontAwesomeIcon icon={faServer} className="h-5 w-5 opacity-50" />
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-semibold text-sm">{s.name}</h3>
-                          {ps && (
-                            <span className={`inline-flex items-center gap-1 text-xs font-medium ${ps.isOnline ? 'text-green-500' : 'text-red-500'}`}>
-                              <span className={`inline-block w-2 h-2 rounded-full ${ps.isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
-                              {ps.isOnline ? `${ps.ping}ms` : '离线'}
-                            </span>
+                  <ContextMenu key={i} items={contextItems}>
+                    <Card className="group border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
+                      <CardContent className="flex items-start gap-3 p-4">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
+                          {s.iconBase64 ? (
+                            <img src={`data:image/png;base64,${s.iconBase64}`} alt={s.name} className="h-full w-full object-cover" loading="lazy" />
+                          ) : (
+                            <FontAwesomeIcon icon={faServer} className="h-5 w-5 opacity-50" />
                           )}
                         </div>
-                        <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                          <span>{s.ip}</span>
-                          {ps?.version && <><span className="text-border">·</span><span>{ps.version}</span></>}
-                          {ps?.isOnline && <>
-                            <span className="text-border">·</span>
-                            <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
-                            <span>{ps.onlinePlayers}/{ps.maxPlayers}</span>
-                          </>}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-semibold text-sm">{s.name}</h3>
+                            {ps && (
+                              <span className={`inline-flex items-center gap-1 text-xs font-medium ${ps.isOnline ? 'text-green-500' : 'text-red-500'}`}>
+                                <span className={`inline-block w-2 h-2 rounded-full ${ps.isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
+                                {ps.isOnline ? `${ps.ping}ms` : '离线'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                            <span>{s.ip}</span>
+                            {ps?.version && <><span className="text-border">·</span><span>{ps.version}</span></>}
+                            {ps?.isOnline && <>
+                              <span className="text-border">·</span>
+                              <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
+                              <span>{ps.onlinePlayers}/{ps.maxPlayers}</span>
+                            </>}
+                          </div>
+                          {ps?.description && (
+                            <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1">{ps.description.replace(/§[0-9a-fk-or]/gi, '')}</p>
+                          )}
                         </div>
-                        {ps?.description && (
-                          <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1">{ps.description.replace(/§[0-9a-fk-or]/gi, '')}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-0.5 shrink-0">
-                        <Tooltip content="编辑">
-                          <button onClick={() => handleEdit(s)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                            <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
-                          </button>
-                        </Tooltip>
-                        <Tooltip content="复制 IP">
-                          <button onClick={() => handleCopyIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                            <FontAwesomeIcon icon={faClipboard} className="h-3.5 w-3.5" />
-                          </button>
-                        </Tooltip>
-                        <Tooltip content="删除">
-                          <button onClick={() => setConfirmIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-                            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-                          </button>
-                        </Tooltip>
-                      </div>
-                    </CardContent>
-                  </Card>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <Tooltip content="编辑">
+                            <button onClick={() => handleEdit(s)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                              <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="复制 IP">
+                            <button onClick={() => handleCopyIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                              <FontAwesomeIcon icon={faClipboard} className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="删除">
+                            <button onClick={() => setConfirmIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                              <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </ContextMenu>
                 )
               })}
             </div>
