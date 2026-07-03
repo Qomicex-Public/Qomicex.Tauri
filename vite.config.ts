@@ -7,6 +7,9 @@ export default defineConfig(() => ({
   plugins: [react()],
   clearScreen: false,
   base: "./",
+  define: {
+    __GIT_SHA__: JSON.stringify(process.env.GITHUB_SHA || "unknown"),
+  },
   server: {
     port: 1420,
     strictPort: true,
