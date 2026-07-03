@@ -34,7 +34,7 @@ import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
-import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, SERVICES, LICENSE, getContributorAvatars } from '../constants/credits.ts'
+import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, SERVICES, LICENSE } from '../constants/credits.ts'
 
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
@@ -62,11 +62,6 @@ function saveSettings(settings: AppSettings) {
 
 function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   const [expandedDep, setExpandedDep] = useState<string | null>('核心框架')
-  const [avatars, setAvatars] = useState<Record<string, string>>({})
-
-  useEffect(() => {
-    getContributorAvatars().then(setAvatars)
-  }, [])
 
   return (
     <div key="about" className="animate-in slide-up space-y-4">
@@ -114,12 +109,10 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         <CardHeader><CardTitle>开发者</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {CONTRIBUTORS.map((c) => {
-                  const avatarUrl = c.github ? avatars[c.github] : undefined
-                  return (
+            {CONTRIBUTORS.map((c) => (
                 <div key={c.name} className="flex items-center gap-3">
-                  {avatarUrl ? (
-                    <img src={avatarUrl} alt={c.name} className="h-10 w-10 rounded-full object-cover" />
+                  {c.avatar ? (
+                    <img src={c.avatar} alt={c.name} className="h-10 w-10 rounded-full object-cover" />
                   ) : (
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
                       {c.name.slice(0, 1).toUpperCase()}
@@ -133,8 +126,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
                     <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />GitHub
                   </Button>
                 </div>
-                  )
-                })}
+                ))}
           </div>
         </CardContent>
       </Card>
