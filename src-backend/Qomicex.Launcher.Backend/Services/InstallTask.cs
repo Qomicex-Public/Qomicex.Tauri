@@ -110,7 +110,11 @@ public class InstallTask : IInstallTask
                 throw new Exception($"无法解析版本 {_gameVersion} 的 JSON 下载地址");
 
             var httpClient = _httpClientFactory.CreateClient();
-            var jsonContent = await httpClient.GetStringAsync(versionJsonUrl, _cts.Token);
+            using var jsonReq = new HttpRequestMessage(HttpMethod.Get, versionJsonUrl);
+            jsonReq.Headers.TryAddWithoutValidation("User-Agent", "QomicexLauncher/1.0");
+            var jsonResp = await httpClient.SendAsync(jsonReq, _cts.Token);
+            jsonResp.EnsureSuccessStatusCode();
+            var jsonContent = await jsonResp.Content.ReadAsStringAsync();
             SetState("downloading-json", 3);
             _cts.Token.ThrowIfCancellationRequested();
 
