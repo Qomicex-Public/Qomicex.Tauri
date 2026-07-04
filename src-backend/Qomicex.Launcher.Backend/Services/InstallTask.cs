@@ -117,6 +117,7 @@ public class InstallTask : IInstallTask
             // ===== Loader JAR download (start early for Forge/NeoForge) =====
             string installerPath = string.Empty;
             Task? loaderJarTask = null;
+            int jarTaskId = -1;
 
             if (!string.IsNullOrEmpty(_loader) && !string.IsNullOrEmpty(_loaderVersion))
             {
@@ -130,9 +131,9 @@ public class InstallTask : IInstallTask
 
                     if (!File.Exists(installerPath) || new FileInfo(installerPath).Length == 0)
                     {
-                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
-                        _downloadManager.AddFileToTask(jarTid, loaderDownloadUrl, installerPath);
-                        loaderJarTask = _downloadManager.StartTaskAsync(jarTid, _cts.Token);
+                        jarTaskId = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                        _downloadManager.AddFileToTask(jarTaskId, loaderDownloadUrl, installerPath);
+                        loaderJarTask = _downloadManager.StartTaskAsync(jarTaskId, _cts.Token);
                     }
                 }
             }
@@ -169,7 +170,19 @@ public class InstallTask : IInstallTask
             if (!string.IsNullOrEmpty(_loader) && !string.IsNullOrEmpty(_loaderVersion))
             {
                 if (loaderJarTask != null)
+                {
                     await loaderJarTask;
+                    if (jarTaskId >= 0)
+                    {
+                        var infos = _downloadManager.GetAllTaskInfos();
+                        if (infos.TryGetValue(jarTaskId, out var jarInfo) && jarInfo.FailedFiles > 0)
+                        {
+                            var statuses = _downloadManager.GetTaskFileStatuses(jarTaskId);
+                            var failed = statuses.FirstOrDefault(s => s.Status == DownloadTask.FileStatus.Failed);
+                            throw new Exception($"下载失败: {failed.Name} (共 {jarInfo.FailedFiles} 个文件失败)");
+                        }
+                    }
+                }
 
                 // Download loader libs
                 SetState("downloading-loader-libs", 65, "正在补全加载器库文件...");
@@ -276,6 +289,14 @@ public class InstallTask : IInstallTask
             try { await Task.Delay(100, ct); } catch (OperationCanceledException) { break; }
         }
         await downloadTask;
+
+        var finalInfos = _downloadManager.GetAllTaskInfos();
+        if (finalInfos.TryGetValue(taskId, out var finalInfo) && finalInfo.FailedFiles > 0)
+        {
+            var statuses = _downloadManager.GetTaskFileStatuses(taskId);
+            var failed = statuses.FirstOrDefault(s => s.Status == DownloadTask.FileStatus.Failed);
+            throw new Exception($"下载失败: {failed.Name} (共 {finalInfo.FailedFiles} 个文件失败)");
+        }
     }
 
     private async Task DownloadAddonsParallel(double stageStart, double stageEnd)
