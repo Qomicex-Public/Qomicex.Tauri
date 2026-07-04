@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer, faCoffee } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
@@ -6,11 +6,12 @@ import { Button } from '../components/ui/button.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
-import { getInstallProgress, pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
-import { getResourceDownloadProgress, cancelResourceDownload, startResourceDownload } from '../api/resource-download.ts'
-import { getJavaDownloadProgress, cancelJavaDownload, pauseJavaDownload, resumeJavaDownload } from '../api/java.ts'
-import { ApiError } from '../api/client.ts'
+import { pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
+import { cancelResourceDownload } from '../api/resource-download.ts'
+import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload } from '../api/java.ts'
+
 import type { DownloadTask } from '../types/index.ts'
+import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
 
@@ -71,136 +72,79 @@ export default function DownloadCenter() {
     return unsub
   }, [])
 
-  function applyJavaProgress(id: string, progress: { status: string; progress: number; speed: number; fileName: string; error: string | null }) {
-    let newStatus: DownloadTask['status'] = 'downloading'
-    if (progress.status === 'completed') newStatus = 'completed'
-    else if (progress.status === 'cancelled') newStatus = 'cancelled'
-    else if (progress.status === 'failed') newStatus = 'failed'
-    else if (progress.status === 'paused') newStatus = 'paused'
-    else if (progress.status === 'queued' || progress.status === 'resolving') newStatus = 'queued'
-
-    updateTask(id, {
-      status: newStatus,
-      stage: progress.status,
-      progress: Math.round(progress.progress),
-      speed: progress.speed,
-      currentFile: progress.fileName || undefined,
-      error: progress.error || undefined,
-      completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
-    })
-  }
-
-  const pollingRef = useRef<number | undefined>(undefined)
+  const sseData = useDownloadSSE()
 
   useEffect(() => {
-    const javaTasks = tasks.filter((t) => t.type === 'java' && t.taskId && (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused'))
-    if (javaTasks.length === 0) return
-    Promise.all(javaTasks.map(async (t) => {
-      try {
-        const progress = await getJavaDownloadProgress(t.taskId!)
-        applyJavaProgress(t.id, progress)
-      } catch {
-        updateTask(t.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
-      }
-    }))
-  }, [])
+    if (!sseData) return
 
-  useEffect(() => {
-    const activeCount = tasks.filter((t) => (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused') && (t.instanceId || t.taskId)).length
+    const ts = getTasks()
+    for (const task of ts) {
+      if (task.status !== 'queued' && task.status !== 'downloading' && task.status !== 'paused') continue
 
-    if (activeCount === 0) {
-      if (pollingRef.current !== undefined) {
-        clearInterval(pollingRef.current)
-        pollingRef.current = undefined
-      }
-      return
-    }
-
-    if (pollingRef.current !== undefined) return
-
-    pollingRef.current = window.setInterval(async () => {
-      const ts = getTasks()
-      const active = ts.filter((t) => t.status === 'queued' || t.status === 'downloading' || t.status === 'paused')
-      for (const task of active) {
-        if (task.type === 'java' && task.taskId) {
-          if (task.status === 'queued' && Date.now() - new Date(task.createdAt).getTime() > 120000) {
-            updateTask(task.id, { status: 'failed', error: '下载超时：后端未响应' })
-            continue
-          }
-          try {
-            const progress = await getJavaDownloadProgress(task.taskId)
-            applyJavaProgress(task.id, progress)
-          } catch {
-            updateTask(task.id, { status: 'failed', error: '获取 Java 下载进度失败' })
-          }
-          continue
-        }
-
-        if (task.type === 'file' && task.taskId) {
-          try {
-            const progress = await getResourceDownloadProgress(task.taskId)
-            let newStatus: DownloadTask['status'] = 'downloading'
-            if (progress.status === 'completed') newStatus = 'completed'
-            else if (progress.status === 'cancelled') newStatus = 'cancelled'
-            else if (progress.status === 'failed') newStatus = 'failed'
-
-            updateTask(task.id, {
-              status: newStatus,
-              progress: Math.round(progress.progress),
-              speed: progress.speed,
-              error: progress.error || undefined,
-              currentFile: progress.fileName || undefined,
-              completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
-            })
-          } catch (e: unknown) {
-            if (e instanceof ApiError && (e.status === 404 || e.code === 'JAVA_DOWNLOAD_PACKAGE_NOT_FOUND')) {
-              updateTask(task.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
-            }
-          }
-          continue
-        }
-        if (!task.instanceId) continue
-        try {
-          const progress = await getInstallProgress(task.instanceId)
-
-          if (progress.status === 'not-started') {
-            // ponytail: 30s timeout for tasks stuck in queued (backend crash / never processed)
-            if (task.status === 'queued' && Date.now() - new Date(task.createdAt).getTime() > 30000) {
-              updateTask(task.id, { status: 'failed', error: '安装超时：后端未响应' })
-            }
-            continue
-          }
-
+      if (task.type === 'java' && task.taskId) {
+        const match = sseData.javaDownloads.find((j) => j.taskId === task.taskId)
+        if (match) {
           let newStatus: DownloadTask['status'] = 'downloading'
-          if (progress.status === 'completed') newStatus = 'completed'
-          else if (progress.status === 'cancelled') newStatus = 'cancelled'
-          else if (progress.status === 'failed') newStatus = 'failed'
-          else if (progress.isPaused) newStatus = 'paused'
-
+          if (match.status === 'completed') newStatus = 'completed'
+          else if (match.status === 'cancelled') newStatus = 'cancelled'
+          else if (match.status === 'failed') newStatus = 'failed'
+          else if (match.status === 'paused') newStatus = 'paused'
+          else if (match.status === 'queued' || match.status === 'resolving') newStatus = 'queued'
           updateTask(task.id, {
             status: newStatus,
-            stage: progress.status,
-            progress: Math.round(progress.progress),
-            speed: progress.speed,
-            currentFile: progress.currentFile || undefined,
-            totalFiles: progress.totalFiles || undefined,
-            completedFiles: progress.completedFiles || undefined,
-            error: progress.error || undefined,
+            stage: match.status,
+            progress: Math.round(match.progress),
+            speed: match.speed,
+            currentFile: match.fileName || undefined,
+            error: match.error || undefined,
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
           })
-        } catch {
-          // skip
+        }
+        continue
+      }
+
+      if (task.type === 'file' && task.taskId) {
+        const match = sseData.resources.find((r) => r.taskId === task.taskId)
+        if (match) {
+          let newStatus: DownloadTask['status'] = 'downloading'
+          if (match.status === 'completed') newStatus = 'completed'
+          else if (match.status === 'cancelled') newStatus = 'cancelled'
+          else if (match.status === 'failed') newStatus = 'failed'
+          updateTask(task.id, {
+            status: newStatus,
+            progress: Math.round(match.progress),
+            speed: match.speed,
+            error: match.error || undefined,
+            currentFile: match.fileName || undefined,
+            completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+          })
+        }
+        continue
+      }
+
+      if (task.instanceId) {
+        const match = sseData.installs.find((i) => i.instanceId === task.instanceId)
+        if (match) {
+          let newStatus: DownloadTask['status'] = 'downloading'
+          if (match.stage === 'completed') newStatus = 'completed'
+          else if (match.stage === 'cancelled') newStatus = 'cancelled'
+          else if (match.stage === 'failed') newStatus = 'failed'
+          else if (match.isPaused) newStatus = 'paused'
+          updateTask(task.id, {
+            status: newStatus,
+            stage: match.stage,
+            progress: Math.round(match.progress),
+            speed: match.speed,
+            currentFile: match.currentFile || undefined,
+            totalFiles: match.totalFiles || undefined,
+            completedFiles: match.completedFiles || undefined,
+            error: match.error || undefined,
+            completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+          })
         }
       }
-    }, 1000)
-
-    return () => {
-      if (pollingRef.current !== undefined) {
-        clearInterval(pollingRef.current)
-        pollingRef.current = undefined
-      }
     }
-  }, [tasks.length, tasks.filter((t) => (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused')).length])
+  }, [sseData])
 
   const filtered = useMemo(() => tasks.filter((t) => {
     if (filter === 'all') return true
@@ -354,17 +298,7 @@ export default function DownloadCenter() {
                     )}
                     {task.status === 'failed' && (
                       <Tooltip content="重试">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={async () => {
-                          if (task.type === 'file' && task.taskId && task.instanceId) {
-                            try {
-                              const progress = await getResourceDownloadProgress(task.taskId)
-                              if (progress.url) {
-                                await startResourceDownload(task.instanceId, progress.url, progress.fileName, 'mods')
-                              }
-                            } catch {}
-                          }
-                          removeTask(task.id)
-                        }}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => removeTask(task.id)}>
                           <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
