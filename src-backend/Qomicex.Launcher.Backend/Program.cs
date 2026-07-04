@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Qomicex.Downloader;
 using Qomicex.Launcher.Backend;
@@ -9,6 +10,18 @@ using Qomicex.Launcher.Backend.Services;
 using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
 
 var builder = WebApplication.CreateBuilder(args);
+
+try
+{
+    var settingsPath = Path.Combine(AppPaths.BaseDir, "QML", "settings.json");
+    if (File.Exists(settingsPath))
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(settingsPath));
+        if (doc.RootElement.TryGetProperty("maxConnectionsPerServer", out var maxConn))
+            CoreConfig.MaxConnectionsPerServer = maxConn.GetInt32();
+    }
+}
+catch { /* use default */ }
 
 builder.Services.AddSingleton(new TraceBufferStore(capacity: 2000));
 builder.Services.AddSingleton<TraceDumpService>();
