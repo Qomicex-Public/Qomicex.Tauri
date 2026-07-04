@@ -298,8 +298,9 @@ public class InstallTask : IInstallTask
         if (finalInfos.TryGetValue(taskId, out var finalInfo) && finalInfo.FailedFiles > 0)
         {
             var statuses = _downloadManager.GetTaskFileStatuses(taskId);
-            var failed = statuses.FirstOrDefault(s => s.Status == DownloadTask.FileStatus.Failed);
-            throw new Exception($"下载失败: {failed.Name} (共 {finalInfo.FailedFiles} 个文件失败)");
+            foreach (var f in statuses.Where(s => s.Status == DownloadTask.FileStatus.Failed))
+                Trace.WriteLine($"[InstallTask] 下载失败（已跳过）: {f.Name}");
+            FailedFiles = finalInfo.FailedFiles;
         }
     }
 
