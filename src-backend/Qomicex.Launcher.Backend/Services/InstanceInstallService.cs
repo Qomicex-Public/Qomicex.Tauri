@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json.Nodes;
 using Qomicex.Downloader;
@@ -77,6 +78,26 @@ public class InstanceInstallService
             };
         }
         return null;
+    }
+
+    public List<InstallState> GetAllActiveStates()
+    {
+        return _tasks.Values
+            .Where(t => !t.IsCompleted && t.Stage != "completed" && t.Stage != "cancelled" && t.Stage != "failed")
+            .Select(t => new InstallState
+            {
+                InstanceId = t.InstanceId,
+                Stage = t.Stage,
+                Progress = t.Progress,
+                Error = t.Error,
+                TotalFiles = t.TotalFiles,
+                CompletedFiles = t.CompletedFiles,
+                FailedFiles = t.FailedFiles,
+                CurrentFile = t.CurrentFile,
+                Speed = t.Speed,
+                IsPaused = t.IsPaused,
+            })
+            .ToList();
     }
 
     public void StartInstall(string instanceId, string gameVersion, string gameDir,
