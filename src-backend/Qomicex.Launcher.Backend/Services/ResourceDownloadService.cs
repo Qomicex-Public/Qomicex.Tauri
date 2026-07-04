@@ -115,7 +115,7 @@ public class ResourceDownloadService
 
         try
         {
-            var core = new DownloadCore(threadCount: 0, maxRetries: 3, autoUpdate: false);
+            var core = new DownloadCore(threadCount: 0, maxRetries: 3, autoUpdate: true);
             state.Engine = core;
             _engines[taskId] = core;
 
