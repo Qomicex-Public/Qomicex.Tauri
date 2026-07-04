@@ -111,7 +111,7 @@ public class InstallTask : IInstallTask
 
             var httpClient = _httpClientFactory.CreateClient();
             using var jsonReq = new HttpRequestMessage(HttpMethod.Get, versionJsonUrl);
-            jsonReq.Headers.TryAddWithoutValidation("User-Agent", "QomicexLauncher/1.0");
+            jsonReq.Headers.TryAddWithoutValidation("User-Agent", CoreConfig.UserAgent);
             var jsonResp = await httpClient.SendAsync(jsonReq, _cts.Token);
             jsonResp.EnsureSuccessStatusCode();
             var jsonContent = await jsonResp.Content.ReadAsStringAsync();

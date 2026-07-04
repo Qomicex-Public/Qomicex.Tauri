@@ -1,291 +1,129 @@
 # Qomicex Launcher
 
-## Path constraint
+## Stack & Ports
 
-Source path contains `#` (`D:\C#\Project\qomicex-launcher`), which breaks Vite/Rollup. Working copy is `D:\qomicex-launcher`. **Run all npm commands from the working copy.**
-
-## Architecture
-
-Three-layer Minecraft desktop launcher:
-
-| Layer | Stack | Directory | Port |
-|-------|-------|-----------|------|
+| Layer | Tech | Dir | Port |
+|-------|------|-----|------|
 | Desktop shell | Tauri v2 (Rust) | `src-tauri/` | — |
 | Frontend | React 19 + Vite 7 + TS + Tailwind | `src/` | 1420 |
-| Backend API | ASP.NET Core (.NET 10) | `src-backend/Qomicex.Launcher.Backend/` | 5000 |
+| Backend API | ASP.NET Core 10 | `src-backend/Qomicex.Launcher.Backend/` | 5000 |
 
-Vite proxies `/api/*` → `http://localhost:5000` (see `vite.config.ts`).
+Vite proxies `/api/*` → `http://localhost:5000` (`vite.config.ts`).
 
-`src-backend/` contains 3 projects: `Qomicex.Launcher.Backend` (main API), `Qomicex.Core` (shared launcher logic), `Qomicex.Downloader` (download library). Backend references both Core and Downloader.
+`src-backend/` has 3 projects: `Qomicex.Launcher.Backend` (main API), `Qomicex.Core` (shared launcher logic, submodule), `Qomicex.Downloader` (download library). Backend references both Core and Downloader.
 
 `Qomicex.Avalonia/` is a **separate repo** (own `.git`). Do not assume shared toolchain.
 
 ## Commands
 
 ```bash
-# Backend
+# Backend dev
 cd src-backend/Qomicex.Launcher.Backend && dotnet run
 
-# Frontend dev
-npm run dev          # vite on :1420
+# Frontend dev (plain Vite)
+npm run dev          # on :1420
 
 # Tauri desktop dev (replaces plain vite)
 npm run tauri dev
 
-# Build (runs tsc then vite build — type errors fail the build)
+# Build (tsc then vite build — type errors fail the build)
 npm run build
+
+# Local Windows release build
+pwsh ./build-release.ps1
 ```
 
-No test framework exists in this repo.
+No test framework. Backend API test script: `bash scripts/test-api-filters.sh`.
 
-## CI/CD (GitHub Actions)
+## CI/CD
 
-`.github/workflows/release.yml` — **手动触发** (`workflow_dispatch`)，可选单个或多个目标：
+`.github/workflows/release.yml` — manual trigger (`workflow_dispatch`). Select platform (`windows`/`linux`/`macos`/`all`), bundles, and macOS arch.
 
-| Job | Runner | 产物 | 打包 |
-|-----|--------|------|------|
-| `windows-x64` | windows-latest | `qomicex-launcher-windows-x64` | NSIS |
-| `linux-x64` | ubuntu-latest | `qomicex-launcher-linux-x64` | AppImage |
-| `macos-arm64` | macos-latest | `qomicex-launcher-macos-arm64` | DMG |
-| `macos-x64` | macos-13 | `qomicex-launcher-macos-x64` | DMG |
-
-构建成功后自动上传 artifact 并创建 GitHub Release。
-
-**注意：** `Qomicex.Avalonia` 是私有子模块。CI 需要在 repo 设置中添加 `QOMICEX_PAT` secret（一个有子模块访问权限的 GitHub Personal Access Token）。
-
-Tauri v2 → React → ASP.NET Core，后端通过 `include_bytes!` 嵌入 Rust exe，启动时解压到临时目录。持久化数据默认存储在 `Environment.SpecialFolder.LocalApplicationData/qomicex-launcher/`（Linux: `~/.local/share/qomicex-launcher/`，Windows: `%LOCALAPPDATA%/qomicex-launcher/`，macOS: `~/Library/Application Support/qomicex-launcher/`）。设置 `QOMICEX_HOME` 环境变量可覆盖为便携模式（由 Rust 在 spawn 前设置）。
+Requires `QOMICEX_PAT` secret for submodule checkout. Builds publish backend per-RID, embed it into `src-tauri/binaries/`, then build Tauri bundle.
 
 ## Import rules (critical)
 
-All local imports **must** include the file extension — Vite path bug:
+All local TS/TSX imports **must include file extensions** — Vite path bug:
 ```ts
 import { foo } from './bar.ts'             // correct
-import { Baz } from './components/Baz.tsx' // correct
 import { x } from './baz'                  // WRONG — Vite will error
 ```
 
 ## Frontend conventions
 
-- Tailwind + shadcn/ui style (`class-variance-authority`, `radix-ui`). Use `cn()` from `src/lib/utils.ts`.
+- `cn()` from `src/lib/utils.ts` for Tailwind class merging.
 - Dark mode via CSS variables in `src/index.css`, Tailwind `darkMode: "class"`.
-- Strict TS: `noUnusedLocals`, `noUnusedParameters`, `strict: true`. Fix all before committing.
-- Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` sidebar → 9 registered routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/settings`.
-- **Internal navigation must use `<Link>` not `<a>`** — plain `<a>` causes full page reload, which remounts `Layout.tsx`, resets random background selection, and loses other persistent state. External links (different origin) should use `<a target="_blank">`.
-- UI components in `src/components/ui/`: badge, button, card, checkbox, combobox, dialog, input, label, message-box, select, separator, table, textarea, tooltip.
-  - **Tooltip** (`tooltip.tsx`) — use instead of native `title` attribute. Always wrap icon-only buttons.
-  - **Select** (`select.tsx`) — use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>` or third‑party dropdowns.
-  - Import via `'../components/ui/<name>.tsx'` (file extension required).
-- `src/pages/LogAnalysis.tsx` exists but is **not registered** in the router.
+- Strict TS: `noUnusedLocals`, `noUnusedParameters`, `strict: true`.
+- Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 9 routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/settings`.
+- **Internal nav: `<Link>` not `<a>`** — plain `<a>` reloads the page, resetting persistent state. External links use `<a target="_blank">`.
+- UI components: `src/components/ui/{badge,button,card,checkbox,combobox,dialog,input,label,message-box,select,separator,table,textarea,tooltip}.tsx`. Import via `'../components/ui/<name>.tsx'` (extension required).
+- **Tooltip**: use instead of native `title`. Always wrap icon-only buttons.
+- **Select**: use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>`.
+- `LogAnalysis.tsx` exists but is **not registered** in the router.
 
 ## Backend conventions
 
-- `Program.cs` registers: controllers, CORS (any origin), 4 named `HttpClient`s (Modrinth, CurseForge, FTB, default), `DownloadManager`, `InstanceInstallService`, `FtbService`, `ResourceDownloadService`, `JavaRuntimeStore`, `JavaDownloadService`, `SkinService`, `McmodService`, `AccountService`, `MsAccount`, `TraceBufferStore`/`TraceDumpService`.
-- Controllers in `Controllers/` map to `api/<name>` routes. 16 controllers total (Account, Instance, InstanceFiles, Java, JavaDownload, Launcher, Loaders, LogAnalysis, Mcmod, ResourceDownload, Resources, RoomCode, Settings, Skin, SystemInfo, Versions).
-- Embedded resources: `error-patterns.json`, `java_launch_wrapper-1.4.4.jar`.
+- **17 controllers** in `Controllers/` → `api/<name>` routes. Includes `DiagnosticsController` (`/api/diagnostics/health`, `/api/diagnostics/trace`, `/api/diagnostics/dump`).
+- `Program.cs` registers: controllers, CORS (any origin), 5 named `HttpClient`s (Modrinth, CurseForge, FTB, AuthlibInjector, default), `DownloadManager`, `InstanceInstallService`, `FtbService`, `ResourceDownloadService`, `JavaRuntimeStore`, `JavaDownloadService`, `SkinService`, `McmodService`, `AccountService`, `MsAccount`, `TraceBufferStore`/`TraceDumpService`, `LanGameListenerService`.
+- Embedded resources: `Alex.png`, `mcmod_data.json` (in `.csproj`).
 - `appsettings.json` `CurseForge:ApiKey` is empty by default.
-
-## Downloader / Install architecture
-
-```
-InstallTask  (Services/InstallTask.cs)
-  ├── Own DownloadManager → creates DownloadTasks per stage
-  ├── Core.DownloadFileAsync (single-file multi-threaded range download)
-  ├── Stages: json → libraries → assets → mainjar → loader JAR → install loader → loader libs → addons
-  ├── Events: OnStateChanged (stage, progress, currentFile, totals, speed)
-  └── Controls: StartAsync, Pause, Resume, Cancel
-```
-
-- `InstanceInstallService` manages a `Dictionary<string, InstallTask>`.
-- `InstallModLoader` rethrows — forge failures surface as `failed` state.
-- Loader installers live in `Modules/Helpers/Installers/`.
+- OpenAPI endpoint available in dev mode (`/openapi/v1.json`).
 
 ## Error handling
 
-**Backend** — all unhandled exceptions are caught by `Middleware/ErrorHandlingMiddleware.cs` and returned as:
+**Backend**: unhandled exceptions → `Middleware/ErrorHandlingMiddleware.cs` → returns:
 ```json
 { "code": "ERROR_CODE", "message": "...", "detail": "...", "traceId": "...", "timestamp": "...", "status": 500 }
 ```
-- Do NOT add try/catch in controllers just to return errors — let exceptions bubble to the middleware.
-- For expected business errors, throw `ApiException`: `throw ApiException.BadRequest("...")`, `throw ApiException.NotFound("...")`, etc. (`Common/ApiError.cs`)
-- Exception → HTTP status mapping in `ErrorHandlingMiddleware.MapException`: `ApiException` → its own StatusCode, `ArgumentNullException` → 400, `FileNotFoundException` → 404, `HttpRequestException` → 502, `TaskCanceledException` → 499, `JsonException` → 400, default → 500. Add new mappings there, not in controllers.
-- Errors are logged via `ILogger` (visible in `dotnet run` console output).
+- Do NOT add try/catch in controllers. Let exceptions bubble.
+- For expected errors, throw `ApiException`: `ApiException.BadRequest(...)`, `ApiException.NotFound(...)`, etc. (`Common/ApiError.cs`).
+- Exception→HTTP mapping in `ErrorHandlingMiddleware.MapException`: `ApiException`→its code, `ArgumentNullException`→400, `FileNotFoundException`→404, `HttpRequestException`→502, `TaskCanceledException`→499, `JsonException`→400, default→500.
 
-**Frontend** — `src/api/client.ts` exports `ApiError` class. All API errors throw `ApiError` with `.code`, `.status`, `.detail`, `.traceId`, `.displayMessage`.
+**Frontend**: `src/api/client.ts` exports `ApiError` with `.code`, `.status`, `.detail`, `.traceId`, `.displayMessage`.
 ```ts
 import { ApiError } from '../api/client.ts'
-try {
-  await someApiCall()
-} catch (e) {
-  if (e instanceof ApiError) showToast(e.displayMessage)
-}
+try { ... } catch (e) { if (e instanceof ApiError) showToast(e.displayMessage) }
 ```
 
-## Cross-platform rules (C#, Rust, TS)
+## Cross-platform rules
 
 The launcher ships on **Windows, Linux, macOS**. Never assume Windows.
 
-### Backend / Core (C#)
-
-- **No hardcoded drive letters or path separators** — use `Path.Combine(...)` and `Environment.GetFolderPath(SpecialFolder.ProgramFiles)` (not `@"C:\..."`).
-- **No hardcoded exe names** — `Process.Start("explorer.exe", ...)` → `Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })`.
-- **Platform guards** — use `OperatingSystem.IsWindows()` / `IsLinux()` / `IsMacOS()` over deprecated `PlatformID.Win32NT`.
-- **UNC/Windows-only path logic** (e.g. `StartsWith("\\\\")`) must be wrapped in `OperatingSystem.IsWindows()`.
-- **Shell default** — `/bin/bash` is not guaranteed; fallback to `/bin/sh`.
-- **Native library embedding** — `dotnet publish` must include `-p:IncludeNativeLibrariesForSelfExtract=true` (SkiaSharp etc.).
-- **Data directory** — never write to `AppContext.BaseDirectory`; use `LocalApplicationData` + app name, with `QOMICEX_HOME` env var override for portable mode.
-
-### Qomicex.Core (submodule, cross-target)
-
-- **Path.Combine over string interpolation** — `$"{dir}/versions/{v}.json"` → `Path.Combine(dir, "versions", v, $"{v}.json")`.
-- **`obj["natives"]` access** — always check `ContainsKey(osName)` before indexing; the `natives` dict may not contain the current OS.
-- **Architecture detection** — check for `"aarch64"` / `"ARM64"` before falling through to `"x86"`.
-- **OS-specific search paths** — SDKMAN/JENV/JABBA/ASDF are Linux/macOS-only tools; keep out of `HighPriorityPaths` (Windows).
-- **OS detection** — `RuntimeInformation.OSDescription` may not contain `"Linux"` on some distros (e.g. AnduinOS → `"AnduinOS 2.0.0"`). Use `OperatingSystem.IsLinux()` / `IsWindows()` / `IsMacOS()` (available in .NET 5+) before falling back to string matching. `SystemInfoHelper.GetSystemInfo()` now uses this approach.
-- **Natives extraction** — `GetNativesInfo` relies on `SystemInfoHelper.OsName` to pick the right classifier key (`"natives-linux"` etc.). If `OsName` is wrong, all natives are silently skipped.
+### C# (Backend / Core)
+- Use `Path.Combine(...)`, never hardcoded drive letters or `\\` separators.
+- Use `Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })`, not `explorer.exe`.
+- Platform guards: `OperatingSystem.IsWindows()` / `IsLinux()` / `IsMacOS()` (not `PlatformID.Win32NT`).
+- `RuntimeInformation.OSDescription` may not contain `"Linux"` on some distros — prefer `OperatingSystem.IsLinux()`.
+- Shell: `/bin/sh` fallback (not `/bin/bash`).
+- `dotnet publish` needs `-p:IncludeNativeLibrariesForSelfExtract=true` (SkiaSharp).
+- Data dir: `LocalApplicationData` + app name, with `QOMICEX_HOME` env override for portable mode. Never write to `AppContext.BaseDirectory`.
+- Qomicex.Core: check `ContainsKey(osName)` before accessing `obj["natives"]`. Detect `aarch64`/`ARM64` before falling to `x86`.
 
 ### Frontend (TS)
-
-- **No `\\` path separators** — replace all `path + '\\sub'` with `path + '/sub'`.
-- **Normalize paths from backend** — always `.replace(/\\/g, '/')` before passing to dialogs or constructing URLs.
-- **File picker filters** — use `['exe']` on Windows, `['*']` on other platforms (Java binary, etc.):
-  ```ts
-  filters: navigator.platform?.includes('Win')
-    ? [{ name: 'Java', extensions: ['exe'] }]
-    : [{ name: 'Java', extensions: ['*'] }]
-  ```
-- **`file://` URI** — strip leading `/` on Unix: `'file:///' + path.replace(/\\/g, '/').replace(/^\/+/, '')`.
+- Normalize backend paths: `.replace(/\\/g, '/')`.
+- File picker filters: `['exe']` on Windows, `['*']` elsewhere.
+- `file://` URI on Unix: `'file:///' + path.replace(/\\/g, '/').replace(/^\/+/, '')`.
 
 ### Rust (Tauri)
-
-- **`cfg(not(windows))` → `cfg(unix)`** — `not(windows)` is broader than intended.
-- **Always `set_permissions` (0o755) on Unix** after writing a binary — `std::fs::write` does not preserve `+x`.
-- **No hardcoded extension** — use `#[cfg(windows)]` / `#[cfg(unix)]` for binary file names.
+- `cfg(unix)` not `cfg(not(windows))`.
+- Set `0o755` permissions after `std::fs::write` for binaries.
+- Use `#[cfg(windows)]` / `#[cfg(unix)]` for binary file names.
 
 ## Path system & version isolation (critical)
 
-### Directory semantics
+**GameDir** = `.minecraft` root. **VersionDir** = `GameDir/versions/{VersionDirName}/` (JSON, jar, libraries).
 
-Minecraft 游戏文件系统的三种目录概念：
+- `VersionDirName` = `{GameVersion}-{Loader}-{LoaderVersion}` (e.g. `1.20.1-Forge-47.1.0`) — used only for VersionDir.
+- `GameVersion` = pure version (e.g. `1.20.1`).
+- `inst.Name` = folder name, synced to `VersionDirName` on install. Use `inst.Name` for **all** version-isolated path construction.
 
-| 目录 | 含义 | 示例 |
-|------|------|------|
-| **GameDir** | `.minecraft` 根目录，所有路径的起点 | `D:\mc\.minecraft` |
-| **VersionDir** | 版本 JSON / jar / libraries 所在目录 | `GameDir\versions\1.20.1-Forge-47.1.0` |
-| **ModDir 等资源目录** | 受版本隔离影响的游戏资源目录 | 见下文 |
+Version-isolated dirs (`mods`, `saves`, `resourcepacks`, `shaderpacks`, `screenshots`, `datapacks`, `crash-reports`, `servers.dat`) go under `GameDir/versions/{inst.Name}/` when isolation is enabled. Shared dirs (`versions`, `assets`, `libraries`, `logs`, `temp`) stay at GameDir root.
 
-### VersionDirName vs GameVersion
+**Always resolve `inst.GameDir` (not VersionDir) as the base** for path construction. Core library constructors (`Mods`, `Saves`, etc.) take `(gameDirectory, version, versionSegmented, apiKey)` — `gameDirectory` must be the GameDir root, `version` must be `inst.Name`.
 
-- `VersionDirName` = `{GameVersion}-{Loader}-{LoaderVersion}`（例如 `1.20.1-Forge-47.1.0`），**仅用于 VersionDir 定位**
-- `GameVersion` = 纯游戏版本号（例如 `1.20.1`），**用于版本隔离的资源目录路径**
-- 原版实例：`VersionDirName` == `GameVersion`，路径碰巧一致
-- 带 loader 实例：`VersionDirName` ≠ `GameVersion`，**绝不能混用**
+## Tauri details
 
-### 版本隔离的资源目录
-
-**`inst.Name` 始终等于版本文件夹名**（如 `"1.12.2"`、`"1.12.2-Forge-14.xxx"`、`"ATM9"`）。安装 loader 时 `StartInstall` 会将 `Name` 同步更新为 `VersionDirName`。所有版本隔离路径统一使用 `inst.Name`：
-
-```
-正确模式：
-  var versionFolder = inst.Name;    // 版本文件夹名，Name == VersionDirName ?? GameVersion
-  var modsDir = isolation
-      ? Path.Combine(gameDir, "versions", versionFolder, "mods")
-      : Path.Combine(gameDir, "mods");
-  new Mods(gameDir, inst.Name, isolation, apiKey);  // Core 也用 inst.Name
-
-错误模式（禁止）：
-  var versionFolder = inst.GameVersion;   // ← 扫描时 Core 会设错，非文件夹名
-```
-
-以下目录受 `VersionIsolation` 标志控制，隔离时路径为 `GameDir\versions\{inst.Name}\{subdir}`：
-
-`mods`、`saves`、`resourcepacks`、`shaderpacks`、`screenshots`、`datapacks`、`crash-reports`、`servers.dat`
-
-以下目录始终在 GameDir 根层级，不受版本隔离影响：
-
-`versions`、`assets`、`libraries`、`logs`、`temp`、`hs_err_pid*.log`
-
-### 路径构造规则（后端必须遵循）
-
-```
-正确模式：
-  var gameDir = inst.GameDir;        // .minecraft 根目录
-  var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-  var modsDir = isolation
-      ? Path.Combine(gameDir, "versions", inst.Name, "mods")     // 隔离
-      : Path.Combine(gameDir, "mods");                                   // 不隔离
-
-错误模式（禁止）：
-  var gameDir = ResolveGameDir(instanceId);   // ← 返回 VersionDir，不是 GameDir！
-  var dir = Path.Combine(gameDir, "mods");    // ← 路径变成 versions/1.20.1-Forge/mods
-```
-
-### Core 库（Qomicex.Core）的路径约定
-
-`Mods`、`Saves`、`Resourcepack`、`Shaders`、`Screenshots`、`DataPacks`、`ServersHelper` 全部遵循相同模式：
-
-```csharp
-constructor(gameDirectory, version, versionSegmented, apiKey)
-// 内部自行拼接：
-//   versionSegmented=true  → Path.Combine(gameDirectory, "versions", version, "mods")
-//   versionSegmented=false → Path.Combine(gameDirectory, "mods")
-```
-
-**`gameDirectory` 必须是 GameDir 根目录**，`version` 参数传 `inst.Name`（版本文件夹名）。不要手动预拼接版本隔离路径再传入——传 `inst.GameDir` + `inst.Name` + `isolation` 即可。
-
-### InstallTask 的区分
-
-`InstallTask` 维护两个字段：
-- `_gameDir`：GameDir 根，用于资源下载（versions、assets、libraries）
-- `_effectiveGameDir`：`versionIsolation ? Path.Combine(gameDir, "versions", _versionId) : gameDir`，用于 mods/addons 安装
-
-### VersionDirName 迁移逻辑
-
-`VersionDirName` 在安装时存入，公式 `{GameVersion}-{Loader}-{LoaderVersion}`。旧实例迁移逻辑（扫描 `versions/` 自动匹配）仅在以下一处实现：
-
-- `InstanceController.cs:GetById` — 迁移 + 持久化到 `VersionDirName`
-
-`InstallTask._versionId` 使用同名公式。原版 `{GameVersion}/{GameVersion}.json` 始终由 `InstallTask.StartAsync()` 创建，迁移时必须排除。
-
-### 全局版本隔离设置
-
-`InstanceController.GetGlobalVersionIsolation()` 读取 `QML/settings.json` 中的 `versionIsolation`，默认返回 `true`。实例级别设置优先于全局设置：
-
-```csharp
-var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
-```
-
-
-## Known issues / next steps
-
-- Frontend does not yet handle the `failed` install stage gracefully.
-- `Core.DownloadFileAsync` uses a static `HttpClient`.
-- Forge/Fabric/Quilt install paths need end-to-end testing.
-
-## Debugging workflow
-
-When debugging any backend-endpoint or filter functionality, run the test script before and after changes:
-
-```bash
-# Start backend if not already running
-cd src-backend/Qomicex.Launcher.Backend && nohup dotnet run > /tmp/backend.log 2>&1 &
-# Wait for it (check with curl localhost:5000/api/diagnostics/health)
-bash scripts/test-api-filters.sh
-```
-
-The test script (`scripts/test-api-filters.sh`) covers CurseForge local loader filtering, streaming version fetch, and Modrinth empty-loader inclusion. Add new test cases there as functionality grows.
-
-## Testing API filters
-
-`scripts/test-api-filters.sh` — tests the CurseForge/Modrinth version filter fixes interactively. Requires `curl` and `jq`:
-
-```bash
-# Start backend first
-cd src-backend/Qomicex.Launcher.Backend && dotnet run &
-sleep 5
-bash scripts/test-api-filters.sh
-
-# Override base URL for non-localhost
-BASE=http://10.0.0.5:5000/api/resources bash scripts/test-api-filters.sh
-```
-
-Tests local loader filtering on CurseForge (older mods without `modLoaderType` field), the streaming version fetch (`start-fetch` → `fetch-progress` → `fetch-result`), Modrinth empty `Loaders: []` inclusion in version and dependency resolution.
+- Backend binary is embedded via `include_bytes!` in release builds (`lib.rs:7-9`), extracted to temp dir on startup. In dev, backend runs separately.
+- Linux: window decorations enabled by default (`lib.rs:86-88`).
+- Capability permissions: `core:default`, window controls, `opener:default`, `opener:allow-open-path`, `opener:allow-reveal-item-in-dir`, `dialog:default`.
+- Backend child process state managed via `BackendChild` Tauri state, cleaned up on exit.
