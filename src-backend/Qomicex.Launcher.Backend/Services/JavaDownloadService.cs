@@ -12,6 +12,7 @@ namespace Qomicex.Launcher.Backend.Services;
 public class JavaDownloadService
 {
     private readonly JavaRuntimeStore _javaRuntimeStore;
+    private readonly HttpClient _httpClient;
     private readonly ConcurrentDictionary<string, JavaDownloadTaskState> _tasks = new();
 
     private sealed class JavaDownloadTaskState
@@ -29,9 +30,10 @@ public class JavaDownloadService
         public DownloadManager? Manager { get; set; }
     }
 
-    public JavaDownloadService(JavaRuntimeStore javaRuntimeStore)
+    public JavaDownloadService(JavaRuntimeStore javaRuntimeStore, IHttpClientFactory httpClientFactory)
     {
         _javaRuntimeStore = javaRuntimeStore;
+        _httpClient = httpClientFactory.CreateClient("default");
     }
 
     public Task<JavaDownloadCatalogResponse> GetCatalogAsync()
@@ -146,6 +148,23 @@ public class JavaDownloadService
         return false;
     }
 
+    public List<JavaDownloadProgressResponse> GetAllActiveStates()
+    {
+        return _tasks.Values
+            .Where(t => t.Status is "queued" or "resolving" or "downloading" or "paused" or "extracting" or "registering")
+            .Select(t => new JavaDownloadProgressResponse
+            {
+                TaskId = t.TaskId,
+                Status = t.Status,
+                Progress = t.Progress,
+                Speed = t.Speed,
+                FileName = t.FileName,
+                TargetDir = t.TargetDir,
+                Error = t.Error,
+            })
+            .ToList();
+    }
+
     private static string GetBaseDir()
     {
         var dir = Path.Combine(AppPaths.BaseDir, "QML", "Runtime", "Java");
@@ -153,15 +172,14 @@ public class JavaDownloadService
         return dir;
     }
 
-    private static async Task<(string url, string fileName)> ResolvePackageAsync(JavaDownloadStartRequest request)
+    private async Task<(string url, string fileName)> ResolvePackageAsync(JavaDownloadStartRequest request)
     {
-        using var http = new HttpClient();
 
         if (request.Vendor == "temurin")
         {
             var imageType = request.Version == 8 ? "jre" : "jdk";
             var api = $"https://api.adoptium.net/v3/assets/latest/{request.Version}/hotspot?release_type=ga&os={MapTemurinPlatform(request.Platform)}&architecture={MapTemurinArchitecture(request.Architecture)}&image_type={imageType}";
-            var json = await http.GetStringAsync(api);
+            var json = await _httpClient.GetStringAsync(api);
             using var doc = JsonDocument.Parse(json);
             var item = doc.RootElement.EnumerateArray().FirstOrDefault();
             if (item.ValueKind == JsonValueKind.Undefined)
@@ -177,7 +195,7 @@ public class JavaDownloadService
         {
             var ext = request.Platform == "windows" ? "zip" : "tar.gz";
             var api = $"https://api.azul.com/metadata/v1/zulu/packages?java_version={request.Version}&os={MapZuluPlatform(request.Platform)}&arch={MapZuluArchitecture(request.Architecture)}&archive_type={ext}&java_package_type=jdk&latest=true";
-            var json = await http.GetStringAsync(api);
+            var json = await _httpClient.GetStringAsync(api);
             using var doc = JsonDocument.Parse(json);
             var item = doc.RootElement
                 .EnumerateArray()
@@ -193,7 +211,7 @@ public class JavaDownloadService
         if (request.Vendor == "microsoft-jdk")
         {
             var api = "https://aka.ms/download-jdk/microsoft-jdk.json";
-            var json = await http.GetStringAsync(api);
+            var json = await _httpClient.GetStringAsync(api);
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("releases", out var releases)
                 || releases.ValueKind != JsonValueKind.Array)
