@@ -1,8 +1,8 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using Qomicex.Downloader;
 using Qomicex.Core.Modules.Helpers;
 using Qomicex.Core.Modules.Helpers.Installers;
@@ -25,6 +25,12 @@ public class InstallTask : IInstallTask
 
     private readonly CancellationTokenSource _cts = new();
     private readonly DownloadManager _downloadManager = new(intervalMs: 500);
+
+    // Group B parallel progress tracking
+    private double _libsProgress;
+    private double _assetsProgress;
+    private double _mainJarProgress;
+    private double _loaderJarProgress;
 
     private string _versionId = string.Empty;
     private string _effectiveGameDir = string.Empty;
@@ -94,21 +100,22 @@ public class InstallTask : IInstallTask
         OnStateChanged?.Invoke(this);
     }
 
+    private double GroupBWeightedProgress()
+    {
+        return _libsProgress * 0.35 + _assetsProgress * 0.35 + _mainJarProgress * 0.15 + _loaderJarProgress * 0.15;
+    }
+
     public async Task StartAsync()
     {
         try
         {
-            // Early Java check for loaders that need a runtime
             if (_loader is "forge" or "neoforge")
             {
                 FindJavaExecutable();
             }
 
-            var httpClient = _httpClientFactory.CreateClient();
-
-            // Stage 1: Core - download version JSON (0-5%)
+            // ===== Group A: Download JSON (3%) =====
             SetState("downloading-json", 0, $"{_gameVersion}.json");
-
             var versionJsonUrl = await ResolveVersionJsonUrl();
             if (string.IsNullOrEmpty(versionJsonUrl))
                 throw new Exception($"无法解析版本 {_gameVersion} 的 JSON 下载地址");
@@ -119,175 +126,124 @@ public class InstallTask : IInstallTask
 
             if (!File.Exists(versionJsonPath))
             {
-                    var core = new Qomicex.Downloader.Core(threadCount: 4, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                var core = new Qomicex.Downloader.Core(threadCount: 4, maxRetries: 3, ignoreRangeProbe200Ok: true);
                 await core.DownloadFileAsync(versionJsonUrl, versionJsonPath, null, _cts.Token);
             }
-            SetState("downloading-json", 5);
+            SetState("downloading-json", 3);
             _cts.Token.ThrowIfCancellationRequested();
 
+            // ===== Scan missing files (parallel) =====
             var resourceHelper = new LocalResourceHelper();
-
-            // Stage 2: DownloadManager - libraries (5-25%)
-            SetState("downloading-libraries", 5, "正在扫描支持库...");
             var missLibs = await resourceHelper.GetMissLibrariesAsync(_gameVersion, _gameDir);
-            if (missLibs.Count > 0)
-                await RunDownloadStage(_downloadThreads, missLibs, 5, 25);
-            else
-                SetState("downloading-libraries", 25);
-            _cts.Token.ThrowIfCancellationRequested();
-
-            // Stage 3: DownloadManager - assets (25-45%)
-            SetState("downloading-assets", 25, "正在扫描资源文件...");
             var missAssets = await resourceHelper.GetMissAssetsAsync(_gameVersion, _gameDir);
-            if (missAssets.Count > 0)
-                await RunDownloadStage(_downloadThreads, missAssets, 25, 45);
-            else
-                SetState("downloading-assets", 45);
-            _cts.Token.ThrowIfCancellationRequested();
-
-            // Stage 4: Core - download main jar (45-50%)
-            SetState("downloading-mainjar", 45, "正在检查主文件...");
             var missMainJar = await resourceHelper.GetMissMainJarAsync(_gameVersion, _gameDir);
+
+            bool needLoaderJar = false;
+            string loaderDownloadUrl = string.Empty;
+            string installerPath = string.Empty;
+
+            if (!string.IsNullOrEmpty(_loader) && !string.IsNullOrEmpty(_loaderVersion))
+            {
+                var loaderLower = _loader.ToLowerInvariant();
+                if (loaderLower is "forge" or "neoforge")
+                {
+                    loaderDownloadUrl = await ResolveLoaderDownloadUrl(_loader, _gameVersion, _loaderVersion);
+                    var tempDir = Path.Combine(_gameDir, "temp");
+                    Directory.CreateDirectory(tempDir);
+                    installerPath = Path.Combine(tempDir, $"{_loader}-{_gameVersion}-{_loaderVersion}-installer.jar");
+                    needLoaderJar = !File.Exists(installerPath) || new FileInfo(installerPath).Length == 0;
+                }
+            }
+
+            // ===== Group D: Mod download (starts immediately, runs in parallel) =====
+            Task? modTask = null;
+            if (_addons != null && _addons.Length > 0)
+            {
+                modTask = DownloadAddonsParallel();
+            }
+
+            // ===== Group B: Parallel download (libs + assets + mainJar + loaderJar) -> 3%-53% =====
+            SetState("downloading", 3);
+            _libsProgress = missLibs.Count > 0 ? 0 : 100;
+            _assetsProgress = missAssets.Count > 0 ? 0 : 100;
+            _mainJarProgress = (missMainJar?.Path != null) ? 0 : 100;
+            _loaderJarProgress = needLoaderJar ? 0 : 100;
+
+            var groupBTasks = new List<Task>();
+
+            if (missLibs.Count > 0)
+            {
+                var tid = _downloadManager.CreateTask(maxConcurrentFiles: _downloadThreads, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                foreach (var f in missLibs)
+                    _downloadManager.AddFileToTask(tid, f.Url, f.Path);
+                groupBTasks.Add(RunDownloadTaskWithCallback(tid, p => _libsProgress = p, _cts.Token));
+            }
+
+            if (missAssets.Count > 0)
+            {
+                var tid = _downloadManager.CreateTask(maxConcurrentFiles: _downloadThreads, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                foreach (var f in missAssets)
+                    _downloadManager.AddFileToTask(tid, f.Url, f.Path);
+                groupBTasks.Add(RunDownloadTaskWithCallback(tid, p => _assetsProgress = p, _cts.Token));
+            }
+
             if (missMainJar != null && !string.IsNullOrEmpty(missMainJar.Path))
             {
                 var tid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
                 _downloadManager.AddFileToTask(tid, missMainJar.Url, missMainJar.Path);
-                await RunDownloadManagerStage(tid, 45, 50);
+                groupBTasks.Add(RunDownloadTaskWithCallback(tid, p => _mainJarProgress = p, _cts.Token));
             }
-            else
+
+            if (needLoaderJar)
             {
-                SetState("downloading-mainjar", 50);
+                var tid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                _downloadManager.AddFileToTask(tid, loaderDownloadUrl, installerPath);
+                groupBTasks.Add(RunDownloadTaskWithCallback(tid, p => _loaderJarProgress = p, _cts.Token));
             }
+
+            // Poll weighted progress while Group B runs
+            var groupBPollCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+            _ = Task.Run(async () =>
+            {
+                while (!groupBPollCts.IsCancellationRequested)
+                {
+                    Progress = 3 + GroupBWeightedProgress() / 100.0 * 50;
+                    OnStateChanged?.Invoke(this);
+                    try { await Task.Delay(100, groupBPollCts.Token); } catch { break; }
+                }
+            });
+
+            await Task.WhenAll(groupBTasks);
+            groupBPollCts.Cancel();
+
+            // Check for failures in Group B
+            var allInfos = _downloadManager.GetAllTaskInfos();
+            foreach (var (_, info) in allInfos)
+            {
+                if (info.FailedFiles > 0)
+                    throw new Exception($"下载阶段失败: {info.FailedFiles} 个文件");
+            }
+
+            SetState("downloading", 53);
             _cts.Token.ThrowIfCancellationRequested();
 
-            // Stage 5-7: Mod loader
+            // ===== Loader handling (53%-85%) =====
             if (!string.IsNullOrEmpty(_loader) && !string.IsNullOrEmpty(_loaderVersion))
             {
-                string loaderLower = _loader.ToLowerInvariant();
-                bool isForgeLike = loaderLower is "forge" or "neoforge";
-
-                if (isForgeLike)
-                {
-                    // Stage 5: Core - download installer JAR (50-55%)
-                    SetState("downloading-loader", 50, $"正在下载 {_loader} 安装程序...");
-                    var downloadUrl = await ResolveLoaderDownloadUrl(_loader, _gameVersion, _loaderVersion);
-                    var tempDir = Path.Combine(_gameDir, "temp");
-                    Directory.CreateDirectory(tempDir);
-                    var installerPath = Path.Combine(tempDir, $"{_loader}-{_gameVersion}-{_loaderVersion}-installer.jar");
-
-                    if (!File.Exists(installerPath) || new FileInfo(installerPath).Length == 0)
-                    {
-                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
-                        _downloadManager.AddFileToTask(jarTid, downloadUrl, installerPath);
-                        await RunDownloadManagerStage(jarTid, 50, 55);
-                    }
-                    else
-                    {
-                        SetState("downloading-loader", 55);
-                    }
-                    _cts.Token.ThrowIfCancellationRequested();
-
-                    // Stage 6: Install loader (forge handles its own lib download + processors) (55-75%)
-                    SetState("installing-loader", 55, $"{_loader} {_loaderVersion}");
-                    await InstallModLoader(httpClient, _versionId, installerPath);
-
-                    // Stage 7: DownloadManager - remaining loader libs (75-85%)
-                    SetState("downloading-loader-libs", 75, "正在补全加载器库文件...");
-                    List<LocalResourceHelper.MissFileData> remainingLibs;
-                    if (loaderLower == "forge")
-                    {
-                        var fi = new ForgeInstaller(0, _gameDir, _gameVersion);
-                        remainingLibs = fi.GetMissForgeLibraries(installerPath, _versionId);
-                    }
-                    else
-                    {
-                        var nfi = new NeoForgeInstaller(0, _gameDir, _gameVersion);
-                        remainingLibs = nfi.GetMissNeoForgeLibraries(installerPath, _versionId);
-                    }
-
-                    if (remainingLibs.Count > 0)
-                        await RunDownloadStage(_downloadThreads, remainingLibs, 75, 85);
-                    else
-                        SetState("downloading-loader-libs", 85);
-
-                    // Stage 7b: Core - ensure main jar for merged version (85-95%)
-                    _cts.Token.ThrowIfCancellationRequested();
-                    SetState("downloading-mainjar", 85, $"{_versionId}.jar");
-                    var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
-                    if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
-                    {
-                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
-                        _downloadManager.AddFileToTask(jarTid, loaderMainJar.Url, loaderMainJar.Path);
-                        await RunDownloadManagerStage(jarTid, 85, 95);
-                    }
-                    else
-                    {
-                        SetState("downloading-mainjar", 95);
-                    }
-
-                    TryDelete(installerPath);
-                }
-                else
-                {
-                    // Fabric/Quilt: install writes merged JSON, then we scan+download remaining libs
-                    SetState("installing-loader", 50, $"{_loader} {_loaderVersion}");
-
-                    var loaderJsonPath = Path.Combine(_gameDir, "versions", _versionId, $"{_versionId}.json");
-                    if (!File.Exists(loaderJsonPath))
-                    {
-                        // First install — run the installer to produce the merged JSON
-                        await InstallModLoader(httpClient, _versionId);
-                    }
-
-                    // Scan the merged versionId JSON for missing libs (covers both install and repair)
-                    SetState("downloading-loader-libs", 60, "正在补全加载器库文件...");
-                    var loaderLibs = await resourceHelper.GetMissLibrariesAsync(_versionId, _gameDir);
-                    if (loaderLibs.Count > 0)
-                        await RunDownloadStage(_downloadThreads, loaderLibs, 60, 75);
-                    else
-                        SetState("downloading-loader-libs", 75);
-
-                    // Also ensure main jar exists for this versionId
-                    _cts.Token.ThrowIfCancellationRequested();
-                    SetState("downloading-mainjar", 75, $"{_versionId}.jar");
-                    var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
-                    if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
-                    {
-                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
-                        _downloadManager.AddFileToTask(jarTid, loaderMainJar.Url, loaderMainJar.Path);
-                        await RunDownloadManagerStage(jarTid, 75, 85);
-                    }
-                    else
-                    {
-                        SetState("downloading-mainjar", 85);
-                    }
-                }
+                await HandleLoaderInstall(
+                    resourceHelper, installerPath, needLoaderJar);
             }
             else
             {
-                SetState(null!, 85);
+                SetState("completed", 85);
             }
             _cts.Token.ThrowIfCancellationRequested();
 
-            // Stage 8: DownloadManager - addons (85-100%)
-            if (_addons != null && _addons.Length > 0)
+            // ===== Wait for Group D (mods) =====
+            if (modTask != null)
             {
                 SetState("downloading-addons", 85, "附加内容...");
-                var modsDir = Path.Combine(_effectiveGameDir, "mods");
-                Directory.CreateDirectory(modsDir);
-
-                var addonTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
-                foreach (var addonId in _addons)
-                {
-                    _cts.Token.ThrowIfCancellationRequested();
-                    var (url, filename) = await ResolveAddonDownload(httpClient, addonId, _gameVersion);
-                    if (url != null && filename != null)
-                        _downloadManager.AddFileToTask(addonTid, url, Path.Combine(modsDir, filename));
-                }
-                if (_downloadManager.GetAllTaskInfos().TryGetValue(addonTid, out var addonInfo) && addonInfo.TotalFiles > 0)
-                    await RunDownloadManagerStage(addonTid, 85, 100);
-                else
-                    SetState("downloading-addons", 100);
+                await modTask;
             }
 
             IsCompleted = true;
@@ -309,29 +265,20 @@ public class InstallTask : IInstallTask
         }
     }
 
-    private async Task RunDownloadStage(int threadNum,
-        List<LocalResourceHelper.MissFileData> files, double stageStart, double stageEnd)
+    private async Task RunDownloadTaskWithCallback(int taskId, Action<double> onProgress, CancellationToken ct)
     {
-        var tid = _downloadManager.CreateTask(maxConcurrentFiles: threadNum, maxRetries: 3, ignoreRangeProbe200Ok: true);
-        foreach (var f in files)
-            _downloadManager.AddFileToTask(tid, f.Url, f.Path);
-        await RunDownloadManagerStage(tid, stageStart, stageEnd);
-    }
-
-    private async Task RunDownloadManagerStage(int taskId, double stageStart, double stageEnd)
-    {
-        var downloadTask = _downloadManager.StartTaskAsync(taskId, _cts.Token);
-
+        var downloadTask = _downloadManager.StartTaskAsync(taskId, ct);
         int lastCompleted = 0;
-        while (!downloadTask.IsCompleted && !_cts.Token.IsCancellationRequested)
+        while (!downloadTask.IsCompleted && !ct.IsCancellationRequested)
         {
             var infos = _downloadManager.GetAllTaskInfos();
             if (infos.TryGetValue(taskId, out var info))
             {
-                Progress = stageStart + (info.Progress / 100.0) * (stageEnd - stageStart);
-                TotalFiles = info.TotalFiles;
-                CompletedFiles = info.CompletedFiles;
-                FailedFiles = info.FailedFiles;
+                onProgress(info.Progress);
+
+                TotalFiles += info.TotalFiles;
+                CompletedFiles += info.CompletedFiles;
+                FailedFiles += info.FailedFiles;
                 Speed = info.Speed;
 
                 if (info.CompletedFiles > lastCompleted)
@@ -346,17 +293,162 @@ public class InstallTask : IInstallTask
                 }
                 OnStateChanged?.Invoke(this);
             }
-            try { await Task.Delay(100, _cts.Token); } catch (OperationCanceledException) { break; }
+            try { await Task.Delay(100, ct); } catch (OperationCanceledException) { break; }
         }
-
         await downloadTask;
+    }
 
-        var finalInfos = _downloadManager.GetAllTaskInfos();
-        if (finalInfos.TryGetValue(taskId, out var finalInfo) && finalInfo.FailedFiles > 0)
+    private async Task HandleLoaderInstall(
+        LocalResourceHelper resourceHelper, string installerPath, bool needLoaderJar)
+    {
+        var loaderLower = _loader!.ToLowerInvariant();
+        bool isForgeLike = loaderLower is "forge" or "neoforge";
+
+        if (isForgeLike)
         {
-            var statuses = _downloadManager.GetTaskFileStatuses(taskId);
-            var failed = statuses.FirstOrDefault(s => s.Status == DownloadTask.FileStatus.Failed);
-            throw new Exception($"下载失败: {failed.Name} (共 {finalInfo.FailedFiles} 个文件失败)");
+            // Group C: Download loader libs BEFORE install (to speed up)
+            SetState("downloading-loader-libs", 53, "正在补全加载器库文件...");
+            List<LocalResourceHelper.MissFileData> remainingLibs;
+            if (loaderLower == "forge")
+            {
+                var fi = new ForgeInstaller(0, _gameDir, _gameVersion);
+                remainingLibs = fi.GetMissForgeLibraries(installerPath, _versionId);
+            }
+            else
+            {
+                var nfi = new NeoForgeInstaller(0, _gameDir, _gameVersion);
+                remainingLibs = nfi.GetMissNeoForgeLibraries(installerPath, _versionId);
+            }
+
+            if (remainingLibs.Count > 0)
+            {
+                var tid = _downloadManager.CreateTask(maxConcurrentFiles: _downloadThreads, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                foreach (var f in remainingLibs)
+                    _downloadManager.AddFileToTask(tid, f.Url, f.Path);
+                double loaderLibProgress = 0;
+                await RunDownloadTaskWithCallback(tid, p =>
+                {
+                    loaderLibProgress = p;
+                    Progress = 53 + loaderLibProgress / 100.0 * 15;
+                }, _cts.Token);
+            }
+            SetState("downloading-loader-libs", 68);
+            _cts.Token.ThrowIfCancellationRequested();
+
+            // Install loader (68%-80%)
+            SetState("installing-loader", 68, $"{_loader} {_loaderVersion}");
+            var httpClient = _httpClientFactory.CreateClient();
+            await InstallModLoader(httpClient, _versionId, installerPath);
+            SetState("installing-loader", 80);
+
+            // Merged main jar (80%-85%)
+            SetState("downloading-mainjar", 80, $"{_versionId}.jar");
+            var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
+            if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
+            {
+                var tid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                _downloadManager.AddFileToTask(tid, loaderMainJar.Url, loaderMainJar.Path);
+                double mainJarProgress = 0;
+                await RunDownloadTaskWithCallback(tid, p =>
+                {
+                    mainJarProgress = p;
+                    Progress = 80 + mainJarProgress / 100.0 * 5;
+                }, _cts.Token);
+            }
+            SetState("downloading-mainjar", 85);
+
+            TryDelete(installerPath);
+        }
+        else
+        {
+            // Fabric/Quilt/LiteLoader: install writes merged JSON, then scan + download remaining libs
+            SetState("installing-loader", 53, $"{_loader} {_loaderVersion}");
+            var loaderJsonPath = Path.Combine(_gameDir, "versions", _versionId, $"{_versionId}.json");
+            if (!File.Exists(loaderJsonPath))
+            {
+                var httpClient = _httpClientFactory.CreateClient();
+                await InstallModLoader(httpClient, _versionId);
+            }
+            SetState("installing-loader", 60);
+
+            // Download loader libs (60%-75%)
+            SetState("downloading-loader-libs", 60, "正在补全加载器库文件...");
+            var loaderLibs = await resourceHelper.GetMissLibrariesAsync(_versionId, _gameDir);
+            if (loaderLibs.Count > 0)
+            {
+                var tid = _downloadManager.CreateTask(maxConcurrentFiles: _downloadThreads, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                foreach (var f in loaderLibs)
+                    _downloadManager.AddFileToTask(tid, f.Url, f.Path);
+                double libProgress = 0;
+                await RunDownloadTaskWithCallback(tid, p =>
+                {
+                    libProgress = p;
+                    Progress = 60 + libProgress / 100.0 * 15;
+                }, _cts.Token);
+            }
+            SetState("downloading-loader-libs", 75);
+
+            // Merged main jar (75%-85%)
+            SetState("downloading-mainjar", 75, $"{_versionId}.jar");
+            var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
+            if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
+            {
+                var tid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                _downloadManager.AddFileToTask(tid, loaderMainJar.Url, loaderMainJar.Path);
+                double mainJarProgress = 0;
+                await RunDownloadTaskWithCallback(tid, p =>
+                {
+                    mainJarProgress = p;
+                    Progress = 75 + mainJarProgress / 100.0 * 10;
+                }, _cts.Token);
+            }
+            SetState("downloading-mainjar", 85);
+        }
+    }
+
+    private async Task DownloadAddonsParallel()
+    {
+        var httpClient = _httpClientFactory.CreateClient();
+        var modsDir = Path.Combine(_effectiveGameDir, "mods");
+        Directory.CreateDirectory(modsDir);
+
+        var addonTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+        var addonLock = new object();
+
+        // Parallel URL resolution with SemaphoreSlim
+        var semaphore = new SemaphoreSlim(12);
+        var resolveTasks = _addons!.Select(async addonId =>
+        {
+            await semaphore.WaitAsync(_cts.Token);
+            try
+            {
+                _cts.Token.ThrowIfCancellationRequested();
+                var (url, filename) = await ResolveAddonDownload(httpClient, addonId, _gameVersion);
+                if (url != null && filename != null)
+                {
+                    lock (addonLock)
+                    {
+                        _downloadManager.AddFileToTask(addonTid, url, Path.Combine(modsDir, filename));
+                    }
+                }
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        await Task.WhenAll(resolveTasks);
+
+        var infos = _downloadManager.GetAllTaskInfos();
+        if (infos.TryGetValue(addonTid, out var info) && info.TotalFiles > 0)
+        {
+            double progress = 0;
+            await RunDownloadTaskWithCallback(addonTid, p =>
+            {
+                progress = p;
+                Progress = 85 + progress / 100.0 * 15;
+            }, _cts.Token);
         }
     }
 
