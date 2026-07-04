@@ -1,0 +1,1872 @@
+diff --git a/.superpowers/sdd/progress.md b/.superpowers/sdd/progress.md
+new file mode 100644
+index 0000000..7882648
+--- /dev/null
++++ b/.superpowers/sdd/progress.md
+@@ -0,0 +1,2 @@
++Task 1: complete (commits f8dd4c1..1b284d3, review clean)
++Task 2: complete (commits 1b284d3..7680bec, review clean)
+diff --git a/.superpowers/sdd/task-1-brief.md b/.superpowers/sdd/task-1-brief.md
+new file mode 100644
+index 0000000..2ac9cf2
+--- /dev/null
++++ b/.superpowers/sdd/task-1-brief.md
+@@ -0,0 +1,74 @@
++### Task 1: CoreConfig + HTTP 连接池
++
++**Files:**
++- Create: `Qomicex.Avalonia/Qomicex.Downloader/CoreConfig.cs`
++- Modify: `Qomicex.Avalonia/Qomicex.Downloader/Core.cs:13`
++
++**Interfaces:**
++- Produces: `CoreConfig.MaxConnectionsPerServer` (static int, default 64)
++
++- [ ] **Step 1: Create CoreConfig.cs**
++
++```csharp
++namespace Qomicex.Downloader;
++
++public static class CoreConfig
++{
++    public static int MaxConnectionsPerServer { get; set; } = 64;
++}
++```
++
++- [ ] **Step 2: Build Downloader project to verify new file compiles**
++
++Run: `dotnet build Qomicex.Avalonia/Qomicex.Downloader/Qomicex.Downloader.csproj`
++Expected: Build succeeded.
++
++- [ ] **Step 3: Replace static HttpClient in Core.cs with Lazy<HttpClient> backed by SocketsHttpHandler**
++
++In `Qomicex.Avalonia/Qomicex.Downloader/Core.cs`, replace line 13:
++```csharp
++private static readonly HttpClient _httpClient = new HttpClient();
++```
++with:
++```csharp
++private static readonly Lazy<HttpClient> _lazyHttpClient = new(() =>
++{
++    var handler = new SocketsHttpHandler
++    {
++        MaxConnectionsPerServer = CoreConfig.MaxConnectionsPerServer,
++        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
++        EnableMultipleHttp2Connections = true
++    };
++    return new HttpClient(handler);
++});
++
++private static HttpClient SharedHttpClient => _lazyHttpClient.Value;
++```
++
++- [ ] **Step 4: Replace all `_httpClient` references with `SharedHttpClient`**
++
++In Core.cs, find all occurrences of `_httpClient` and replace with `SharedHttpClient`. These appear in:
++- `DownloadFileAsync` (line 54): `await _httpClient.SendAsync(headRequest, ...)`
++- `CanUseRangeAsync` (line 109): `await _httpClient.SendAsync(probeRequest, ...)`
++- `DownloadSingleStreamAsync` (line 132): `await _httpClient.SendAsync(request, ...)`
++- `DownloadMultiPartAsync` (line 164): `await _httpClient.SendAsync(req, ...)`
++
++- [ ] **Step 5: Verify compilation**
++
++Run: `dotnet build Qomicex.Avalonia/Qomicex.Downloader/Qomicex.Downloader.csproj`
++Expected: Build succeeded with no warnings.
++
++- [ ] **Step 6: Verify backend still builds (references Downloader)**
++
++Run: `dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
++Expected: Build succeeded.
++
++- [ ] **Step 7: Commit**
++
++```bash
++git add Qomicex.Avalonia/Qomicex.Downloader/CoreConfig.cs Qomicex.Avalonia/Qomicex.Downloader/Core.cs
++git commit -m "feat(downloader): add CoreConfig for HTTP connection pool tuning"
++```
++
++---
++
+diff --git a/.superpowers/sdd/task-1-report.md b/.superpowers/sdd/task-1-report.md
+new file mode 100644
+index 0000000..28f9a0b
+--- /dev/null
++++ b/.superpowers/sdd/task-1-report.md
+@@ -0,0 +1,40 @@
++# Task 1 Report: CoreConfig + HTTP 连接池
++
++## 实现内容
++
++### CoreConfig.cs（新建）
++- 位于 `Qomicex.Avalonia/Qomicex.Downloader/CoreConfig.cs`
++- `public static class CoreConfig`，单一属性 `MaxConnectionsPerServer`，默认值 64
++- 声明式命名空间格式 (`namespace Qomicex.Downloader;`)，与其他文件保持一致（注意 `Core.cs` 使用大括号式 `namespace Qomicex.Downloader { }`，但两种方式在 C# 10+ 中等价且互相兼容）
++
++### Core.cs（修改）
++- 将 `private static readonly HttpClient _httpClient = new HttpClient();` 替换为 `Lazy<HttpClient>`，底层使用 `SocketsHttpHandler`
++- 配置：`MaxConnectionsPerServer = CoreConfig.MaxConnectionsPerServer`、`PooledConnectionLifetime = TimeSpan.FromMinutes(5)`、`EnableMultipleHttp2Connections = true`
++- `SharedHttpClient` 属性提供惰性初始化的单例访问
++- 全部 4 处 `_httpClient` 引用均替换为 `SharedHttpClient`（第 65、120、143、175 行）
++
++## 构建验证结果
++
++| 项目 | 结果 | 错误 | 新增警告 |
++|------|------|------|----------|
++| `Qomicex.Downloader` | 成功 | 0 | 0 |
++| `Qomicex.Launcher.Backend` | 成功 | 0 | 0 |
++
++所有警告均为已有问题，与本次改动无关。
++
++## 变更文件
++
++- **新建：** `Qomicex.Avalonia/Qomicex.Downloader/CoreConfig.cs`（6 行）
++- **修改：** `Qomicex.Avalonia/Qomicex.Downloader/Core.cs`（替换静态 HttpClient 为 Lazy+SocketsHttpHandler，更新所有引用）
++
++## 自审发现
++
++- 无回归问题
++- `SocketsHttpHandler` 命名空间 `System.Net.Http` 已在 `Core.cs` 中导入，无需新增 using
++- `Core.cs` 使用大括号式命名空间（`namespace Qomicex.Downloader { }`），`CoreConfig.cs` 使用声明式（`namespace Qomicex.Downloader;`）——两种方式互操作无问题，但风格不一致。若需保持一致，可将 `CoreConfig.cs` 改为大括号式
++- 提交在子模块 `Qomicex.Avalonia` 内完成（`detached HEAD`），外部仓库需单独更新子模块指针
++
++## 问题与疑虑
++
++- 子模块处于 detached HEAD 状态——工作正常，但如需推送需先创建分支或直接推送提交
++- `CoreConfig.cs` 与 `Core.cs` 的命名空间声明风格不一致（声明式 vs 大括号式），建议后续统一
+diff --git a/.superpowers/sdd/task-2-brief.md b/.superpowers/sdd/task-2-brief.md
+new file mode 100644
+index 0000000..a67da8a
+--- /dev/null
++++ b/.superpowers/sdd/task-2-brief.md
+@@ -0,0 +1,113 @@
++### Task 2: 设置页新增下载配置
++
++**Files:**
++- Modify: `src/api/settings.ts:15-16,41-65` (types + defaults)
++- Modify: `src/pages/Settings.tsx:646-665` (UI below downloadThreads)
++
++**Interfaces:**
++- Consumes: nothing
++- Produces: `AppSettings.fileChunkThreads` (number, default 0), `AppSettings.maxConnectionsPerServer` (number, default 64)
++- Backend reads from `settings.json` in Task 6 (InstallTask uses `fileChunkThreads`) and at startup
++
++- [ ] **Step 1: Add new fields to AppSettings interface and DEFAULT_SETTINGS**
++
++In `src/api/settings.ts`, add two fields after `downloadThreads`:
++
++In the interface (after line 15):
++```typescript
++  fileChunkThreads: number
++  maxConnectionsPerServer: number
++```
++
++In DEFAULT_SETTINGS (after line 43 `downloadThreads: 64,`):
++```typescript
++  fileChunkThreads: 0,
++  maxConnectionsPerServer: 64,
++```
++
++- [ ] **Step 2: Add UI controls in Settings.tsx after downloadThreads section**
++
++In `src/pages/Settings.tsx`, after the closing `</div>` of the downloadThreads section (after line 664), insert:
++
++```tsx
++                <div className="space-y-2">
++                  <Label htmlFor="fileChunkThreads">分片线程数</Label>
++                  <div className="flex items-center gap-2">
++                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('fileChunkThreads', Math.max(0, settings.fileChunkThreads - 1))} disabled={settings.fileChunkThreads <= 0}>
++                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
++                    </Button>
++                    <Input
++                      id="fileChunkThreads"
++                      type="number"
++                      min={0}
++                      max={16}
++                      value={settings.fileChunkThreads}
++                      onChange={(e) => update('fileChunkThreads', Math.max(0, Math.min(16, parseInt(e.target.value) || 0)))}
++                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
++                    />
++                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('fileChunkThreads', Math.min(16, settings.fileChunkThreads + 1))} disabled={settings.fileChunkThreads >= 16}>
++                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
++                    </Button>
++                  </div>
++                  <p className="text-xs text-muted-foreground">单文件分片下载线程数（0=自动，最大 16），数值越大单文件下载越快</p>
++                </div>
++
++                <div className="space-y-2">
++                  <Label htmlFor="maxConnectionsPerServer">最大连接数</Label>
++                  <div className="flex items-center gap-2">
++                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('maxConnectionsPerServer', Math.max(8, settings.maxConnectionsPerServer - 8))} disabled={settings.maxConnectionsPerServer <= 8}>
++                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
++                    </Button>
++                    <Input
++                      id="maxConnectionsPerServer"
++                      type="number"
++                      min={8}
++                      max={256}
++                      step={8}
++                      value={settings.maxConnectionsPerServer}
++                      onChange={(e) => update('maxConnectionsPerServer', Math.max(8, Math.min(256, parseInt(e.target.value) || 8)))}
++                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
++                    />
++                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('maxConnectionsPerServer', Math.min(256, settings.maxConnectionsPerServer + 8))} disabled={settings.maxConnectionsPerServer >= 256}>
++                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
++                    </Button>
++                  </div>
++                  <p className="text-xs text-muted-foreground">每个服务器的最大连接数（8-256），重启后生效</p>
++                </div>
++```
++
++- [ ] **Step 3: Initialize CoreConfig.MaxConnectionsPerServer in Program.cs startup**
++
++In `src-backend/Qomicex.Launcher.Backend/Program.cs`, add after `var builder = WebApplication.CreateBuilder(args);`:
++
++```csharp
++// Initialize CoreConfig from settings.json
++try
++{
++    var settingsPath = Path.Combine(AppPaths.BaseDir, "QML", "settings.json");
++    if (File.Exists(settingsPath))
++    {
++        using var doc = JsonDocument.Parse(File.ReadAllText(settingsPath));
++        if (doc.RootElement.TryGetProperty("maxConnectionsPerServer", out var maxConn))
++            CoreConfig.MaxConnectionsPerServer = maxConn.GetInt32();
++    }
++}
++catch { /* use default */ }
++```
++
++Add `using System.Text.Json;` to Program.cs imports.
++
++- [ ] **Step 4: Verify TypeScript compilation**
++
++Run: `npx tsc --noEmit`
++Expected: No errors.
++
++- [ ] **Step 5: Commit**
++
++```bash
++git add src/api/settings.ts src/pages/Settings.tsx src-backend/Qomicex.Launcher.Backend/Program.cs
++git commit -m "feat(settings): add fileChunkThreads and maxConnectionsPerServer download settings"
++```
++
++---
++
+diff --git a/.superpowers/sdd/task-2-report.md b/.superpowers/sdd/task-2-report.md
+new file mode 100644
+index 0000000..a13307f
+--- /dev/null
++++ b/.superpowers/sdd/task-2-report.md
+@@ -0,0 +1,38 @@
++# Task 2 Report: 设置页新增下载配置
++
++## What was implemented
++
++1. **AppSettings interface** (`src/api/settings.ts`): Added `fileChunkThreads: number` and `maxConnectionsPerServer: number` fields after `downloadThreads`.
++
++2. **DEFAULT_SETTINGS** (`src/api/settings.ts`): Added defaults `fileChunkThreads: 0` and `maxConnectionsPerServer: 64`.
++
++3. **Settings UI** (`src/pages/Settings.tsx`): Added two new settings sections below the downloadThreads control:
++   - **分片线程数** (fileChunkThreads): Number input with +/- buttons, range 0-16, step 1, default 0 (0 = auto).
++   - **最大连接数** (maxConnectionsPerServer): Number input with +/- buttons, range 8-256, step 8, default 64. Description notes it takes effect after restart.
++
++4. **Backend startup** (`Program.cs`): Added `using System.Text.Json;` and a try/catch block after `CreateBuilder` that reads `maxConnectionsPerServer` from `QML/settings.json` and sets `CoreConfig.MaxConnectionsPerServer` before any services are configured.
++
++## Build/typecheck results
++
++- **TypeScript** (`npx tsc --noEmit`): 0 errors
++- **Backend** (`dotnet build`): 0 errors, 88 pre-existing warnings (all in Qomicex.Core, none related to our changes)
++
++## Files changed
++
++| File | Changes |
++|------|---------|
++| `src/api/settings.ts` | +4 lines (2 interface fields, 2 defaults) |
++| `src/pages/Settings.tsx` | +45 lines (2 new settings sections) |
++| `src-backend/Qomicex.Launcher.Backend/Program.cs` | +13 lines (import + startup init block) |
++
++## Self-review findings
++
++- Both settings follow the exact same pattern as the existing `downloadThreads` UI (Button+Input+Button with FontAwesome minus/plus icons, Tailwind styling).
++- `fileChunkThreads` default of 0 (auto) correctly allows disabling chunked downloads.
++- `maxConnectionsPerServer` step of 8 ensures values are multiples of 8, consistent with `CoreConfig` defaults.
++- Backend `try/catch` silently falls back to the default `CoreConfig.MaxConnectionsPerServer = 64` if settings.json doesn't exist or is malformed — this is the intended behavior.
++- TypeScript `update()` function infers the key type from `AppSettings`, ensuring type safety.
++
++## Issues or concerns
++
++None.
+diff --git a/.superpowers/sdd/task-3-brief.md b/.superpowers/sdd/task-3-brief.md
+new file mode 100644
+index 0000000..c62e69e
+--- /dev/null
++++ b/.superpowers/sdd/task-3-brief.md
+@@ -0,0 +1,77 @@
++### Task 3: JavaDownloadService 注入 IHttpClientFactory + GetAllActiveStates
++
++**Files:**
++- Modify: `src-backend/Qomicex.Launcher.Backend/Services/JavaDownloadService.cs:32-35,156-158`
++
++**Interfaces:**
++- Consumes: `IHttpClientFactory` (DI)
++- Produces: `JavaDownloadService.GetAllActiveStates()` → `List<JavaDownloadProgressResponse>`
++
++- [ ] **Step 1: Add IHttpClientFactory field and constructor parameter**
++
++In `JavaDownloadService.cs`, add field after line 14:
++```csharp
++    private readonly HttpClient _httpClient;
++```
++
++Change constructor (line 32-35) to:
++```csharp
++    public JavaDownloadService(JavaRuntimeStore javaRuntimeStore, IHttpClientFactory httpClientFactory)
++    {
++        _javaRuntimeStore = javaRuntimeStore;
++        _httpClient = httpClientFactory.CreateClient("default");
++    }
++```
++
++- [ ] **Step 2: Replace using new HttpClient() with _httpClient**
++
++In `ResolvePackageAsync` (line 156-158), replace:
++```csharp
++        using var http = new HttpClient();
++```
++with just using `_httpClient`. All `http.GetStringAsync(...)` calls remain the same but use the instance field.
++
++Since `ResolvePackageAsync` is `static`, change it to instance method by removing `static` keyword. All callers call it on `this` already (it's called from `RunTaskAsync` which is an instance method).
++
++Remove `static` from method signature on line 156:
++```csharp
++    private async Task<(string url, string fileName)> ResolvePackageAsync(JavaDownloadStartRequest request)
++```
++
++- [ ] **Step 3: Add GetAllActiveStates method**
++
++Add to `JavaDownloadService.cs` (before the `GetBaseDir` method, after line 147):
++
++```csharp
++    public List<JavaDownloadProgressResponse> GetAllActiveStates()
++    {
++        return _tasks.Values
++            .Where(t => t.Status is "queued" or "resolving" or "downloading" or "paused" or "extracting" or "registering")
++            .Select(t => new JavaDownloadProgressResponse
++            {
++                TaskId = t.TaskId,
++                Status = t.Status,
++                Progress = t.Progress,
++                Speed = t.Speed,
++                FileName = t.FileName,
++                TargetDir = t.TargetDir,
++                Error = t.Error,
++            })
++            .ToList();
++    }
++```
++
++- [ ] **Step 4: Verify build**
++
++Run: `dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
++Expected: Build succeeded.
++
++- [ ] **Step 5: Commit**
++
++```bash
++git add src-backend/Qomicex.Launcher.Backend/Services/JavaDownloadService.cs
++git commit -m "feat(java-download): inject IHttpClientFactory, add GetAllActiveStates"
++```
++
++---
++
+diff --git a/.superpowers/sdd/task-3-report.md b/.superpowers/sdd/task-3-report.md
+new file mode 100644
+index 0000000..dbdda92
+--- /dev/null
++++ b/.superpowers/sdd/task-3-report.md
+@@ -0,0 +1,26 @@
++# Task 3 Report: JavaDownloadService HttpClient 注入 + GetAllActiveStates
++
++## Status: 完成
++
++## Commits
++
++- `91f37c6` — `feat(java-download): inject IHttpClientFactory, add GetAllActiveStates`
++
++## 修改内容
++
++| 修改 | 行号 | 描述 |
++|------|------|------|
++| 添加 `_httpClient` 字段 | line 15 | `private readonly HttpClient _httpClient;` |
++| 构造函数注入 `IHttpClientFactory` | line 33-37 | 通过 `httpClientFactory.CreateClient("default")` 初始化 |
++| `ResolvePackageAsync` 改为实例方法 | line 174 | 移除 `static`，用 `_httpClient` 替代 `new HttpClient()` |
++| 添加 `GetAllActiveStates()` | line 151-165 | 返回所有活跃任务的状态列表 |
++
++## Build Summary
++
++```
++dotnet build — 0 errors, 7 warnings (all pre-existing)
++```
++
++## Concerns
++
++无。所有修改严格按 brief 执行，无额外变更。
+diff --git a/.superpowers/sdd/task-4-brief.md b/.superpowers/sdd/task-4-brief.md
+new file mode 100644
+index 0000000..35e8d38
+--- /dev/null
++++ b/.superpowers/sdd/task-4-brief.md
+@@ -0,0 +1,145 @@
++### Task 4: ResourceDownloadService 接入 Core 引擎 + GetAllActiveStates
++
++**Files:**
++- Modify: `src-backend/Qomicex.Launcher.Backend/Services/ResourceDownloadService.cs`
++
++**Interfaces:**
++- Consumes: `Qomicex.Downloader.Core`, `Qomicex.Downloader.CoreConfig`
++- Produces: `PauseDownload(id)`, `ResumeDownload(id)`, `GetAllActiveStates()`
++
++- [ ] **Step 1: Add using and fields for pause/resume/cancel support**
++
++Add `using Qomicex.Downloader;` at the top of `ResourceDownloadService.cs` after the existing `using System.Collections.Concurrent;`.
++
++Add fields to `ResourceDownloadState` class (after line 17):
++```csharp
++    public CancellationTokenSource? Cts { get; set; }
++    public Core? Engine { get; set; }
++```
++
++Add to `ResourceDownloadService` class fields (after line 22):
++```csharp
++    private readonly ConcurrentDictionary<string, Core> _engines = new();
++```
++
++- [ ] **Step 2: Replace DownloadAsync with Core-based implementation**
++
++Replace the entire `DownloadAsync` method (lines 73-125) with:
++
++```csharp
++    private async Task DownloadAsync(string taskId, ResourceDownloadState state)
++    {
++        state.Status = "downloading";
++        var filePath = Path.Combine(state.TargetPath, state.FileName);
++        state.Cts = new CancellationTokenSource();
++
++        try
++        {
++            var core = new Core(threadCount: 0, maxRetries: 3, autoUpdate: false);
++            state.Engine = core;
++            _engines[taskId] = core;
++
++            var progress = new Progress<DownloadProgress>(p =>
++            {
++                state.DownloadedBytes = p.DownloadedBytes;
++                state.TotalBytes = p.TotalBytes;
++                state.Speed = p.Speed;
++                state.Progress = p.Progress;
++            });
++
++            await core.DownloadFileAsync(state.Url, filePath, progress, state.Cts.Token);
++
++            state.Progress = 100;
++            state.Speed = 0;
++            state.Status = "completed";
++        }
++        catch (OperationCanceledException)
++        {
++            state.Status = "cancelled";
++        }
++        catch (Exception ex)
++        {
++            state.Status = "failed";
++            state.Error = ex.Message;
++        }
++        finally
++        {
++            _engines.TryRemove(taskId, out _);
++        }
++    }
++```
++
++- [ ] **Step 3: Update Cancel method to cancel CancellationTokenSource**
++
++Replace the `Cancel` method (lines 53-61) with:
++
++```csharp
++    public bool Cancel(string taskId)
++    {
++        if (_downloads.TryGetValue(taskId, out var state) && state.Status is "queued" or "downloading")
++        {
++            state.Cts?.Cancel();
++            state.Status = "cancelled";
++            return true;
++        }
++        return false;
++    }
++```
++
++- [ ] **Step 4: Add Pause, Resume methods**
++
++Add after `Cancel` method:
++
++```csharp
++    public bool Pause(string taskId)
++    {
++        if (_engines.TryGetValue(taskId, out var engine))
++        {
++            if (_downloads.TryGetValue(taskId, out var state))
++                state.Status = "paused";
++            engine.Pause();
++            return true;
++        }
++        return false;
++    }
++
++    public bool Resume(string taskId)
++    {
++        if (_engines.TryGetValue(taskId, out var engine))
++        {
++            if (_downloads.TryGetValue(taskId, out var state))
++                state.Status = "downloading";
++            engine.Resume();
++            return true;
++        }
++        return false;
++    }
++```
++
++- [ ] **Step 5: Add GetAllActiveStates method**
++
++Add after `GetAll` method:
++
++```csharp
++    public List<ResourceDownloadState> GetAllActiveStates()
++    {
++        return _downloads.Values
++            .Where(s => s.Status is "queued" or "downloading" or "paused")
++            .ToList();
++    }
++```
++
++- [ ] **Step 6: Verify build**
++
++Run: `dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
++Expected: Build succeeded.
++
++- [ ] **Step 7: Commit**
++
++```bash
++git add src-backend/Qomicex.Launcher.Backend/Services/ResourceDownloadService.cs
++git commit -m "feat(resource-download): use Core engine, add pause/resume/cancel, GetAllActiveStates"
++```
++
++---
++
+diff --git a/.superpowers/sdd/task-4-report.md b/.superpowers/sdd/task-4-report.md
+new file mode 100644
+index 0000000..442302c
+--- /dev/null
++++ b/.superpowers/sdd/task-4-report.md
+@@ -0,0 +1,26 @@
++# Task 4 Report: ResourceDownloadService 接入 Core 引擎 + GetAllActiveStates
++
++## Status: ✅ Complete
++
++## Commits
++- `2e15315` feat(resource-download): use Core engine, add pause/resume/cancel, GetAllActiveStates
++
++## Build Summary
++- **Build:** Succeeded (0 errors, 7 pre-existing warnings unrelated to this change)
++- **File changed:** `src-backend/Qomicex.Launcher.Backend/Services/ResourceDownloadService.cs` (+53/-29)
++
++## Changes Applied
++1. **Added `using Qomicex.Downloader;`** and `using DownloadCore = Qomicex.Downloader.Core;` alias
++2. **Added to `ResourceDownloadState`:** `CancellationTokenSource? Cts`, `DownloadCore? Engine`
++3. **Added to `ResourceDownloadService`:** `ConcurrentDictionary<string, DownloadCore> _engines`
++4. **Replaced `DownloadAsync`:** Now uses `DownloadCore` engine with multi-threaded download, progress callback, and `CancellationToken` support
++5. **Updated `Cancel`:** Now calls `state.Cts?.Cancel()` to actually cancel the download
++6. **Added `Pause`/`Resume`:** Delegate to `engine.Pause()`/`engine.Resume()`, update status accordingly
++7. **Added `GetAllActiveStates()`:** Returns downloads with status "queued", "downloading", or "paused"
++
++## Concerns
++1. **`autoUpdate: false` — progress won't update:** The brief specifies `new DownloadCore(threadCount: 0, maxRetries: 3, autoUpdate: false)`. With `autoUpdate: false`, the `Progress<DownloadProgress>` callback passed to `DownloadFileAsync` is never invoked by the Core engine (it only reports progress internally when `_autoUpdate` is true). This means `state.Progress`, `state.Speed`, `state.DownloadedBytes`, and `state.TotalBytes` will not update during active download. The download still completes successfully, and `state.Progress = 100` is still set in the try block after `await`. To restore real-time progress, change to `autoUpdate: true` or call `engine.UpdateProgress()` periodically.
++2. **Type naming deviation:** The brief uses `Core` as the type name, but this conflicts with the `Qomicex.Core` namespace from the Qomicex.Core project reference. Used `DownloadCore` alias instead. This is a naming difference only — the runtime type is still `Qomicex.Downloader.Core`.
++
++## Report Path
++`.superpowers/sdd/task-4-report.md`
+diff --git a/Qomicex.Avalonia b/Qomicex.Avalonia
+index 9b8cebd..133d2f8 160000
+--- a/Qomicex.Avalonia
++++ b/Qomicex.Avalonia
+@@ -1 +1 @@
+-Subproject commit 9b8cebdbfd1cfed37296d0d9b42637a41b58f342
++Subproject commit 133d2f864a77ab6b04c9ecdc4a3e44da86879e60
+diff --git a/src-backend/Qomicex.Launcher.Backend/Controllers/ProgressSseController.cs b/src-backend/Qomicex.Launcher.Backend/Controllers/ProgressSseController.cs
+new file mode 100644
+index 0000000..2a838ed
+--- /dev/null
++++ b/src-backend/Qomicex.Launcher.Backend/Controllers/ProgressSseController.cs
+@@ -0,0 +1,57 @@
++using System.Text.Json;
++using Microsoft.AspNetCore.Mvc;
++using Qomicex.Launcher.Backend.Services;
++
++namespace Qomicex.Launcher.Backend.Controllers;
++
++[ApiController]
++[Route("api/progress")]
++public class ProgressSseController : ControllerBase
++{
++    [HttpGet("stream")]
++    public async Task StreamProgress(
++        [FromServices] InstanceInstallService installService,
++        [FromServices] JavaDownloadService javaService,
++        [FromServices] ResourceDownloadService resourceService,
++        CancellationToken ct)
++    {
++        Response.Headers.ContentType = "text/event-stream";
++        Response.Headers.CacheControl = "no-cache";
++        Response.Headers.Connection = "keep-alive";
++
++        while (!ct.IsCancellationRequested)
++        {
++            await Task.Delay(300, ct);
++
++            var installs = installService.GetAllActiveStates();
++            var javaDownloads = javaService.GetAllActiveStates();
++            var resources = resourceService.GetAllActiveStates();
++
++            double totalSpeed = 0;
++
++            foreach (var i in installs) { totalSpeed += i.Speed; }
++            foreach (var j in javaDownloads) { totalSpeed += j.Speed; }
++            foreach (var r in resources) { totalSpeed += r.Speed; }
++
++            var payload = new
++            {
++                type = "progress",
++                installs,
++                javaDownloads,
++                resources,
++                summary = new
++                {
++                    activeCount = installs.Count + javaDownloads.Count + resources.Count,
++                    totalSpeed
++                }
++            };
++
++            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
++            {
++                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
++            });
++            await Response.WriteAsync($"data: {json}\n\n", ct);
++            await Response.Body.FlushAsync(ct);
++        }
++    }
++}
+diff --git a/src-backend/Qomicex.Launcher.Backend/Program.cs b/src-backend/Qomicex.Launcher.Backend/Program.cs
+index eae7285..f5426ec 100644
+--- a/src-backend/Qomicex.Launcher.Backend/Program.cs
++++ b/src-backend/Qomicex.Launcher.Backend/Program.cs
+@@ -1,5 +1,6 @@
+ using System.Diagnostics;
+ using System.Net.Http.Headers;
++using System.Text.Json;
+ using System.Text.Json.Serialization;
+ using Qomicex.Downloader;
+ using Qomicex.Launcher.Backend;
+@@ -10,6 +11,18 @@ using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
+ 
+ var builder = WebApplication.CreateBuilder(args);
+ 
++try
++{
++    var settingsPath = Path.Combine(AppPaths.BaseDir, "QML", "settings.json");
++    if (File.Exists(settingsPath))
++    {
++        using var doc = JsonDocument.Parse(File.ReadAllText(settingsPath));
++        if (doc.RootElement.TryGetProperty("maxConnectionsPerServer", out var maxConn))
++            CoreConfig.MaxConnectionsPerServer = maxConn.GetInt32();
++    }
++}
++catch { /* use default */ }
++
+ builder.Services.AddSingleton(new TraceBufferStore(capacity: 2000));
+ builder.Services.AddSingleton<TraceDumpService>();
+ builder.Services.AddOpenApi();
+diff --git a/src-backend/Qomicex.Launcher.Backend/Services/InstallTask.cs b/src-backend/Qomicex.Launcher.Backend/Services/InstallTask.cs
+index fb19106..2e03764 100644
+--- a/src-backend/Qomicex.Launcher.Backend/Services/InstallTask.cs
++++ b/src-backend/Qomicex.Launcher.Backend/Services/InstallTask.cs
+@@ -1,8 +1,8 @@
+-using System.Collections.Concurrent;
+ using System.Diagnostics;
+ using System.Net.Http;
+ using System.Text.Json;
+ using System.Text.Json.Nodes;
++using System.Threading;
+ using Qomicex.Downloader;
+ using Qomicex.Core.Modules.Helpers;
+ using Qomicex.Core.Modules.Helpers.Installers;
+@@ -26,6 +26,12 @@ public class InstallTask : IInstallTask
+     private readonly CancellationTokenSource _cts = new();
+     private readonly DownloadManager _downloadManager = new(intervalMs: 500);
+ 
++    // Group B parallel progress tracking
++    private double _libsProgress;
++    private double _assetsProgress;
++    private double _mainJarProgress;
++    private double _loaderJarProgress;
++
+     private string _versionId = string.Empty;
+     private string _effectiveGameDir = string.Empty;
+ 
+@@ -94,21 +100,22 @@ public class InstallTask : IInstallTask
+         OnStateChanged?.Invoke(this);
+     }
+ 
++    private double GroupBWeightedProgress()
++    {
++        return _libsProgress * 0.35 + _assetsProgress * 0.35 + _mainJarProgress * 0.15 + _loaderJarProgress * 0.15;
++    }
++
+     public async Task StartAsync()
+     {
+         try
+         {
+-            // Early Java check for loaders that need a runtime
+             if (_loader is "forge" or "neoforge")
+             {
+                 FindJavaExecutable();
+             }
+ 
+-            var httpClient = _httpClientFactory.CreateClient();
+-
+-            // Stage 1: Core - download version JSON (0-5%)
++            // ===== Group A: Download JSON (3%) =====
+             SetState("downloading-json", 0, $"{_gameVersion}.json");
+-
+             var versionJsonUrl = await ResolveVersionJsonUrl();
+             if (string.IsNullOrEmpty(versionJsonUrl))
+                 throw new Exception($"无法解析版本 {_gameVersion} 的 JSON 下载地址");
+@@ -119,175 +126,124 @@ public class InstallTask : IInstallTask
+ 
+             if (!File.Exists(versionJsonPath))
+             {
+-                    var core = new Qomicex.Downloader.Core(threadCount: 4, maxRetries: 3, ignoreRangeProbe200Ok: true);
++                var core = new Qomicex.Downloader.Core(threadCount: 4, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                 await core.DownloadFileAsync(versionJsonUrl, versionJsonPath, null, _cts.Token);
+             }
+-            SetState("downloading-json", 5);
++            SetState("downloading-json", 3);
+             _cts.Token.ThrowIfCancellationRequested();
+ 
++            // ===== Scan missing files (parallel) =====
+             var resourceHelper = new LocalResourceHelper();
+-
+-            // Stage 2: DownloadManager - libraries (5-25%)
+-            SetState("downloading-libraries", 5, "正在扫描支持库...");
+             var missLibs = await resourceHelper.GetMissLibrariesAsync(_gameVersion, _gameDir);
++            var missAssets = await resourceHelper.GetMissAssetsAsync(_gameVersion, _gameDir);
++            var missMainJar = await resourceHelper.GetMissMainJarAsync(_gameVersion, _gameDir);
++
++            bool needLoaderJar = false;
++            string loaderDownloadUrl = string.Empty;
++            string installerPath = string.Empty;
++
++            if (!string.IsNullOrEmpty(_loader) && !string.IsNullOrEmpty(_loaderVersion))
++            {
++                var loaderLower = _loader.ToLowerInvariant();
++                if (loaderLower is "forge" or "neoforge")
++                {
++                    loaderDownloadUrl = await ResolveLoaderDownloadUrl(_loader, _gameVersion, _loaderVersion);
++                    var tempDir = Path.Combine(_gameDir, "temp");
++                    Directory.CreateDirectory(tempDir);
++                    installerPath = Path.Combine(tempDir, $"{_loader}-{_gameVersion}-{_loaderVersion}-installer.jar");
++                    needLoaderJar = !File.Exists(installerPath) || new FileInfo(installerPath).Length == 0;
++                }
++            }
++
++            // ===== Group D: Mod download (starts immediately, runs in parallel) =====
++            Task? modTask = null;
++            if (_addons != null && _addons.Length > 0)
++            {
++                modTask = DownloadAddonsParallel();
++            }
++
++            // ===== Group B: Parallel download (libs + assets + mainJar + loaderJar) -> 3%-53% =====
++            SetState("downloading", 3);
++            _libsProgress = missLibs.Count > 0 ? 0 : 100;
++            _assetsProgress = missAssets.Count > 0 ? 0 : 100;
++            _mainJarProgress = (missMainJar?.Path != null) ? 0 : 100;
++            _loaderJarProgress = needLoaderJar ? 0 : 100;
++
++            var groupBTasks = new List<Task>();
++
+             if (missLibs.Count > 0)
+-                await RunDownloadStage(_downloadThreads, missLibs, 5, 25);
+-            else
+-                SetState("downloading-libraries", 25);
+-            _cts.Token.ThrowIfCancellationRequested();
++            {
++                var tid = _downloadManager.CreateTask(maxConcurrentFiles: _downloadThreads, maxRetries: 3, ignoreRangeProbe200Ok: true);
++                foreach (var f in missLibs)
++                    _downloadManager.AddFileToTask(tid, f.Url, f.Path);
++                groupBTasks.Add(RunDownloadTaskWithCallback(tid, p => _libsProgress = p, _cts.Token));
++            }
+ 
+-            // Stage 3: DownloadManager - assets (25-45%)
+-            SetState("downloading-assets", 25, "正在扫描资源文件...");
+-            var missAssets = await resourceHelper.GetMissAssetsAsync(_gameVersion, _gameDir);
+             if (missAssets.Count > 0)
+-                await RunDownloadStage(_downloadThreads, missAssets, 25, 45);
+-            else
+-                SetState("downloading-assets", 45);
+-            _cts.Token.ThrowIfCancellationRequested();
++            {
++                var tid = _downloadManager.CreateTask(maxConcurrentFiles: _downloadThreads, maxRetries: 3, ignoreRangeProbe200Ok: true);
++                foreach (var f in missAssets)
++                    _downloadManager.AddFileToTask(tid, f.Url, f.Path);
++                groupBTasks.Add(RunDownloadTaskWithCallback(tid, p => _assetsProgress = p, _cts.Token));
++            }
+ 
+-            // Stage 4: Core - download main jar (45-50%)
+-            SetState("downloading-mainjar", 45, "正在检查主文件...");
+-            var missMainJar = await resourceHelper.GetMissMainJarAsync(_gameVersion, _gameDir);
+             if (missMainJar != null && !string.IsNullOrEmpty(missMainJar.Path))
+             {
+                 var tid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+                 _downloadManager.AddFileToTask(tid, missMainJar.Url, missMainJar.Path);
+-                await RunDownloadManagerStage(tid, 45, 50);
++                groupBTasks.Add(RunDownloadTaskWithCallback(tid, p => _mainJarProgress = p, _cts.Token));
+             }
+-            else
++
++            if (needLoaderJar)
+             {
+-                SetState("downloading-mainjar", 50);
++                var tid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
++                _downloadManager.AddFileToTask(tid, loaderDownloadUrl, installerPath);
++                groupBTasks.Add(RunDownloadTaskWithCallback(tid, p => _loaderJarProgress = p, _cts.Token));
+             }
+-            _cts.Token.ThrowIfCancellationRequested();
+ 
+-            // Stage 5-7: Mod loader
+-            if (!string.IsNullOrEmpty(_loader) && !string.IsNullOrEmpty(_loaderVersion))
++            // Poll weighted progress while Group B runs
++            var groupBPollCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
++            _ = Task.Run(async () =>
+             {
+-                string loaderLower = _loader.ToLowerInvariant();
+-                bool isForgeLike = loaderLower is "forge" or "neoforge";
+-
+-                if (isForgeLike)
++                while (!groupBPollCts.IsCancellationRequested)
+                 {
+-                    // Stage 5: Core - download installer JAR (50-55%)
+-                    SetState("downloading-loader", 50, $"正在下载 {_loader} 安装程序...");
+-                    var downloadUrl = await ResolveLoaderDownloadUrl(_loader, _gameVersion, _loaderVersion);
+-                    var tempDir = Path.Combine(_gameDir, "temp");
+-                    Directory.CreateDirectory(tempDir);
+-                    var installerPath = Path.Combine(tempDir, $"{_loader}-{_gameVersion}-{_loaderVersion}-installer.jar");
+-
+-                    if (!File.Exists(installerPath) || new FileInfo(installerPath).Length == 0)
+-                    {
+-                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+-                        _downloadManager.AddFileToTask(jarTid, downloadUrl, installerPath);
+-                        await RunDownloadManagerStage(jarTid, 50, 55);
+-                    }
+-                    else
+-                    {
+-                        SetState("downloading-loader", 55);
+-                    }
+-                    _cts.Token.ThrowIfCancellationRequested();
+-
+-                    // Stage 6: Install loader (forge handles its own lib download + processors) (55-75%)
+-                    SetState("installing-loader", 55, $"{_loader} {_loaderVersion}");
+-                    await InstallModLoader(httpClient, _versionId, installerPath);
+-
+-                    // Stage 7: DownloadManager - remaining loader libs (75-85%)
+-                    SetState("downloading-loader-libs", 75, "正在补全加载器库文件...");
+-                    List<LocalResourceHelper.MissFileData> remainingLibs;
+-                    if (loaderLower == "forge")
+-                    {
+-                        var fi = new ForgeInstaller(0, _gameDir, _gameVersion);
+-                        remainingLibs = fi.GetMissForgeLibraries(installerPath, _versionId);
+-                    }
+-                    else
+-                    {
+-                        var nfi = new NeoForgeInstaller(0, _gameDir, _gameVersion);
+-                        remainingLibs = nfi.GetMissNeoForgeLibraries(installerPath, _versionId);
+-                    }
++                    Progress = 3 + GroupBWeightedProgress() / 100.0 * 50;
++                    OnStateChanged?.Invoke(this);
++                    try { await Task.Delay(100, groupBPollCts.Token); } catch { break; }
++                }
++            });
+ 
+-                    if (remainingLibs.Count > 0)
+-                        await RunDownloadStage(_downloadThreads, remainingLibs, 75, 85);
+-                    else
+-                        SetState("downloading-loader-libs", 85);
++            await Task.WhenAll(groupBTasks);
++            groupBPollCts.Cancel();
+ 
+-                    // Stage 7b: Core - ensure main jar for merged version (85-95%)
+-                    _cts.Token.ThrowIfCancellationRequested();
+-                    SetState("downloading-mainjar", 85, $"{_versionId}.jar");
+-                    var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
+-                    if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
+-                    {
+-                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+-                        _downloadManager.AddFileToTask(jarTid, loaderMainJar.Url, loaderMainJar.Path);
+-                        await RunDownloadManagerStage(jarTid, 85, 95);
+-                    }
+-                    else
+-                    {
+-                        SetState("downloading-mainjar", 95);
+-                    }
+-
+-                    TryDelete(installerPath);
+-                }
+-                else
+-                {
+-                    // Fabric/Quilt: install writes merged JSON, then we scan+download remaining libs
+-                    SetState("installing-loader", 50, $"{_loader} {_loaderVersion}");
++            // Check for failures in Group B
++            var allInfos = _downloadManager.GetAllTaskInfos();
++            foreach (var (_, info) in allInfos)
++            {
++                if (info.FailedFiles > 0)
++                    throw new Exception($"下载阶段失败: {info.FailedFiles} 个文件");
++            }
+ 
+-                    var loaderJsonPath = Path.Combine(_gameDir, "versions", _versionId, $"{_versionId}.json");
+-                    if (!File.Exists(loaderJsonPath))
+-                    {
+-                        // First install — run the installer to produce the merged JSON
+-                        await InstallModLoader(httpClient, _versionId);
+-                    }
++            SetState("downloading", 53);
++            _cts.Token.ThrowIfCancellationRequested();
+ 
+-                    // Scan the merged versionId JSON for missing libs (covers both install and repair)
+-                    SetState("downloading-loader-libs", 60, "正在补全加载器库文件...");
+-                    var loaderLibs = await resourceHelper.GetMissLibrariesAsync(_versionId, _gameDir);
+-                    if (loaderLibs.Count > 0)
+-                        await RunDownloadStage(_downloadThreads, loaderLibs, 60, 75);
+-                    else
+-                        SetState("downloading-loader-libs", 75);
+-
+-                    // Also ensure main jar exists for this versionId
+-                    _cts.Token.ThrowIfCancellationRequested();
+-                    SetState("downloading-mainjar", 75, $"{_versionId}.jar");
+-                    var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
+-                    if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
+-                    {
+-                        var jarTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+-                        _downloadManager.AddFileToTask(jarTid, loaderMainJar.Url, loaderMainJar.Path);
+-                        await RunDownloadManagerStage(jarTid, 75, 85);
+-                    }
+-                    else
+-                    {
+-                        SetState("downloading-mainjar", 85);
+-                    }
+-                }
++            // ===== Loader handling (53%-85%) =====
++            if (!string.IsNullOrEmpty(_loader) && !string.IsNullOrEmpty(_loaderVersion))
++            {
++                await HandleLoaderInstall(
++                    resourceHelper, installerPath, needLoaderJar);
+             }
+             else
+             {
+-                SetState(null!, 85);
++                SetState("completed", 85);
+             }
+             _cts.Token.ThrowIfCancellationRequested();
+ 
+-            // Stage 8: DownloadManager - addons (85-100%)
+-            if (_addons != null && _addons.Length > 0)
++            // ===== Wait for Group D (mods) =====
++            if (modTask != null)
+             {
+                 SetState("downloading-addons", 85, "附加内容...");
+-                var modsDir = Path.Combine(_effectiveGameDir, "mods");
+-                Directory.CreateDirectory(modsDir);
+-
+-                var addonTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
+-                foreach (var addonId in _addons)
+-                {
+-                    _cts.Token.ThrowIfCancellationRequested();
+-                    var (url, filename) = await ResolveAddonDownload(httpClient, addonId, _gameVersion);
+-                    if (url != null && filename != null)
+-                        _downloadManager.AddFileToTask(addonTid, url, Path.Combine(modsDir, filename));
+-                }
+-                if (_downloadManager.GetAllTaskInfos().TryGetValue(addonTid, out var addonInfo) && addonInfo.TotalFiles > 0)
+-                    await RunDownloadManagerStage(addonTid, 85, 100);
+-                else
+-                    SetState("downloading-addons", 100);
++                await modTask;
+             }
+ 
+             IsCompleted = true;
+@@ -309,29 +265,20 @@ public class InstallTask : IInstallTask
+         }
+     }
+ 
+-    private async Task RunDownloadStage(int threadNum,
+-        List<LocalResourceHelper.MissFileData> files, double stageStart, double stageEnd)
++    private async Task RunDownloadTaskWithCallback(int taskId, Action<double> onProgress, CancellationToken ct)
+     {
+-        var tid = _downloadManager.CreateTask(maxConcurrentFiles: threadNum, maxRetries: 3, ignoreRangeProbe200Ok: true);
+-        foreach (var f in files)
+-            _downloadManager.AddFileToTask(tid, f.Url, f.Path);
+-        await RunDownloadManagerStage(tid, stageStart, stageEnd);
+-    }
+-
+-    private async Task RunDownloadManagerStage(int taskId, double stageStart, double stageEnd)
+-    {
+-        var downloadTask = _downloadManager.StartTaskAsync(taskId, _cts.Token);
+-
++        var downloadTask = _downloadManager.StartTaskAsync(taskId, ct);
+         int lastCompleted = 0;
+-        while (!downloadTask.IsCompleted && !_cts.Token.IsCancellationRequested)
++        while (!downloadTask.IsCompleted && !ct.IsCancellationRequested)
+         {
+             var infos = _downloadManager.GetAllTaskInfos();
+             if (infos.TryGetValue(taskId, out var info))
+             {
+-                Progress = stageStart + (info.Progress / 100.0) * (stageEnd - stageStart);
+-                TotalFiles = info.TotalFiles;
+-                CompletedFiles = info.CompletedFiles;
+-                FailedFiles = info.FailedFiles;
++                onProgress(info.Progress);
++
++                TotalFiles += info.TotalFiles;
++                CompletedFiles += info.CompletedFiles;
++                FailedFiles += info.FailedFiles;
+                 Speed = info.Speed;
+ 
+                 if (info.CompletedFiles > lastCompleted)
+@@ -346,17 +293,162 @@ public class InstallTask : IInstallTask
+                 }
+                 OnStateChanged?.Invoke(this);
+             }
+-            try { await Task.Delay(100, _cts.Token); } catch (OperationCanceledException) { break; }
++            try { await Task.Delay(100, ct); } catch (OperationCanceledException) { break; }
+         }
+-
+         await downloadTask;
++    }
++
++    private async Task HandleLoaderInstall(
++        LocalResourceHelper resourceHelper, string installerPath, bool needLoaderJar)
++    {
++        var loaderLower = _loader!.ToLowerInvariant();
++        bool isForgeLike = loaderLower is "forge" or "neoforge";
++
++        if (isForgeLike)
++        {
++            // Group C: Download loader libs BEFORE install (to speed up)
++            SetState("downloading-loader-libs", 53, "正在补全加载器库文件...");
++            List<LocalResourceHelper.MissFileData> remainingLibs;
++            if (loaderLower == "forge")
++            {
++                var fi = new ForgeInstaller(0, _gameDir, _gameVersion);
++                remainingLibs = fi.GetMissForgeLibraries(installerPath, _versionId);
++            }
++            else
++            {
++                var nfi = new NeoForgeInstaller(0, _gameDir, _gameVersion);
++                remainingLibs = nfi.GetMissNeoForgeLibraries(installerPath, _versionId);
++            }
++
++            if (remainingLibs.Count > 0)
++            {
++                var tid = _downloadManager.CreateTask(maxConcurrentFiles: _downloadThreads, maxRetries: 3, ignoreRangeProbe200Ok: true);
++                foreach (var f in remainingLibs)
++                    _downloadManager.AddFileToTask(tid, f.Url, f.Path);
++                double loaderLibProgress = 0;
++                await RunDownloadTaskWithCallback(tid, p =>
++                {
++                    loaderLibProgress = p;
++                    Progress = 53 + loaderLibProgress / 100.0 * 15;
++                }, _cts.Token);
++            }
++            SetState("downloading-loader-libs", 68);
++            _cts.Token.ThrowIfCancellationRequested();
++
++            // Install loader (68%-80%)
++            SetState("installing-loader", 68, $"{_loader} {_loaderVersion}");
++            var httpClient = _httpClientFactory.CreateClient();
++            await InstallModLoader(httpClient, _versionId, installerPath);
++            SetState("installing-loader", 80);
++
++            // Merged main jar (80%-85%)
++            SetState("downloading-mainjar", 80, $"{_versionId}.jar");
++            var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
++            if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
++            {
++                var tid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
++                _downloadManager.AddFileToTask(tid, loaderMainJar.Url, loaderMainJar.Path);
++                double mainJarProgress = 0;
++                await RunDownloadTaskWithCallback(tid, p =>
++                {
++                    mainJarProgress = p;
++                    Progress = 80 + mainJarProgress / 100.0 * 5;
++                }, _cts.Token);
++            }
++            SetState("downloading-mainjar", 85);
+ 
+-        var finalInfos = _downloadManager.GetAllTaskInfos();
+-        if (finalInfos.TryGetValue(taskId, out var finalInfo) && finalInfo.FailedFiles > 0)
++            TryDelete(installerPath);
++        }
++        else
+         {
+-            var statuses = _downloadManager.GetTaskFileStatuses(taskId);
+-            var failed = statuses.FirstOrDefault(s => s.Status == DownloadTask.FileStatus.Failed);
+-            throw new Exception($"下载失败: {failed.Name} (共 {finalInfo.FailedFiles} 个文件失败)");
++            // Fabric/Quilt/LiteLoader: install writes merged JSON, then scan + download remaining libs
++            SetState("installing-loader", 53, $"{_loader} {_loaderVersion}");
++            var loaderJsonPath = Path.Combine(_gameDir, "versions", _versionId, $"{_versionId}.json");
++            if (!File.Exists(loaderJsonPath))
++            {
++                var httpClient = _httpClientFactory.CreateClient();
++                await InstallModLoader(httpClient, _versionId);
++            }
++            SetState("installing-loader", 60);
++
++            // Download loader libs (60%-75%)
++            SetState("downloading-loader-libs", 60, "正在补全加载器库文件...");
++            var loaderLibs = await resourceHelper.GetMissLibrariesAsync(_versionId, _gameDir);
++            if (loaderLibs.Count > 0)
++            {
++                var tid = _downloadManager.CreateTask(maxConcurrentFiles: _downloadThreads, maxRetries: 3, ignoreRangeProbe200Ok: true);
++                foreach (var f in loaderLibs)
++                    _downloadManager.AddFileToTask(tid, f.Url, f.Path);
++                double libProgress = 0;
++                await RunDownloadTaskWithCallback(tid, p =>
++                {
++                    libProgress = p;
++                    Progress = 60 + libProgress / 100.0 * 15;
++                }, _cts.Token);
++            }
++            SetState("downloading-loader-libs", 75);
++
++            // Merged main jar (75%-85%)
++            SetState("downloading-mainjar", 75, $"{_versionId}.jar");
++            var loaderMainJar = await resourceHelper.GetMissMainJarAsync(_versionId, _gameDir);
++            if (loaderMainJar != null && !string.IsNullOrEmpty(loaderMainJar.Path))
++            {
++                var tid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
++                _downloadManager.AddFileToTask(tid, loaderMainJar.Url, loaderMainJar.Path);
++                double mainJarProgress = 0;
++                await RunDownloadTaskWithCallback(tid, p =>
++                {
++                    mainJarProgress = p;
++                    Progress = 75 + mainJarProgress / 100.0 * 10;
++                }, _cts.Token);
++            }
++            SetState("downloading-mainjar", 85);
++        }
++    }
++
++    private async Task DownloadAddonsParallel()
++    {
++        var httpClient = _httpClientFactory.CreateClient();
++        var modsDir = Path.Combine(_effectiveGameDir, "mods");
++        Directory.CreateDirectory(modsDir);
++
++        var addonTid = _downloadManager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
++        var addonLock = new object();
++
++        // Parallel URL resolution with SemaphoreSlim
++        var semaphore = new SemaphoreSlim(12);
++        var resolveTasks = _addons!.Select(async addonId =>
++        {
++            await semaphore.WaitAsync(_cts.Token);
++            try
++            {
++                _cts.Token.ThrowIfCancellationRequested();
++                var (url, filename) = await ResolveAddonDownload(httpClient, addonId, _gameVersion);
++                if (url != null && filename != null)
++                {
++                    lock (addonLock)
++                    {
++                        _downloadManager.AddFileToTask(addonTid, url, Path.Combine(modsDir, filename));
++                    }
++                }
++            }
++            finally
++            {
++                semaphore.Release();
++            }
++        });
++
++        await Task.WhenAll(resolveTasks);
++
++        var infos = _downloadManager.GetAllTaskInfos();
++        if (infos.TryGetValue(addonTid, out var info) && info.TotalFiles > 0)
++        {
++            double progress = 0;
++            await RunDownloadTaskWithCallback(addonTid, p =>
++            {
++                progress = p;
++                Progress = 85 + progress / 100.0 * 15;
++            }, _cts.Token);
+         }
+     }
+ 
+diff --git a/src-backend/Qomicex.Launcher.Backend/Services/InstanceInstallService.cs b/src-backend/Qomicex.Launcher.Backend/Services/InstanceInstallService.cs
+index 4f0dd7c..934944d 100644
+--- a/src-backend/Qomicex.Launcher.Backend/Services/InstanceInstallService.cs
++++ b/src-backend/Qomicex.Launcher.Backend/Services/InstanceInstallService.cs
+@@ -1,5 +1,6 @@
+ using System.Collections.Concurrent;
+ using System.Diagnostics;
++using System.Linq;
+ using System.Net.Http;
+ using System.Text.Json.Nodes;
+ using Qomicex.Downloader;
+@@ -79,6 +80,26 @@ public class InstanceInstallService
+         return null;
+     }
+ 
++    public List<InstallState> GetAllActiveStates()
++    {
++        return _tasks.Values
++            .Where(t => !t.IsCompleted && t.Stage != "completed" && t.Stage != "cancelled" && t.Stage != "failed")
++            .Select(t => new InstallState
++            {
++                InstanceId = t.InstanceId,
++                Stage = t.Stage,
++                Progress = t.Progress,
++                Error = t.Error,
++                TotalFiles = t.TotalFiles,
++                CompletedFiles = t.CompletedFiles,
++                FailedFiles = t.FailedFiles,
++                CurrentFile = t.CurrentFile,
++                Speed = t.Speed,
++                IsPaused = t.IsPaused,
++            })
++            .ToList();
++    }
++
+     public void StartInstall(string instanceId, string gameVersion, string gameDir,
+         string? loader, string? loaderVersion, string[]? addons,
+         int downloadThreads = 64, bool versionIsolation = true, int downloadSourceId = 0, int downloadTimeout = 15,
+diff --git a/src-backend/Qomicex.Launcher.Backend/Services/JavaDownloadService.cs b/src-backend/Qomicex.Launcher.Backend/Services/JavaDownloadService.cs
+index 64e4bea..ea12bb3 100644
+--- a/src-backend/Qomicex.Launcher.Backend/Services/JavaDownloadService.cs
++++ b/src-backend/Qomicex.Launcher.Backend/Services/JavaDownloadService.cs
+@@ -12,6 +12,7 @@ namespace Qomicex.Launcher.Backend.Services;
+ public class JavaDownloadService
+ {
+     private readonly JavaRuntimeStore _javaRuntimeStore;
++    private readonly HttpClient _httpClient;
+     private readonly ConcurrentDictionary<string, JavaDownloadTaskState> _tasks = new();
+ 
+     private sealed class JavaDownloadTaskState
+@@ -29,9 +30,10 @@ public class JavaDownloadService
+         public DownloadManager? Manager { get; set; }
+     }
+ 
+-    public JavaDownloadService(JavaRuntimeStore javaRuntimeStore)
++    public JavaDownloadService(JavaRuntimeStore javaRuntimeStore, IHttpClientFactory httpClientFactory)
+     {
+         _javaRuntimeStore = javaRuntimeStore;
++        _httpClient = httpClientFactory.CreateClient("default");
+     }
+ 
+     public Task<JavaDownloadCatalogResponse> GetCatalogAsync()
+@@ -146,6 +148,23 @@ public class JavaDownloadService
+         return false;
+     }
+ 
++    public List<JavaDownloadProgressResponse> GetAllActiveStates()
++    {
++        return _tasks.Values
++            .Where(t => t.Status is "queued" or "resolving" or "downloading" or "paused" or "extracting" or "registering")
++            .Select(t => new JavaDownloadProgressResponse
++            {
++                TaskId = t.TaskId,
++                Status = t.Status,
++                Progress = t.Progress,
++                Speed = t.Speed,
++                FileName = t.FileName,
++                TargetDir = t.TargetDir,
++                Error = t.Error,
++            })
++            .ToList();
++    }
++
+     private static string GetBaseDir()
+     {
+         var dir = Path.Combine(AppPaths.BaseDir, "QML", "Runtime", "Java");
+@@ -153,15 +172,14 @@ public class JavaDownloadService
+         return dir;
+     }
+ 
+-    private static async Task<(string url, string fileName)> ResolvePackageAsync(JavaDownloadStartRequest request)
++    private async Task<(string url, string fileName)> ResolvePackageAsync(JavaDownloadStartRequest request)
+     {
+-        using var http = new HttpClient();
+ 
+         if (request.Vendor == "temurin")
+         {
+             var imageType = request.Version == 8 ? "jre" : "jdk";
+             var api = $"https://api.adoptium.net/v3/assets/latest/{request.Version}/hotspot?release_type=ga&os={MapTemurinPlatform(request.Platform)}&architecture={MapTemurinArchitecture(request.Architecture)}&image_type={imageType}";
+-            var json = await http.GetStringAsync(api);
++            var json = await _httpClient.GetStringAsync(api);
+             using var doc = JsonDocument.Parse(json);
+             var item = doc.RootElement.EnumerateArray().FirstOrDefault();
+             if (item.ValueKind == JsonValueKind.Undefined)
+@@ -177,7 +195,7 @@ public class JavaDownloadService
+         {
+             var ext = request.Platform == "windows" ? "zip" : "tar.gz";
+             var api = $"https://api.azul.com/metadata/v1/zulu/packages?java_version={request.Version}&os={MapZuluPlatform(request.Platform)}&arch={MapZuluArchitecture(request.Architecture)}&archive_type={ext}&java_package_type=jdk&latest=true";
+-            var json = await http.GetStringAsync(api);
++            var json = await _httpClient.GetStringAsync(api);
+             using var doc = JsonDocument.Parse(json);
+             var item = doc.RootElement
+                 .EnumerateArray()
+@@ -193,7 +211,7 @@ public class JavaDownloadService
+         if (request.Vendor == "microsoft-jdk")
+         {
+             var api = "https://aka.ms/download-jdk/microsoft-jdk.json";
+-            var json = await http.GetStringAsync(api);
++            var json = await _httpClient.GetStringAsync(api);
+             using var doc = JsonDocument.Parse(json);
+             if (!doc.RootElement.TryGetProperty("releases", out var releases)
+                 || releases.ValueKind != JsonValueKind.Array)
+diff --git a/src-backend/Qomicex.Launcher.Backend/Services/ResourceDownloadService.cs b/src-backend/Qomicex.Launcher.Backend/Services/ResourceDownloadService.cs
+index e895ce0..ba47f38 100644
+--- a/src-backend/Qomicex.Launcher.Backend/Services/ResourceDownloadService.cs
++++ b/src-backend/Qomicex.Launcher.Backend/Services/ResourceDownloadService.cs
+@@ -1,4 +1,6 @@
+ using System.Collections.Concurrent;
++using Qomicex.Downloader;
++using DownloadCore = Qomicex.Downloader.Core;
+ 
+ namespace Qomicex.Launcher.Backend.Services;
+ 
+@@ -15,11 +17,14 @@ public class ResourceDownloadState
+     public long DownloadedBytes { get; set; }
+     public long TotalBytes { get; set; }
+     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
++    public CancellationTokenSource? Cts { get; set; }
++    public DownloadCore? Engine { get; set; }
+ }
+ 
+ public class ResourceDownloadService
+ {
+     private readonly ConcurrentDictionary<string, ResourceDownloadState> _downloads = new();
++    private readonly ConcurrentDictionary<string, DownloadCore> _engines = new();
+     private readonly HttpClient _httpClient;
+ 
+     public ResourceDownloadService(IHttpClientFactory httpClientFactory)
+@@ -54,12 +59,37 @@ public class ResourceDownloadService
+     {
+         if (_downloads.TryGetValue(taskId, out var state) && state.Status is "queued" or "downloading")
+         {
++            state.Cts?.Cancel();
+             state.Status = "cancelled";
+             return true;
+         }
+         return false;
+     }
+ 
++    public bool Pause(string taskId)
++    {
++        if (_engines.TryGetValue(taskId, out var engine))
++        {
++            if (_downloads.TryGetValue(taskId, out var state))
++                state.Status = "paused";
++            engine.Pause();
++            return true;
++        }
++        return false;
++    }
++
++    public bool Resume(string taskId)
++    {
++        if (_engines.TryGetValue(taskId, out var engine))
++        {
++            if (_downloads.TryGetValue(taskId, out var state))
++                state.Status = "downloading";
++            engine.Resume();
++            return true;
++        }
++        return false;
++    }
++
+     public void Remove(string taskId)
+     {
+         _downloads.TryRemove(taskId, out _);
+@@ -70,44 +100,34 @@ public class ResourceDownloadService
+         return _downloads.Values.ToList();
+     }
+ 
++    public List<ResourceDownloadState> GetAllActiveStates()
++    {
++        return _downloads.Values
++            .Where(s => s.Status is "queued" or "downloading" or "paused")
++            .ToList();
++    }
++
+     private async Task DownloadAsync(string taskId, ResourceDownloadState state)
+     {
+         state.Status = "downloading";
+         var filePath = Path.Combine(state.TargetPath, state.FileName);
++        state.Cts = new CancellationTokenSource();
+ 
+         try
+         {
+-            using var response = await _httpClient.GetAsync(state.Url, HttpCompletionOption.ResponseHeadersRead);
+-            response.EnsureSuccessStatusCode();
++            var core = new DownloadCore(threadCount: 0, maxRetries: 3, autoUpdate: true);
++            state.Engine = core;
++            _engines[taskId] = core;
+ 
+-            state.TotalBytes = response.Content.Headers.ContentLength ?? -1;
+-            await using var stream = await response.Content.ReadAsStreamAsync();
+-            await using var fileStream = System.IO.File.Create(filePath);
+-
+-            var buffer = new byte[81920];
+-            long totalRead = 0;
+-            var sw = System.Diagnostics.Stopwatch.StartNew();
+-            long lastBytes = 0;
+-            var lastTime = sw.Elapsed.TotalSeconds;
+-
+-            int bytesRead;
+-            while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
++            var progress = new Progress<DownloadProgress>(p =>
+             {
+-                await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead));
+-                totalRead += bytesRead;
+-                state.DownloadedBytes = totalRead;
+-
+-                var now = sw.Elapsed.TotalSeconds;
+-                if (now - lastTime >= 0.5)
+-                {
+-                    var elapsed = now - lastTime;
+-                    state.Speed = elapsed > 0 ? (totalRead - lastBytes) / elapsed : 0;
+-                    lastBytes = totalRead;
+-                    lastTime = now;
+-                }
+-
+-                state.Progress = state.TotalBytes > 0 ? (double)totalRead / state.TotalBytes * 100 : 0;
+-            }
++                state.DownloadedBytes = p.DownloadedBytes;
++                state.TotalBytes = p.TotalBytes;
++                state.Speed = p.Speed;
++                state.Progress = p.Progress;
++            });
++
++            await core.DownloadFileAsync(state.Url, filePath, progress, state.Cts.Token);
+ 
+             state.Progress = 100;
+             state.Speed = 0;
+@@ -122,5 +142,9 @@ public class ResourceDownloadService
+             state.Status = "failed";
+             state.Error = ex.Message;
+         }
++        finally
++        {
++            _engines.TryRemove(taskId, out _);
++        }
+     }
+ }
+diff --git a/src/api/settings.ts b/src/api/settings.ts
+index 9898fbf..74b7f0d 100644
+--- a/src/api/settings.ts
++++ b/src/api/settings.ts
+@@ -13,6 +13,8 @@ interface CustomJavaEntry {
+ export interface AppSettings {
+   gameDir: string
+   downloadThreads: number
++  fileChunkThreads: number
++  maxConnectionsPerServer: number
+   versionIsolation: boolean
+   closeAfterLaunch: boolean
+   memoryMode: 'auto' | 'custom'
+@@ -41,6 +43,8 @@ export interface AppSettings {
+ export const DEFAULT_SETTINGS: AppSettings = {
+   gameDir: '.minecraft',
+   downloadThreads: 64,
++  fileChunkThreads: 0,
++  maxConnectionsPerServer: 64,
+   versionIsolation: true,
+   closeAfterLaunch: false,
+   memoryMode: 'auto',
+diff --git a/src/hooks/useDownloadSSE.ts b/src/hooks/useDownloadSSE.ts
+new file mode 100644
+index 0000000..d506aa2
+--- /dev/null
++++ b/src/hooks/useDownloadSSE.ts
+@@ -0,0 +1,68 @@
++import { useEffect, useState } from 'react'
++
++export interface InstallState {
++  instanceId: string
++  stage: string
++  progress: number
++  error: string | null
++  totalFiles: number
++  completedFiles: number
++  failedFiles: number
++  currentFile: string
++  speed: number
++  isPaused: boolean
++}
++
++export interface JavaDownloadState {
++  taskId: string
++  status: string
++  progress: number
++  speed: number
++  fileName: string
++  targetDir: string
++  error: string | null
++}
++
++export interface ResourceDownloadState {
++  taskId: string
++  url: string
++  targetPath: string
++  fileName: string
++  progress: number
++  speed: number
++  status: string
++  error: string | null
++  downloadedBytes: number
++  totalBytes: number
++}
++
++export interface ProgressPayload {
++  type: 'progress'
++  installs: InstallState[]
++  javaDownloads: JavaDownloadState[]
++  resources: ResourceDownloadState[]
++  summary: {
++    activeCount: number
++    totalSpeed: number
++  }
++}
++
++export function useDownloadSSE() {
++  const [data, setData] = useState<ProgressPayload | null>(null)
++
++  useEffect(() => {
++    const es = new EventSource('/api/progress/stream')
++    es.onmessage = (e) => {
++      try {
++        const parsed = JSON.parse(e.data) as ProgressPayload
++        setData(parsed)
++      } catch { /* ignore malformed */ }
++    }
++    es.onerror = () => {
++      // browser will auto-reconnect
++    }
++    return () => es.close()
++  }, [])
++
++  return data
++}
+diff --git a/src/pages/DownloadCenter.tsx b/src/pages/DownloadCenter.tsx
+index e9ce60e..d89537f 100644
+--- a/src/pages/DownloadCenter.tsx
++++ b/src/pages/DownloadCenter.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useState, useRef, useMemo } from 'react'
++import { useEffect, useState, useMemo } from 'react'
+ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+ import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer, faCoffee } from '@fortawesome/free-solid-svg-icons'
+ import { PageHeader } from '../components/PageHeader.tsx'
+@@ -6,11 +6,12 @@ import { Button } from '../components/ui/button.tsx'
+ import { Tooltip } from '../components/ui/tooltip.tsx'
+ import { useNavigate } from 'react-router-dom'
+ import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
+-import { getInstallProgress, pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
+-import { getResourceDownloadProgress, cancelResourceDownload, startResourceDownload } from '../api/resource-download.ts'
+-import { getJavaDownloadProgress, cancelJavaDownload, pauseJavaDownload, resumeJavaDownload } from '../api/java.ts'
+-import { ApiError } from '../api/client.ts'
++import { pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
++import { cancelResourceDownload } from '../api/resource-download.ts'
++import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload } from '../api/java.ts'
++
+ import type { DownloadTask } from '../types/index.ts'
++import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
+ 
+ type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
+ 
+@@ -71,136 +72,79 @@ export default function DownloadCenter() {
+     return unsub
+   }, [])
+ 
+-  function applyJavaProgress(id: string, progress: { status: string; progress: number; speed: number; fileName: string; error: string | null }) {
+-    let newStatus: DownloadTask['status'] = 'downloading'
+-    if (progress.status === 'completed') newStatus = 'completed'
+-    else if (progress.status === 'cancelled') newStatus = 'cancelled'
+-    else if (progress.status === 'failed') newStatus = 'failed'
+-    else if (progress.status === 'paused') newStatus = 'paused'
+-    else if (progress.status === 'queued' || progress.status === 'resolving') newStatus = 'queued'
+-
+-    updateTask(id, {
+-      status: newStatus,
+-      stage: progress.status,
+-      progress: Math.round(progress.progress),
+-      speed: progress.speed,
+-      currentFile: progress.fileName || undefined,
+-      error: progress.error || undefined,
+-      completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+-    })
+-  }
+-
+-  const pollingRef = useRef<number | undefined>(undefined)
+-
+-  useEffect(() => {
+-    const javaTasks = tasks.filter((t) => t.type === 'java' && t.taskId && (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused'))
+-    if (javaTasks.length === 0) return
+-    Promise.all(javaTasks.map(async (t) => {
+-      try {
+-        const progress = await getJavaDownloadProgress(t.taskId!)
+-        applyJavaProgress(t.id, progress)
+-      } catch {
+-        updateTask(t.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
+-      }
+-    }))
+-  }, [])
++  const sseData = useDownloadSSE()
+ 
+   useEffect(() => {
+-    const activeCount = tasks.filter((t) => (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused') && (t.instanceId || t.taskId)).length
++    if (!sseData) return
+ 
+-    if (activeCount === 0) {
+-      if (pollingRef.current !== undefined) {
+-        clearInterval(pollingRef.current)
+-        pollingRef.current = undefined
+-      }
+-      return
+-    }
++    const ts = getTasks()
++    for (const task of ts) {
++      if (task.status !== 'queued' && task.status !== 'downloading' && task.status !== 'paused') continue
+ 
+-    if (pollingRef.current !== undefined) return
+-
+-    pollingRef.current = window.setInterval(async () => {
+-      const ts = getTasks()
+-      const active = ts.filter((t) => t.status === 'queued' || t.status === 'downloading' || t.status === 'paused')
+-      for (const task of active) {
+-        if (task.type === 'java' && task.taskId) {
+-          if (task.status === 'queued' && Date.now() - new Date(task.createdAt).getTime() > 120000) {
+-            updateTask(task.id, { status: 'failed', error: '下载超时：后端未响应' })
+-            continue
+-          }
+-          try {
+-            const progress = await getJavaDownloadProgress(task.taskId)
+-            applyJavaProgress(task.id, progress)
+-          } catch {
+-            updateTask(task.id, { status: 'failed', error: '获取 Java 下载进度失败' })
+-          }
+-          continue
+-        }
+-
+-        if (task.type === 'file' && task.taskId) {
+-          try {
+-            const progress = await getResourceDownloadProgress(task.taskId)
+-            let newStatus: DownloadTask['status'] = 'downloading'
+-            if (progress.status === 'completed') newStatus = 'completed'
+-            else if (progress.status === 'cancelled') newStatus = 'cancelled'
+-            else if (progress.status === 'failed') newStatus = 'failed'
+-
+-            updateTask(task.id, {
+-              status: newStatus,
+-              progress: Math.round(progress.progress),
+-              speed: progress.speed,
+-              error: progress.error || undefined,
+-              currentFile: progress.fileName || undefined,
+-              completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+-            })
+-          } catch (e: unknown) {
+-            if (e instanceof ApiError && (e.status === 404 || e.code === 'JAVA_DOWNLOAD_PACKAGE_NOT_FOUND')) {
+-              updateTask(task.id, { status: 'failed', error: '下载任务已失效（后端已重启），请重新创建' })
+-            }
+-          }
+-          continue
++      if (task.type === 'java' && task.taskId) {
++        const match = sseData.javaDownloads.find((j) => j.taskId === task.taskId)
++        if (match) {
++          let newStatus: DownloadTask['status'] = 'downloading'
++          if (match.status === 'completed') newStatus = 'completed'
++          else if (match.status === 'cancelled') newStatus = 'cancelled'
++          else if (match.status === 'failed') newStatus = 'failed'
++          else if (match.status === 'paused') newStatus = 'paused'
++          else if (match.status === 'queued' || match.status === 'resolving') newStatus = 'queued'
++          updateTask(task.id, {
++            status: newStatus,
++            stage: match.status,
++            progress: Math.round(match.progress),
++            speed: match.speed,
++            currentFile: match.fileName || undefined,
++            error: match.error || undefined,
++            completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
++          })
+         }
+-        if (!task.instanceId) continue
+-        try {
+-          const progress = await getInstallProgress(task.instanceId)
+-
+-          if (progress.status === 'not-started') {
+-            // ponytail: 30s timeout for tasks stuck in queued (backend crash / never processed)
+-            if (task.status === 'queued' && Date.now() - new Date(task.createdAt).getTime() > 30000) {
+-              updateTask(task.id, { status: 'failed', error: '安装超时：后端未响应' })
+-            }
+-            continue
+-          }
++        continue
++      }
+ 
++      if (task.type === 'file' && task.taskId) {
++        const match = sseData.resources.find((r) => r.taskId === task.taskId)
++        if (match) {
+           let newStatus: DownloadTask['status'] = 'downloading'
+-          if (progress.status === 'completed') newStatus = 'completed'
+-          else if (progress.status === 'cancelled') newStatus = 'cancelled'
+-          else if (progress.status === 'failed') newStatus = 'failed'
+-          else if (progress.isPaused) newStatus = 'paused'
+-
++          if (match.status === 'completed') newStatus = 'completed'
++          else if (match.status === 'cancelled') newStatus = 'cancelled'
++          else if (match.status === 'failed') newStatus = 'failed'
+           updateTask(task.id, {
+             status: newStatus,
+-            stage: progress.status,
+-            progress: Math.round(progress.progress),
+-            speed: progress.speed,
+-            currentFile: progress.currentFile || undefined,
+-            totalFiles: progress.totalFiles || undefined,
+-            completedFiles: progress.completedFiles || undefined,
+-            error: progress.error || undefined,
++            progress: Math.round(match.progress),
++            speed: match.speed,
++            error: match.error || undefined,
++            currentFile: match.fileName || undefined,
+             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+           })
+-        } catch {
+-          // skip
+         }
++        continue
+       }
+-    }, 1000)
+ 
+-    return () => {
+-      if (pollingRef.current !== undefined) {
+-        clearInterval(pollingRef.current)
+-        pollingRef.current = undefined
++      if (task.instanceId) {
++        const match = sseData.installs.find((i) => i.instanceId === task.instanceId)
++        if (match) {
++          let newStatus: DownloadTask['status'] = 'downloading'
++          if (match.stage === 'completed') newStatus = 'completed'
++          else if (match.stage === 'cancelled') newStatus = 'cancelled'
++          else if (match.stage === 'failed') newStatus = 'failed'
++          else if (match.isPaused) newStatus = 'paused'
++          updateTask(task.id, {
++            status: newStatus,
++            stage: match.stage,
++            progress: Math.round(match.progress),
++            speed: match.speed,
++            currentFile: match.currentFile || undefined,
++            totalFiles: match.totalFiles || undefined,
++            completedFiles: match.completedFiles || undefined,
++            error: match.error || undefined,
++            completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
++          })
++        }
+       }
+     }
+-  }, [tasks.length, tasks.filter((t) => (t.status === 'queued' || t.status === 'downloading' || t.status === 'paused')).length])
++  }, [sseData])
+ 
+   const filtered = useMemo(() => tasks.filter((t) => {
+     if (filter === 'all') return true
+@@ -354,17 +298,7 @@ export default function DownloadCenter() {
+                     )}
+                     {task.status === 'failed' && (
+                       <Tooltip content="重试">
+-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={async () => {
+-                          if (task.type === 'file' && task.taskId && task.instanceId) {
+-                            try {
+-                              const progress = await getResourceDownloadProgress(task.taskId)
+-                              if (progress.url) {
+-                                await startResourceDownload(task.instanceId, progress.url, progress.fileName, 'mods')
+-                              }
+-                            } catch {}
+-                          }
+-                          removeTask(task.id)
+-                        }}>
++                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => removeTask(task.id)}>
+                           <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+                         </Button>
+                       </Tooltip>
+diff --git a/src/pages/Settings.tsx b/src/pages/Settings.tsx
+index 403ba80..ba70d21 100644
+--- a/src/pages/Settings.tsx
++++ b/src/pages/Settings.tsx
+@@ -664,6 +664,51 @@ export default function Settings() {
+                   <p className="text-xs text-muted-foreground">同时下载的文件数量（1-512），数值越大下载越快但占用带宽越多</p>
+                 </div>
+ 
++                <div className="space-y-2">
++                  <Label htmlFor="fileChunkThreads">分片线程数</Label>
++                  <div className="flex items-center gap-2">
++                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('fileChunkThreads', Math.max(0, settings.fileChunkThreads - 1))} disabled={settings.fileChunkThreads <= 0}>
++                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
++                    </Button>
++                    <Input
++                      id="fileChunkThreads"
++                      type="number"
++                      min={0}
++                      max={16}
++                      value={settings.fileChunkThreads}
++                      onChange={(e) => update('fileChunkThreads', Math.max(0, Math.min(16, parseInt(e.target.value) || 0)))}
++                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
++                    />
++                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('fileChunkThreads', Math.min(16, settings.fileChunkThreads + 1))} disabled={settings.fileChunkThreads >= 16}>
++                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
++                    </Button>
++                  </div>
++                  <p className="text-xs text-muted-foreground">单文件分片下载线程数（0=自动，最大 16），数值越大单文件下载越快</p>
++                </div>
++
++                <div className="space-y-2">
++                  <Label htmlFor="maxConnectionsPerServer">最大连接数</Label>
++                  <div className="flex items-center gap-2">
++                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('maxConnectionsPerServer', Math.max(8, settings.maxConnectionsPerServer - 8))} disabled={settings.maxConnectionsPerServer <= 8}>
++                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
++                    </Button>
++                    <Input
++                      id="maxConnectionsPerServer"
++                      type="number"
++                      min={8}
++                      max={256}
++                      step={8}
++                      value={settings.maxConnectionsPerServer}
++                      onChange={(e) => update('maxConnectionsPerServer', Math.max(8, Math.min(256, parseInt(e.target.value) || 8)))}
++                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
++                    />
++                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('maxConnectionsPerServer', Math.min(256, settings.maxConnectionsPerServer + 8))} disabled={settings.maxConnectionsPerServer >= 256}>
++                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
++                    </Button>
++                  </div>
++                  <p className="text-xs text-muted-foreground">每个服务器的最大连接数（8-256），重启后生效</p>
++                </div>
++
+                 <label className="flex items-center gap-3 cursor-pointer">
+                   <Checkbox
+                     checked={settings.versionIsolation}
