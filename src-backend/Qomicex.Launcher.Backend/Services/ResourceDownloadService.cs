@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using Qomicex.Downloader;
+using DownloadCore = Qomicex.Downloader.Core;
 
 namespace Qomicex.Launcher.Backend.Services;
 
@@ -15,11 +17,14 @@ public class ResourceDownloadState
     public long DownloadedBytes { get; set; }
     public long TotalBytes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public CancellationTokenSource? Cts { get; set; }
+    public DownloadCore? Engine { get; set; }
 }
 
 public class ResourceDownloadService
 {
     private readonly ConcurrentDictionary<string, ResourceDownloadState> _downloads = new();
+    private readonly ConcurrentDictionary<string, DownloadCore> _engines = new();
     private readonly HttpClient _httpClient;
 
     public ResourceDownloadService(IHttpClientFactory httpClientFactory)
@@ -54,7 +59,32 @@ public class ResourceDownloadService
     {
         if (_downloads.TryGetValue(taskId, out var state) && state.Status is "queued" or "downloading")
         {
+            state.Cts?.Cancel();
             state.Status = "cancelled";
+            return true;
+        }
+        return false;
+    }
+
+    public bool Pause(string taskId)
+    {
+        if (_engines.TryGetValue(taskId, out var engine))
+        {
+            if (_downloads.TryGetValue(taskId, out var state))
+                state.Status = "paused";
+            engine.Pause();
+            return true;
+        }
+        return false;
+    }
+
+    public bool Resume(string taskId)
+    {
+        if (_engines.TryGetValue(taskId, out var engine))
+        {
+            if (_downloads.TryGetValue(taskId, out var state))
+                state.Status = "downloading";
+            engine.Resume();
             return true;
         }
         return false;
@@ -70,44 +100,34 @@ public class ResourceDownloadService
         return _downloads.Values.ToList();
     }
 
+    public List<ResourceDownloadState> GetAllActiveStates()
+    {
+        return _downloads.Values
+            .Where(s => s.Status is "queued" or "downloading" or "paused")
+            .ToList();
+    }
+
     private async Task DownloadAsync(string taskId, ResourceDownloadState state)
     {
         state.Status = "downloading";
         var filePath = Path.Combine(state.TargetPath, state.FileName);
+        state.Cts = new CancellationTokenSource();
 
         try
         {
-            using var response = await _httpClient.GetAsync(state.Url, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
+            var core = new DownloadCore(threadCount: 0, maxRetries: 3, autoUpdate: false);
+            state.Engine = core;
+            _engines[taskId] = core;
 
-            state.TotalBytes = response.Content.Headers.ContentLength ?? -1;
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            await using var fileStream = System.IO.File.Create(filePath);
-
-            var buffer = new byte[81920];
-            long totalRead = 0;
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            long lastBytes = 0;
-            var lastTime = sw.Elapsed.TotalSeconds;
-
-            int bytesRead;
-            while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
+            var progress = new Progress<DownloadProgress>(p =>
             {
-                await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead));
-                totalRead += bytesRead;
-                state.DownloadedBytes = totalRead;
+                state.DownloadedBytes = p.DownloadedBytes;
+                state.TotalBytes = p.TotalBytes;
+                state.Speed = p.Speed;
+                state.Progress = p.Progress;
+            });
 
-                var now = sw.Elapsed.TotalSeconds;
-                if (now - lastTime >= 0.5)
-                {
-                    var elapsed = now - lastTime;
-                    state.Speed = elapsed > 0 ? (totalRead - lastBytes) / elapsed : 0;
-                    lastBytes = totalRead;
-                    lastTime = now;
-                }
-
-                state.Progress = state.TotalBytes > 0 ? (double)totalRead / state.TotalBytes * 100 : 0;
-            }
+            await core.DownloadFileAsync(state.Url, filePath, progress, state.Cts.Token);
 
             state.Progress = 100;
             state.Speed = 0;
@@ -121,6 +141,10 @@ public class ResourceDownloadService
         {
             state.Status = "failed";
             state.Error = ex.Message;
+        }
+        finally
+        {
+            _engines.TryRemove(taskId, out _);
         }
     }
 }
