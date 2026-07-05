@@ -495,6 +495,37 @@ export interface GameSettingDto {
   valueKind: string
 }
 
+export interface ModpackFileEntry {
+  path: string
+  downloadUrl: string | null
+  size: number | null
+}
+
+export interface ModpackParseResult {
+  name: string
+  summary: string | null
+  gameVersion: string
+  loader: string
+  loaderVersion: string | null
+  source: string
+  files: ModpackFileEntry[]
+  hasOverrides: boolean
+  fileCount: number
+  overridesZip: string | null
+}
+
+export interface ModpackInstallRequest {
+  name: string
+  gameVersion: string
+  loader: string | null
+  loaderVersion: string | null
+  maxMemory: number
+  gameDir: string
+  versionIsolation: boolean
+  modpackFiles: ModpackFileEntry[]
+  overridesZip: string | null
+}
+
 export interface SkinProfile {
   profileId: string | null
   profileName: string | null
