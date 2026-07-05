@@ -19,6 +19,10 @@ const BACKEND_EXE: &str = "qomicex-backend";
 struct BackendChild(Mutex<Option<std::process::Child>>);
 
 fn spawn_backend(app: &tauri::App) {
+    if std::env::var("QOMICEX_LAUNCHER_MANAGED").is_ok() {
+        eprintln!("[backend] launcher-managed, skipping spawn");
+        return;
+    }
     if BACKEND.len() < 1024 {
         eprintln!("[backend] placeholder ({} bytes), skipping", BACKEND.len());
         return;
@@ -38,13 +42,7 @@ fn spawn_backend(app: &tauri::App) {
     cmd.stderr(std::process::Stdio::piped());
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            if dir.join(".portable").exists() {
-                let data_dir = dir.join("../Data");
-                let _ = std::fs::create_dir_all(&data_dir);
-                cmd.env("QOMICEX_HOME", data_dir);
-            } else {
-                cmd.env("QOMICEX_HOME", dir);
-            }
+            cmd.env("QOMICEX_HOME", dir);
         }
     }
     #[cfg(windows)] { const CREATE_NO_WINDOW: u32 = 0x08000000; cmd.creation_flags(CREATE_NO_WINDOW); }
