@@ -43,6 +43,8 @@ on:
 env:
   CARGO_TERM_COLORS: always
   GITHUB_SHA: ${{ github.sha }}
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
   windows-x64:
@@ -68,6 +70,22 @@ jobs:
         shell: pwsh
       - run: npm ci
       - run: npm run tauri -- build --bundles nsis
+      - name: Generate update manifest fragment
+        shell: pwsh
+        run: |
+          $sig = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.exe.sig" | Select-Object -First 1
+          $content = (Get-Content -Raw $sig.FullName).Trim()
+          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$($sig.BaseName)"
+          $platform = "windows-x86_64"
+          $fragment = @{}
+          $fragment[$platform] = @{ signature = $content; url = $url }
+          $json = $fragment | ConvertTo-Json -Compress -Depth 10
+          Set-Content -Path "update-fragment-$platform.json" -Value $json
+          Write-Output "Fragment: $json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
 
@@ -96,6 +114,19 @@ jobs:
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
       - run: npm run tauri -- build --bundles ${{ github.event.inputs.linuxBundles }}
+      - name: Generate update manifest fragment
+        run: |
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          SIG=$(find "$BUNDLE_DIR" -name '*.AppImage.sig' | head -1)
+          SIG_CONTENT=$(cat "$SIG")
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$(basename "${SIG%.sig}")"
+          PLATFORM="linux-x86_64"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-linux-x64, path: src-tauri/target/release/bundle/ }
 
@@ -121,6 +152,19 @@ jobs:
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
       - run: npm run tauri -- build --bundles dmg
+      - name: Generate update manifest fragment
+        run: |
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          SIG=$(find "$BUNDLE_DIR" -name '*.app.tar.gz.sig' | head -1)
+          SIG_CONTENT=$(cat "$SIG")
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$(basename "${SIG%.sig}")"
+          PLATFORM="darwin-aarch64"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-macos-arm64, path: src-tauri/target/release/bundle/ }
 
@@ -146,6 +190,19 @@ jobs:
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
       - run: npm run tauri -- build --bundles dmg
+      - name: Generate update manifest fragment
+        run: |
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          SIG=$(find "$BUNDLE_DIR" -name '*.app.tar.gz.sig' | head -1)
+          SIG_CONTENT=$(cat "$SIG")
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$(basename "${SIG%.sig}")"
+          PLATFORM="darwin-x86_64"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-macos-x64, path: src-tauri/target/release/bundle/ }
 
@@ -157,6 +214,37 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { pattern: qomicex-launcher-*, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: update-fragment-*
+          merge-multiple: true
+      - name: Assemble update manifest
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          VERSION="${VERSION#v}"
+          NOTES="Release $VERSION"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          echo "{" > latest.json
+          echo "  \"version\": \"$VERSION\"," >> latest.json
+          echo "  \"notes\": \"$NOTES\"," >> latest.json
+          echo "  \"pub_date\": \"$PUB_DATE\"," >> latest.json
+          echo "  \"platforms\": {" >> latest.json
+
+          FIRST=true
+          for f in update-fragment-*.json; do
+            [ -f "$f" ] || continue
+            [ "$FIRST" = "true" ] || printf "," >> latest.json
+            FIRST=false
+            sed 's/^[[:space:]]*{//; s/}[[:space:]]*$//' "$f" >> latest.json
+          done
+
+          echo "" >> latest.json
+          echo "  }" >> latest.json
+          echo "}" >> latest.json
+
+          python3 -m json.tool latest.json > /dev/null && echo "Valid JSON"
+          cat latest.json
       - uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.event.inputs.version }}
