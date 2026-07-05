@@ -122,7 +122,19 @@ jobs:
             7z a -mx9 app.7z QML
             $sfxStub = "C:\Program Files\7-Zip\7z.sfx"
             if (-not (Test-Path $sfxStub)) { throw "7z.sfx not found at $sfxStub" }
-            cmd /c copy /b `"$sfxStub`" + config.txt + app.7z `"$releaseDir\qomicex-launcher-portable.exe`"
+            $dest = "$releaseDir\qomicex-launcher-portable.exe"
+            $stream = [System.IO.File]::Create($dest)
+            try {
+              $sfxBytes = [System.IO.File]::ReadAllBytes($sfxStub)
+              $stream.Write($sfxBytes, 0, $sfxBytes.Length)
+              $cfgBytes = [System.Text.Encoding]::UTF8.GetBytes($config)
+              $stream.Write($cfgBytes, 0, $cfgBytes.Length)
+              $appBytes = [System.IO.File]::ReadAllBytes("$sfxDir/app.7z")
+              $stream.Write($appBytes, 0, $appBytes.Length)
+            } finally {
+              $stream.Dispose()
+            }
+            Write-Host "SFX created: $dest ($((Get-Item $dest).Length) bytes)"
           } finally {
             Pop-Location
           }
