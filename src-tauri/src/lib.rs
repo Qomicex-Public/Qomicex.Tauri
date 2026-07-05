@@ -82,6 +82,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(BackendChild(Mutex::new(None)))
         .setup(|app| {
+            #[cfg(desktop)]
+            let _ = app.handle().plugin(tauri_plugin_updater::Builder::new().build());
             #[cfg(target_os = "linux")]
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_decorations(true);
