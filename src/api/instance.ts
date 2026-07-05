@@ -90,8 +90,8 @@ export async function parseModpackFile(file: File): Promise<ModpackParseResult> 
   formData.append('file', file)
   const res = await fetch('/api/modpack/parse', { method: 'POST', body: formData })
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Parse failed' }))
-    throw new Error(err.error || 'Parse failed')
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.message || err.error || '解析失败')
   }
   return res.json()
 }

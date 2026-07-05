@@ -60,6 +60,11 @@ public class ModpackInstallTask : IInstallTask
             TotalFiles = downloadables.Count + (_overridesZip != null ? 1 : 0);
             SetState("modpack-files", 0);
 
+            if (downloadables.Count == 0 && _overridesZip == null)
+            {
+                throw new Exception("整合包文件列表为空，所有文件下载地址均不可用（CurseForge API 可能已更改）");
+            }
+
             if (downloadables.Count > 0)
             {
                 var tid = _downloadManager.CreateTask(maxConcurrentFiles: 4, maxRetries: 2);

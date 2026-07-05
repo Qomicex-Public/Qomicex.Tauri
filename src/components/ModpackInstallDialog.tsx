@@ -82,7 +82,7 @@ export default function ModpackInstallDialog({
         gameDir,
         versionIsolation,
         modpackFiles: resolved.files,
-        overridesZip: null,
+        overridesZip: resolved.overridesZip,
       })
       addTask({
         id: instanceId,

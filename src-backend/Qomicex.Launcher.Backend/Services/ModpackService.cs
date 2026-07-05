@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
@@ -25,6 +26,7 @@ public class ModpackParseResult
     public ModpackSource Source { get; set; }
     public List<ModpackFileEntry> Files { get; set; } = [];
     public bool HasOverrides { get; set; }
+    public byte[]? OverridesBytes { get; set; }
 }
 
 public class ModpackService
@@ -154,11 +156,31 @@ public class ModpackService
             if (string.IsNullOrEmpty(apiKey))
                 throw new Exception("CurseForge API key not configured");
 
-            var client = _httpClientFactory.CreateClient("CurseForge");
-            for (int i = 0; i < fileEntries.Count; i += 50)
+            // 过滤加载器安装器（由专用 Forge/Fabric 安装流程处理，不下载为模组）
+            var loaderProjectIds = new HashSet<int> { 238222, 634908, 683900 };
+            var modEntries = fileEntries.Where(e =>
             {
-                var batch = fileEntries.Skip(i).Take(50).ToList();
-                var body = new { fileIds = batch.Select(f => f["fileId"]?.GetValue<int>() ?? 0).ToList() };
+                var entry = e as JsonObject;
+                if (entry == null) return false;
+                int projectId = entry.TryGetPropertyValue("projectID", out var pid) == true ? pid.GetValue<int>() : 0;
+                if (loaderProjectIds.Contains(projectId)) return false;
+                var fileName = entry["fileName"]?.GetValue<string>() ?? "";
+                if (fileName.StartsWith("forge-", StringComparison.OrdinalIgnoreCase) &&
+                    (fileName.Contains("-installer") || fileName.Contains("-universal")))
+                    return false;
+                return true;
+            }).ToList();
+
+            var client = _httpClientFactory.CreateClient("CurseForge");
+            for (int i = 0; i < modEntries.Count; i += 50)
+            {
+                var batch = modEntries.Skip(i).Take(50).ToList();
+                var body = new { fileIds = batch.Select(f =>
+                {
+                    var entry = f as JsonObject;
+                    int id = entry?.TryGetPropertyValue("fileID", out var node) == true ? node.GetValue<int>() : 0;
+                    return id;
+                }).Where(id => id > 0).ToList() };
                 var jsonBody = JsonContent.Create(body);
                 jsonBody.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
@@ -169,6 +191,11 @@ public class ModpackService
                 request.Headers.Add("x-api-key", apiKey);
 
                 var response = await client.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Trace.WriteLine($"CurseForge batch file request failed: {(int)response.StatusCode} on batch starting at index {i}");
+                    continue;
+                }
                 response.EnsureSuccessStatusCode();
                 var resultJson = await response.Content.ReadAsStringAsync();
                 var resultDoc = JsonNode.Parse(resultJson)!;
@@ -266,30 +293,59 @@ public class ModpackService
             throw new Exception("CurseForge API key not configured");
 
         var client = _httpClientFactory.CreateClient("CurseForge");
+
+        // Get mod name for display
+        var modRequest = new HttpRequestMessage(HttpMethod.Get, $"/v1/mods/{projectId}");
+        modRequest.Headers.Add("x-api-key", apiKey);
+        var modResponse = await client.SendAsync(modRequest);
+        modResponse.EnsureSuccessStatusCode();
+        var modJson = await modResponse.Content.ReadAsStringAsync();
+        var modData = JsonNode.Parse(modJson)!["data"];
+        var modName = modData?["name"]?.GetValue<string>() ?? projectId;
+
+        // Get file info and download URL
         var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/mods/{projectId}/files/{fileId}");
         request.Headers.Add("x-api-key", apiKey);
-
         var response = await client.SendAsync(request);
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadAsStringAsync();
         var doc = JsonNode.Parse(json)!;
         var data = doc["data"];
 
-        return new ModpackParseResult
+        var fileName = data?["fileName"]?.GetValue<string>() ?? "";
+        var downloadUrl = data?["downloadUrl"]?.GetValue<string>();
+
+        // CurseForge removed downloadUrl from API responses for some mods;
+        // fall back to constructing a CDN URL from file ID
+        if (string.IsNullOrEmpty(downloadUrl) && int.TryParse(fileId, out var fidNum) && !string.IsNullOrEmpty(fileName))
         {
-            Name = projectId,
-            GameVersion = "",
-            Source = ModpackSource.CurseForge,
-            Files = new List<ModpackFileEntry>
+            var prefix = fidNum.ToString().PadLeft(7, '0');
+            downloadUrl = $"https://edge.forgecdn.net/files/{prefix[..4]}/{prefix[4..]}/{Uri.EscapeDataString(fileName)}";
+        }
+
+        if (string.IsNullOrEmpty(downloadUrl))
+            throw new Exception("CurseForge 文件下载地址不可用，请使用 .zip 文件导入");
+
+        // Download the zip to temp and parse via the same path as .zip import
+        var tempPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip");
+        try
+        {
+            using (var httpStream = await client.GetStreamAsync(downloadUrl))
+            using (var fileStream = new FileStream(tempPath, FileMode.CreateNew))
             {
-                new()
-                {
-                    Path = data?["fileName"]?.GetValue<string>() ?? "",
-                    DownloadUrl = data?["downloadUrl"]?.GetValue<string>(),
-                    Size = data?["fileLength"]?.GetValue<long>(),
-                }
-            },
-        };
+                await httpStream.CopyToAsync(fileStream);
+            }
+
+            var result = await ParseCurseForgeZipAsync(tempPath);
+            result.Name = modName;
+            result.OverridesBytes = ExtractOverridesZip(tempPath);
+            return result;
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+                File.Delete(tempPath);
+        }
     }
 
     private async Task<ModpackParseResult> ResolveFtbAsync(string projectId, string versionId)

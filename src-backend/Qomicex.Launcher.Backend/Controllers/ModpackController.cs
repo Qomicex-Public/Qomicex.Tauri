@@ -80,6 +80,8 @@ public class ModpackController : ControllerBase
             Source = result.Source.ToString().ToLowerInvariant(),
             result.Files,
             FileCount = result.Files.Count,
+            result.HasOverrides,
+            OverridesZip = result.OverridesBytes != null ? Convert.ToBase64String(result.OverridesBytes) : null,
         });
     }
 
