@@ -78,7 +78,6 @@ jobs:
           $sig = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
           if (-not $sig) { throw "No .sig file found in bundle directory" }
           $content = (Get-Content -Raw $sig.FullName).Trim()
-          # BaseName strips .sig only if it's the final extension; we need the full asset name
           $assetName = $sig.Name -replace '\.sig$', ''
           $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$assetName"
           $platform = "windows-x86_64"
@@ -90,8 +89,37 @@ jobs:
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
+      - name: Build portable SFX
+        shell: pwsh
+        run: |
+          $releaseDir = "src-tauri/target/release"
+          $sfxDir = "$releaseDir/sfx"
+          $runtimeDir = "$sfxDir/QML/Runtime"
+          $dataDir = "$sfxDir/QML/Data"
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          Copy-Item "$releaseDir/qomicex-launcher.exe" -Destination $runtimeDir -ErrorAction Stop
+          Get-ChildItem "$releaseDir/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $runtimeDir
+          if (Test-Path "$releaseDir/resources") { Copy-Item -Recurse "$releaseDir/resources" -Destination $runtimeDir }
+          New-Item -ItemType File -Path "$runtimeDir/.portable" -Force | Out-Null
+          $config = @"
+          ;!@Install@!UTF-8!
+          Title="Qomicex Launcher"
+          BeginPrompt=""
+          ExtractPath="."
+          ExtractTitle="Extracting..."
+          RunProgram="QML\\Runtime\\qomicex-launcher.exe"
+          ;!@InstallEnd@!
+          "@
+          Set-Content -Path "$sfxDir/config.txt" -Value $config -NoNewline
+          Push-Location $sfxDir
+          7z a -mx9 app.7z QML
+          cmd /c copy /b "C:\Program Files\7-Zip\7z.sfx" + config.txt + app.7z "$releaseDir\qomicex-launcher-portable.exe"
+          Pop-Location
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
+      - uses: actions/upload-artifact@v4
+        with: { name: qomicex-launcher-windows-x64-portable, path: src-tauri/target/release/qomicex-launcher-portable.exe }
 
   linux-x64:
     if: ${{ github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all' }}
@@ -130,7 +158,6 @@ jobs:
           fi
           SIG_CONTENT=$(cat "$SIG")
           SIG_BASENAME=$(basename "$SIG")
-          # Strip .sig suffix to get asset name (handles both .AppImage.sig and .AppImage.tar.gz.sig)
           ASSET_NAME="${SIG_BASENAME%.sig}"
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="linux-x86_64"
@@ -299,3 +326,4 @@ jobs:
           artifacts: ./*
           generateReleaseNotes: true
           allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}

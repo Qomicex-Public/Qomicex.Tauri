@@ -38,7 +38,13 @@ fn spawn_backend(app: &tauri::App) {
     cmd.stderr(std::process::Stdio::piped());
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            cmd.env("QOMICEX_HOME", dir);
+            if dir.join(".portable").exists() {
+                let data_dir = dir.join("../Data");
+                let _ = std::fs::create_dir_all(&data_dir);
+                cmd.env("QOMICEX_HOME", data_dir);
+            } else {
+                cmd.env("QOMICEX_HOME", dir);
+            }
         }
     }
     #[cfg(windows)] { const CREATE_NO_WINDOW: u32 = 0x08000000; cmd.creation_flags(CREATE_NO_WINDOW); }
