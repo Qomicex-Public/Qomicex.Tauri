@@ -40,6 +40,10 @@ public class ModpackController : ControllerBase
             var result = await _modpackService.ParseModpackFileAsync(tempPath);
             result.Name = result.Name ?? Path.GetFileNameWithoutExtension(file.FileName);
 
+            byte[]? overridesZip = null;
+            if (result.HasOverrides)
+                overridesZip = _modpackService.ExtractOverridesZip(tempPath);
+
             return Ok(new
             {
                 result.Name,
@@ -51,6 +55,7 @@ public class ModpackController : ControllerBase
                 result.Files,
                 result.HasOverrides,
                 FileCount = result.Files.Count,
+                OverridesZip = overridesZip != null ? Convert.ToBase64String(overridesZip) : null,
             });
         }
         finally
