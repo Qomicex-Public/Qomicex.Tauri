@@ -1,26 +1,40 @@
-# Task 3 Report: JavaDownloadService HttpClient 注入 + GetAllActiveStates
+# Task 3 Report: Frontend UI — Add Update Check in Settings > About
 
-## Status: 完成
+## Status: Done
 
-## Commits
+## Changes
+- **File:** `src/pages/Settings.tsx`
+- **Commit:** `0a82380` — `feat(settings): add update check UI in About tab`
 
-- `91f37c6` — `feat(java-download): inject IHttpClientFactory, add GetAllActiveStates`
+### What was added
+1. **Imports:**
+   - `faArrowUp, faCircleCheck` to existing `@fortawesome/free-solid-svg-icons` import
+   - `check` from `@tauri-apps/plugin-updater`
+   - `relaunch` from `@tauri-apps/plugin-process`
 
-## 修改内容
+2. **State variables** in `AboutTab`:
+   - `updateState` — tracks 7 states: `idle | checking | available | downloading | installing | uptodate | error`
+   - `updateInfo` — stores version and body from the check result
 
-| 修改 | 行号 | 描述 |
-|------|------|------|
-| 添加 `_httpClient` 字段 | line 15 | `private readonly HttpClient _httpClient;` |
-| 构造函数注入 `IHttpClientFactory` | line 33-37 | 通过 `httpClientFactory.CreateClient("default")` 初始化 |
-| `ResolvePackageAsync` 改为实例方法 | line 174 | 移除 `static`，用 `_httpClient` 替代 `new HttpClient()` |
-| 添加 `GetAllActiveStates()` | line 151-165 | 返回所有活跃任务的状态列表 |
+3. **Functions:**
+   - `checkForUpdate()` — calls `check()`, sets `uptodate` if no update, `available` with info if found, `error` on failure
+   - `downloadAndInstall()` — calls `check()`, then `update.downloadAndInstall()`, then `relaunch()`
 
-## Build Summary
+4. **UI Card** — placed between Version Info and Contributors cards:
+   - Check button with spin animation during check
+   - "Up to date" confirmation with check icon
+   - Error message on failure
+   - Available update panel: version diff, release notes, download button
+   - Indeterminate progress bar during download
+   - "Installing, restarting..." state
 
-```
-dotnet build — 0 errors, 7 warnings (all pre-existing)
-```
+### Deviations from brief
+- **Removed `progress` state** and percentage display: the `Progress` event from `@tauri-apps/plugin-updater` only exposes `chunkLength` (no `contentLength`), so real percentage calculation is impossible. Used an indeterminate `animate-pulse` bar instead. Add percentage tracking if/when the type provides total content length.
+
+## Build
+- `npm run build` — passes (tsc + vite, no errors)
+- Only pre-existing warnings (large chunk size, unrelated dynamic imports)
 
 ## Concerns
-
-无。所有修改严格按 brief 执行，无额外变更。
+- `update.downloadAndInstall()` callback is passed as empty arrow `() => {}` since we don't track progress. If the type requires the callback to process events, this is fine.
+- The `@tauri-apps/plugin-updater` plugin must be registered in Tauri's `tauri.conf.json` capabilities for `check()` to work in production (already added by a sibling task).

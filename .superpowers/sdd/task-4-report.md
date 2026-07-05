@@ -1,26 +1,42 @@
-# Task 4 Report: ResourceDownloadService 接入 Core 引擎 + GetAllActiveStates
+# Task 4 Report: CI/CD — Add Signing and Update Manifest to Release Workflow
 
-## Status: ✅ Complete
+**Status: Complete**
 
-## Commits
-- `2e15315` feat(resource-download): use Core engine, add pause/resume/cancel, GetAllActiveStates
+## Changes
 
-## Build Summary
-- **Build:** Succeeded (0 errors, 7 pre-existing warnings unrelated to this change)
-- **File changed:** `src-backend/Qomicex.Launcher.Backend/Services/ResourceDownloadService.cs` (+53/-29)
+**File modified:** `.github/workflows/release.yml` (+88 lines)
 
-## Changes Applied
-1. **Added `using Qomicex.Downloader;`** and `using DownloadCore = Qomicex.Downloader.Core;` alias
-2. **Added to `ResourceDownloadState`:** `CancellationTokenSource? Cts`, `DownloadCore? Engine`
-3. **Added to `ResourceDownloadService`:** `ConcurrentDictionary<string, DownloadCore> _engines`
-4. **Replaced `DownloadAsync`:** Now uses `DownloadCore` engine with multi-threaded download, progress callback, and `CancellationToken` support
-5. **Updated `Cancel`:** Now calls `state.Cts?.Cancel()` to actually cancel the download
-6. **Added `Pause`/`Resume`:** Delegate to `engine.Pause()`/`engine.Resume()`, update status accordingly
-7. **Added `GetAllActiveStates()`:** Returns downloads with status "queued", "downloading", or "paused"
+### 1. Signing env vars (top-level `env:`)
+- Added `TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}`
+- Added `TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}`
 
-## Concerns
-1. **`autoUpdate: false` — progress won't update:** The brief specifies `new DownloadCore(threadCount: 0, maxRetries: 3, autoUpdate: false)`. With `autoUpdate: false`, the `Progress<DownloadProgress>` callback passed to `DownloadFileAsync` is never invoked by the Core engine (it only reports progress internally when `_autoUpdate` is true). This means `state.Progress`, `state.Speed`, `state.DownloadedBytes`, and `state.TotalBytes` will not update during active download. The download still completes successfully, and `state.Progress = 100` is still set in the try block after `await`. To restore real-time progress, change to `autoUpdate: true` or call `engine.UpdateProgress()` periodically.
-2. **Type naming deviation:** The brief uses `Core` as the type name, but this conflicts with the `Qomicex.Core` namespace from the Qomicex.Core project reference. Used `DownloadCore` alias instead. This is a naming difference only — the runtime type is still `Qomicex.Downloader.Core`.
+These apply to all jobs automatically, enabling Tauri to sign build artifacts.
 
-## Report Path
-`.superpowers/sdd/task-4-report.md`
+### 2. Fragment generation per platform job
+
+| Job | Shell | Sig pattern | Platform key | Artifact name |
+|-----|-------|-------------|-------------|---------------|
+| windows-x64 | pwsh | `*.exe.sig` | `windows-x86_64` | `update-fragment-windows-x64` |
+| linux-x64 | bash | `*.AppImage.sig` | `linux-x86_64` | `update-fragment-linux-x64` |
+| macos-arm64 | bash | `*.app.tar.gz.sig` | `darwin-aarch64` | `update-fragment-macos-arm64` |
+| macos-x64 | bash | `*.app.tar.gz.sig` | `darwin-x86_64` | `update-fragment-macos-x64` |
+
+Each step generates `update-fragment-{platform}.json` containing `{"platform":{"signature":"...","url":"..."}}` and uploads it as a workflow artifact.
+
+### 3. Fragment assembly in release job
+- Added second `actions/download-artifact@v4` step with `pattern: update-fragment-*`
+- Added `Assemble update manifest` step that:
+  - Constructs `latest.json` with `version`, `notes`, `pub_date`, and `platforms`
+  - Strips outer braces from fragments via `sed` before appending inside `platforms: {}`
+  - Validates JSON with `python3 -m json.tool`
+- Resulting `latest.json` is included in release assets via existing `ncipollo/release-action` with `artifacts: ./*`
+
+### URL construction
+Uses `${{ github.server_url }}/${{ github.repository }}` (not hardcoded) so the workflow works in forks.
+
+## Verification
+- YAML syntax validated with `yaml.safe_load` — **valid**
+- No local CI runner available for functional testing
+
+## Commit
+`3ae695e` — `Task 4: Add signing keys and update manifest to release workflow`

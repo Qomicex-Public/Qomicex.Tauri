@@ -1,40 +1,32 @@
-# Task 1 Report: CoreConfig + HTTP 连接池
+# Task 1 Report: Rust Backend — Add Updater Plugin
 
-## 实现内容
+## What I Implemented
 
-### CoreConfig.cs（新建）
-- 位于 `Qomicex.Avalonia/Qomicex.Downloader/CoreConfig.cs`
-- `public static class CoreConfig`，单一属性 `MaxConnectionsPerServer`，默认值 64
-- 声明式命名空间格式 (`namespace Qomicex.Downloader;`)，与其他文件保持一致（注意 `Core.cs` 使用大括号式 `namespace Qomicex.Downloader { }`，但两种方式在 C# 10+ 中等价且互相兼容）
+Added `tauri-plugin-updater` to the Tauri v2 desktop shell:
 
-### Core.cs（修改）
-- 将 `private static readonly HttpClient _httpClient = new HttpClient();` 替换为 `Lazy<HttpClient>`，底层使用 `SocketsHttpHandler`
-- 配置：`MaxConnectionsPerServer = CoreConfig.MaxConnectionsPerServer`、`PooledConnectionLifetime = TimeSpan.FromMinutes(5)`、`EnableMultipleHttp2Connections = true`
-- `SharedHttpClient` 属性提供惰性初始化的单例访问
-- 全部 4 处 `_httpClient` 引用均替换为 `SharedHttpClient`（第 65、120、143、175 行）
+1. **`src-tauri/Cargo.toml`** — Added `tauri-plugin-updater = "2"` dependency after `tauri-plugin-dialog`
+2. **`src-tauri/src/lib.rs`** — Registered updater plugin in `.setup()` closure with `#[cfg(desktop)]` guard, using `app.handle().plugin(...)` (the Tauri v2 API — `&mut App` does not expose `.plugin()` directly)
+3. **`src-tauri/tauri.conf.json`** — Added `"createUpdaterArtifacts": true` in bundle, and `plugins.updater` with the public key and GitHub releases endpoint
 
-## 构建验证结果
+## What I Tested
 
-| 项目 | 结果 | 错误 | 新增警告 |
-|------|------|------|----------|
-| `Qomicex.Downloader` | 成功 | 0 | 0 |
-| `Qomicex.Launcher.Backend` | 成功 | 0 | 0 |
+- `cargo check` passed with no errors or warnings
+- All new dependency crates resolved and compiled successfully (32 packages, including `tauri-plugin-updater v2.10.1`)
 
-所有警告均为已有问题，与本次改动无关。
+## Files Changed
 
-## 变更文件
+- `src-tauri/Cargo.toml` — 1 line added
+- `src-tauri/src/lib.rs` — 3 lines added
+- `src-tauri/tauri.conf.json` — 10 lines added
+- `src-tauri/Cargo.lock` — auto-regenerated
 
-- **新建：** `Qomicex.Avalonia/Qomicex.Downloader/CoreConfig.cs`（6 行）
-- **修改：** `Qomicex.Avalonia/Qomicex.Downloader/Core.cs`（替换静态 HttpClient 为 Lazy+SocketsHttpHandler，更新所有引用）
+## Self-Review Findings
 
-## 自审发现
+- The brief's original code snippet suggested `app.plugin(...)` but this doesn't compile on Tauri v2. The correct API in `.setup()` is `app.handle().plugin(...)` since `&mut tauri::App` doesn't have a `plugin` method — it delegates to `AppHandle` via the `Manager` trait
+- Public key correctly replaces the placeholder — actual value from `~/.tauri/qomicex.key.pub` used
+- `#[cfg(desktop)]` guard ensures the updater only registers on desktop builds (not mobile)
+- `createUpdaterArtifacts: true` enables Tauri's bundle build to produce the update artifacts
 
-- 无回归问题
-- `SocketsHttpHandler` 命名空间 `System.Net.Http` 已在 `Core.cs` 中导入，无需新增 using
-- `Core.cs` 使用大括号式命名空间（`namespace Qomicex.Downloader { }`），`CoreConfig.cs` 使用声明式（`namespace Qomicex.Downloader;`）——两种方式互操作无问题，但风格不一致。若需保持一致，可将 `CoreConfig.cs` 改为大括号式
-- 提交在子模块 `Qomicex.Avalonia` 内完成（`detached HEAD`），外部仓库需单独更新子模块指针
+## Issues / Concerns
 
-## 问题与疑虑
-
-- 子模块处于 detached HEAD 状态——工作正常，但如需推送需先创建分支或直接推送提交
-- `CoreConfig.cs` 与 `Core.cs` 的命名空间声明风格不一致（声明式 vs 大括号式），建议后续统一
+None.

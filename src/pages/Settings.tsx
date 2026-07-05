@@ -66,6 +66,8 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   const [expandedDep, setExpandedDep] = useState<string | null>(null)
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string } | null>(null)
+  const [updateObj, setUpdateObj] = useState<any>(null)
+  const [progress, setProgress] = useState(0)
 
 
   async function checkForUpdate() {
@@ -76,6 +78,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         setUpdateState('uptodate')
         return
       }
+      setUpdateObj(update)
       setUpdateInfo({ version: update.version, body: update.body ?? '' })
       setUpdateState('available')
     } catch {
@@ -84,12 +87,22 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   }
 
   async function downloadAndInstall() {
-    if (!updateInfo) return
+    if (!updateObj) return
     setUpdateState('downloading')
+    setProgress(0)
     try {
-      const update = await check()
-      if (!update) return
-      await update.downloadAndInstall(() => {})
+      let contentLength = 0
+      let downloaded = 0
+      await updateObj.downloadAndInstall((event: any) => {
+        if (event.event === 'Started') {
+          contentLength = event.data.contentLength
+        } else if (event.event === 'Progress') {
+          downloaded += event.data.chunkLength
+          if (contentLength > 0) {
+            setProgress(Math.round((downloaded / contentLength) * 100))
+          }
+        }
+      })
       setUpdateState('installing')
       await relaunch()
     } catch {
@@ -183,11 +196,12 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
 
           {updateState === 'downloading' && (
             <div className="space-y-2">
-              <div className="flex items-center text-xs text-muted-foreground">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>正在下载更新...</span>
+                <span>{progress}%</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-muted">
-                <div className="h-full w-1/2 rounded-full bg-primary animate-pulse" />
+                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
               </div>
             </div>
           )}

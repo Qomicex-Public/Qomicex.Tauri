@@ -7,8 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "bump-version": "node scripts/bump-version.mjs"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.2.0",
