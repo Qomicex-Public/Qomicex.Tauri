@@ -276,8 +276,8 @@ jobs:
           cat latest.json
       - name: Flatten bundle directories
         run: |
-          find . -maxdepth 2 -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.exe' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' -o -name '*.msi' -o -name '*.zip' \) -exec mv -t . {} +
-          for d in appimage deb rpm nsis msi dmg macos; do rmdir "$d" 2>/dev/null || true; done
+          find . -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.exe' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' -o -name '*.msi' -o -name '*.zip' \) -exec mv -t . {} +
+          find . -type d -empty -delete
       - uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.event.inputs.version }}
