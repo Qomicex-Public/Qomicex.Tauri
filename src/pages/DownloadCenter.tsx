@@ -44,7 +44,9 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
 }
 
 const STAGE_LABELS: Record<string, string> = {
+  'queued': '排队中',
   'downloading-json': '下载版本 JSON',
+  'downloading': '下载游戏文件',
   'downloading-libraries': '下载支持库',
   'downloading-assets': '下载资源文件',
   'downloading-mainjar': '下载主文件',
@@ -52,6 +54,8 @@ const STAGE_LABELS: Record<string, string> = {
   'downloading-loader-libs': '下载加载器库',
   'installing-loader': '安装加载器',
   'downloading-addons': '下载附加内容',
+  'modpack-files': '下载整合包文件',
+  'modpack-overrides': '解压覆盖文件',
 }
 
 const FILTERS: { key: FilterMode; label: string }[] = [

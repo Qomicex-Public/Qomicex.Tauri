@@ -76,7 +76,7 @@ public class ModpackInstallTask : IInstallTask
 
             if (_overridesZip != null)
             {
-                SetState("modpack-overrides", 90, "Extracting overrides...");
+                SetState("modpack-overrides", 90, "正在解压覆盖文件...");
                 using var ms = new MemoryStream(_overridesZip);
                 using var archive = new ZipArchive(ms);
                 foreach (var entry in archive.Entries)

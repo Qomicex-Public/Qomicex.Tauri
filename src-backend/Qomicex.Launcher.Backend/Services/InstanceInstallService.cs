@@ -103,7 +103,7 @@ public class InstanceInstallService
     public void StartInstall(string instanceId, string gameVersion, string gameDir,
         string? loader, string? loaderVersion, string[]? addons,
         int downloadThreads = 64, bool versionIsolation = true, int downloadSourceId = 0, int downloadTimeout = 15,
-        string? javaPath = null)
+        string? javaPath = null, string? versionId = null)
     {
         if (string.IsNullOrEmpty(javaPath))
         {
@@ -115,7 +115,7 @@ public class InstanceInstallService
 
         var task = new InstallTask(instanceId, gameVersion, gameDir,
             loader, loaderVersion, addons, downloadThreads, versionIsolation,
-            _httpClientFactory, downloadSourceId, downloadTimeout, javaPath);
+            _httpClientFactory, downloadSourceId, downloadTimeout, javaPath, versionId);
 
         _tasks[instanceId] = task;
 
@@ -148,7 +148,7 @@ public class InstanceInstallService
 
         var installTask = new InstallTask(instanceId, gameVersion, gameDir,
             loader, loaderVersion, null, downloadThreads, versionIsolation,
-            _httpClientFactory, downloadSourceId, downloadTimeout, javaPath);
+            _httpClientFactory, downloadSourceId, downloadTimeout, javaPath, instName);
 
         _tasks[instanceId] = installTask;
 

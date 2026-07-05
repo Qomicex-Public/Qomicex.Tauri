@@ -279,7 +279,7 @@ export interface InstallProgressResponse {
 export interface DownloadTask {
   id: string
   name: string
-  type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java'
+  type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java' | 'modpack'
   gameVersion: string
   loader?: string
   loaderVersion?: string
@@ -519,7 +519,7 @@ export interface ModpackInstallRequest {
   gameVersion: string
   loader: string | null
   loaderVersion: string | null
-  maxMemory: number
+  maxMemory?: number
   gameDir: string
   versionIsolation: boolean
   modpackFiles: ModpackFileEntry[]

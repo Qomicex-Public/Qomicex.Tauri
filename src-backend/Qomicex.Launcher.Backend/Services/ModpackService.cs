@@ -46,9 +46,19 @@ public class ModpackService
         return ext switch
         {
             ".mrpack" => await ParseMrpackAsync(filePath),
-            ".zip" => await ParseCurseForgeZipAsync(filePath),
+            ".zip" => await ParseZipWithDetectionAsync(filePath),
             _ => throw new ArgumentException($"Unsupported modpack format: {ext}")
         };
+    }
+
+    private async Task<ModpackParseResult> ParseZipWithDetectionAsync(string filePath)
+    {
+        using (var probe = ZipFile.OpenRead(filePath))
+        {
+            if (probe.GetEntry("modrinth.index.json") != null)
+                return await ParseMrpackAsync(filePath);
+        }
+        return await ParseCurseForgeZipAsync(filePath);
     }
 
     public async Task<ModpackParseResult> ResolveOnlineAsync(string source, string projectId, string versionId)

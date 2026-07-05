@@ -177,14 +177,11 @@ public class InstanceController : ControllerBase
 
         if (request.VersionIsolation == true && string.IsNullOrEmpty(instance.VersionDirName))
         {
-            instance.VersionDirName = !string.IsNullOrEmpty(request.Loader) && !string.IsNullOrEmpty(request.LoaderVersion)
-                ? $"{instance.GameVersion}-{request.Loader}-{request.LoaderVersion}"
-                : instance.GameVersion;
-            instance.Name = instance.VersionDirName;
+            instance.VersionDirName = instance.Name;
             _repository.Update(instance.Id, instance);
         }
 
-        _installService.StartInstall(id, instance.GameVersion, instance.GameDir, request.Loader, request.LoaderVersion, request.Addons, request.DownloadThreads ?? 64, request.VersionIsolation, request.DownloadSourceId, request.DownloadTimeout, instance.JavaPath);
+        _installService.StartInstall(id, instance.GameVersion, instance.GameDir, request.Loader, request.LoaderVersion, request.Addons, request.DownloadThreads ?? 64, request.VersionIsolation, request.DownloadSourceId, request.DownloadTimeout, instance.JavaPath, instance.VersionDirName ?? instance.Name);
 
         return Ok(new { message = "安装已开始", instanceId = id });
     }

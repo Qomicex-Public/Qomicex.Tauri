@@ -31,10 +31,10 @@ public class ModpackController : ControllerBase
         if (ext != ".mrpack" && ext != ".zip")
             return BadRequest(new { error = "Unsupported file format. Use .mrpack or .zip" });
 
-        var tempPath = Path.GetTempFileName();
+        var tempPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ext);
         try
         {
-            await using (var stream = new FileStream(tempPath, FileMode.Create))
+            await using (var stream = new FileStream(tempPath, FileMode.CreateNew))
                 await file.CopyToAsync(stream);
 
             var result = await _modpackService.ParseModpackFileAsync(tempPath);
@@ -49,7 +49,7 @@ public class ModpackController : ControllerBase
                 result.Name,
                 result.Summary,
                 result.GameVersion,
-                Loader = result.Loader.ToString().ToLowerInvariant(),
+                Loader = result.Loader.ToString(),
                 result.LoaderVersion,
                 Source = result.Source.ToString().ToLowerInvariant(),
                 result.Files,
@@ -75,7 +75,7 @@ public class ModpackController : ControllerBase
         {
             result.Name,
             result.GameVersion,
-            Loader = result.Loader.ToString().ToLowerInvariant(),
+            Loader = result.Loader.ToString(),
             result.LoaderVersion,
             Source = result.Source.ToString().ToLowerInvariant(),
             result.Files,
@@ -101,10 +101,7 @@ public class ModpackController : ControllerBase
 
         if (request.VersionIsolation != false)
         {
-            created.VersionDirName = !string.IsNullOrEmpty(request.Loader) && !string.IsNullOrEmpty(request.LoaderVersion)
-                ? $"{request.GameVersion}-{request.Loader}-{request.LoaderVersion}"
-                : request.GameVersion;
-            created.Name = created.VersionDirName;
+            created.VersionDirName = request.Name;
             _repository.Update(created.Id, created);
         }
 
