@@ -53,6 +53,7 @@ builder.Services.AddHttpClient("AuthlibInjector", client =>
 });
 builder.Services.AddSingleton<LaunchService>();
 builder.Services.AddSingleton<FtbService>();
+builder.Services.AddSingleton<ModpackService>();
 builder.Services.AddSingleton<DownloadManager>();
 builder.Services.AddSingleton<InstanceInstallService>();
 builder.Services.AddSingleton<ResourceDownloadService>();
