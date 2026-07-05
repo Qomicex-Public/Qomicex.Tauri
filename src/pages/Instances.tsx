@@ -25,6 +25,7 @@ import { ApiError } from '../api/client.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import ImportDialog from '../components/ImportDialog.tsx'
 
 interface ManagedDir {
   path: string
@@ -116,6 +117,7 @@ export default function Instances() {
   const [defaultInstanceId, setDefaultInstanceId] = useState<string | null>(null)
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const launchPollRef = useRef<number | null>(null)
   const launchingInstanceIdRef = useRef<string | null>(null)
 
@@ -1035,7 +1037,7 @@ export default function Instances() {
         <Button onClick={gotoNewInstance}>
           <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />下载新版本
         </Button>
-        <Button variant="outline" disabled><FontAwesomeIcon icon={faFileImport} className="h-4 w-4" />导入</Button>
+        <Button variant="outline" onClick={() => setImportOpen(true)}><FontAwesomeIcon icon={faFileImport} className="h-4 w-4" />导入</Button>
         <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', viewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
           <FontAwesomeIcon icon={viewMode === 'grid' ? faGrip : faList} className="h-3.5 w-3.5" />
         </button>
@@ -1202,6 +1204,12 @@ export default function Instances() {
           setShowMicrosoftReauth(false)
           navigate('/accounts')
         }}
+      />
+      <ImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        gameDir={loadSettings().gameDir || currentDir}
+        versionIsolation={loadSettings().versionIsolation !== false}
       />
       </div>
     )
