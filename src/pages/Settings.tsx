@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart } from '@fortawesome/free-solid-svg-icons'
 import { faGithub } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
@@ -31,6 +31,8 @@ import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
+import { check } from '@tauri-apps/plugin-updater'
+import { relaunch } from '@tauri-apps/plugin-process'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
@@ -62,6 +64,38 @@ function saveSettings(settings: AppSettings) {
 
 function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   const [expandedDep, setExpandedDep] = useState<string | null>(null)
+  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
+  const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string } | null>(null)
+
+
+  async function checkForUpdate() {
+    setUpdateState('checking')
+    try {
+      const update = await check()
+      if (!update) {
+        setUpdateState('uptodate')
+        return
+      }
+      setUpdateInfo({ version: update.version, body: update.body ?? '' })
+      setUpdateState('available')
+    } catch {
+      setUpdateState('error')
+    }
+  }
+
+  async function downloadAndInstall() {
+    if (!updateInfo) return
+    setUpdateState('downloading')
+    try {
+      const update = await check()
+      if (!update) return
+      await update.downloadAndInstall(() => {})
+      setUpdateState('installing')
+      await relaunch()
+    } catch {
+      setUpdateState('error')
+    }
+  }
 
   return (
     <div key="about" className="animate-in slide-up space-y-4">
@@ -101,6 +135,69 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
               <div><div className="text-xs text-muted-foreground">内存</div><div className="mt-0.5 font-medium">{sysInfo ? `${(sysInfo.memory / 1024).toFixed(1)} GB` : '加载中...'}</div></div>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Update */}
+      <Card>
+        <CardHeader><CardTitle>
+          <FontAwesomeIcon icon={faArrowUp} className="mr-2 h-4 w-4 text-primary" />
+          更新
+        </CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
+              <FontAwesomeIcon icon={updateState === 'checking' ? faRotate : faArrowUp} className={cn('mr-1 h-3 w-3', updateState === 'checking' && 'animate-spin')} />
+              {updateState === 'checking' ? '检查中...' : '检查更新'}
+            </Button>
+            {updateState === 'uptodate' && (
+              <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                <FontAwesomeIcon icon={faCircleCheck} className="h-3.5 w-3.5 text-primary" />
+                已是最新版本
+              </span>
+            )}
+            {updateState === 'error' && (
+              <span className="text-sm text-destructive">检查更新失败</span>
+            )}
+          </div>
+
+          {updateState === 'available' && updateInfo && (
+            <div className="space-y-3 rounded-lg border bg-background p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium">新版本 {updateInfo.version}</div>
+                  <div className="text-xs text-muted-foreground">当前版本 {APP_INFO.version}</div>
+                </div>
+                <Button size="sm" onClick={downloadAndInstall}>
+                  <FontAwesomeIcon icon={faDownload} className="mr-1 h-3 w-3" />
+                  下载并安装
+                </Button>
+              </div>
+              {updateInfo.body && (
+                <div className="max-h-32 overflow-y-auto rounded bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
+                  {updateInfo.body}
+                </div>
+              )}
+            </div>
+          )}
+
+          {updateState === 'downloading' && (
+            <div className="space-y-2">
+              <div className="flex items-center text-xs text-muted-foreground">
+                <span>正在下载更新...</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div className="h-full w-1/2 rounded-full bg-primary animate-pulse" />
+              </div>
+            </div>
+          )}
+
+          {updateState === 'installing' && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin text-primary" />
+              正在安装更新，即将重启...
+            </div>
+          )}
         </CardContent>
       </Card>
 
