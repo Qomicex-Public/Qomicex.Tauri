@@ -92,30 +92,40 @@ jobs:
       - name: Build portable SFX
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $releaseDir = "src-tauri/target/release"
           $sfxDir = "$releaseDir/sfx"
           $runtimeDir = "$sfxDir/QML/Runtime"
           $dataDir = "$sfxDir/QML/Data"
           New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-          Copy-Item "$releaseDir/qomicex-launcher.exe" -Destination $runtimeDir -ErrorAction Stop
+          $exe = Get-ChildItem "$releaseDir/*.exe" -Name | Where-Object { $_ -notmatch 'portable|backend' } | Select-Object -First 1
+          if (-not $exe) { throw "No app exe found in $releaseDir" }
+          Write-Host "Copying $exe to $runtimeDir"
+          Copy-Item "$releaseDir/$exe" -Destination "$runtimeDir/qomicex-launcher.exe"
           Get-ChildItem "$releaseDir/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $runtimeDir
           if (Test-Path "$releaseDir/resources") { Copy-Item -Recurse "$releaseDir/resources" -Destination $runtimeDir }
           New-Item -ItemType File -Path "$runtimeDir/.portable" -Force | Out-Null
-          $config = @"
-          ;!@Install@!UTF-8!
-          Title="Qomicex Launcher"
-          BeginPrompt=""
-          ExtractPath="."
-          ExtractTitle="Extracting..."
-          RunProgram="QML\\Runtime\\qomicex-launcher.exe"
-          ;!@InstallEnd@!
-          "@
+          $configLines = @(
+            ';!@Install@!UTF-8!'
+            'Title="Qomicex Launcher"'
+            'BeginPrompt=""'
+            'ExtractPath="."'
+            'ExtractTitle="Extracting..."'
+            'RunProgram="QML\Runtime\qomicex-launcher.exe"'
+            ';!@InstallEnd@!'
+          )
+          $config = $configLines -join "`n"
           Set-Content -Path "$sfxDir/config.txt" -Value $config -NoNewline
           Push-Location $sfxDir
-          7z a -mx9 app.7z QML
-          cmd /c copy /b "C:\Program Files\7-Zip\7z.sfx" + config.txt + app.7z "$releaseDir\qomicex-launcher-portable.exe"
-          Pop-Location
+          try {
+            7z a -mx9 app.7z QML
+            $sfxStub = "C:\Program Files\7-Zip\7z.sfx"
+            if (-not (Test-Path $sfxStub)) { throw "7z.sfx not found at $sfxStub" }
+            cmd /c copy /b `"$sfxStub`" + config.txt + app.7z `"$releaseDir\qomicex-launcher-portable.exe`"
+          } finally {
+            Pop-Location
+          }
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
       - uses: actions/upload-artifact@v4
