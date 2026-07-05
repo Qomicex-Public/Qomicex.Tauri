@@ -109,6 +109,7 @@ public class ModpackInstallTask : IInstallTask
     private async Task RunWithProgress(int taskId, double stageStart, double stageEnd)
     {
         var downloadTask = _downloadManager.StartTaskAsync(taskId, _cts.Token);
+        int lastCompleted = 0;
         while (!downloadTask.IsCompleted && !_cts.Token.IsCancellationRequested)
         {
             var infos = _downloadManager.GetAllTaskInfos();
@@ -119,6 +120,17 @@ public class ModpackInstallTask : IInstallTask
                 TotalFiles = info.TotalFiles;
                 FailedFiles = info.FailedFiles;
                 Speed = info.Speed;
+
+                if (info.CompletedFiles > lastCompleted)
+                {
+                    var statuses = _downloadManager.GetTaskFileStatuses(taskId);
+                    var lastDone = statuses.LastOrDefault(s =>
+                        s.Status == DownloadTask.FileStatus.Completed ||
+                        s.Status == DownloadTask.FileStatus.Failed);
+                    if (lastDone.Name != null)
+                        CurrentFile = lastDone.Name;
+                    lastCompleted = info.CompletedFiles;
+                }
                 OnStateChanged?.Invoke(this);
             }
             try { await Task.Delay(100, _cts.Token); } catch { break; }
