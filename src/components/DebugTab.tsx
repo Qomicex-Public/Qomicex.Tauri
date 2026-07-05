@@ -152,7 +152,7 @@ function DiagnosticsCard() {
             )}
             <div>
               <p className="font-medium text-xs text-muted-foreground mb-1">版本信息</p>
-              <p className="text-xs">Launcher: 0.1.0 | React: 19 | Build: {import.meta.env.DEV ? 'dev' : 'release'}</p>
+              <p className="text-xs">Launcher: {__APP_VERSION__} | React: 19 | Build: {import.meta.env.DEV ? 'dev' : 'release'}</p>
             </div>
             <div>
               <p className="font-medium text-xs text-muted-foreground mb-1">连通状态</p>

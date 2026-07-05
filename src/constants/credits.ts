@@ -26,7 +26,7 @@ export interface LicenseInfo {
 
 export const APP_INFO = {
   name: 'Qomicex Launcher',
-  version: '0.1.0',
+  version: __APP_VERSION__,
   description: '一个现代化的 Minecraft 启动器，支持多版本管理、模组加载器兼容、账户管理等功能。',
 }
 
