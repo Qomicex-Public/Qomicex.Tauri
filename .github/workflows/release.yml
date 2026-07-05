@@ -73,12 +73,16 @@ jobs:
       - name: Generate update manifest fragment
         shell: pwsh
         run: |
-          $sig = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.exe.sig" | Select-Object -First 1
+          Write-Output "=== Bundle dir contents ==="
+          Get-ChildItem -Recurse -Path "src-tauri/target/release/bundle" | Select-Object FullName
+          $sig = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
+          if (-not $sig) { throw "No .sig file found in bundle directory" }
           $content = (Get-Content -Raw $sig.FullName).Trim()
-          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$($sig.BaseName)"
+          # BaseName strips .sig only if it's the final extension; we need the full asset name
+          $assetName = $sig.Name -replace '\.sig$', ''
+          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$assetName"
           $platform = "windows-x86_64"
-          $fragment = @{}
-          $fragment[$platform] = @{ signature = $content; url = $url }
+          $fragment = @{ $platform = @{ signature = $content; url = $url } }
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
@@ -117,9 +121,18 @@ jobs:
       - name: Generate update manifest fragment
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          SIG=$(find "$BUNDLE_DIR" -name '*.AppImage.sig' | head -1)
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
+          fi
           SIG_CONTENT=$(cat "$SIG")
-          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$(basename "${SIG%.sig}")"
+          SIG_BASENAME=$(basename "$SIG")
+          # Strip .sig suffix to get asset name (handles both .AppImage.sig and .AppImage.tar.gz.sig)
+          ASSET_NAME="${SIG_BASENAME%.sig}"
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="linux-x86_64"
           echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
@@ -155,9 +168,17 @@ jobs:
       - name: Generate update manifest fragment
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          SIG=$(find "$BUNDLE_DIR" -name '*.app.tar.gz.sig' | head -1)
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
+          fi
           SIG_CONTENT=$(cat "$SIG")
-          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$(basename "${SIG%.sig}")"
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="darwin-aarch64"
           echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
@@ -193,9 +214,17 @@ jobs:
       - name: Generate update manifest fragment
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          SIG=$(find "$BUNDLE_DIR" -name '*.app.tar.gz.sig' | head -1)
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
+          fi
           SIG_CONTENT=$(cat "$SIG")
-          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$(basename "${SIG%.sig}")"
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="darwin-x86_64"
           echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
