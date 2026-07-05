@@ -93,7 +93,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $releaseDir = "src-tauri/target/release"
+          $releaseDir = Resolve-Path "src-tauri/target/release"
           $sfxDir = "$releaseDir/sfx"
           $runtimeDir = "$sfxDir/QML/Runtime"
           $dataDir = "$sfxDir/QML/Data"
