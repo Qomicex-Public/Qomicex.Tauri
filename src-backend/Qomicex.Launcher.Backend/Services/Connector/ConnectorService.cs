@@ -87,7 +87,7 @@ public sealed class ConnectorService : IDisposable
                 ?? typeof(ConnectorService).Assembly.GetName().Version?.ToString()
                 ?? "0.0.0").Split('+')[0];
             var etVersion = GetEasyTierVersion();
-            _cachedVendor = $"Qomicex {launcherVersion}/Qomicex.Connector | EasyTier{etVersion}";
+            _cachedVendor = $"Qomicex.Launcher {launcherVersion}/Qomicex.Connector | EasyTier{etVersion}";
             return _cachedVendor;
         }
     }

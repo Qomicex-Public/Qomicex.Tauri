@@ -181,7 +181,7 @@ export default function Connect() {
         </Card>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="flex flex-col gap-6">
         {/* 创建房间 */}
         {!isGuest && (
         <Card className="space-y-4 border p-5">
