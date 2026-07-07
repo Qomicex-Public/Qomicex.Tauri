@@ -154,7 +154,7 @@ export default function Connect() {
   const etReady = easyTier?.installed ?? false
 
   return (
-    <div className="space-y-6">
+    <div className="animate-in slide-up space-y-6 p-8">
       <PageHeader title="联机" subtitle="创建或加入联机房间" />
 
       {easyTier && !etReady && (
