@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { MinecraftText } from './MinecraftText.tsx'
 import { faSun } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui/card.tsx'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
@@ -75,7 +76,9 @@ export default function ShaderCard({ shader, instanceId, gameDir, onDelete, comp
               {shader.version && <span>{shader.version}</span>}
             </div>
             {shader.description && (
-              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">{shader.description}</p>
+              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
+                <MinecraftText text={shader.description} />
+              </p>
             )}
           </div>
           {sourceLabel && (

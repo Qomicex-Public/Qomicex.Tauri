@@ -8,6 +8,7 @@ import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import { Button } from './ui/button.tsx'
 import { cn } from '../lib/utils.ts'
+import { MinecraftText } from './MinecraftText.tsx'
 import { enableMod, disableMod, deleteMod } from '../api/instance-files.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import type { ModMetadata } from '../types/index.ts'
@@ -122,7 +123,9 @@ export default function ModCard({
                 )}
               </div>
               {mod.description && mod.description !== 'No description available' && (
-                <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">{mod.description}</p>
+                <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
+                  <MinecraftText text={mod.description} />
+                </p>
               )}
             </div>
             <Tooltip content={mod.active ? '已启用' : '已禁用'}>
