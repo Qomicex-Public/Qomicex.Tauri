@@ -17,6 +17,16 @@ public sealed class EasyTierProvider
 {
     private const string Version = "v2.6.4";
 
+    private static readonly string[] ProxyPrefixes =
+    [
+        "",
+        "https://edgeone.gh-proxy.org/",
+        "https://cdn.gh-proxy.org/",
+        "https://hk.gh-proxy.org/",
+        "https://v6.gh-proxy.org/",
+        "https://ghfast.top/",
+    ];
+
     private readonly ILogger<EasyTierProvider> _logger;
     private readonly object _lock = new();
     private readonly EasyTierDownloadStatus _status = new();
@@ -83,11 +93,16 @@ public sealed class EasyTierProvider
             Directory.CreateDirectory(tmpDir);
 
             var assetName = $"easytier-{GetOsToken()}-{GetArchToken()}-{Version}.zip";
-            var url = $"https://github.com/EasyTier/EasyTier/releases/download/{Version}/{assetName}";
+            var githubUrl = $"https://github.com/EasyTier/EasyTier/releases/download/{Version}/{assetName}";
             var archivePath = Path.Combine(tmpDir, assetName);
 
-            _logger.LogInformation("下载 EasyTier: {Url}", url);
+            lock (_lock) _status.Status = "resolving";
+            var prefix = await PickFastestPrefixAsync();
+            var url = prefix + githubUrl;
 
+            _logger.LogInformation("下载 EasyTier (镜像前缀='{Prefix}'): {Url}", prefix, url);
+
+            lock (_lock) _status.Status = "downloading";
             using var manager = new DownloadManager(intervalMs: 500);
             var tid = manager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
             manager.AddFileToTask(tid, url, archivePath);
@@ -146,6 +161,40 @@ public sealed class EasyTierProvider
         {
             try { if (Directory.Exists(tmpDir)) Directory.Delete(tmpDir, recursive: true); } catch { }
         }
+    }
+
+    private async Task<string> PickFastestPrefixAsync()
+    {
+        var githubUrl = $"https://github.com/EasyTier/EasyTier/releases/download/{Version}/easytier-{GetOsToken()}-{GetArchToken()}-{Version}.zip";
+
+        async Task<(string prefix, long ms)> ProbeAsync(string prefix)
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, prefix + githubUrl);
+                req.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
+                using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                sw.Stop();
+                if (!resp.IsSuccessStatusCode) return (prefix, long.MaxValue);
+                return (prefix, sw.ElapsedMilliseconds);
+            }
+            catch
+            {
+                return (prefix, long.MaxValue);
+            }
+        }
+
+        var results = await Task.WhenAll(ProxyPrefixes.Select(ProbeAsync));
+        var best = results.OrderBy(r => r.ms).First();
+        if (best.ms == long.MaxValue)
+        {
+            _logger.LogWarning("所有 EasyTier 镜像测速失败，回退直连 GitHub");
+            return "";
+        }
+        _logger.LogInformation("EasyTier 最快镜像前缀='{Prefix}' ({Ms}ms)", best.prefix, best.ms);
+        return best.prefix;
     }
 
     private static void SetExecutable(string path)

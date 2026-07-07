@@ -171,7 +171,7 @@ export interface ConnectorStatus {
 
 export interface EasyTierStatus {
   installed: boolean
-  status: 'idle' | 'downloading' | 'extracting' | 'installed' | 'failed'
+  status: 'idle' | 'resolving' | 'downloading' | 'extracting' | 'installed' | 'failed'
   progress: number
   speed: number
   error: string | null

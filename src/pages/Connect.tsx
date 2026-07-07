@@ -86,7 +86,7 @@ export default function Connect() {
     const init = async () => {
       try {
         let et = await connectorApi.getEasyTierStatus()
-        if (!et.installed && et.status !== 'downloading' && et.status !== 'extracting') {
+        if (!et.installed && et.status !== 'resolving' && et.status !== 'downloading' && et.status !== 'extracting') {
           et = await connectorApi.downloadEasyTier()
         }
         if (!cancelled) setEasyTier(et)
@@ -99,7 +99,7 @@ export default function Connect() {
   }, [msgError])
 
   useEffect(() => {
-    if (easyTier && !easyTier.installed && (easyTier.status === 'downloading' || easyTier.status === 'extracting')) {
+    if (easyTier && !easyTier.installed && (easyTier.status === 'resolving' || easyTier.status === 'downloading' || easyTier.status === 'extracting')) {
       etTimer.current = setInterval(async () => {
         try { setEasyTier(await connectorApi.getEasyTierStatus()) } catch { /* ignore */ }
       }, 1000)
@@ -170,7 +170,7 @@ export default function Connect() {
             <>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <FontAwesomeIcon icon={faSpinner} spin />
-                <span>{easyTier.status === 'extracting' ? '正在解压 EasyTier…' : '正在下载 EasyTier 联机组件…'}</span>
+                <span>{easyTier.status === 'resolving' ? '正在测速选择最快下载源…' : easyTier.status === 'extracting' ? '正在解压 EasyTier…' : '正在下载 EasyTier 联机组件…'}</span>
                 <span className="ml-auto text-xs">{Math.round(easyTier.progress)}% {fmtSpeed(easyTier.speed)}</span>
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
