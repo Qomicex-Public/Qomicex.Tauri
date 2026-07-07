@@ -12,6 +12,7 @@ import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
+import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getLaunchProgress } from '../api/instance.ts'
 import { openFolder } from '../api/settings.ts'
@@ -253,6 +254,9 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [batchProcessing, setBatchProcessing] = useState(false)
 
   const loadMods = useCallback(async () => {
+    const cacheKey = `api-instance-${instanceId}-mods`
+    const cached = cacheGet<ModMetadata[]>(cacheKey)
+    if (cached) { setMods(cached); setLoading(false) }
     setLoading(true)
     setLoadProgress(null)
     try {
@@ -267,6 +271,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       clearInterval(pollId)
       setLoadProgress(null)
       setMods(data)
+      cacheSet(cacheKey, data)
     } catch (e) { console.error('Load mods failed:', e); setMods([]) }
     setLoading(false)
   }, [instanceId])
@@ -324,6 +329,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       if (batchConfirm.type === 'enable') await batchEnableMods(instanceId, names)
       else if (batchConfirm.type === 'disable') await batchDisableMods(instanceId, names)
       else if (batchConfirm.type === 'delete') await batchDeleteMods(instanceId, names)
+      cacheInvalidate(`api-instance-${instanceId}-mods`)
       await loadMods()
       exitBatchMode()
     } catch (e) { console.error('Batch action failed:', e) }
@@ -501,8 +507,11 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { inst
   }, [])
 
   const load = useCallback(async () => {
+    const cacheKey = `api-instance-${instanceId}-resourcepacks`
+    const cached = cacheGet<ResourcePackMetadata[]>(cacheKey)
+    if (cached) { setPacks(cached); setLoading(false) }
     setLoading(true)
-    try { const data = await getResourcePacksMetadata(instanceId); setPacks(data) }
+    try { const data = await getResourcePacksMetadata(instanceId); setPacks(data); cacheSet(cacheKey, data) }
     catch (e) {
       setPacks([])
       notify(`加载资源包失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
@@ -603,8 +612,11 @@ function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId
   }, [])
 
   const load = useCallback(async () => {
+    const cacheKey = `api-instance-${instanceId}-shaders`
+    const cached = cacheGet<ShaderMetadata[]>(cacheKey)
+    if (cached) { setShaders(cached); setLoading(false) }
     setLoading(true)
-    try { const data = await getShadersMetadata(instanceId); setShaders(data) }
+    try { const data = await getShadersMetadata(instanceId); setShaders(data); cacheSet(cacheKey, data) }
     catch (e) {
       setShaders([])
       notify(`加载光影包失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
@@ -695,8 +707,11 @@ function DataPacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { instance
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
+    const cacheKey = `api-instance-${instanceId}-datapacks`
+    const cached = cacheGet<DataPackMetadata[]>(cacheKey)
+    if (cached) { setPacks(cached); setLoading(false) }
     setLoading(true)
-    try { const data = await getDataPacksMetadata(instanceId); setPacks(data) }
+    try { const data = await getDataPacksMetadata(instanceId); setPacks(data); cacheSet(cacheKey, data) }
     catch { setPacks([]) }
     setLoading(false)
   }, [instanceId])
@@ -1378,6 +1393,13 @@ export default function InstanceDetailPage() {
   const [dataPacksRefresh, setDataPacksRefresh] = useState(0)
   const [serversRefresh, setServersRefresh] = useState(0)
   const [gameSettingsRefresh, setGameSettingsRefresh] = useState(0)
+  const [detailRefreshKey, setDetailRefreshKey] = useState(0)
+
+  const refreshDetail = useCallback(() => {
+    cacheInvalidate('api-instance-')
+    cacheInvalidate('api-instances')
+    setDetailRefreshKey(k => k + 1)
+  }, [])
 
   useEffect(() => {
     const unsub = subscribe(() => setRuntimes([...getRuntimes()]))
@@ -1390,10 +1412,14 @@ export default function InstanceDetailPage() {
     async function load() {
       setLoading(true)
       try {
+        const cacheKey = `api-instance-${id}`
+        const cached = cacheGet<GameInstance>(cacheKey)
+        if (cached) { setInstance(cached); setForm({ ...cached }) }
         const [inst, accts, sys, def] = await Promise.all([getInstance(id!), getAccounts(), getSystemInfo(), getDefaultInstance()])
         if (cancelled) return
         setInstance(inst)
         setForm({ ...inst })
+        cacheSet(cacheKey, inst)
         setRuntimes([...getRuntimes()])
         setAccounts(accts)
         setSysInfo(sys)
@@ -1408,7 +1434,7 @@ export default function InstanceDetailPage() {
     }
     load()
     return () => { cancelled = true }
-  }, [id, navigate])
+  }, [id, navigate, detailRefreshKey])
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -1567,6 +1593,7 @@ export default function InstanceDetailPage() {
     if (!id || !instance) return
     try {
       await deleteInstance(id)
+      cacheInvalidate('api-')
       navigate('/instances')
     } catch {}
   }, [id, instance, navigate])
@@ -1629,6 +1656,11 @@ export default function InstanceDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Tooltip content="刷新">
+            <Button variant="outline" size="icon" onClick={refreshDetail}>
+              <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', loading && 'animate-spin')} />
+            </Button>
+          </Tooltip>
           <Button onClick={handleLaunch} className="gap-2">
             <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />启动
           </Button>
@@ -1935,10 +1967,10 @@ export default function InstanceDetailPage() {
 
           {tab === 'saves' && <SavesTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} />}
           {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} />}
-          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={modsRefresh} onRefresh={() => setModsRefresh(k => k + 1)} />}
-          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={resourcePacksRefresh} onRefresh={() => setResourcePacksRefresh(k => k + 1)} />}
-          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={shadersRefresh} onRefresh={() => setShadersRefresh(k => k + 1)} />}
-          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={dataPacksRefresh} onRefresh={() => setDataPacksRefresh(k => k + 1)} />}
+          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} />}
+          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} />}
+          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} />}
+          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} />}
           {tab === 'servers' && <ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} />}
           {tab === 'gamesettings' && <GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} />}
         </div>

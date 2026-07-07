@@ -26,6 +26,7 @@ import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import ImportDialog from '../components/ImportDialog.tsx'
+import { cacheInvalidate, cacheGet, cacheSet } from '../lib/simple-cache.ts'
 
 interface ManagedDir {
   path: string
@@ -118,6 +119,13 @@ export default function Instances() {
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [instanceRefreshKey, setInstanceRefreshKey] = useState(0)
+
+  const refreshInstances = useCallback(() => {
+    cacheInvalidate('api-instances')
+    cacheInvalidate('api-instance-')
+    setInstanceRefreshKey(k => k + 1)
+  }, [])
   const launchPollRef = useRef<number | null>(null)
   const launchingInstanceIdRef = useRef<string | null>(null)
 
@@ -187,15 +195,18 @@ export default function Instances() {
     async function init() {
       setLoading(true)
       try {
+        const cached = await cacheGet<Awaited<ReturnType<typeof getInstances>>>('api-instances')
+        if (cached) setBackedInstances(cached)
         const [remote, instances, def, settings] = await Promise.all([getRemoteVersions(), getInstances(), getDefaultInstance(), apiLoadSettings()])
         setRemoteVersions(remote)
         setBackedInstances(instances)
+        cacheSet('api-instances', instances)
         setDefaultInstanceId(def?.id ?? null)
         if (settings.gameDir) setCurrentDir(settings.gameDir)
       } catch (e) { console.error(e) } finally { setLoading(false) }
     }
     init()
-  }, [])
+  }, [instanceRefreshKey])
 
   useEffect(() => () => { if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null } }, [])
 
@@ -830,7 +841,15 @@ export default function Instances() {
 
   return (
       <div className="animate-in slide-up space-y-6 p-8">
-        <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`} />
+        <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`}
+          actions={
+            <Tooltip content="刷新">
+              <button onClick={refreshInstances} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+                <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              </button>
+            </Tooltip>
+          }
+        />
 
       <div className="flex items-center gap-3" ref={popoverRef}>
         <div className="relative">
