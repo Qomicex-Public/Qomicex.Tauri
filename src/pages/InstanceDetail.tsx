@@ -14,12 +14,12 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
 import { useMessageBox } from '../components/ui/message-box.tsx'
-import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getLaunchProgress } from '../api/instance.ts'
+import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting } from '../api/instance.ts'
 import { openFolder } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto, LaunchProgress } from '../types/index.ts'
+import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
@@ -28,6 +28,7 @@ import { ApiError } from '../api/client.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
+import { useRunning } from '../contexts/RunningContext.tsx'
 import ModCard from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
 import type { ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata } from '../types/index.ts'
@@ -1479,9 +1480,7 @@ export default function InstanceDetailPage() {
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
   const [launchError, setLaunchError] = useState<{ title: string; message: string; detail?: string | null; args?: string | null } | null>(null)
-  const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
-  const launchPollRef = useRef<number | null>(null)
-  const launchingInstanceIdRef = useRef<string | null>(null)
+  const { launchInstance: ctxLaunchInstance } = useRunning()
 
   const handleLaunch = useCallback(async () => {
     if (!id) return
@@ -1490,7 +1489,7 @@ export default function InstanceDetailPage() {
       if (!ok) return
     }
     try {
-      const result = await launchInstance(id)
+      const result = await ctxLaunchInstance(id, instance?.name || id)
       if (!result.success) {
         setLaunchError({
           title: '启动失败',
@@ -1498,29 +1497,7 @@ export default function InstanceDetailPage() {
           detail: result.detail,
           args: result.arguments,
         })
-        return
       }
-      launchingInstanceIdRef.current = id
-      setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
-      if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
-      const poll = async () => {
-        try {
-          const p = await getLaunchProgress(id)
-          if (p.stage === 'completed') {
-            setLaunchProgress({ stage: p.stage, message: p.message, progress: 100, isRunning: false })
-            launchingInstanceIdRef.current = null
-            launchPollRef.current = null
-          } else if (p.stage === 'crashed' || p.stage === 'failed') {
-            setLaunchProgress(p)
-            launchingInstanceIdRef.current = null
-            launchPollRef.current = null
-          } else {
-            setLaunchProgress(p)
-            launchPollRef.current = window.setTimeout(poll, p.stage === 'running' ? 2000 : 500)
-          }
-        } catch { }
-      }
-      launchPollRef.current = window.setTimeout(poll, 500)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const code = e instanceof ApiError ? e.code : ''
@@ -1530,25 +1507,7 @@ export default function InstanceDetailPage() {
       }
       setLaunchError({ title: '启动失败', message: e instanceof Error ? e.message : String(e) })
     }
-  }, [id])
-
-  useEffect(() => {
-    if (!launchProgress) return
-    if (launchProgress.stage === 'completed' || launchProgress.stage === 'crashed') {
-      const instId = launchingInstanceIdRef.current
-      if (!instId) return
-      ;(async () => {
-        try {
-          const updated = await getInstance(instId)
-          if (updated) {
-            setInstance(prev => prev ? { ...prev, ...updated } : prev)
-          }
-        } catch { /* ignore */ }
-      })()
-    }
-  }, [launchProgress])
-
-  useEffect(() => () => { if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null } }, [])
+  }, [id, instance?.name, needsAccount, resolveAccountCheck, ctxLaunchInstance])
 
   const handleVerifyResources = useCallback(async () => {
     if (!id) return
