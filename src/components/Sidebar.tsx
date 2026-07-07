@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faHouse, faCube, faDownload, faUser, faGear, faCompass } from '@fortawesome/free-solid-svg-icons'
+import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faNetworkWired } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui/tooltip.tsx'
 
 const links = [
@@ -9,6 +9,7 @@ const links = [
   { to: '/downloads', label: '下载', icon: faDownload },
   { to: '/accounts', label: '账户', icon: faUser },
   { to: '/resource-center', label: '资源中心', icon: faCompass },
+  { to: '/connect', label: '联机', icon: faNetworkWired },
 ]
 
 export default function Sidebar() {
