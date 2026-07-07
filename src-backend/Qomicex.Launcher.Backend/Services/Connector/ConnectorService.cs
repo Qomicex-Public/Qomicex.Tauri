@@ -33,6 +33,7 @@ public sealed class ConnectorService : IDisposable
     private ScaffoldingGuest? _guest;
     private GameInfoDto _gameInfo = new();
     private readonly Dictionary<string, string> _iconMap = new();
+    private readonly object _iconLock = new();
     private string? _mcHost;
     private int? _mcPort;
 
@@ -136,7 +137,8 @@ public sealed class ConnectorService : IDisposable
             var map = await QmlProtocols.ExchangeIconsAsync(_guest,
                 new PlayerIconUpload { MachineId = MachineId, IconBase64 = icon }, ct);
             if (map?.Icons != null)
-                foreach (var kv in map.Icons) _iconMap[kv.Key] = kv.Value;
+                lock (_iconLock)
+                    foreach (var kv in map.Icons) _iconMap[kv.Key] = kv.Value;
 
             return (host, mcPort);
         }
@@ -150,19 +152,24 @@ public sealed class ConnectorService : IDisposable
         {
             await _client.CloseAsync(ct);
             _center = null; _guest = null; _mcHost = null; _mcPort = null;
-            _gameInfo = new GameInfoDto(); _iconMap.Clear();
+            _gameInfo = new GameInfoDto();
+            lock (_iconLock) _iconMap.Clear();
         }
         finally { _gate.Release(); }
     }
 
     public ConnectorStatusDto GetStatus()
     {
-        if (_center != null)
-            return new ConnectorStatusDto("host", _center.RoomCode.Raw, null, null, _gameInfo,
-                MapPlayers(_center.GetPlayers()));
-        if (_guest != null)
+        var center = _center;
+        var guest = _guest;
+        Dictionary<string, string> icons;
+        lock (_iconLock) icons = new Dictionary<string, string>(_iconMap);
+        if (center != null)
+            return new ConnectorStatusDto("host", center.RoomCode.Raw, null, null, _gameInfo,
+                MapPlayers(center.GetPlayers(), icons));
+        if (guest != null)
             return new ConnectorStatusDto("guest", null, _mcHost, _mcPort, _gameInfo,
-                MapPlayers(_guest.GetPlayerListAsync().GetAwaiter().GetResult()));
+                MapPlayers(guest.GetPlayerListAsync().GetAwaiter().GetResult(), icons));
         return new ConnectorStatusDto("idle", null, null, null, null, new());
     }
 
@@ -174,9 +181,12 @@ public sealed class ConnectorService : IDisposable
 
     private PlayerIconMap ExchangeIcons(PlayerIconUpload upload)
     {
-        if (!string.IsNullOrEmpty(upload.MachineId) && !string.IsNullOrEmpty(upload.IconBase64))
-            _iconMap[upload.MachineId] = upload.IconBase64;
-        return new PlayerIconMap { Icons = new Dictionary<string, string>(_iconMap) };
+        lock (_iconLock)
+        {
+            if (!string.IsNullOrEmpty(upload.MachineId) && !string.IsNullOrEmpty(upload.IconBase64))
+                _iconMap[upload.MachineId] = upload.IconBase64;
+            return new PlayerIconMap { Icons = new Dictionary<string, string>(_iconMap) };
+        }
     }
 
     private async Task<string> GetSelfIconBase64(string uuid, bool isMicrosoft)
@@ -190,10 +200,10 @@ public sealed class ConnectorService : IDisposable
         catch { return ""; }
     }
 
-    private List<ConnectorPlayerDto> MapPlayers(IReadOnlyList<PlayerInfo> players)
+    private List<ConnectorPlayerDto> MapPlayers(IReadOnlyList<PlayerInfo> players, IReadOnlyDictionary<string, string> icons)
         => players.Select(p => new ConnectorPlayerDto(
             p.Name, p.Vendor,
-            _iconMap.TryGetValue(p.MachineId, out var icon) ? icon : null,
+            icons.TryGetValue(p.MachineId, out var icon) ? icon : null,
             p.Kind == PlayerKind.Host ? "host" : "guest")).ToList();
 
     public void Dispose() { _client.Dispose(); _gate.Dispose(); }
