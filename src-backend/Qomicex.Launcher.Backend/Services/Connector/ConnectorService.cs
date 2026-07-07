@@ -1,0 +1,102 @@
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.Extensions.Logging;
+using Qomicex.Connector;
+using Qomicex.Connector.Center;
+using Qomicex.Connector.Guest;
+using Qomicex.Connector.Models;
+using Qomicex.Launcher.Backend.Common;
+using Qomicex.Core.Modules.Helpers;
+
+namespace Qomicex.Launcher.Backend.Services.Connector;
+
+public enum ConnectorMode { Idle, Host, Guest }
+
+public sealed record ConnectorPlayerDto(string Name, string Vendor, string? IconBase64, string Kind);
+public sealed record ConnectorStatusDto(
+    string Mode, string? RoomCode, string? McHost, int? McPort,
+    GameInfoDto? GameInfo, List<ConnectorPlayerDto> Players);
+
+public sealed class ConnectorService : IDisposable
+{
+    private readonly ILogger<ConnectorService> _logger;
+    private readonly GameProcessInspector _inspector;
+    private readonly AccountService _accountService;
+    private readonly LanGameListenerService _lanListener;
+    private readonly IInstanceRepository _instances;
+    private readonly SkinService _skinService;
+
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ScaffoldingClient _client = new(easyTierPath: null);
+
+    private ScaffoldingCenter? _center;
+    private ScaffoldingGuest? _guest;
+    private GameInfoDto _gameInfo = new();
+    private readonly Dictionary<string, string> _iconMap = new();
+    private string? _mcHost;
+    private int? _mcPort;
+
+    private static string? _cachedVendor;
+    private static string? _cachedMachineId;
+
+    public ConnectorService(
+        ILogger<ConnectorService> logger,
+        GameProcessInspector inspector,
+        AccountService accountService,
+        LanGameListenerService lanListener,
+        IInstanceRepository instances,
+        SkinService skinService)
+    {
+        _logger = logger;
+        _inspector = inspector;
+        _accountService = accountService;
+        _lanListener = lanListener;
+        _instances = instances;
+        _skinService = skinService;
+    }
+
+    private static string MachineId
+    {
+        get
+        {
+            if (_cachedMachineId != null) return _cachedMachineId;
+            var info = SystemInfoHelper.GetSystemInfo();
+            var sysText = $"{info.OSName}|{info.OS}|{info.OSVersion}|{info.Architecture}";
+            var combined = sysText + CryptHelper.GetMachineCode();
+            _cachedMachineId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(combined)));
+            return _cachedMachineId;
+        }
+    }
+
+    private string Vendor
+    {
+        get
+        {
+            if (_cachedVendor != null) return _cachedVendor;
+            var launcherVersion = typeof(ConnectorService).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+            var etVersion = GetEasyTierVersion();
+            _cachedVendor = $"Qomicex {launcherVersion}/Qomicex.Connector | EasyTier{etVersion}";
+            return _cachedVendor;
+        }
+    }
+
+    private string GetEasyTierVersion()
+    {
+        try
+        {
+            using var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("easytier-core", "-V")
+            {
+                RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true
+            });
+            if (proc == null) return "unknown";
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(3000);
+            var token = output.Split(new[] { ' ', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(t => t.Any(char.IsDigit) && t.Contains('.'));
+            return token ?? "unknown";
+        }
+        catch { return "unknown"; }
+    }
+
+    public void Dispose() { _client.Dispose(); _gate.Dispose(); }
+}
