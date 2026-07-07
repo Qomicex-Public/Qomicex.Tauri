@@ -1,5 +1,5 @@
 import { get, post } from './client.ts'
-import type { ConnectorStatus } from '../types/index.ts'
+import type { ConnectorStatus, EasyTierStatus } from '../types/index.ts'
 
 export function hostByPort(port: number): Promise<{ roomCode: string }> {
   return post('/connector/host/port', { port })
@@ -19,4 +19,12 @@ export function getStatus(): Promise<ConnectorStatus> {
 
 export function leave(): Promise<{ status: string }> {
   return post('/connector/leave')
+}
+
+export function getEasyTierStatus(): Promise<EasyTierStatus> {
+  return get<EasyTierStatus>('/connector/easytier/status')
+}
+
+export function downloadEasyTier(): Promise<EasyTierStatus> {
+  return post<EasyTierStatus>('/connector/easytier/download')
 }

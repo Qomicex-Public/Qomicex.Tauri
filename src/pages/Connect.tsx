@@ -11,7 +11,14 @@ import { useMessageBox } from '../components/ui/message-box.tsx'
 import { ApiError } from '../api/client.ts'
 import * as connectorApi from '../api/connector.ts'
 import { getInstances } from '../api/instance.ts'
-import type { ConnectorStatus, ConnectorPlayer, GameInstance } from '../types/index.ts'
+import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus } from '../types/index.ts'
+
+function fmtSpeed(bytesPerSec: number): string {
+  if (bytesPerSec <= 0) return ''
+  const mb = bytesPerSec / (1024 * 1024)
+  if (mb >= 1) return `${mb.toFixed(1)} MB/s`
+  return `${(bytesPerSec / 1024).toFixed(0)} KB/s`
+}
 
 function fmtErr(e: unknown): string {
   if (e instanceof ApiError) return e.displayMessage
@@ -61,7 +68,9 @@ export default function Connect() {
   const [selectedInstance, setSelectedInstance] = useState('')
   const [hostMode, setHostMode] = useState<'port' | 'instance'>('port')
   const [busy, setBusy] = useState(false)
+  const [easyTier, setEasyTier] = useState<EasyTierStatus | null>(null)
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const etTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const refreshStatus = useCallback(async () => {
     try { setStatus(await connectorApi.getStatus()) } catch { /* ignore poll errors */ }
@@ -71,6 +80,32 @@ export default function Connect() {
     refreshStatus()
     getInstances().then(setInstances).catch(() => {})
   }, [refreshStatus])
+
+  useEffect(() => {
+    let cancelled = false
+    const init = async () => {
+      try {
+        let et = await connectorApi.getEasyTierStatus()
+        if (!et.installed && et.status !== 'downloading' && et.status !== 'extracting') {
+          et = await connectorApi.downloadEasyTier()
+        }
+        if (!cancelled) setEasyTier(et)
+      } catch (e) {
+        if (!cancelled) msgError(fmtErr(e))
+      }
+    }
+    init()
+    return () => { cancelled = true }
+  }, [msgError])
+
+  useEffect(() => {
+    if (easyTier && !easyTier.installed && (easyTier.status === 'downloading' || easyTier.status === 'extracting')) {
+      etTimer.current = setInterval(async () => {
+        try { setEasyTier(await connectorApi.getEasyTierStatus()) } catch { /* ignore */ }
+      }, 1000)
+      return () => { if (etTimer.current) clearInterval(etTimer.current) }
+    }
+  }, [easyTier])
 
   useEffect(() => {
     if (status.mode !== 'idle') {
@@ -116,10 +151,35 @@ export default function Connect() {
   const isHost = status.mode === 'host'
   const isGuest = status.mode === 'guest'
   const isStarting = status.mode === 'starting'
+  const etReady = easyTier?.installed ?? false
 
   return (
     <div className="space-y-6">
       <PageHeader title="联机" subtitle="创建或加入联机房间" />
+
+      {easyTier && !etReady && (
+        <Card className="space-y-2 border p-4">
+          {easyTier.status === 'failed' ? (
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-sm text-destructive">EasyTier 下载失败：{easyTier.error}</p>
+              <Button size="sm" variant="outline" onClick={async () => {
+                try { setEasyTier(await connectorApi.downloadEasyTier()) } catch (e) { msgError(fmtErr(e)) }
+              }}>重试</Button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <FontAwesomeIcon icon={faSpinner} spin />
+                <span>{easyTier.status === 'extracting' ? '正在解压 EasyTier…' : '正在下载 EasyTier 联机组件…'}</span>
+                <span className="ml-auto text-xs">{Math.round(easyTier.progress)}% {fmtSpeed(easyTier.speed)}</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(2, easyTier.progress)}%` }} />
+              </div>
+            </>
+          )}
+        </Card>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* 创建房间 */}
@@ -137,7 +197,7 @@ export default function Connect() {
                 <div className="space-y-2">
                   <Label>MC 局域网端口</Label>
                   <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="例如 25565" />
-                  <Button onClick={handleHostPort} disabled={busy} className="w-full">
+                  <Button onClick={handleHostPort} disabled={busy || !etReady} className="w-full">
                     {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : '创建房间'}
                   </Button>
                 </div>
@@ -148,7 +208,7 @@ export default function Connect() {
                     <SelectOption value="">请选择...</SelectOption>
                     {instances.map((i) => <SelectOption key={i.id} value={i.id}>{i.name}</SelectOption>)}
                   </Select>
-                  <Button onClick={handleHostInstance} disabled={busy} className="w-full">
+                  <Button onClick={handleHostInstance} disabled={busy || !etReady} className="w-full">
                     <FontAwesomeIcon icon={faPlay} className="mr-2" />
                     启动并创建房间
                   </Button>
@@ -198,7 +258,7 @@ export default function Connect() {
             <div className="space-y-2">
               <Label>房间码</Label>
               <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="U/XXXX-XXXX-XXXX-XXXX" />
-              <Button onClick={handleJoin} disabled={busy} className="w-full">
+              <Button onClick={handleJoin} disabled={busy || !etReady} className="w-full">
                 <FontAwesomeIcon icon={faRightToBracket} className="mr-2" />
                 {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : '加入房间'}
               </Button>
