@@ -1,6 +1,6 @@
 // ponytail: global in-memory cache, invalidate on mutations, no eviction — LRU if memory matters
 const store = new Map<string, { data: unknown; timestamp: number }>()
-
+const FRESH_TTL = 30_000
 
 export function cacheGet<T>(key: string): T | null {
   const entry = store.get(key)
@@ -8,12 +8,14 @@ export function cacheGet<T>(key: string): T | null {
   return entry.data as T
 }
 
-export function cacheSet<T>(key: string, data: T): void {
-  store.set(key, { data, timestamp: Date.now() })
+export function cacheFresh<T>(key: string): T | null {
+  const entry = store.get(key)
+  if (!entry || Date.now() - entry.timestamp > FRESH_TTL) return null
+  return entry.data as T
 }
 
-export function cacheHas(key: string): boolean {
-  return store.has(key)
+export function cacheSet<T>(key: string, data: T): void {
+  store.set(key, { data, timestamp: Date.now() })
 }
 
 export function cacheInvalidate(pattern?: string): void {

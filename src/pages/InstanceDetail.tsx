@@ -12,7 +12,7 @@ import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
-import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
+import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { getInstance, updateInstance, launchInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getLaunchProgress } from '../api/instance.ts'
 import { openFolder } from '../api/settings.ts'
@@ -255,8 +255,10 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 
   const loadMods = useCallback(async () => {
     const cacheKey = `api-instance-${instanceId}-mods`
-    const cached = cacheGet<ModMetadata[]>(cacheKey)
-    if (cached) { setMods(cached); setLoading(false) }
+    const fresh = cacheFresh<ModMetadata[]>(cacheKey)
+    if (fresh) { setMods(fresh); setLoading(false); return }
+    const stale = cacheGet<ModMetadata[]>(cacheKey)
+    if (stale) { setMods(stale); setLoading(false) }
     setLoading(true)
     setLoadProgress(null)
     try {
@@ -508,8 +510,10 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { inst
 
   const load = useCallback(async () => {
     const cacheKey = `api-instance-${instanceId}-resourcepacks`
-    const cached = cacheGet<ResourcePackMetadata[]>(cacheKey)
-    if (cached) { setPacks(cached); setLoading(false) }
+    const fresh = cacheFresh<ResourcePackMetadata[]>(cacheKey)
+    if (fresh) { setPacks(fresh); setLoading(false); return }
+    const stale = cacheGet<ResourcePackMetadata[]>(cacheKey)
+    if (stale) { setPacks(stale); setLoading(false) }
     setLoading(true)
     try { const data = await getResourcePacksMetadata(instanceId); setPacks(data); cacheSet(cacheKey, data) }
     catch (e) {
@@ -613,8 +617,10 @@ function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId
 
   const load = useCallback(async () => {
     const cacheKey = `api-instance-${instanceId}-shaders`
-    const cached = cacheGet<ShaderMetadata[]>(cacheKey)
-    if (cached) { setShaders(cached); setLoading(false) }
+    const fresh = cacheFresh<ShaderMetadata[]>(cacheKey)
+    if (fresh) { setShaders(fresh); setLoading(false); return }
+    const stale = cacheGet<ShaderMetadata[]>(cacheKey)
+    if (stale) { setShaders(stale); setLoading(false) }
     setLoading(true)
     try { const data = await getShadersMetadata(instanceId); setShaders(data); cacheSet(cacheKey, data) }
     catch (e) {
@@ -708,8 +714,10 @@ function DataPacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { instance
 
   const load = useCallback(async () => {
     const cacheKey = `api-instance-${instanceId}-datapacks`
-    const cached = cacheGet<DataPackMetadata[]>(cacheKey)
-    if (cached) { setPacks(cached); setLoading(false) }
+    const fresh = cacheFresh<DataPackMetadata[]>(cacheKey)
+    if (fresh) { setPacks(fresh); setLoading(false); return }
+    const stale = cacheGet<DataPackMetadata[]>(cacheKey)
+    if (stale) { setPacks(stale); setLoading(false) }
     setLoading(true)
     try { const data = await getDataPacksMetadata(instanceId); setPacks(data); cacheSet(cacheKey, data) }
     catch { setPacks([]) }
