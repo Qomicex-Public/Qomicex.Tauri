@@ -108,7 +108,7 @@ public sealed class ConnectorService : IDisposable
             var proc = _inspector.Inspect(port);
             _gameInfo = new GameInfoDto { GameVersion = proc.GameVersionArg ?? "unknown" };
             var selfIcon = await GetSelfIconBase64(proc.Uuid, proc.IsMicrosoft);
-            _iconMap[MachineId] = selfIcon;
+            lock (_iconLock) _iconMap[MachineId] = selfIcon;
 
             var protocols = QmlProtocols.BuildHostProtocols(() => _gameInfo, ExchangeIcons);
             _center = await _client.CreateRoomAsync(proc.PlayerName, MachineId, Vendor, port, protocols, ct);
