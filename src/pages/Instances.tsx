@@ -14,10 +14,10 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, repairInstance, launchInstance, getLaunchProgress, cancelLaunch, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
+import { createInstance, startInstall, getInstances, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx'
-import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance, LaunchProgress } from '../types/index.ts'
+import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance } from '../types/index.ts'
 import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, autoSelectDownloadSource, openFolder } from '../api/settings.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
@@ -27,6 +27,7 @@ import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import ImportDialog from '../components/ImportDialog.tsx'
 import { cacheInvalidate, cacheGet, cacheSet } from '../lib/simple-cache.ts'
+import { useRunning } from '../contexts/RunningContext.tsx'
 
 interface ManagedDir {
   path: string
@@ -103,7 +104,8 @@ type PageStep = 'list' | 'select-version' | 'configure'
 
 export default function Instances() {
   const navigate = useNavigate()
-  const { alert: msgAlert, prompt: msgPrompt, notify } = useMessageBox()
+  const { alert: msgAlert, prompt: msgPrompt } = useMessageBox()
+  const { launchInstance: ctxLaunchInstance } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
 
   const [scannedLocal, setScannedLocal] = useState<ScannedVersion[]>([])
@@ -116,7 +118,6 @@ export default function Instances() {
   const [settingsTab, setSettingsTab] = useState<'basic' | 'repair'>('basic')
   const [repairAdded, setRepairAdded] = useState(false)
   const [defaultInstanceId, setDefaultInstanceId] = useState<string | null>(null)
-  const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [instanceRefreshKey, setInstanceRefreshKey] = useState(0)
@@ -126,8 +127,6 @@ export default function Instances() {
     cacheInvalidate('api-instance-')
     setInstanceRefreshKey(k => k + 1)
   }, [])
-  const launchPollRef = useRef<number | null>(null)
-  const launchingInstanceIdRef = useRef<string | null>(null)
 
   const [managedDirs, setManagedDirs] = useState<ManagedDir[]>(() => loadDirs())
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
@@ -184,13 +183,6 @@ export default function Instances() {
     } catch { setScannedLocal([]) } finally { setScanning(false) }
   }, [])
 
-  const loadInstances = useCallback(async () => {
-    try {
-      const instances = await getInstances()
-      setBackedInstances(instances)
-    } catch { /* ignore */ }
-  }, [])
-
   useEffect(() => {
     async function init() {
       setLoading(true)
@@ -207,8 +199,6 @@ export default function Instances() {
     }
     init()
   }, [instanceRefreshKey])
-
-  useEffect(() => () => { if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null } }, [])
 
   useEffect(() => { if (currentDir) doScan(currentDir) }, [currentDir, doScan])
 
@@ -418,10 +408,9 @@ export default function Instances() {
     }
 
     try {
-      const result = await launchInstance(inst!.id)
+      const result = await ctxLaunchInstance(inst!.id, inst!.name)
       if (!result.success) {
         await msgAlert(`启动失败: ${result.error}\n${result.detail || ''}`)
-        return
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -431,43 +420,7 @@ export default function Instances() {
         return
       }
       await msgAlert(`启动失败: ${e instanceof Error ? e.message : String(e)}`)
-      return
     }
-
-    launchingInstanceIdRef.current = inst!.id
-    setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
-    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
-    const poll = async () => {
-      try {
-        const p = await getLaunchProgress(inst!.id)
-        if (p.stage === 'completed') {
-          setLaunchProgress(null)
-          launchingInstanceIdRef.current = null
-          launchPollRef.current = null
-          loadInstances()
-        } else if (p.stage === 'crashed' || p.stage === 'failed') {
-          setLaunchProgress(p)
-          launchingInstanceIdRef.current = null
-          launchPollRef.current = null
-          loadInstances()
-        } else {
-          setLaunchProgress(p)
-          launchPollRef.current = window.setTimeout(poll, p.stage === 'running' ? 2000 : 500)
-        }
-      } catch { }
-    }
-    launchPollRef.current = window.setTimeout(poll, 500)
-  }
-
-  async function handleCancelLaunch() {
-    const id = launchingInstanceIdRef.current
-    if (id) {
-      try { await cancelLaunch(id) } catch { }
-    }
-    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
-    launchingInstanceIdRef.current = null
-    setLaunchProgress(null)
-    notify('已取消启动', 'info')
   }
 
   async function openVersionSettings(v: ScannedVersion) {
@@ -993,78 +946,6 @@ export default function Instances() {
               )
             })()}
           </div>
-        </DialogBody>
-      </Dialog>
-
-      <Dialog open={!!launchProgress} onClose={handleCancelLaunch} className="w-[480px]">
-        <DialogHeader onClose={handleCancelLaunch}>
-          <DialogTitle>
-            {launchProgress && ['crashed', 'failed'].includes(launchProgress.stage)
-              ? '启动失败'
-              : '启动游戏'}
-          </DialogTitle>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          {launchProgress && (() => {
-            const stageLabels: Record<string, string> = {
-              starting: '准备中',
-              checking: '检查文件完整性',
-              repairing: '补全文件',
-              'logging-in': '验证账户',
-              authlib: '配置外置登录',
-              natives: '解压原生库',
-              building: '构建启动参数',
-              launching: '启动游戏',
-              running: '游戏运行中',
-              crashed: '游戏异常退出',
-              failed: '启动失败',
-              completed: '游戏已退出',
-            }
-            const isFinal = ['completed', 'crashed', 'failed'].includes(launchProgress.stage)
-            const isError = ['crashed', 'failed'].includes(launchProgress.stage)
-            return (
-              <>
-                <div className="flex items-center justify-between text-sm">
-                  <span className={cn('font-medium', isError && 'text-destructive')}>
-                    {stageLabels[launchProgress.stage] || launchProgress.stage}
-                  </span>
-                  <span className="text-muted-foreground">{Math.round(launchProgress.progress)}%</span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={cn('h-full rounded-full transition-all', isError ? 'bg-destructive' : 'bg-primary')}
-                    style={{ width: `${launchProgress.progress}%` }}
-                  />
-                </div>
-                <p className="text-sm text-muted-foreground">{launchProgress.message}</p>
-                {launchProgress.error && (
-                  <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{launchProgress.error}</p>
-                )}
-                {launchProgress.crashReport && (
-                  <details className="rounded-lg border border-border bg-muted/30">
-                    <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">查看崩溃报告</summary>
-                    <pre className="max-h-48 overflow-auto px-3 pb-3 text-[11px] text-muted-foreground">{launchProgress.crashReport}</pre>
-                  </details>
-                )}
-                {launchProgress.stage === 'running' && launchProgress.processId && (
-                  <p className="text-xs text-muted-foreground">进程 ID: {launchProgress.processId}</p>
-                )}
-                {!isFinal && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-                    正在启动...
-                  </div>
-                )}
-                {isFinal && (
-                  <div className="flex justify-end">
-                    <Button variant="secondary" size="sm" onClick={() => setLaunchProgress(null)}>
-                      关闭
-                    </Button>
-                  </div>
-                )}
-              </>
-            )
-          })()}
         </DialogBody>
       </Dialog>
 
