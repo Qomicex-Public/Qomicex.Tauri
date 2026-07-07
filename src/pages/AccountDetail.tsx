@@ -144,7 +144,7 @@ export default function AccountDetail() {
                 )}
               </>
             ) : account.serverUrl ? (
-              <Button variant="outline" size="sm" onClick={() => openUrl(account.serverUrl!).catch(() => window.open(account.serverUrl!, '_blank'))}>
+              <Button variant="outline" size="sm" onClick={() => { const url = new URL(account.serverUrl!).origin; openUrl(url).catch(() => window.open(url, '_blank')) }}>
                 <FontAwesomeIcon icon={faGlobe} className="mr-1 h-3 w-3" /> 前往皮肤站
               </Button>
             ) : null}
