@@ -248,42 +248,40 @@ public class ModpackService
         var json = await response.Content.ReadAsStringAsync();
         var doc = JsonNode.Parse(json)!;
 
-        var gameVersions = doc["game_versions"]?.AsArray();
-        var loaders = doc["loaders"]?.AsArray();
+        // Find the primary .mrpack file from the version
+        var mrpackFile = doc["files"]?.AsArray()?
+            .OfType<JsonObject>()
+            .FirstOrDefault(f => f["primary"]?.GetValue<bool>() == true);
+        mrpackFile ??= doc["files"]?.AsArray()?
+            .OfType<JsonObject>()
+            .FirstOrDefault(f => f["filename"]?.GetValue<string>()?.EndsWith(".mrpack") == true);
+        if (mrpackFile == null)
+            throw new Exception("Modrinth 版本中没有找到 .mrpack 文件");
 
-        var files = new List<ModpackFileEntry>();
-        if (doc["files"] is JsonArray fileArray)
+        var mrpackUrl = mrpackFile["url"]?.GetValue<string>();
+        if (string.IsNullOrEmpty(mrpackUrl))
+            throw new Exception("Modrinth 版本文件缺少下载地址");
+
+        // Download .mrpack to temp and parse it
+        var tempPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".mrpack");
+        try
         {
-            foreach (var f in fileArray.OfType<JsonObject>())
+            using (var httpStream = await client.GetStreamAsync(mrpackUrl))
+            using (var fileStream = new FileStream(tempPath, FileMode.CreateNew))
             {
-                var downloads = f["downloads"]?.AsArray();
-                files.Add(new ModpackFileEntry
-                {
-                    Path = f["filename"]?.GetValue<string>() ?? "",
-                    DownloadUrl = downloads?.Count > 0 ? downloads[0]?.GetValue<string>() : null,
-                    Size = f["size"]?.GetValue<long>(),
-                });
+                await httpStream.CopyToAsync(fileStream);
             }
-        }
 
-        return new ModpackParseResult
+            var result = await ParseMrpackAsync(tempPath);
+            result.Name = doc["name"]?.GetValue<string>() ?? projectId;
+            result.OverridesBytes = ExtractOverridesZip(tempPath);
+            return result;
+        }
+        finally
         {
-            Name = projectId,
-            Summary = null,
-            GameVersion = gameVersions?.LastOrDefault()?.GetValue<string>() ?? "",
-            Loader = loaders?.FirstOrDefault()?.GetValue<string>()?.ToLowerInvariant() switch
-            {
-                "fabric" => ModpackLoader.Fabric,
-                "forge" => ModpackLoader.Forge,
-                "neoforge" => ModpackLoader.NeoForge,
-                "quilt" => ModpackLoader.Quilt,
-                _ => ModpackLoader.Fabric,
-            },
-            LoaderVersion = null,
-            Source = ModpackSource.Local,
-            Files = files,
-            HasOverrides = false,
-        };
+            if (File.Exists(tempPath))
+                File.Delete(tempPath);
+        }
     }
 
     private async Task<ModpackParseResult> ResolveCurseForgeAsync(string projectId, string fileId)
