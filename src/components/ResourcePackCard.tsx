@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { MinecraftText } from './MinecraftText.tsx'
 import { faBox } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui/card.tsx'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
@@ -77,7 +78,9 @@ export default function ResourcePackCard({ pack, instanceId, gameDir, onDelete, 
               {pack.packFormat > 0 && <span>format {pack.packFormat}</span>}
             </div>
             {pack.description && (
-              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">{pack.description}</p>
+              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
+                <MinecraftText text={pack.description} />
+              </p>
             )}
           </div>
           {sourceLabel && (

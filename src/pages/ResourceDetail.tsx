@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { MinecraftText } from '../components/MinecraftText.tsx'
 import {
   faArrowLeft,
   faArrowUpRightFromSquare,
@@ -20,6 +21,7 @@ import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
+import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { get } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
@@ -28,6 +30,7 @@ import { downloadTo } from '../api/resource-download.ts'
 import { getInstance, getDefaultInstance } from '../api/instance.ts'
 import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
+import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { save } from '@tauri-apps/plugin-dialog'
 import { loadSettings } from '../api/settings.ts'
 import ModpackInstallDialog from '../components/ModpackInstallDialog.tsx'
@@ -98,7 +101,14 @@ export default function ResourceDetailPage() {
   const [translation, setTranslation] = useState<{ original: string; translated: string; translatedAt: string } | null>(null)
   const [translating, setTranslating] = useState(false)
   const [visibleCount, setVisibleCount] = useState(0)
+  const [detailRefreshKey, setDetailRefreshKey] = useState(0)
   const PAGE_SIZE = 30
+
+  const refreshDetail = useCallback(() => {
+    cacheInvalidate('api-resource-detail')
+    cacheInvalidate('api-resource-versions')
+    setDetailRefreshKey(k => k + 1)
+  }, [])
 
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
     setDownloadingFor(versionId)
@@ -132,9 +142,13 @@ export default function ResourceDetailPage() {
 
       // Phase 1: load detail only — show page ASAP
       try {
+        const cacheKey = `api-resource-detail-${id}-${source}`
+        const cached = cacheGet<ResourceDetail>(cacheKey)
+        if (cached) { setDetail(cached); setLoading(false) }
         const resourceDetail = await getResourceDetail(id, source)
         if (cancelled) return
         setDetail(resourceDetail)
+        cacheSet(cacheKey, resourceDetail)
         if (category === 'mod') lookupChineseName(resourceDetail.title).then(setCnName)
         setLoading(false)
       } catch (e) {
@@ -211,7 +225,7 @@ export default function ResourceDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [resourceId, source])
+  }, [resourceId, source, detailRefreshKey])
 
   const gameVersionOptions = useMemo(() => {
     return ['all', ...new Set(versions.flatMap((version) => version.gameVersions).filter(Boolean))]
@@ -270,14 +284,23 @@ export default function ResourceDetailPage() {
             资源详情
           </>
         }
-        actions={detail?.projectUrl ? (
-          <Button asChild variant="outline" size="sm">
-            <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
-              <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3.5 w-3.5" />
-              原始页面
-            </a>
-          </Button>
-        ) : undefined}
+        actions={
+          <div className="flex items-center gap-2">
+            <Tooltip content="刷新">
+              <Button variant="outline" size="sm" onClick={refreshDetail}>
+                <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              </Button>
+            </Tooltip>
+            {detail?.projectUrl ? (
+              <Button asChild variant="outline" size="sm">
+                <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
+                  <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3.5 w-3.5" />
+                  原始页面
+                </a>
+              </Button>
+            ) : null}
+          </div>
+        }
       />
 
       {loading ? (
@@ -316,7 +339,7 @@ export default function ResourceDetailPage() {
                       <Badge variant="secondary">{getSourceLabel(detail.source)}</Badge>
                       {detail.latestVersion && <Badge variant="outline">最新 {detail.latestVersion}</Badge>}
                     </div>
-                    <p className="text-sm leading-7 text-muted-foreground">{detail.description || '暂无简介'}</p>
+                    <MinecraftText text={detail.description || '暂无简介'} className="text-sm leading-7 text-muted-foreground" />
                     {detail.source !== 'ftb' && (
                       <div className="space-y-2">
                         <button

@@ -46,6 +46,9 @@ stdout.txt
 stderr.txt
 docs/
 
+# Reference / external source
+/参考/
+
 # Git worktrees
 .worktrees/
 

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { MinecraftText } from './MinecraftText.tsx'
 import { faDatabase } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui/card.tsx'
 import { Tooltip } from './ui/tooltip.tsx'
@@ -41,7 +42,9 @@ export default function DataPackCard({ pack, instanceId, onDelete }: Props) {
             {pack.packFormat > 0 && <span>format {pack.packFormat}</span>}
           </div>
           {pack.description && (
-            <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">{pack.description}</p>
+            <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
+              <MinecraftText text={pack.description} />
+            </p>
           )}
         </div>
         <Tooltip content="删除">

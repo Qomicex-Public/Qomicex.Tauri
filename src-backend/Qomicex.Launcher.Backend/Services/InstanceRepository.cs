@@ -102,7 +102,18 @@ public class InstanceRepository : IInstanceRepository
         lock (_lock)
         {
             var existing = _instances.Find(i => i.GameDir == instance.GameDir && i.Name == instance.Name);
-            if (existing != null) return existing;
+            if (existing != null)
+            {
+                existing.Icon = instance.Icon;
+                existing.IconData = instance.IconData;
+                existing.MaxMemory = instance.MaxMemory;
+                existing.ModpackName = instance.ModpackName;
+                existing.ModpackVersion = instance.ModpackVersion;
+                existing.ModpackAuthor = instance.ModpackAuthor;
+                existing.ModpackSummary = instance.ModpackSummary;
+                SaveToFile();
+                return existing;
+            }
             _instances.Add(instance);
             SaveToFile();
             return instance;

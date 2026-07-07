@@ -83,6 +83,11 @@ export default function ModpackInstallDialog({
         versionIsolation,
         modpackFiles: resolved.files,
         overridesZip: resolved.overridesZip,
+        iconData: resolved.iconData,
+        modpackName: resolved.name,
+        modpackVersion: resolved.version,
+        modpackAuthor: resolved.author,
+        modpackSummary: resolved.summary,
       })
       addTask({
         id: instanceId,

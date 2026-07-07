@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo, faGlobe } from '@fortawesome/free-solid-svg-icons'
 import { getAccount, deleteAccount } from '../api/account.ts'
 import { getSkinProfile, uploadSkin, resetSkin } from '../api/skin.ts'
 import { API_BASE } from '../api/client.ts'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { SkinViewer3D } from '../components/SkinViewer3D.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { Button } from '../components/ui/button.tsx'
@@ -130,15 +131,23 @@ export default function AccountDetail() {
             <Button variant="outline" size="sm" onClick={handleSkinRefresh}>
               <FontAwesomeIcon icon={faRotate} className="mr-1 h-3 w-3" /> 刷新皮肤
             </Button>
-            <input ref={fileRef} type="file" accept="image/png" className="hidden" onChange={handleSkinUpload} />
-            <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-              <FontAwesomeIcon icon={faUpload} className="mr-1 h-3 w-3" /> 上传皮肤
-            </Button>
-            {profile?.skinSource === 'local' && (
-              <Button variant="outline" size="sm" onClick={handleSkinReset}>
-                <FontAwesomeIcon icon={faUndo} className="mr-1 h-3 w-3" /> 重置皮肤
+            {account.loginMethod === 'Microsoft' ? (
+              <>
+                <input ref={fileRef} type="file" accept="image/png" className="hidden" onChange={handleSkinUpload} />
+                <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+                  <FontAwesomeIcon icon={faUpload} className="mr-1 h-3 w-3" /> 上传皮肤
+                </Button>
+                {profile?.skinSource === 'local' && (
+                  <Button variant="outline" size="sm" onClick={handleSkinReset}>
+                    <FontAwesomeIcon icon={faUndo} className="mr-1 h-3 w-3" /> 重置皮肤
+                  </Button>
+                )}
+              </>
+            ) : account.serverUrl ? (
+              <Button variant="outline" size="sm" onClick={() => openUrl(account.serverUrl!).catch(() => window.open(account.serverUrl!, '_blank'))}>
+                <FontAwesomeIcon icon={faGlobe} className="mr-1 h-3 w-3" /> 前往皮肤站
               </Button>
-            )}
+            ) : null}
             <Button variant="destructive" size="sm" onClick={handleDelete}>
               <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> 删除账户
             </Button>

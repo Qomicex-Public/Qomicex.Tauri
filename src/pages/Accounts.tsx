@@ -8,6 +8,7 @@ import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
+import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui/dialog.tsx'
@@ -88,12 +89,22 @@ export default function Accounts() {
     try {
       const list = await accountApi.getAccounts()
       setAccounts(list)
+      cacheSet('api-accounts', list)
       const fetches = list
         .filter((a) => a.loginMethod === 'Yggdrasil' && a.serverUrl && !accountApi.getCachedMeta(a.serverUrl))
         .map((a) => accountApi.getYggdrasilMeta(a.serverUrl!))
       if (fetches.length > 0) { await Promise.all(fetches); setMetaVersion((v) => v + 1) }
     } catch { /* ignore */ }
   }, [])
+
+  const forceRefresh = useCallback(async () => {
+    cacheInvalidate('api-accounts')
+    await refresh()
+  }, [refresh])
+
+  // show cached accounts immediately on mount
+  const cachedAccounts = cacheGet<Account[]>('api-accounts')
+  if (cachedAccounts && accounts.length === 0) setAccounts(cachedAccounts)
 
   async function handleSetDefault(uuid: string) {
     try {
@@ -248,7 +259,15 @@ export default function Accounts() {
 
   return (
     <div className="animate-in slide-up space-y-6 p-8">
-      <PageHeader title="账户管理" />
+      <PageHeader title="账户管理"
+        actions={
+          <Tooltip content="刷新">
+            <button onClick={forceRefresh} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+              <FontAwesomeIcon icon={faSpinner} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            </button>
+          </Tooltip>
+        }
+      />
 
       <div className="flex flex-col gap-1.5">
         {accounts.map((acc) => {

@@ -11,8 +11,18 @@ import ResourceCenter from './pages/ResourceCenter.tsx'
 import ResourceDetailPage from './pages/ResourceDetail.tsx'
 import Connect from './pages/Connect.tsx'
 import Settings from './pages/Settings.tsx'
-import { MessageBoxProvider } from './components/ui/message-box.tsx'
+import RunningInstances from './pages/RunningInstances.tsx'
+import { MessageBoxProvider, useMessageBox } from './components/ui/message-box.tsx'
 import { loadSettings, onSettingsChange } from './api/settings.ts'
+import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
+import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
+
+function RunningNotifyBridge() {
+  const { notify } = useMessageBox()
+  const { setNotifyImpl } = useRunning()
+  useEffect(() => { setNotifyImpl(notify) }, [notify, setNotifyImpl])
+  return null
+}
 
 function App() {
   useEffect(() => {
@@ -28,24 +38,29 @@ function App() {
   }, [])
 
   return (
-    <MessageBoxProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/instances" element={<Instances />} />
-            <Route path="/instances/:id" element={<InstanceDetailPage />} />
-            <Route path="/downloads" element={<DownloadCenter />} />
-            <Route path="/accounts" element={<Accounts />} />
-            <Route path="/accounts/:uuid" element={<AccountDetail />} />
-            <Route path="/resource-center" element={<ResourceCenter />} />
-            <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
-            <Route path="/connect" element={<Connect />} />
+    <RunningProvider>
+      <MessageBoxProvider>
+        <BrowserRouter>
+          <RunningNotifyBridge />
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/instances" element={<Instances />} />
+              <Route path="/instances/:id" element={<InstanceDetailPage />} />
+              <Route path="/downloads" element={<DownloadCenter />} />
+              <Route path="/accounts" element={<Accounts />} />
+              <Route path="/accounts/:uuid" element={<AccountDetail />} />
+              <Route path="/resource-center" element={<ResourceCenter />} />
+              <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
+              <Route path="/connect" element={<Connect />} />
             <Route path="/settings" element={<Settings />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </MessageBoxProvider>
+            <Route path="/running" element={<RunningInstances />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+        <LaunchProgressDialog />
+      </MessageBoxProvider>
+    </RunningProvider>
   )
 }
 

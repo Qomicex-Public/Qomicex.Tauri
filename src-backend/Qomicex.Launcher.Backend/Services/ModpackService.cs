@@ -27,6 +27,9 @@ public class ModpackParseResult
     public List<ModpackFileEntry> Files { get; set; } = [];
     public bool HasOverrides { get; set; }
     public byte[]? OverridesBytes { get; set; }
+    public byte[]? IconBytes { get; set; }
+    public string? Author { get; set; }
+    public string? Version { get; set; }
 }
 
 public class ModpackService
@@ -105,6 +108,16 @@ public class ModpackService
             }
         }
 
+        byte[]? iconBytes = null;
+        var iconEntry = archive.GetEntry("overrides/icon.png");
+        if (iconEntry != null)
+        {
+            using var iconStream = iconEntry.Open();
+            using var iconMs = new MemoryStream();
+            await iconStream.CopyToAsync(iconMs);
+            iconBytes = iconMs.ToArray();
+        }
+
         return new ModpackParseResult
         {
             Name = doc["name"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(filePath),
@@ -119,6 +132,8 @@ public class ModpackService
                 _ => ModpackLoader.Fabric,
             },
             LoaderVersion = loaderVersion,
+            Version = doc["versionId"]?.GetValue<string>(),
+            IconBytes = iconBytes,
             Source = ModpackSource.Mrpack,
             Files = files,
             HasOverrides = archive.Entries.Any(e => e.FullName.StartsWith("overrides/") && e.Length > 0),
@@ -218,6 +233,16 @@ public class ModpackService
             }
         }
 
+        byte[]? iconBytes = null;
+        var iconEntry = archive.GetEntry("overrides/icon.png");
+        if (iconEntry != null)
+        {
+            using var iconStream = iconEntry.Open();
+            using var iconMs = new MemoryStream();
+            await iconStream.CopyToAsync(iconMs);
+            iconBytes = iconMs.ToArray();
+        }
+
         return new ModpackParseResult
         {
             Name = doc["name"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(filePath),
@@ -232,6 +257,8 @@ public class ModpackService
                 _ => ModpackLoader.Forge,
             },
             LoaderVersion = loaderVer,
+            Version = doc["version"]?.GetValue<string>(),
+            IconBytes = iconBytes,
             Source = ModpackSource.CurseForge,
             Files = files,
             HasOverrides = archive.Entries.Any(e => e.FullName.StartsWith("overrides/") && e.Length > 0),
@@ -248,42 +275,72 @@ public class ModpackService
         var json = await response.Content.ReadAsStringAsync();
         var doc = JsonNode.Parse(json)!;
 
-        var gameVersions = doc["game_versions"]?.AsArray();
-        var loaders = doc["loaders"]?.AsArray();
+        // Find the primary .mrpack file from the version
+        var mrpackFile = doc["files"]?.AsArray()?
+            .OfType<JsonObject>()
+            .FirstOrDefault(f => f["primary"]?.GetValue<bool>() == true);
+        mrpackFile ??= doc["files"]?.AsArray()?
+            .OfType<JsonObject>()
+            .FirstOrDefault(f => f["filename"]?.GetValue<string>()?.EndsWith(".mrpack") == true);
+        if (mrpackFile == null)
+            throw new Exception("Modrinth 版本中没有找到 .mrpack 文件");
 
-        var files = new List<ModpackFileEntry>();
-        if (doc["files"] is JsonArray fileArray)
+        var mrpackUrl = mrpackFile["url"]?.GetValue<string>();
+        if (string.IsNullOrEmpty(mrpackUrl))
+            throw new Exception("Modrinth 版本文件缺少下载地址");
+
+        // Download .mrpack to temp and parse it
+        var tempPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".mrpack");
+        try
         {
-            foreach (var f in fileArray.OfType<JsonObject>())
+            using (var httpStream = await client.GetStreamAsync(mrpackUrl))
+            using (var fileStream = new FileStream(tempPath, FileMode.CreateNew))
             {
-                var downloads = f["downloads"]?.AsArray();
-                files.Add(new ModpackFileEntry
-                {
-                    Path = f["filename"]?.GetValue<string>() ?? "",
-                    DownloadUrl = downloads?.Count > 0 ? downloads[0]?.GetValue<string>() : null,
-                    Size = f["size"]?.GetValue<long>(),
-                });
+                await httpStream.CopyToAsync(fileStream);
             }
-        }
 
-        return new ModpackParseResult
-        {
-            Name = projectId,
-            Summary = null,
-            GameVersion = gameVersions?.LastOrDefault()?.GetValue<string>() ?? "",
-            Loader = loaders?.FirstOrDefault()?.GetValue<string>()?.ToLowerInvariant() switch
+            var result = await ParseMrpackAsync(tempPath);
+            result.Name = doc["name"]?.GetValue<string>() ?? projectId;
+            result.Version = doc["version_number"]?.GetValue<string>();
+            result.OverridesBytes = ExtractOverridesZip(tempPath);
+
+            // Fetch project info for author and fallback icon
+            try
             {
-                "fabric" => ModpackLoader.Fabric,
-                "forge" => ModpackLoader.Forge,
-                "neoforge" => ModpackLoader.NeoForge,
-                "quilt" => ModpackLoader.Quilt,
-                _ => ModpackLoader.Fabric,
-            },
-            LoaderVersion = null,
-            Source = ModpackSource.Local,
-            Files = files,
-            HasOverrides = false,
-        };
+                var projectUrl = ModApiMirror.MirrorModrinth($"https://api.modrinth.com/v2/project/{projectId}");
+                var projectResponse = await client.GetAsync(projectUrl);
+                if (projectResponse.IsSuccessStatusCode)
+                {
+                    var projectJson = await projectResponse.Content.ReadAsStringAsync();
+                    var projectDoc = JsonNode.Parse(projectJson)!;
+                    result.Author = projectDoc["author"]?.GetValue<string>();
+                    // 如果 .mrpack 中没有图标，使用项目图标
+                    if (result.IconBytes == null)
+                    {
+                        var iconUrl = projectDoc["icon_url"]?.GetValue<string>();
+                        if (!string.IsNullOrEmpty(iconUrl))
+                        {
+                            try
+                            {
+                                using var iconStream = await client.GetStreamAsync(iconUrl);
+                                using var iconMs = new MemoryStream();
+                                await iconStream.CopyToAsync(iconMs);
+                                result.IconBytes = iconMs.ToArray();
+                            }
+                            catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return result;
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+                File.Delete(tempPath);
+        }
     }
 
     private async Task<ModpackParseResult> ResolveCurseForgeAsync(string projectId, string fileId)
@@ -302,6 +359,8 @@ public class ModpackService
         var modJson = await modResponse.Content.ReadAsStringAsync();
         var modData = JsonNode.Parse(modJson)!["data"];
         var modName = modData?["name"]?.GetValue<string>() ?? projectId;
+        var modAuthor = modData?["authors"]?.AsArray()?.FirstOrDefault()?["name"]?.GetValue<string>();
+        var modLogoUrl = modData?["logo"]?["url"]?.GetValue<string>();
 
         // Get file info and download URL
         var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/mods/{projectId}/files/{fileId}");
@@ -338,6 +397,19 @@ public class ModpackService
 
             var result = await ParseCurseForgeZipAsync(tempPath);
             result.Name = modName;
+            result.Author = modAuthor;
+            // 如果 zip 中没有图标，使用 CurseForge API 的项目 logo
+            if (result.IconBytes == null && !string.IsNullOrEmpty(modLogoUrl))
+            {
+                try
+                {
+                    using var iconStream = await client.GetStreamAsync(modLogoUrl);
+                    using var iconMs = new MemoryStream();
+                    await iconStream.CopyToAsync(iconMs);
+                    result.IconBytes = iconMs.ToArray();
+                }
+                catch { }
+            }
             result.OverridesBytes = ExtractOverridesZip(tempPath);
             return result;
         }

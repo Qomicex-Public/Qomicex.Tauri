@@ -14,10 +14,10 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, repairInstance, launchInstance, getLaunchProgress, cancelLaunch, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
+import { createInstance, startInstall, getInstances, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx'
-import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance, LaunchProgress } from '../types/index.ts'
+import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance } from '../types/index.ts'
 import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, autoSelectDownloadSource, openFolder } from '../api/settings.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
@@ -26,6 +26,8 @@ import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import ImportDialog from '../components/ImportDialog.tsx'
+import { cacheInvalidate, cacheGet, cacheSet } from '../lib/simple-cache.ts'
+import { useRunning } from '../contexts/RunningContext.tsx'
 
 interface ManagedDir {
   path: string
@@ -102,7 +104,8 @@ type PageStep = 'list' | 'select-version' | 'configure'
 
 export default function Instances() {
   const navigate = useNavigate()
-  const { alert: msgAlert, prompt: msgPrompt, notify } = useMessageBox()
+  const { alert: msgAlert, prompt: msgPrompt } = useMessageBox()
+  const { launchInstance: ctxLaunchInstance } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
 
   const [scannedLocal, setScannedLocal] = useState<ScannedVersion[]>([])
@@ -115,11 +118,15 @@ export default function Instances() {
   const [settingsTab, setSettingsTab] = useState<'basic' | 'repair'>('basic')
   const [repairAdded, setRepairAdded] = useState(false)
   const [defaultInstanceId, setDefaultInstanceId] = useState<string | null>(null)
-  const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  const launchPollRef = useRef<number | null>(null)
-  const launchingInstanceIdRef = useRef<string | null>(null)
+  const [instanceRefreshKey, setInstanceRefreshKey] = useState(0)
+
+  const refreshInstances = useCallback(() => {
+    cacheInvalidate('api-instances')
+    cacheInvalidate('api-instance-')
+    setInstanceRefreshKey(k => k + 1)
+  }, [])
 
   const [managedDirs, setManagedDirs] = useState<ManagedDir[]>(() => loadDirs())
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
@@ -164,6 +171,11 @@ export default function Instances() {
           loaderVersion: v.loaders.find((l) => l.version)?.version,
           gameDir: dir,
           maxMemory: 4096,
+          iconData: v.modpack?.iconData,
+          modpackName: v.modpack?.modpackName,
+          modpackVersion: v.modpack?.modpackVersion,
+          modpackAuthor: v.modpack?.modpackAuthor,
+          modpackSummary: v.modpack?.modpackSummary,
         }).catch(() => null)))
         const valid = created.filter((c): c is GameInstance => c !== null)
         if (valid.length > 0) setBackedInstances((prev) => [...prev, ...valid])
@@ -171,28 +183,22 @@ export default function Instances() {
     } catch { setScannedLocal([]) } finally { setScanning(false) }
   }, [])
 
-  const loadInstances = useCallback(async () => {
-    try {
-      const instances = await getInstances()
-      setBackedInstances(instances)
-    } catch { /* ignore */ }
-  }, [])
-
   useEffect(() => {
     async function init() {
       setLoading(true)
       try {
+        const cached = await cacheGet<Awaited<ReturnType<typeof getInstances>>>('api-instances')
+        if (cached) setBackedInstances(cached)
         const [remote, instances, def, settings] = await Promise.all([getRemoteVersions(), getInstances(), getDefaultInstance(), apiLoadSettings()])
         setRemoteVersions(remote)
         setBackedInstances(instances)
+        cacheSet('api-instances', instances)
         setDefaultInstanceId(def?.id ?? null)
         if (settings.gameDir) setCurrentDir(settings.gameDir)
       } catch (e) { console.error(e) } finally { setLoading(false) }
     }
     init()
-  }, [])
-
-  useEffect(() => () => { if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null } }, [])
+  }, [instanceRefreshKey])
 
   useEffect(() => { if (currentDir) doScan(currentDir) }, [currentDir, doScan])
 
@@ -383,6 +389,11 @@ export default function Instances() {
           loaderVersion: v.loaders.find(l => l.version)?.version,
           gameDir: currentDir!,
           maxMemory: 4096,
+          iconData: v.modpack?.iconData,
+          modpackName: v.modpack?.modpackName,
+          modpackVersion: v.modpack?.modpackVersion,
+          modpackAuthor: v.modpack?.modpackAuthor,
+          modpackSummary: v.modpack?.modpackSummary,
         })
         setBackedInstances((prev) => [...prev, inst!])
       } catch (e) {
@@ -397,10 +408,9 @@ export default function Instances() {
     }
 
     try {
-      const result = await launchInstance(inst!.id)
+      const result = await ctxLaunchInstance(inst!.id, inst!.name)
       if (!result.success) {
         await msgAlert(`启动失败: ${result.error}\n${result.detail || ''}`)
-        return
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -410,43 +420,7 @@ export default function Instances() {
         return
       }
       await msgAlert(`启动失败: ${e instanceof Error ? e.message : String(e)}`)
-      return
     }
-
-    launchingInstanceIdRef.current = inst!.id
-    setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
-    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
-    const poll = async () => {
-      try {
-        const p = await getLaunchProgress(inst!.id)
-        if (p.stage === 'completed') {
-          setLaunchProgress(null)
-          launchingInstanceIdRef.current = null
-          launchPollRef.current = null
-          loadInstances()
-        } else if (p.stage === 'crashed' || p.stage === 'failed') {
-          setLaunchProgress(p)
-          launchingInstanceIdRef.current = null
-          launchPollRef.current = null
-          loadInstances()
-        } else {
-          setLaunchProgress(p)
-          launchPollRef.current = window.setTimeout(poll, p.stage === 'running' ? 2000 : 500)
-        }
-      } catch { }
-    }
-    launchPollRef.current = window.setTimeout(poll, 500)
-  }
-
-  async function handleCancelLaunch() {
-    const id = launchingInstanceIdRef.current
-    if (id) {
-      try { await cancelLaunch(id) } catch { }
-    }
-    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
-    launchingInstanceIdRef.current = null
-    setLaunchProgress(null)
-    notify('已取消启动', 'info')
   }
 
   async function openVersionSettings(v: ScannedVersion) {
@@ -464,6 +438,11 @@ export default function Instances() {
         loaderVersion: v.loaders.find((l) => l.version)?.version,
         maxMemory: 4096,
         gameDir: currentDir,
+        iconData: v.modpack?.iconData,
+        modpackName: v.modpack?.modpackName,
+        modpackVersion: v.modpack?.modpackVersion,
+        modpackAuthor: v.modpack?.modpackAuthor,
+        modpackSummary: v.modpack?.modpackSummary,
       })
       setBackedInstances((prev) => [...prev, created])
       navigate(`/instances/${created.id}`)
@@ -483,6 +462,11 @@ export default function Instances() {
           loaderVersion: v.loaders.find((l) => l.version)?.version,
           gameDir: currentDir!,
           maxMemory: 4096,
+          iconData: v.modpack?.iconData,
+          modpackName: v.modpack?.modpackName,
+          modpackVersion: v.modpack?.modpackVersion,
+          modpackAuthor: v.modpack?.modpackAuthor,
+          modpackSummary: v.modpack?.modpackSummary,
         })
         setBackedInstances((prev) => [...prev, inst!])
       } catch { return }
@@ -810,7 +794,15 @@ export default function Instances() {
 
   return (
       <div className="animate-in slide-up space-y-6 p-8">
-        <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`} />
+        <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`}
+          actions={
+            <Tooltip content="刷新">
+              <button onClick={refreshInstances} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+                <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              </button>
+            </Tooltip>
+          }
+        />
 
       <div className="flex items-center gap-3" ref={popoverRef}>
         <div className="relative">
@@ -957,78 +949,6 @@ export default function Instances() {
         </DialogBody>
       </Dialog>
 
-      <Dialog open={!!launchProgress} onClose={handleCancelLaunch} className="w-[480px]">
-        <DialogHeader onClose={handleCancelLaunch}>
-          <DialogTitle>
-            {launchProgress && ['crashed', 'failed'].includes(launchProgress.stage)
-              ? '启动失败'
-              : '启动游戏'}
-          </DialogTitle>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          {launchProgress && (() => {
-            const stageLabels: Record<string, string> = {
-              starting: '准备中',
-              checking: '检查文件完整性',
-              repairing: '补全文件',
-              'logging-in': '验证账户',
-              authlib: '配置外置登录',
-              natives: '解压原生库',
-              building: '构建启动参数',
-              launching: '启动游戏',
-              running: '游戏运行中',
-              crashed: '游戏异常退出',
-              failed: '启动失败',
-              completed: '游戏已退出',
-            }
-            const isFinal = ['completed', 'crashed', 'failed'].includes(launchProgress.stage)
-            const isError = ['crashed', 'failed'].includes(launchProgress.stage)
-            return (
-              <>
-                <div className="flex items-center justify-between text-sm">
-                  <span className={cn('font-medium', isError && 'text-destructive')}>
-                    {stageLabels[launchProgress.stage] || launchProgress.stage}
-                  </span>
-                  <span className="text-muted-foreground">{Math.round(launchProgress.progress)}%</span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={cn('h-full rounded-full transition-all', isError ? 'bg-destructive' : 'bg-primary')}
-                    style={{ width: `${launchProgress.progress}%` }}
-                  />
-                </div>
-                <p className="text-sm text-muted-foreground">{launchProgress.message}</p>
-                {launchProgress.error && (
-                  <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{launchProgress.error}</p>
-                )}
-                {launchProgress.crashReport && (
-                  <details className="rounded-lg border border-border bg-muted/30">
-                    <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">查看崩溃报告</summary>
-                    <pre className="max-h-48 overflow-auto px-3 pb-3 text-[11px] text-muted-foreground">{launchProgress.crashReport}</pre>
-                  </details>
-                )}
-                {launchProgress.stage === 'running' && launchProgress.processId && (
-                  <p className="text-xs text-muted-foreground">进程 ID: {launchProgress.processId}</p>
-                )}
-                {!isFinal && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-                    正在启动...
-                  </div>
-                )}
-                {isFinal && (
-                  <div className="flex justify-end">
-                    <Button variant="secondary" size="sm" onClick={() => setLaunchProgress(null)}>
-                      关闭
-                    </Button>
-                  </div>
-                )}
-              </>
-            )
-          })()}
-        </DialogBody>
-      </Dialog>
-
       <div className="flex items-center gap-3">
         <div className="relative max-w-sm flex-1">
           <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1092,7 +1012,7 @@ export default function Instances() {
           <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
               <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
-                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} loader={v.loaders?.[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
+                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={v.loaders?.[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 {v.loaders && v.loaders.filter((l) => l.type).length > 0 && (
                   <div className="mt-1 flex flex-wrap justify-center gap-1">
@@ -1136,7 +1056,7 @@ export default function Instances() {
           <div className="space-y-3">
             {filtered.map((v) => (
               <div key={v.name} className="group flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
-                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} loader={v.loaders?.[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
+                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={v.loaders?.[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="truncate text-sm font-medium">{v.name}</h3>

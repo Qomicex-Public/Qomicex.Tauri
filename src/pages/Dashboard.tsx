@@ -1,14 +1,15 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlay, faStop, faChevronDown, faUser, faCheck, faMemory, faCube } from '@fortawesome/free-solid-svg-icons'
+import { faPlay, faChevronDown, faUser, faCheck, faMemory, faCube } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { ApiError } from '../api/client.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
-import { getDefaultInstance, launchInstance, getLaunchProgress, cancelLaunch } from '../api/instance.ts'
+import { getDefaultInstance } from '../api/instance.ts'
 import { getAccounts, getDefaultAccount, setDefaultAccount } from '../api/account.ts'
-import type { GameInstance, Account, JavaRuntime, LaunchProgress } from '../types/index.ts'
+import type { GameInstance, Account, JavaRuntime } from '../types/index.ts'
+import { useRunning } from '../contexts/RunningContext.tsx'
 import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
@@ -22,12 +23,11 @@ import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 export default function Dashboard() {
   const navigate = useNavigate()
   useMessageBox()
+  const { launchInstance } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
   const [defaultInstance, setDefaultInstance] = useState<GameInstance | null>(null)
-  const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [launchError, setLaunchError] = useState<{ title: string; message: string; detail?: string | null; args?: string | null } | null>(null)
   const [defaultAccount, setDefaultAccountState] = useState<Account | null>(null)
-  const launchPollRef = useRef<number | null>(null)
   const [allAccounts, setAllAccounts] = useState<Account[]>([])
   const [accountsOpen, setAccountsOpen] = useState(false)
   const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
@@ -62,8 +62,6 @@ export default function Dashboard() {
       scanRuntimes('quick').catch(() => {})
     }
   }, [])
-
-  useEffect(() => () => { if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null } }, [])
 
   useEffect(() => {
     function load(s = getSettings()) {
@@ -107,7 +105,7 @@ export default function Dashboard() {
       if (!ok) return
     }
     try {
-      const result = await launchInstance(defaultInstance.id)
+      const result = await launchInstance(defaultInstance.id, defaultInstance.name)
       if (!result.success) {
         setLaunchError({
           title: '启动失败',
@@ -115,7 +113,6 @@ export default function Dashboard() {
           detail: result.detail,
           args: result.arguments,
         })
-        return
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -125,38 +122,7 @@ export default function Dashboard() {
         return
       }
       setLaunchError({ title: '启动失败', message: e instanceof Error ? e.message : String(e) })
-      return
     }
-
-    setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
-    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
-    const poll = async () => {
-      try {
-        const p = await getLaunchProgress(defaultInstance!.id)
-        if (p.stage === 'completed') {
-          setLaunchProgress(null)
-          launchPollRef.current = null
-          loadDefaultInstance()
-        } else if (p.stage === 'crashed' || p.stage === 'failed') {
-          setLaunchProgress(p)
-          setLaunchError({ title: '启动失败', message: p.error || '游戏异常退出' })
-          launchPollRef.current = null
-          loadDefaultInstance()
-        } else {
-          setLaunchProgress(p)
-          launchPollRef.current = window.setTimeout(poll, p.stage === 'running' ? 2000 : 500)
-        }
-      } catch { }
-    }
-    launchPollRef.current = window.setTimeout(poll, 500)
-  }
-
-  const handleCancelLaunch = async () => {
-    if (defaultInstance) {
-      try { await cancelLaunch(defaultInstance.id) } catch { }
-    }
-    setLaunchProgress(null)
-    if (launchPollRef.current) { clearTimeout(launchPollRef.current); launchPollRef.current = null }
   }
 
   const validJava = javaRuntimes.filter((j) => j.state === 'Valid')
@@ -249,7 +215,7 @@ export default function Dashboard() {
       {defaultInstance ? (
         <div className="mt-auto flex items-center justify-between rounded-2xl border border-border/30 bg-card/70 px-6 py-4 backdrop-blur-md">
           <div className="flex items-center gap-4">
-            <InstanceIcon icon={defaultInstance.icon} loader={defaultInstance.loader} className="h-12 w-12 shrink-0 rounded-xl" imgClassName="rounded-xl" />
+            <InstanceIcon icon={defaultInstance.icon} iconData={defaultInstance.iconData} loader={defaultInstance.loader} className="h-12 w-12 shrink-0 rounded-xl" imgClassName="rounded-xl" />
             <div>
               <div className="flex items-center gap-2">
                 <button onClick={() => navigate(`/instances/${defaultInstance.id}`)} className="text-base font-semibold hover:underline">
@@ -268,35 +234,16 @@ export default function Dashboard() {
           </div>
           <div className="flex items-center gap-4">
             <div className="hidden text-right md:block">
-              {launchProgress ? (
-                <>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/60">进度</p>
-                  <p className="text-sm text-muted-foreground animate-pulse">{launchProgress.message}</p>
-                </>
-              ) : (
-                <>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">状态</p>
-                  <p className="text-sm text-muted-foreground">准备就绪</p>
-                </>
-              )}
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">状态</p>
+              <p className="text-sm text-muted-foreground">准备就绪</p>
             </div>
-            {launchProgress ? (
-              <Button
-                onClick={handleCancelLaunch}
-                className="flex h-14 items-center gap-3 rounded-xl px-10 text-lg font-bold tracking-widest transition-all hover:brightness-110 active:scale-95 bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
-                <FontAwesomeIcon icon={faStop} className="h-5 w-5" />
-                取消
-              </Button>
-            ) : (
-              <Button
-                onClick={handleLaunch}
-                className="flex h-14 items-center gap-3 rounded-xl px-10 text-lg font-bold tracking-widest transition-all hover:brightness-110 active:scale-95"
-              >
-                <FontAwesomeIcon icon={faPlay} className="h-5 w-5" />
-                启动
-              </Button>
-            )}
+            <Button
+              onClick={handleLaunch}
+              className="flex h-14 items-center gap-3 rounded-xl px-10 text-lg font-bold tracking-widest transition-all hover:brightness-110 active:scale-95"
+            >
+              <FontAwesomeIcon icon={faPlay} className="h-5 w-5" />
+              启动
+            </Button>
           </div>
         </div>
       ) : (
