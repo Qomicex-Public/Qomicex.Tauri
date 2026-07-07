@@ -1,0 +1,36 @@
+# Review package: da236ad..1a26514
+
+## Commits
+1a26514 build: reference Qomicex.Connector submodule from backend
+
+## Files changed
+ src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj | 1 +
+ 1 file changed, 1 insertion(+)
+
+## Diff
+diff --git a/src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj b/src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj
+index d96f0a7..4cd656f 100644
+--- a/src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj
++++ b/src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj
+@@ -26,20 +26,21 @@
+     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+ 
+     <PackageReference Include="Microsoft.OpenApi" Version="2.1.0" />
+     <PackageReference Include="SharpCompress" Version="0.39.0" NoWarn="NU1902" />
+     <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="2.88.7" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+     <PackageReference Include="System.Management" Version="10.0.0" />
+   </ItemGroup>
+ 
+   <ItemGroup>
+     <ProjectReference Include="..\..\Qomicex.Avalonia\Qomicex.Core\Qomicex.Core.csproj" />
++    <ProjectReference Include="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
+   </ItemGroup>
+ 
+   <Target Name="SetGitHash" BeforeTargets="CoreCompile" Condition="'$(GitHash)' != ''">
+     <ItemGroup>
+       <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+         <_Parameter1>GitHash</_Parameter1>
+         <_Parameter2>$(GitHash)</_Parameter2>
+       </AssemblyAttribute>
+     </ItemGroup>
+   </Target>

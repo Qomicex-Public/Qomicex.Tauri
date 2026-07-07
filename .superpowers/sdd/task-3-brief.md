@@ -1,77 +1,83 @@
-### Task 3: JavaDownloadService 注入 IHttpClientFactory + GetAllActiveStates
+# Task 3: QmlProtocols 自定义协议注册表
 
 **Files:**
-- Modify: `src-backend/Qomicex.Launcher.Backend/Services/JavaDownloadService.cs:32-35,156-158`
+- Create: `src-backend/Qomicex.Launcher.Backend/Services/Connector/QmlProtocols.cs`
 
 **Interfaces:**
-- Consumes: `IHttpClientFactory` (DI)
-- Produces: `JavaDownloadService.GetAllActiveStates()` → `List<JavaDownloadProgressResponse>`
+- Consumes: `Qomicex.Connector.Protocols.{IProtocol, DelegateProtocol}`、`Qomicex.Connector.Guest.ScaffoldingGuest`（`SendAsync<TResp>`、`SendAsync<TReq,TResp>`）。参考 `src-backend/Qomicex.Connector.Part.Scaffolding/README.md` 第六节。
+- Produces:
+  - DTO：`GameInfoDto { string GameVersion; string? Loader; string? LoaderVersion; }`
+  - DTO：`PlayerIconUpload { string MachineId; string IconBase64; }`
+  - DTO：`PlayerIconMap { Dictionary<string,string> Icons; }`
+  - `static string[] GuestKeys` = `["qml:game_info", "qml:player_icons"]`
+  - `static IProtocol[] BuildHostProtocols(Func<GameInfoDto> getGameInfo, Func<PlayerIconUpload, PlayerIconMap> exchangeIcons)`
+  - `static Task<GameInfoDto?> FetchGameInfoAsync(ScaffoldingGuest guest, CancellationToken ct)`
+  - `static Task<PlayerIconMap?> ExchangeIconsAsync(ScaffoldingGuest guest, PlayerIconUpload upload, CancellationToken ct)`
 
-- [ ] **Step 1: Add IHttpClientFactory field and constructor parameter**
+- [ ] **Step 1: 创建 QmlProtocols.cs**
 
-In `JavaDownloadService.cs`, add field after line 14:
 ```csharp
-    private readonly HttpClient _httpClient;
-```
+using Qomicex.Connector.Guest;
+using Qomicex.Connector.Protocols;
 
-Change constructor (line 32-35) to:
-```csharp
-    public JavaDownloadService(JavaRuntimeStore javaRuntimeStore, IHttpClientFactory httpClientFactory)
+namespace Qomicex.Launcher.Backend.Services.Connector;
+
+public sealed class GameInfoDto
+{
+    public string GameVersion { get; set; } = "";
+    public string? Loader { get; set; }
+    public string? LoaderVersion { get; set; }
+}
+
+public sealed class PlayerIconUpload
+{
+    public string MachineId { get; set; } = "";
+    public string IconBase64 { get; set; } = "";
+}
+
+public sealed class PlayerIconMap
+{
+    public Dictionary<string, string> Icons { get; set; } = new();
+}
+
+/// <summary>
+/// qml 命名空间自定义协议集中注册表。新增协议：在此加键名常量、DTO、
+/// BuildHostProtocols 里的一个 DelegateProtocol、GuestKeys 里的键、以及一个 Guest 调用封装。
+/// </summary>
+public static class QmlProtocols
+{
+    public const string GameInfoKey = "qml:game_info";
+    public const string PlayerIconsKey = "qml:player_icons";
+
+    public static readonly string[] GuestKeys = [GameInfoKey, PlayerIconsKey];
+
+    public static IProtocol[] BuildHostProtocols(
+        Func<GameInfoDto> getGameInfo,
+        Func<PlayerIconUpload, PlayerIconMap> exchangeIcons)
     {
-        _javaRuntimeStore = javaRuntimeStore;
-        _httpClient = httpClientFactory.CreateClient("default");
+        return
+        [
+            new DelegateProtocol<GameInfoDto>(GameInfoKey, getGameInfo),
+            new DelegateProtocol<PlayerIconUpload, PlayerIconMap>(PlayerIconsKey, exchangeIcons),
+        ];
     }
+
+    public static Task<GameInfoDto?> FetchGameInfoAsync(ScaffoldingGuest guest, CancellationToken ct = default)
+        => guest.SendAsync<GameInfoDto>(GameInfoKey, ct);
+
+    public static Task<PlayerIconMap?> ExchangeIconsAsync(ScaffoldingGuest guest, PlayerIconUpload upload, CancellationToken ct = default)
+        => guest.SendAsync<PlayerIconUpload, PlayerIconMap>(PlayerIconsKey, upload, ct);
+}
 ```
 
-- [ ] **Step 2: Replace using new HttpClient() with _httpClient**
-
-In `ResolvePackageAsync` (line 156-158), replace:
-```csharp
-        using var http = new HttpClient();
-```
-with just using `_httpClient`. All `http.GetStringAsync(...)` calls remain the same but use the instance field.
-
-Since `ResolvePackageAsync` is `static`, change it to instance method by removing `static` keyword. All callers call it on `this` already (it's called from `RunTaskAsync` which is an instance method).
-
-Remove `static` from method signature on line 156:
-```csharp
-    private async Task<(string url, string fileName)> ResolvePackageAsync(JavaDownloadStartRequest request)
-```
-
-- [ ] **Step 3: Add GetAllActiveStates method**
-
-Add to `JavaDownloadService.cs` (before the `GetBaseDir` method, after line 147):
-
-```csharp
-    public List<JavaDownloadProgressResponse> GetAllActiveStates()
-    {
-        return _tasks.Values
-            .Where(t => t.Status is "queued" or "resolving" or "downloading" or "paused" or "extracting" or "registering")
-            .Select(t => new JavaDownloadProgressResponse
-            {
-                TaskId = t.TaskId,
-                Status = t.Status,
-                Progress = t.Progress,
-                Speed = t.Speed,
-                FileName = t.FileName,
-                TargetDir = t.TargetDir,
-                Error = t.Error,
-            })
-            .ToList();
-    }
-```
-
-- [ ] **Step 4: Verify build**
+- [ ] **Step 2: 验证 build**
 
 Run: `dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
-Expected: Build succeeded.
+Expected: Build succeeded。若报 `DelegateProtocol<T>` 构造签名不符，核对 `src-backend/Qomicex.Connector.Part.Scaffolding/Qomicex.Connector/Protocols/IProtocol.cs` 中的重载并调整。
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add src-backend/Qomicex.Launcher.Backend/Services/JavaDownloadService.cs
-git commit -m "feat(java-download): inject IHttpClientFactory, add GetAllActiveStates"
+git add src-backend/Qomicex.Launcher.Backend/Services/Connector/QmlProtocols.cs
+git commit -m "feat: add QmlProtocols registry for custom connector protocols"
 ```
-
----
-

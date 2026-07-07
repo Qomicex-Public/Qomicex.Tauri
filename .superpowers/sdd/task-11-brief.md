@@ -1,3 +1,15 @@
+## Task 11: Connect 页面 — 完整 UI
+
+**Files:**
+- Modify: `src/pages/Connect.tsx`
+
+**Interfaces:**
+- Consumes: `src/api/connector.ts`、`ConnectorStatus`、`getInstances`（`../api/instance.ts`）、UI 组件、`useMessageBox`、`ApiError`。
+- Produces: 完整联机页面。
+
+- [ ] **Step 1: 实现 Connect.tsx**
+
+```tsx
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay } from '@fortawesome/free-solid-svg-icons'
@@ -40,20 +52,10 @@ function PlayerRow({ p }: { p: ConnectorPlayer }) {
   )
 }
 
-function PlayerList({ players }: { players: ConnectorPlayer[] }) {
-  if (players.length === 0) return <p className="text-sm text-muted-foreground">暂无玩家</p>
-  return (
-    <div className="space-y-2">
-      <Label>玩家列表 ({players.length})</Label>
-      {players.map((p, i) => <PlayerRow key={p.name + i} p={p} />)}
-    </div>
-  )
-}
-
 export default function Connect() {
   const { error: msgError } = useMessageBox()
   const [status, setStatus] = useState<ConnectorStatus>({
-    mode: 'idle', roomCode: null, mcHost: null, mcPort: null, gameInfo: null, players: [], error: null,
+    mode: 'idle', roomCode: null, mcHost: null, mcPort: null, gameInfo: null, players: [],
   })
   const [port, setPort] = useState('')
   const [code, setCode] = useState('')
@@ -115,7 +117,7 @@ export default function Connect() {
 
   const isHost = status.mode === 'host'
   const isGuest = status.mode === 'guest'
-  const isStarting = status.mode === 'starting'
+  const idle = status.mode === 'idle'
 
   return (
     <div className="space-y-6">
@@ -126,7 +128,7 @@ export default function Connect() {
         <Card className="space-y-4 border p-5">
           <h2 className="text-lg font-semibold">创建房间</h2>
 
-          {!isGuest && !isHost && !isStarting && (
+          {!isGuest && !isHost && (
             <>
               <div className="flex gap-2">
                 <Button variant={hostMode === 'port' ? 'default' : 'outline'} size="sm" onClick={() => setHostMode('port')}>手填端口</Button>
@@ -155,22 +157,7 @@ export default function Connect() {
                   <p className="text-xs text-muted-foreground">启动后请在游戏内点击"对局域网开放"，将自动探测端口。</p>
                 </div>
               )}
-              {status.error && (
-                <p className="text-sm text-destructive">{status.error}</p>
-              )}
             </>
-          )}
-
-          {isStarting && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <FontAwesomeIcon icon={faSpinner} spin />
-                <span>正在启动游戏，请在游戏内点击"对局域网开放"…</span>
-              </div>
-              <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-                <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />取消
-              </Button>
-            </div>
           )}
 
           {isHost && (
@@ -194,7 +181,7 @@ export default function Connect() {
         <Card className="space-y-4 border p-5">
           <h2 className="text-lg font-semibold">加入房间</h2>
 
-          {!isHost && !isGuest && !isStarting && (
+          {!isHost && !isGuest && (
             <div className="space-y-2">
               <Label>房间码</Label>
               <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="U/XXXX-XXXX-XXXX-XXXX" />
@@ -226,8 +213,44 @@ export default function Connect() {
               </Button>
             </div>
           )}
+
+          {idle === false && !isHost && !isGuest && null}
         </Card>
       </div>
     </div>
   )
 }
+
+function PlayerList({ players }: { players: ConnectorPlayer[] }) {
+  if (players.length === 0) return <p className="text-sm text-muted-foreground">暂无玩家</p>
+  return (
+    <div className="space-y-2">
+      <Label>玩家列表 ({players.length})</Label>
+      {players.map((p, i) => <PlayerRow key={p.name + i} p={p} />)}
+    </div>
+  )
+}
+```
+
+- [ ] **Step 2: 核对 UI 组件 props**
+
+用 `read` 打开 `src/components/ui/card.tsx`、`button.tsx`、`select.tsx`，确认：
+- `Card` 是否接受 `className`（是）。
+- `Button` 的 `variant` 是否有 `default/outline/ghost/destructive`、`size` 是否有 `sm`。
+- `Select` 的 props 是 `value` + `onChange:(v:string)=>void` 还是别的；`SelectOption` 的 props。
+若与上面代码不符，按实际签名调整（例如 `onChange` 可能传事件对象）。
+
+- [ ] **Step 3: 验证 build**
+
+Run: `npm run build`
+Expected: 编译通过（tsc 严格模式无 unused/类型错误）。修正 `PlayerRow`/`PlayerList` 定义顺序等 lint 问题。
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/pages/Connect.tsx
+git commit -m "feat: implement Connect page UI (host/join panels, player list)"
+```
+
+---
+

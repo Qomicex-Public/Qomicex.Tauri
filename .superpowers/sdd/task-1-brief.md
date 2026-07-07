@@ -1,74 +1,31 @@
-### Task 1: CoreConfig + HTTP 连接池
+# Task 1: 后端引用 submodule 项目
 
 **Files:**
-- Create: `Qomicex.Avalonia/Qomicex.Downloader/CoreConfig.cs`
-- Modify: `Qomicex.Avalonia/Qomicex.Downloader/Core.cs:13`
+- Modify: `src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
 
 **Interfaces:**
-- Produces: `CoreConfig.MaxConnectionsPerServer` (static int, default 64)
+- Consumes: submodule 项目 `src-backend/Qomicex.Connector.Part.Scaffolding/Qomicex.Connector/Qomicex.Connector.csproj`。
+- Produces: 后端可 `using Qomicex.Connector;` 及其子命名空间。
 
-- [ ] **Step 1: Create CoreConfig.cs**
+- [ ] **Step 1: 添加 ProjectReference**
 
-```csharp
-namespace Qomicex.Downloader;
+在 `Qomicex.Launcher.Backend.csproj` 里已有的 `<ItemGroup>`（含 `Qomicex.Core` 的那个）中追加：
 
-public static class CoreConfig
-{
-    public static int MaxConnectionsPerServer { get; set; } = 64;
-}
+```xml
+  <ItemGroup>
+    <ProjectReference Include="..\..\Qomicex.Avalonia\Qomicex.Core\Qomicex.Core.csproj" />
+    <ProjectReference Include="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
+  </ItemGroup>
 ```
 
-- [ ] **Step 2: Build Downloader project to verify new file compiles**
-
-Run: `dotnet build Qomicex.Avalonia/Qomicex.Downloader/Qomicex.Downloader.csproj`
-Expected: Build succeeded.
-
-- [ ] **Step 3: Replace static HttpClient in Core.cs with Lazy<HttpClient> backed by SocketsHttpHandler**
-
-In `Qomicex.Avalonia/Qomicex.Downloader/Core.cs`, replace line 13:
-```csharp
-private static readonly HttpClient _httpClient = new HttpClient();
-```
-with:
-```csharp
-private static readonly Lazy<HttpClient> _lazyHttpClient = new(() =>
-{
-    var handler = new SocketsHttpHandler
-    {
-        MaxConnectionsPerServer = CoreConfig.MaxConnectionsPerServer,
-        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-        EnableMultipleHttp2Connections = true
-    };
-    return new HttpClient(handler);
-});
-
-private static HttpClient SharedHttpClient => _lazyHttpClient.Value;
-```
-
-- [ ] **Step 4: Replace all `_httpClient` references with `SharedHttpClient`**
-
-In Core.cs, find all occurrences of `_httpClient` and replace with `SharedHttpClient`. These appear in:
-- `DownloadFileAsync` (line 54): `await _httpClient.SendAsync(headRequest, ...)`
-- `CanUseRangeAsync` (line 109): `await _httpClient.SendAsync(probeRequest, ...)`
-- `DownloadSingleStreamAsync` (line 132): `await _httpClient.SendAsync(request, ...)`
-- `DownloadMultiPartAsync` (line 164): `await _httpClient.SendAsync(req, ...)`
-
-- [ ] **Step 5: Verify compilation**
-
-Run: `dotnet build Qomicex.Avalonia/Qomicex.Downloader/Qomicex.Downloader.csproj`
-Expected: Build succeeded with no warnings.
-
-- [ ] **Step 6: Verify backend still builds (references Downloader)**
+- [ ] **Step 2: 验证 build**
 
 Run: `dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
-Expected: Build succeeded.
+Expected: 编译成功（Build succeeded），无关于 `Qomicex.Connector` 的引用错误。
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add Qomicex.Avalonia/Qomicex.Downloader/CoreConfig.cs Qomicex.Avalonia/Qomicex.Downloader/Core.cs
-git commit -m "feat(downloader): add CoreConfig for HTTP connection pool tuning"
+git add src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj
+git commit -m "build: reference Qomicex.Connector submodule from backend"
 ```
-
----
-

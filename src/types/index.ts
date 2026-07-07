@@ -160,12 +160,13 @@ export interface ConnectorGameInfo {
 }
 
 export interface ConnectorStatus {
-  mode: 'idle' | 'host' | 'guest'
+  mode: 'idle' | 'starting' | 'host' | 'guest'
   roomCode: string | null
   mcHost: string | null
   mcPort: number | null
   gameInfo: ConnectorGameInfo | null
   players: ConnectorPlayer[]
+  error: string | null
 }
 
 export interface GameInstance {

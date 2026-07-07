@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
@@ -10,12 +11,10 @@ using Qomicex.Core.Modules.Helpers;
 
 namespace Qomicex.Launcher.Backend.Services.Connector;
 
-public enum ConnectorMode { Idle, Host, Guest }
-
 public sealed record ConnectorPlayerDto(string Name, string Vendor, string? IconBase64, string Kind);
 public sealed record ConnectorStatusDto(
     string Mode, string? RoomCode, string? McHost, int? McPort,
-    GameInfoDto? GameInfo, List<ConnectorPlayerDto> Players);
+    GameInfoDto? GameInfo, List<ConnectorPlayerDto> Players, string? Error);
 
 public sealed class ConnectorService : IDisposable
 {
@@ -37,6 +36,10 @@ public sealed class ConnectorService : IDisposable
     private readonly object _iconLock = new();
     private string? _mcHost;
     private int? _mcPort;
+
+    private volatile bool _starting;
+    private volatile string? _startError;
+    private CancellationTokenSource? _startCts;
 
     private static string? _cachedVendor;
     private static string? _cachedMachineId;
@@ -75,7 +78,10 @@ public sealed class ConnectorService : IDisposable
         get
         {
             if (_cachedVendor != null) return _cachedVendor;
-            var launcherVersion = typeof(ConnectorService).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+            var launcherVersion = (typeof(ConnectorService).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? typeof(ConnectorService).Assembly.GetName().Version?.ToString()
+                ?? "0.0.0").Split('+')[0];
             var etVersion = GetEasyTierVersion();
             _cachedVendor = $"Qomicex {launcherVersion}/Qomicex.Connector | EasyTier{etVersion}";
             return _cachedVendor;
@@ -127,9 +133,22 @@ public sealed class ConnectorService : IDisposable
             var instance = _instances.GetById(instanceId)
                 ?? throw ApiException.NotFound("实例不存在");
 
+            _startError = null;
+            _starting = true;
+            _startCts = new CancellationTokenSource();
+            var token = _startCts.Token;
+            _ = Task.Run(() => RunHostByInstanceAsync(instance, token));
+        }
+        finally { _gate.Release(); }
+    }
+
+    private async Task RunHostByInstanceAsync(Models.GameInstance instance, CancellationToken ct)
+    {
+        try
+        {
             var knownPorts = _lanListener.GetGames().Select(g => g.Port).ToHashSet();
 
-            var resp = await _localHttp.PostAsync($"/api/instance/{instanceId}/launch", null, ct);
+            using var resp = await _localHttp.PostAsync($"/api/instance/{instance.Id}/launch", null, ct);
             resp.EnsureSuccessStatusCode();
 
             var deadline = DateTime.UtcNow.AddMinutes(5);
@@ -146,22 +165,42 @@ public sealed class ConnectorService : IDisposable
             }
 
             if (newPort is null)
-                throw ApiException.BadRequest("等待游戏开放局域网超时，请在游戏内点击\"对局域网开放\"");
+            {
+                _startError = "等待游戏开放局域网超时，请在游戏内点击\"对局域网开放\"";
+                return;
+            }
 
             var proc = _inspector.Inspect(newPort.Value);
-            _gameInfo = new GameInfoDto
+            var gameInfo = new GameInfoDto
             {
                 GameVersion = instance.GameVersion,
                 Loader = instance.Loader,
                 LoaderVersion = instance.LoaderVersion,
             };
             var selfIcon = await GetSelfIconBase64(proc.Uuid, proc.IsMicrosoft);
-            lock (_iconLock) _iconMap[MachineId] = selfIcon;
 
-            var protocols = QmlProtocols.BuildHostProtocols(() => _gameInfo, ExchangeIcons);
-            _center = await _client.CreateRoomAsync(proc.PlayerName, MachineId, Vendor, newPort.Value, protocols, ct);
+            await _gate.WaitAsync(ct);
+            try
+            {
+                _gameInfo = gameInfo;
+                lock (_iconLock) _iconMap[MachineId] = selfIcon;
+                var protocols = QmlProtocols.BuildHostProtocols(() => _gameInfo, ExchangeIcons);
+                _center = await _client.CreateRoomAsync(proc.PlayerName, MachineId, Vendor, newPort.Value, protocols, ct);
+            }
+            finally { _gate.Release(); }
         }
-        finally { _gate.Release(); }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "选实例开房失败");
+            _startError = ex is ApiException api ? api.Message : "开房失败: " + ex.Message;
+        }
+        finally
+        {
+            _starting = false;
+        }
     }
 
     public async Task<(string Host, int Port)> JoinAsync(string code, CancellationToken ct = default)
@@ -194,12 +233,14 @@ public sealed class ConnectorService : IDisposable
 
     public async Task LeaveAsync(CancellationToken ct = default)
     {
+        _startCts?.Cancel();
         await _gate.WaitAsync(ct);
         try
         {
             await _client.CloseAsync(ct);
             _center = null; _guest = null; _mcHost = null; _mcPort = null;
             _gameInfo = new GameInfoDto();
+            _starting = false; _startError = null;
             lock (_iconLock) _iconMap.Clear();
         }
         finally { _gate.Release(); }
@@ -213,16 +254,18 @@ public sealed class ConnectorService : IDisposable
         lock (_iconLock) icons = new Dictionary<string, string>(_iconMap);
         if (center != null)
             return new ConnectorStatusDto("host", center.RoomCode.Raw, null, null, _gameInfo,
-                MapPlayers(center.GetPlayers(), icons));
+                MapPlayers(center.GetPlayers(), icons), null);
         if (guest != null)
             return new ConnectorStatusDto("guest", null, _mcHost, _mcPort, _gameInfo,
-                MapPlayers(guest.GetPlayerListAsync().GetAwaiter().GetResult(), icons));
-        return new ConnectorStatusDto("idle", null, null, null, null, new());
+                MapPlayers(guest.GetPlayerListAsync().GetAwaiter().GetResult(), icons), null);
+        if (_starting)
+            return new ConnectorStatusDto("starting", null, null, null, null, new(), _startError);
+        return new ConnectorStatusDto("idle", null, null, null, null, new(), _startError);
     }
 
     private void EnsureIdle()
     {
-        if (_center != null || _guest != null)
+        if (_center != null || _guest != null || _starting)
             throw ApiException.BadRequest("已有进行中的房间或连接，请先退出");
     }
 
@@ -253,5 +296,5 @@ public sealed class ConnectorService : IDisposable
             icons.TryGetValue(p.MachineId, out var icon) ? icon : null,
             p.Kind == PlayerKind.Host ? "host" : "guest")).ToList();
 
-    public void Dispose() { _client.Dispose(); _gate.Dispose(); _localHttp.Dispose(); }
+    public void Dispose() { _startCts?.Dispose(); _client.Dispose(); _gate.Dispose(); _localHttp.Dispose(); }
 }
