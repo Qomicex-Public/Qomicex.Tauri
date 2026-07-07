@@ -1,3 +1,6 @@
 [submodule "Qomicex.Avalonia"]
 	path = Qomicex.Avalonia
 	url = git@github.com:Qomicex-Public/Qomicex.Avalonia.git
+[submodule "src-backend/Qomicex.Connector.Part.Scaffolding"]
+	path = src-backend/Qomicex.Connector.Part.Scaffolding
+	url = git@github.com:Qomicex-Public/Qomicex.Connector.Part.Scaffolding.git
