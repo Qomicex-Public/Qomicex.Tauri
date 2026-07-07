@@ -190,6 +190,11 @@ export interface CreateInstanceRequest {
   versionIsolation?: boolean | null
   icon?: string
   skipIntegrityCheck?: boolean
+  iconData?: string
+  modpackName?: string
+  modpackVersion?: string
+  modpackAuthor?: string
+  modpackSummary?: string
 }
 
 export interface LaunchResult {
@@ -228,6 +233,13 @@ export interface ScannedVersion {
   state: string
   stateDescribe: string
   loaders: ScannedVersionLoader[]
+  modpack?: {
+    iconData?: string
+    modpackName?: string
+    modpackVersion?: string
+    modpackAuthor?: string
+    modpackSummary?: string
+  } | null
 }
 
 export interface LoaderVersionInfo {

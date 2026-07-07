@@ -164,6 +164,11 @@ public class InstanceController : ControllerBase
             JvmArgs = request.JvmArgs,
             VersionIsolation = request.VersionIsolation,
             Icon = request.Icon ?? GetDefaultIcon(request.Loader),
+            IconData = request.IconData,
+            ModpackName = request.ModpackName,
+            ModpackVersion = request.ModpackVersion,
+            ModpackAuthor = request.ModpackAuthor,
+            ModpackSummary = request.ModpackSummary,
         };
         var created = _repository.Create(instance);
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);

@@ -15,4 +15,9 @@ public class CreateInstanceRequest
     public string? JvmArgs { get; set; }
     public bool? VersionIsolation { get; set; }
     public string? Icon { get; set; }
+    public string? IconData { get; set; }
+    public string? ModpackName { get; set; }
+    public string? ModpackVersion { get; set; }
+    public string? ModpackAuthor { get; set; }
+    public string? ModpackSummary { get; set; }
 }

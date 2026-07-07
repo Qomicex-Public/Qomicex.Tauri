@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Models;
 using Qomicex.Launcher.Backend.Services;
+using System.Text.Json;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -124,7 +125,28 @@ public class ModpackController : ControllerBase
             request.DownloadThreads ?? 64, request.VersionIsolation != false,
             request.ModpackFiles, request.OverridesZip, created.JavaPath);
 
+        WriteModpackMeta(request);
+
         return Ok(new { message = "整合包安装已开始", instanceId = created.Id });
+    }
+
+    private void WriteModpackMeta(ModpackInstallRequest request)
+    {
+        if (string.IsNullOrEmpty(request.ModpackName) || request.VersionIsolation == false) return;
+
+        // ponytail: write metadata file for scan to read back, HMCL pattern
+        var versionRoot = Path.Combine(request.GameDir, "versions", request.Name);
+        Directory.CreateDirectory(versionRoot);
+        var metaPath = Path.Combine(versionRoot, ".qomicex-modpack.json");
+        var meta = new
+        {
+            iconData = request.IconData,
+            modpackName = request.ModpackName,
+            modpackVersion = request.ModpackVersion,
+            modpackAuthor = request.ModpackAuthor,
+            modpackSummary = request.ModpackSummary,
+        };
+        System.IO.File.WriteAllText(metaPath, JsonSerializer.Serialize(meta));
     }
 
     private static string GetDefaultIcon(string? loader) => loader?.ToLowerInvariant() switch

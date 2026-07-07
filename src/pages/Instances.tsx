@@ -164,6 +164,11 @@ export default function Instances() {
           loaderVersion: v.loaders.find((l) => l.version)?.version,
           gameDir: dir,
           maxMemory: 4096,
+          iconData: v.modpack?.iconData,
+          modpackName: v.modpack?.modpackName,
+          modpackVersion: v.modpack?.modpackVersion,
+          modpackAuthor: v.modpack?.modpackAuthor,
+          modpackSummary: v.modpack?.modpackSummary,
         }).catch(() => null)))
         const valid = created.filter((c): c is GameInstance => c !== null)
         if (valid.length > 0) setBackedInstances((prev) => [...prev, ...valid])
@@ -383,6 +388,11 @@ export default function Instances() {
           loaderVersion: v.loaders.find(l => l.version)?.version,
           gameDir: currentDir!,
           maxMemory: 4096,
+          iconData: v.modpack?.iconData,
+          modpackName: v.modpack?.modpackName,
+          modpackVersion: v.modpack?.modpackVersion,
+          modpackAuthor: v.modpack?.modpackAuthor,
+          modpackSummary: v.modpack?.modpackSummary,
         })
         setBackedInstances((prev) => [...prev, inst!])
       } catch (e) {
@@ -464,6 +474,11 @@ export default function Instances() {
         loaderVersion: v.loaders.find((l) => l.version)?.version,
         maxMemory: 4096,
         gameDir: currentDir,
+        iconData: v.modpack?.iconData,
+        modpackName: v.modpack?.modpackName,
+        modpackVersion: v.modpack?.modpackVersion,
+        modpackAuthor: v.modpack?.modpackAuthor,
+        modpackSummary: v.modpack?.modpackSummary,
       })
       setBackedInstances((prev) => [...prev, created])
       navigate(`/instances/${created.id}`)
@@ -483,6 +498,11 @@ export default function Instances() {
           loaderVersion: v.loaders.find((l) => l.version)?.version,
           gameDir: currentDir!,
           maxMemory: 4096,
+          iconData: v.modpack?.iconData,
+          modpackName: v.modpack?.modpackName,
+          modpackVersion: v.modpack?.modpackVersion,
+          modpackAuthor: v.modpack?.modpackAuthor,
+          modpackSummary: v.modpack?.modpackSummary,
         })
         setBackedInstances((prev) => [...prev, inst!])
       } catch { return }
