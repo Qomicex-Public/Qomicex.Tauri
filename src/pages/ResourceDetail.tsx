@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { MinecraftText } from '../components/MinecraftText.tsx'
 import {
   faArrowLeft,
   faArrowUpRightFromSquare,
@@ -316,7 +317,7 @@ export default function ResourceDetailPage() {
                       <Badge variant="secondary">{getSourceLabel(detail.source)}</Badge>
                       {detail.latestVersion && <Badge variant="outline">最新 {detail.latestVersion}</Badge>}
                     </div>
-                    <p className="text-sm leading-7 text-muted-foreground">{detail.description || '暂无简介'}</p>
+                    <MinecraftText text={detail.description || '暂无简介'} className="text-sm leading-7 text-muted-foreground" />
                     {detail.source !== 'ftb' && (
                       <div className="space-y-2">
                         <button
