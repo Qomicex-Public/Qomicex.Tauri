@@ -28,6 +28,7 @@ public sealed class ConnectorService : IDisposable
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ScaffoldingClient _client = new(easyTierPath: null);
+    private readonly HttpClient _localHttp = new() { BaseAddress = new Uri("http://localhost:5000") };
 
     private ScaffoldingCenter? _center;
     private ScaffoldingGuest? _guest;
@@ -113,6 +114,52 @@ public sealed class ConnectorService : IDisposable
             var protocols = QmlProtocols.BuildHostProtocols(() => _gameInfo, ExchangeIcons);
             _center = await _client.CreateRoomAsync(proc.PlayerName, MachineId, Vendor, port, protocols, ct);
             return _center.RoomCode.Raw;
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task HostByInstanceAsync(string instanceId, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            EnsureIdle();
+            var instance = _instances.GetById(instanceId)
+                ?? throw ApiException.NotFound("实例不存在");
+
+            var knownPorts = _lanListener.GetGames().Select(g => g.Port).ToHashSet();
+
+            var resp = await _localHttp.PostAsync($"/api/instance/{instanceId}/launch", null, ct);
+            resp.EnsureSuccessStatusCode();
+
+            var deadline = DateTime.UtcNow.AddMinutes(5);
+            int? newPort = null;
+            while (DateTime.UtcNow < deadline)
+            {
+                ct.ThrowIfCancellationRequested();
+                var candidate = _lanListener.GetGames()
+                    .Where(g => !knownPorts.Contains(g.Port))
+                    .OrderByDescending(g => g.LastSeen)
+                    .FirstOrDefault();
+                if (candidate != null) { newPort = candidate.Port; break; }
+                await Task.Delay(2000, ct);
+            }
+
+            if (newPort is null)
+                throw ApiException.BadRequest("等待游戏开放局域网超时，请在游戏内点击\"对局域网开放\"");
+
+            var proc = _inspector.Inspect(newPort.Value);
+            _gameInfo = new GameInfoDto
+            {
+                GameVersion = instance.GameVersion,
+                Loader = instance.Loader,
+                LoaderVersion = instance.LoaderVersion,
+            };
+            var selfIcon = await GetSelfIconBase64(proc.Uuid, proc.IsMicrosoft);
+            lock (_iconLock) _iconMap[MachineId] = selfIcon;
+
+            var protocols = QmlProtocols.BuildHostProtocols(() => _gameInfo, ExchangeIcons);
+            _center = await _client.CreateRoomAsync(proc.PlayerName, MachineId, Vendor, newPort.Value, protocols, ct);
         }
         finally { _gate.Release(); }
     }
@@ -206,5 +253,5 @@ public sealed class ConnectorService : IDisposable
             icons.TryGetValue(p.MachineId, out var icon) ? icon : null,
             p.Kind == PlayerKind.Host ? "host" : "guest")).ToList();
 
-    public void Dispose() { _client.Dispose(); _gate.Dispose(); }
+    public void Dispose() { _client.Dispose(); _gate.Dispose(); _localHttp.Dispose(); }
 }
