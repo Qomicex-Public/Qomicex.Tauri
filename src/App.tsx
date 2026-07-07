@@ -10,6 +10,7 @@ import AccountDetail from './pages/AccountDetail.tsx'
 import ResourceCenter from './pages/ResourceCenter.tsx'
 import ResourceDetailPage from './pages/ResourceDetail.tsx'
 import Settings from './pages/Settings.tsx'
+import RunningInstances from './pages/RunningInstances.tsx'
 import { MessageBoxProvider, useMessageBox } from './components/ui/message-box.tsx'
 import { loadSettings, onSettingsChange } from './api/settings.ts'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
@@ -51,6 +52,7 @@ function App() {
               <Route path="/resource-center" element={<ResourceCenter />} />
               <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
               <Route path="/settings" element={<Settings />} />
+            <Route path="/running" element={<RunningInstances />} />
             </Route>
           </Routes>
         </BrowserRouter>

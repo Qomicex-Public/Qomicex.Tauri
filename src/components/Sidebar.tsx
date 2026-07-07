@@ -1,10 +1,8 @@
-import { useState, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui/tooltip.tsx'
 import { useRunning } from '../contexts/RunningContext.tsx'
-import RunningInstancePopover from './RunningInstancePopover.tsx'
 import { cn } from '../lib/utils.ts'
 
 const links = [
@@ -17,8 +15,6 @@ const links = [
 
 export default function Sidebar() {
   const { runningInstances } = useRunning()
-  const [popoverOpen, setPopoverOpen] = useState(false)
-  const runningBtnRef = useRef<HTMLButtonElement>(null)
   const hasRunning = runningInstances.length > 0
 
   return (
@@ -52,28 +48,28 @@ export default function Sidebar() {
       </ul>
 
       <div className="flex w-full flex-col items-center border-t border-border px-2 py-2 pb-4 gap-1">
-        <div className="relative">
-          <Tooltip content="运行中" side="right">
-            <button
-              ref={runningBtnRef}
-              onClick={() => setPopoverOpen(!popoverOpen)}
-              className={cn(
-                'flex h-9 w-9 items-center justify-center rounded-lg text-base transition-colors',
-                hasRunning
-                  ? 'text-green-500 hover:bg-green-500/10'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+        <Tooltip content="运行中" side="right">
+          <NavLink
+            to="/running"
+            className={({ isActive }) =>
+              cn(
+                'flex h-9 w-9 items-center justify-center rounded-lg text-base transition-colors relative',
+                isActive
+                  ? 'bg-primary/10 text-primary'
+                  : hasRunning
+                    ? 'text-green-500 hover:bg-green-500/10'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              )
+            }
+          >
+            <div className="relative">
+              <FontAwesomeIcon icon={faGamepad} className="h-4 w-4" />
+              {hasRunning && (
+                <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-green-500 animate-ping" />
               )}
-            >
-              <div className="relative">
-                <FontAwesomeIcon icon={faGamepad} className="h-4 w-4" />
-                {hasRunning && (
-                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-green-500 animate-ping" />
-                )}
-              </div>
-            </button>
-          </Tooltip>
-          <RunningInstancePopover open={popoverOpen} onClose={() => setPopoverOpen(false)} anchorRef={runningBtnRef} />
-        </div>
+            </div>
+          </NavLink>
+        </Tooltip>
         <Tooltip content="设置" side="right">
           <NavLink
             to="/settings"
