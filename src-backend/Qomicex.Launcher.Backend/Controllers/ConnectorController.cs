@@ -35,6 +35,16 @@ public class ConnectorController : ControllerBase
     [HttpGet("status")]
     public IActionResult Status() => Ok(_connector.GetStatus());
 
+    [HttpGet("easytier/status")]
+    public IActionResult EasyTierStatus() => Ok(_connector.GetEasyTierStatus());
+
+    [HttpPost("easytier/download")]
+    public IActionResult EasyTierDownload()
+    {
+        _connector.EnsureEasyTierDownloadStarted();
+        return Ok(_connector.GetEasyTierStatus());
+    }
+
     [HttpPost("leave")]
     public async Task<IActionResult> Leave(CancellationToken ct)
     {

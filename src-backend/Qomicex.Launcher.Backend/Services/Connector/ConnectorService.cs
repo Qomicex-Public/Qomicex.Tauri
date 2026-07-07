@@ -24,9 +24,10 @@ public sealed class ConnectorService : IDisposable
     private readonly LanGameListenerService _lanListener;
     private readonly IInstanceRepository _instances;
     private readonly SkinService _skinService;
+    private readonly EasyTierProvider _easyTier;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly ScaffoldingClient _client = new(easyTierPath: null);
+    private readonly ScaffoldingClient _client;
     private readonly HttpClient _localHttp = new() { BaseAddress = new Uri("http://localhost:5000") };
 
     private ScaffoldingCenter? _center;
@@ -50,7 +51,8 @@ public sealed class ConnectorService : IDisposable
         AccountService accountService,
         LanGameListenerService lanListener,
         IInstanceRepository instances,
-        SkinService skinService)
+        SkinService skinService,
+        EasyTierProvider easyTier)
     {
         _logger = logger;
         _inspector = inspector;
@@ -58,6 +60,8 @@ public sealed class ConnectorService : IDisposable
         _lanListener = lanListener;
         _instances = instances;
         _skinService = skinService;
+        _easyTier = easyTier;
+        _client = new ScaffoldingClient(easyTierPath: EasyTierProvider.GetExecutablePath());
     }
 
     private static string MachineId
@@ -112,6 +116,7 @@ public sealed class ConnectorService : IDisposable
         try
         {
             EnsureIdle();
+            EnsureEasyTierReady();
             var proc = _inspector.Inspect(port);
             _gameInfo = new GameInfoDto { GameVersion = proc.GameVersionArg ?? "unknown" };
             var selfIcon = await GetSelfIconBase64(proc.Uuid, proc.IsMicrosoft);
@@ -132,6 +137,7 @@ public sealed class ConnectorService : IDisposable
             EnsureIdle();
             var instance = _instances.GetById(instanceId)
                 ?? throw ApiException.NotFound("实例不存在");
+            EnsureEasyTierReady();
 
             _startError = null;
             _starting = true;
@@ -209,6 +215,7 @@ public sealed class ConnectorService : IDisposable
         try
         {
             EnsureIdle();
+            EnsureEasyTierReady();
             var account = await _accountService.GetDefaultAsync()
                 ?? throw ApiException.BadRequest("请先在账户页选择一个账户再加入房间");
 
@@ -263,10 +270,20 @@ public sealed class ConnectorService : IDisposable
         return new ConnectorStatusDto("idle", null, null, null, null, new(), _startError);
     }
 
+    public EasyTierDownloadStatus GetEasyTierStatus() => _easyTier.GetStatus();
+
+    public void EnsureEasyTierDownloadStarted() => _easyTier.EnsureDownloadStarted();
+
     private void EnsureIdle()
     {
         if (_center != null || _guest != null || _starting)
             throw ApiException.BadRequest("已有进行中的房间或连接，请先退出");
+    }
+
+    private void EnsureEasyTierReady()
+    {
+        if (!_easyTier.IsInstalled)
+            throw ApiException.BadRequest("EasyTier 尚未就绪，请等待下载完成后重试");
     }
 
     private PlayerIconMap ExchangeIcons(PlayerIconUpload upload)

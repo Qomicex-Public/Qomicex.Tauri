@@ -72,6 +72,7 @@ builder.Services.AddSingleton<SkinService>();
 builder.Services.AddSingleton<McmodService>();
 builder.Services.AddSingleton<LanGameListenerService>();
 builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.GameProcessInspector>();
+builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.EasyTierProvider>();
 builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.ConnectorService>();
 builder.Services.AddSingleton(_ => new AccountService(AppPaths.BaseDir));
 builder.Services.AddTransient<MsAccount>(_ => new MsAccount { ClientId = builder.Configuration["Microsoft:ClientId"] ?? string.Empty });

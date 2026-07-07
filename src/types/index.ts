@@ -169,6 +169,14 @@ export interface ConnectorStatus {
   error: string | null
 }
 
+export interface EasyTierStatus {
+  installed: boolean
+  status: 'idle' | 'downloading' | 'extracting' | 'installed' | 'failed'
+  progress: number
+  speed: number
+  error: string | null
+}
+
 export interface GameInstance {
   id: string
   name: string
