@@ -50,3 +50,5 @@ docs/
 .worktrees/
 
 .fake
+# Superpowers SDD scratch
+.superpowers/
