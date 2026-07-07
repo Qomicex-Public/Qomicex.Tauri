@@ -146,6 +146,29 @@ export interface RoomCodeResponse {
   code: string
 }
 
+export interface ConnectorPlayer {
+  name: string
+  vendor: string
+  iconBase64: string | null
+  kind: 'host' | 'guest'
+}
+
+export interface ConnectorGameInfo {
+  gameVersion: string
+  loader: string | null
+  loaderVersion: string | null
+}
+
+export interface ConnectorStatus {
+  mode: 'idle' | 'starting' | 'host' | 'guest'
+  roomCode: string | null
+  mcHost: string | null
+  mcPort: number | null
+  gameInfo: ConnectorGameInfo | null
+  players: ConnectorPlayer[]
+  error: string | null
+}
+
 export interface GameInstance {
   id: string
   name: string

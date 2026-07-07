@@ -1,0 +1,65 @@
+# Review package: 6a9d1f6..8eef614
+
+## Commits
+8eef614 feat: add QmlProtocols registry for custom connector protocols
+
+## Files changed
+ .../Services/Connector/QmlProtocols.cs             | 51 ++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+## Diff
+diff --git a/src-backend/Qomicex.Launcher.Backend/Services/Connector/QmlProtocols.cs b/src-backend/Qomicex.Launcher.Backend/Services/Connector/QmlProtocols.cs
+new file mode 100644
+index 0000000..d9b3e46
+--- /dev/null
++++ b/src-backend/Qomicex.Launcher.Backend/Services/Connector/QmlProtocols.cs
+@@ -0,0 +1,51 @@
++using Qomicex.Connector.Guest;
++using Qomicex.Connector.Protocols;
++
++namespace Qomicex.Launcher.Backend.Services.Connector;
++
++public sealed class GameInfoDto
++{
++    public string GameVersion { get; set; } = "";
++    public string? Loader { get; set; }
++    public string? LoaderVersion { get; set; }
++}
++
++public sealed class PlayerIconUpload
++{
++    public string MachineId { get; set; } = "";
++    public string IconBase64 { get; set; } = "";
++}
++
++public sealed class PlayerIconMap
++{
++    public Dictionary<string, string> Icons { get; set; } = new();
++}
++
++/// <summary>
++/// qml 鍛藉悕绌洪棿鑷畾涔夊崗璁泦涓敞鍐岃〃銆傛柊澧炲崗璁細鍦ㄦ鍔犻敭鍚嶅父閲忋€丏TO銆?+/// BuildHostProtocols 閲岀殑涓€涓?DelegateProtocol銆丟uestKeys 閲岀殑閿€佷互鍙婁竴涓?Guest 璋冪敤灏佽銆?+/// </summary>
++public static class QmlProtocols
++{
++    public const string GameInfoKey = "qml:game_info";
++    public const string PlayerIconsKey = "qml:player_icons";
++
++    public static readonly string[] GuestKeys = [GameInfoKey, PlayerIconsKey];
++
++    public static IProtocol[] BuildHostProtocols(
++        Func<GameInfoDto> getGameInfo,
++        Func<PlayerIconUpload, PlayerIconMap> exchangeIcons)
++    {
++        return
++        [
++            new DelegateProtocol<GameInfoDto>(GameInfoKey, getGameInfo),
++            new DelegateProtocol<PlayerIconUpload, PlayerIconMap>(PlayerIconsKey, exchangeIcons),
++        ];
++    }
++
++    public static Task<GameInfoDto?> FetchGameInfoAsync(ScaffoldingGuest guest, CancellationToken ct = default)
++        => guest.SendAsync<GameInfoDto>(GameInfoKey, ct);
++
++    public static Task<PlayerIconMap?> ExchangeIconsAsync(ScaffoldingGuest guest, PlayerIconUpload upload, CancellationToken ct = default)
++        => guest.SendAsync<PlayerIconUpload, PlayerIconMap>(PlayerIconsKey, upload, ct);
++}

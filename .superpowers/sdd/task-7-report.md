@@ -1,57 +1,41 @@
-# Task 7 报告: SSE 统一进度推送 + 前端轮询改 SSE
+# Task 7 Report: ConnectorService — HostByInstance
 
-## 状态: 完成
+## What I implemented
+Added to `Services/Connector/ConnectorService.cs`:
+- New field `private readonly HttpClient _localHttp = new() { BaseAddress = new Uri("http://localhost:5000") };` in the field region (after `_client`).
+- New method `HostByInstanceAsync(string instanceId, CancellationToken ct = default)` inserted before `JoinAsync`. It launches the instance via `POST /api/instance/{id}/launch` on the local backend, snapshots known LAN ports, polls `LanGameListenerService.GetGames()` every 2s (5-min deadline) for a NEW port ordered by `LastSeen`, inspects that port, builds `GameInfoDto` from the instance's `GameVersion`/`Loader`/`LoaderVersion`, sets the self icon, and creates the room.
+- `Dispose()` now also disposes `_localHttp`.
 
-## 提交
+## _iconLock adjustment
+The brief's code had a bare `_iconMap[MachineId] = selfIcon;`. Per the Task 6 invariant (all `_iconMap` writes guarded by `lock (_iconLock)`), I changed it to:
+```csharp
+lock (_iconLock) _iconMap[MachineId] = selfIcon;
+```
 
-| Hash | 信息 |
-|------|------|
-| `e66a103` | `feat(progress): SSE unified progress streaming, replace frontend polling` |
+## Other deviations
+None. All brief code used verbatim except the icon-lock adjustment.
 
-## 变更文件
+## Signature verification
+- `ApiException.NotFound(string)` / `BadRequest(string)` — exist (`Common/ApiError.cs:65,69`).
+- `IInstanceRepository.GetById(string)` → `GameInstance?` (`Services/IInstanceRepository.cs:8`).
+- `GameInstance.GameVersion` (string), `.Loader` (string?), `.LoaderVersion` (string?) (`Models/GameInstance.cs:7-9`).
+- `LanGameEntry.Port` (int), `.LastSeen` (DateTime) (`Services/LanGameListenerService.cs:11,18`); `GetGames()` → `List<LanGameEntry>`.
+- `GameProcessInfo(string PlayerName, string Uuid, bool IsMicrosoft, string? GameVersionArg)` (`Services/Connector/GameProcessInspector.cs:7`).
+- `GameInfoDto` has GameVersion/Loader/LoaderVersion (`QmlProtocols.cs:6-11`).
+- `HttpClient`/`Uri` available via `ImplicitUsings=enable`.
 
-| 文件 | 操作 |
-|------|------|
-| `src-backend/.../Controllers/ProgressSseController.cs` | 新建 |
-| `src/hooks/useDownloadSSE.ts` | 新建 |
-| `src/pages/DownloadCenter.tsx` | 修改 |
+## Build result
+`dotnet build ...Qomicex.Launcher.Backend.csproj`: **Build succeeded, 0 errors, 9 warnings** — none originate from ConnectorService (verified by filtering warnings; all 9 are pre-existing).
 
-## 构建总结
+## Files changed
+- `src-backend/Qomicex.Launcher.Backend/Services/Connector/ConnectorService.cs` (+48 / -1)
 
-| 目标 | 结果 |
-|------|------|
-| `dotnet build` (后端) | **0 错误**, 7 个预先存在的警告 |
-| `npx tsc --noEmit` (前端) | **无错误** |
+## Self-review findings
+- Gate released in `finally { _gate.Release(); }` ✓
+- `_iconMap` write wrapped in `lock (_iconLock)` ✓
+- `_localHttp` disposed in `Dispose()` ✓
+- `EnsureIdle()` called inside the gate; not-found → `ApiException.NotFound`; LAN timeout → `ApiException.BadRequest` ✓
+- No code comments added ✓
 
-## 变更详情
-
-### 1. ProgressSseController.cs (新建)
-- `GET /api/progress/stream` — SSE 端点，每 300ms 推送合并的进度负载
-- 聚合来自 `InstanceInstallService`、`JavaDownloadService` 和 `ResourceDownloadService` 的 `GetAllActiveStates()`
-- 输出带有 `installs`、`javaDownloads`、`resources` 和 `summary`（`activeCount`、`totalSpeed`）的 JSON
-- 对客户端断开连接使用 `CancellationToken` 妥善处理
-
-### 2. useDownloadSSE.ts (新建)
-- 使用 `EventSource` 连接到 `/api/progress/stream` 的 React hook
-- 返回 `ProgressPayload | null`
-- 导出了包含 `InstallState`、`JavaDownloadState`、`ResourceDownloadState` 的完整 TypeScript 接口
-- 组件卸载时通过 `es.close()` 进行清理
-- 通过 `onerror` 处理程序实现浏览器自动重连
-
-### 3. DownloadCenter.tsx (已修改)
-**已移除:**
-- `useRef` 导入（不再需要）
-- 轮询 API 导入：`getInstallProgress`、`getResourceDownloadProgress`、`getJavaDownloadProgress`、`ApiError`
-- 包含 `pollingRef` 的 `applyJavaProgress` 函数和两个轮询 `useEffect` 块（~130 行）
-- 重试按钮中的异步 `getResourceDownloadProgress` 调用 —— 现仅调用 `removeTask()`
-
-**已添加:**
-- `useDownloadSSE` hook 导入和使用
-- 单个 SSE 响应式效果：对 `getTasks()` 进行迭代，通过 `taskId`/`instanceId` 匹配 SSE 数据，并以进度/速度/阶段/错误更新调用 `updateTask`
-- 效果依赖于 `[sseData]`，每次 SSE 推送间隔约 300ms 触发
-
-**已保留:** 所有操作 API — `pauseInstall`、`resumeInstall`、`cancelInstall`、`cancelResourceDownload`、`cancelJavaDownload`、`pauseJavaDownload`、`resumeJavaDownload`（按钮使用）。
-
-## 关注点
-
-无。后端和前端构建均无错误通过。所有依赖项（Tasks 3-5 中的 `GetAllActiveStates()`）均已到位且经过验证。
+## Concerns
+- `_localHttp` hardcodes `http://localhost:5000`, matching the brief and the AGENTS.md backend port. Fine for the in-process launch call.

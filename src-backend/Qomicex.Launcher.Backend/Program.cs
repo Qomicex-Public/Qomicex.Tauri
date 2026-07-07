@@ -71,6 +71,8 @@ builder.Services.AddSingleton<JavaDownloadService>();
 builder.Services.AddSingleton<SkinService>();
 builder.Services.AddSingleton<McmodService>();
 builder.Services.AddSingleton<LanGameListenerService>();
+builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.GameProcessInspector>();
+builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.ConnectorService>();
 builder.Services.AddSingleton(_ => new AccountService(AppPaths.BaseDir));
 builder.Services.AddTransient<MsAccount>(_ => new MsAccount { ClientId = builder.Configuration["Microsoft:ClientId"] ?? string.Empty });
 
@@ -133,5 +135,7 @@ app.MapControllers();
 var lanService = app.Services.GetRequiredService<LanGameListenerService>();
 lanService.Start();
 app.Lifetime.ApplicationStopping.Register(() => lanService.Stop());
+var connectorService = app.Services.GetRequiredService<Qomicex.Launcher.Backend.Services.Connector.ConnectorService>();
+app.Lifetime.ApplicationStopping.Register(() => { try { connectorService.LeaveAsync().GetAwaiter().GetResult(); } catch { } });
 
 app.Run();

@@ -1,32 +1,33 @@
-# Task 1 Report: Rust Backend — Add Updater Plugin
+# Task 1 Report: 后端引用 submodule 项目
 
-## What I Implemented
+## Status: DONE
 
-Added `tauri-plugin-updater` to the Tauri v2 desktop shell:
+## What Changed
+Added a single `ProjectReference` to the existing `<ItemGroup>` (the one already containing `Qomicex.Core`) in the backend csproj so the backend can `using Qomicex.Connector;` and its sub-namespaces.
 
-1. **`src-tauri/Cargo.toml`** — Added `tauri-plugin-updater = "2"` dependency after `tauri-plugin-dialog`
-2. **`src-tauri/src/lib.rs`** — Registered updater plugin in `.setup()` closure with `#[cfg(desktop)]` guard, using `app.handle().plugin(...)` (the Tauri v2 API — `&mut App` does not expose `.plugin()` directly)
-3. **`src-tauri/tauri.conf.json`** — Added `"createUpdaterArtifacts": true` in bundle, and `plugins.updater` with the public key and GitHub releases endpoint
+```xml
+<ProjectReference Include="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
+```
 
-## What I Tested
-
-- `cargo check` passed with no errors or warnings
-- All new dependency crates resolved and compiled successfully (32 packages, including `tauri-plugin-updater v2.10.1`)
+Relative path with `\` separators (MSBuild normalizes cross-platform). Placed alongside the existing `Qomicex.Core` reference as specified.
 
 ## Files Changed
+- `src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj` (1 insertion)
 
-- `src-tauri/Cargo.toml` — 1 line added
-- `src-tauri/src/lib.rs` — 3 lines added
-- `src-tauri/tauri.conf.json` — 10 lines added
-- `src-tauri/Cargo.lock` — auto-regenerated
+## Build Result
+`dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
+- **已成功生成 (Build succeeded)** — 0 errors.
+- `Qomicex.Connector.csproj` was restored and compiled: `Qomicex.Connector -> ...\Qomicex.Connector\bin\Debug\net10.0\Qomicex.Connector.dll`.
+- 9 warnings, all pre-existing and unrelated to this change (CS8601/CS8602 nullability in AccountController.cs, InstanceFilesController.cs, ModpackService.cs; CA1416 platform warning in JavaDownloadService.cs).
+
+## Commit
+- `1a26514` build: reference Qomicex.Connector submodule from backend
 
 ## Self-Review Findings
+- Verified the submodule project exists at the referenced path before editing.
+- Diff is exactly one line inside the correct ItemGroup — no adjacent code touched, no formatting changes.
+- Change traces directly to the task brief Step 1.
+- No tests added (correct per global constraints — project has no test framework).
 
-- The brief's original code snippet suggested `app.plugin(...)` but this doesn't compile on Tauri v2. The correct API in `.setup()` is `app.handle().plugin(...)` since `&mut tauri::App` doesn't have a `plugin` method — it delegates to `AppHandle` via the `Manager` trait
-- Public key correctly replaces the placeholder — actual value from `~/.tauri/qomicex.key.pub` used
-- `#[cfg(desktop)]` guard ensures the updater only registers on desktop builds (not mobile)
-- `createUpdaterArtifacts: true` enables Tauri's bundle build to produce the update artifacts
-
-## Issues / Concerns
-
+## Concerns
 None.

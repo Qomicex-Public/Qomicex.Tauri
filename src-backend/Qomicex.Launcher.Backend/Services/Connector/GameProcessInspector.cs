@@ -1,17 +1,3 @@
-## Task 4: GameProcessInspector — 端口反查进程参数（跨平台）
-
-**Files:**
-- Create: `src-backend/Qomicex.Launcher.Backend/Services/Connector/GameProcessInspector.cs`
-
-**Interfaces:**
-- Consumes: `System.Management`（已在 csproj 引用，仅 Windows 使用）。
-- Produces:
-  - `sealed record GameProcessInfo(string PlayerName, string Uuid, bool IsMicrosoft, string? GameVersionArg)`
-  - `class GameProcessInspector` 单例，方法 `GameProcessInfo Inspect(int port)`（找不到抛 `Qomicex.Launcher.Backend.Common.ApiException.BadRequest`）。
-
-- [ ] **Step 1: 创建 GameProcessInspector.cs（含端口→PID、PID→cmdline、参数解析）**
-
-```csharp
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Qomicex.Launcher.Backend.Common;
@@ -73,7 +59,7 @@ public sealed class GameProcessInspector
                 for (int i = 0; i < rowCount; i++)
                 {
                     var row = Marshal.PtrToStructure<MIB_TCPROW_OWNER_PID>(IntPtr.Add(rowPtr, i * rowSize));
-                    int localPort = ((row.localPort & 0xFF) << 8) | ((row.localPort >> 8) & 0xFF);
+                    int localPort = (int)(((row.localPort & 0xFF) << 8) | ((row.localPort >> 8) & 0xFF));
                     if (localPort == port) return (int)row.owningPid;
                 }
             }
@@ -224,23 +210,3 @@ public sealed class GameProcessInspector
         return null;
     }
 }
-```
-
-- [ ] **Step 2: 验证 build**
-
-Run: `dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
-Expected: Build succeeded。若 `ApiException.BadRequest` 签名不符，核对 `Common/ApiError.cs`。
-
-- [ ] **Step 3: 手动验证说明（记录，不阻塞）**
-
-后续联调时：Windows 上启动一个监听已知端口的进程，调 `Inspect(port)` 应返回其 PID 对应命令行的参数。此步无自动化测试。
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add src-backend/Qomicex.Launcher.Backend/Services/Connector/GameProcessInspector.cs
-git commit -m "feat: add cross-platform GameProcessInspector for port->args"
-```
-
----
-

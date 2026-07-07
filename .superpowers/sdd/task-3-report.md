@@ -1,40 +1,33 @@
-# Task 3 Report: Frontend UI — Add Update Check in Settings > About
+# Task 3 Report: QmlProtocols 自定义协议注册表
 
-## Status: Done
+## What I implemented
+Created `src-backend/Qomicex.Launcher.Backend/Services/Connector/QmlProtocols.cs` (new `Services/Connector/` directory) with:
+- DTOs: `GameInfoDto`, `PlayerIconUpload`, `PlayerIconMap`
+- `QmlProtocols` static class: `GameInfoKey`/`PlayerIconsKey` consts, `GuestKeys` array, `BuildHostProtocols(...)`, `FetchGameInfoAsync(...)`, `ExchangeIconsAsync(...)`.
+- Namespace: `Qomicex.Launcher.Backend.Services.Connector`.
+- One XML doc summary only (no extra comments).
 
-## Changes
-- **File:** `src/pages/Settings.tsx`
-- **Commit:** `0a82380` — `feat(settings): add update check UI in About tab`
+## Signature deviations
+None. Verified against library source:
+- `DelegateProtocol<TResp>(string, Func<TResp>, JsonSerializerOptions? = null)` — matches (options optional).
+- `DelegateProtocol<TReq, TResp>(string, Func<TReq, TResp>, JsonSerializerOptions? = null)` — matches.
+- `ScaffoldingGuest.SendAsync<TResp>(string, CancellationToken)` → `Task<TResp?>` — matches, nullable return aligns with `FetchGameInfoAsync` returning `Task<GameInfoDto?>`.
+- `ScaffoldingGuest.SendAsync<TReq, TResp>(string, TReq, CancellationToken)` → `Task<TResp?>` — matches.
 
-### What was added
-1. **Imports:**
-   - `faArrowUp, faCircleCheck` to existing `@fortawesome/free-solid-svg-icons` import
-   - `check` from `@tauri-apps/plugin-updater`
-   - `relaunch` from `@tauri-apps/plugin-process`
+Brief code compiled verbatim with no adjustment needed.
 
-2. **State variables** in `AboutTab`:
-   - `updateState` — tracks 7 states: `idle | checking | available | downloading | installing | uptodate | error`
-   - `updateInfo` — stores version and body from the check result
+## Build result
+`dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`: **Build succeeded — 0 errors, 9 warnings** (all pre-existing, unrelated to this file: nullability CS86xx + CA1416 in AccountController/ModpackService/JavaDownloadService).
 
-3. **Functions:**
-   - `checkForUpdate()` — calls `check()`, sets `uptodate` if no update, `available` with info if found, `error` on failure
-   - `downloadAndInstall()` — calls `check()`, then `update.downloadAndInstall()`, then `relaunch()`
+## Files changed
+- Added: `src-backend/Qomicex.Launcher.Backend/Services/Connector/QmlProtocols.cs` (51 lines)
 
-4. **UI Card** — placed between Version Info and Contributors cards:
-   - Check button with spin animation during check
-   - "Up to date" confirmation with check icon
-   - Error message on failure
-   - Available update panel: version diff, release notes, download button
-   - Indeterminate progress bar during download
-   - "Installing, restarting..." state
-
-### Deviations from brief
-- **Removed `progress` state** and percentage display: the `Progress` event from `@tauri-apps/plugin-updater` only exposes `chunkLength` (no `contentLength`), so real percentage calculation is impossible. Used an indeterminate `animate-pulse` bar instead. Add percentage tracking if/when the type provides total content length.
-
-## Build
-- `npm run build` — passes (tsc + vite, no errors)
-- Only pre-existing warnings (large chunk size, unrelated dynamic imports)
+## Self-review
+- Namespace correct; imports `Qomicex.Connector.Guest` + `Qomicex.Connector.Protocols` resolve.
+- No comments beyond the one required XML summary.
+- Nullable return types on Fetch/Exchange consistent with underlying `SendAsync` returning `TResp?`.
+- Collection-expression syntax (`[...]`) valid for C# / .NET 10 target.
 
 ## Concerns
-- `update.downloadAndInstall()` callback is passed as empty arrow `() => {}` since we don't track progress. If the type requires the callback to process events, this is fine.
-- The `@tauri-apps/plugin-updater` plugin must be registered in Tauri's `tauri.conf.json` capabilities for `check()` to work in production (already added by a sibling task).
+- Git reported LF→CRLF normalization warning on commit; cosmetic only, no impact.
+- File uses LF line endings; repo may normalize to CRLF later.

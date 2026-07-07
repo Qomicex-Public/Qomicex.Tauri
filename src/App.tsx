@@ -9,6 +9,7 @@ import Accounts from './pages/Accounts.tsx'
 import AccountDetail from './pages/AccountDetail.tsx'
 import ResourceCenter from './pages/ResourceCenter.tsx'
 import ResourceDetailPage from './pages/ResourceDetail.tsx'
+import Connect from './pages/Connect.tsx'
 import Settings from './pages/Settings.tsx'
 import { MessageBoxProvider } from './components/ui/message-box.tsx'
 import { loadSettings, onSettingsChange } from './api/settings.ts'
@@ -39,6 +40,7 @@ function App() {
             <Route path="/accounts/:uuid" element={<AccountDetail />} />
             <Route path="/resource-center" element={<ResourceCenter />} />
             <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
+            <Route path="/connect" element={<Connect />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>

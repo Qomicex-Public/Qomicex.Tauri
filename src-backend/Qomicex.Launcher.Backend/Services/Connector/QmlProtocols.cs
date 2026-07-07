@@ -1,22 +1,3 @@
-# Task 3: QmlProtocols 自定义协议注册表
-
-**Files:**
-- Create: `src-backend/Qomicex.Launcher.Backend/Services/Connector/QmlProtocols.cs`
-
-**Interfaces:**
-- Consumes: `Qomicex.Connector.Protocols.{IProtocol, DelegateProtocol}`、`Qomicex.Connector.Guest.ScaffoldingGuest`（`SendAsync<TResp>`、`SendAsync<TReq,TResp>`）。参考 `src-backend/Qomicex.Connector.Part.Scaffolding/README.md` 第六节。
-- Produces:
-  - DTO：`GameInfoDto { string GameVersion; string? Loader; string? LoaderVersion; }`
-  - DTO：`PlayerIconUpload { string MachineId; string IconBase64; }`
-  - DTO：`PlayerIconMap { Dictionary<string,string> Icons; }`
-  - `static string[] GuestKeys` = `["qml:game_info", "qml:player_icons"]`
-  - `static IProtocol[] BuildHostProtocols(Func<GameInfoDto> getGameInfo, Func<PlayerIconUpload, PlayerIconMap> exchangeIcons)`
-  - `static Task<GameInfoDto?> FetchGameInfoAsync(ScaffoldingGuest guest, CancellationToken ct)`
-  - `static Task<PlayerIconMap?> ExchangeIconsAsync(ScaffoldingGuest guest, PlayerIconUpload upload, CancellationToken ct)`
-
-- [ ] **Step 1: 创建 QmlProtocols.cs**
-
-```csharp
 using Qomicex.Connector.Guest;
 using Qomicex.Connector.Protocols;
 
@@ -68,16 +49,3 @@ public static class QmlProtocols
     public static Task<PlayerIconMap?> ExchangeIconsAsync(ScaffoldingGuest guest, PlayerIconUpload upload, CancellationToken ct = default)
         => guest.SendAsync<PlayerIconUpload, PlayerIconMap>(PlayerIconsKey, upload, ct);
 }
-```
-
-- [ ] **Step 2: 验证 build**
-
-Run: `dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
-Expected: Build succeeded。若报 `DelegateProtocol<T>` 构造签名不符，核对 `src-backend/Qomicex.Connector.Part.Scaffolding/Qomicex.Connector/Protocols/IProtocol.cs` 中的重载并调整。
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src-backend/Qomicex.Launcher.Backend/Services/Connector/QmlProtocols.cs
-git commit -m "feat: add QmlProtocols registry for custom connector protocols"
-```

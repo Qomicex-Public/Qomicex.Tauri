@@ -1,30 +1,30 @@
-# Task 2 Report: Frontend — Add npm Dependencies + Capabilities
+# Task 2 Report: ScaffoldingException 异常映射
 
-## Status: ✅ Complete
+## What I changed
+Modified `src-backend/Qomicex.Launcher.Backend/Middleware/ErrorHandlingMiddleware.cs`:
 
-## Steps
+1. **Added using** — inserted `using Qomicex.Connector;` in the top using block (between `System.Text.Json` and `Qomicex.Launcher.Backend.Common`).
+2. **Added two switch arms** in `MapException` — inserted immediately after the `ApiException` arm and before the `ArgumentNullException` arm:
+   ```csharp
+   RoomCodeInvalidException => (400, "ROOM_CODE_INVALID", ex.Message, null),
+   ScaffoldingException => (502, "CONNECTOR_ERROR", ex.Message, ex.InnerException?.Message),
+   ```
 
-1. **Install npm packages** — `npm install @tauri-apps/plugin-updater @tauri-apps/plugin-process` (added 2 packages)
-2. **Edit capabilities** — Added `"updater:default"` to `src-tauri/capabilities/default.json`
-3. **Check lib.rs** — `tauri_plugin_updater` already registered in `setup()` (line 86). `tauri_plugin_process` is built-in (no Rust registration needed). No changes required.
-4. **Build verification** — `npm run build` passes (tsc + vite build, no errors)
+## Build result
+`dotnet build src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj`
+→ **已成功生成 (Build succeeded), 0 errors, 9 warnings.**
+All 9 warnings are pre-existing and unrelated to this change (nullable warnings in InstanceFilesController/AccountController/ModpackService, CA1416 in JavaDownloadService).
 
-## Commits
+## Files changed
+- `src-backend/Qomicex.Launcher.Backend/Middleware/ErrorHandlingMiddleware.cs` (3 insertions)
 
-- `9348df6` — feat(frontend): add updater plugin npm packages and capability
+## Self-review findings
+- **Case ordering correct**: `RoomCodeInvalidException` (derived) appears before `ScaffoldingException` (base). Confirmed against `ScaffoldingException.cs` where `RoomCodeInvalidException : ScaffoldingException`. C# switch pattern matching is order-sensitive; had the base come first, the derived case would be unreachable.
+- **No unused usings**: `using Qomicex.Connector;` is used by both new arms. No other usings added or orphaned.
+- **Placement**: New arms are within the `ex switch` expression, matching the brief exactly. `ex.InnerException?.Message` uses the switched `ex` parameter (consistent with the `_ =>` default arm's use of `ex.Message`).
 
-## Files Changed
-
-- `package.json` — added `@tauri-apps/plugin-updater` and `@tauri-apps/plugin-process` to dependencies
-- `package-lock.json` — auto-generated lockfile update
-- `src-tauri/capabilities/default.json` — added `"updater:default"` to permissions array
+## Commit
+`6a9d1f6` — feat: map ScaffoldingException to HTTP errors (on branch `feature/connect-center`)
 
 ## Concerns
-
-- `@tauri-apps/plugin-process` is a Tauri v2 built-in plugin — it's available from JS via npm but requires no Rust-side `plugin()` registration. Verified this is correct.
-- The updater plugin is conditionally registered (`#[cfg(desktop)]` guard in `setup()`), which is correct for cross-platform support.
-- No breaking changes, no type errors introduced.
-
-## Report Path
-
-`.superpowers/sdd/task-2-report.md`
+None. Other `ScaffoldingException` subtypes (EasyTierStartException, CenterNotFoundException, etc.) intentionally fall through to the base `ScaffoldingException => 502 CONNECTOR_ERROR` arm, per the brief.
