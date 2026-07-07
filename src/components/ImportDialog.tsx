@@ -95,6 +95,11 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
         versionIsolation,
         modpackFiles: parsed.files,
         overridesZip: parsed.overridesZip,
+        iconData: parsed.iconData,
+        modpackName: parsed.name,
+        modpackVersion: parsed.version,
+        modpackAuthor: parsed.author,
+        modpackSummary: parsed.summary,
       })
       addTask({
         id: instanceId,

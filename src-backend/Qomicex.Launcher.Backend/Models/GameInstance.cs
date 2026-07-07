@@ -21,6 +21,11 @@ public class GameInstance
     public string? VersionDirName { get; set; }
     public bool IsDefault { get; set; }
     public string? Icon { get; set; }
+    public string? IconData { get; set; }
+    public string? ModpackName { get; set; }
+    public string? ModpackVersion { get; set; }
+    public string? ModpackAuthor { get; set; }
+    public string? ModpackSummary { get; set; }
     public bool SkipIntegrityCheck { get; set; }
 
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]

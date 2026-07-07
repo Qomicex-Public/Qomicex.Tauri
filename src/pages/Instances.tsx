@@ -1092,7 +1092,7 @@ export default function Instances() {
           <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
               <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
-                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} loader={v.loaders?.[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
+                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={v.loaders?.[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 {v.loaders && v.loaders.filter((l) => l.type).length > 0 && (
                   <div className="mt-1 flex flex-wrap justify-center gap-1">
@@ -1136,7 +1136,7 @@ export default function Instances() {
           <div className="space-y-3">
             {filtered.map((v) => (
               <div key={v.name} className="group flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
-                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} loader={v.loaders?.[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
+                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={v.loaders?.[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="truncate text-sm font-medium">{v.name}</h3>

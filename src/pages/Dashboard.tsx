@@ -249,7 +249,7 @@ export default function Dashboard() {
       {defaultInstance ? (
         <div className="mt-auto flex items-center justify-between rounded-2xl border border-border/30 bg-card/70 px-6 py-4 backdrop-blur-md">
           <div className="flex items-center gap-4">
-            <InstanceIcon icon={defaultInstance.icon} loader={defaultInstance.loader} className="h-12 w-12 shrink-0 rounded-xl" imgClassName="rounded-xl" />
+            <InstanceIcon icon={defaultInstance.icon} iconData={defaultInstance.iconData} loader={defaultInstance.loader} className="h-12 w-12 shrink-0 rounded-xl" imgClassName="rounded-xl" />
             <div>
               <div className="flex items-center gap-2">
                 <button onClick={() => navigate(`/instances/${defaultInstance.id}`)} className="text-base font-semibold hover:underline">

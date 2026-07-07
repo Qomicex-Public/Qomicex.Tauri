@@ -166,6 +166,11 @@ export interface GameInstance {
   versionDirName: string | null
   isDefault: boolean
   icon: string | null
+  iconData: string | null
+  modpackName: string | null
+  modpackVersion: string | null
+  modpackAuthor: string | null
+  modpackSummary: string | null
   skipIntegrityCheck?: boolean
   resolvedGameDir: string | null
 }
@@ -504,6 +509,8 @@ export interface ModpackFileEntry {
 export interface ModpackParseResult {
   name: string
   summary: string | null
+  author: string | null
+  version: string | null
   gameVersion: string
   loader: string
   loaderVersion: string | null
@@ -512,6 +519,7 @@ export interface ModpackParseResult {
   hasOverrides: boolean
   fileCount: number
   overridesZip: string | null
+  iconData: string | null
 }
 
 export interface ModpackInstallRequest {
@@ -524,6 +532,11 @@ export interface ModpackInstallRequest {
   versionIsolation: boolean
   modpackFiles: ModpackFileEntry[]
   overridesZip: string | null
+  iconData?: string | null
+  modpackName?: string | null
+  modpackVersion?: string | null
+  modpackAuthor?: string | null
+  modpackSummary?: string | null
 }
 
 export interface SkinProfile {

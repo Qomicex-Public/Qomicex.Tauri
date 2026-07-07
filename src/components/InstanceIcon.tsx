@@ -25,12 +25,20 @@ export function getDefaultIcon(loader?: string | null): InstanceIconName {
 
 interface InstanceIconProps {
   icon: string | null | undefined
+  iconData?: string | null | undefined
   loader?: string | null
   className?: string
   imgClassName?: string
 }
 
-export function InstanceIcon({ icon, loader, className, imgClassName }: InstanceIconProps) {
+export function InstanceIcon({ icon, iconData, loader, className, imgClassName }: InstanceIconProps) {
+  if (iconData?.startsWith('data:image/')) {
+    return (
+      <div className={cn('flex items-center justify-center overflow-hidden', className)}>
+        <img src={iconData} alt="" className={cn('h-full w-full object-cover', imgClassName)} />
+      </div>
+    )
+  }
   const name = (icon || getDefaultIcon(loader)).replace(/\.png$/i, '')
   const src = `/instances-icons/${name}.png`
   return (

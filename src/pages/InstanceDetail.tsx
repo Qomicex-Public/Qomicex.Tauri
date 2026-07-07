@@ -1620,7 +1620,7 @@ export default function InstanceDetailPage() {
         <Button variant="ghost" size="icon" onClick={() => navigate('/instances')}>
           <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
         </Button>
-        <InstanceIcon icon={instance.icon} loader={instance.loader} className="h-10 w-10 shrink-0 rounded-lg" imgClassName="rounded-lg" />
+        <InstanceIcon icon={instance.icon} iconData={instance.iconData} loader={instance.loader} className="h-10 w-10 shrink-0 rounded-lg" imgClassName="rounded-lg" />
         <div className="flex-1">
           <h1 className="text-2xl font-semibold tracking-tight">{instance.name}</h1>
           <p className="text-xs text-muted-foreground">
@@ -1689,6 +1689,38 @@ export default function InstanceDetailPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {instance.modpackName && (
+                <Card>
+                  <CardContent className="p-5 space-y-3">
+                    <h3 className="text-sm font-medium">整合包信息</h3>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <p className="text-xs text-muted-foreground">整合包名称</p>
+                        <p className="font-medium">{instance.modpackName}</p>
+                      </div>
+                      {instance.modpackVersion && (
+                        <div>
+                          <p className="text-xs text-muted-foreground">版本</p>
+                          <p className="font-medium">{instance.modpackVersion}</p>
+                        </div>
+                      )}
+                      {instance.modpackAuthor && (
+                        <div>
+                          <p className="text-xs text-muted-foreground">作者</p>
+                          <p className="font-medium">{instance.modpackAuthor}</p>
+                        </div>
+                      )}
+                    </div>
+                    {instance.modpackSummary && (
+                      <div className="pt-1">
+                        <p className="text-xs text-muted-foreground mb-1">简介</p>
+                        <div className="text-sm text-muted-foreground prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: instance.modpackSummary }} />
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
                 <CardContent className="p-5 space-y-3">
