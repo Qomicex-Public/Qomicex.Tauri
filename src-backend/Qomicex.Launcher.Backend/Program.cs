@@ -23,6 +23,15 @@ try
 }
 catch { /* use default */ }
 
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 524288000; // 500 MB
+});
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 524288500; // ~500 MB
+});
+
 builder.Services.AddSingleton(new TraceBufferStore(capacity: 2000));
 builder.Services.AddSingleton<TraceDumpService>();
 builder.Services.AddOpenApi();
@@ -53,6 +62,7 @@ builder.Services.AddHttpClient("AuthlibInjector", client =>
 });
 builder.Services.AddSingleton<LaunchService>();
 builder.Services.AddSingleton<FtbService>();
+builder.Services.AddSingleton<ModpackService>();
 builder.Services.AddSingleton<DownloadManager>();
 builder.Services.AddSingleton<InstanceInstallService>();
 builder.Services.AddSingleton<ResourceDownloadService>();

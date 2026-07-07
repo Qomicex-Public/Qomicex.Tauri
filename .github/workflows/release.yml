@@ -297,22 +297,11 @@ jobs:
           cat latest.json
       - name: Flatten bundle directories
         run: |
-          echo "=== Before ==="
-          find . -type d
-          find . -type f
-          echo "=== Moving ==="
-          shopt -s nullglob
           for d in appimage deb rpm nsis msi dmg macos; do
             [ -d "$d" ] || continue
-            echo "Processing $d: $(ls "$d")"
-            for f in "$d"/*; do
-              mv -v "$f" ./
-            done
-            rmdir -v "$d" 2>/dev/null || echo "rmdir $d failed"
+            find "$d" -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.exe' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' -o -name '*.msi' -o -name '*.zip' \) -exec mv -f -t . {} +
+            rm -rf "$d"
           done
-          echo "=== After ==="
-          find . -type d
-          find . -type f
       - uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.event.inputs.version }}

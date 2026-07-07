@@ -103,7 +103,7 @@ public class InstanceInstallService
     public void StartInstall(string instanceId, string gameVersion, string gameDir,
         string? loader, string? loaderVersion, string[]? addons,
         int downloadThreads = 64, bool versionIsolation = true, int downloadSourceId = 0, int downloadTimeout = 15,
-        string? javaPath = null)
+        string? javaPath = null, string? versionId = null)
     {
         if (string.IsNullOrEmpty(javaPath))
         {
@@ -115,7 +115,7 @@ public class InstanceInstallService
 
         var task = new InstallTask(instanceId, gameVersion, gameDir,
             loader, loaderVersion, addons, downloadThreads, versionIsolation,
-            _httpClientFactory, downloadSourceId, downloadTimeout, javaPath);
+            _httpClientFactory, downloadSourceId, downloadTimeout, javaPath, versionId);
 
         _tasks[instanceId] = task;
 
@@ -130,6 +130,42 @@ public class InstanceInstallService
                 // Keep task in dict so GetState can read final state
                 // It will be removed by RemoveInstall or after timeout
             }
+        });
+    }
+
+    public void StartModpackInstall(string instanceId, string gameVersion, string gameDir,
+        string? loader, string? loaderVersion, string instName, int downloadThreads,
+        bool versionIsolation, List<ModpackFileEntry> files, byte[]? overridesZip,
+        string? javaPath, int downloadSourceId = 0, int downloadTimeout = 15)
+    {
+        if (string.IsNullOrEmpty(javaPath))
+        {
+            var customJavas = _javaRuntimeStore.GetCustomAsync().GetAwaiter().GetResult();
+            var valid = customJavas.FirstOrDefault(j => j.State == JavaHelper.JavaState.Valid);
+            if (valid != null)
+                javaPath = valid.Path;
+        }
+
+        var installTask = new InstallTask(instanceId, gameVersion, gameDir,
+            loader, loaderVersion, null, downloadThreads, versionIsolation,
+            _httpClientFactory, downloadSourceId, downloadTimeout, javaPath, instName);
+
+        _tasks[instanceId] = installTask;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await installTask.StartAsync();
+                if (installTask.IsCompleted && installTask.Error == null)
+                {
+                    var modpackTask = new ModpackInstallTask(instanceId, gameDir, instName,
+                        files, overridesZip, versionIsolation);
+                    _tasks[instanceId] = modpackTask;
+                    await modpackTask.StartAsync();
+                }
+            }
+            finally { }
         });
     }
 

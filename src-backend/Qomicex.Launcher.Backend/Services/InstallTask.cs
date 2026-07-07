@@ -50,7 +50,7 @@ public class InstallTask : IInstallTask
         string? loader, string? loaderVersion, string[]? addons,
         int downloadThreads, bool versionIsolation,
         IHttpClientFactory httpClientFactory, int downloadSourceId = 0, int downloadTimeout = 15,
-        string? javaPath = null)
+        string? javaPath = null, string? versionId = null)
     {
         InstanceId = instanceId;
         _gameVersion = gameVersion;
@@ -64,9 +64,9 @@ public class InstallTask : IInstallTask
         _httpClientFactory = httpClientFactory;
         _javaPath = javaPath;
 
-        _versionId = !string.IsNullOrEmpty(loader) && !string.IsNullOrEmpty(loaderVersion)
+        _versionId = versionId ?? (!string.IsNullOrEmpty(loader) && !string.IsNullOrEmpty(loaderVersion)
             ? $"{gameVersion}-{loader}-{loaderVersion}"
-            : gameVersion;
+            : gameVersion);
         _effectiveGameDir = versionIsolation
             ? Path.Combine(gameDir, "versions", _versionId)
             : gameDir;

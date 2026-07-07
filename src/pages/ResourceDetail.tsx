@@ -29,6 +29,8 @@ import { getInstance, getDefaultInstance } from '../api/instance.ts'
 import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 import { save } from '@tauri-apps/plugin-dialog'
+import { loadSettings } from '../api/settings.ts'
+import ModpackInstallDialog from '../components/ModpackInstallDialog.tsx'
 
 
 function formatDownloads(n: number): string {
@@ -89,6 +91,9 @@ export default function ResourceDetailPage() {
   const [loadingDownloadsFor, setLoadingDownloadsFor] = useState<string | null>(null)
   const [downloadingFor, setDownloadingFor] = useState<string | null>(null)
 
+  const [modpackInstallVersion, setModpackInstallVersion] = useState<ResourceVersion | null>(null)
+  const [modpackGameDir, setModpackGameDir] = useState('')
+  const [modpackIsolation, setModpackIsolation] = useState(true)
   const [cnName, setCnName] = useState<string | null>(null)
   const [translation, setTranslation] = useState<{ original: string; translated: string; translatedAt: string } | null>(null)
   const [translating, setTranslating] = useState(false)
@@ -487,7 +492,21 @@ export default function ResourceDetailPage() {
                                 </div>
                               </div>
 
-                              {source === 'ftb' ? (
+                              {category === 'modpack' ? (
+                                <Button
+                                  size="sm"
+                                  className="shrink-0"
+                                  onClick={async () => {
+                                    const settings = await loadSettings()
+                                    setModpackGameDir(settings.gameDir)
+                                    setModpackIsolation(settings.versionIsolation ?? true)
+                                    setModpackInstallVersion(version)
+                                  }}
+                                >
+                                  <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                  安装此整合包
+                                </Button>
+                              ) : source === 'ftb' ? (
                                 downloadsByVersion[version.id]?.[0]?.url ? (
                                   <Button
                                     size="sm"
@@ -552,6 +571,18 @@ export default function ResourceDetailPage() {
         </>
       )}
 
+      {modpackInstallVersion && (
+        <ModpackInstallDialog
+          open={!!modpackInstallVersion}
+          onClose={() => setModpackInstallVersion(null)}
+          modpackName={detail?.title || modpackInstallVersion.name || ''}
+          projectId={resourceId || ''}
+          source={source}
+          selectedVersion={modpackInstallVersion}
+          gameDir={modpackGameDir}
+          versionIsolation={modpackIsolation}
+        />
+      )}
     </div>
   )
 }

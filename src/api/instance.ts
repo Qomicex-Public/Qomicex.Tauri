@@ -1,5 +1,5 @@
 import { get, post, put, del } from './client.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
@@ -83,4 +83,23 @@ export async function getGameSettings(id: string): Promise<GameSettingDto[]> {
 
 export async function setGameSetting(id: string, name: string, value: string): Promise<void> {
   await put(`/instance/${id}/game-settings/` + encodeURIComponent(name), value)
+}
+
+export async function parseModpackFile(file: File): Promise<ModpackParseResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await fetch('/api/modpack/parse', { method: 'POST', body: formData })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.message || err.error || '解析失败')
+  }
+  return res.json()
+}
+
+export async function resolveModpack(source: string, projectId: string, versionId: string): Promise<ModpackParseResult> {
+  return post<ModpackParseResult>('/modpack/resolve', { source, projectId, versionId })
+}
+
+export async function startModpackInstall(data: ModpackInstallRequest): Promise<{ message: string; instanceId: string }> {
+  return post('/modpack/install', data)
 }

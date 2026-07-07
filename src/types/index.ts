@@ -279,7 +279,7 @@ export interface InstallProgressResponse {
 export interface DownloadTask {
   id: string
   name: string
-  type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java'
+  type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java' | 'modpack'
   gameVersion: string
   loader?: string
   loaderVersion?: string
@@ -493,6 +493,37 @@ export interface GameSettingDto {
   introducedVersion: string
   isAvailableInCurrentVersion: boolean
   valueKind: string
+}
+
+export interface ModpackFileEntry {
+  path: string
+  downloadUrl: string | null
+  size: number | null
+}
+
+export interface ModpackParseResult {
+  name: string
+  summary: string | null
+  gameVersion: string
+  loader: string
+  loaderVersion: string | null
+  source: string
+  files: ModpackFileEntry[]
+  hasOverrides: boolean
+  fileCount: number
+  overridesZip: string | null
+}
+
+export interface ModpackInstallRequest {
+  name: string
+  gameVersion: string
+  loader: string | null
+  loaderVersion: string | null
+  maxMemory?: number
+  gameDir: string
+  versionIsolation: boolean
+  modpackFiles: ModpackFileEntry[]
+  overridesZip: string | null
 }
 
 export interface SkinProfile {
