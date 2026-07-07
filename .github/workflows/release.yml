@@ -212,7 +212,7 @@ jobs:
 
   macos-x64:
     if: ${{ (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') && (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'x64') }}
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
