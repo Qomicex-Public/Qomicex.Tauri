@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using Qomicex.Connector;
 using Qomicex.Launcher.Backend.Common;
 
 namespace Qomicex.Launcher.Backend.Middleware;
@@ -58,6 +59,8 @@ public sealed class ErrorHandlingMiddleware
         return ex switch
         {
             ApiException api => (api.StatusCode, api.ErrorCode, api.Message, api.InnerException?.Message),
+            RoomCodeInvalidException => (400, "ROOM_CODE_INVALID", ex.Message, null),
+            ScaffoldingException => (502, "CONNECTOR_ERROR", ex.Message, ex.InnerException?.Message),
             ArgumentNullException arg => (400, "MISSING_PARAMETER", $"缺少必要参数: {arg.ParamName}", null),
             ArgumentException arg => (400, "INVALID_PARAMETER", arg.Message, null),
             FileNotFoundException fnf => (404, "FILE_NOT_FOUND", $"文件不存在: {fnf.FileName ?? "unknown"}", null),
