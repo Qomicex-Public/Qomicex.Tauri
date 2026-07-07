@@ -33,6 +33,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Qomicex.Avalonia\Qomicex.Core\Qomicex.Core.csproj" />
+    <ProjectReference Include="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
   </ItemGroup>
 
   <Target Name="SetGitHash" BeforeTargets="CoreCompile" Condition="'$(GitHash)' != ''">
