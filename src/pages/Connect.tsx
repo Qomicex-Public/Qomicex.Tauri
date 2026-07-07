@@ -66,7 +66,7 @@ export default function Connect() {
   const [code, setCode] = useState('')
   const [instances, setInstances] = useState<GameInstance[]>([])
   const [selectedInstance, setSelectedInstance] = useState('')
-  const [hostMode, setHostMode] = useState<'port' | 'instance'>('port')
+  const [hostMode, setHostMode] = useState<'port' | 'instance'>('instance')
   const [busy, setBusy] = useState(false)
   const [easyTier, setEasyTier] = useState<EasyTierStatus | null>(null)
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -183,6 +183,7 @@ export default function Connect() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* 创建房间 */}
+        {!isGuest && (
         <Card className="space-y-4 border p-5">
           <h2 className="text-lg font-semibold">创建房间</h2>
 
@@ -249,8 +250,10 @@ export default function Connect() {
             </div>
           )}
         </Card>
+        )}
 
         {/* 加入房间 */}
+        {!isHost && !isStarting && (
         <Card className="space-y-4 border p-5">
           <h2 className="text-lg font-semibold">加入房间</h2>
 
@@ -287,6 +290,7 @@ export default function Connect() {
             </div>
           )}
         </Card>
+        )}
       </div>
     </div>
   )
