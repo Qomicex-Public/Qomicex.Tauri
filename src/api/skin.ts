@@ -1,6 +1,29 @@
 import { get, API_BASE } from './client.ts'
 import type { SkinProfile } from '../types/index.ts'
 
+// ponytail: global in-memory avatar blob cache, cleared on manual refresh
+const avatarCache = new Map<string, string>()
+
+export function tryGetCachedAvatar(uuid: string): string | null {
+  return avatarCache.get(uuid) ?? null
+}
+
+export async function fetchAndCacheAvatar(uuid: string, type: string, server?: string | null): Promise<string> {
+  const cached = avatarCache.get(uuid)
+  if (cached) return cached
+  const url = getAvatarUrl(uuid, type, server)
+  const resp = await fetch(url)
+  const blob = await resp.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  avatarCache.set(uuid, blobUrl)
+  return blobUrl
+}
+
+export function invalidateAvatarCache(): void {
+  for (const url of avatarCache.values()) URL.revokeObjectURL(url)
+  avatarCache.clear()
+}
+
 export async function getSkinProfile(uuid: string, type: string, server?: string | null): Promise<SkinProfile | null> {
   const params = new URLSearchParams({ type })
   if (server) params.set('server', server)

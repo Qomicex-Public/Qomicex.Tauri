@@ -9,6 +9,7 @@ import { Label } from '../components/ui/label.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
+import { invalidateAvatarCache } from '../api/skin.ts'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui/dialog.tsx'
@@ -99,6 +100,7 @@ export default function Accounts() {
 
   const forceRefresh = useCallback(async () => {
     cacheInvalidate('api-accounts')
+    invalidateAvatarCache()
     await refresh()
   }, [refresh])
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart } from '@fortawesome/free-solid-svg-icons'
-import { faGithub } from '@fortawesome/free-brands-svg-icons'
+import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -742,7 +742,7 @@ export default function Settings() {
           ))}
         </div>
 
-        <div className="flex-1 space-y-4">
+        <div className="flex-1 min-w-0 space-y-4">
           {category === 'launcher' && (
             <div key="launcher" className="animate-in slide-up">
             <Card>
@@ -1042,8 +1042,8 @@ export default function Settings() {
                           key={i}
                           className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 transition-colors hover:border-muted-foreground/30"
                         >
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-bold text-primary">
-                            {j.name.charAt(0)}
+                          <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', j.state === 'Valid' ? 'bg-green-500/10 text-green-600' : 'bg-destructive/15 text-destructive')}>
+                            <FontAwesomeIcon icon={faJava} className="h-5 w-5" />
                           </div>
 
                           <div className="min-w-0 flex-1">
