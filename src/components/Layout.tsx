@@ -121,6 +121,7 @@ export default function Layout() {
   }, [msgConfirm])
 
   const isLinux = useMemo(() => navigator.userAgent.includes('Linux'), [])
+  const isMacos = useMemo(() => navigator.userAgent.includes('Mac'), [])
 
   return (
     <DebugProvider>
@@ -135,7 +136,7 @@ export default function Layout() {
       <div className="relative z-10 flex flex-1 min-w-0">
         <Sidebar />
         <div className="flex flex-1 flex-col min-w-0">
-          {!isLinux && <TitleBar />}
+          {!isLinux && !isMacos && <TitleBar />}
           <main className="flex-1 overflow-y-auto overflow-x-hidden bg-background/50 backdrop-blur-sm">
             <Outlet />
           </main>

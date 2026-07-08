@@ -141,6 +141,10 @@ pub fn run() {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_decorations(true);
             }
+            #[cfg(target_os = "macos")]
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_decorations(true);
+            }
             spawn_backend(app);
             Ok(())
         })
