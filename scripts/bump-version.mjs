@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,7 +10,8 @@ const ROOT = resolve(__dirname, "..");
 
 function usage() {
   console.log("Usage: node scripts/bump-version.mjs <new-version>");
-  console.log("  Updates version in: package.json, Cargo.toml, tauri.conf.json, Directory.Build.props");
+  console.log("  Updates version in: package.json, Cargo.toml, tauri.conf.json");
+  console.log("  (Directory.Build.props derives its version from package.json)");
   process.exit(1);
 }
 
@@ -35,15 +36,8 @@ const tauriConf = JSON.parse(readFileSync(tauriConfPath, "utf-8"));
 tauriConf.version = newVersion;
 writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2) + "\n");
 
-// 4. Directory.Build.props
-const propsPath = resolve(ROOT, "src-backend/Directory.Build.props");
-if (existsSync(propsPath)) {
-  let props = readFileSync(propsPath, "utf-8");
-  props = props.replace(/(<Version>)[^<]*(<\/Version>)/, `$1${newVersion}$2`);
-  props = props.replace(/(<AssemblyVersion>)[^<]*(<\/AssemblyVersion>)/, `$1${newVersion}.0$2`);
-  props = props.replace(/(<FileVersion>)[^<]*(<\/FileVersion>)/, `$1${newVersion}.0$2`);
-  props = props.replace(/(<Version>)[^<]*(<\/Version>)/, `$1${newVersion}$2`);
-  writeFileSync(propsPath, props);
-}
+// Directory.Build.props derives its version from package.json automatically
+// (and strips any pre-release suffix for AssemblyVersion/FileVersion), so it
+// must NOT be rewritten here.
 
 console.log(`Version bumped to ${newVersion}`);
