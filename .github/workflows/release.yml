@@ -62,6 +62,9 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
+      - name: Bump version
+        shell: pwsh
+        run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
@@ -133,6 +136,9 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+      - name: Bump version
+        shell: pwsh
+        run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime linux-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
@@ -179,6 +185,9 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
+      - name: Bump version
+        shell: pwsh
+        run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime osx-arm64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
@@ -225,6 +234,9 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
+      - name: Bump version
+        shell: pwsh
+        run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend --runtime osx-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
