@@ -1,4 +1,4 @@
-import { get, post, put, del } from './client.ts'
+import { get, post, put, del, API_BASE } from './client.ts'
 import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
@@ -88,7 +88,7 @@ export async function setGameSetting(id: string, name: string, value: string): P
 export async function parseModpackFile(file: File): Promise<ModpackParseResult> {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await fetch('/api/modpack/parse', { method: 'POST', body: formData })
+  const res = await fetch(`${API_BASE}/modpack/parse`, { method: 'POST', body: formData })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.message || err.error || '解析失败')

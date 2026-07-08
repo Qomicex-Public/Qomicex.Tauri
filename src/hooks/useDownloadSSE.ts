@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { API_BASE } from '../api/client.ts'
 
 export interface InstallState {
   instanceId: string
@@ -51,7 +52,7 @@ export function useDownloadSSE() {
   const [data, setData] = useState<ProgressPayload | null>(null)
 
   useEffect(() => {
-    const es = new EventSource('/api/progress/stream')
+    const es = new EventSource(`${API_BASE}/progress/stream`)
     es.onmessage = (e) => {
       try {
         const parsed = JSON.parse(e.data) as ProgressPayload
