@@ -89,11 +89,6 @@ fn spawn_backend(app: &tauri::App) {
     let mut cmd = std::process::Command::new(&exe_path);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            cmd.env("QOMICEX_HOME", dir);
-        }
-    }
     #[cfg(windows)] { const CREATE_NO_WINDOW: u32 = 0x08000000; cmd.creation_flags(CREATE_NO_WINDOW); }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
