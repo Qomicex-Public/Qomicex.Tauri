@@ -132,13 +132,9 @@ pub fn run() {
         .setup(|app| {
             #[cfg(desktop)]
             let _ = app.handle().plugin(tauri_plugin_updater::Builder::new().build());
-            #[cfg(target_os = "linux")]
+            #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_decorations(true);
-            }
-            #[cfg(target_os = "macos")]
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_decorations(true);
+                let _ = w.set_decorations(false);
             }
             spawn_backend(app);
             Ok(())

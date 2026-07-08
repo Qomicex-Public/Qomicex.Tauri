@@ -15,7 +15,7 @@
         "title": "Qomicex Launcher",
         "width": 1140,
         "height": 790,
-        "decorations": false,
+        "decorations": true,
         "resizable": true
       }
     ],
