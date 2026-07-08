@@ -281,7 +281,7 @@ export default function Accounts() {
               onClick={() => navigate(`/accounts/${acc.uuid}`)}
               className="group flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3.5 py-3 text-left transition-colors hover:border-border"
             >
-              <AccountAvatar account={acc} className="h-10 w-10 shrink-0" textClassName="text-base font-bold" />
+              <AccountAvatar account={acc} className="h-10 w-10 shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{acc.name}</div>
                 <div className="flex items-center gap-1">

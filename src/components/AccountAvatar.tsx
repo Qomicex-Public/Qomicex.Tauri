@@ -3,24 +3,34 @@ import { tryGetCachedAvatar, fetchAndCacheAvatar } from '../api/skin.ts'
 import type { Account } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 
-export function AccountAvatar({ account, className, textClassName }: {
+export function AccountAvatar({ account, className }: {
   account: Pick<Account, 'name' | 'uuid' | 'loginMethod' | 'serverUrl'>
   className?: string
-  textClassName?: string
 }) {
   const [imgUrl, setImgUrl] = useState<string | null>(() => tryGetCachedAvatar(account.uuid))
-  const [failed, setFailed] = useState(false)
+  const [loading, setLoading] = useState(!imgUrl)
 
   useEffect(() => {
-    if (tryGetCachedAvatar(account.uuid)) return
-    fetchAndCacheAvatar(account.uuid, account.loginMethod, account.serverUrl).then(setImgUrl)
+    const cached = tryGetCachedAvatar(account.uuid)
+    if (cached) { setImgUrl(cached); setLoading(false); return }
+    setLoading(true)
+    fetchAndCacheAvatar(account.uuid, account.loginMethod, account.serverUrl)
+      .then(setImgUrl)
+      .catch(() => setImgUrl(null))
+      .finally(() => setLoading(false))
   }, [account.uuid, account.loginMethod, account.serverUrl])
 
-  if (failed || !imgUrl) {
+  if (loading) {
     return (
-      <div className={cn('flex items-center justify-center rounded-full bg-gradient-to-br from-primary/20 to-primary/5 font-bold text-primary ring-1 ring-primary/20', className)}>
-        <span className={textClassName}>{account.name.charAt(0).toUpperCase()}</span>
+      <div className={cn('flex items-center justify-center rounded-full bg-muted', className)}>
+        <div className="h-1/2 w-1/2 animate-pulse rounded-full bg-muted-foreground/20" />
       </div>
+    )
+  }
+
+  if (!imgUrl) {
+    return (
+      <div className={cn('rounded-full bg-muted', className)} />
     )
   }
 
@@ -29,7 +39,6 @@ export function AccountAvatar({ account, className, textClassName }: {
       src={imgUrl}
       alt={account.name}
       className={cn('rounded-full object-cover [image-rendering:pixelated]', className)}
-      onError={() => setFailed(true)}
     />
   )
 }

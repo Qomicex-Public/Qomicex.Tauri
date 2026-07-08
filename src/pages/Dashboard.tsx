@@ -147,7 +147,7 @@ export default function Dashboard() {
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">账户</p>
             <div ref={accountRef} className="flex items-center gap-3">
               {defaultAccount ? (
-                <AccountAvatar account={defaultAccount} className="h-9 w-9 shrink-0" textClassName="text-sm font-bold" />
+                <AccountAvatar account={defaultAccount} className="h-9 w-9 shrink-0" />
               ) : (
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted">
                   <FontAwesomeIcon icon={faUser} className="h-4 w-4 text-muted-foreground" />
@@ -173,7 +173,7 @@ export default function Dashboard() {
                       onMouseDown={() => handleSwitchAccount(acc.uuid)}
                       className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent"
                     >
-                      <AccountAvatar account={acc} className="h-6 w-6 shrink-0" textClassName="text-[10px] font-bold" />
+                      <AccountAvatar account={acc} className="h-6 w-6 shrink-0" />
                       <span className="flex-1 truncate">{acc.name}</span>
                       {isDefault && <FontAwesomeIcon icon={faCheck} className="h-3 w-3 text-primary" />}
                     </button>

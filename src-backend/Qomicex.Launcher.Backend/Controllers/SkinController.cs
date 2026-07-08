@@ -31,10 +31,12 @@ public class SkinController : ControllerBase
         if (type == "Offline")
             return File(SkinService.GetDefaultSkinBytes(), "image/png");
         var profile = await _skin.FetchProfile(uuid, type, server);
-        if (profile?.SkinUrl == null) return NotFound();
-        var data = await _skin.DownloadSkin(profile.SkinUrl);
-        if (data == null) return NotFound();
-        return File(data, "image/png");
+        if (profile?.SkinUrl != null)
+        {
+            var data = await _skin.DownloadSkin(profile.SkinUrl);
+            if (data != null) return File(data, "image/png");
+        }
+        return File(SkinService.GetDefaultSkinBytes(), "image/png");
     }
 
     [HttpPost("upload/{uuid}")]
