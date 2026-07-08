@@ -136,6 +136,10 @@ public class ModpackInstallTask : IInstallTask
                         CurrentFile = lastDone.Name;
                     lastCompleted = info.CompletedFiles;
                 }
+                var active = _downloadManager.GetTaskFileStatuses(taskId)
+                    .FirstOrDefault(s => s.Status == DownloadTask.FileStatus.Downloading);
+                if (active.Name != null)
+                    CurrentFile = active.Name;
                 OnStateChanged?.Invoke(this);
             }
             try { await Task.Delay(100, _cts.Token); } catch { break; }

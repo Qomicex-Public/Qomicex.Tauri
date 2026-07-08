@@ -103,6 +103,16 @@ export default function ModpackInstallDialog({
       })
       setInstallingInstanceId(instanceId)
     } catch (e: any) {
+      addTask({
+        id: `modpack-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        name: instanceName,
+        type: 'modpack',
+        gameVersion: selectedVersion.gameVersions[0] || '',
+        status: 'failed',
+        progress: 0,
+        error: e.message || '安装失败',
+        createdAt: new Date().toISOString(),
+      })
       setError(e.message || '安装失败')
       setStep('config')
     }
