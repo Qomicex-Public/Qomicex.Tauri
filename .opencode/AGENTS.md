@@ -16,7 +16,11 @@
 
 Vite 将 `/api/*` 代理到 `http://localhost:5000`（`vite.config.ts`）。
 
-`src-backend/` 包含 3 个项目：`Qomicex.Launcher.Backend`（主 API）、`Qomicex.Core`（共享启动器逻辑）、`Qomicex.Downloader`（下载库）。Backend 同时引用 Core 和 Downloader。
+`src-backend/` 有 5 个项目：`Qomicex.Launcher.Backend`（主 API）、`Qomicex.Downloader`（下载库）、`Qomicex.Connector.Part.Scaffolding/`（子模块）、`Qomicex.Launcher/`（Windows 独立启动器），以及 `Directory.Build.props`。Core 位于 `Qomicex.Avalonia/` 子模块的 `Qomicex.Avalonia/Qomicex.Core/`。
+
+Backend 引用 Core（通过 `Qomicex.Avalonia/Qomicex.Core/`）和 `Qomicex.Connector`。
+
+子模块（递归检出）：`Qomicex.Avalonia/`、`src-backend/Qomicex.Connector.Part.Scaffolding/`。
 
 `Qomicex.Avalonia/` 是**独立仓库**（有自己的 `.git`）。不要假定与 Tauri 应用共享工具链。
 
@@ -50,7 +54,7 @@ import { x } from './baz'                    // 错误 —— Vite 会报错
 - **样式**：Tailwind + shadcn/ui 风格组件（`class-variance-authority`、`radix-ui`）。使用 `src/lib/utils.ts` 中的 `cn()` 合并 class。
 - **主题**：深色模式 CSS 变量定义在 `src/index.css`。Tailwind 配置了 `darkMode: "class"`。
 - **严格 TS**：启用了 `noUnusedLocals`、`noUnusedParameters`、`strict: true`。`tsc` 是构建的一部分，开发时必须修复这些错误。
-- **路由**：`BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` 侧边栏 → 9 个已注册路由：`/`、`/instances`、`/instances/:id`、`/downloads`、`/accounts`、`/accounts/:uuid`、`/resource-center`、`/resource-center/:resourceId`、`/settings`。
+- **路由**：`BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` 侧边栏 → 11 个路由：`/`、`/instances`、`/instances/:id`、`/downloads`、`/accounts`、`/accounts/:uuid`、`/resource-center`、`/resource-center/:resourceId`、`/connect`、`/settings`、`/running`。`LaunchProgressDialog` 渲染在路由外。
 - **UI 组件**在 `src/components/ui/`：badge、button、card、checkbox、combobox、dialog、input、label、message-box、select、separator、table、textarea、tooltip。
   - **Tooltip**（`tooltip.tsx`）— 替代原生 `title` 属性。包裹所有纯图标按钮。
   - **Select**（`select.tsx`）— 使用 `Select`/`SelectOption`/`SelectDivider` 替代原生 `<select>`。
@@ -59,10 +63,10 @@ import { x } from './baz'                    // 错误 —— Vite 会报错
 
 ## 后端要点
 
-- `Program.cs` 注册了：控制器、CORS（允许任意来源）、4 个 `HttpClient`（Modrinth、CurseForge、FTB、默认）、`DownloadManager`、`InstanceInstallService`、`FtbService`、`ResourceDownloadService`、`JavaRuntimeStore`、`JavaDownloadService`、`SkinService`、`McmodService`、`AccountService`、`MsAccount`、`TraceBufferStore`/`TraceDumpService`。
-- `Controllers/` 中的控制器对应 `api/<name>` 路由。共 16 个控制器（Account、Instance、InstanceFiles、Java、JavaDownload、Launcher、Loaders、LogAnalysis、Mcmod、ResourceDownload、Resources、RoomCode、Settings、Skin、SystemInfo、Versions）。
-- 内嵌资源：`error-patterns.json`（日志分析）、`java_launch_wrapper-1.4.4.jar`。
-- `appsettings.json` 中 `CurseForge:ApiKey` 默认为空。
+- `Program.cs` 注册了：控制器、CORS（允许任意来源）、5 个 `HttpClient`（Modrinth、CurseForge、FTB、AuthlibInjector、默认）、`DownloadManager`、`InstanceInstallService`、`LaunchService`、`FtbService`、`ModpackService`、`ResourceDownloadService`、`JavaRuntimeStore`、`JavaDownloadService`、`SkinService`、`McmodService`、`AccountService`、`MsAccount`、`TraceBufferStore`/`TraceDumpService`、`LanGameListenerService`、`ConnectorService`/`GameProcessInspector`/`EasyTierProvider`。
+- `Controllers/` 中的控制器对应 `api/<name>` 路由。共 20 个控制器（Account、Connector、Diagnostics、Instance、InstanceFiles、Java、JavaDownload、Launcher、Loaders、LogAnalysis、Mcmod、Modpack、ProgressSse、ResourceDownload、Resources、RoomCode、Settings、Skin、SystemInfo、Versions）。
+- 内嵌资源：`Alex.png`、`mcmod_data.json`（在 `.csproj` 中）。
+- `appsettings.json` 中包含 `CurseForge:ApiKey`（已在仓库中设置）。
 
 ## 错误处理
 

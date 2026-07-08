@@ -10,7 +10,11 @@
 
 Vite proxies `/api/*` → `http://localhost:5000` (`vite.config.ts`).
 
-`src-backend/` has 3 projects: `Qomicex.Launcher.Backend` (main API), `Qomicex.Core` (shared launcher logic, submodule), `Qomicex.Downloader` (download library). Backend references both Core and Downloader.
+`src-backend/` has 5 projects: `Qomicex.Launcher.Backend` (main API), `Qomicex.Downloader` (download lib), `Qomicex.Connector.Part.Scaffolding/` (submodule), `Qomicex.Launcher/` (Windows standalone launcher), plus `Directory.Build.props`. Core lives in `Qomicex.Avalonia/` submodule at `Qomicex.Avalonia/Qomicex.Core/`.
+
+Backend references Core (via `Qomicex.Avalonia/Qomicex.Core/`) and `Qomicex.Connector`.
+
+Submodules (recursive checkout): `Qomicex.Avalonia/`, `src-backend/Qomicex.Connector.Part.Scaffolding/`.
 
 `Qomicex.Avalonia/` is a **separate repo** (own `.git`). Do not assume shared toolchain.
 
@@ -54,7 +58,7 @@ import { x } from './baz'                  // WRONG — Vite will error
 - `cn()` from `src/lib/utils.ts` for Tailwind class merging.
 - Dark mode via CSS variables in `src/index.css`, Tailwind `darkMode: "class"`.
 - Strict TS: `noUnusedLocals`, `noUnusedParameters`, `strict: true`.
-- Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 9 routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/settings`.
+- Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 11 routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/connect`, `/settings`, `/running`. `LaunchProgressDialog` rendered outside routes.
 - **Internal nav: `<Link>` not `<a>`** — plain `<a>` reloads the page, resetting persistent state. External links use `<a target="_blank">`.
 - UI components: `src/components/ui/{badge,button,card,checkbox,combobox,dialog,input,label,message-box,select,separator,table,textarea,tooltip}.tsx`. Import via `'../components/ui/<name>.tsx'` (extension required).
 - **Tooltip**: use instead of native `title`. Always wrap icon-only buttons.
@@ -63,10 +67,10 @@ import { x } from './baz'                  // WRONG — Vite will error
 
 ## Backend conventions
 
-- **17 controllers** in `Controllers/` → `api/<name>` routes. Includes `DiagnosticsController` (`/api/diagnostics/health`, `/api/diagnostics/trace`, `/api/diagnostics/dump`).
-- `Program.cs` registers: controllers, CORS (any origin), 5 named `HttpClient`s (Modrinth, CurseForge, FTB, AuthlibInjector, default), `DownloadManager`, `InstanceInstallService`, `FtbService`, `ResourceDownloadService`, `JavaRuntimeStore`, `JavaDownloadService`, `SkinService`, `McmodService`, `AccountService`, `MsAccount`, `TraceBufferStore`/`TraceDumpService`, `LanGameListenerService`.
+- **20 controllers** in `Controllers/` → `api/<name>` routes. Includes `DiagnosticsController` (`/api/diagnostics/health`, `/api/diagnostics/trace`, `/api/diagnostics/dump`).
+- `Program.cs` registers: controllers, CORS (any origin), 5 named `HttpClient`s (Modrinth, CurseForge, FTB, AuthlibInjector, default), `DownloadManager`, `InstanceInstallService`, `LaunchService`, `FtbService`, `ModpackService`, `ResourceDownloadService`, `JavaRuntimeStore`, `JavaDownloadService`, `SkinService`, `McmodService`, `AccountService`, `MsAccount`, `TraceBufferStore`/`TraceDumpService`, `LanGameListenerService`, `ConnectorService`/`GameProcessInspector`/`EasyTierProvider`.
 - Embedded resources: `Alex.png`, `mcmod_data.json` (in `.csproj`).
-- `appsettings.json` `CurseForge:ApiKey` is empty by default.
+- `appsettings.json` includes a `CurseForge:ApiKey` (set in repo).
 - OpenAPI endpoint available in dev mode (`/openapi/v1.json`).
 
 ## Error handling
@@ -125,5 +129,5 @@ Version-isolated dirs (`mods`, `saves`, `resourcepacks`, `shaderpacks`, `screens
 
 - Backend binary is embedded via `include_bytes!` in release builds (`lib.rs:7-9`), extracted to temp dir on startup. In dev, backend runs separately.
 - Linux: window decorations enabled by default (`lib.rs:86-88`).
-- Capability permissions: `core:default`, window controls, `opener:default`, `opener:allow-open-path`, `opener:allow-reveal-item-in-dir`, `dialog:default`.
+- Capability permissions: `core:default`, window controls, `opener:default`, `opener:allow-open-path`, `opener:allow-reveal-item-in-dir`, `dialog:default`, `updater:default`.
 - Backend child process state managed via `BackendChild` Tauri state, cleaned up on exit.
