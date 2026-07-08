@@ -297,7 +297,7 @@ export default function ResourceCenter() {
 
   return (
     <div className="animate-in slide-up space-y-6 p-8">
-      <PageHeader title="资源中心" subtitle="先筛选资源，再点右侧「安装」进入详情页选择版本。" />
+      <PageHeader title="资源中心" />
 
       <Card className="border-border/60 bg-muted/20 p-4">
         <div className="space-y-4">
