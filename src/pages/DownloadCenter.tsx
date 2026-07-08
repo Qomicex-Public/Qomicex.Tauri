@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer, faCoffee } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
-import { pauseInstall, resumeInstall, cancelInstall } from '../api/instance.ts'
+import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '../api/instance.ts'
 import { cancelResourceDownload } from '../api/resource-download.ts'
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload } from '../api/java.ts'
 
@@ -77,6 +77,7 @@ export default function DownloadCenter() {
   }, [])
 
   const sseData = useDownloadSSE()
+  const prevInstallIds = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     if (!sseData) return
@@ -148,6 +149,20 @@ export default function DownloadCenter() {
         }
       }
     }
+
+    const currentIds = new Set(sseData.installs.map(i => i.instanceId))
+    for (const prevId of prevInstallIds.current) {
+      if (!currentIds.has(prevId)) {
+        const lost = getTasks().find(t => t.instanceId === prevId && (t.status === 'downloading' || t.status === 'paused'))
+        if (lost) {
+          getInstallProgress(prevId).then(p => {
+            if (p.status === 'completed') updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+            else if (p.status === 'failed' || p.status === 'cancelled') updateTask(lost.id, { status: p.status })
+          }).catch(() => {})
+        }
+      }
+    }
+    prevInstallIds.current = currentIds
   }, [sseData])
 
   const filtered = useMemo(() => tasks.filter((t) => {
@@ -204,16 +219,20 @@ export default function DownloadCenter() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex min-w-0 items-start gap-3">
                     <div className={cn(
-                      'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                      'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg',
                       task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : 'bg-primary/10'
                     )}>
-                      <FontAwesomeIcon
-                          icon={task.type === 'java' ? faCoffee : task.type === 'resource' ? faBox : task.type === 'repair' ? faHammer : task.type === 'batch' ? faDownload : faCube}
-                        className={cn(
-                          'h-5 w-5',
-                          task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-primary'
-                        )}
-                      />
+                      {task.icon?.startsWith('data:image/') ? (
+                        <img src={task.icon} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <FontAwesomeIcon
+                            icon={task.type === 'java' ? faCoffee : task.type === 'resource' ? faBox : task.type === 'repair' ? faHammer : task.type === 'batch' ? faDownload : faCube}
+                          className={cn(
+                            'h-5 w-5',
+                            task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-primary'
+                          )}
+                        />
+                      )}
                     </div>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">

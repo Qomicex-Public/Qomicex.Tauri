@@ -342,6 +342,7 @@ export interface DownloadTask {
   error?: string
   createdAt: string
   completedAt?: string
+  icon?: string
   instanceId?: string
   /** for file downloads */
   taskId?: string

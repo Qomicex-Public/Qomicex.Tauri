@@ -7,7 +7,7 @@ import { Separator } from './ui/separator.tsx'
 import { startModpackInstall, resolveModpack, getInstallProgress } from '../api/instance.ts'
 import type { ResourceVersion, InstallProgressResponse } from '../types/index.ts'
 import { useNavigate } from 'react-router'
-import { addTask } from '../stores/downloadStore.ts'
+import { addTask, updateTask } from '../stores/downloadStore.ts'
 
 const STAGE_LABELS: Record<string, string> = {
   'queued': '排队中',
@@ -61,6 +61,11 @@ export default function ModpackInstallDialog({
         setProgress(p)
         if (p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled') {
           stopPolling()
+          if (p.status === 'completed') {
+            updateTask(installingInstanceId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+          } else {
+            updateTask(installingInstanceId, { status: 'failed', progress: Math.round(p.progress), error: p.error || (p.status === 'cancelled' ? '已取消' : '安装失败') })
+          }
         }
       } catch { /* retry next tick */ }
     }, 500)
@@ -98,6 +103,7 @@ export default function ModpackInstallDialog({
         loaderVersion: resolved.loaderVersion ?? undefined,
         status: 'downloading',
         progress: 0,
+        icon: resolved.iconData ?? undefined,
         createdAt: new Date().toISOString(),
         instanceId,
       })

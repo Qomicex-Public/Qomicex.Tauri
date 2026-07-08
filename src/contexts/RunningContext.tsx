@@ -88,7 +88,10 @@ export function RunningProvider({ children }: { children: ReactNode }) {
 
   const cancelLaunch = useCallback(async (id?: string) => {
     const targetId = id || launchingIdRef.current
-    if (!targetId) return
+    if (!targetId) {
+      setLaunchProgress(null)
+      return
+    }
     try { await apiCancelLaunch(targetId) } catch {}
     setLaunchProgress(null)
     clearInstancePoll(targetId)

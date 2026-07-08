@@ -28,7 +28,7 @@ export default function LaunchProgressDialog() {
   const isError = ['crashed', 'failed'].includes(launchProgress.stage)
 
   return (
-    <Dialog open onClose={() => {}} closeOnBackdrop={false} closeOnEsc={false}>
+    <Dialog open onClose={() => cancelLaunch()} closeOnBackdrop={isFinal} closeOnEsc={isFinal}>
       <DialogHeader onClose={() => cancelLaunch()}>
         <DialogTitle>{isError ? '启动失败' : '启动游戏'}</DialogTitle>
       </DialogHeader>
@@ -58,10 +58,14 @@ export default function LaunchProgressDialog() {
         {launchProgress.stage === 'running' && launchProgress.processId && (
           <p className="text-xs text-muted-foreground">进程 ID: {launchProgress.processId}</p>
         )}
-        {!isFinal && (
+        {!isFinal ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
             正在启动...
+          </div>
+        ) : (
+          <div className="flex justify-center pt-2">
+            <button onClick={() => cancelLaunch()} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">关闭</button>
           </div>
         )}
       </DialogBody>
