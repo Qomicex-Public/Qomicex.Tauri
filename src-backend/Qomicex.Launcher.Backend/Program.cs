@@ -11,6 +11,13 @@ using MsAccount = Qomicex.Core.Modules.Helpers.Account.Microsoft;
 
 var builder = WebApplication.CreateBuilder(args);
 
+using (var embeddedSettings = System.Reflection.Assembly.GetExecutingAssembly()
+    .GetManifestResourceStream("Qomicex.Launcher.Backend.appsettings.json"))
+{
+    if (embeddedSettings != null)
+        builder.Configuration.AddJsonStream(embeddedSettings);
+}
+
 try
 {
     var settingsPath = Path.Combine(AppPaths.BaseDir, "QML", "settings.json");

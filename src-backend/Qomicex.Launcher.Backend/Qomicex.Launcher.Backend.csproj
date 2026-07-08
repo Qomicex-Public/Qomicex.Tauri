@@ -10,6 +10,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Resources\Alex.png" />
     <EmbeddedResource Include="Resources\mcmod_data.json" />
+    <EmbeddedResource Include="appsettings.json" />
   </ItemGroup>
 
   <ItemGroup>

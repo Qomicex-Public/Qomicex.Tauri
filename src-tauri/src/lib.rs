@@ -18,6 +18,53 @@ const BACKEND_EXE: &str = "qomicex-backend";
 
 struct BackendChild(Mutex<Option<std::process::Child>>);
 
+fn user_temp_dir() -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        // Prefer the per-user runtime dir (private, 0700). Falls back to a
+        // username-scoped folder under the shared /tmp so a file created by one
+        // user never blocks another (e.g. normal user vs. sudo/root).
+        if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
+            if !runtime.is_empty() {
+                return std::path::PathBuf::from(runtime).join("qomicex");
+            }
+        }
+        let user = std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .unwrap_or_else(|_| "default".into());
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("qomicex-{user}"));
+        dir
+    }
+    #[cfg(not(unix))]
+    {
+        let mut dir = std::env::temp_dir();
+        dir.push("qomicex");
+        dir
+    }
+}
+
+fn extract_backend() -> Option<std::path::PathBuf> {
+    let base = user_temp_dir();
+    let _ = std::fs::create_dir_all(&base);
+    let primary = base.join(BACKEND_EXE);
+
+    match std::fs::write(&primary, BACKEND) {
+        Ok(()) => return Some(primary),
+        Err(e) => eprintln!("[backend] write to {} failed: {e}", primary.display()),
+    }
+
+    // Fallback: unique per-process file if the primary path is not writable.
+    let unique = base.join(format!("{}-{}", std::process::id(), BACKEND_EXE));
+    match std::fs::write(&unique, BACKEND) {
+        Ok(()) => Some(unique),
+        Err(e) => {
+            eprintln!("[backend] write to {} failed: {e}", unique.display());
+            None
+        }
+    }
+}
+
 fn spawn_backend(app: &tauri::App) {
     if std::env::var("QOMICEX_LAUNCHER_MANAGED").is_ok() {
         eprintln!("[backend] launcher-managed, skipping spawn");
@@ -27,11 +74,13 @@ fn spawn_backend(app: &tauri::App) {
         eprintln!("[backend] placeholder ({} bytes), skipping", BACKEND.len());
         return;
     }
-    let exe_path = std::env::temp_dir().join(BACKEND_EXE);
-    if let Err(e) = std::fs::write(&exe_path, BACKEND) {
-        eprintln!("[backend] write to {} failed: {e}", exe_path.display());
-        return;
-    }
+    let exe_path = match extract_backend() {
+        Some(p) => p,
+        None => {
+            eprintln!("[backend] failed to extract backend to a writable location");
+            return;
+        }
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
