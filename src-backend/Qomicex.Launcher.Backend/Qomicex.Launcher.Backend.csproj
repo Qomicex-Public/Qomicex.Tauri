@@ -28,12 +28,11 @@
 
     <PackageReference Include="Microsoft.OpenApi" Version="2.1.0" />
     <PackageReference Include="SharpCompress" Version="0.39.0" NoWarn="NU1902" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="2.88.7" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
     <PackageReference Include="System.Management" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Qomicex.Avalonia\Qomicex.Core\Qomicex.Core.csproj" />
+    <ProjectReference Include="..\Qomicex.Core\Qomicex.Core.csproj" />
     <ProjectReference Include="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
   </ItemGroup>
 

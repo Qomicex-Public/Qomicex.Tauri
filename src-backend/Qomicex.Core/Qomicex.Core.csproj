@@ -1,0 +1,56 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Remove="nul" />
+		<None Remove="Resources\java_launch_wrapper-1.4.4.jar" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="DnsClient" Version="1.8.0" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.5-beta1" />
+		<PackageReference Include="Tomlyn" Version="0.17.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Resource Include="Resources\java_launch_wrapper-1.4.4.jar" />
+		<EmbeddedResource Include="Resources\LogAnalysis\error-patterns.json">
+			<LogicalName>Qomicex.Core.Resources.LogAnalysis.error-patterns.json</LogicalName>
+		</EmbeddedResource>
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Update="Resources\Resources.Designer.cs">
+			<DesignTime>True</DesignTime>
+			<AutoGen>True</AutoGen>
+			<DependentUpon>Resources.resx</DependentUpon>
+		</Compile>
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Update="Resources\Resources.resx">
+			<Generator>ResXFileCodeGenerator</Generator>
+			<LastGenOutput>Resources.Designer.cs</LastGenOutput>
+		</EmbeddedResource>
+	</ItemGroup>
+
+	<ItemGroup>
+		<Folder Include="Modules\Helpers\Account\" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Qomicex.Downloader\Qomicex.Downloader.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+			<_Parameter1>Qomicex.Core.Debugger.Tests</_Parameter1>
+		</AssemblyAttribute>
+	</ItemGroup>
+
+</Project>

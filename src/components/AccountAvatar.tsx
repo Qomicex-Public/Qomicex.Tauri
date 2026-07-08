@@ -28,7 +28,7 @@ export function AccountAvatar({ account, className, textClassName }: {
     <img
       src={imgUrl}
       alt={account.name}
-      className={cn('rounded-full object-cover', className)}
+      className={cn('rounded-full object-cover [image-rendering:pixelated]', className)}
       onError={() => setFailed(true)}
     />
   )

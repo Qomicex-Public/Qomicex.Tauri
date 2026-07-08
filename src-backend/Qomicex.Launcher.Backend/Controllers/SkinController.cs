@@ -37,14 +37,6 @@ public class SkinController : ControllerBase
         return File(data, "image/png");
     }
 
-    [HttpGet("avatar/{uuid}")]
-    public async Task<IActionResult> GetAvatar(string uuid, [FromQuery] string type = "Microsoft", [FromQuery] string? server = null, [FromQuery] int size = 64)
-    {
-        var data = await _skin.GetHeadAvatar(uuid, type, server, size);
-        if (data == null) return NotFound();
-        return File(data, "image/png");
-    }
-
     [HttpPost("upload/{uuid}")]
     public async Task<IActionResult> Upload(string uuid, IFormFile file)
     {

@@ -1,8 +1,6 @@
 using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
-using SkiaSharp;
-using Qomicex.Core.Modules.Helpers;
 
 namespace Qomicex.Launcher.Backend.Services;
 
@@ -135,54 +133,6 @@ public class SkinService
     }
 
     public static byte[] GetDefaultSkinBytes() => GetDefaultSkin();
-
-    public async Task<byte[]?> GetHeadAvatar(string uuid, string loginMethod, string? serverUrl, int size = 64)
-    {
-        byte[]? skinData = GetLocalSkin(uuid);
-        if (skinData == null)
-        {
-            if (loginMethod == "Offline")
-            {
-                skinData = GetDefaultSkin();
-            }
-            else
-            {
-                var profile = await FetchProfile(uuid, loginMethod, serverUrl);
-                if (profile?.SkinUrl != null)
-                    skinData = await DownloadSkin(profile.SkinUrl);
-            }
-        }
-        if (skinData != null)
-        {
-            try
-            {
-                using var helper = new SkinHelper(skinData);
-                var head = helper.GetHeadAvatar(size);
-                if (head != null)
-                {
-                    using var img = SKImage.FromBitmap(head);
-                    using var data = img.Encode(SKEncodedImageFormat.Png, 100);
-                    return data.ToArray();
-                }
-            }
-            catch { }
-        }
-        return await GenerateFallbackAvatar(uuid, size);
-    }
-
-    private static async Task<byte[]?> GenerateFallbackAvatar(string uuid, int size)
-    {
-        var hash = 0;
-        foreach (var c in uuid.Replace("-", "")) hash = hash * 31 + c;
-        var r = (byte)((hash >> 16) & 0xFF);
-        var g = (byte)((hash >> 8) & 0xFF);
-        var b = (byte)(hash & 0xFF);
-        if (r < 80) r = 80; if (g < 80) g = 80; if (b < 80) b = 80;
-        using var surface = SKSurface.Create(new SKImageInfo(size, size));
-        var canvas = surface.Canvas;
-        canvas.Clear(new SKColor(r, g, b));
-        return await Task.FromResult(surface.Snapshot().Encode(SKEncodedImageFormat.Png, 100).ToArray());
-    }
 }
 
 public class SkinProfile

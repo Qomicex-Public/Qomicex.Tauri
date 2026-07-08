@@ -296,15 +296,9 @@ public sealed class ConnectorService : IDisposable
         }
     }
 
-    private async Task<string> GetSelfIconBase64(string uuid, bool isMicrosoft)
+    private static Task<string> GetSelfIconBase64(string uuid, bool isMicrosoft)
     {
-        try
-        {
-            var loginMethod = isMicrosoft ? "Microsoft" : "Offline";
-            var bytes = await _skinService.GetHeadAvatar(uuid, loginMethod, null, 64);
-            return bytes != null ? Convert.ToBase64String(bytes) : "";
-        }
-        catch { return ""; }
+        return Task.FromResult("");
     }
 
     private List<ConnectorPlayerDto> MapPlayers(IReadOnlyList<PlayerInfo> players, IReadOnlyDictionary<string, string> icons)
