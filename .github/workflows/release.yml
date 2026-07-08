@@ -105,7 +105,7 @@ jobs:
           Compress-Archive -Path "$pkgDir/*" -DestinationPath "src-backend/Qomicex.Launcher/Resources/runtime.zip" -Force
           Remove-Item -Recurse -Force $pkgDir
       - name: Publish Launcher
-        run: dotnet publish src-backend/Qomicex.Launcher --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=embedded -p:InformationalVersion=${{ github.event.inputs.version }} -o src-tauri/target/release/launcher-out
+        run: dotnet publish src-backend/Qomicex.Launcher --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=embedded "-p:InformationalVersion=${{ github.event.inputs.version }}" -o src-tauri/target/release/launcher-out
       - run: |
           Move-Item -Force src-tauri/target/release/launcher-out/Qomicex.Launcher.exe src-tauri/target/release/Qomicex.Launcher.exe
           Remove-Item -Recurse -Force src-tauri/target/release/launcher-out
@@ -185,7 +185,7 @@ jobs:
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
-      - run: npm run tauri -- build --bundles dmg
+      - run: npm run tauri -- build --bundles app,dmg
       - name: Generate update manifest fragment
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
@@ -231,7 +231,7 @@ jobs:
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
-      - run: npm run tauri -- build --bundles dmg
+      - run: npm run tauri -- build --bundles app,dmg
       - name: Generate update manifest fragment
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
