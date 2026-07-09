@@ -79,7 +79,7 @@ public sealed class GameProcessInspector
     {
         try
         {
-            var portPids = new Dictionary<int, int>();
+            var portToInode = new Dictionary<int, string>();
             foreach (var path in new[] { "/proc/net/tcp", "/proc/net/tcp6" })
             {
                 if (!File.Exists(path)) continue;
@@ -91,22 +91,36 @@ public sealed class GameProcessInspector
                     var colon = local.LastIndexOf(':');
                     if (colon < 0) continue;
                     if (int.TryParse(local[(colon + 1)..], System.Globalization.NumberStyles.HexNumber, null, out var p))
-                    {
-                        var pid = int.Parse(parts[9], System.Globalization.NumberStyles.HexNumber);
-                        portPids[p] = pid;
-                    }
+                        portToInode[p] = parts[9];
                 }
             }
+            if (portToInode.Count == 0) return null;
 
-            foreach (var kv in portPids)
+            foreach (var procDir in Directory.EnumerateDirectories("/proc"))
             {
-                var commPath = $"/proc/{kv.Value}/comm";
-                if (File.Exists(commPath))
+                var pidName = Path.GetFileName(procDir);
+                if (!int.TryParse(pidName, out _)) continue;
+                var commPath = Path.Combine(procDir, "comm");
+                if (!File.Exists(commPath)) continue;
+                var procName = File.ReadAllText(commPath).Trim().ToLowerInvariant();
+                if (procName is not ("java" or "javaw")) continue;
+
+                var fdDir = Path.Combine(procDir, "fd");
+                if (!Directory.Exists(fdDir)) continue;
+                try
                 {
-                    var name = File.ReadAllText(commPath).Trim().ToLowerInvariant();
-                    if (name is "java" or "javaw")
-                        return kv.Key;
+                    foreach (var fd in Directory.EnumerateFiles(fdDir))
+                    {
+                        var link = ReadLinkSafe(fd);
+                        if (link is null) continue;
+                        foreach (var kv in portToInode)
+                        {
+                            if (link.Contains($"socket:[{kv.Value}]"))
+                                return kv.Key;
+                        }
+                    }
                 }
+                catch { }
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Linux Java 端口扫描失败"); }
