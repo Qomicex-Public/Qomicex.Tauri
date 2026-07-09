@@ -265,8 +265,21 @@ public sealed class ConnectorService : IDisposable
             return new ConnectorStatusDto("host", center.RoomCode.Raw, null, null, _gameInfo,
                 MapPlayers(center.GetPlayers(), icons), null);
         if (guest != null)
-            return new ConnectorStatusDto("guest", null, _mcHost, _mcPort, _gameInfo,
-                MapPlayers(guest.GetPlayerListAsync().GetAwaiter().GetResult(), icons), null);
+        {
+            try
+            {
+                var players = guest.GetPlayerListAsync().GetAwaiter().GetResult();
+                return new ConnectorStatusDto("guest", null, _mcHost, _mcPort, _gameInfo,
+                    MapPlayers(players, icons), null);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "获取玩家列表失败，连接可能已断开");
+                _ = Task.Run(() => OnGuestConnectionLost());
+                return new ConnectorStatusDto("guest", null, _mcHost, _mcPort, _gameInfo,
+                    new(), "连接已断开，正在退出…");
+            }
+        }
         if (_starting)
             return new ConnectorStatusDto("starting", null, null, null, null, new(), _startError);
         return new ConnectorStatusDto("idle", null, null, null, null, new(), _startError);

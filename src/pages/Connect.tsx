@@ -112,7 +112,7 @@ export default function Connect() {
 
   useEffect(() => {
     if (status.mode !== 'idle') {
-      pollTimer.current = setInterval(refreshStatus, 3000)
+      pollTimer.current = setInterval(refreshStatus, 2000)
       return () => { if (pollTimer.current) clearInterval(pollTimer.current) }
     }
   }, [status.mode, refreshStatus])
