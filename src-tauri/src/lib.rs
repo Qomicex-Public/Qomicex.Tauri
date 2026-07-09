@@ -3,6 +3,8 @@ use std::sync::Mutex;
 use tauri::Manager;
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 
+mod dialog_cmd;
+
 #[cfg(all(windows, not(debug_assertions)))]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend.exe");
 #[cfg(all(unix, not(debug_assertions)))]
@@ -139,7 +141,7 @@ pub fn run() {
             spawn_backend(app);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![greet, dialog_cmd::pick_dialog])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

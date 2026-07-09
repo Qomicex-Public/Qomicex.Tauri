@@ -29,7 +29,7 @@ import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntime
 import { addTask } from '../stores/downloadStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
-import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import { check } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
@@ -599,14 +599,15 @@ export default function Settings() {
 
   async function handleBrowseJava() {
     try {
-      const selected: unknown = await tauriOpen({
-        multiple: false,
-        title: '选择 Java 可执行文件',
-        filters: navigator.platform?.includes('Win')
-          ? [{ name: 'Java', extensions: ['exe'] }]
-          : undefined,
+      const selected = await invoke<string | null>('pick_dialog', {
+        options: {
+          title: '选择 Java 可执行文件',
+          filters: navigator.platform?.includes('Win')
+            ? [{ name: 'Java', extensions: ['exe'] }]
+            : undefined,
+        },
       })
-      if (typeof selected === 'string') setAddPath(selected)
+      if (selected) setAddPath(selected)
     } catch {}
   }
 
