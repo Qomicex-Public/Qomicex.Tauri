@@ -7,6 +7,11 @@ on:
         description: 'Release tag (e.g. v0.2.0)'
         required: true
         default: 'v0.1.0'
+      prerelease:
+        description: 'Pre-release'
+        required: false
+        default: false
+        type: boolean
       buildPlatform:
         description: '构建平台'
         required: true
@@ -58,6 +63,9 @@ on:
           - both
           - arm64
           - x64
+
+release:
+    types: [published]
 
 env:
   CARGO_TERM_COLORS: always
@@ -511,9 +519,10 @@ jobs:
           done
       - uses: ncipollo/release-action@v1
         with:
-          tag: ${{ github.event.inputs.version }}
-          name: ${{ github.event.inputs.version }}
+          tag: ${{ github.event.release.tag_name || github.event.inputs.version }}
+          name: ${{ github.event.release.tag_name || github.event.inputs.version }}
           artifacts: ./*
           generateReleaseNotes: true
           allowUpdates: true
+          prerelease: ${{ github.event.release.prerelease || (github.event.inputs.prerelease == 'true') || false }}
           token: ${{ secrets.GITHUB_TOKEN }}
