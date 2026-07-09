@@ -101,7 +101,9 @@ public sealed class ConnectorService : IDisposable
     {
         try
         {
-            using var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("easytier-core", "-V")
+            var exePath = EasyTierProvider.GetExecutablePath();
+            if (!File.Exists(exePath)) return "unknown";
+            using var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exePath, "--version")
             {
                 RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true
             });
