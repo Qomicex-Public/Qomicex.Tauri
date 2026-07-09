@@ -25,6 +25,7 @@ public sealed class ConnectorService : IDisposable
     private readonly IInstanceRepository _instances;
     private readonly SkinService _skinService;
     private readonly EasyTierProvider _easyTier;
+    private readonly LaunchService _launchService;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ScaffoldingClient _client;
@@ -41,6 +42,7 @@ public sealed class ConnectorService : IDisposable
     private volatile bool _starting;
     private volatile string? _startError;
     private CancellationTokenSource? _startCts;
+    private string? _hostingInstanceId;
 
     private static string? _cachedVendor;
     private static string? _cachedMachineId;
@@ -52,7 +54,8 @@ public sealed class ConnectorService : IDisposable
         LanGameListenerService lanListener,
         IInstanceRepository instances,
         SkinService skinService,
-        EasyTierProvider easyTier)
+        EasyTierProvider easyTier,
+        LaunchService launchService)
     {
         _logger = logger;
         _inspector = inspector;
@@ -61,6 +64,7 @@ public sealed class ConnectorService : IDisposable
         _instances = instances;
         _skinService = skinService;
         _easyTier = easyTier;
+        _launchService = launchService;
         _client = new ScaffoldingClient(easyTierPath: EasyTierProvider.GetExecutablePath());
     }
 
@@ -142,6 +146,7 @@ public sealed class ConnectorService : IDisposable
             _startError = null;
             _starting = true;
             _startCts = new CancellationTokenSource();
+            _hostingInstanceId = instanceId;
             var token = _startCts.Token;
             _ = Task.Run(() => RunHostByInstanceAsync(instance, token));
         }
@@ -242,6 +247,11 @@ public sealed class ConnectorService : IDisposable
     public async Task LeaveAsync(CancellationToken ct = default)
     {
         _startCts?.Cancel();
+        if (_hostingInstanceId != null)
+        {
+            _launchService.Cancel(_hostingInstanceId);
+            _hostingInstanceId = null;
+        }
         await _gate.WaitAsync(ct);
         try
         {
@@ -313,9 +323,28 @@ public sealed class ConnectorService : IDisposable
         }
     }
 
-    private static Task<string> GetSelfIconBase64(string uuid, bool isMicrosoft)
+    private async Task<string> GetSelfIconBase64(string uuid, bool isMicrosoft)
     {
-        return Task.FromResult("");
+        try
+        {
+            var loginMethod = isMicrosoft ? "Microsoft" : "Offline";
+            var local = _skinService.GetLocalSkin(uuid);
+            byte[]? skinData = local;
+            if (skinData == null)
+            {
+                if (loginMethod == "Offline")
+                    skinData = SkinService.GetDefaultSkinBytes();
+                else
+                {
+                    var profile = await _skinService.FetchProfile(uuid, loginMethod, null);
+                    if (profile?.SkinUrl != null)
+                        skinData = await _skinService.DownloadSkin(profile.SkinUrl);
+                    skinData ??= SkinService.GetDefaultSkinBytes();
+                }
+            }
+            return skinData != null ? Convert.ToBase64String(skinData) : "";
+        }
+        catch { return ""; }
     }
 
     private List<ConnectorPlayerDto> MapPlayers(IReadOnlyList<PlayerInfo> players, IReadOnlyDictionary<string, string> icons)

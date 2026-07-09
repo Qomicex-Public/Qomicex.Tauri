@@ -11,6 +11,7 @@ import { useMessageBox } from '../components/ui/message-box.tsx'
 import { ApiError } from '../api/client.ts'
 import * as connectorApi from '../api/connector.ts'
 import { getInstances } from '../api/instance.ts'
+import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
 import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus } from '../types/index.ts'
 
 function fmtSpeed(bytesPerSec: number): string {
@@ -26,11 +27,33 @@ function fmtErr(e: unknown): string {
   return String(e)
 }
 
+const skinHeadCache = new Map<string, string>()
+
 function PlayerRow({ p }: { p: ConnectorPlayer }) {
+  const [headUrl, setHeadUrl] = useState<string | null>(() => skinHeadCache.get(p.name) ?? null)
+
+  useEffect(() => {
+    if (!p.iconBase64) return
+    const iconData = p.iconBase64
+    const cached = skinHeadCache.get(p.name)
+    if (cached) { setHeadUrl(cached); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const skinBytes = Uint8Array.from(atob(iconData), c => c.charCodeAt(0))
+        const skinBlob = new Blob([skinBytes], { type: 'image/png' })
+        const headBlob = await cropHeadFromSkin(skinBlob, 64)
+        const url = URL.createObjectURL(headBlob)
+        if (!cancelled) { skinHeadCache.set(p.name, url); setHeadUrl(url) }
+      } catch { /* ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [p.iconBase64, p.name])
+
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2">
-      {p.iconBase64 ? (
-        <img src={`data:image/png;base64,${p.iconBase64}`} alt={p.name} className="h-8 w-8 rounded-full object-cover" />
+      {headUrl ? (
+        <img src={headUrl} alt={p.name} className="h-8 w-8 rounded-full object-cover [image-rendering:pixelated]" />
       ) : (
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">
           {p.name.charAt(0).toUpperCase()}
