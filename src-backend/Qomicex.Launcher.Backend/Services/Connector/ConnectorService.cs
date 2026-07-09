@@ -245,8 +245,8 @@ public sealed class ConnectorService : IDisposable
         await _gate.WaitAsync(ct);
         try
         {
-            await _client.CloseAsync(ct);
             if (_guest != null) _guest.ConnectionLost -= OnGuestConnectionLost;
+            await _client.CloseAsync(ct);
             _center = null; _guest = null; _mcHost = null; _mcPort = null;
             _gameInfo = new GameInfoDto();
             _starting = false; _startError = null;
