@@ -806,23 +806,43 @@ export default function Instances() {
 
 
 
-      <Dialog open={dirManager} onClose={() => setDirManager(false)} className="w-[540px]">
+      <Dialog open={dirManager} onClose={() => setDirManager(false)} className="w-[600px]">
         <DialogHeader onClose={() => setDirManager(false)}>
           <DialogTitle>目录管理</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-2">
-          {managedDirs.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">暂无目录</p>}
-          {managedDirs.map((d) => (
-            <div key={d.path} className="flex items-center gap-3 rounded-lg border p-3">
-              <div className="flex-1">
-                <Input value={d.name} onChange={(e) => { setManagedDirs((prev) => { const next = prev.map((dd) => dd.path === d.path ? { ...dd, name: e.target.value } : dd); saveDirs(next); return next }) }} className="h-8 text-sm" />
-                <div className="mt-0.5 text-xs text-muted-foreground">{d.path}</div>
-              </div>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => removeDir(d.path)}>
-                <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-              </Button>
+          {managedDirs.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-8">
+              <FontAwesomeIcon icon={faFolder} className="h-10 w-10 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">暂无目录</p>
+              <p className="text-xs text-muted-foreground/60">点击下方按钮添加一个游戏目录</p>
             </div>
-          ))}
+          ) : (
+            <div className="space-y-1">
+              <p className="px-1 text-xs text-muted-foreground">共 {managedDirs.length} 个目录，勾选标记当前使用的目录</p>
+              {managedDirs.map((d) => (
+                <div key={d.path} className={cn('flex items-center gap-2 rounded-lg border p-3 transition-colors', currentDir === d.path && 'border-primary/40 bg-primary/5')}>
+                  <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-md', currentDir === d.path ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
+                    <FontAwesomeIcon icon={currentDir === d.path ? faCheck : faFolder} className="h-3.5 w-3.5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <Input value={d.name} onChange={(e) => { setManagedDirs((prev) => { const next = prev.map((dd) => dd.path === d.path ? { ...dd, name: e.target.value } : dd); saveDirs(next); return next }) }} className="h-7 text-sm" />
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">{d.path}</div>
+                  </div>
+                  <Tooltip content="打开目录">
+                    <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => openFolder(d.path).catch(() => {})}>
+                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content="移除">
+                    <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => removeDir(d.path)}>
+                      <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
+                </div>
+              ))}
+            </div>
+          )}
         </DialogBody>
         <DialogFooter>
           <Button variant="secondary" onClick={addDirManually} className="gap-1.5"><FontAwesomeIcon icon={faPlus} className="h-4 w-4" />手动添加</Button>

@@ -41,8 +41,9 @@ export const BACKEND_DEPENDENCIES: Record<string, Dependency[]> = {
     { name: 'ASP.NET Core', version: '10.x', url: 'https://learn.microsoft.com/aspnet/core', license: 'MIT' },
   ],
   '核心库': [
-    { name: 'Qomicex.Core', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Tauri', license: '自研' },
-    { name: 'Qomicex.Downloader', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Tauri', license: '自研' },
+    { name: 'Qomicex.Core', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Core', license: '自研' },
+    { name: 'Qomicex.Connector', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Connector.Part.Scaffolding', license: '自研' },
+    { name: 'Qomicex.Downloader', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Downloader', license: '自研' },
   ],
 }
 
