@@ -4,6 +4,8 @@ import { MinecraftText } from './MinecraftText.tsx'
 import { faDatabase } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui/card.tsx'
 import { Tooltip } from './ui/tooltip.tsx'
+import { Button } from './ui/button.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import type { DataPackMetadata } from '../types/index.ts'
 
 interface Props {
@@ -14,6 +16,7 @@ interface Props {
 
 export default function DataPackCard({ pack, instanceId, onDelete }: Props) {
   const [deleting, setDeleting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const handleDelete = useCallback(async () => {
     setDeleting(true)
@@ -49,7 +52,7 @@ export default function DataPackCard({ pack, instanceId, onDelete }: Props) {
         </div>
         <Tooltip content="删除">
           <button
-            onClick={(e) => { e.stopPropagation(); handleDelete() }}
+            onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }}
             disabled={deleting}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
           >
@@ -57,6 +60,20 @@ export default function DataPackCard({ pack, instanceId, onDelete }: Props) {
           </button>
         </Tooltip>
       </CardContent>
+      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
+        <DialogHeader onClose={() => setConfirmOpen(false)}>
+          <DialogTitle>删除数据包</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">确定要删除数据包「{pack.name}」吗？将被移至回收站。</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>取消</Button>
+          <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
+            {deleting ? '删除中...' : '删除'}
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </Card>
   )
 }

@@ -157,7 +157,7 @@ export default function ModCard({
           <DialogTitle>删除 Mod</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <p className="text-sm text-muted-foreground">确定要删除 Mod「{mod.name}」吗？此操作不可撤销。</p>
+          <p className="text-sm text-muted-foreground">确定要删除 Mod「{mod.name}」吗？将被移至回收站。</p>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={() => setConfirmDelete(false)}>取消</Button>

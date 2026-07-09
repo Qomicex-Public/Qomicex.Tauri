@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faTrashCan } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui/tooltip.tsx'
+import { Button } from './ui/button.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import type { ScreenshotMetadata } from '../types/index.ts'
 
 interface Props {
@@ -12,6 +14,7 @@ interface Props {
 
 export default function ScreenshotCard({ screenshot, instanceId, onRefresh }: Props) {
   const [deleting, setDeleting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const [preview, setPreview] = useState(false)
   const [imgSrc, setImgSrc] = useState('')
   const imgInited = useRef(false)
@@ -47,12 +50,27 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh }: Pr
         </div>
         <div className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <Tooltip content="删除">
-            <button onClick={() => handleDelete()} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">
+            <button onClick={() => setConfirmOpen(true)} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">
               <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
         </div>
       </div>
+
+      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
+        <DialogHeader onClose={() => setConfirmOpen(false)}>
+          <DialogTitle>删除截图</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">确定要删除截图「{screenshot.fileName}」吗？将被移至回收站。</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>取消</Button>
+          <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
+            {deleting ? '删除中...' : '删除'}
+          </Button>
+        </DialogFooter>
+      </Dialog>
 
       {preview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setPreview(false)}>

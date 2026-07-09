@@ -274,56 +274,9 @@ public class InstanceController : ControllerBase
         var versionDir = Path.Combine(gameDir, "versions", versionDirName);
 
         if (Directory.Exists(versionDir))
-            MoveToTrash(versionDir, instance.Name, gameDir);
+            Common.FileTrash.MoveDirectory(versionDir, gameDir);
 
         return NoContent();
-    }
-
-    private static void MoveToTrash(string dir, string instanceName, string gameDir)
-    {
-        try
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
-                    dir,
-                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-            }
-            else if (OperatingSystem.IsLinux())
-            {
-                var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "gio",
-                    Arguments = $"trash \"{dir}\"",
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                });
-                if (proc is not null)
-                {
-                    proc.WaitForExit();
-                    if (proc.ExitCode != 0 && Directory.Exists(dir))
-                        FallbackMove(dir, instanceName, gameDir);
-                }
-            }
-            else
-            {
-                FallbackMove(dir, instanceName, gameDir);
-            }
-        }
-        catch
-        {
-            try { FallbackMove(dir, instanceName, gameDir); } catch { }
-        }
-    }
-
-    private static void FallbackMove(string dir, string instanceName, string gameDir)
-    {
-        var trashRoot = Path.Combine(gameDir, ".trash");
-        Directory.CreateDirectory(trashRoot);
-        var dest = Path.Combine(trashRoot, $"{instanceName}_{DateTime.Now:yyyyMMddHHmmss}");
-        Directory.Move(dir, dest);
     }
 
     [HttpPost("{id}/repair")]

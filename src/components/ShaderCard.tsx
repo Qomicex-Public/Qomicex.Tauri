@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { MinecraftText } from './MinecraftText.tsx'
 import { faSun } from '@fortawesome/free-solid-svg-icons'
@@ -7,6 +7,8 @@ import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { useMessageBox } from './ui/message-box.tsx'
 import { ApiError } from '../api/client.ts'
 import { openFolder } from '../api/settings.ts'
+import { Button } from './ui/button.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import type { ShaderMetadata } from '../types/index.ts'
 
 interface Props {
@@ -19,8 +21,11 @@ interface Props {
 
 export default function ShaderCard({ shader, instanceId, gameDir, onDelete, compact }: Props) {
   const { notify } = useMessageBox()
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const handleDelete = useCallback(async () => {
+    setDeleting(true)
     try {
       const { deleteShaderPack } = await import('../api/instance-files.ts')
       await deleteShaderPack(instanceId, shader.fileName)
@@ -28,6 +33,7 @@ export default function ShaderCard({ shader, instanceId, gameDir, onDelete, comp
       onDelete(shader.fileName)
     } catch (e) {
       notify(`删除失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+      setDeleting(false)
     }
   }, [instanceId, shader.fileName, shader.name, onDelete, notify])
 
@@ -51,15 +57,14 @@ export default function ShaderCard({ shader, instanceId, gameDir, onDelete, comp
 
   contextItems.push({
     label: '删除',
-    onClick: () => {
-      if (window.confirm(`确定要删除「${shader.name}」吗？`)) handleDelete()
-    },
+    onClick: () => setConfirmOpen(true),
     danger: true,
   })
 
   const sourceLabel = shader.source === 'curseforge' ? 'CurseForge' : shader.source === 'modrinth' ? 'Modrinth' : null
 
   return (
+    <>
     <ContextMenu items={contextItems}>
       <Card className="group border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
         <CardContent className={`flex items-center gap-4 ${compact ? 'p-3' : 'p-4'}`}>
@@ -91,5 +96,20 @@ export default function ShaderCard({ shader, instanceId, gameDir, onDelete, comp
         </CardContent>
       </Card>
     </ContextMenu>
+    <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
+      <DialogHeader onClose={() => setConfirmOpen(false)}>
+        <DialogTitle>删除光影包</DialogTitle>
+      </DialogHeader>
+      <DialogBody>
+        <p className="text-sm text-muted-foreground">确定要删除光影包「{shader.name}」吗？将被移至回收站。</p>
+      </DialogBody>
+      <DialogFooter>
+        <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>取消</Button>
+        <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
+          {deleting ? '删除中...' : '删除'}
+        </Button>
+      </DialogFooter>
+    </Dialog>
+    </>
   )
 }

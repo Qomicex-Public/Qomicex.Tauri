@@ -90,7 +90,7 @@ public class InstanceFilesController : ControllerBase
         var savesDir = GetCategoryDir(gameDir, inst.Name, isolation, "saves");
         var path = Path.Combine(savesDir, name);
         if (!Directory.Exists(path)) return NotFound();
-        Directory.Delete(path, true);
+        Common.FileTrash.MoveDirectory(path, gameDir);
         return NoContent();
     }
 
@@ -137,7 +137,7 @@ public class InstanceFilesController : ControllerBase
         var dir = GetCategoryDir(gameDir, inst.Name, isolation, "screenshots");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
-        System.IO.File.Delete(path);
+        Common.FileTrash.MoveFile(path, gameDir);
         return NoContent();
     }
 
@@ -169,7 +169,7 @@ public class InstanceFilesController : ControllerBase
         var dir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
-        System.IO.File.Delete(path);
+        Common.FileTrash.MoveFile(path, gameDir);
         return NoContent();
     }
 
@@ -420,10 +420,10 @@ public class InstanceFilesController : ControllerBase
         {
             var path = Path.Combine(modsDir, name);
             if (System.IO.File.Exists(path))
-                System.IO.File.Delete(path);
+                Common.FileTrash.MoveFile(path, gameDir);
             var disabledPath = Path.Combine(modsDir, name + ".disabled");
             if (System.IO.File.Exists(disabledPath))
-                System.IO.File.Delete(disabledPath);
+                Common.FileTrash.MoveFile(disabledPath, gameDir);
         }
         return NoContent();
     }
@@ -456,7 +456,7 @@ public class InstanceFilesController : ControllerBase
         var dir = GetCategoryDir(gameDir, inst.Name, isolation, "resourcepacks");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
-        System.IO.File.Delete(path);
+        Common.FileTrash.MoveFile(path, gameDir);
         return NoContent();
     }
 
@@ -682,7 +682,7 @@ public class InstanceFilesController : ControllerBase
         var dir = GetCategoryDir(gameDir, inst.Name, isolation, "datapacks");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
-        System.IO.File.Delete(path);
+        Common.FileTrash.MoveFile(path, gameDir);
         return NoContent();
     }
 
@@ -727,7 +727,7 @@ public class InstanceFilesController : ControllerBase
         var dir = GetCategoryDir(gameDir, inst.Name, isolation, "shaderpacks");
         var path = Path.Combine(dir, name);
         if (!System.IO.File.Exists(path)) return NotFound();
-        System.IO.File.Delete(path);
+        Common.FileTrash.MoveFile(path, gameDir);
         return NoContent();
     }
 

@@ -469,6 +469,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             确定要
             {batchConfirm?.type === 'enable' ? '启用' : batchConfirm?.type === 'disable' ? '禁用' : '删除'}
             {selected.size} 个 Mod 吗？
+            {batchConfirm?.type === 'delete' ? '将被移至回收站。' : ''}
           </p>
         </DialogBody>
         <DialogFooter>

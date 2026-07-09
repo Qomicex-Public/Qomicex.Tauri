@@ -5,6 +5,7 @@ import { Card, CardContent } from './ui/card.tsx'
 import { Tooltip } from './ui/tooltip.tsx'
 import { Input } from './ui/input.tsx'
 import { Button } from './ui/button.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import type { SaveMetadata } from '../types/index.ts'
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
 
 export default function SaveCard({ save, instanceId, onRefresh }: Props) {
   const [deleting, setDeleting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(save.name)
   const [backingUp, setBackingUp] = useState(false)
@@ -92,12 +94,26 @@ export default function SaveCard({ save, instanceId, onRefresh }: Props) {
             </button>
           </Tooltip>
           <Tooltip content="删除">
-            <button onClick={() => handleDelete()} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+            <button onClick={() => setConfirmOpen(true)} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
               <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
         </div>
       </CardContent>
+      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
+        <DialogHeader onClose={() => setConfirmOpen(false)}>
+          <DialogTitle>删除存档</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">确定要删除存档「{save.name}」吗？将被移至回收站。</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>取消</Button>
+          <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
+            {deleting ? '删除中...' : '删除'}
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </Card>
   )
 }
