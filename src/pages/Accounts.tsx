@@ -105,8 +105,10 @@ export default function Accounts() {
   }, [refresh])
 
   // show cached accounts immediately on mount
-  const cachedAccounts = cacheGet<Account[]>('api-accounts')
-  if (cachedAccounts && accounts.length === 0) setAccounts(cachedAccounts)
+  useEffect(() => {
+    const cached = cacheGet<Account[]>('api-accounts')
+    if (cached) setAccounts(cached)
+  }, [])
 
   async function handleSetDefault(uuid: string) {
     try {
