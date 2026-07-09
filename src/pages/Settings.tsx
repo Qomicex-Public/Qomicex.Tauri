@@ -957,14 +957,23 @@ export default function Settings() {
 
                 <div className="space-y-2">
                   <Label htmlFor="downloadTimeout">下载超时 (秒)</Label>
-                  <Input
-                    id="downloadTimeout"
-                    type="number"
-                    min={5}
-                    max={120}
-                    value={settings.downloadTimeout}
-                    onChange={(e) => update('downloadTimeout', Math.max(0, Math.min(120, parseInt(e.target.value) || 15)))}
-                  />
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.max(0, settings.downloadTimeout - 5))} disabled={settings.downloadTimeout <= 0}>
+                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                    </Button>
+                    <Input
+                      id="downloadTimeout"
+                      type="number"
+                      min={0}
+                      max={120}
+                      value={settings.downloadTimeout}
+                      onChange={(e) => update('downloadTimeout', Math.max(0, Math.min(120, parseInt(e.target.value) || 15)))}
+                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.min(120, settings.downloadTimeout + 5))} disabled={settings.downloadTimeout >= 120}>
+                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                   <p className="text-xs text-muted-foreground">单个文件下载无响应超过此时间则自动重试（0=不超时，1-120 秒）</p>
                 </div>
               </CardContent>

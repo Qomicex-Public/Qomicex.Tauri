@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay } from '@fortawesome/free-solid-svg-icons'
+import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { Card } from '../components/ui/card.tsx'
 import { Button } from '../components/ui/button.tsx'
@@ -296,14 +296,22 @@ export default function Connect() {
               )}
 
               <div className="space-y-2">
-                <Label>或者手动输入端口</Label>
-                <div className="flex gap-2">
-                  <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="例如 25565" className="flex-1" />
-                  <Button onClick={handleHostPort} disabled={busy || !etReady} variant="outline">
-                    {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : '创建房间'}
-                  </Button>
+                  <Label>或者手动输入端口</Label>
+                  <div className="flex gap-2">
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setPort(String(Math.max(1, (parseInt(port) || 0) - 1)))} disabled={!port || parseInt(port) <= 1}>
+                        <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                      </Button>
+                      <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="25565" className="w-24 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
+                      <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setPort(String(Math.min(65535, (parseInt(port) || 0) + 1)))} disabled={parseInt(port) >= 65535}>
+                        <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <Button onClick={handleHostPort} disabled={busy || !etReady} variant="outline">
+                      {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : '创建房间'}
+                    </Button>
+                  </div>
                 </div>
-              </div>
             </Card>
           )}
 
