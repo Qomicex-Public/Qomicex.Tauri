@@ -1394,6 +1394,7 @@ export default function InstanceDetailPage() {
   const [repairing, setRepairing] = useState(false)
   const [repairProgress, setRepairProgress] = useState(0)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [savesRefresh, setSavesRefresh] = useState(0)
   const [screenshotsRefresh, setScreenshotsRefresh] = useState(0)
   const [modsRefresh, setModsRefresh] = useState(0)
@@ -1556,14 +1557,19 @@ export default function InstanceDetailPage() {
     }
   }, [id])
 
-  const handleDelete = useCallback(async () => {
+  const confirmDelete = useCallback(async () => {
     if (!id || !instance) return
+    setDeleteConfirmOpen(false)
     try {
       await deleteInstance(id)
       cacheInvalidate('api-')
       navigate('/instances')
     } catch {}
   }, [id, instance, navigate])
+
+  const handleDelete = useCallback(() => {
+    setDeleteConfirmOpen(true)
+  }, [])
 
   const toggleDefault = useCallback(async () => {
     if (!id) return
@@ -1969,6 +1975,7 @@ export default function InstanceDetailPage() {
           navigate('/accounts')
         }}
       />
+      <ConfirmDialog open={deleteConfirmOpen} title="删除实例" message={`确定要删除实例「${instance?.name ?? ''}」吗？其版本文件夹将被移至回收站。`} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
     </div>
   )
 }

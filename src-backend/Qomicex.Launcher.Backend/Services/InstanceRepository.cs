@@ -133,17 +133,15 @@ public class InstanceRepository : IInstanceRepository
         }
     }
 
-    public bool Delete(string id)
+    public GameInstance? Delete(string id)
     {
         lock (_lock)
         {
-            var removed = _instances.RemoveAll(i => i.Id == id);
-            if (removed > 0)
-            {
-                SaveToFile();
-                return true;
-            }
-            return false;
+            var instance = _instances.FirstOrDefault(i => i.Id == id);
+            if (instance == null) return null;
+            _instances.RemoveAll(i => i.Id == id);
+            SaveToFile();
+            return instance;
         }
     }
 }

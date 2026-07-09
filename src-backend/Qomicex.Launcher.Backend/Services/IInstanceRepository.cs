@@ -9,5 +9,5 @@ public interface IInstanceRepository
     GameInstance? GetDefault();
     GameInstance Create(GameInstance instance);
     GameInstance? Update(string id, GameInstance instance);
-    bool Delete(string id);
+    GameInstance? Delete(string id);
 }
