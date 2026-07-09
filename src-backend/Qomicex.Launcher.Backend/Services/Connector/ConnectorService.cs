@@ -276,6 +276,8 @@ public sealed class ConnectorService : IDisposable
 
     public void EnsureEasyTierDownloadStarted() => _easyTier.EnsureDownloadStarted();
 
+    public int? ScanJavaPort() => _inspector.ScanJavaPort();
+
     private void EnsureIdle()
     {
         if (_center != null || _guest != null || _starting)

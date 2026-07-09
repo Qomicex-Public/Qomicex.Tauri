@@ -31,6 +31,111 @@ public sealed class GameProcessInspector
         return new GameProcessInfo(name, uuid, isMicrosoft, version);
     }
 
+    public int? ScanJavaPort()
+    {
+        if (OperatingSystem.IsWindows()) return ScanJavaPortWindows();
+        if (OperatingSystem.IsLinux()) return ScanJavaPortLinux();
+        if (OperatingSystem.IsMacOS()) return ScanJavaPortMac();
+        return null;
+    }
+
+    private int? ScanJavaPortWindows()
+    {
+        try
+        {
+            int bufferSize = 0;
+            uint AF_INET = 2;
+            GetExtendedTcpTable(IntPtr.Zero, ref bufferSize, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
+            var buffer = Marshal.AllocHGlobal(bufferSize);
+            try
+            {
+                if (GetExtendedTcpTable(buffer, ref bufferSize, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != 0)
+                    return null;
+
+                int rowCount = Marshal.ReadInt32(buffer);
+                var rowPtr = IntPtr.Add(buffer, 4);
+                int rowSize = Marshal.SizeOf<MIB_TCPROW_OWNER_PID>();
+                for (int i = 0; i < rowCount; i++)
+                {
+                    var row = Marshal.PtrToStructure<MIB_TCPROW_OWNER_PID>(IntPtr.Add(rowPtr, i * rowSize));
+                    int localPort = (int)(((row.localPort & 0xFF) << 8) | ((row.localPort >> 8) & 0xFF));
+                    try
+                    {
+                        var proc = System.Diagnostics.Process.GetProcessById((int)row.owningPid);
+                        var name = proc.ProcessName.ToLowerInvariant();
+                        if (name is "java" or "javaw")
+                            return localPort;
+                    }
+                    catch { }
+                }
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Windows Java 端口扫描失败"); }
+        return null;
+    }
+
+    private int? ScanJavaPortLinux()
+    {
+        try
+        {
+            var portPids = new Dictionary<int, int>();
+            foreach (var path in new[] { "/proc/net/tcp", "/proc/net/tcp6" })
+            {
+                if (!File.Exists(path)) continue;
+                foreach (var line in File.ReadLines(path).Skip(1))
+                {
+                    var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length < 10) continue;
+                    var local = parts[1];
+                    var colon = local.LastIndexOf(':');
+                    if (colon < 0) continue;
+                    if (int.TryParse(local[(colon + 1)..], System.Globalization.NumberStyles.HexNumber, null, out var p))
+                    {
+                        var pid = int.Parse(parts[9], System.Globalization.NumberStyles.HexNumber);
+                        portPids[p] = pid;
+                    }
+                }
+            }
+
+            foreach (var kv in portPids)
+            {
+                var commPath = $"/proc/{kv.Value}/comm";
+                if (File.Exists(commPath))
+                {
+                    var name = File.ReadAllText(commPath).Trim().ToLowerInvariant();
+                    if (name is "java" or "javaw")
+                        return kv.Key;
+                }
+            }
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Linux Java 端口扫描失败"); }
+        return null;
+    }
+
+    private int? ScanJavaPortMac()
+    {
+        try
+        {
+            var output = RunProcess("lsof", "-nP -iTCP -sTCP:LISTEN -c java -F pn");
+            int? port = null;
+            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (line.StartsWith('n') && line.Contains(':'))
+                {
+                    var parts = line.Split(':');
+                    if (parts.Length >= 2 && int.TryParse(parts[^1], out var p))
+                        port = p;
+                }
+                if (line.StartsWith('p') && port.HasValue)
+                    return port.Value;
+            }
+            if (port.HasValue) return port.Value;
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "macOS Java 端口扫描失败"); }
+        return null;
+    }
+
     private int? FindPidByPort(int port)
     {
         if (OperatingSystem.IsWindows()) return FindPidByPortWindows(port);

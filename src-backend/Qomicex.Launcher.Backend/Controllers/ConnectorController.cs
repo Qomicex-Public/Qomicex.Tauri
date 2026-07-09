@@ -51,6 +51,13 @@ public class ConnectorController : ControllerBase
         await _connector.LeaveAsync(ct);
         return Ok(new { status = "idle" });
     }
+
+    [HttpGet("scan-ports")]
+    public IActionResult ScanPorts()
+    {
+        var port = _connector.ScanJavaPort();
+        return Ok(new { port });
+    }
 }
 
 public class HostByPortRequest { public int Port { get; set; } }
