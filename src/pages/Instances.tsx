@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
-import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '../components/ui/button.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -244,7 +244,7 @@ export default function Instances() {
 
   async function handlePickDir() {
     try {
-      const dir = await tauriOpen({ directory: true, multiple: false, title: '选择游戏目录' })
+      const dir = await invoke<string | null>('pick_dialog', { options: { directory: true, title: '选择游戏目录' } })
       if (dir) {
         const path = dir as string
         setCurrentDir(path)
