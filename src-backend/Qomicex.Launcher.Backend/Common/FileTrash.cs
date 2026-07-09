@@ -96,4 +96,3 @@ public static class FileTrash
             System.IO.File.Move(path, dest);
     }
 }
-</content>
