@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faKey, faFolderOpen, faSliders, faCheck, faXmark, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
@@ -18,7 +18,6 @@ import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
 import type { SystemInfo, JavaDownloadVendorInfo, DownloadTask } from '../types/index.ts'
-import { generateRoomCode, validateRoomCode } from '../api/roomCode.ts'
 import {
   addCustomJavaRuntime,
   removeCustomJavaRuntime,
@@ -42,10 +41,8 @@ const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
   { id: 'java', label: 'Java 运行时', icon: faCoffee },
   { id: 'appearance', label: '外观', icon: faPalette },
-  { id: 'roomcode', label: '联机房间码', icon: faKey },
   { id: 'about', label: '关于', icon: faInfoCircle },
   { id: 'debug', label: '调试', icon: faBug },
-
 ]
 
 const DOWNLOAD_SOURCES = [
@@ -433,10 +430,6 @@ export default function Settings() {
   const [modPings, setModPings] = useState<ModSourcePing[]>([])
   const [modPingLoading, setModPingLoading] = useState(false)
 
-  const [roomCode, setRoomCode] = useState('')
-  const [validationCode, setValidationCode] = useState('')
-  const [validationResult, setValidationResult] = useState<boolean | null>(null)
-
   useEffect(() => {
     if (saved) {
       const t = setTimeout(() => setSaved(false), 2000)
@@ -698,25 +691,6 @@ export default function Settings() {
       setJavaStatus('删除失败')
     } finally {
       setRemovingPath(null)
-    }
-  }
-
-  async function handleGenerate() {
-    try {
-      const result = await generateRoomCode()
-      setRoomCode(result.code)
-    } catch (e: unknown) {
-      await msgError(e instanceof Error ? e.message : '生成失败')
-    }
-  }
-
-  async function handleValidate() {
-    if (!validationCode.trim()) return
-    try {
-      const result = await validateRoomCode(validationCode)
-      setValidationResult(result.valid)
-    } catch {
-      setValidationResult(false)
     }
   }
 
@@ -1406,61 +1380,6 @@ export default function Settings() {
                   )}
                 </CardContent>
               </Card>
-            </div>
-          )}
-
-          {category === 'roomcode' && (
-            <div key="roomcode" className="animate-in slide-up">
-            <div className="grid gap-4 md:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <FontAwesomeIcon icon={faKey} className="mr-2 h-4 w-4 text-primary" />
-                    生成房间码
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Button onClick={handleGenerate}>
-                    <FontAwesomeIcon icon={faSliders} className="h-4 w-4" />
-                    生成房间码
-                  </Button>
-                  {roomCode && (
-                    <div className="rounded-lg border bg-background p-5 text-center">
-                      <code className="text-3xl font-bold tracking-[6px] text-primary">{roomCode}</code>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <FontAwesomeIcon icon={faKey} className="mr-2 h-4 w-4" />
-                    验证房间码
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="code">输入房间码</Label>
-                    <Input
-                      id="code"
-                      value={validationCode}
-                      onChange={(e) => setValidationCode(e.target.value)}
-                      placeholder="输入房间码"
-                    />
-                  </div>
-                  <Button variant="secondary" onClick={handleValidate}>
-                    验证
-                  </Button>
-                  {validationResult !== null && (
-                    <p className={`text-sm ${validationResult ? 'text-primary' : 'text-destructive'}`}>
-                      <FontAwesomeIcon icon={validationResult ? faCheck : faXmark} className="mr-1 h-3 w-3" />
-                      {validationResult ? '有效' : '无效'}
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
             </div>
           )}
 

@@ -142,10 +142,6 @@ export interface LogAnalysisResult {
   errorMessage: string | null
 }
 
-export interface RoomCodeResponse {
-  code: string
-}
-
 export interface ConnectorPlayer {
   name: string
   vendor: string
