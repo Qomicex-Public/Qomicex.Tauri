@@ -185,11 +185,11 @@ public class AccountController : ControllerBase
         {
             var stored = new StoredAccount
             {
-                Name = ygg.Name,
-                Uuid = ygg.Uuid,
-                Token = ygg.AccessToken,
-                AccessToken = ygg.AccessToken,
-                RefreshToken = ygg.ClientToken,
+                Name = ygg.Name ?? "",
+                Uuid = ygg.Uuid ?? "",
+                Token = ygg.AccessToken ?? "",
+                AccessToken = ygg.AccessToken ?? "",
+                RefreshToken = ygg.ClientToken ?? "",
                 LoginMethod = "Yggdrasil",
                 ServerUrl = request.ServerUrl,
             };

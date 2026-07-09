@@ -177,7 +177,7 @@ public class ModpackService
             {
                 var entry = e as JsonObject;
                 if (entry == null) return false;
-                int projectId = entry.TryGetPropertyValue("projectID", out var pid) == true ? pid.GetValue<int>() : 0;
+                int projectId = entry.TryGetPropertyValue("projectID", out var pid) == true ? pid!.GetValue<int>() : 0;
                 if (loaderProjectIds.Contains(projectId)) return false;
                 var fileName = entry["fileName"]?.GetValue<string>() ?? "";
                 if (fileName.StartsWith("forge-", StringComparison.OrdinalIgnoreCase) &&
@@ -193,7 +193,7 @@ public class ModpackService
                 var body = new { fileIds = batch.Select(f =>
                 {
                     var entry = f as JsonObject;
-                    int id = entry?.TryGetPropertyValue("fileID", out var node) == true ? node.GetValue<int>() : 0;
+                    int id = entry?.TryGetPropertyValue("fileID", out var node) == true ? node!.GetValue<int>() : 0;
                     return id;
                 }).Where(id => id > 0).ToList() };
                 var jsonBody = JsonContent.Create(body);

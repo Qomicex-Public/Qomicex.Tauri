@@ -232,7 +232,7 @@ public class InstanceFilesController : ControllerBase
                 return new ModMetadataDto
                 {
                     FileName = Path.GetFileName(m.FilePath),
-                    Name = m.Name,
+                    Name = m.Name ?? "",
                     Version = m.Version,
                     Description = m.Description ?? "",
                     Authors = m.Authors ?? [],

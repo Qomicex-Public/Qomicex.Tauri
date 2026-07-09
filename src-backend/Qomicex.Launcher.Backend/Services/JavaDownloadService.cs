@@ -382,6 +382,7 @@ public class JavaDownloadService
         {
             try
             {
+                if (OperatingSystem.IsWindows()) continue;
                 var mode = UnixFileMode.UserRead | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
                 File.SetUnixFileMode(path, mode);
             }
