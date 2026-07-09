@@ -39,11 +39,28 @@ pwsh ./build-release.ps1
 
 No test framework. Backend API test script: `bash scripts/test-api-filters.sh`.
 
+## Conventional Commits
+
+All commits must follow [Conventional Commits v1.0.0](https://www.conventionalcommits.org/zh-hans/v1.0.0/):
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+Types: `feat`, `fix`, `build`, `chore`, `ci`, `docs`, `perf`, `refactor`, `revert`, `style`, `test`.
+- `BREAKING CHANGE:` in footer or `!` after type/scope for breaking changes.
+- Scope: component/area (e.g. `ui`, `backend`, `release.yml`).
+- Description: imperative, lowercase, no period.
+
 ## CI/CD
 
-`.github/workflows/release.yml` — manual trigger (`workflow_dispatch`). Select platform (`windows`/`linux`/`macos`/`all`), bundles, and macOS arch.
+`.github/workflows/release.yml` — `workflow_dispatch` (with `prerelease` boolean input) or `release: [published]`. Select platform (`windows`/`linux`/`macos`/`all`), bundles, and macOS arch.
 
-Requires `QOMICEX_PAT` secret for submodule checkout. Builds publish backend per-RID, embed it into `src-tauri/binaries/`, then build Tauri bundle.
+Requires `QOMICEX_PAT` secret for submodule checkout. Builds publish backend per-RID, embed it into `src-tauri/binaries/`, then build Tauri bundle. Marked as pre-release when the input or the GitHub release has `prerelease: true`.
 
 ## Import rules (critical)
 
