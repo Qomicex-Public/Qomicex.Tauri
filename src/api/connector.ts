@@ -28,3 +28,7 @@ export function getEasyTierStatus(): Promise<EasyTierStatus> {
 export function downloadEasyTier(): Promise<EasyTierStatus> {
   return post<EasyTierStatus>('/connector/easytier/download')
 }
+
+export function scanPorts(): Promise<{ port: number | null }> {
+  return get('/connector/scan-ports')
+}

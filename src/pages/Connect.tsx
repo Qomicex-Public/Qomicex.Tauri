@@ -66,11 +66,14 @@ export default function Connect() {
   const [code, setCode] = useState('')
   const [instances, setInstances] = useState<GameInstance[]>([])
   const [selectedInstance, setSelectedInstance] = useState('')
-  const [hostMode, setHostMode] = useState<'port' | 'instance'>('instance')
+  const [hostSubMode, setHostSubMode] = useState<'instance' | 'scan'>('instance')
   const [busy, setBusy] = useState(false)
   const [easyTier, setEasyTier] = useState<EasyTierStatus | null>(null)
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const etTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [tab, setTab] = useState<'create' | 'join'>('create')
+  const [scanning, setScanning] = useState(false)
+  const [detectedPort, setDetectedPort] = useState<number | null>(null)
 
   const refreshStatus = useCallback(async () => {
     try { setStatus(await connectorApi.getStatus()) } catch { /* ignore poll errors */ }
@@ -113,6 +116,25 @@ export default function Connect() {
       return () => { if (pollTimer.current) clearInterval(pollTimer.current) }
     }
   }, [status.mode, refreshStatus])
+
+  useEffect(() => {
+    if (hostSubMode !== 'scan') return
+    setScanning(true)
+    setDetectedPort(null)
+    let cancelled = false
+    const interval = setInterval(async () => {
+      try {
+        const result = await connectorApi.scanPorts()
+        if (!cancelled && result.port !== null) {
+          setDetectedPort(result.port)
+          setPort(String(result.port))
+          setScanning(false)
+          clearInterval(interval)
+        }
+      } catch { /* ignore */ }
+    }, 1000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [hostSubMode])
 
   const handleHostPort = async () => {
     const p = parseInt(port, 10)
@@ -181,117 +203,158 @@ export default function Connect() {
         </Card>
       )}
 
-      <div className="flex flex-col gap-6">
-        {/* 创建房间 */}
-        {!isGuest && (
-        <Card className="space-y-4 border p-5">
-          <h2 className="text-lg font-semibold">创建房间</h2>
+      {status.mode === 'idle' && (
+        <>
+          <div className="flex gap-2 border-b border-border pb-2 mb-4">
+            <Button variant={tab === 'create' ? 'default' : 'ghost'} onClick={() => setTab('create')}>
+              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />创建房间
+            </Button>
+            <Button variant={tab === 'join' ? 'default' : 'ghost'} onClick={() => setTab('join')}>
+              <FontAwesomeIcon icon={faRightToBracket} className="mr-2" />加入房间
+            </Button>
+          </div>
 
-          {!isGuest && !isHost && !isStarting && (
-            <>
-              <div className="flex gap-2">
-                <Button variant={hostMode === 'port' ? 'default' : 'outline'} size="sm" onClick={() => setHostMode('port')}>手填端口</Button>
-                <Button variant={hostMode === 'instance' ? 'default' : 'outline'} size="sm" onClick={() => setHostMode('instance')}>选择实例</Button>
+          {tab === 'create' && hostSubMode === 'instance' && (
+            <Card className="space-y-4 border p-5">
+              <h2 className="text-lg font-semibold">启动实例并创建房间</h2>
+              <Label>选择实例</Label>
+              <Select value={selectedInstance} onChange={setSelectedInstance}>
+                <SelectOption value="">请选择...</SelectOption>
+                {instances.map((i) => <SelectOption key={i.id} value={i.id}>{i.name}</SelectOption>)}
+              </Select>
+              <Button onClick={handleHostInstance} disabled={busy || !etReady} className="w-full">
+                {busy ? <FontAwesomeIcon icon={faSpinner} spin className="mr-2" /> : null}
+                {busy ? '正在启动…' : <><FontAwesomeIcon icon={faPlay} className="mr-2" />启动并创建房间</>}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                启动后请在游戏内点击"对局域网开放"，将自动探测端口。
+              </p>
+              <div className="text-center">
+                <button className="text-xs text-primary hover:underline" onClick={() => setHostSubMode('scan')}>
+                  已手动启动实例？点击这里
+                </button>
               </div>
+            </Card>
+          )}
 
-              {hostMode === 'port' ? (
+          {tab === 'create' && hostSubMode === 'scan' && (
+            <Card className="space-y-4 border p-5">
+              <div className="flex items-center gap-2">
+                <button className="text-sm text-muted-foreground hover:text-foreground" onClick={() => setHostSubMode('instance')}>
+                  &larr; 返回实例选择
+                </button>
+              </div>
+              <h2 className="text-lg font-semibold">扫描本地端口</h2>
+              
+              {scanning && detectedPort === null && (
                 <div className="space-y-2">
-                  <Label>MC 局域网端口</Label>
-                  <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="例如 25565" />
-                  <Button onClick={handleHostPort} disabled={busy || !etReady} className="w-full">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <FontAwesomeIcon icon={faSpinner} spin />
+                    <span>正在扫描 Java 进程端口…</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                    <div className="h-full w-full origin-left animate-pulse rounded-full bg-primary" />
+                  </div>
+                </div>
+              )}
+
+              {detectedPort !== null && (
+                <div className="rounded-lg border border-border/50 bg-primary/5 p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground">检测到端口</p>
+                      <p className="text-2xl font-bold">{detectedPort}</p>
+                    </div>
+                    <Button onClick={handleHostPort} disabled={busy || !etReady}>
+                      {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : '创建房间'}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label>或者手动输入端口</Label>
+                <div className="flex gap-2">
+                  <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="例如 25565" className="flex-1" />
+                  <Button onClick={handleHostPort} disabled={busy || !etReady} variant="outline">
                     {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : '创建房间'}
                   </Button>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <Label>选择实例</Label>
-                  <Select value={selectedInstance} onChange={setSelectedInstance}>
-                    <SelectOption value="">请选择...</SelectOption>
-                    {instances.map((i) => <SelectOption key={i.id} value={i.id}>{i.name}</SelectOption>)}
-                  </Select>
-                  <Button onClick={handleHostInstance} disabled={busy || !etReady} className="w-full">
-                    <FontAwesomeIcon icon={faPlay} className="mr-2" />
-                    启动并创建房间
-                  </Button>
-                  <p className="text-xs text-muted-foreground">启动后请在游戏内点击"对局域网开放"，将自动探测端口。</p>
-                </div>
-              )}
-              {status.error && (
-                <p className="text-sm text-destructive">{status.error}</p>
-              )}
-            </>
-          )}
-
-          {isStarting && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <FontAwesomeIcon icon={faSpinner} spin />
-                <span>正在启动游戏，请在游戏内点击"对局域网开放"…</span>
               </div>
-              <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-                <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />取消
-              </Button>
-            </div>
+            </Card>
           )}
 
-          {isHost && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">房间码</span>
-                <code className="rounded bg-muted px-2 py-1 text-sm">{status.roomCode}</code>
-                <Button size="sm" variant="ghost" onClick={() => status.roomCode && copy(status.roomCode)}>
-                  <FontAwesomeIcon icon={faCopy} />
-                </Button>
-              </div>
-              <PlayerList players={status.players} />
-              <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-                <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />关闭房间
-              </Button>
-            </div>
-          )}
-        </Card>
-        )}
-
-        {/* 加入房间 */}
-        {!isHost && !isStarting && (
-        <Card className="space-y-4 border p-5">
-          <h2 className="text-lg font-semibold">加入房间</h2>
-
-          {!isHost && !isGuest && !isStarting && (
-            <div className="space-y-2">
+          {tab === 'join' && (
+            <Card className="space-y-4 border p-5">
+              <h2 className="text-lg font-semibold">加入房间</h2>
               <Label>房间码</Label>
               <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="U/XXXX-XXXX-XXXX-XXXX" />
               <Button onClick={handleJoin} disabled={busy || !etReady} className="w-full">
-                <FontAwesomeIcon icon={faRightToBracket} className="mr-2" />
-                {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : '加入房间'}
+                {busy ? <><FontAwesomeIcon icon={faSpinner} spin className="mr-2" />正在加入…</> : <><FontAwesomeIcon icon={faRightToBracket} className="mr-2" />加入房间</>}
               </Button>
-            </div>
+            </Card>
           )}
+        </>
+      )}
 
-          {isGuest && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">服务器地址</span>
-                <code className="rounded bg-muted px-2 py-1 text-sm">{status.mcHost}:{status.mcPort}</code>
-                <Button size="sm" variant="ghost" onClick={() => copy(`${status.mcHost}:${status.mcPort}`)}>
-                  <FontAwesomeIcon icon={faCopy} />
-                </Button>
-              </div>
-              {status.gameInfo && (
-                <p className="text-xs text-muted-foreground">
-                  房主版本：{status.gameInfo.gameVersion}
-                  {status.gameInfo.loader ? ` · ${status.gameInfo.loader} ${status.gameInfo.loaderVersion ?? ''}` : ''}
-                </p>
-              )}
-              <PlayerList players={status.players} />
-              <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-                <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />退出房间
+      {isStarting && (
+        <Card className="space-y-4 border p-5">
+          <h2 className="text-lg font-semibold">创建房间</h2>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <FontAwesomeIcon icon={faSpinner} spin />
+              <span>正在启动游戏，请在游戏内点击"对局域网开放"…</span>
+            </div>
+            <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
+              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />取消
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {isHost && (
+        <Card className="space-y-4 border p-5">
+          <h2 className="text-lg font-semibold">创建房间</h2>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">房间码</span>
+              <code className="rounded bg-muted px-2 py-1 text-sm">{status.roomCode}</code>
+              <Button size="sm" variant="ghost" onClick={() => status.roomCode && copy(status.roomCode)}>
+                <FontAwesomeIcon icon={faCopy} />
               </Button>
             </div>
-          )}
+            <PlayerList players={status.players} />
+            <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
+              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />关闭房间
+            </Button>
+          </div>
         </Card>
-        )}
-      </div>
+      )}
+
+      {isGuest && (
+        <Card className="space-y-4 border p-5">
+          <h2 className="text-lg font-semibold">加入房间</h2>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">服务器地址</span>
+              <code className="rounded bg-muted px-2 py-1 text-sm">{status.mcHost}:{status.mcPort}</code>
+              <Button size="sm" variant="ghost" onClick={() => copy(`${status.mcHost}:${status.mcPort}`)}>
+                <FontAwesomeIcon icon={faCopy} />
+              </Button>
+            </div>
+            {status.gameInfo && (
+              <p className="text-xs text-muted-foreground">
+                房主版本：{status.gameInfo.gameVersion}
+                {status.gameInfo.loader ? ` · ${status.gameInfo.loader} ${status.gameInfo.loaderVersion ?? ''}` : ''}
+              </p>
+            )}
+            <PlayerList players={status.players} />
+            <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
+              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />退出房间
+            </Button>
+          </div>
+        </Card>
+      )}
     </div>
   )
 }
