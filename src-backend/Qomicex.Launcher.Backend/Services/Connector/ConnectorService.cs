@@ -38,6 +38,7 @@ public sealed class ConnectorService : IDisposable
     private readonly object _iconLock = new();
     private string? _mcHost;
     private int? _mcPort;
+    private int _lastGuestPlayerCount = -1;
 
     private volatile bool _starting;
     private volatile string? _startError;
@@ -279,6 +280,20 @@ public sealed class ConnectorService : IDisposable
             try
             {
                 var players = guest.GetPlayerListAsync().GetAwaiter().GetResult();
+                if (players.Count != _lastGuestPlayerCount)
+                {
+                    _lastGuestPlayerCount = players.Count;
+                    try
+                    {
+                        var map = QmlProtocols.ExchangeIconsAsync(guest,
+                            new PlayerIconUpload { MachineId = MachineId, IconBase64 = "" }).GetAwaiter().GetResult();
+                        if (map?.Icons != null)
+                            lock (_iconLock)
+                                foreach (var kv in map.Icons) _iconMap[kv.Key] = kv.Value;
+                        icons = new Dictionary<string, string>(_iconMap);
+                    }
+                    catch (Exception ex) { _logger.LogDebug(ex, "刷新 icon map 失败"); }
+                }
                 return new ConnectorStatusDto("guest", null, _mcHost, _mcPort, _gameInfo,
                     MapPlayers(players, icons), null);
             }
