@@ -220,6 +220,7 @@ public sealed class ConnectorService : IDisposable
                 ?? throw ApiException.BadRequest("请先在账户页选择一个账户再加入房间");
 
             _guest = await _client.JoinRoomAsync(code, account.Name, MachineId, Vendor, QmlProtocols.GuestKeys, ct);
+            _guest.ConnectionLost += OnGuestConnectionLost;
             var (host, mcPort) = await _guest.MapMinecraftPortAsync(ct);
             _mcHost = host; _mcPort = mcPort;
 
@@ -245,6 +246,7 @@ public sealed class ConnectorService : IDisposable
         try
         {
             await _client.CloseAsync(ct);
+            if (_guest != null) _guest.ConnectionLost -= OnGuestConnectionLost;
             _center = null; _guest = null; _mcHost = null; _mcPort = null;
             _gameInfo = new GameInfoDto();
             _starting = false; _startError = null;
@@ -306,6 +308,13 @@ public sealed class ConnectorService : IDisposable
             p.Name, p.Vendor,
             icons.TryGetValue(p.MachineId, out var icon) ? icon : null,
             p.Kind == PlayerKind.Host ? "host" : "guest")).ToList();
+
+    private async void OnGuestConnectionLost()
+    {
+        _logger.LogWarning("与联机中心的连接已断开，自动退出房间");
+        try { await LeaveAsync(CancellationToken.None); }
+        catch (Exception ex) { _logger.LogError(ex, "自动退出房间时出错"); }
+    }
 
     public void Dispose() { _startCts?.Dispose(); _client.Dispose(); _gate.Dispose(); _localHttp.Dispose(); }
 }
