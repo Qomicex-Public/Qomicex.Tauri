@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
@@ -18,6 +18,8 @@ import useCloseGuard from './hooks/useCloseGuard.ts'
 import { loadSettings, onSettingsChange } from './api/settings.ts'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
+import { get } from './api/client.ts'
+import { Button } from './components/ui/button.tsx'
 
 function RunningNotifyBridge() {
   const { notify } = useMessageBox()
@@ -27,7 +29,52 @@ function RunningNotifyBridge() {
 }
 
 function AppContent() {
+  const [backendState, setBackendState] = useState<'loading' | 'ready' | 'error'>('loading')
   const { closeWithGuard, Provider } = useCloseGuard()
+
+  useEffect(() => {
+    let cancelled = false
+    let attempts = 0
+    const poll = async () => {
+      while (!cancelled && attempts < 10) {
+        try {
+          await get('/diagnostics/health')
+          if (!cancelled) setBackendState('ready')
+          return
+        } catch { attempts++ }
+        if (!cancelled) await new Promise(r => setTimeout(r, 1000))
+      }
+      if (!cancelled) setBackendState('error')
+    }
+    poll()
+    return () => { cancelled = true }
+  }, [])
+
+  if (backendState !== 'ready') {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="text-center">
+          {backendState === 'loading' ? (
+            <>
+              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <p className="mt-4 text-sm text-muted-foreground">启动后端服务...</p>
+            </>
+          ) : (
+            <>
+              <p className="text-destructive font-medium">后端启动失败</p>
+              <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                请确保已安装 .NET 10 Runtime 和 ASP.NET Core Runtime 10.0，然后重启启动器。
+              </p>
+              <p className="mt-1">
+                <a href="https://dotnet.microsoft.com/download/dotnet/10.0" target="_blank" className="text-xs text-primary underline">下载 .NET 10</a>
+              </p>
+              <Button className="mt-4" onClick={() => window.location.reload()}>重试</Button>
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <Provider value={closeWithGuard}>
