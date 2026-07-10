@@ -109,6 +109,60 @@ public class ResourceDownloadService
             .ToList();
     }
 
+    public string DownloadTo(string url, string targetPath)
+    {
+        var taskId = Guid.NewGuid().ToString("N")[..12];
+        var state = new ResourceDownloadState
+        {
+            TaskId = taskId,
+            Url = url,
+            TargetPath = targetPath,
+            FileName = Path.GetFileName(targetPath),
+            Status = "downloading",
+        };
+        _downloads[taskId] = state;
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        _ = DownloadToAsync(taskId, state);
+        return taskId;
+    }
+
+    private async Task DownloadToAsync(string taskId, ResourceDownloadState state)
+    {
+        state.Cts = new CancellationTokenSource();
+        try
+        {
+            var core = new DownloadCore(threadCount: 0, maxRetries: 3, autoUpdate: true);
+            state.Engine = core;
+            _engines[taskId] = core;
+
+            var progress = new Progress<DownloadProgress>(p =>
+            {
+                state.DownloadedBytes = p.DownloadedBytes;
+                state.TotalBytes = p.TotalBytes;
+                state.Speed = p.Speed;
+                state.Progress = p.Progress;
+            });
+
+            await core.DownloadFileAsync(state.Url, state.TargetPath, progress, state.Cts.Token);
+            state.Progress = 100;
+            state.Speed = 0;
+            state.Status = "completed";
+        }
+        catch (OperationCanceledException)
+        {
+            state.Status = "cancelled";
+        }
+        catch (Exception ex)
+        {
+            state.Status = "failed";
+            state.Error = ex.Message;
+        }
+        finally
+        {
+            _engines.TryRemove(taskId, out _);
+        }
+    }
+
     private async Task DownloadAsync(string taskId, ResourceDownloadState state)
     {
         state.Status = "downloading";

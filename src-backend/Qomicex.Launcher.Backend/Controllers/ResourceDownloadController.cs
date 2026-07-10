@@ -48,19 +48,13 @@ public class ResourceDownloadController : ControllerBase
     }
 
     [HttpPost("download-to")]
-    public async Task<IActionResult> DownloadTo([FromBody] DownloadToRequest request)
+    public IActionResult DownloadTo([FromBody] DownloadToRequest request)
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(request.TargetPath)!);
-            var http = _httpFactory.CreateClient();
-            var response = await http.GetAsync(request.Url);
-            if (!response.IsSuccessStatusCode)
-                return BadRequest(new { error = "下载失败" });
-            using var stream = await response.Content.ReadAsStreamAsync();
-            using var fileStream = System.IO.File.Create(request.TargetPath);
-            await stream.CopyToAsync(fileStream);
-            return Ok(new { path = request.TargetPath });
+            var taskId = _downloadService.DownloadTo(request.Url, request.TargetPath);
+            return Ok(new { taskId = taskId, path = request.TargetPath });
         }
         catch (Exception ex)
         {
