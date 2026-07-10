@@ -16,6 +16,7 @@ public static class Verify
         SourceExpanderCases();
         SegmentChainCases();
         FileWriterCases();
+        SourcePoolCases();
         return _failed;
     }
 
@@ -89,5 +90,27 @@ using (var w = new FileWriter(tmp))
         w2.WriteAsync(0, new byte[] { 9 }, default).AsTask().GetAwaiter().GetResult();
         w2.Dispose(); // 未 commit
         Assert(!File.Exists(tmp2) && !File.Exists(tmp2 + ".qdtmp"), "abort leaves no files");
+    }
+
+    private static void SourcePoolCases()
+    {
+        var pool = new SourcePool(new[] { "https://a.com/x", "https://bmclapi2.bangbang93.com/x" });
+        Assert(pool.HasAvailable(), "pool has available initially");
+
+        var s = pool.Acquire();
+        // 致命错误（404）立即禁用
+        var disabled = pool.ReportFailure(s!, new Exception("错误码 NotFound (404)"), 4);
+        Assert(disabled && s!.IsDisabled, "404 disables source");
+
+        // bmclapi 的 403 不禁用
+        var s2 = pool.Acquire();
+        var d2 = pool.ReportFailure(s2!, new Exception("错误码 Forbidden (403)"), 4);
+        Assert(!d2 && !s2!.IsDisabled, "bmclapi 403 not disabled");
+
+        // 全部禁用后可兜底重试一次
+        pool.ReportFailure(s2!, new RangeNotSupportedException("no range"), 4);
+        Assert(!pool.HasAvailable(), "all disabled");
+        Assert(pool.TryResetForRetry(), "reset re-enables once");
+        Assert(!pool.TryResetForRetry(), "reset only once");
     }
 }
