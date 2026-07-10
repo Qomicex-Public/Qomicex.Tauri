@@ -468,6 +468,18 @@ public class InstanceController : ControllerBase
         // Clear previous state
         _launchService.Set(id, new LaunchProgress { Stage = "starting", Message = "准备启动...", Progress = 0 });
 
+        // Pre-check：是否有兼容此版本的 Java
+        var javaList = _javaRuntimeStore.GetMergedAsync(JavaHelper.JavaSearchMode.Quick).GetAwaiter().GetResult();
+        var recommended = JavaHelper.GetRecommendedJava(javaList, instance.GameVersion, instance.GameDir);
+        if (!recommended.Any(j => JavaHelper.CheckJavaCompatibility(j, instance.GameVersion, instance.GameDir)))
+        {
+            return Ok(new LaunchResult
+            {
+                Success = false,
+                Error = $"未找到与 Minecraft {instance.GameVersion} 兼容的 Java 运行时。\n请前往「设置 → Java → 下载 Java」安装。"
+            });
+        }
+
         _ = RunLaunchAsync(id);
 
             return Ok(new LaunchResult { Success = true, Stage = "starting" });
