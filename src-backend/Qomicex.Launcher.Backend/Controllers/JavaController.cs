@@ -21,10 +21,27 @@ public class JavaController : ControllerBase
     [HttpGet("search")]
     public IActionResult SearchJava([FromQuery] string? mode)
     {
-        var runtimes = JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions
+        var searchMode = ParseSearchMode(mode);
+        var runtimes = JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions { Mode = searchMode });
+
+        var downloadDir = Path.Combine(AppPaths.BaseDir, "QML", "Runtime", "Java");
+        if (Directory.Exists(downloadDir))
         {
-            Mode = ParseSearchMode(mode)
-        });
+            var downloaded = JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions
+            {
+                Mode = JavaHelper.JavaSearchMode.Custom,
+                CustomRootPath = downloadDir,
+                MaxDepth = 5,
+                MaxResults = 50,
+            });
+            var merged = new Dictionary<string, JavaHelper.JavaInfoExtended>(StringComparer.OrdinalIgnoreCase);
+            foreach (var j in runtimes)
+                merged[Path.GetFullPath(j.Path)] = j;
+            foreach (var j in downloaded)
+                merged.TryAdd(Path.GetFullPath(j.Path), j);
+            return Ok(merged.Values.ToList());
+        }
+
         return Ok(runtimes);
     }
 

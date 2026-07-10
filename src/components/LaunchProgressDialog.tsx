@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate } from '@fortawesome/free-solid-svg-icons'
+import { faRotate, faDownload, faSpinner } from '@fortawesome/free-solid-svg-icons'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from './ui/dialog.tsx'
+import { Button } from './ui/button.tsx'
 import { useRunning } from '../contexts/RunningContext.tsx'
+import { exportDiagnostics } from '../api/instance.ts'
 import { cn } from '../lib/utils.ts'
 
 const stageLabels: Record<string, string> = {
@@ -20,12 +23,20 @@ const stageLabels: Record<string, string> = {
 }
 
 export default function LaunchProgressDialog() {
-  const { launchProgress, cancelLaunch } = useRunning()
+  const { launchProgress, launchingInstanceId, cancelLaunch } = useRunning()
+  const [exporting, setExporting] = useState(false)
 
   if (!launchProgress) return null
 
   const isFinal = ['completed', 'crashed', 'failed'].includes(launchProgress.stage)
   const isError = ['crashed', 'failed'].includes(launchProgress.stage)
+
+  const handleExport = async () => {
+    if (!launchingInstanceId || exporting) return
+    setExporting(true)
+    try { await exportDiagnostics(launchingInstanceId) } catch { /* ignore */ }
+    finally { setExporting(false) }
+  }
 
   return (
     <Dialog open onClose={() => cancelLaunch()} closeOnBackdrop={isFinal} closeOnEsc={isFinal}>
@@ -64,7 +75,13 @@ export default function LaunchProgressDialog() {
             正在启动...
           </div>
         ) : (
-          <div className="flex justify-center pt-2">
+          <div className="flex items-center justify-center gap-2 pt-2">
+            {isError && launchingInstanceId && (
+              <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-1.5 h-7 text-xs">
+                <FontAwesomeIcon icon={exporting ? faSpinner : faDownload} className={exporting ? 'h-3 w-3 animate-spin' : 'h-3 w-3'} />
+                {exporting ? '导出中...' : '导出诊断报告'}
+              </Button>
+            )}
             <button onClick={() => cancelLaunch()} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">关闭</button>
           </div>
         )}

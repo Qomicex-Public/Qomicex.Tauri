@@ -473,10 +473,12 @@ public class InstanceController : ControllerBase
         var recommended = JavaHelper.GetRecommendedJava(javaList, instance.GameVersion, instance.GameDir);
         if (!recommended.Any(j => JavaHelper.CheckJavaCompatibility(j, instance.GameVersion, instance.GameDir)))
         {
+            string requiredJava = "未知";
+            try { requiredJava = GeneralHelper.GetMinecraftRequireJavaVersion(instance.GameVersion, instance.GameDir); } catch { }
             return Ok(new LaunchResult
             {
                 Success = false,
-                Error = $"未找到与 Minecraft {instance.GameVersion} 兼容的 Java 运行时。\n请前往「设置 → Java → 下载 Java」安装。"
+                Error = $"未找到与 Minecraft {instance.GameVersion} 兼容的 Java 运行时（需要 Java {requiredJava}）。\n请前往「设置 → Java → 下载 Java」安装。"
             });
         }
 

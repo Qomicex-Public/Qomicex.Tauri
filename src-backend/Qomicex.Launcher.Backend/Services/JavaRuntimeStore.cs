@@ -102,12 +102,30 @@ public sealed class JavaRuntimeStore
             merged[NormalizePath(runtime.Path)] = runtime;
         }
 
+        foreach (var runtime in ScanJavaDownloadDir())
+        {
+            merged.TryAdd(NormalizePath(runtime.Path), runtime);
+        }
+
         foreach (var runtime in await GetCustomAsync())
         {
             merged[NormalizePath(runtime.Path)] = runtime;
         }
 
         return merged.Values.ToList();
+    }
+
+    private static List<JavaHelper.JavaInfoExtended> ScanJavaDownloadDir()
+    {
+        var dir = Path.Combine(AppPaths.BaseDir, "QML", "Runtime", "Java");
+        if (!Directory.Exists(dir)) return [];
+        return JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions
+        {
+            Mode = JavaHelper.JavaSearchMode.Custom,
+            CustomRootPath = dir,
+            MaxDepth = 5,
+            MaxResults = 50,
+        });
     }
 
     private async Task<List<StoredJavaRuntime>> LoadEntriesAsync()

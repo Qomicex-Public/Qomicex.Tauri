@@ -14,6 +14,7 @@ export interface RunningInstance {
 export interface RunningContextValue {
   runningInstances: RunningInstance[]
   launchProgress: LaunchProgress | null
+  launchingInstanceId: string | null
   launchInstance: (id: string, name: string) => Promise<LaunchResult>
   cancelLaunch: (id?: string) => Promise<void>
   killInstance: (id: string) => Promise<void>
@@ -31,6 +32,7 @@ export function useRunning(): RunningContextValue {
 export function RunningProvider({ children }: { children: ReactNode }) {
   const [runningInstances, setRunningInstances] = useState<RunningInstance[]>([])
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
+  const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null)
   const pollRefs = useRef<Map<string, number>>(new Map())
   const notifyRef = useRef<(msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void>(() => {})
   const launchingIdRef = useRef<string | null>(null)
@@ -47,6 +49,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     if (!result.success) return result
 
     launchingIdRef.current = id
+    setLaunchingInstanceId(id)
     setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
 
     const poll = async () => {
@@ -56,13 +59,13 @@ export function RunningProvider({ children }: { children: ReactNode }) {
           setLaunchProgress(p)
           clearInstancePoll(id)
           setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
-          launchingIdRef.current = null
+          setLaunchingInstanceId(null)
           notifyRef.current?.('游戏已崩溃', 'error')
         } else if (p.stage === 'completed') {
           setLaunchProgress(null)
           clearInstancePoll(id)
           setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
-          launchingIdRef.current = null
+          setLaunchingInstanceId(null)
           notifyRef.current?.('游戏已退出', 'info')
         } else if (p.stage === 'running') {
           setLaunchProgress(null)
@@ -79,7 +82,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
         clearInstancePoll(id)
         setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
         setLaunchProgress(null)
-        launchingIdRef.current = null
+        setLaunchingInstanceId(null)
       }
     }
     pollRefs.current.set(id, window.setTimeout(poll, 500))
@@ -94,9 +97,9 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     }
     try { await apiCancelLaunch(targetId) } catch {}
     setLaunchProgress(null)
+    setLaunchingInstanceId(null)
     clearInstancePoll(targetId)
     setRunningInstances(prev => prev.filter(r => r.instanceId !== targetId))
-    launchingIdRef.current = null
     notifyRef.current?.('已取消启动', 'info')
   }, [clearInstancePoll])
 
@@ -112,7 +115,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   }, [clearInstancePoll])
 
   return (
-    <RunningCtx.Provider value={{ runningInstances, launchProgress, launchInstance, cancelLaunch, killInstance, setNotifyImpl }}>
+    <RunningCtx.Provider value={{ runningInstances, launchProgress, launchingInstanceId, launchInstance, cancelLaunch, killInstance, setNotifyImpl }}>
       {children}
     </RunningCtx.Provider>
   )

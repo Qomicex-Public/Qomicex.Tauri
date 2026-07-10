@@ -85,6 +85,21 @@ export async function setGameSetting(id: string, name: string, value: string): P
   await put(`/instance/${id}/game-settings/` + encodeURIComponent(name), value)
 }
 
+export async function exportDiagnostics(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/instance/${id}/export-diagnostics`, { method: 'POST' })
+  if (!res.ok) throw new Error('导出诊断报告失败')
+  const blob = await res.blob()
+  const disposition = res.headers.get('content-disposition')
+  const match = disposition?.match(/filename="?(.+?)"?$/)
+  const filename = match?.[1] || `diagnostics-${id}.zip`
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 export async function parseModpackFile(file: File): Promise<ModpackParseResult> {
   const formData = new FormData()
   formData.append('file', file)

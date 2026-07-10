@@ -1955,6 +1955,7 @@ export default function InstanceDetailPage() {
         message={launchError?.message || ''}
         detail={launchError?.detail}
         args={launchError?.args}
+        instanceId={id}
         onClose={() => setLaunchError(null)}
       />
       <AccountSelectDialog

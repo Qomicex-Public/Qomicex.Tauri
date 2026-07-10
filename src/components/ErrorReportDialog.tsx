@@ -1,21 +1,40 @@
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBug, faTriangleExclamation, faXmark, faCopy } from '@fortawesome/free-solid-svg-icons'
+import { faBug, faTriangleExclamation, faXmark, faCopy, faDownload, faSpinner } from '@fortawesome/free-solid-svg-icons'
 import { Button } from './ui/button.tsx'
+import { exportDiagnostics } from '../api/instance.ts'
 
-export function ErrorReportDialog({ open, title, message, detail, args, onClose }: {
+export function ErrorReportDialog({ open, title, message, detail, args, instanceId, onClose }: {
   open: boolean
   title: string
   message: string
   detail?: string | null
   args?: string | null
+  instanceId?: string
   onClose: () => void
 }) {
+  const [exporting, setExporting] = useState(false)
+  const [exportErr, setExportErr] = useState('')
+
   if (!open) return null
 
   const copyAll = () => {
     const text = [title, message, detail && `详情:\n${detail}`, args && `参数:\n${args}`].filter(Boolean).join('\n\n')
     navigator.clipboard.writeText(text)
+  }
+
+  const handleExport = async () => {
+    if (!instanceId || exporting) return
+    setExporting(true)
+    setExportErr('')
+    try {
+      await exportDiagnostics(instanceId)
+    } catch (e: unknown) {
+      setExportErr(e instanceof Error ? e.message : '导出失败')
+    } finally {
+      setExporting(false)
+    }
   }
 
   return createPortal(
@@ -49,11 +68,20 @@ export function ErrorReportDialog({ open, title, message, detail, args, onClose 
               <pre className="max-h-28 overflow-auto rounded-lg bg-muted p-3 text-[11px] leading-relaxed whitespace-pre-wrap break-all font-mono">{args}</pre>
             </div>
           )}
+          {exportErr && (
+            <p className="text-xs text-destructive">{exportErr}</p>
+          )}
         </div>
         <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
           <Button variant="outline" size="sm" onClick={copyAll} className="gap-1.5 h-7 text-xs">
             <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />复制全部
           </Button>
+          {instanceId && (
+            <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-1.5 h-7 text-xs">
+              <FontAwesomeIcon icon={exporting ? faSpinner : faDownload} className={exporting ? 'h-3 w-3 animate-spin' : 'h-3 w-3'} />
+              {exporting ? '导出中...' : '导出诊断报告'}
+            </Button>
+          )}
           <Button size="sm" onClick={onClose} className="h-7 text-xs">关闭</Button>
         </div>
       </div>
