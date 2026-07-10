@@ -113,7 +113,7 @@ export default function ResourceDetailPage() {
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
     setDownloadingFor(versionId)
     try {
-      const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shaderpack: 'shaderpacks', save: 'saves' }
+      const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shader: 'shaderpacks', save: 'saves' }
       const subDir = folderMap[category] || ''
       const defaultDir = instance?.gameDir ? instance.gameDir.replace(/\\/g, '/') + (subDir ? `/${subDir}` : '') : undefined
       const defaultPath = defaultDir ? `${defaultDir}/${fileName}` : fileName

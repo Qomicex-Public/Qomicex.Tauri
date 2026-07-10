@@ -31,10 +31,10 @@ public class ResourceDownloadController : ControllerBase
 
         var category = request.Category?.ToLowerInvariant() switch
         {
-            "mods" => "mods",
-            "resourcepacks" => "resourcepacks",
-            "shaderpacks" => "shaderpacks",
-            "saves" => "saves",
+            "mods" or "mod" => "mods",
+            "resourcepacks" or "resourcepack" => "resourcepacks",
+            "shaderpacks" or "shader" => "shaderpacks",
+            "saves" or "save" => "saves",
             "screenshots" => "screenshots",
             _ => "mods",
         };
