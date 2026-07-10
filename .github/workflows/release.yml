@@ -344,7 +344,17 @@ jobs:
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
-      - run: npm run tauri -- build --bundles app,dmg
+      - run: npm run tauri -- build --bundles app
+      - name: Create DMG
+        run: |
+          APP="src-tauri/target/release/bundle/macos/qomicex-launcher.app"
+          DMG_DIR="src-tauri/target/release/bundle/dmg"
+          mkdir -p "$DMG_DIR"
+          codesign --force --deep --sign - "$APP"
+          hdiutil create -volname "Qomicex Launcher" \
+            -srcfolder "$APP" \
+            -ov -format UDZO \
+            "$DMG_DIR/qomicex-launcher_${{ github.event.inputs.version }}_$(uname -m).dmg"
       - name: Generate update manifest fragment
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
@@ -393,7 +403,17 @@ jobs:
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
-      - run: npm run tauri -- build --bundles app,dmg
+      - run: npm run tauri -- build --bundles app
+      - name: Create DMG
+        run: |
+          APP="src-tauri/target/release/bundle/macos/qomicex-launcher.app"
+          DMG_DIR="src-tauri/target/release/bundle/dmg"
+          mkdir -p "$DMG_DIR"
+          codesign --force --deep --sign - "$APP"
+          hdiutil create -volname "Qomicex Launcher" \
+            -srcfolder "$APP" \
+            -ov -format UDZO \
+            "$DMG_DIR/qomicex-launcher_${{ github.event.inputs.version }}_$(uname -m).dmg"
       - name: Generate update manifest fragment
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
