@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
@@ -20,6 +20,7 @@ import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { get } from './api/client.ts'
 import { Button } from './components/ui/button.tsx'
+import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
 
 function RunningNotifyBridge() {
   const { notify } = useMessageBox()
@@ -31,6 +32,8 @@ function RunningNotifyBridge() {
 function AppContent() {
   const [backendState, setBackendState] = useState<'loading' | 'ready' | 'error'>('loading')
   const { closeWithGuard, Provider } = useCloseGuard()
+  const { alert } = useMessageBox()
+  const javaChecked = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -49,6 +52,20 @@ function AppContent() {
     poll()
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    if (backendState !== 'ready' || javaChecked.current) return
+    javaChecked.current = true
+    ;(async () => {
+      try {
+        await loadCustomRuntimes()
+        if (!hasAnyRuntimes()) await scanRuntimes('quick')
+        if (!getRuntimes().some(r => r.state === 'Valid')) {
+          alert('启动 Minecraft 需要 Java 运行时环境。\n\n你可以使用「设置 → Java → 下载 Java」功能快速安装，或手动添加已安装的 Java 路径。', '未检测到 Java 运行时')
+        }
+      } catch {}
+    })()
+  }, [backendState, alert])
 
   if (backendState !== 'ready') {
     return (
