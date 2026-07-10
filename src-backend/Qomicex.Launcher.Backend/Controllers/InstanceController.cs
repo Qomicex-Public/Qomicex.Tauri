@@ -486,6 +486,24 @@ public class InstanceController : ControllerBase
             });
         }
 
+        // Pre-check：Vulkan 运行时（lwjgl-vma 需要）
+        if (OperatingSystem.IsWindows())
+        {
+            var vulkanPath = Path.Combine(Environment.SystemDirectory, "vulkan-1.dll");
+            if (!System.IO.File.Exists(vulkanPath))
+            {
+                return Ok(new LaunchResult
+                {
+                    Success = false,
+                    Error = "系统缺少 Vulkan 运行时（vulkan-1.dll）。\n" +
+                            "当前游戏版本需要 lwjgl-vma（Vulkan 内存分配器），请安装最新的显卡驱动。\n" +
+                            "NVIDIA: https://www.nvidia.cn/geforce/drivers/\n" +
+                            "AMD: https://www.amd.com/zh-cn/support\n" +
+                            "Intel: https://www.intel.cn/content/www/cn/zh/support/products/80939/graphics.html"
+                });
+            }
+        }
+
         _ = RunLaunchAsync(id);
 
             return Ok(new LaunchResult { Success = true, Stage = "starting" });
