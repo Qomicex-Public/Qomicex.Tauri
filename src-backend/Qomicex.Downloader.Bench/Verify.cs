@@ -17,6 +17,7 @@ public static class Verify
         SegmentChainCases();
         FileWriterCases();
         SourcePoolCases();
+        SpeedTrackerCases();
         return _failed;
     }
 
@@ -90,6 +91,15 @@ using (var w = new FileWriter(tmp))
         w2.WriteAsync(0, new byte[] { 9 }, default).AsTask().GetAwaiter().GetResult();
         w2.Dispose(); // 未 commit
         Assert(!File.Exists(tmp2) && !File.Exists(tmp2 + ".qdtmp"), "abort leaves no files");
+    }
+
+    private static void SpeedTrackerCases()
+    {
+        var t = new SpeedTracker();
+        t.Sample(0);
+        System.Threading.Thread.Sleep(120);
+        t.Sample(120_000);
+        Assert(t.Current > 0, "speed tracker produces positive speed");
     }
 
     private static void SourcePoolCases()
