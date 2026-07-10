@@ -91,15 +91,37 @@ using (var w = new FileWriter(tmp))
         w2.WriteAsync(0, new byte[] { 9 }, default).AsTask().GetAwaiter().GetResult();
         w2.Dispose(); // 未 commit
         Assert(!File.Exists(tmp2) && !File.Exists(tmp2 + ".qdtmp"), "abort leaves no files");
+
+        // 同步定位写（小文件内存落盘路径使用，避免 pooled ValueTask 的 GetResult 崩溃）
+        var tmp3 = Path.Combine(Path.GetTempPath(), "qdw_" + Guid.NewGuid().ToString("N") + ".bin");
+        try
+        {
+            using (var w3 = new FileWriter(tmp3))
+            {
+                var payload = new byte[] { 10, 20, 30, 40 };
+                w3.Preallocate(payload.Length);
+                w3.Write(0, payload);
+                w3.CommitAtomic();
+            }
+            var b3 = File.ReadAllBytes(tmp3);
+            Assert(b3.Length == 4 && b3[0] == 10 && b3[3] == 40, "sync Write lands correctly");
+        }
+        finally { if (File.Exists(tmp3)) File.Delete(tmp3); }
     }
 
     private static void SpeedTrackerCases()
     {
         var t = new SpeedTracker();
         t.Sample(0);
-        System.Threading.Thread.Sleep(120);
+        System.Threading.Thread.Sleep(220);
         t.Sample(120_000);
         Assert(t.Current > 0, "speed tracker produces positive speed");
+
+        // 200ms 窗口内的连续采样不应爆表（多线程逐包场景）
+        var t2 = new SpeedTracker();
+        t2.Sample(0);
+        for (int i = 1; i <= 100; i++) t2.Sample(i * 64 * 1024);
+        Assert(t2.Current < 500L * 1024 * 1024, "rapid sub-window samples do not explode speed");
     }
 
     private static void SourcePoolCases()
