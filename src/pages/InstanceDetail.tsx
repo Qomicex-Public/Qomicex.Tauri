@@ -493,7 +493,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   )
 }
 
-function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
+function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
+  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<ResourcePackMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -563,6 +564,15 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { inst
                 <FontAwesomeIcon icon={viewMode === 'grid' ? faList : faGrip} className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
+            <Button size="sm" onClick={() => {
+              const p = new URLSearchParams({ category: 'resourcepack', source: 'modrinth' })
+              if (gameVersion) p.set('gameVersion', gameVersion)
+              if (loader) p.set('loader', loader.toLowerCase())
+              if (instanceId) p.set('instanceId', instanceId)
+              navigate(`/resource-center?${p.toString()}`)
+            }} className="gap-1.5 h-7 text-xs">
+              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装资源包
+            </Button>
           </div>
         </div>
         {loading ? (
@@ -600,7 +610,8 @@ function ResourcePacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { inst
   )
 }
 
-function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
+function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
+  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [shaders, setShaders] = useState<ShaderMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -672,6 +683,15 @@ function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId
                 <FontAwesomeIcon icon={viewMode === 'grid' ? faList : faGrip} className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
+            <Button size="sm" onClick={() => {
+              const p = new URLSearchParams({ category: 'shader', source: 'modrinth' })
+              if (gameVersion) p.set('gameVersion', gameVersion)
+              if (loader) p.set('loader', loader.toLowerCase())
+              if (instanceId) p.set('instanceId', instanceId)
+              navigate(`/resource-center?${p.toString()}`)
+            }} className="gap-1.5 h-7 text-xs">
+              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装光影包
+            </Button>
           </div>
         </div>
         {loading ? (
@@ -709,7 +729,8 @@ function ShadersTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId
   )
 }
 
-function DataPacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
+function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
+  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<DataPackMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -760,6 +781,15 @@ function DataPacksTab({ instanceId, gameDir, refreshKey, onRefresh }: { instance
             </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+            </Button>
+            <Button size="sm" onClick={() => {
+              const p = new URLSearchParams({ category: 'datapack', source: 'modrinth' })
+              if (gameVersion) p.set('gameVersion', gameVersion)
+              if (loader) p.set('loader', loader.toLowerCase())
+              if (instanceId) p.set('instanceId', instanceId)
+              navigate(`/resource-center?${p.toString()}`)
+            }} className="gap-1.5 h-7 text-xs">
+              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装数据包
             </Button>
           </div>
         </div>
@@ -1942,9 +1972,9 @@ export default function InstanceDetailPage() {
           {tab === 'saves' && <SavesTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} />}
           {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} />}
           {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} />}
-          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} />}
-          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} />}
-          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} />}
+          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} />}
+          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} />}
+          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} />}
           {tab === 'servers' && <ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} />}
           {tab === 'gamesettings' && <GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} />}
         </div>
