@@ -5,7 +5,7 @@ export function startResourceDownload(instanceId: string, url: string, fileName:
   return post('/resource-download/start', { instanceId, url, fileName, category })
 }
 
-export function downloadTo(url: string, targetPath: string): Promise<{ path: string }> {
+export function downloadTo(url: string, targetPath: string): Promise<{ taskId: string; path: string }> {
   return post('/resource-download/download-to', { url, targetPath })
 }
 

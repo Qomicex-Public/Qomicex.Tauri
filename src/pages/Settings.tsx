@@ -14,6 +14,7 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Checkbox } from '../components/ui/checkbox.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import DebugTab from '../components/DebugTab.tsx'
+import ToolboxTab from '../components/ToolboxTab.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
@@ -41,6 +42,7 @@ const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
   { id: 'java', label: 'Java 运行时', icon: faCoffee },
   { id: 'appearance', label: '外观', icon: faPalette },
+  { id: 'toolbox', label: '工具箱', icon: faDownload },
   { id: 'about', label: '关于', icon: faInfoCircle },
   { id: 'debug', label: '调试', icon: faBug },
 ]
@@ -1382,6 +1384,8 @@ export default function Settings() {
               </Card>
             </div>
           )}
+
+          {category === 'toolbox' && <ToolboxTab />}
 
           {category === 'about' && (
             <AboutTab sysInfo={sysInfo} />
