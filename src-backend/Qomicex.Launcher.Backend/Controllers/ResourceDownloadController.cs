@@ -10,13 +10,11 @@ public class ResourceDownloadController : ControllerBase
 {
     private readonly ResourceDownloadService _downloadService;
     private readonly IInstanceRepository _instanceRepository;
-    private readonly IHttpClientFactory _httpFactory;
 
-    public ResourceDownloadController(ResourceDownloadService downloadService, IInstanceRepository instanceRepository, IHttpClientFactory httpFactory)
+    public ResourceDownloadController(ResourceDownloadService downloadService, IInstanceRepository instanceRepository)
     {
         _downloadService = downloadService;
         _instanceRepository = instanceRepository;
-        _httpFactory = httpFactory;
     }
 
     [HttpPost("start")]
