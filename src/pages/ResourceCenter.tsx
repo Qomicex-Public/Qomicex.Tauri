@@ -202,8 +202,9 @@ export default function ResourceCenter() {
     if (keyword) params.set('keyword', keyword)
     if (gameVersion) params.set('gameVersion', gameVersion)
     if (loader) params.set('loader', loader)
+    if (instanceId) params.set('instanceId', instanceId)
     setSearchParams(params, { replace: true })
-  }, [category, keyword, setSearchParams, sort, source, gameVersion, loader])
+  }, [category, keyword, setSearchParams, sort, source, gameVersion, loader, instanceId])
 
   const doSearch = useCallback(async (pageNum: number, append: boolean) => {
     setLoading(true)
@@ -456,6 +457,7 @@ export default function ResourceCenter() {
           resourceIcon={installDialogItem.iconUrl}
           source={installDialogItem.source}
           category={category}
+          instanceId={instanceId}
         />
       )}
 

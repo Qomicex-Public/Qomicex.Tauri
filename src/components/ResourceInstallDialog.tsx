@@ -23,6 +23,7 @@ interface ResourceInstallDialogProps {
   resourceIcon: string
   source: string
   category: string
+  instanceId?: string
 }
 
 interface InstallProgress {
@@ -38,7 +39,7 @@ function versionCacheKey(resourceId: string, gameVersion: string, loader: string
 }
 
 export default function ResourceInstallDialog({
-  open, onClose, resourceId, resourceTitle, resourceIcon, source, category,
+  open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId,
 }: ResourceInstallDialogProps) {
   const { notify } = useMessageBox()
   const [instances, setInstances] = useState<GameInstance[]>([])
@@ -77,8 +78,8 @@ export default function ResourceInstallDialog({
         const all = (await getInstances()).filter(i => i.gameDir === getSettings().gameDir)
         setInstances(all)
         if (all.length > 0) {
-          const def = all.find(i => i.isDefault) ?? all[0]
-          setSelectedInstance(def)
+          const target = instanceId ? all.find(i => i.id === instanceId) : undefined
+          setSelectedInstance(target ?? all.find(i => i.isDefault) ?? all[0])
         }
       } catch { notify('加载实例列表失败', 'error') }
       setLoadingInstance(false)
