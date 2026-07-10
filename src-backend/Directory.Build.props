@@ -15,5 +15,6 @@
     <Version>$(_AppVersion)</Version>
     <AssemblyVersion>$(_AppVersion.Split('-')[0]).0</AssemblyVersion>
     <FileVersion>$(_AppVersion.Split('-')[0]).0</FileVersion>
+    <InformationalVersion>$(_AppVersion)</InformationalVersion>
   </PropertyGroup>
 </Project>
