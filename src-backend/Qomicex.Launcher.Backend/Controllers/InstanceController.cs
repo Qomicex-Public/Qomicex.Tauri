@@ -775,12 +775,7 @@ public class InstanceController : ControllerBase
 
             if (param.Java.VersionID == 0)
             {
-                try
-                {
-                    var verStr = GeneralHelper.GetMinecraftRequireJavaVersion(instance.GameVersion, instance.GameDir);
-                    param.Java.VersionID = int.TryParse(verStr, out var vid) ? vid : 21;
-                }
-                catch { param.Java.VersionID = 21; }
+                param.Java.VersionID = JavaHelper.GetRequiredJavaMajor(instance.GameVersion, instance.GameDir);
             }
 
             // ─── Step 6: Build arguments + Natives ───
