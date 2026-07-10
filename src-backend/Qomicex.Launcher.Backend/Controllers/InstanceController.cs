@@ -294,12 +294,16 @@ public class InstanceController : ControllerBase
     [HttpGet("{id}/verify-resources")]
     public async Task<ActionResult<VerifyResourcesResult>> VerifyResources(string id)
     {
+        var sw = Stopwatch.StartNew();
         var instance = _repository.GetById(id);
         if (instance == null) return NotFound();
 
         var versionId = !string.IsNullOrEmpty(instance.VersionDirName) ? instance.VersionDirName : instance.Name;
         var resourceHelper = new LocalResourceHelper();
         var missFiles = FilterMissFiles(await resourceHelper.GetAllMissFilesAsync(versionId, instance.GameDir));
+
+        sw.Stop();
+        Trace.WriteLine($"[VerifyResources] instance={id} missing={missFiles.Count} elapsed={sw.ElapsedMilliseconds}ms");
 
         var result = new VerifyResourcesResult
         {

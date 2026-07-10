@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Security.Cryptography;
 using Qomicex.Downloader;
 using DownloadCore = Qomicex.Downloader.Core;
 
@@ -128,6 +130,13 @@ public class ResourceDownloadService
             });
 
             await core.DownloadFileAsync(state.Url, filePath, progress, state.Cts.Token);
+
+            var sw = Stopwatch.StartNew();
+            using var sha1 = SHA1.Create();
+            await using var fs = File.OpenRead(filePath);
+            var hash = Convert.ToHexStringLower(await sha1.ComputeHashAsync(fs));
+            sw.Stop();
+            Trace.WriteLine($"[ResourceDownload] integrity sha1={hash} elapsed={sw.ElapsedMilliseconds}ms file={state.FileName}");
 
             state.Progress = 100;
             state.Speed = 0;

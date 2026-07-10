@@ -83,9 +83,7 @@ function loadSettings() {
   return getSettings()
 }
 function saveSettings(s: Record<string, unknown>) {
-  apiLoadSettings().then((fresh) => {
-    apiSaveSettings({ ...fresh, ...s })
-  }).catch(() => {})
+  apiSaveSettings({ ...getSettings(), ...s })
 }
 
 function formatDate(dateStr: string): string {
