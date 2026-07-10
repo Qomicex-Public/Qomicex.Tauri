@@ -55,3 +55,6 @@ docs/
 .fake
 # Superpowers SDD scratch
 .superpowers/
+
+# Website
+/website/
