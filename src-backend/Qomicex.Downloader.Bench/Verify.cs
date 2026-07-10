@@ -15,6 +15,7 @@ public static class Verify
         _failed = 0;
         SourceExpanderCases();
         SegmentChainCases();
+        FileWriterCases();
         return _failed;
     }
 
@@ -62,5 +63,31 @@ public static class Verify
         h.Canceled = true;
         var resumed = c3.ClaimNext();
         Assert(resumed == h && resumed!.Start == 100_000 && resumed.Downloaded == 0, "resume from break point");
+    }
+
+    private static void FileWriterCases()
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "qdw_" + Guid.NewGuid().ToString("N") + ".bin");
+        try
+        {
+using (var w = new FileWriter(tmp))
+        {
+            w.Preallocate(8);
+            w.WriteAsync(4, new byte[] { 5, 6, 7, 8 }, default).AsTask().GetAwaiter().GetResult();
+            w.WriteAsync(0, new byte[] { 1, 2, 3, 4 }, default).AsTask().GetAwaiter().GetResult();
+            Assert(!File.Exists(tmp), "final not present before commit");
+            w.CommitAtomic();
+        }
+            var bytes = File.ReadAllBytes(tmp);
+            Assert(bytes.Length == 8 && bytes[0] == 1 && bytes[7] == 8, "positional writes land correctly");
+        }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
+
+        // 中止：不留 .qdtmp
+        var tmp2 = Path.Combine(Path.GetTempPath(), "qdw_" + Guid.NewGuid().ToString("N") + ".bin");
+        var w2 = new FileWriter(tmp2);
+        w2.WriteAsync(0, new byte[] { 9 }, default).AsTask().GetAwaiter().GetResult();
+        w2.Dispose(); // 未 commit
+        Assert(!File.Exists(tmp2) && !File.Exists(tmp2 + ".qdtmp"), "abort leaves no files");
     }
 }
