@@ -170,7 +170,7 @@ jobs:
           Remove-Item -Recurse -Force src-tauri/binaries/tmp
         shell: pwsh
       - run: npm ci
-      - run: npm run tauri -- build --bundles nsis
+      - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
       - name: Generate update manifest fragment
         shell: pwsh
         run: |
