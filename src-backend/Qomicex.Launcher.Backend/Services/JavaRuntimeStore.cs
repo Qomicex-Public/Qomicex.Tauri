@@ -115,17 +115,43 @@ public sealed class JavaRuntimeStore
         return merged.Values.ToList();
     }
 
-    private static List<JavaHelper.JavaInfoExtended> ScanJavaDownloadDir()
+    internal static List<JavaHelper.JavaInfoExtended> ScanJavaDownloadDir()
     {
         var dir = Path.Combine(AppPaths.BaseDir, "QML", "Runtime", "Java");
         if (!Directory.Exists(dir)) return [];
-        return JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions
+
+        var javaName = OperatingSystem.IsWindows() ? "java.exe" : "java";
+        var results = new List<JavaHelper.JavaInfoExtended>();
+        var seen = new HashSet<string>(PathComparer);
+
+        try
         {
-            Mode = JavaHelper.JavaSearchMode.Custom,
-            CustomRootPath = dir,
-            MaxDepth = 5,
-            MaxResults = 50,
-        });
+            foreach (var javaPath in Directory.GetFiles(dir, javaName, SearchOption.AllDirectories))
+            {
+                var javaHome = Path.GetDirectoryName(Path.GetDirectoryName(javaPath));
+                if (string.IsNullOrEmpty(javaHome)) continue;
+
+                var found = JavaHelper.SearchJava(new JavaHelper.JavaSearchOptions
+                {
+                    Mode = JavaHelper.JavaSearchMode.Custom,
+                    CustomRootPath = javaHome,
+                    MaxDepth = 2,
+                    MaxResults = 20,
+                });
+
+                foreach (var r in found)
+                {
+                    if (seen.Add(r.Path))
+                    {
+                        r.DiscoveredBy = "DownloadDir";
+                        results.Add(r);
+                    }
+                }
+            }
+        }
+        catch { }
+
+        return results;
     }
 
     private async Task<List<StoredJavaRuntime>> LoadEntriesAsync()
