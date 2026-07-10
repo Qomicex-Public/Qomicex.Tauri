@@ -110,6 +110,12 @@ export default function Accounts() {
     if (cached) setAccounts(cached)
   }, [])
 
+  useEffect(() => {
+    accountApi.checkAccountsLost().then(async lost => {
+      if (lost) await msgError('账户数据文件已损坏或机器码变更，文件已被删除，请重新添加账户。')
+    })
+  }, [])
+
   async function handleSetDefault(uuid: string) {
     try {
       await accountApi.setDefaultAccount(uuid)

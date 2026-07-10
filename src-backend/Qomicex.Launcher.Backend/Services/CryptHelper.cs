@@ -292,10 +292,16 @@ public static class CryptHelper
     {
         try
         {
+            var blacklist = new[] { "bluetooth", "virtual", "vpn", "tun", "tap",
+                                    "pcap", "vmnet", "docker", "vmware", "hyper-v" };
             var nic = NetworkInterface.GetAllNetworkInterfaces()
-                .FirstOrDefault(n => n.OperationalStatus == OperationalStatus.Up
-                                  && n.NetworkInterfaceType != NetworkInterfaceType.Loopback);
-            return nic?.GetPhysicalAddress().ToString() ?? "UnknownMAC";
+                .Where(n => n.OperationalStatus == OperationalStatus.Up
+                         && n.NetworkInterfaceType != NetworkInterfaceType.Loopback
+                         && n.NetworkInterfaceType != NetworkInterfaceType.Tunnel
+                         && !blacklist.Any(d => n.Description.IndexOf(d, StringComparison.OrdinalIgnoreCase) >= 0))
+                .Select(n => n.GetPhysicalAddress().ToString())
+                .FirstOrDefault();
+            return nic ?? "UnknownMAC";
         }
         catch { return "UnknownMAC"; }
     }

@@ -88,6 +88,12 @@ public class AccountController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("lost")]
+    public IActionResult CheckAccountsLost()
+    {
+        return Ok(new { lost = _accountService.CheckAccountsLost() });
+    }
+
     [HttpGet("offline-uuid")]
     public IActionResult GetOfflineUuid([FromQuery] string name)
     {

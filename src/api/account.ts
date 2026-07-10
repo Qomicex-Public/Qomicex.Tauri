@@ -56,6 +56,11 @@ export function clearDefaultAccount(): Promise<void> {
   return del('/account/default')
 }
 
+export async function checkAccountsLost(): Promise<boolean> {
+  const res = await get<{ lost: boolean }>('/account/lost')
+  return res.lost
+}
+
 const yggdrasilMetaCache = new Map<string, string>()
 
 export function getCachedMeta(serverUrl?: string | null): string {

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -9,6 +10,7 @@ public class AccountService
     private readonly string _filePath;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private List<StoredAccount>? _cache;
+    private bool _accountsWereLost;
     private static readonly byte[] _entropy = [0x51, 0x6F, 0x6D, 0x69, 0x63, 0x65, 0x78, 0x4C, 0x61, 0x75, 0x6E, 0x63, 0x68, 0x65, 0x72];
 
     public AccountService(string baseDir)
@@ -31,6 +33,13 @@ public class AccountService
             IsDefault = a.IsDefault,
             ServerUrl = a.ServerUrl,
         }).ToList();
+    }
+
+    public bool CheckAccountsLost()
+    {
+        var v = _accountsWereLost;
+        _accountsWereLost = false;
+        return v;
     }
 
     public async Task<StoredAccount?> GetAccountAsync(string uuid)
@@ -192,7 +201,8 @@ public class AccountService
         }
         catch (CryptographicException)
         {
-            // 机器码不匹配或数据被篡改 → 自毁
+            _accountsWereLost = true;
+            Trace.WriteLine("[AccountService] accounts.dat 解密失败（机器码不匹配或数据被篡改），已删除文件，账户数据将重新初始化。");
             try { File.Delete(_filePath); } catch { }
             return new();
         }
