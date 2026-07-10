@@ -80,11 +80,13 @@ export default function ShaderCard({ shader, instanceId, gameDir, onDelete, comp
             <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
               {shader.version && <span>{shader.version}</span>}
             </div>
-            {shader.description && (
-              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
-                <MinecraftText text={shader.description} />
-              </p>
-            )}
+            <div className="h-5">
+              {shader.description && (
+                <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
+                  <MinecraftText text={shader.description} />
+                </p>
+              )}
+            </div>
           </div>
           {sourceLabel && (
             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${

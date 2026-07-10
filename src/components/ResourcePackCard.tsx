@@ -82,11 +82,13 @@ export default function ResourcePackCard({ pack, instanceId, gameDir, onDelete, 
               {pack.version && pack.packFormat > 0 && <span className="text-border">·</span>}
               {pack.packFormat > 0 && <span>format {pack.packFormat}</span>}
             </div>
-            {pack.description && (
-              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
-                <MinecraftText text={pack.description} />
-              </p>
-            )}
+            <div className="h-5">
+              {pack.description && (
+                <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
+                  <MinecraftText text={pack.description} />
+                </p>
+              )}
+            </div>
           </div>
           {sourceLabel && (
             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${

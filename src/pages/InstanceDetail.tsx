@@ -211,7 +211,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instan
           </div>
         </div>
         {loading ? (
-          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="animate-pulse rounded-xl border bg-card overflow-hidden">
                 <div className="aspect-video bg-muted" />
@@ -227,7 +227,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instan
             {search ? '无匹配截图' : '暂无截图'}
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map((s) => (
               <ScreenshotCard key={s.filePath} screenshot={s} instanceId={instanceId} onRefresh={load} />
             ))}
@@ -599,7 +599,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             {search ? '无匹配资源包' : '暂无资源包'}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map((pack) => (
               <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
             ))}
@@ -718,7 +718,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             {search ? '无匹配光影包' : '暂无光影包'}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map((shader) => (
               <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
             ))}
