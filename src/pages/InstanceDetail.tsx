@@ -133,6 +133,8 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: 
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索存档..." className="h-8 pl-8 text-xs" />
             </div>
+          </div>
+          <div className="flex items-center gap-1.5">
             <Tooltip content="刷新">
               <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
                 <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
@@ -196,6 +198,8 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instan
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索截图..." className="h-8 pl-8 text-xs" />
             </div>
+          </div>
+          <div className="flex items-center gap-1.5">
             <Tooltip content="刷新">
               <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
                 <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
@@ -207,7 +211,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instan
           </div>
         </div>
         {loading ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="animate-pulse rounded-xl border bg-card overflow-hidden">
                 <div className="aspect-video bg-muted" />
@@ -223,7 +227,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instan
             {search ? '无匹配截图' : '暂无截图'}
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {filtered.map((s) => (
               <ScreenshotCard key={s.filePath} screenshot={s} instanceId={instanceId} onRefresh={load} />
             ))}
@@ -551,6 +555,8 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索资源包..." className="h-8 pl-8 text-xs" />
             </div>
+          </div>
+          <div className="flex items-center gap-1.5">
             <Tooltip content="刷新">
               <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
                 <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
@@ -593,9 +599,9 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             {search ? '无匹配资源包' : '暂无资源包'}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {filtered.map((pack) => (
-              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} compact />
+              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
             ))}
           </div>
         ) : (
@@ -712,9 +718,9 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             {search ? '无匹配光影包' : '暂无光影包'}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {filtered.map((shader) => (
-              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} compact />
+              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
             ))}
           </div>
         ) : (
