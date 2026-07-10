@@ -1,4 +1,5 @@
 using Qomicex.Downloader.Bench;
+using System.Linq;
 
 if (args.Length == 0)
 {
@@ -11,8 +12,7 @@ switch (args[0])
     case "verify":
         return Verify.RunAll() == 0 ? 0 : 1;
     case "bench":
-        Console.WriteLine("bench not implemented yet");
-        return 0;
+        return await Bench.RunAsync(args.Skip(1).ToArray());
     default:
         Console.WriteLine($"unknown command: {args[0]}");
         return 2;
