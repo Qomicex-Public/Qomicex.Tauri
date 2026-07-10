@@ -109,6 +109,11 @@ export async function loadCustomRuntimes(): Promise<JavaRuntime[]> {
   return customRuntimes
 }
 
+export async function refreshCustomRuntimes(): Promise<JavaRuntime[]> {
+  customLoaded = false
+  return loadCustomRuntimes()
+}
+
 export function subscribe(fn: Listener): () => void {
   listeners.push(fn)
   return () => {

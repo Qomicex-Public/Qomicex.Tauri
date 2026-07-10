@@ -9,6 +9,7 @@ import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../
 import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '../api/instance.ts'
 import { cancelResourceDownload } from '../api/resource-download.ts'
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
+import { refreshCustomRuntimes } from '../stores/javaStore.ts'
 
 import type { DownloadTask } from '../types/index.ts'
 import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
@@ -105,6 +106,7 @@ export default function DownloadCenter() {
             error: match.error || undefined,
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
           })
+          if (newStatus === 'completed') refreshCustomRuntimes()
         }
         continue
       }
@@ -171,7 +173,7 @@ export default function DownloadCenter() {
         const lost = getTasks().find(t => t.taskId === prevId && t.type === 'java' && (t.status === 'downloading' || t.status === 'paused'))
         if (lost) {
           getJavaDownloadProgress(prevId).then(p => {
-            if (p.status === 'completed') updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+            if (p.status === 'completed') { updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() }); refreshCustomRuntimes() }
             else if (p.status === 'failed' || p.status === 'cancelled') updateTask(lost.id, { status: p.status })
           }).catch(() => {})
         }
