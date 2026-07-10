@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
 import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '../api/instance.ts'
 import { cancelResourceDownload } from '../api/resource-download.ts'
-import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload } from '../api/java.ts'
+import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 
 import type { DownloadTask } from '../types/index.ts'
 import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
@@ -78,6 +78,7 @@ export default function DownloadCenter() {
 
   const sseData = useDownloadSSE()
   const prevInstallIds = useRef<Set<string>>(new Set())
+  const prevJavaIds = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     if (!sseData) return
@@ -163,6 +164,20 @@ export default function DownloadCenter() {
       }
     }
     prevInstallIds.current = currentIds
+
+    const currentJavaIds = new Set(sseData.javaDownloads.map(j => j.taskId))
+    for (const prevId of prevJavaIds.current) {
+      if (!currentJavaIds.has(prevId)) {
+        const lost = getTasks().find(t => t.taskId === prevId && t.type === 'java' && (t.status === 'downloading' || t.status === 'paused'))
+        if (lost) {
+          getJavaDownloadProgress(prevId).then(p => {
+            if (p.status === 'completed') updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+            else if (p.status === 'failed' || p.status === 'cancelled') updateTask(lost.id, { status: p.status })
+          }).catch(() => {})
+        }
+      }
+    }
+    prevJavaIds.current = currentJavaIds
   }, [sseData])
 
   const filtered = useMemo(() => tasks.filter((t) => {
