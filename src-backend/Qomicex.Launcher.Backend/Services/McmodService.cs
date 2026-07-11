@@ -49,20 +49,7 @@ public sealed class McmodService
     {
         var key = Normalize(enName);
         if (key.Length == 0) return null;
-
-        if (_map.TryGetValue(key, out var entry)) return entry.CnName;
-
-        foreach (var (k, v) in _map)
-            if (k.Contains(key) || key.Contains(k))
-                return v.CnName;
-
-        var words = key.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        foreach (var (k, v) in _map)
-            foreach (var w in words)
-                if (w.Length > 2 && k.Contains(w))
-                    return v.CnName;
-
-        return null;
+        return _map.TryGetValue(key, out var entry) ? entry.CnName : null;
     }
 
     public Dictionary<string, string?> BatchLookup(List<string> names)
