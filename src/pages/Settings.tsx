@@ -68,10 +68,15 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   const [updateObj, setUpdateObj] = useState<any>(null)
   const [progress, setProgress] = useState(0)
   const [channel, setChannel] = useState(() => localStorage.getItem('update-channel') || 'stable')
+  const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const isPreRelease = /-/.test(APP_INFO.version)
+  const versionType = isPreRelease ? '测试版' : '稳定版'
 
   function setChannelAndSave(v: string) {
     setChannel(v)
-    localStorage.setItem('update-channel', v)
+    if (channelTimerRef.current) clearTimeout(channelTimerRef.current)
+    channelTimerRef.current = setTimeout(() => localStorage.setItem('update-channel', v), 500)
   }
 
   async function checkForUpdate() {
@@ -143,7 +148,10 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
             <img src="/logo.svg" alt={APP_INFO.name} className="h-14 w-14 rounded-2xl" />
             <div className="flex-1 min-w-0">
               <div className="text-lg font-semibold">{APP_INFO.name}</div>
-              <div className="text-sm text-muted-foreground">版本 {APP_INFO.version}</div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">版本 {APP_INFO.version}</span>
+                <span className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted">{versionType}</span>
+              </div>
             </div>
             <Button size="sm" variant="ghost" onClick={() => openUrl(REPOSITORY_URL).catch(() => window.open(REPOSITORY_URL, '_blank'))} className="gap-1.5 h-7 text-xs shrink-0">
               <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />查看仓库
@@ -159,7 +167,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         <CardContent>
           <div className="rounded-lg bg-background p-4 text-sm">
             <div className="grid grid-cols-2 gap-3">
-              <div><div className="text-xs text-muted-foreground">应用版本</div><div className="mt-0.5 font-medium">{APP_INFO.version}</div></div>
+              <div><div className="text-xs text-muted-foreground">应用版本</div><div className="mt-0.5 flex items-center gap-2 font-medium">{APP_INFO.version}<span className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted">{versionType}</span></div></div>
               <div><div className="text-xs text-muted-foreground">版本哈希</div><div className="mt-0.5 font-medium text-xs font-mono">{sysInfo?.gitCommit && sysInfo.gitCommit !== 'unknown' ? sysInfo.gitCommit : __GIT_SHA__}</div></div>
               <div><div className="text-xs text-muted-foreground">操作系统</div><div className="mt-0.5 font-medium">{sysInfo?.osDisplayName || (sysInfo ? `${sysInfo.osName} ${sysInfo.osVersion}` : '加载中...')}</div></div>
               <div><div className="text-xs text-muted-foreground">系统架构</div><div className="mt-0.5 font-medium">{sysInfo?.architecture ?? '加载中...'}</div></div>
