@@ -67,12 +67,24 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string } | null>(null)
   const [updateObj, setUpdateObj] = useState<any>(null)
   const [progress, setProgress] = useState(0)
+  const [channel, setChannel] = useState(() => localStorage.getItem('update-channel') || 'stable')
 
+  function setChannelAndSave(v: string) {
+    setChannel(v)
+    localStorage.setItem('update-channel', v)
+  }
 
   async function checkForUpdate() {
     setUpdateState('checking')
     try {
-      const update = await check()
+      const isBeta = channel === 'beta'
+      const update = await check({
+        endpoints: [
+          isBeta
+            ? 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/beta.json'
+            : 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json',
+        ],
+      } as any)
       if (!update) {
         setUpdateState('uptodate')
         return
@@ -158,6 +170,10 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         </CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
+            <Select value={channel} onChange={setChannelAndSave} className="w-28">
+              <SelectOption value="stable">稳定版</SelectOption>
+              <SelectOption value="beta">测试版</SelectOption>
+            </Select>
             <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
               <FontAwesomeIcon icon={updateState === 'checking' ? faRotate : faArrowUp} className={cn('mr-1 h-3 w-3', updateState === 'checking' && 'animate-spin')} />
               {updateState === 'checking' ? '检查中...' : '检查更新'}
