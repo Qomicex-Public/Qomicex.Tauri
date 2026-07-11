@@ -106,9 +106,16 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
         setUpdateState('uptodate')
         return
       }
+      let body = metadata.body ?? ''
+      if (!body || body.startsWith('Release ')) {
+        try {
+          const res = await fetch(`https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases/tags/v${metadata.version}`)
+          if (res.ok) body = (await res.json()).body ?? body
+        } catch {}
+      }
       const upd = new Update(metadata)
       setUpdateObj(upd)
-      setUpdateInfo({ version: upd.version, body: upd.body ?? '' })
+      setUpdateInfo({ version: upd.version, body })
       setUpdateState('available')
     } catch (e) {
       setUpdateState('error')

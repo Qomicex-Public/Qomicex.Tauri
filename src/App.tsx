@@ -101,7 +101,14 @@ function AppContent() {
             if (s.version === metadata.version && s.until > Date.now()) return
           } catch {}
         }
-        setPendingUpdate({ version: metadata.version, body: metadata.body ?? '', required, update: new Update(metadata) })
+        let body = metadata.body ?? ''
+        if (!body || body.startsWith('Release ')) {
+          try {
+            const res = await fetch(`https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases/tags/v${metadata.version}`)
+            if (res.ok) body = (await res.json()).body ?? body
+          } catch {}
+        }
+        setPendingUpdate({ version: metadata.version, body, required, update: new Update(metadata) })
       } catch {}
     }, 5000)
     return () => clearTimeout(timer)
