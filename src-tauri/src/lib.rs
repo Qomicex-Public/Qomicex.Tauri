@@ -1,6 +1,8 @@
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
 use tauri::Manager;
+use tauri_plugin_updater::UpdaterExt;
+use url::Url;
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 
 mod dialog_cmd;
@@ -120,6 +122,41 @@ fn spawn_backend(app: &tauri::App) {
     eprintln!("[backend] spawned: {} ({} bytes)", exe_path.display(), BACKEND.len());
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInfo {
+    rid: tauri::ResourceId,
+    current_version: String,
+    version: String,
+    date: Option<String>,
+    body: Option<String>,
+    raw_json: serde_json::Value,
+}
+
+#[tauri::command]
+async fn check_update_with_endpoint<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
+    endpoint: String,
+) -> Result<Option<UpdateInfo>, String> {
+    let url = Url::parse(&endpoint).map_err(|e| e.to_string())?;
+    let updater = webview
+        .updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())?;
+    let update = updater.check().await.map_err(|e| e.to_string())?;
+
+    Ok(update.map(|u| {
+        let current_version = u.current_version.clone();
+        let version = u.version.clone();
+        let body = u.body.clone();
+        let raw_json = u.raw_json.clone();
+        let rid = webview.resources_table().add(u);
+        UpdateInfo { rid, current_version, version, date: None, body, raw_json }
+    }))
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -141,7 +178,11 @@ pub fn run() {
             spawn_backend(app);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, dialog_cmd::pick_dialog])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            dialog_cmd::pick_dialog,
+            check_update_with_endpoint
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

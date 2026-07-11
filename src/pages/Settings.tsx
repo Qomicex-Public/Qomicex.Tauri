@@ -31,7 +31,7 @@ import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
-import { check } from '@tauri-apps/plugin-updater'
+import { Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache } from '../api/settings.ts'
@@ -77,20 +77,27 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   async function checkForUpdate() {
     setUpdateState('checking')
     try {
-      const isBeta = channel === 'beta'
-      const update = await check({
-        endpoints: [
-          isBeta
-            ? 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/beta.json'
-            : 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json',
-        ],
-      } as any)
-      if (!update) {
+      let endpoint: string
+      if (channel === 'stable') {
+        endpoint = 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json'
+      } else {
+        const res = await fetch('https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases?per_page=5')
+        if (!res.ok) throw new Error('获取更新信息失败')
+        const releases: any[] = await res.json()
+        const pre = releases.find(r => r.prerelease && !r.draft)
+        if (!pre) throw new Error('没有测试版更新')
+        const asset = pre.assets.find((a: any) => a.name === 'beta.json')
+        if (!asset) throw new Error('测试版更新清单不存在')
+        endpoint = asset.browser_download_url
+      }
+      const metadata: any = await invoke('check_update_with_endpoint', { endpoint })
+      if (!metadata) {
         setUpdateState('uptodate')
         return
       }
-      setUpdateObj(update)
-      setUpdateInfo({ version: update.version, body: update.body ?? '' })
+      const upd = new Update(metadata)
+      setUpdateObj(upd)
+      setUpdateInfo({ version: upd.version, body: upd.body ?? '' })
       setUpdateState('available')
     } catch {
       setUpdateState('error')
