@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { invoke } from '@tauri-apps/api/core'
+import { Update } from '@tauri-apps/plugin-updater'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
 import Instances from './pages/Instances.tsx'
@@ -18,6 +20,7 @@ import useCloseGuard from './hooks/useCloseGuard.ts'
 import { loadSettings, onSettingsChange } from './api/settings.ts'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
+import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
 import { Button } from './components/ui/button.tsx'
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
@@ -34,6 +37,8 @@ function AppContent() {
   const { closeWithGuard, Provider } = useCloseGuard()
   const { alert } = useMessageBox()
   const javaChecked = useRef(false)
+  const [pendingUpdate, setPendingUpdate] = useState<{ version: string; body: string; required: boolean; update: Update } | null>(null)
+  const autoCheckDone = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -66,6 +71,41 @@ function AppContent() {
       } catch {}
     })()
   }, [backendState, alert])
+
+  useEffect(() => {
+    if (backendState !== 'ready' || autoCheckDone.current) return
+    autoCheckDone.current = true
+    const timer = setTimeout(async () => {
+      try {
+        const channel = localStorage.getItem('update-channel') || 'stable'
+        let endpoint: string
+        if (channel === 'stable') {
+          endpoint = 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json'
+        } else {
+          const res = await fetch('https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases?per_page=5')
+          if (!res.ok) return
+          const releases: any[] = await res.json()
+          const pre = releases.find(r => r.prerelease && !r.draft)
+          if (!pre) return
+          const asset = pre.assets.find((a: any) => a.name === 'beta.json')
+          if (!asset) return
+          endpoint = asset.browser_download_url
+        }
+        const metadata: any = await invoke('check_update_with_endpoint', { endpoint })
+        if (!metadata) return
+        const required = !!(metadata.rawJson?.required)
+        const snooze = localStorage.getItem('snooze-update')
+        if (snooze) {
+          try {
+            const s = JSON.parse(snooze)
+            if (s.version === metadata.version && s.until > Date.now()) return
+          } catch {}
+        }
+        setPendingUpdate({ version: metadata.version, body: metadata.body ?? '', required, update: new Update(metadata) })
+      } catch {}
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [backendState])
 
   if (backendState !== 'ready') {
     return (
@@ -115,6 +155,19 @@ function AppContent() {
         </Routes>
       </BrowserRouter>
       <LaunchProgressDialog />
+      <UpdateDialog
+        open={pendingUpdate !== null}
+        version={pendingUpdate?.version ?? ''}
+        body={pendingUpdate?.body ?? ''}
+        required={pendingUpdate?.required ?? false}
+        update={pendingUpdate?.update ?? null}
+        onClose={() => {
+          if (pendingUpdate) {
+            localStorage.setItem('snooze-update', JSON.stringify({ version: pendingUpdate.version, until: Date.now() + 86400000 }))
+          }
+          setPendingUpdate(null)
+        }}
+      />
     </Provider>
   )
 }

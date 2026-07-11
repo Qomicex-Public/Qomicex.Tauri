@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      required:
+        description: '强制更新（用户必须更新才能继续使用）'
+        required: false
+        default: false
+        type: boolean
       buildPlatform:
         description: '构建平台'
         required: true
@@ -516,6 +521,7 @@ jobs:
           echo "  \"version\": \"$VERSION\"," >> "$MANIFEST"
           echo "  \"notes\": \"$NOTES\"," >> "$MANIFEST"
           echo "  \"pub_date\": \"$PUB_DATE\"," >> "$MANIFEST"
+          echo "  \"required\": ${{ github.event.inputs.required == 'true' && 'true' || 'false' }},"
           echo "  \"platforms\": {" >> "$MANIFEST"
 
           FIRST=true
