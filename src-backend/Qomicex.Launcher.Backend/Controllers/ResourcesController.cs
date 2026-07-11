@@ -16,6 +16,7 @@ public class ResourcesController : ControllerBase
     private readonly HttpClient _curseforge;
     private readonly string _cfApiKey;
     private readonly FtbService _ftbService;
+    private readonly McmodService _mcmod;
 
     private static readonly ConcurrentDictionary<string, CurseForgeVersionFetchState> CfFetchStates = new();
 
@@ -28,12 +29,13 @@ public class ResourcesController : ControllerBase
         public string? Error { get; set; }
     }
 
-    public ResourcesController(IHttpClientFactory httpClientFactory, IConfiguration config, FtbService ftbService)
+    public ResourcesController(IHttpClientFactory httpClientFactory, IConfiguration config, FtbService ftbService, McmodService mcmod)
     {
         _modrinth = httpClientFactory.CreateClient("Modrinth");
         _curseforge = httpClientFactory.CreateClient("CurseForge");
         _cfApiKey = config["CurseForge:ApiKey"] ?? "";
         _ftbService = ftbService;
+        _mcmod = mcmod;
     }
 
     [HttpGet("search")]
@@ -47,6 +49,15 @@ public class ResourcesController : ControllerBase
         [FromQuery] string? gameVersion = null,
         [FromQuery] string? loader = null)
     {
+        // 中文搜索：仅对 Mod / 数据包（整合包等名称可能本就含中文），将中文关键词
+        // 通过本地 MC 百科词库转换为对应 Mod 的英文 slug 再转发给上游 API。
+        if ((string.Equals(category, "mod", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(category, "datapack", StringComparison.OrdinalIgnoreCase)))
+        {
+            var alt = _mcmod.ResolveChineseSearch(keyword);
+            if (!string.IsNullOrEmpty(alt)) keyword = alt;
+        }
+
         return source.ToLowerInvariant() switch
         {
             "curseforge" => await SearchCurseForge(category, keyword, page, pageSize, sort),
