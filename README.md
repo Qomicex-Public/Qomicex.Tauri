@@ -40,17 +40,13 @@ Qomicex
 | **Windows** | `x64`, `ARM64` | Windows 10 1809+ | ✅ 稳定 | `.exe`（NSIS 安装器）|
 | **macOS** | `x64`（Intel）<br>`ARM64`（Apple Silicon） | macOS 10.15+ | ✅ 稳定 | `.dmg` / `.app` |
 | **Linux** | `x64`, `ARM64`<br>`LoongArch64` (理论可用但无机器)<br>`RISC-V 64`(实验性,推进中) | Ubuntu 20.04+ / Fedora 34+ / glibc 2.28+ | ✅ 稳定 | `.deb` / `.rpm` / AppImage |
-| **Android** | `ARM64`, `ARMv7`, `x64` | Android 8.0+ | ❌ 计划支持 | `.apk` |
-| **iOS** | `ARM64` | iOS 14+ | ❌ 计划支持 | （未来通过 App Store） |
+
 
 > 您也可以通过下方的状态徽章快速查看支持情况：
 ### 支持
 ![Windows](https://img.shields.io/badge/Windows-10%2B-blue?logo=windows)
 ![macOS](https://img.shields.io/badge/macOS-10.15%2B-black?logo=apple)
 ![Linux](https://img.shields.io/badge/Linux-Ubuntu%2020.04%2B-yellow?logo=linux)
-### 计划支持
-![Android](https://img.shields.io/badge/Android-8.0%2B-brightgreen?logo=android)
-![iOS](https://img.shields.io/badge/iOS-14%2B-lightgrey?logo=apple)
 
 
 ---

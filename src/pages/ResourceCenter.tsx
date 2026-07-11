@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowUpRightFromSquare, faDownload, faMagnifyingGlass, faRotate, faTag, faUser, faXmark } from '@fortawesome/free-solid-svg-icons'
@@ -21,6 +21,22 @@ interface PageCache {
 }
 const searchCache = new Map<string, Map<number, PageCache>>()
 const CACHE_TTL = 5 * 60 * 1000
+
+interface Snapshot {
+  category: string
+  source: string
+  keyword: string
+  sort: string
+  gameVersion: string
+  loader: string
+  items: ResourceItem[]
+  total: number
+  page: number
+  searchInput: string
+  cnNames: Record<string, string | null>
+  scrollY: number
+}
+let savedSnapshot: Snapshot | null = null
 
 function cacheKey(category: string, keyword: string, sort: string, source: string, gameVersion: string, loader: string): string {
   return `${source}|${category}|${keyword}|${sort}|${gameVersion}|${loader}`
@@ -176,23 +192,27 @@ function ResourceCard({
 export default function ResourceCenter() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [category, setCategory] = useState(searchParams.get('category') ?? 'mod')
-  const [source, setSource] = useState(searchParams.get('source') ?? 'modrinth')
-  const [keyword, setKeyword] = useState(searchParams.get('keyword') ?? '')
-  const [searchInput, setSearchInput] = useState(searchParams.get('keyword') ?? '')
-  const [sort, setSort] = useState(searchParams.get('sort') ?? 'relevance')
-  const [gameVersion, setGameVersion] = useState(searchParams.get('gameVersion') ?? '')
-  const [loader, setLoader] = useState((searchParams.get('loader') ?? '').toLowerCase())
+  const [category, setCategory] = useState(() => savedSnapshot?.category ?? searchParams.get('category') ?? 'mod')
+  const [source, setSource] = useState(() => savedSnapshot?.source ?? searchParams.get('source') ?? 'modrinth')
+  const [keyword, setKeyword] = useState(() => savedSnapshot?.keyword ?? searchParams.get('keyword') ?? '')
+  const [searchInput, setSearchInput] = useState(() => savedSnapshot?.searchInput ?? searchParams.get('keyword') ?? '')
+  const [sort, setSort] = useState(() => savedSnapshot?.sort ?? searchParams.get('sort') ?? 'relevance')
+  const [gameVersion, setGameVersion] = useState(() => savedSnapshot?.gameVersion ?? searchParams.get('gameVersion') ?? '')
+  const [loader, setLoader] = useState(() => (savedSnapshot?.loader ?? searchParams.get('loader') ?? '').toLowerCase())
   const instanceId = searchParams.get('instanceId') ?? ''
-  const [items, setItems] = useState<ResourceItem[]>([])
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
+  const [items, setItems] = useState<ResourceItem[]>(() => savedSnapshot?.items ?? [])
+  const [total, setTotal] = useState(() => savedSnapshot?.total ?? 0)
+  const [page, setPage] = useState(() => savedSnapshot?.page ?? 1)
   const [loading, setLoading] = useState(false)
-  const [initialLoading, setInitialLoading] = useState(true)
+  const [initialLoading, setInitialLoading] = useState(() => !savedSnapshot)
   const [error, setError] = useState<string | null>(null)
   const [installDialogItem, setInstallDialogItem] = useState<ResourceItem | null>(null)
-  const [cnNames, setCnNames] = useState<Record<string, string | null>>({})
+  const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => savedSnapshot?.cnNames ?? {})
   const pageSize = 20
+
+  const restoredRef = useRef(!!savedSnapshot)
+  const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, items, total, page, searchInput, cnNames })
+  useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, items, total, page, searchInput, cnNames } })
 
   useEffect(() => {
     const params = new URLSearchParams()
@@ -250,12 +270,24 @@ export default function ResourceCenter() {
     setInitialLoading(false)
   }, [category, keyword, sort, source, gameVersion, loader])
 
+  const scrollEl = () => document.querySelector('main')
+
   useEffect(() => {
-    setInitialLoading(true)
-    setItems([])
-    setPage(1)
+    if (restoredRef.current) {
+      const sy = savedSnapshot!.scrollY
+      savedSnapshot = null
+      requestAnimationFrame(() => scrollEl()?.scrollTo(0, sy))
+    }
+  }, [])
+
+  useEffect(() => {
+    if (restoredRef.current) { restoredRef.current = false; return }
     doSearch(1, false)
   }, [doSearch])
+
+  useEffect(() => () => {
+    savedSnapshot = { ...snapRef.current, scrollY: scrollEl()?.scrollTop ?? 0 }
+  }, [])
 
   const handleSearch = () => setKeyword(searchInput.trim())
 

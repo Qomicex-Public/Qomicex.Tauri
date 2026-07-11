@@ -170,13 +170,13 @@ jobs:
           Remove-Item -Recurse -Force src-tauri/binaries/tmp
         shell: pwsh
       - run: npm ci
-      - run: npm run tauri -- build --bundles nsis
+      - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
       - name: Generate update manifest fragment
         shell: pwsh
         run: |
           Write-Output "=== Bundle dir contents ==="
-          Get-ChildItem -Recurse -Path "src-tauri/target/release/bundle" | Select-Object FullName
-          $sig = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
+          Get-ChildItem -Recurse -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" | Select-Object FullName
+          $sig = Get-ChildItem -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
           if (-not $sig) { throw "No .sig file found in bundle directory" }
           $content = (Get-Content -Raw $sig.FullName).Trim()
           $assetName = $sig.Name -replace '\.sig$', ''
@@ -194,7 +194,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $releaseDir = Resolve-Path "src-tauri/target/release"
+          $releaseDir = Resolve-Path "src-tauri/target/aarch64-pc-windows-msvc/release"
           $pkgDir = "$releaseDir/runtime-pkg"
           New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
           $exe = Get-ChildItem "$releaseDir/*.exe" -Name | Where-Object { $_ -notmatch 'portable|backend' } | Select-Object -First 1
@@ -206,15 +206,15 @@ jobs:
           Compress-Archive -Path "$pkgDir/*" -DestinationPath "src-backend/Qomicex.Launcher/Resources/runtime.zip" -Force
           Remove-Item -Recurse -Force $pkgDir
       - name: Publish Launcher
-        run: dotnet publish src-backend/Qomicex.Launcher --runtime win-arm64 --self-contained true -p:PublishSingleFile=true -p:DebugType=embedded "-p:InformationalVersion=${{ github.event.inputs.version }}" -o src-tauri/target/release/launcher-out
+        run: dotnet publish src-backend/Qomicex.Launcher --runtime win-arm64 --self-contained true -p:PublishSingleFile=true -p:DebugType=embedded "-p:InformationalVersion=${{ github.event.inputs.version }}" -o src-tauri/target/aarch64-pc-windows-msvc/release/launcher-out
       - run: |
-          Move-Item -Force src-tauri/target/release/launcher-out/Qomicex.Launcher.exe src-tauri/target/release/Qomicex.Launcher.exe
-          Remove-Item -Recurse -Force src-tauri/target/release/launcher-out
+          Move-Item -Force src-tauri/target/aarch64-pc-windows-msvc/release/launcher-out/Qomicex.Launcher.exe src-tauri/target/aarch64-pc-windows-msvc/release/Qomicex.Launcher.exe
+          Remove-Item -Recurse -Force src-tauri/target/aarch64-pc-windows-msvc/release/launcher-out
         shell: pwsh
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-windows-arm64, path: src-tauri/target/release/bundle/ }
+        with: { name: qomicex-launcher-windows-arm64, path: src-tauri/target/aarch64-pc-windows-msvc/release/bundle/ }
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-windows-arm64-portable, path: src-tauri/target/release/Qomicex.Launcher.exe }
+        with: { name: qomicex-launcher-windows-arm64-portable, path: src-tauri/target/aarch64-pc-windows-msvc/release/Qomicex.Launcher.exe }
 
   linux-x64:
     if: ${{ (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') && (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'x64') }}
