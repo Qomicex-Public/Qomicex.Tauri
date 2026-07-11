@@ -505,31 +505,33 @@ jobs:
           merge-multiple: true
       - name: Assemble update manifest
         run: |
+          IS_PRERELEASE="${{ github.event.release.prerelease || (github.event.inputs.prerelease == 'true') || false }}"
+          MANIFEST="$([ "$IS_PRERELEASE" = "true" ] && echo "beta.json" || echo "latest.json")"
           VERSION="${{ github.event.inputs.version }}"
           VERSION="${VERSION#v}"
           NOTES="Release $VERSION"
           PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-          echo "{" > latest.json
-          echo "  \"version\": \"$VERSION\"," >> latest.json
-          echo "  \"notes\": \"$NOTES\"," >> latest.json
-          echo "  \"pub_date\": \"$PUB_DATE\"," >> latest.json
-          echo "  \"platforms\": {" >> latest.json
+          echo "{" > "$MANIFEST"
+          echo "  \"version\": \"$VERSION\"," >> "$MANIFEST"
+          echo "  \"notes\": \"$NOTES\"," >> "$MANIFEST"
+          echo "  \"pub_date\": \"$PUB_DATE\"," >> "$MANIFEST"
+          echo "  \"platforms\": {" >> "$MANIFEST"
 
           FIRST=true
           for f in update-fragment-*.json; do
             [ -f "$f" ] || continue
-            [ "$FIRST" = "true" ] || printf "," >> latest.json
+            [ "$FIRST" = "true" ] || printf "," >> "$MANIFEST"
             FIRST=false
-            sed 's/^[[:space:]]*{//; s/}[[:space:]]*$//' "$f" >> latest.json
+            sed 's/^[[:space:]]*{//; s/}[[:space:]]*$//' "$f" >> "$MANIFEST"
           done
 
-          echo "" >> latest.json
-          echo "  }" >> latest.json
-          echo "}" >> latest.json
+          echo "" >> "$MANIFEST"
+          echo "  }" >> "$MANIFEST"
+          echo "}" >> "$MANIFEST"
 
-          python3 -m json.tool latest.json > /dev/null && echo "Valid JSON"
-          cat latest.json
+          python3 -m json.tool "$MANIFEST" > /dev/null && echo "Valid JSON: $MANIFEST"
+          cat "$MANIFEST"
       - name: Flatten bundle directories
         run: |
           for d in appimage deb rpm nsis msi dmg macos; do
