@@ -28,6 +28,7 @@ public class InstallTask : IInstallTask
 
     private string _versionId = string.Empty;
     private string _effectiveGameDir = string.Empty;
+    private string _installerPath = string.Empty;
 
     // --- Public state (polled by frontend) ---
     public string InstanceId { get; }
@@ -132,6 +133,7 @@ public class InstallTask : IInstallTask
                     var tempDir = Path.Combine(_gameDir, "temp");
                     Directory.CreateDirectory(tempDir);
                     installerPath = Path.Combine(tempDir, $"{_loader}-{_gameVersion}-{_loaderVersion}-installer.jar");
+                    _installerPath = installerPath;
 
                     if (!File.Exists(installerPath) || new FileInfo(installerPath).Length == 0)
                     {
@@ -205,9 +207,6 @@ public class InstallTask : IInstallTask
                 SetState("installing-loader", 80, $"{_loader} {_loaderVersion}");
                 await InstallModLoader(httpClient, _versionId, jsonContent, installerPath);
 
-                if (_loader.ToLowerInvariant() is "forge" or "neoforge")
-                    TryDelete(installerPath);
-
                 _cts.Token.ThrowIfCancellationRequested();
 
                 // Check merged main JAR
@@ -246,6 +245,7 @@ public class InstallTask : IInstallTask
         finally
         {
             _downloadManager.StopTask(-1);
+            CleanupTempFiles();
         }
     }
 
@@ -489,6 +489,20 @@ public class InstallTask : IInstallTask
     private static void TryDelete(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); } catch { }
+    }
+
+    private void CleanupTempFiles()
+    {
+        if (!string.IsNullOrEmpty(_installerPath))
+            TryDelete(_installerPath);
+
+        var tempDir = Path.Combine(_gameDir, "temp");
+        try
+        {
+            if (Directory.Exists(tempDir) && !Directory.EnumerateFileSystemEntries(tempDir).Any())
+                Directory.Delete(tempDir);
+        }
+        catch { }
     }
 
     // --- Control ---

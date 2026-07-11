@@ -34,7 +34,7 @@ import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import { check } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS } from '../constants/credits.ts'
 
@@ -397,7 +397,8 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
 }
 
 export default function Settings() {
-  const { error: msgError, confirm: msgConfirm } = useMessageBox()
+  const { error: msgError, confirm: msgConfirm, notify } = useMessageBox()
+  const [clearingCache, setClearingCache] = useState(false)
   const { state: debugState } = useDebug()
   const [category, setCategory] = useState(() => {
     const params = new URLSearchParams(window.location.search)
@@ -677,6 +678,18 @@ export default function Settings() {
     setDownloadArch(selectedVendor.architectures[0] ?? 'x64')
   }, [selectedVendor])
 
+  async function handleClearCache() {
+    setClearingCache(true)
+    try {
+      const { deleted } = await clearCache()
+      notify(`已清理缓存，删除 ${deleted} 个文件`, 'success')
+    } catch (e) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '清理缓存失败')
+    } finally {
+      setClearingCache(false)
+    }
+  }
+
   async function handleDelete(path: string) {
     const name = runtimes.find((j) => j.path === path)?.name || ''
     const ok = await msgConfirm(`确定要删除 "${name}" 吗？`, '删除 Java')
@@ -952,6 +965,27 @@ export default function Settings() {
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">单个文件下载无响应超过此时间则自动重试（0=不超时，1-120 秒）</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-primary" />
+                  存储与缓存
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label>版本列表缓存</Label>
+                    <p className="text-xs text-muted-foreground">清理 Forge 版本列表的 HTML 缓存文件</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
+                    <FontAwesomeIcon icon={clearingCache ? faRotate : faTrashCan} className={cn('h-4 w-4', clearingCache && 'animate-spin')} />
+                    清理缓存
+                  </Button>
                 </div>
               </CardContent>
             </Card>

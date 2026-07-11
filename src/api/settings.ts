@@ -148,4 +148,8 @@ export function openFolder(path: string): Promise<void> {
   return post('/settings/open-folder', { path })
 }
 
+export async function clearCache(): Promise<{ deleted: number }> {
+  return post<{ deleted: number }>('/settings/clear-cache', {})
+}
+
 

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Qomicex.Core.Modules.Helpers.Resources;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -242,5 +243,12 @@ public class SettingsController : ControllerBase
         }
         catch { }
         return Ok();
+    }
+
+    [HttpPost("clear-cache")]
+    public IActionResult ClearCache()
+    {
+        var deleted = ModLoaderResourceHelper.ClearForgeVersionCache();
+        return Ok(new { deleted });
     }
 }
