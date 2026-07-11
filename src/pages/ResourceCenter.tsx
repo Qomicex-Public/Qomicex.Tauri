@@ -205,6 +205,7 @@ export default function ResourceCenter() {
   const [page, setPage] = useState(() => savedSnapshot?.page ?? 1)
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(() => !savedSnapshot)
+  const [isReplacing, setIsReplacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [installDialogItem, setInstallDialogItem] = useState<ResourceItem | null>(null)
   const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => savedSnapshot?.cnNames ?? {})
@@ -239,6 +240,7 @@ export default function ResourceCenter() {
       setInitialLoading(false)
       return
     }
+    if (!append) setIsReplacing(true)
     try {
       const res = await searchResources({
         category,
@@ -268,6 +270,7 @@ export default function ResourceCenter() {
     }
     setLoading(false)
     setInitialLoading(false)
+    setIsReplacing(false)
   }, [category, keyword, sort, source, gameVersion, loader])
 
   const scrollEl = () => document.querySelector('main')
@@ -405,7 +408,7 @@ export default function ResourceCenter() {
       </Card>
 
       <div>
-        {initialLoading ? (
+        {(initialLoading || isReplacing) ? (
           <div className="flex flex-col gap-3">
             {Array.from({ length: 5 }).map((_, index) => (
               <Card key={index} className="animate-pulse p-4">
