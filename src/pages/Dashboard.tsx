@@ -1,14 +1,14 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlay, faChevronDown, faUser, faCheck, faMemory, faCube } from '@fortawesome/free-solid-svg-icons'
+import { faPlay, faChevronDown, faUser, faCheck, faCube } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { ApiError } from '../api/client.ts'
-import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
+import { scanRuntimes, loadCustomRuntimes, hasAnyRuntimes } from '../stores/javaStore.ts'
 import { getDefaultInstance } from '../api/instance.ts'
 import { getAccounts, getDefaultAccount, setDefaultAccount } from '../api/account.ts'
-import type { GameInstance, Account, JavaRuntime } from '../types/index.ts'
+import type { GameInstance, Account } from '../types/index.ts'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
@@ -30,18 +30,12 @@ export default function Dashboard() {
   const [defaultAccount, setDefaultAccountState] = useState<Account | null>(null)
   const [allAccounts, setAllAccounts] = useState<Account[]>([])
   const [accountsOpen, setAccountsOpen] = useState(false)
-  const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
   const [watermarkEnabled, setWatermarkEnabled] = useState(true)
   const [watermarkText, setWatermarkText] = useState('Qomicex')
   const [watermarkSubtext, setWatermarkSubtext] = useState('启动器')
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const pageRef = usePageAnimation()
   const accountRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const unsub = subscribe(() => setJavaRuntimes([...getRuntimes()]))
-    return unsub
-  }, [])
 
   const loadDefaultInstance = useCallback(async () => {
     try {
@@ -125,8 +119,6 @@ export default function Dashboard() {
     }
   }
 
-  const validJava = javaRuntimes.filter((j) => j.state === 'Valid')
-
   return (
     <div ref={pageRef} className="relative flex h-full flex-col p-8">
       {/* Center branding */}
@@ -193,22 +185,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* System widget */}
-        <div className="rounded-xl border border-border/30 bg-card/70 p-4 backdrop-blur-md">
-          <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">系统</p>
-          <div className="space-y-2.5">
-            <div className="flex items-center gap-2 text-xs">
-              <FontAwesomeIcon icon={faCube} className="h-3 w-3 text-muted-foreground/50" />
-              <span className="text-muted-foreground/70">Java</span>
-              <span className="ml-auto font-medium">{validJava.length > 0 ? validJava[0].version : '未检测'}</span>
-            </div>
-            <div className="flex items-center gap-2 text-xs">
-              <FontAwesomeIcon icon={faMemory} className="h-3 w-3 text-muted-foreground/50" />
-              <span className="text-muted-foreground/70">版本</span>
-              <span className="ml-auto font-medium">1.0.0</span>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Bottom action bar */}

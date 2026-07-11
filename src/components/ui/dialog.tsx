@@ -52,7 +52,7 @@ interface DialogHeaderProps {
 
 function DialogHeader({ children, className, onClose }: DialogHeaderProps) {
   return (
-    <div className={cn("flex items-center justify-between border-b border-border px-6 py-4", className)}>
+    <div data-tauri-drag-region className={cn("flex items-center justify-between border-b border-border px-6 py-4", className)}>
       <div className="flex-1">{children}</div>
       {onClose && (
         <button onClick={onClose} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">

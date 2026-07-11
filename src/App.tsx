@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { invoke } from '@tauri-apps/api/core'
+import { Update } from '@tauri-apps/plugin-updater'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
 import Instances from './pages/Instances.tsx'
@@ -18,6 +20,7 @@ import useCloseGuard from './hooks/useCloseGuard.ts'
 import { loadSettings, onSettingsChange } from './api/settings.ts'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
+import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
 import { Button } from './components/ui/button.tsx'
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
@@ -34,6 +37,8 @@ function AppContent() {
   const { closeWithGuard, Provider } = useCloseGuard()
   const { alert } = useMessageBox()
   const javaChecked = useRef(false)
+  const [pendingUpdate, setPendingUpdate] = useState<{ version: string; body: string; required: boolean; update: Update } | null>(null)
+  const autoCheckDone = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -67,31 +72,47 @@ function AppContent() {
     })()
   }, [backendState, alert])
 
-  if (backendState !== 'ready') {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <div className="text-center">
-          {backendState === 'loading' ? (
-            <>
-              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <p className="mt-4 text-sm text-muted-foreground">启动后端服务...</p>
-            </>
-          ) : (
-            <>
-              <p className="text-destructive font-medium">后端启动失败</p>
-              <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                请确保已安装 .NET 10 Runtime 和 ASP.NET Core Runtime 10.0，然后重启启动器。
-              </p>
-              <p className="mt-1">
-                <a href="https://dotnet.microsoft.com/download/dotnet/10.0" target="_blank" className="text-xs text-primary underline">下载 .NET 10</a>
-              </p>
-              <Button className="mt-4" onClick={() => window.location.reload()}>重试</Button>
-            </>
-          )}
-        </div>
-      </div>
-    )
-  }
+  useEffect(() => {
+    if (backendState !== 'ready' || autoCheckDone.current) return
+    autoCheckDone.current = true
+    const timer = setTimeout(async () => {
+      try {
+        const channel = localStorage.getItem('update-channel') || 'stable'
+        let endpoint: string
+        if (channel === 'stable') {
+          endpoint = 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json'
+        } else {
+          const res = await fetch('https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases?per_page=5')
+          if (!res.ok) return
+          const releases: any[] = await res.json()
+          const pre = releases.find(r => r.prerelease && !r.draft)
+          if (!pre) return
+          const asset = pre.assets.find((a: any) => a.name === 'beta.json')
+          if (!asset) return
+          endpoint = asset.browser_download_url
+        }
+        const metadata: any = await invoke('check_update_with_endpoint', { endpoint })
+        if (!metadata) return
+        const required = !!(metadata.rawJson?.required)
+        const snooze = localStorage.getItem('snooze-update')
+        if (snooze) {
+          try {
+            const s = JSON.parse(snooze)
+            if (s.version === metadata.version && s.until > Date.now()) return
+          } catch {}
+        }
+        let body = metadata.body ?? ''
+        if (!body || body.startsWith('Release ')) {
+          try {
+            const res = await fetch(`https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases/tags/v${metadata.version}`)
+            if (res.ok) body = (await res.json()).body ?? body
+          } catch {}
+        }
+        setPendingUpdate({ version: metadata.version, body, required, update: new Update(metadata) })
+      } catch {}
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [backendState])
 
   return (
     <Provider value={closeWithGuard}>
@@ -100,21 +121,62 @@ function AppContent() {
         <TaskCompletionNotifier />
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/instances" element={<Instances />} />
-            <Route path="/instances/:id" element={<InstanceDetailPage />} />
-            <Route path="/downloads" element={<DownloadCenter />} />
-            <Route path="/accounts" element={<Accounts />} />
-            <Route path="/accounts/:uuid" element={<AccountDetail />} />
-            <Route path="/resource-center" element={<ResourceCenter />} />
-            <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
-            <Route path="/connect" element={<Connect />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/running" element={<RunningInstances />} />
+            {backendState === 'ready' ? (
+              <>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/instances" element={<Instances />} />
+                <Route path="/instances/:id" element={<InstanceDetailPage />} />
+                <Route path="/downloads" element={<DownloadCenter />} />
+                <Route path="/accounts" element={<Accounts />} />
+                <Route path="/accounts/:uuid" element={<AccountDetail />} />
+                <Route path="/resource-center" element={<ResourceCenter />} />
+                <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
+                <Route path="/connect" element={<Connect />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/running" element={<RunningInstances />} />
+              </>
+            ) : (
+              <Route path="*" element={
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center">
+                    {backendState === 'loading' ? (
+                      <>
+                        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        <p className="mt-4 text-sm text-muted-foreground">启动后端服务...</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-destructive font-medium">后端启动失败</p>
+                        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                          请确保已安装 .NET 10 Runtime 和 ASP.NET Core Runtime 10.0，然后重启启动器。
+                        </p>
+                        <p className="mt-1">
+                          <a href="https://dotnet.microsoft.com/download/dotnet/10.0" target="_blank" className="text-xs text-primary underline">下载 .NET 10</a>
+                        </p>
+                        <Button className="mt-4" onClick={() => window.location.reload()}>重试</Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              } />
+            )}
           </Route>
         </Routes>
       </BrowserRouter>
       <LaunchProgressDialog />
+      <UpdateDialog
+        open={pendingUpdate !== null}
+        version={pendingUpdate?.version ?? ''}
+        body={pendingUpdate?.body ?? ''}
+        required={pendingUpdate?.required ?? false}
+        update={pendingUpdate?.update ?? null}
+        onClose={() => {
+          if (pendingUpdate) {
+            localStorage.setItem('snooze-update', JSON.stringify({ version: pendingUpdate.version, until: Date.now() + 86400000 }))
+          }
+          setPendingUpdate(null)
+        }}
+      />
     </Provider>
   )
 }
