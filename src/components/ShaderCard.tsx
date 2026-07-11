@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { MinecraftText } from './MinecraftText.tsx'
 import { faSun } from '@fortawesome/free-solid-svg-icons'
@@ -15,11 +16,14 @@ interface Props {
   shader: ShaderMetadata
   instanceId: string
   gameDir: string
+  gameVersion?: string
+  loader?: string
   onDelete: (fileName: string) => void
   compact?: boolean
 }
 
-export default function ShaderCard({ shader, instanceId, gameDir, onDelete, compact }: Props) {
+export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, loader, onDelete, compact }: Props) {
+  const navigate = useNavigate()
   const { notify } = useMessageBox()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -48,10 +52,13 @@ export default function ShaderCard({ shader, instanceId, gameDir, onDelete, comp
     const params = new URLSearchParams()
     params.set('source', shader.source || 'modrinth')
     params.set('category', 'shader')
+    if (gameVersion) params.set('gameVersion', gameVersion)
+    if (loader) params.set('loader', loader.toLowerCase())
+    if (instanceId) params.set('instanceId', instanceId)
     const id = shader.curseForgeId?.toString() ?? shader.modrinthId ?? ''
     contextItems.push({
       label: '查看详情',
-      onClick: () => window.open(`#/resource-center/${encodeURIComponent(id)}?${params.toString()}`, '_blank'),
+      onClick: () => navigate(`/resource-center/${encodeURIComponent(id)}?${params.toString()}&expandBody=1`),
     })
   }
 

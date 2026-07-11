@@ -615,13 +615,13 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
         ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map((pack) => (
-              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
+              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
             ))}
           </div>
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((pack) => (
-              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
+              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
             ))}
           </div>
         )}
@@ -734,13 +734,13 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
         ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map((shader) => (
-              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
+              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
             ))}
           </div>
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((shader) => (
-              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} onDelete={handleDelete} />
+              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
             ))}
           </div>
         )}
@@ -833,7 +833,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((pack) => (
-              <DataPackCard key={pack.fileName} pack={pack} instanceId={instanceId} onDelete={handleDelete} />
+              <DataPackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
             ))}
           </div>
         )}

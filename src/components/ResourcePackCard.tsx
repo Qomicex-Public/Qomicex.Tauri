@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { MinecraftText } from './MinecraftText.tsx'
 import { faBox } from '@fortawesome/free-solid-svg-icons'
@@ -15,11 +16,14 @@ interface Props {
   pack: ResourcePackMetadata
   instanceId: string
   gameDir: string
+  gameVersion?: string
+  loader?: string
   onDelete: (fileName: string) => void
   compact?: boolean
 }
 
-export default function ResourcePackCard({ pack, instanceId, gameDir, onDelete, compact }: Props) {
+export default function ResourcePackCard({ pack, instanceId, gameDir, gameVersion, loader, onDelete, compact }: Props) {
+  const navigate = useNavigate()
   const { notify } = useMessageBox()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -48,10 +52,13 @@ export default function ResourcePackCard({ pack, instanceId, gameDir, onDelete, 
     const params = new URLSearchParams()
     params.set('source', pack.source || 'modrinth')
     params.set('category', 'resourcepack')
+    if (gameVersion) params.set('gameVersion', gameVersion)
+    if (loader) params.set('loader', loader.toLowerCase())
+    if (instanceId) params.set('instanceId', instanceId)
     const id = pack.curseForgeId?.toString() ?? pack.modrinthId ?? ''
     contextItems.push({
       label: '查看详情',
-      onClick: () => window.open(`#/resource-center/${encodeURIComponent(id)}?${params.toString()}`, '_blank'),
+      onClick: () => navigate(`/resource-center/${encodeURIComponent(id)}?${params.toString()}&expandBody=1`),
     })
   }
 
