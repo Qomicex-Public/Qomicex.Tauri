@@ -21,6 +21,11 @@ public sealed class PlayerIconMap
     public Dictionary<string, string> Icons { get; set; } = new();
 }
 
+public sealed class PlayerLeaveNotify
+{
+    public string MachineId { get; set; } = "";
+}
+
 /// <summary>
 /// qml 命名空间自定义协议集中注册表。新增协议：在此加键名常量、DTO、
 /// BuildHostProtocols 里的一个 DelegateProtocol、GuestKeys 里的键、以及一个 Guest 调用封装。
@@ -29,17 +34,24 @@ public static class QmlProtocols
 {
     public const string GameInfoKey = "qml:game_info";
     public const string PlayerIconsKey = "qml:player_icons";
+    public const string PlayerLeaveKey = "qml:player_leave";
 
-    public static readonly string[] GuestKeys = [GameInfoKey, PlayerIconsKey];
+    public static readonly string[] GuestKeys = [GameInfoKey, PlayerIconsKey, PlayerLeaveKey];
 
     public static IProtocol[] BuildHostProtocols(
         Func<GameInfoDto> getGameInfo,
-        Func<PlayerIconUpload, PlayerIconMap> exchangeIcons)
+        Func<PlayerIconUpload, PlayerIconMap> exchangeIcons,
+        Action<string> onPlayerLeave)
     {
         return
         [
             new DelegateProtocol<GameInfoDto>(GameInfoKey, getGameInfo),
             new DelegateProtocol<PlayerIconUpload, PlayerIconMap>(PlayerIconsKey, exchangeIcons),
+            new DelegateProtocol<PlayerLeaveNotify, bool>(PlayerLeaveKey, notify =>
+            {
+                if (!string.IsNullOrEmpty(notify?.MachineId)) onPlayerLeave(notify.MachineId);
+                return true;
+            }),
         ];
     }
 
@@ -48,4 +60,7 @@ public static class QmlProtocols
 
     public static Task<PlayerIconMap?> ExchangeIconsAsync(ScaffoldingGuest guest, PlayerIconUpload upload, CancellationToken ct = default)
         => guest.SendAsync<PlayerIconUpload, PlayerIconMap>(PlayerIconsKey, upload, ct);
+
+    public static Task<bool> NotifyLeaveAsync(ScaffoldingGuest guest, string machineId, CancellationToken ct = default)
+        => guest.SendAsync<PlayerLeaveNotify, bool>(PlayerLeaveKey, new PlayerLeaveNotify { MachineId = machineId }, ct);
 }

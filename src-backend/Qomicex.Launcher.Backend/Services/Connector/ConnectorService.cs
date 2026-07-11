@@ -126,10 +126,10 @@ public sealed class ConnectorService : IDisposable
             EnsureEasyTierReady();
             var proc = _inspector.Inspect(port);
             _gameInfo = new GameInfoDto { GameVersion = proc.GameVersionArg ?? "unknown" };
-            var selfIcon = await GetSelfIconBase64(proc.Uuid, proc.IsMicrosoft);
+            var selfIcon = await ResolveHostIconAsync(proc);
             lock (_iconLock) _iconMap[MachineId] = selfIcon;
 
-            var protocols = QmlProtocols.BuildHostProtocols(() => _gameInfo, ExchangeIcons);
+            var protocols = QmlProtocols.BuildHostProtocols(() => _gameInfo, ExchangeIcons, mid => _center?.RemovePlayer(mid));
             _center = await _client.CreateRoomAsync(proc.PlayerName, MachineId, Vendor, port, protocols, ct);
             return _center.RoomCode.Raw;
         }
@@ -191,14 +191,14 @@ public sealed class ConnectorService : IDisposable
                 Loader = instance.Loader,
                 LoaderVersion = instance.LoaderVersion,
             };
-            var selfIcon = await GetSelfIconBase64(proc.Uuid, proc.IsMicrosoft);
+            var selfIcon = await ResolveHostIconAsync(proc);
 
             await _gate.WaitAsync(ct);
             try
             {
                 _gameInfo = gameInfo;
                 lock (_iconLock) _iconMap[MachineId] = selfIcon;
-                var protocols = QmlProtocols.BuildHostProtocols(() => _gameInfo, ExchangeIcons);
+                var protocols = QmlProtocols.BuildHostProtocols(() => _gameInfo, ExchangeIcons, mid => _center?.RemovePlayer(mid));
                 _center = await _client.CreateRoomAsync(proc.PlayerName, MachineId, Vendor, newPort.Value, protocols, ct);
             }
             finally { _gate.Release(); }
@@ -258,7 +258,12 @@ public sealed class ConnectorService : IDisposable
         await _gate.WaitAsync(ct);
         try
         {
-            if (_guest != null) _guest.ConnectionLost -= OnGuestConnectionLost;
+            if (_guest != null)
+            {
+                _guest.ConnectionLost -= OnGuestConnectionLost;
+                try { await QmlProtocols.NotifyLeaveAsync(_guest, MachineId, ct); }
+                catch (Exception ex) { _logger.LogDebug(ex, "发送离开通知失败，将由断开/心跳超时兜底移除"); }
+            }
             await _client.CloseAsync(ct);
             _center = null; _guest = null; _mcHost = null; _mcPort = null;
             _gameInfo = new GameInfoDto();
@@ -338,6 +343,17 @@ public sealed class ConnectorService : IDisposable
                 _iconMap[upload.MachineId] = upload.IconBase64;
             return new PlayerIconMap { Icons = new Dictionary<string, string>(_iconMap) };
         }
+    }
+
+    private async Task<string> ResolveHostIconAsync(GameProcessInfo proc)
+    {
+        var account = await _accountService.GetDefaultAsync();
+        if (account != null)
+        {
+            var isMicrosoft = string.Equals(account.LoginMethod, "Microsoft", StringComparison.OrdinalIgnoreCase);
+            return await GetSelfIconBase64(account.Uuid, isMicrosoft);
+        }
+        return await GetSelfIconBase64(proc.Uuid, proc.IsMicrosoft);
     }
 
     private async Task<string> GetSelfIconBase64(string uuid, bool isMicrosoft)
