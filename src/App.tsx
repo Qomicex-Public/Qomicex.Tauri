@@ -107,32 +107,6 @@ function AppContent() {
     return () => clearTimeout(timer)
   }, [backendState])
 
-  if (backendState !== 'ready') {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <div className="text-center">
-          {backendState === 'loading' ? (
-            <>
-              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <p className="mt-4 text-sm text-muted-foreground">启动后端服务...</p>
-            </>
-          ) : (
-            <>
-              <p className="text-destructive font-medium">后端启动失败</p>
-              <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                请确保已安装 .NET 10 Runtime 和 ASP.NET Core Runtime 10.0，然后重启启动器。
-              </p>
-              <p className="mt-1">
-                <a href="https://dotnet.microsoft.com/download/dotnet/10.0" target="_blank" className="text-xs text-primary underline">下载 .NET 10</a>
-              </p>
-              <Button className="mt-4" onClick={() => window.location.reload()}>重试</Button>
-            </>
-          )}
-        </div>
-      </div>
-    )
-  }
-
   return (
     <Provider value={closeWithGuard}>
       <BrowserRouter>
@@ -140,17 +114,45 @@ function AppContent() {
         <TaskCompletionNotifier />
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/instances" element={<Instances />} />
-            <Route path="/instances/:id" element={<InstanceDetailPage />} />
-            <Route path="/downloads" element={<DownloadCenter />} />
-            <Route path="/accounts" element={<Accounts />} />
-            <Route path="/accounts/:uuid" element={<AccountDetail />} />
-            <Route path="/resource-center" element={<ResourceCenter />} />
-            <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
-            <Route path="/connect" element={<Connect />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/running" element={<RunningInstances />} />
+            {backendState === 'ready' ? (
+              <>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/instances" element={<Instances />} />
+                <Route path="/instances/:id" element={<InstanceDetailPage />} />
+                <Route path="/downloads" element={<DownloadCenter />} />
+                <Route path="/accounts" element={<Accounts />} />
+                <Route path="/accounts/:uuid" element={<AccountDetail />} />
+                <Route path="/resource-center" element={<ResourceCenter />} />
+                <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
+                <Route path="/connect" element={<Connect />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/running" element={<RunningInstances />} />
+              </>
+            ) : (
+              <Route path="*" element={
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center">
+                    {backendState === 'loading' ? (
+                      <>
+                        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        <p className="mt-4 text-sm text-muted-foreground">启动后端服务...</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-destructive font-medium">后端启动失败</p>
+                        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                          请确保已安装 .NET 10 Runtime 和 ASP.NET Core Runtime 10.0，然后重启启动器。
+                        </p>
+                        <p className="mt-1">
+                          <a href="https://dotnet.microsoft.com/download/dotnet/10.0" target="_blank" className="text-xs text-primary underline">下载 .NET 10</a>
+                        </p>
+                        <Button className="mt-4" onClick={() => window.location.reload()}>重试</Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              } />
+            )}
           </Route>
         </Routes>
       </BrowserRouter>
