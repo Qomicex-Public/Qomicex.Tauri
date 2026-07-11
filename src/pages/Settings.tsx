@@ -67,6 +67,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string } | null>(null)
   const [updateObj, setUpdateObj] = useState<any>(null)
   const [progress, setProgress] = useState(0)
+  const [updateError, setUpdateError] = useState<string>()
   const [channel, setChannel] = useState(() => localStorage.getItem('update-channel') || 'stable')
   const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
@@ -81,13 +82,18 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
 
   async function checkForUpdate() {
     setUpdateState('checking')
+    setUpdateError(undefined)
     try {
       let endpoint: string
       if (channel === 'stable') {
         endpoint = 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json'
       } else {
         const res = await fetch('https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases?per_page=5')
-        if (!res.ok) throw new Error('获取更新信息失败')
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          if (body.message?.includes?.('rate limit')) throw new Error('GitHub API 速率限制，请稍后重试')
+          throw new Error('获取更新信息失败')
+        }
         const releases: any[] = await res.json()
         const pre = releases.find(r => r.prerelease && !r.draft)
         if (!pre) throw new Error('没有测试版更新')
@@ -104,8 +110,9 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
       setUpdateObj(upd)
       setUpdateInfo({ version: upd.version, body: upd.body ?? '' })
       setUpdateState('available')
-    } catch {
+    } catch (e) {
       setUpdateState('error')
+      if (e instanceof Error) setUpdateError(e.message)
     }
   }
 
@@ -200,7 +207,9 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
               </span>
             )}
             {updateState === 'error' && (
-              <span className="text-sm text-destructive">检查更新失败</span>
+              <Tooltip content={updateError}>
+                <span className="text-sm text-destructive cursor-help">检查更新失败</span>
+              </Tooltip>
             )}
           </div>
 
