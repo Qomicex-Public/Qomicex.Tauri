@@ -765,7 +765,7 @@ export default function Settings() {
 
         <div className="flex-1 min-w-0 space-y-4">
           {category === 'launcher' && (
-            <div key="launcher" className="animate-in slide-up">
+            <div key="launcher" className="animate-in slide-up space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>
