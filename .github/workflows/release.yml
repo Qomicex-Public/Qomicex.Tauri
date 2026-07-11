@@ -536,7 +536,7 @@ jobs:
         run: |
           for d in appimage deb rpm nsis msi dmg macos; do
             [ -d "$d" ] || continue
-            find "$d" -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.exe' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' -o -name '*.msi' -o -name '*.zip' \) -exec mv -f -t . {} +
+            find "$d" -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.exe' -o -name '*.dmg' -o -name 'qomicex-launcher*.tar.gz' -o -name '*.sig' -o -name '*.msi' -o -name '*.zip' \) -exec mv -f -t . {} +
             rm -rf "$d"
           done
       - uses: ncipollo/release-action@v1
