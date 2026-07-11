@@ -3,7 +3,8 @@
 	url = https://github.com/Qomicex-Public/Qomicex.Connector.Part.Scaffolding.git
 [submodule "src-backend/Qomicex.Core"]
 	path = src-backend/Qomicex.Core
-	url = https://github.com/Qomicex-Public/Qomicex.Core.git
+	url = https://github.com/lenmei233/Qomicex.Core.git
+	branch = refactor/aot-migration
 [submodule "src-backend/Qomicex.Downloader"]
 	path = src-backend/Qomicex.Downloader
 	url = https://github.com/Qomicex-Public/Qomicex.Downloader.git
