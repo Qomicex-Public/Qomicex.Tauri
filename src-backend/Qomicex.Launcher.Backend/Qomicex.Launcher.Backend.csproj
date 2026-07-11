@@ -33,6 +33,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Qomicex.Core\Qomicex.Core.csproj" />
+    <ProjectReference Include="..\Qomicex.Downloader\Qomicex.Downloader.csproj" />
     <ProjectReference Include="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
   </ItemGroup>
 
