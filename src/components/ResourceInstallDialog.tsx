@@ -9,11 +9,11 @@ import { Select, SelectOption } from './ui/select.tsx'
 import { getInstances } from '../api/instance.ts'
 import { getResourceVersions, getResourceDependencies } from '../api/resource.ts'
 import { getSettings } from '../api/settings.ts'
-import { getInstalledFileNames } from '../api/instance-files.ts'
+import { getInstalledFileNames, getModsMetadata, deleteMod } from '../api/instance-files.ts'
 import { startResourceDownload } from '../api/resource-download.ts'
 import { addTask, updateTask } from '../stores/downloadStore.ts'
 import { useMessageBox } from './ui/message-box.tsx'
-import type { GameInstance, ResourceVersion, ResolvedDependency } from '../types/index.ts'
+import type { GameInstance, ModMetadata, ResourceVersion, ResolvedDependency } from '../types/index.ts'
 
 interface ResourceInstallDialogProps {
   open: boolean
@@ -48,6 +48,7 @@ export default function ResourceInstallDialog({
   const [selectedVersion, setSelectedVersion] = useState<ResourceVersion | null>(null)
   const [deps, setDeps] = useState<ResolvedDependency[]>([])
   const [installedNames, setInstalledNames] = useState<Set<string>>(new Set())
+  const [installedByProjectId, setInstalledByProjectId] = useState<Map<string, { fileName: string; version: string }>>(new Map())
   const [loadingInstance, setLoadingInstance] = useState(false)
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [loadingDeps, setLoadingDeps] = useState(false)
@@ -145,6 +146,15 @@ export default function ResourceInstallDialog({
           nameMap[cat] = results[i].status === 'fulfilled' ? results[i].value : []
         })
         setInstalledNames(new Set(Object.values(nameMap).flat()))
+        // build projectId→(fileName, version) map from mods metadata
+        const meta = await getModsMetadata(selectedInstance.id).catch(() => [] as ModMetadata[])
+        if (cancelled) return
+        const pidMap = new Map<string, { fileName: string; version: string }>()
+        for (const m of meta) {
+          const pid = m.modrinthId ?? (m.curseForgeId ? String(m.curseForgeId) : null)
+          if (pid) pidMap.set(pid, { fileName: m.fileName, version: m.version })
+        }
+        setInstalledByProjectId(pidMap)
       } catch { notify('加载前置模组失败', 'error') }
       if (!cancelled) setLoadingDeps(false)
     })()
@@ -193,15 +203,24 @@ export default function ResourceInstallDialog({
     if (!selectedInstance || !selectedVersion) return
     setInstalling(true)
     setInstallProgress(null)
-    const allItems: { url: string; fileName: string; category: string; name: string }[] = []
+    const allItems: { url: string; fileName: string; category: string; name: string; oldFileName?: string }[] = []
+    const toDelete: { fileName: string; category: string }[] = []
 
     for (const dep of deps) {
+      const existing = installedByProjectId.get(dep.projectId)
+      if (existing) {
+        if (existing.fileName !== dep.fileName)
+          toDelete.push({ fileName: existing.fileName, category: dep.category })
+        continue
+      }
       const sel = depSelectedVersion[dep.projectId]
       const url = sel?.downloadUrl ?? dep.downloadUrl
       const fileName = sel?.fileName ?? dep.fileName
-      if (url && !installedNames.has(fileName)) {
-        allItems.push({ url, fileName, category: dep.category, name: dep.name })
-      }
+      if (url) allItems.push({ url, fileName, category: dep.category, name: dep.name })
+    }
+    // clean up old files before downloading new ones
+    for (const d of toDelete) {
+      try { await deleteMod(selectedInstance.id, d.fileName) } catch { /* skip */ }
     }
     const mainFile = selectedVersion.downloads[0]
     if (!mainFile) { setInstallError('该版本没有可下载的文件'); setInstalling(false); return }
@@ -249,7 +268,7 @@ export default function ResourceInstallDialog({
     notify(`安装完成：${resourceTitle}`, 'success')
     setInstalling(false)
     onClose()
-  }, [selectedInstance, selectedVersion, deps, installedNames, category, resourceTitle, notify, onClose])
+  }, [selectedInstance, selectedVersion, deps, installedNames, installedByProjectId, category, resourceTitle, notify, onClose])
 
   return (
     <Dialog open={open} onClose={onClose}>

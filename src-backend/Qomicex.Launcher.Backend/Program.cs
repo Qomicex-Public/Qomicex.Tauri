@@ -77,6 +77,7 @@ builder.Services.AddSingleton<JavaRuntimeStore>();
 builder.Services.AddSingleton<JavaDownloadService>();
 builder.Services.AddSingleton<SkinService>();
 builder.Services.AddSingleton<McmodService>();
+builder.Services.AddSingleton<ModUpdateService>();
 builder.Services.AddSingleton<LanGameListenerService>();
 builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.GameProcessInspector>();
 builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.EasyTierProvider>();

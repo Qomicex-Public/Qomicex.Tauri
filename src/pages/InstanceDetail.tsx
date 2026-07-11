@@ -31,6 +31,7 @@ import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import ModCard from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
+import ModUpdateDialog from '../components/ModUpdateDialog.tsx'
 import type { ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata } from '../types/index.ts'
 import ResourcePackCard from '../components/ResourcePackCard.tsx'
 import ShaderCard from '../components/ShaderCard.tsx'
@@ -252,6 +253,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [loading, setLoading] = useState(true)
   const [loadProgress, setLoadProgress] = useState<{ current: number; total: number } | null>(null)
   const [versionDialogMod, setVersionDialogMod] = useState<ModMetadata | null>(null)
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
+  const [updateFileNames, setUpdateFileNames] = useState<Set<string>>(new Set())
 
   const [batchMode, setBatchMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -395,6 +398,9 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                   <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
                     <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
                   </Button>
+                  <Button size="sm" variant="outline" onClick={() => setUpdateDialogOpen(true)} className="gap-1.5 h-7 text-xs">
+                    <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />检查更新
+                  </Button>
                   <Button size="sm" variant="outline" onClick={enterBatchMode} className="gap-1.5 h-7 text-xs">
                     批量操作
                   </Button>
@@ -443,19 +449,20 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
           ) : (
             <div className="flex flex-col gap-2">
               {filtered.map((mod) => (
-                <ModCard
-                  key={mod.fileName}
-                  mod={mod}
-                  instanceId={instanceId}
-                  gameVersion={gameVersion}
-                  loader={loader}
-                  onRefresh={loadMods}
-                  onToggle={toggleModLocal}
-                  onChangeVersion={setVersionDialogMod}
-                  batchMode={batchMode}
-                  selected={selected.has(mod.fileName)}
-                  onSelect={toggleSelect}
-                />
+                  <ModCard
+                    key={mod.fileName}
+                    mod={mod}
+                    instanceId={instanceId}
+                    gameVersion={gameVersion}
+                    loader={loader}
+                    onRefresh={loadMods}
+                    onToggle={toggleModLocal}
+                    onChangeVersion={setVersionDialogMod}
+                    batchMode={batchMode}
+                    selected={selected.has(mod.fileName)}
+                    onSelect={toggleSelect}
+                    hasUpdate={updateFileNames.has(mod.fileName)}
+                  />
               ))}
             </div>
           )}
@@ -492,6 +499,13 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         gameVersion={gameVersion}
         loader={loader}
         onDone={loadMods}
+      />
+      <ModUpdateDialog
+        open={updateDialogOpen}
+        onClose={() => setUpdateDialogOpen(false)}
+        instanceId={instanceId}
+        onDone={() => { setUpdateFileNames(new Set()); loadMods() }}
+        onUpdatesFound={(list) => setUpdateFileNames(new Set(list.map(u => u.fileName)))}
       />
     </>
   )

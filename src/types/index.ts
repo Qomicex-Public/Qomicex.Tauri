@@ -406,6 +406,17 @@ export interface FileEntry {
   extension: string
 }
 
+export interface ModUpdateEntry {
+  fileName: string
+  name: string
+  currentVersion: string
+  latestVersion: string
+  projectId: string
+  source: string
+  downloadUrl: string
+  newFileName: string
+}
+
 export interface ModMetadata {
   fileName: string
   name: string

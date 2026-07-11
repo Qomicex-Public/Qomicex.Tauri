@@ -24,11 +24,12 @@ interface ModCardProps {
   batchMode?: boolean
   selected?: boolean
   onSelect?: (fileName: string) => void
+  hasUpdate?: boolean
 }
 
 export default function ModCard({
   mod, instanceId, gameVersion, loader, onRefresh, onToggle, onChangeVersion,
-  batchMode, selected, onSelect,
+  batchMode, selected, onSelect, hasUpdate,
 }: ModCardProps) {
   const navigate = useNavigate()
   const [toggling, setToggling] = useState(false)
@@ -111,6 +112,9 @@ export default function ModCard({
               <div className="flex items-center gap-2">
                 <h3 className="truncate text-sm font-semibold text-foreground">
                   {mod.chineseName ? <>{mod.chineseName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {mod.name}</span></> : mod.name}
+                  {hasUpdate && (
+                    <span className="ml-2 inline-block h-2 w-2 rounded-full bg-blue-500 align-middle" />
+                  )}
                 </h3>
               </div>
               <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">

@@ -19,19 +19,22 @@ public class InstanceFilesController : ControllerBase
     private readonly McmodService _mcmod;
     private readonly IConfiguration _configuration;
     private readonly LanGameListenerService _lanListener;
+    private readonly ModUpdateService _modUpdate;
 
     public InstanceFilesController(
         IInstanceRepository repository,
         IHttpClientFactory httpClientFactory,
         McmodService mcmod,
         IConfiguration configuration,
-        LanGameListenerService lanListener)
+        LanGameListenerService lanListener,
+        ModUpdateService modUpdate)
     {
         _repository = repository;
         _httpClientFactory = httpClientFactory;
         _mcmod = mcmod;
         _configuration = configuration;
         _lanListener = lanListener;
+        _modUpdate = modUpdate;
     }
 
     private static string ResolveGameDir(GameInstance inst)
@@ -345,6 +348,83 @@ public class InstanceFilesController : ControllerBase
             System.IO.File.Move(oldBak, oldPath);
         if (System.IO.File.Exists(disabledBak))
             System.IO.File.Move(disabledBak, disabledPath);
+    }
+
+    [HttpGet("mods/check-updates")]
+    public async Task<ActionResult<List<ModUpdateEntry>>> CheckModUpdates(string instanceId)
+    {
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
+        if (!Directory.Exists(modsDir))
+            return Ok(new List<ModUpdateEntry>());
+
+        var mods = new Mods(gameDir, inst.Name, isolation, apiKey);
+        var modList = await mods.GetModList();
+        var items = modList
+            .Where(m => !string.IsNullOrEmpty(m.ModrinthId) || m.CurseForgeId > 0)
+            .Select(m => new ModUpdateCheckItem
+            {
+                FileName = Path.GetFileName(m.FilePath),
+                Name = m.Name ?? "",
+                CurrentVersion = m.Version ?? "",
+                ProjectId = m.ModrinthId ?? m.CurseForgeId.ToString(),
+                Source = !string.IsNullOrEmpty(m.ModrinthId) ? "modrinth" : "curseforge",
+            }).ToList();
+
+        var loader = inst.Loader?.ToLowerInvariant();
+        var result = await _modUpdate.CheckUpdates(items, inst.GameVersion, loader);
+        return Ok(result);
+    }
+
+    [HttpPost("mods/batch-update")]
+    public async Task<IActionResult> BatchUpdateMods(string instanceId, [FromBody] BatchUpdateRequest request)
+    {
+        var inst = _repository.GetById(instanceId);
+        if (inst == null) return NotFound();
+        var gameDir = ResolveGameDir(inst);
+        var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
+        var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
+
+        var client = _httpClientFactory.CreateClient();
+        foreach (var update in request.Updates)
+        {
+            var oldPath = Path.Combine(modsDir, update.FileName);
+            var oldBak = oldPath + ".bak";
+            if (System.IO.File.Exists(oldPath))
+                System.IO.File.Move(oldPath, oldBak);
+
+            var disabledPath = Path.Combine(modsDir, update.FileName + ".disabled");
+            var disabledBak = disabledPath + ".bak";
+            if (System.IO.File.Exists(disabledPath))
+                System.IO.File.Move(disabledPath, disabledBak);
+
+            var newPath = Path.Combine(modsDir, update.NewFileName);
+            try
+            {
+                var response = await client.GetAsync(update.DownloadUrl);
+                if (!response.IsSuccessStatusCode)
+                {
+                    RollbackBackups(oldBak, oldPath, disabledBak, disabledPath);
+                    continue;
+                }
+                await using var stream = await response.Content.ReadAsStreamAsync();
+                await using var file = System.IO.File.Create(newPath);
+                await stream.CopyToAsync(file);
+
+                if (System.IO.File.Exists(oldBak)) System.IO.File.Delete(oldBak);
+                if (System.IO.File.Exists(disabledBak)) System.IO.File.Delete(disabledBak);
+            }
+            catch
+            {
+                RollbackBackups(oldBak, oldPath, disabledBak, disabledPath);
+            }
+        }
+        return NoContent();
     }
 
     [HttpPost("mods/install")]
