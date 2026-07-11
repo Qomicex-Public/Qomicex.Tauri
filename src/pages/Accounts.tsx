@@ -25,6 +25,15 @@ function fmtErr(e: unknown): string {
   return String(e)
 }
 
+function fmtOAuthError(code: string): string {
+  switch (code) {
+    case 'access_denied': return '你在浏览器中取消或拒绝了授权'
+    case 'expired_token': return '验证码已过期，请重新登录'
+    case 'invalid_grant': return '授权无效，请重新登录'
+    default: return `登录失败：${code}`
+  }
+}
+
 function getAccountLabel(loginMethod: string, serverUrl?: string | null): string {
   if (loginMethod === 'Microsoft') return 'Microsoft'
   if (loginMethod === 'Offline') return '离线'
@@ -161,11 +170,27 @@ export default function Accounts() {
       setMicrosoftMsg(`验证码已复制到剪贴板，请在浏览器中登录 Microsoft 账号\n验证码: ${data.userCode}`)
 
       const intervalMs = Math.max((data.interval || 5) * 1000, 3000)
+      const deadline = Date.now() + (data.expiresIn || 900) * 1000
+      const stopPolling = () => {
+        if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null }
+      }
       pollTimer.current = setInterval(async () => {
+        if (Date.now() > deadline) {
+          stopPolling()
+          setMicrosoftStep('error')
+          setMicrosoftMsg('登录超时，请重新登录')
+          return
+        }
         try {
           const result = await accountApi.microsoftPoll(data)
+          if (result.status === 'failed') {
+            stopPolling()
+            setMicrosoftStep('error')
+            setMicrosoftMsg(fmtOAuthError(result.error ?? 'unknown'))
+            return
+          }
           if (result.access_token) {
-            if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null }
+            stopPolling()
             setMicrosoftStep('fetching-info')
             setMicrosoftMsg('正在获取账户信息...')
             try {
@@ -180,7 +205,7 @@ export default function Accounts() {
             }
           }
         } catch {
-          // poll error — likely authorization_pending, keep waiting
+          // 网络抖动等瞬时错误：忽略，继续轮询（受 deadline 兜底）
         }
       }, intervalMs)
     } catch (e: unknown) {
