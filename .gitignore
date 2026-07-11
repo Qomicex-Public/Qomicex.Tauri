@@ -55,6 +55,12 @@ docs/
 .fake
 # Superpowers SDD scratch
 .superpowers/
+.superpods/
 
-# Website
-/website/
+# Agent/skill config (local, not project files)
+.firecrawl/
+.agents/
+.opencode/
+docs/superpowers/
+skills-lock.json
+*.sdd.md

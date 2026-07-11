@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar.tsx'
 import { TitleBar } from './TitleBar.tsx'
+import ScrollToTop from './ScrollToTop.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { get, API_BASE } from '../api/client.ts'
 import { useMessageBox } from './ui/message-box.tsx'
@@ -142,6 +143,7 @@ export default function Layout() {
           </main>
         </div>
       </div>
+      <ScrollToTop />
     </div>
     </DebugProvider>
   )

@@ -1,6 +1,7 @@
 use rfd::FileDialog;
 use serde::Deserialize;
 use std::path::PathBuf;
+use tauri::async_runtime;
 use tauri::Window;
 
 #[derive(Deserialize)]
@@ -21,6 +22,7 @@ pub struct FilterDef {
 
 #[tauri::command]
 pub fn pick_dialog(window: Window, options: PickDialogOptions) -> Option<String> {
+    let _guard = async_runtime::handle().inner().enter();
     let mut dialog = FileDialog::new().set_parent(&window);
 
     if let Some(title) = &options.title {
