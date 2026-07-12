@@ -23,6 +23,7 @@ import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { Button } from './components/ui/button.tsx'
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
 
@@ -150,12 +151,14 @@ function AppContent() {
                       <>
                         <p className="text-destructive font-medium">后端启动失败</p>
                         <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                          请确保已安装 .NET 10 Runtime 和 ASP.NET Core Runtime 10.0，然后重启启动器。
+                          后端进程异常退出，请检查日志后重试。
                         </p>
-                        <p className="mt-1">
-                          <a href="https://dotnet.microsoft.com/download/dotnet/10.0" target="_blank" className="text-xs text-primary underline">下载 .NET 10</a>
-                        </p>
-                        <Button className="mt-4" onClick={() => window.location.reload()}>重试</Button>
+                        <div className="mt-4 flex items-center justify-center gap-3">
+                          <Button onClick={() => window.location.reload()}>重试</Button>
+                          <Button variant="outline" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))}>
+                            反馈问题
+                          </Button>
+                        </div>
                       </>
                     )}
                   </div>
