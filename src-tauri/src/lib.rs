@@ -135,13 +135,10 @@ struct UpdateInfo {
 }
 
 fn transform_version(v: &str) -> String {
-    v.replace("alpha", "0")
-        .replace("beta", "1")
-        .replace("release", "2")
-        .split(".build")
-        .next()
-        .unwrap_or(v)
-        .to_string()
+    let v = v.split(".build").next().unwrap_or(v);
+    v.replace("-alpha", "-0.")
+        .replace("-beta", "-1.")
+        .replace("-release", "-2.")
 }
 
 fn current_os_arch() -> String {
