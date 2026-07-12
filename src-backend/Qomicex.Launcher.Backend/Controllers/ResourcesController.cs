@@ -297,18 +297,24 @@ public class ResourcesController : ControllerBase
 
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(id)}"));
+            var url = ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(id)}");
+            Trace.WriteLine($"[CF Detail] Fetching: {url}");
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("x-api-key", _cfApiKey);
             var httpResponse = await _curseforge.SendAsync(request);
+            Trace.WriteLine($"[CF Detail] Status: {(int)httpResponse.StatusCode}");
             httpResponse.EnsureSuccessStatusCode();
 
             var json = await httpResponse.Content.ReadFromJsonAsync<JsonObject>();
             var data = json?["data"]?.AsObject();
             if (data == null)
+            {
+                Trace.WriteLine($"[CF Detail] No data in response");
                 return NotFound(new { error = "Project not found" });
+            }
 
             var logo = data["logo"]?.AsObject();
-            return Ok(new ResourceDetail
+            var detail = new ResourceDetail
             {
                 Id = data["id"]?.GetValue<int>().ToString() ?? "",
                 Title = data["name"]?.GetValue<string>() ?? "",
@@ -319,10 +325,13 @@ public class ResourcesController : ControllerBase
                 DownloadCount = data["downloadCount"]?.GetValue<long>() ?? 0,
                 Source = "curseforge",
                 ProjectUrl = $"https://www.curseforge.com/minecraft/mc-mods/{data["slug"]?.GetValue<string>()}",
-            });
+            };
+            Trace.WriteLine($"[CF Detail] OK: {detail.Title}");
+            return Ok(detail);
         }
         catch (Exception ex)
         {
+            Trace.WriteLine($"[CF Detail] Exception: {ex}");
             return StatusCode(502, new { error = $"CurseForge API error: {ex.Message}" });
         }
     }
