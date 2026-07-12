@@ -73,6 +73,7 @@ public class LogController : ControllerBase
             {
                 try { System.IO.File.Delete(old.Path); } catch { }
             }
+            entries.RemoveAll(e => !System.IO.File.Exists(e.Path));
         }
 
         entries = entries
