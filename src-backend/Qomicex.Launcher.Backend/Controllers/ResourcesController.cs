@@ -861,6 +861,15 @@ public class ResourcesController : ControllerBase
                 Size = f?["fileLength"]?.GetValue<long>() ?? 0,
             }],
             DatePublished = f?["fileDate"]?.GetValue<DateTime>() ?? DateTime.MinValue,
+            Dependencies = f?["dependencies"] is JsonArray depArr
+                ? depArr
+                    .Where(d => d?["relationType"]?.GetValue<int>() == 1)
+                    .Select(d => new ModrinthDependency
+                    {
+                        ProjectId = d!["modId"]?.GetValue<int>().ToString() ?? "",
+                        DependencyType = "required",
+                    }).ToList()
+                : [],
         };
     }
 
