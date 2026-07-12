@@ -1,0 +1,84 @@
+name: "🐛 Bug 反馈 | Bug Report"
+description: "提交一个 QML Bug | Report a Bug for QML"
+labels: ["bug", "needs-triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: "QML 版本号 | QML Version"
+      placeholder: "e.g. v1.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "复现步骤 | Steps to Reproduce"
+      description: "请提供具体的操作步骤 | Please provide detailed steps"
+      placeholder: |
+        示例 | Example：
+        1. 点击 xxx... | 1. Click xxx...
+        2. 然后点击 xxx... | 2. Then click xxx...
+        3. 看到错误... | 3. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "期望结果 | Expected Behavior"
+      placeholder: "你希望发生什么？ | What did you expect to happen?"
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "实际结果 | Actual Behavior"
+      placeholder: "实际发生了什么？ | What actually happened?"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "📎 日志与附件 | Logs & Attachments"
+      description: |
+        **导出方式 | Export Method：**
+        在问题发生后立即使用 `设置 → 日志 → 找到对应日志 → 导出日志` 并上传导出的压缩包。
+
+  placeholder: |
+        📤 先点击此文本框，再将文件拖拽到此处以上传 | Click this text box first, then drag and drop files here.
+        
+        📷 如有相关截图或文件，也请一并上传 | Please also upload any relevant screenshots or files.
+        
+        ⚠️ 请勿自行判断是否需要日志。日志文件不仅包含错误信息，还可能包含其他关键分析数据。
+        Do not decide on your own whether logs are needed. Logs may contain not only error messages, but other key information as well.
+        
+        ❗ 如果缺少相关日志用于分析问题，此 Issue 可能会被直接关闭。
+        If the required logs are missing, this issue may be closed directly.
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "💻 环境信息 | Environment"
+      description: "请填写运行环境信息 | Please fill in your environment details"
+      placeholder: |
+        操作系统 | OS: e.g. Windows 11 23H2 / macOS 14.0 / Ubuntu 22.04
+        系统架构 | Architecture: e.g. x86_64 / ARM64
+        QML 版本 | QML Version: e.g. v1.0.0
+        其他相关环境 | Other relevant info:
+      render: markdown
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "✅ 提交前确认 | Checklist"
+      description: "请确保以下事项 | Please ensure the following"
+      options:
+        - label: "我已搜索过已有 Issue，没有发现重复 | I have searched existing issues and found no duplicates"
+          required: true
+        - label: "我已提供最小复现示例（如适用）| I have provided a minimal reproduction example (if applicable)"
+          required: false
+        - label: "我已上传相关日志文件 | I have uploaded the relevant log files"
+          required: false
+        - label: |
+            我已认真阅读并确认上述内容，勾选此框即表示我同意维护者有权无条件关闭此 Issue。
+            | I have carefully read and confirmed the above. By checking this box, I agree that maintainers may close this issue unconditionally.
+          required: false
