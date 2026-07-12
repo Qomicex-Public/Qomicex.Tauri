@@ -20,6 +20,7 @@ import useCloseGuard from './hooks/useCloseGuard.ts'
 import { loadSettings, onSettingsChange } from './api/settings.ts'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
+import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
 import { Button } from './components/ui/button.tsx'
@@ -36,6 +37,7 @@ function AppContent() {
   const [backendState, setBackendState] = useState<'loading' | 'ready' | 'error'>('loading')
   const { closeWithGuard, Provider } = useCloseGuard()
   const { alert } = useMessageBox()
+  const { crashDialogState, clearCrashDialog } = useRunning()
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<{ version: string; body: string; required: boolean; update: Update } | null>(null)
   const autoCheckDone = useRef(false)
@@ -164,6 +166,21 @@ function AppContent() {
         </Routes>
       </BrowserRouter>
       <LaunchProgressDialog />
+      <CrashAnalysisDialog
+        open={!!crashDialogState}
+        title={crashDialogState?.title || ''}
+        message={crashDialogState?.message || ''}
+        detail={crashDialogState?.detail}
+        args={crashDialogState?.args}
+        crashReport={crashDialogState?.crashReport}
+        analysis={crashDialogState?.analysis}
+        analysisLoading={crashDialogState?.loading}
+        error={crashDialogState?.error}
+        mcloGsUrl={crashDialogState?.mcloGsUrl}
+        qrCodeBase64={crashDialogState?.qrCodeBase64}
+        instanceId={crashDialogState?.instanceId}
+        onClose={clearCrashDialog}
+      />
       <UpdateDialog
         open={pendingUpdate !== null}
         version={pendingUpdate?.version ?? ''}

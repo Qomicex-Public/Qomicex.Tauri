@@ -22,6 +22,7 @@ export interface RunningContextValue {
   setNotifyImpl: (fn: (msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void) => void
   crashDialogState: CrashDialogState | null
   clearCrashDialog: () => void
+  showLaunchError: (title: string, message: string, detail?: string | null, args?: string | null) => void
 }
 
 const RunningCtx = createContext<RunningContextValue | null>(null)
@@ -45,6 +46,18 @@ export function RunningProvider({ children }: { children: ReactNode }) {
 
   const clearCrashDialog = useCallback(() => setCrashDialogState(null), [])
 
+  const showLaunchError = useCallback((title: string, message: string, detail?: string | null, args?: string | null) => {
+    setCrashDialogState({
+      instanceId: '',
+      title,
+      message,
+      detail: detail || null,
+      crashReport: null,
+      args: args || null,
+      loading: false,
+    })
+  }, [])
+
   const clearInstancePoll = useCallback((id: string) => {
     const ref = pollRefs.current.get(id)
     if (ref) { clearTimeout(ref); pollRefs.current.delete(id) }
@@ -52,7 +65,18 @@ export function RunningProvider({ children }: { children: ReactNode }) {
 
   const launchInstance = useCallback(async (id: string, name: string): Promise<LaunchResult> => {
     const result = await apiLaunchInstance(id)
-    if (!result.success) return result
+    if (!result.success) {
+      setCrashDialogState({
+        instanceId: id,
+        title: '启动失败',
+        message: result.error || '未知错误',
+        detail: result.detail || null,
+        crashReport: null,
+        args: result.arguments || null,
+        loading: false,
+      })
+      return result
+    }
 
     launchingIdRef.current = id
     setLaunchingInstanceId(id)
@@ -140,7 +164,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   }, [clearInstancePoll])
 
   return (
-    <RunningCtx.Provider value={{ runningInstances, launchProgress, launchingInstanceId, launchInstance, cancelLaunch, killInstance, setNotifyImpl, crashDialogState, clearCrashDialog }}>
+    <RunningCtx.Provider value={{ runningInstances, launchProgress, launchingInstanceId, launchInstance, cancelLaunch, killInstance, setNotifyImpl, crashDialogState, clearCrashDialog, showLaunchError }}>
       {children}
     </RunningCtx.Provider>
   )

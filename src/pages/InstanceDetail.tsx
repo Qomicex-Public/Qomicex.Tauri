@@ -22,7 +22,6 @@ import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
-import { CrashAnalysisDialog } from '../components/CrashAnalysisDialog.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
@@ -1531,8 +1530,7 @@ export default function InstanceDetailPage() {
 
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
-  const [launchError, setLaunchError] = useState<{ title: string; message: string; detail?: string | null; args?: string | null } | null>(null)
-  const { launchInstance: ctxLaunchInstance, crashDialogState, clearCrashDialog } = useRunning()
+  const { launchInstance: ctxLaunchInstance, showLaunchError } = useRunning()
 
   const handleLaunch = useCallback(async () => {
     if (!id) return
@@ -1541,15 +1539,7 @@ export default function InstanceDetailPage() {
       if (!ok) return
     }
     try {
-      const result = await ctxLaunchInstance(id, instance?.name || id)
-      if (!result.success) {
-        setLaunchError({
-          title: '启动失败',
-          message: result.error || '未知错误',
-          detail: result.detail,
-          args: result.arguments,
-        })
-      }
+      await ctxLaunchInstance(id, instance?.name || id)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const code = e instanceof ApiError ? e.code : ''
@@ -1557,7 +1547,7 @@ export default function InstanceDetailPage() {
         setShowMicrosoftReauth(true)
         return
       }
-      setLaunchError({ title: '启动失败', message: e instanceof Error ? e.message : String(e) })
+      showLaunchError('启动失败', e instanceof Error ? e.message : String(e))
     }
   }, [id, instance?.name, needsAccount, resolveAccountCheck, ctxLaunchInstance])
 
@@ -1999,21 +1989,6 @@ export default function InstanceDetailPage() {
           {tab === 'gamesettings' && <GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} />}
         </div>
       </div>
-      <CrashAnalysisDialog
-        open={!!launchError || !!crashDialogState}
-        title={crashDialogState?.title || launchError?.title || ''}
-        message={crashDialogState?.message || launchError?.message || ''}
-        detail={crashDialogState?.detail || launchError?.detail}
-        args={crashDialogState?.args || launchError?.args}
-        crashReport={crashDialogState?.crashReport}
-        analysis={crashDialogState?.analysis}
-        analysisLoading={crashDialogState?.loading}
-        error={crashDialogState?.error}
-        mcloGsUrl={crashDialogState?.mcloGsUrl}
-        qrCodeBase64={crashDialogState?.qrCodeBase64}
-        instanceId={crashDialogState?.instanceId || id}
-        onClose={() => { setLaunchError(null); clearCrashDialog() }}
-      />
       <AccountSelectDialog
         open={showSelectAccount}
         onClose={handleCancelSelect}
