@@ -142,6 +142,25 @@ export interface LogAnalysisResult {
   errorMessage: string | null
 }
 
+export interface CrashAnalysisResult {
+  analysis: LogAnalysisResult
+  mcloGsUrl: string | null
+  qrCodeBase64: string | null
+}
+
+export interface CrashDialogState {
+  instanceId: string
+  title: string
+  message: string
+  detail?: string | null
+  crashReport?: string | null
+  analysis?: LogAnalysisResult | null
+  mcloGsUrl?: string
+  qrCodeBase64?: string
+  loading: boolean
+  error?: string
+}
+
 export interface ConnectorPlayer {
   name: string
   vendor: string
