@@ -1,5 +1,5 @@
 using System.Net.Http.Json;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using QRCoder;
 using SkiaSharp;
 
@@ -21,16 +21,14 @@ public class CrashUploadService
         try
         {
             var client = _httpClientFactory.CreateClient();
-            var payload = new
+            using var form = new FormUrlEncodedContent(new[]
             {
-                content,
-                source = "Qomicex-Launcher",
-                metadata = new { launcher_version = "1.0.0", visible = true }
-            };
-            var response = await client.PostAsJsonAsync("https://api.mclo.gs/1/log", payload);
+                new KeyValuePair<string, string>("content", content)
+            });
+            var response = await client.PostAsync("https://api.mclo.gs/1/log", form);
             response.EnsureSuccessStatusCode();
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-            var url = json.TryGetProperty("url", out var u) ? u.GetString() : null;
+            var json = await response.Content.ReadFromJsonAsync<JsonNode>();
+            var url = json?["url"]?.GetValue<string>();
             if (string.IsNullOrEmpty(url)) return (null, null);
             var qrBytes = CreateQrCode(url);
             return (url, qrBytes);

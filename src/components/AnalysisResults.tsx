@@ -1,6 +1,6 @@
-import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
-import { Badge } from '../components/ui/badge.tsx'
-import { Separator } from '../components/ui/separator.tsx'
+import { Card, CardHeader, CardTitle, CardContent } from './ui/card.tsx'
+import { Badge } from './ui/badge.tsx'
+import { Separator } from './ui/separator.tsx'
 import type { LogAnalysisResult } from '../types/index.ts'
 
 const severityColor: Record<string, string> = {
@@ -47,7 +47,11 @@ export function AnalysisResults({ result }: { result: LogAnalysisResult }) {
           </div>
         )}
 
-        {result.issues.length === 0 && (
+        {result.errorMessage && (
+          <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{result.errorMessage}</p>
+        )}
+
+        {result.issues.length === 0 && !result.errorMessage && (
           <p className="py-2 text-sm text-muted-foreground">未发现明显问题</p>
         )}
 

@@ -76,6 +76,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
             message: crashMessage,
             detail: p.error || null,
             crashReport: p.crashReport || null,
+            args: p.arguments || null,
             loading: true,
           })
           analyzeCrash(id)

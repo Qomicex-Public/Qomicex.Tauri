@@ -154,6 +154,7 @@ export interface CrashDialogState {
   message: string
   detail?: string | null
   crashReport?: string | null
+  args?: string | null
   analysis?: LogAnalysisResult | null
   mcloGsUrl?: string | null
   qrCodeBase64?: string | null

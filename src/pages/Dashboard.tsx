@@ -248,8 +248,11 @@ export default function Dashboard() {
         title={crashDialogState?.title || launchError?.title || ''}
         message={crashDialogState?.message || launchError?.message || ''}
         detail={crashDialogState?.detail || launchError?.detail}
+        args={crashDialogState?.args || launchError?.args}
         crashReport={crashDialogState?.crashReport}
         analysis={crashDialogState?.analysis}
+        analysisLoading={crashDialogState?.loading}
+        error={crashDialogState?.error}
         mcloGsUrl={crashDialogState?.mcloGsUrl}
         qrCodeBase64={crashDialogState?.qrCodeBase64}
         instanceId={crashDialogState?.instanceId || defaultInstance?.id}

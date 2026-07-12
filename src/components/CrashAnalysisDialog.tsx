@@ -9,16 +9,19 @@ import { exportDiagnostics } from '../api/instance.ts'
 import { AnalysisResults } from './AnalysisResults.tsx'
 import type { LogAnalysisResult } from '../types/index.ts'
 
-export function CrashAnalysisDialog({ open, instanceId, title, message, detail, crashReport, analysis, mcloGsUrl, qrCodeBase64, onClose }: {
+export function CrashAnalysisDialog({ open, instanceId, title, message, detail, crashReport, args, analysis, analysisLoading, mcloGsUrl, qrCodeBase64, error, onClose }: {
   open: boolean
   instanceId?: string
   title: string
   message: string
   detail?: string | null
   crashReport?: string | null
+  args?: string | null
   analysis?: LogAnalysisResult | null
+  analysisLoading?: boolean
   mcloGsUrl?: string | null
   qrCodeBase64?: string | null
+  error?: string | null
   onClose: () => void
 }) {
   const [exporting, setExporting] = useState(false)
@@ -29,7 +32,7 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
   const logId = mcloGsUrl ? new URL(mcloGsUrl).pathname.replace(/^\//, '') : null
 
   const copyAll = () => {
-    const text = [title, message, detail && `详情:\n${detail}`, crashReport && `崩溃报告:\n${crashReport}`, mcloGsUrl && `日志链接: ${mcloGsUrl}`].filter(Boolean).join('\n\n')
+    const text = [title, message, detail && `详情:\n${detail}`, args && `启动参数:\n${args}`, crashReport && `崩溃报告:\n${crashReport}`, mcloGsUrl && `日志链接: ${mcloGsUrl}`].filter(Boolean).join('\n\n')
     navigator.clipboard.writeText(text)
   }
 
@@ -115,12 +118,25 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
 
           {collapsibleSection('崩溃报告', crashReport)}
 
-          {collapsibleSection('完整原始日志', crashReport)}
+          {collapsibleSection('启动参数', args)}
 
-          {(analysis || detail) && (
+          {analysisLoading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+              <FontAwesomeIcon icon={faSpinner} className="h-3 w-3 animate-spin" />
+              正在分析崩溃报告...
+            </div>
+          )}
+
+          {!analysis && !analysisLoading && error && (
+            <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
+          )}
+
+          {(analysis || analysisLoading || detail) && (
             <>
               <Separator />
-              {analysis ? (
+              {analysisLoading ? (
+                <p className="text-sm text-muted-foreground">暂无分析结果</p>
+              ) : analysis ? (
                 <AnalysisResults result={analysis} />
               ) : (
                 <p className="text-sm text-muted-foreground">暂无分析结果</p>
