@@ -22,14 +22,16 @@ export function previewLog(path: string): Promise<PreviewResult> {
   return get<PreviewResult>(`/logs/preview?path=${encodeURIComponent(path)}`)
 }
 
-export async function exportLog(path: string): Promise<Blob> {
-  const res = await fetch(`${API_BASE}/logs/export`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  })
-  if (!res.ok) throw new Error()
-  return res.blob()
+export function getExportUrl(path: string): string {
+  return `${API_BASE}/logs/export?path=${btoa(path)}`
+}
+
+export function exportLogTo(path: string, dest: string): Promise<{ path: string }> {
+  return post('/logs/export-to', { path, dest })
+}
+
+export function exportAllLogsTo(dest: string): Promise<{ path: string }> {
+  return post('/logs/export-all-to', { dest })
 }
 
 export function getExportAllUrl(): string {

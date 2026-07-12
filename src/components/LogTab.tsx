@@ -10,9 +10,10 @@ import { Badge } from './ui/badge.tsx'
 import { cn } from '../lib/utils.ts'
 import { useMessageBox } from './ui/message-box.tsx'
 import {
-  listLogs, previewLog, exportLog, getExportAllUrl, deleteLog, openLog, openLogDir,
+  listLogs, previewLog, getExportUrl, getExportAllUrl, exportLogTo, exportAllLogsTo, deleteLog, openLog, openLogDir,
 } from '../api/logs.ts'
 import type { LogEntry, PreviewResult } from '../api/logs.ts'
+import { save } from '@tauri-apps/plugin-dialog'
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -74,28 +75,30 @@ export default function LogTab() {
 
   const handleExport = async (entry: LogEntry) => {
     try {
-      const blob = await exportLog(entry.path)
-      const url = URL.createObjectURL(blob)
+      const dest = await save({ defaultPath: `${entry.name}.gz`, filters: [{ name: 'GZip', extensions: ['gz'] }] })
+      if (!dest) return
+      await exportLogTo(entry.path, dest)
+      notify(`已导出到 ${dest}`, 'success')
+    } catch {
       const a = document.createElement('a')
-      a.href = url
-      a.download = `${entry.name}.gz`
+      a.href = getExportUrl(entry.path)
       a.click()
-      URL.revokeObjectURL(url)
-    } catch { notify('导出失败', 'error') }
+      notify('已开始下载', 'success')
+    }
   }
 
   const handleExportAll = async () => {
     try {
-      const res = await fetch(getExportAllUrl())
-      if (!res.ok) throw new Error()
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
+      const dest = await save({ defaultPath: `logs-${Date.now()}.zip`, filters: [{ name: 'Zip', extensions: ['zip'] }] })
+      if (!dest) return
+      await exportAllLogsTo(dest)
+      notify(`已导出到 ${dest}`, 'success')
+    } catch {
       const a = document.createElement('a')
-      a.href = url
-      a.download = `logs-${Date.now()}.zip`
+      a.href = getExportAllUrl()
       a.click()
-      URL.revokeObjectURL(url)
-    } catch { notify('导出失败', 'error') }
+      notify('已开始下载', 'success')
+    }
   }
 
   const handleDelete = async (entry: LogEntry) => {
