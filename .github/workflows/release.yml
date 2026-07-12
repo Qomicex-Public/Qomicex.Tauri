@@ -124,31 +124,8 @@ jobs:
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-      - name: Package runtime.zip for Launcher
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $releaseDir = Resolve-Path "src-tauri/target/release"
-          $pkgDir = "$releaseDir/runtime-pkg"
-          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
-          $exe = Get-ChildItem "$releaseDir/*.exe" -Name | Where-Object { $_ -notmatch 'portable|backend' } | Select-Object -First 1
-          if (-not $exe) { throw "No app exe found in $releaseDir" }
-          Copy-Item "$releaseDir/$exe" "$pkgDir/qomicex-launcher.exe"
-          Get-ChildItem "$releaseDir/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $pkgDir
-          if (Test-Path "$releaseDir/resources") { Copy-Item -Recurse "$releaseDir/resources" "$pkgDir/resources" }
-          Copy-Item "src-tauri/binaries/backend.exe" "$pkgDir/backend.exe"
-          Compress-Archive -Path "$pkgDir/*" -DestinationPath "src-backend/Qomicex.Launcher/Resources/runtime.zip" -Force
-          Remove-Item -Recurse -Force $pkgDir
-      - name: Publish Launcher
-        run: dotnet publish src-backend/Qomicex.Launcher --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=embedded "-p:InformationalVersion=${{ github.event.inputs.version }}" -o src-tauri/target/release/launcher-out
-      - run: |
-          Move-Item -Force src-tauri/target/release/launcher-out/Qomicex.Launcher.exe src-tauri/target/release/Qomicex.Launcher.exe
-          Remove-Item -Recurse -Force src-tauri/target/release/launcher-out
-        shell: pwsh
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
-      - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-windows-x64-portable, path: src-tauri/target/release/Qomicex.Launcher.exe }
 
   windows-arm64:
     if: ${{ (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') && (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'arm64') }}
@@ -195,31 +172,8 @@ jobs:
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-      - name: Package runtime.zip for Launcher
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $releaseDir = Resolve-Path "src-tauri/target/aarch64-pc-windows-msvc/release"
-          $pkgDir = "$releaseDir/runtime-pkg"
-          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
-          $exe = Get-ChildItem "$releaseDir/*.exe" -Name | Where-Object { $_ -notmatch 'portable|backend' } | Select-Object -First 1
-          if (-not $exe) { throw "No app exe found in $releaseDir" }
-          Copy-Item "$releaseDir/$exe" "$pkgDir/qomicex-launcher.exe"
-          Get-ChildItem "$releaseDir/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $pkgDir
-          if (Test-Path "$releaseDir/resources") { Copy-Item -Recurse "$releaseDir/resources" "$pkgDir/resources" }
-          Copy-Item "src-tauri/binaries/backend.exe" "$pkgDir/backend.exe"
-          Compress-Archive -Path "$pkgDir/*" -DestinationPath "src-backend/Qomicex.Launcher/Resources/runtime.zip" -Force
-          Remove-Item -Recurse -Force $pkgDir
-      - name: Publish Launcher
-        run: dotnet publish src-backend/Qomicex.Launcher --runtime win-arm64 --self-contained true -p:PublishSingleFile=true -p:DebugType=embedded "-p:InformationalVersion=${{ github.event.inputs.version }}" -o src-tauri/target/aarch64-pc-windows-msvc/release/launcher-out
-      - run: |
-          Move-Item -Force src-tauri/target/aarch64-pc-windows-msvc/release/launcher-out/Qomicex.Launcher.exe src-tauri/target/aarch64-pc-windows-msvc/release/Qomicex.Launcher.exe
-          Remove-Item -Recurse -Force src-tauri/target/aarch64-pc-windows-msvc/release/launcher-out
-        shell: pwsh
       - uses: actions/upload-artifact@v4
         with: { name: qomicex-launcher-windows-arm64, path: src-tauri/target/aarch64-pc-windows-msvc/release/bundle/ }
-      - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-windows-arm64-portable, path: src-tauri/target/aarch64-pc-windows-msvc/release/Qomicex.Launcher.exe }
 
   linux-x64:
     if: ${{ (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') && (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'x64') }}
