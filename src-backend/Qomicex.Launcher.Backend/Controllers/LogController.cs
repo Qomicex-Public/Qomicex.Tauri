@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Models;
 
@@ -127,6 +128,46 @@ public class LogController : ControllerBase
         catch
         {
             return BadRequest(new { message = "无法删除文件" });
+        }
+    }
+
+    [HttpPost("open")]
+    public IActionResult Open([FromBody] JsonElement body)
+    {
+        var path = body.GetProperty("path").GetString();
+        if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
+            return NotFound();
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to open file: {Path}", path);
+            return BadRequest(new { message = "无法打开文件" });
+        }
+    }
+
+    [HttpPost("open-dir")]
+    public IActionResult OpenDir([FromBody] JsonElement body)
+    {
+        var path = body.GetProperty("path").GetString();
+        if (string.IsNullOrEmpty(path)) return NotFound();
+        try
+        {
+            var dir = System.IO.File.Exists(path)
+                ? Path.GetDirectoryName(path)
+                : path;
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+                return NotFound();
+            Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true });
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to open directory: {Path}", path);
+            return BadRequest(new { message = "无法打开目录" });
         }
     }
 }

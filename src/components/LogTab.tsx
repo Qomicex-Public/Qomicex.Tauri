@@ -10,10 +10,9 @@ import { Badge } from './ui/badge.tsx'
 import { cn } from '../lib/utils.ts'
 import { useMessageBox } from './ui/message-box.tsx'
 import {
-  listLogs, previewLog, getExportUrl, getExportAllUrl, deleteLog,
+  listLogs, previewLog, getExportUrl, getExportAllUrl, deleteLog, openLog, openLogDir,
 } from '../api/logs.ts'
 import type { LogEntry, PreviewResult } from '../api/logs.ts'
-import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -101,10 +100,7 @@ export default function LogTab() {
   }
 
   const handleOpenDir = (entry: LogEntry) => {
-    revealItemInDir(entry.path).catch(() => {
-      const dir = entry.path.replace(/[/\\][^/\\]+$/, '')
-      openPath(dir).catch(() => {})
-    })
+    openLogDir(entry.path).catch(() => notify('无法打开目录', 'error'))
   }
 
   const handleContextMenu = (e: React.MouseEvent, entry: LogEntry) => {
@@ -164,7 +160,7 @@ export default function LogTab() {
                   </div>
                   <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <button
-                      onClick={() => openPath(entry.path).catch(() => {})}
+                      onClick={() => openLog(entry.path).catch(() => notify('无法打开文件', 'error'))}
                       className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                       title="打开"
                     >
@@ -224,7 +220,7 @@ export default function LogTab() {
           onClick={() => setContextMenu(null)}
         >
           <button
-            onClick={() => { openPath(contextMenu.entry.path).catch(() => {}); setContextMenu(null) }}
+            onClick={() => { openLog(contextMenu.entry.path).catch(() => {}); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
             <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />打开

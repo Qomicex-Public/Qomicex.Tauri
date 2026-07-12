@@ -1,4 +1,4 @@
-import { get, del, API_BASE } from './client.ts'
+import { get, del, post, API_BASE } from './client.ts'
 
 export interface LogEntry {
   path: string
@@ -32,4 +32,12 @@ export function getExportAllUrl(): string {
 
 export function deleteLog(path: string): Promise<void> {
   return del(`/logs?path=${encodeURIComponent(path)}`)
+}
+
+export function openLog(path: string): Promise<void> {
+  return post('/logs/open', { path })
+}
+
+export function openLogDir(path: string): Promise<void> {
+  return post('/logs/open-dir', { path })
 }
