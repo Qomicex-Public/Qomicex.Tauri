@@ -658,16 +658,27 @@ public class ResourcesController : ControllerBase
     {
         if (depth > 8 || !visited.Add(modId)) return;
 
-        // 根层：用 GetFileInfo 获取文件依赖列表
+        // 根层：获取文件依赖列表（使用 _curseforge HttpClient，与子层一致）
         if (fileId != null)
         {
             try
             {
-                var fileInfo = await _cfMods.GetFileInfo(modId, fileId);
-                var depTasks = fileInfo.Dependencies
-                    .Where(d => d.Type == 1)
-                    .Select(d => ResolveCurseForgeDependencies(d.Id.ToString(), null, gameVersion, loader, visited, result, depth + 1));
-                await Task.WhenAll(depTasks);
+                var req = new HttpRequestMessage(HttpMethod.Get,
+                    ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(modId)}/files/{Uri.EscapeDataString(fileId)}"));
+                req.Headers.Add("x-api-key", _cfApiKey);
+                var resp = await _curseforge.SendAsync(req);
+                resp.EnsureSuccessStatusCode();
+                var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
+                var data = json?["data"];
+                if (data != null && data["dependencies"] is JsonArray depArr)
+                {
+                    var depTasks = depArr
+                        .Where(d => d?["relationType"]?.GetValue<int>() == 1)
+                        .Select(d => ResolveCurseForgeDependencies(
+                            d!["modId"]?.GetValue<int>().ToString() ?? "",
+                            null, gameVersion, loader, visited, result, depth + 1));
+                    await Task.WhenAll(depTasks);
+                }
             }
             catch { /* skip if file info fails */ }
             return;
