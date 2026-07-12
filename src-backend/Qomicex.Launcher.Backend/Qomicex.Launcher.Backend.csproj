@@ -29,6 +29,8 @@
     <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
     <PackageReference Include="SharpCompress" Version="0.39.0" NoWarn="NU1902" />
     <PackageReference Include="System.Management" Version="10.0.0" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+    <PackageReference Include="SkiaSharp" Version="3.116.1" />
   </ItemGroup>
 
   <ItemGroup>
