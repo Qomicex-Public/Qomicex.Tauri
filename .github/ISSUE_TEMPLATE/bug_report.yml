@@ -42,8 +42,7 @@ body:
       description: |
         **导出方式 | Export Method：**
         在问题发生后立即使用 `设置 → 日志 → 找到对应日志 → 导出日志` 并上传导出的压缩包。
-
-  placeholder: |
+      placeholder: |
         📤 先点击此文本框，再将文件拖拽到此处以上传 | Click this text box first, then drag and drop files here.
         
         📷 如有相关截图或文件，也请一并上传 | Please also upload any relevant screenshots or files.
