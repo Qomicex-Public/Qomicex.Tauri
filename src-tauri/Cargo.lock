@@ -2741,6 +2741,7 @@ name = "qomicex-launcher"
 version = "0.1.1"
 dependencies = [
  "rfd",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

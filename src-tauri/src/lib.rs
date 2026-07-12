@@ -1,8 +1,9 @@
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
 use tauri::Manager;
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{RemoteRelease, UpdaterExt};
 use url::Url;
+use semver::Version;
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 
 mod dialog_cmd;
@@ -133,16 +134,50 @@ struct UpdateInfo {
     raw_json: serde_json::Value,
 }
 
+fn transform_version(v: &str) -> String {
+    v.replace("alpha", "0")
+        .replace("beta", "1")
+        .replace("release", "2")
+        .split(".build")
+        .next()
+        .unwrap_or(v)
+        .to_string()
+}
+
+fn current_os_arch() -> String {
+    let os = if cfg!(target_os = "linux") { "linux" }
+    else if cfg!(target_os = "macos") { "darwin" }
+    else { "windows" };
+    let arch = if cfg!(target_arch = "x86_64") { "x86_64" }
+    else if cfg!(target_arch = "aarch64") { "aarch64" }
+    else if cfg!(target_arch = "x86") { "i686" }
+    else { "x86_64" };
+    format!("{os}-{arch}")
+}
+
 #[tauri::command]
 async fn check_update_with_endpoint<R: tauri::Runtime>(
     webview: tauri::Webview<R>,
     endpoint: String,
 ) -> Result<Option<UpdateInfo>, String> {
     let url = Url::parse(&endpoint).map_err(|e| e.to_string())?;
+    let target = current_os_arch();
+
+    let version_comparator = move |current: Version, release: RemoteRelease| {
+        let cur = transform_version(&current.to_string());
+        let rel = transform_version(&release.version.to_string());
+        match (Version::parse(&cur), Version::parse(&rel)) {
+            (Ok(c), Ok(r)) => r > c,
+            _ => false,
+        }
+    };
+
     let updater = webview
         .updater_builder()
         .endpoints(vec![url])
         .map_err(|e| e.to_string())?
+        .target(target)
+        .version_comparator(version_comparator)
         .build()
         .map_err(|e| e.to_string())?;
     let update = updater.check().await.map_err(|e| e.to_string())?;
