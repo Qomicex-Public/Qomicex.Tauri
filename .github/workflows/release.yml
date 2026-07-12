@@ -554,3 +554,6 @@ jobs:
           allowUpdates: true
           prerelease: ${{ github.event.release.prerelease || (github.event.inputs.prerelease == 'true') || false }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger website rebuild
+        run: curl -X POST ${{ secrets.VERCEL_DEPLOY_HOOK }}
