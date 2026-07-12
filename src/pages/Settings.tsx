@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
@@ -14,6 +14,7 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Checkbox } from '../components/ui/checkbox.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import DebugTab from '../components/DebugTab.tsx'
+import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
@@ -44,6 +45,7 @@ const CATEGORIES = [
   { id: 'appearance', label: '外观', icon: faPalette },
   { id: 'toolbox', label: '工具箱', icon: faDownload },
   { id: 'about', label: '关于', icon: faInfoCircle },
+  { id: 'logs', label: '日志', icon: faFileLines },
   { id: 'debug', label: '调试', icon: faBug },
 ]
 
@@ -1471,6 +1473,8 @@ export default function Settings() {
           {category === 'about' && (
             <AboutTab sysInfo={sysInfo} />
           )}
+
+          {category === 'logs' && <LogTab />}
 
           {category === 'debug' && <DebugTab />}
 
