@@ -925,8 +925,44 @@ public class InstanceController : ControllerBase
 
                     // Collect crash diagnostics
                     var diagnostics = new List<string>();
+                    var cutoff = DateTime.UtcNow.AddMinutes(-5);
 
-                    // Check crash-reports (Minecraft)
+                    // Helper: read recent file with line-based truncation
+                    string? ReadRecentFile(string path, int maxLines, string label)
+                    {
+                        if (!System.IO.File.Exists(path)) return null;
+                        try
+                        {
+                            var lastWrite = System.IO.File.GetLastWriteTimeUtc(path);
+                            if (lastWrite < cutoff) return null;
+                            var lines = System.IO.File.ReadAllLines(path);
+                            var content = lines.Length <= maxLines
+                                ? string.Join(Environment.NewLine, lines)
+                                : string.Join(Environment.NewLine, lines[^maxLines..]);
+                            return string.IsNullOrWhiteSpace(content) ? null : $"=== {label} ===" + Environment.NewLine + content;
+                        }
+                        catch { return null; }
+                    }
+
+                    // Helper: read recent file with head+tail truncation
+                    string? ReadRecentFileHeadTail(string path, int headLines, int tailLines, string label)
+                    {
+                        if (!System.IO.File.Exists(path)) return null;
+                        try
+                        {
+                            var lastWrite = System.IO.File.GetLastWriteTimeUtc(path);
+                            if (lastWrite < cutoff) return null;
+                            var allLines = System.IO.File.ReadAllLines(path);
+                            if (allLines.Length <= headLines + tailLines)
+                                return $"=== {label} ===" + Environment.NewLine + string.Join(Environment.NewLine, allLines);
+                            var head = string.Join(Environment.NewLine, allLines.Take(headLines));
+                            var tail = string.Join(Environment.NewLine, allLines[^tailLines..]);
+                            return $"=== {label} ===" + Environment.NewLine + head + Environment.NewLine + $"... (中间省略 {allLines.Length - headLines - tailLines} 行) ..." + Environment.NewLine + tail;
+                        }
+                        catch { return null; }
+                    }
+
+                    // 1. Minecraft crash-reports (head 300 + tail 700)
                     var crashDir = effectiveIsolation
                         ? Path.Combine(instance.GameDir, "versions", instance.Name, "crash-reports")
                         : Path.Combine(instance.GameDir, "crash-reports");
@@ -937,13 +973,12 @@ public class InstanceController : ControllerBase
                             .FirstOrDefault();
                         if (latest != null)
                         {
-                            var content = System.IO.File.ReadAllText(latest);
-                            diagnostics.Add("=== Crash Report ===");
-                            diagnostics.Add(content.Length > 5000 ? content[..5000] + "..." : content);
+                            var entry = ReadRecentFileHeadTail(latest, 300, 700, "Minecraft Crash Report");
+                            if (entry != null) diagnostics.Add(entry);
                         }
                     }
 
-                    // Check JVM hs_err crash logs
+                    // 2. JVM hs_err crash logs (head 200 + tail 100)
                     var hsErrDir = instance.GameDir;
                     for (var d = hsErrDir; d != null && Directory.Exists(d); d = Path.GetDirectoryName(d))
                     {
@@ -954,20 +989,39 @@ public class InstanceController : ControllerBase
                         if (hsErrFiles.Length > 0)
                         {
                             foreach (var hf in hsErrFiles)
-                                diagnostics.Add($"=== {Path.GetFileName(hf)} ===" + Environment.NewLine + (System.IO.File.ReadAllText(hf).Length > 3000 ? System.IO.File.ReadAllText(hf)[..3000] + "..." : System.IO.File.ReadAllText(hf)));
+                            {
+                                var entry = ReadRecentFileHeadTail(hf, 200, 100, Path.GetFileName(hf));
+                                if (entry != null) diagnostics.Add(entry);
+                            }
                             break;
                         }
                     }
 
-                    // Attach stderr if no crash report found
-                    if (diagnostics.Count == 0 && System.IO.File.Exists(stderrPath))
+                    // 3. Minecraft latest.log (last 200 lines)
+                    var mcLogDir = Path.Combine(instance.GameDir, "logs");
+                    if (System.IO.Directory.Exists(mcLogDir))
                     {
-                        var stderrContent = System.IO.File.ReadAllText(stderrPath);
-                        if (!string.IsNullOrWhiteSpace(stderrContent))
-                        {
-                            diagnostics.Add("=== stderr ===");
-                            diagnostics.Add(stderrContent.Length > 3000 ? stderrContent[..3000] + "..." : stderrContent);
-                        }
+                        var latestLog = Path.Combine(mcLogDir, "latest.log");
+                        var entry = ReadRecentFile(latestLog, 200, "latest.log");
+                        if (entry != null) diagnostics.Add(entry);
+
+                        var debugLog = Path.Combine(mcLogDir, "debug.log");
+                        entry = ReadRecentFile(debugLog, 200, "debug.log");
+                        if (entry != null) diagnostics.Add(entry);
+                    }
+
+                    // 4. stderr (always include)
+                    if (System.IO.File.Exists(stderrPath))
+                    {
+                        var entry = ReadRecentFile(stderrPath, 300, "启动器输出");
+                        if (entry != null) diagnostics.Add(entry);
+                    }
+
+                    // 5. stdout (always include)
+                    if (System.IO.File.Exists(stdoutPath))
+                    {
+                        var entry = ReadRecentFile(stdoutPath, 100, "启动器标准输出");
+                        if (entry != null) diagnostics.Add(entry);
                     }
 
                     state.CrashReport = diagnostics.Count > 0 ? string.Join(Environment.NewLine + Environment.NewLine, diagnostics) : null;
