@@ -122,6 +122,7 @@ export type IssueCategory =
 export type IssueSeverity = 'Critical' | 'Error' | 'Warning' | 'Info'
 
 export interface DetectedIssue {
+  name: string
   patternId: string
   category: IssueCategory
   severity: IssueSeverity

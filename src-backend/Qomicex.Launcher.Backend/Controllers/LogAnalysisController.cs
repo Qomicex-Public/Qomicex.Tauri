@@ -87,15 +87,16 @@ public class LogAnalysisController : ControllerBase
             loadedMods = result.LoadedMods.Select(m => m.Id).ToArray(),
             stackTrace = result.StackTrace.Count > 0 ? string.Join("\n", result.StackTrace) : null as string,
             rawLogExcerpt = result.RawLogExcerpt,
-            issues = result.Issues.Select(i => new
-            {
-                patternId = i.PatternId,
-                category = i.Category.ToString(),
-                severity = i.Severity.ToString(),
-                lineNumber = i.LineNumber,
-                matchedText = i.MatchedText,
-                capturedGroups = i.CapturedGroups,
-                solutions = i.Solutions.Select(s => new
+issues = result.Issues.Select(i => new
+{
+    name = i.Name,
+    patternId = i.PatternId,
+    category = i.Category.ToString(),
+    severity = i.Severity.ToString(),
+    lineNumber = i.LineNumber,
+    matchedText = i.MatchedText,
+    capturedGroups = i.CapturedGroups,
+    solutions = i.Solutions.Select(s => new
                 {
                     title = s.Description.Length > 30 ? s.Description[..30] + "..." : s.Description,
                     description = s.Description,

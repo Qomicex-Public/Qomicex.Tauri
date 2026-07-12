@@ -64,7 +64,10 @@ export function AnalysisResults({ result }: { result: LogAnalysisResult }) {
               <span className="text-xs font-medium text-muted-foreground">{categoryLabel[issue.category] || issue.category}</span>
               <span className="text-[11px] text-muted-foreground/50">L{issue.lineNumber}</span>
             </div>
-            <p className="font-mono text-xs leading-relaxed">{issue.matchedText}</p>
+            {issue.name && (
+              <p className="mb-0.5 text-sm font-semibold text-foreground">{issue.name}</p>
+            )}
+            <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">{issue.matchedText}</p>
             {issue.solutions.length > 0 && (
               <details className="mt-2">
                 <summary className="cursor-pointer text-xs font-medium text-primary">建议解决方案</summary>

@@ -20,9 +20,10 @@ const stageLabels: Record<string, string> = {
 }
 
 export default function LaunchProgressDialog() {
-  const { launchProgress, cancelLaunch } = useRunning()
+  const { launchProgress, crashDialogState, cancelLaunch } = useRunning()
 
   if (!launchProgress) return null
+  if (crashDialogState) return null
 
   const isFinal = ['completed', 'crashed', 'failed'].includes(launchProgress.stage)
   const isError = ['crashed', 'failed'].includes(launchProgress.stage)
