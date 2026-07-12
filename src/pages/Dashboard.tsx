@@ -13,7 +13,7 @@ import { useRunning } from '../contexts/RunningContext.tsx'
 import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
-import { ErrorReportDialog } from '../components/ErrorReportDialog.tsx'
+import { CrashAnalysisDialog } from '../components/CrashAnalysisDialog.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
@@ -23,7 +23,7 @@ import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 export default function Dashboard() {
   const navigate = useNavigate()
   useMessageBox()
-  const { launchInstance } = useRunning()
+  const { launchInstance, crashDialogState, clearCrashDialog } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
   const [defaultInstance, setDefaultInstance] = useState<GameInstance | null>(null)
   const [launchError, setLaunchError] = useState<{ title: string; message: string; detail?: string | null; args?: string | null } | null>(null)
@@ -243,13 +243,20 @@ export default function Dashboard() {
         onAddAccount={handleAddAccount}
         onGoToAccounts={handleGoToAccounts}
       />
-      <ErrorReportDialog
-        open={!!launchError}
-        title={launchError?.title || ''}
-        message={launchError?.message || ''}
-        detail={launchError?.detail}
-        args={launchError?.args}
-        onClose={() => setLaunchError(null)}
+      <CrashAnalysisDialog
+        open={!!launchError || !!crashDialogState}
+        title={crashDialogState?.title || launchError?.title || ''}
+        message={crashDialogState?.message || launchError?.message || ''}
+        detail={crashDialogState?.detail || launchError?.detail}
+        args={crashDialogState?.args || launchError?.args}
+        crashReport={crashDialogState?.crashReport}
+        analysis={crashDialogState?.analysis}
+        analysisLoading={crashDialogState?.loading}
+        error={crashDialogState?.error}
+        mcloGsUrl={crashDialogState?.mcloGsUrl}
+        qrCodeBase64={crashDialogState?.qrCodeBase64}
+        instanceId={crashDialogState?.instanceId || defaultInstance?.id}
+        onClose={() => { setLaunchError(null); clearCrashDialog() }}
       />
       <MicrosoftReauthDialog
         open={showMicrosoftReauth}

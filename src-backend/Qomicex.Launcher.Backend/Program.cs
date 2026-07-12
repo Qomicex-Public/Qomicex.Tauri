@@ -83,6 +83,7 @@ builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.GamePr
 builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.EasyTierProvider>();
 builder.Services.AddSingleton<Qomicex.Launcher.Backend.Services.Connector.ConnectorService>();
 builder.Services.AddSingleton(_ => new AccountService(AppPaths.BaseDir));
+builder.Services.AddSingleton<CrashUploadService>();
 builder.Services.AddTransient<MsAccount>(_ => new MsAccount { ClientId = builder.Configuration["Microsoft:ClientId"] ?? string.Empty });
 
 builder.Services.AddCors(options =>
