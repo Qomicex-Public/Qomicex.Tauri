@@ -812,6 +812,7 @@ public class ResourcesController : ControllerBase
             DownloadUrl = primaryDownload.Url,
             FileName = primaryDownload.Filename ?? Path.GetFileName(primaryDownload.Url) ?? "unknown",
             Category = "mods",
+            Source = "curseforge",
         });
 
         // 递归解析子依赖
@@ -1264,6 +1265,7 @@ public class ResolvedDependency
     public string DownloadUrl { get; set; } = "";
     public string FileName { get; set; } = "";
     public string Category { get; set; } = "mods";
+    public string Source { get; set; } = "";
 }
 
 public class ModrinthFile

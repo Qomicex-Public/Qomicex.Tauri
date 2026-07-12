@@ -168,7 +168,7 @@ export default function ResourceInstallDialog({
     ;(async () => {
       const results = await Promise.allSettled(
         pending.map(dep =>
-          getResourceVersions(dep.projectId, 'modrinth', selectedInstance.gameVersion, (selectedInstance.loader || '').toLowerCase() || undefined)
+          getResourceVersions(dep.projectId, dep.source || 'modrinth', selectedInstance.gameVersion, (selectedInstance.loader || '').toLowerCase() || undefined)
             .then(vers => ({ projectId: dep.projectId, vers }))
         )
       )

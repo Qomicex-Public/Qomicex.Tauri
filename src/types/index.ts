@@ -559,6 +559,7 @@ export interface ResolvedDependency {
   downloadUrl: string
   fileName: string
   category: string
+  source: string
 }
 
 export interface GameSettingDto {
