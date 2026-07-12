@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faFileLines, faDownload, faTrashCan, faRotate, faEye,
-  faFolderOpen, faTimes,
+  faFileLines, faDownload, faTrashCan, faRotate,
+  faEye, faFolderOpen, faTimes,
 } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card.tsx'
 import { Button } from './ui/button.tsx'
@@ -13,7 +13,7 @@ import {
   listLogs, previewLog, getExportUrl, getExportAllUrl, deleteLog,
 } from '../api/logs.ts'
 import type { LogEntry, PreviewResult } from '../api/logs.ts'
-import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
+import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -40,8 +40,7 @@ export default function LogTab() {
   const fetchLogs = useCallback(async () => {
     setLoading(true)
     try {
-      const entries = await listLogs()
-      setLogs(entries)
+      setLogs(await listLogs())
     } catch {
       notify('加载日志列表失败', 'error')
     } finally {
@@ -49,9 +48,7 @@ export default function LogTab() {
     }
   }, [notify])
 
-  useEffect(() => {
-    fetchLogs()
-  }, [fetchLogs])
+  useEffect(() => { fetchLogs() }, [fetchLogs])
 
   useEffect(() => {
     const close = () => setContextMenu(null)
@@ -65,10 +62,10 @@ export default function LogTab() {
   }, [])
 
   const handlePreview = async (entry: LogEntry) => {
+    if (preview?.entry.path === entry.path) { setPreview(null); return }
     setPreviewLoading(true)
     try {
-      const result = await previewLog(entry.path)
-      setPreview({ entry, result })
+      setPreview({ entry, result: await previewLog(entry.path) })
     } catch {
       notify('预览失败', 'error')
     } finally {
@@ -77,17 +74,15 @@ export default function LogTab() {
   }
 
   const handleExport = (entry: LogEntry) => {
-    const url = getExportUrl(entry.path)
     const a = document.createElement('a')
-    a.href = url
+    a.href = getExportUrl(entry.path)
     a.download = ''
     a.click()
   }
 
   const handleExportAll = () => {
-    const url = getExportAllUrl()
     const a = document.createElement('a')
-    a.href = url
+    a.href = getExportAllUrl()
     a.download = ''
     a.click()
   }
@@ -105,10 +100,6 @@ export default function LogTab() {
     }
   }
 
-  const handleOpen = (entry: LogEntry) => {
-    openPath(entry.path).catch(() => {})
-  }
-
   const handleOpenDir = (entry: LogEntry) => {
     revealItemInDir(entry.path).catch(() => {
       const dir = entry.path.replace(/[/\\][^/\\]+$/, '')
@@ -122,7 +113,7 @@ export default function LogTab() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Card>
         <CardHeader>
           <CardTitle>
@@ -140,74 +131,91 @@ export default function LogTab() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-xs text-muted-foreground">
-                  <th className="px-4 py-2 text-left font-medium">文件名</th>
-                  <th className="px-4 py-2 text-right font-medium w-24">大小</th>
-                  <th className="px-4 py-2 text-right font-medium w-40">修改时间</th>
-                  <th className="px-4 py-2 text-center font-medium w-24">状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.length === 0 ? (
-                  <tr><td colSpan={4} className="px-4 py-12 text-center text-muted-foreground text-xs">暂无日志</td></tr>
-                ) : (
-                  logs.map((entry, i) => (
-                    <tr
-                      key={`${entry.path}-${i}`}
-                      onClick={() => handlePreview(entry)}
-                      onContextMenu={(e) => handleContextMenu(e, entry)}
-                      className={cn(
-                        'border-b border-border/50 cursor-pointer transition-colors hover:bg-accent/50',
-                        preview?.entry.path === entry.path && 'bg-accent'
+        <CardContent className="space-y-1">
+          {logs.length === 0 ? (
+            <p className="py-8 text-center text-xs text-muted-foreground">
+              {loading ? '加载中...' : '暂无日志'}
+            </p>
+          ) : (
+            logs.map((entry, i) => (
+              <div key={`${entry.path}-${i}`}>
+                <div
+                  onClick={() => handlePreview(entry)}
+                  onContextMenu={(e) => handleContextMenu(e, entry)}
+                  className={cn(
+                    'flex items-center gap-3 rounded-lg px-3 py-2.5 cursor-pointer transition-colors',
+                    'hover:bg-accent/50 border border-transparent',
+                    preview?.entry.path === entry.path
+                      ? 'border-primary/30 bg-accent'
+                      : 'border-border/40'
+                  )}
+                >
+                  <FontAwesomeIcon icon={faFileLines} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm truncate">{entry.name}</span>
+                      {entry.isCurrentSession && (
+                        <Badge variant="default" className="shrink-0 text-[10px] px-1.5 py-0">当前会话</Badge>
                       )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {formatSize(entry.size)} · {formatDate(entry.lastModified)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => openPath(entry.path).catch(() => {})}
+                      className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      title="打开"
                     >
-                      <td className="px-4 py-2.5 truncate max-w-md">{entry.name}</td>
-                      <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">{formatSize(entry.size)}</td>
-                      <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">{formatDate(entry.lastModified)}</td>
-                      <td className="px-4 py-2.5 text-center">
-                        {entry.isCurrentSession && (
-                          <Badge variant="default" className="text-[10px] px-1.5 py-0">当前会话</Badge>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                      <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleExport(entry)}
+                      className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      title="导出 (.gz)"
+                    >
+                      <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(entry)}
+                      className="rounded-md p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
+                      title="删除"
+                    >
+                      <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {preview?.entry.path === entry.path && (
+                  <div className="mx-2 mb-1 rounded-lg border border-border/50 overflow-hidden">
+                    <div className="flex items-center justify-between bg-muted/30 px-3 py-1.5">
+                      <span className="text-xs text-muted-foreground">
+                        <FontAwesomeIcon icon={faEye} className="mr-1.5 h-3 w-3" />
+                        预览 ({formatSize(preview.result.totalSize)}
+                        {preview.result.totalSize > 100_000 && `, 显示末尾 ${formatSize(preview.result.previewSize)}`})
+                      </span>
+                      <button
+                        onClick={() => setPreview(null)}
+                        className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <FontAwesomeIcon icon={faTimes} className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <pre className="max-h-60 overflow-y-auto p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+                      {previewLoading ? (
+                        <span className="text-muted-foreground">加载中...</span>
+                      ) : (
+                        preview.result.content || <span className="text-muted-foreground">（空）</span>
+                      )}
+                    </pre>
+                  </div>
                 )}
-              </tbody>
-            </table>
-          </div>
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
-
-      {preview && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">
-              <FontAwesomeIcon icon={faEye} className="mr-2 h-3 w-3" />
-              预览: {preview.entry.name}
-              <span className="ml-2 text-xs text-muted-foreground font-normal">
-                ({formatSize(preview.result.totalSize)}
-                {preview.result.totalSize > 100_000 && `, 显示末尾 ${formatSize(preview.result.previewSize)}`})
-              </span>
-            </CardTitle>
-            <Button size="sm" variant="ghost" onClick={() => setPreview(null)} className="h-7 w-7">
-              <FontAwesomeIcon icon={faTimes} className="h-3 w-3" />
-            </Button>
-          </CardHeader>
-          <CardContent className="p-0">
-            <pre className="max-h-96 overflow-y-auto bg-muted/30 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-              {previewLoading ? (
-                <span className="text-muted-foreground">加载中...</span>
-              ) : (
-                preview.result.content || <span className="text-muted-foreground">（空）</span>
-              )}
-            </pre>
-          </CardContent>
-        </Card>
-      )}
 
       {contextMenu && (
         <div
@@ -216,13 +224,7 @@ export default function LogTab() {
           onClick={() => setContextMenu(null)}
         >
           <button
-            onClick={() => { handleExport(contextMenu.entry); setContextMenu(null) }}
-            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
-          >
-            <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />导出 (.gz)
-          </button>
-          <button
-            onClick={() => { handleOpen(contextMenu.entry); setContextMenu(null) }}
+            onClick={() => { openPath(contextMenu.entry.path).catch(() => {}); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
             <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />打开
@@ -232,6 +234,12 @@ export default function LogTab() {
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
             <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开所在目录
+          </button>
+          <button
+            onClick={() => { handleExport(contextMenu.entry); setContextMenu(null) }}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
+          >
+            <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />导出 (.gz)
           </button>
           <div className="my-1 border-t border-border" />
           <button

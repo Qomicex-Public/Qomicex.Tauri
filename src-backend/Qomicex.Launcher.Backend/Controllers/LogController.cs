@@ -3,7 +3,6 @@ using System.IO.Compression;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Models;
-using Qomicex.Launcher.Backend.Services;
 
 namespace Qomicex.Launcher.Backend.Controllers;
 
@@ -11,13 +10,12 @@ namespace Qomicex.Launcher.Backend.Controllers;
 [Route("api/logs")]
 public class LogController : ControllerBase
 {
-    private readonly IInstanceRepository _repository;
     private readonly ILogger<LogController> _logger;
+    private static readonly string BackendDir = Path.Combine(AppPaths.BaseDir, "logs");
     private static readonly DateTime ProcessStartTime = Process.GetCurrentProcess().StartTime;
 
-    public LogController(IInstanceRepository repository, ILogger<LogController> logger)
+    public LogController(ILogger<LogController> logger)
     {
-        _repository = repository;
         _logger = logger;
     }
 
@@ -25,62 +23,31 @@ public class LogController : ControllerBase
     public IActionResult ListLogs()
     {
         var entries = new List<LogEntry>();
+        if (!Directory.Exists(BackendDir))
+            return Ok(entries);
 
-        var backendDir = Path.Combine(AppPaths.BaseDir, "logs");
-        if (Directory.Exists(backendDir))
+        foreach (var f in Directory.GetFiles(BackendDir, "backend-trace-*.log").OrderByDescending(f => f))
         {
-            foreach (var f in Directory.GetFiles(backendDir, "*.log"))
+            var fi = new FileInfo(f);
+            entries.Add(new LogEntry
             {
-                var fi = new FileInfo(f);
-                entries.Add(new LogEntry
-                {
-                    Path = f,
-                    Name = Path.GetRelativePath(AppPaths.BaseDir, f),
-                    Size = fi.Length,
-                    LastModified = fi.LastWriteTime.ToString("O"),
-                    IsCurrentSession = fi.CreationTime >= ProcessStartTime.AddSeconds(-5),
-                });
-            }
+                Path = f,
+                Name = fi.Name,
+                Size = fi.Length,
+                LastModified = fi.LastWriteTime.ToString("O"),
+                IsCurrentSession = fi.CreationTime >= ProcessStartTime.AddSeconds(-5),
+            });
         }
 
-        var instances = _repository.GetAll();
-        foreach (var inst in instances)
+        if (entries.Count > 10)
         {
-            var logDir = Path.Combine(inst.GameDir, "logs");
-            if (!Directory.Exists(logDir)) continue;
-            foreach (var f in Directory.GetFiles(logDir, "*.log")
-                         .Concat(Directory.GetFiles(logDir, "*.log.gz")))
-            {
-                var fi = new FileInfo(f);
-                entries.Add(new LogEntry
-                {
-                    Path = f,
-                    Name = $"[{inst.Name}] {fi.Name}",
-                    Size = fi.Length,
-                    LastModified = fi.LastWriteTime.ToString("O"),
-                    IsCurrentSession = false,
-                });
-            }
-        }
-
-        // cleanup: backend trace logs > 10, keep newest
-        var backendLogs = entries
-            .Where(e => e.Path.StartsWith(backendDir, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(e => e.LastModified)
-            .ToList();
-        if (backendLogs.Count > 10)
-        {
-            foreach (var old in backendLogs.Skip(10))
+            foreach (var old in entries.Skip(10))
             {
                 try { System.IO.File.Delete(old.Path); }
                 catch (Exception ex) { _logger.LogWarning(ex, "Failed to delete old backend log: {Path}", old.Path); }
             }
             entries.RemoveAll(e => !System.IO.File.Exists(e.Path));
         }
-
-        entries = entries
-            .OrderByDescending(e => e.LastModified)
-            .ToList();
 
         return Ok(entries);
     }
@@ -122,22 +89,24 @@ public class LogController : ControllerBase
     [HttpGet("export-all")]
     public IActionResult ExportAll()
     {
-        var entries = CollectAllLogFiles();
         var fileName = $"logs-{DateTime.Now:yyyyMMdd-HHmmss}.zip";
         var ms = new MemoryStream();
 
         using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
         {
-            foreach (var (filePath, entryName) in entries)
+            if (Directory.Exists(BackendDir))
             {
-                try
+                foreach (var f in Directory.GetFiles(BackendDir, "backend-trace-*.log"))
                 {
-                    var entry = archive.CreateEntry(entryName);
-                    using var entryStream = entry.Open();
-                    using var fileStream = System.IO.File.OpenRead(filePath);
-                    fileStream.CopyTo(entryStream);
+                    try
+                    {
+                        var entry = archive.CreateEntry(Path.GetFileName(f));
+                        using var entryStream = entry.Open();
+                        using var fileStream = System.IO.File.OpenRead(f);
+                        fileStream.CopyTo(entryStream);
+                    }
+                    catch (Exception ex) { _logger.LogWarning(ex, "Failed to add log to export zip: {Path}", f); }
                 }
-                catch (Exception ex) { _logger.LogWarning(ex, "Failed to add log to export zip: {Path}", filePath); }
             }
         }
 
@@ -159,29 +128,5 @@ public class LogController : ControllerBase
         {
             return BadRequest(new { message = "无法删除文件" });
         }
-    }
-
-    private List<(string filePath, string entryName)> CollectAllLogFiles()
-    {
-        var result = new List<(string, string)>();
-
-        var backendDir = Path.Combine(AppPaths.BaseDir, "logs");
-        if (Directory.Exists(backendDir))
-        {
-            foreach (var f in Directory.GetFiles(backendDir, "*.log"))
-                result.Add((f, "backend/" + Path.GetFileName(f)));
-        }
-
-        var instances = _repository.GetAll();
-        foreach (var inst in instances)
-        {
-            var logDir = Path.Combine(inst.GameDir, "logs");
-            if (!Directory.Exists(logDir)) continue;
-            foreach (var f in Directory.GetFiles(logDir, "*.log")
-                         .Concat(Directory.GetFiles(logDir, "*.log.gz")))
-                result.Add((f, $"{inst.Name}/{Path.GetFileName(f)}"));
-        }
-
-        return result;
     }
 }
