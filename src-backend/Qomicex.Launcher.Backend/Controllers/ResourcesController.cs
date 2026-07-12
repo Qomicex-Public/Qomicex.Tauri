@@ -545,8 +545,26 @@ public class ResourcesController : ControllerBase
         [FromQuery] string? gameVersion = null,
         [FromQuery] string? loader = null)
     {
+        if (source == "curseforge")
+        {
+            if (string.IsNullOrEmpty(versionId))
+                return Ok(Array.Empty<object>());
+
+            try
+            {
+                var visited = new HashSet<string>();
+                var result = new List<ResolvedDependency>();
+                await ResolveCurseForgeDependencies(id, versionId, gameVersion, loader, visited, result, 0);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(502, new { error = $"CurseForge API error: {ex.Message}" });
+            }
+        }
+
         if (source != "modrinth")
-            return Ok(Array.Empty<object>()); // ponytail: only Modrinth deps for now
+            return Ok(Array.Empty<object>());
 
         try
         {
@@ -631,6 +649,103 @@ public class ResourcesController : ControllerBase
                 .Where(d => d.DependencyType == "required" && d.ProjectId != null)
                 .Select(d => ResolveModrinthDependencies(d.ProjectId!, gameVersion, loader, visited, result, depth + 1));
             await Task.WhenAll(tasks);
+        }
+    }
+
+    private async Task ResolveCurseForgeDependencies(string modId, string? fileId,
+        string? gameVersion, string? loader,
+        HashSet<string> visited, List<ResolvedDependency> result, int depth)
+    {
+        if (depth > 8 || !visited.Add(modId)) return;
+
+        // 根层：用 GetFileInfo 获取文件依赖列表
+        if (fileId != null)
+        {
+            try
+            {
+                var fileInfo = await _cfMods.GetFileInfo(modId, fileId);
+                var depTasks = fileInfo.Dependencies
+                    .Where(d => d.Type == 1)
+                    .Select(d => ResolveCurseForgeDependencies(d.Id.ToString(), null, gameVersion, loader, visited, result, depth + 1));
+                await Task.WhenAll(depTasks);
+            }
+            catch { /* skip if file info fails */ }
+            return;
+        }
+
+        // 子层：从依赖 modId 开始，查文件列表找最佳匹配
+        List<ResourceVersion>? subVersions = null;
+        try
+        {
+            var query = $"/v1/mods/{Uri.EscapeDataString(modId)}/files?pageSize=50";
+            if (!string.IsNullOrWhiteSpace(gameVersion))
+                query += $"&gameVersion={Uri.EscapeDataString(gameVersion)}";
+
+            var req = new HttpRequestMessage(HttpMethod.Get, ModApiMirror.MirrorCurseForge(query));
+            req.Headers.Add("x-api-key", _cfApiKey);
+            var resp = await _curseforge.SendAsync(req);
+            resp.EnsureSuccessStatusCode();
+            var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
+            var data = json?["data"]?.AsArray();
+            if (data == null || data.Count == 0) return;
+
+            subVersions = data
+                .Select(f => ParseCurseForgeFile(modId, f))
+                .ToList();
+        }
+        catch { return; }
+
+        if (subVersions == null || subVersions.Count == 0) return;
+
+        // 按 loader 过滤
+        if (!string.IsNullOrWhiteSpace(loader))
+        {
+            var normalized = loader.Trim().ToLowerInvariant();
+            subVersions = subVersions
+                .Where(v => v.Loaders.Count == 0 ||
+                            v.Loaders.Any(l => l.Equals(normalized, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+        }
+
+        // 取最新文件
+        var best = subVersions.MaxBy(v => v.DatePublished);
+        if (best == null) return;
+
+        var primaryDownload = best.Downloads?.FirstOrDefault(d => !string.IsNullOrEmpty(d.Url));
+        if (primaryDownload == null) return;
+
+        // 获取 mod 名称/图标
+        string name = modId, iconUrl = "";
+        try
+        {
+            var info = await _cfMods.GetModInfoAsync(modId);
+            if (info != null)
+            {
+                name = info.Name ?? modId;
+                iconUrl = info.IconUrl ?? "";
+            }
+        }
+        catch { /* skip name/icon if fails */ }
+
+        result.Add(new ResolvedDependency
+        {
+            ProjectId = modId,
+            Name = name,
+            IconUrl = iconUrl,
+            VersionId = best.Id,
+            VersionNumber = best.VersionNumber,
+            DownloadUrl = primaryDownload.Url,
+            FileName = primaryDownload.Filename ?? Path.GetFileName(primaryDownload.Url) ?? "unknown",
+            Category = "mods",
+        });
+
+        // 递归解析子依赖
+        if (best.Dependencies != null && best.Dependencies.Count > 0)
+        {
+            var depTasks = best.Dependencies
+                .Where(d => d.DependencyType == "required" && d.ProjectId != null)
+                .Select(d => ResolveCurseForgeDependencies(d.ProjectId!, null, gameVersion, loader, visited, result, depth + 1));
+            await Task.WhenAll(depTasks);
         }
     }
 
