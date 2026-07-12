@@ -695,7 +695,7 @@ public class ResourcesController : ControllerBase
                     }
 
                     var depTasks = depArr
-                        .Where(d => d?["relationType"]?.GetValue<int>() == 1)
+                        .Where(d => d?["relationType"]?.GetValue<int>() == 3)
                         .Select(d => ResolveCurseForgeDependencies(
                             d!["modId"]?.GetValue<int>().ToString() ?? "",
                             null, gameVersion, loader, visited, result, depth + 1));
@@ -782,17 +782,23 @@ public class ResourcesController : ControllerBase
         string name = modId, iconUrl = "";
         try
         {
-            var info = await _cfMods.GetModInfoAsync(modId);
-            if (info != null)
+            var modReq = new HttpRequestMessage(HttpMethod.Get,
+                ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(modId)}"));
+            modReq.Headers.Add("x-api-key", _cfApiKey);
+            var modResp = await _curseforge.SendAsync(modReq);
+            modResp.EnsureSuccessStatusCode();
+            var modJson = await modResp.Content.ReadFromJsonAsync<JsonObject>();
+            var modData = modJson?["data"];
+            if (modData != null)
             {
-                name = info.Name ?? modId;
-                iconUrl = info.IconUrl ?? "";
+                name = modData["name"]?.GetValue<string>() ?? modId;
+                iconUrl = modData["logo"]?["url"]?.GetValue<string>() ?? "";
                 Trace.WriteLine($"[CF Dep] Mod info: name={name}, icon={iconUrl}");
             }
         }
         catch (Exception ex)
         {
-            Trace.WriteLine($"[CF Dep] GetModInfoAsync failed: {ex.Message}");
+            Trace.WriteLine($"[CF Dep] Mod info fetch failed: {ex.Message}");
         }
 
         Trace.WriteLine($"[CF Dep] Adding to result: projId={modId}, versionId={best.Id}, file={primaryDownload.Filename}");
@@ -1045,10 +1051,10 @@ public class ResourcesController : ControllerBase
                 Size = f?["fileLength"]?.GetValue<long>() ?? 0,
             }],
             DatePublished = f?["fileDate"]?.GetValue<DateTime>() ?? DateTime.MinValue,
-            Dependencies = f?["dependencies"] is JsonArray depArr
-                ? depArr
-                    .Where(d => d?["relationType"]?.GetValue<int>() == 1)
-                    .Select(d => new ModrinthDependency
+        Dependencies = f?["dependencies"] is JsonArray depArr
+            ? depArr
+                .Where(d => d?["relationType"]?.GetValue<int>() == 3)
+                .Select(d => new ModrinthDependency
                     {
                         ProjectId = d!["modId"]?.GetValue<int>().ToString() ?? "",
                         DependencyType = "required",
