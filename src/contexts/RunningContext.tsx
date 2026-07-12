@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { launchInstance as apiLaunchInstance, getLaunchProgress, cancelLaunch as apiCancelLaunch } from '../api/instance.ts'
-import type { LaunchResult, LaunchProgress } from '../types/index.ts'
+import { analyzeCrash } from '../api/crashDiagnostics.ts'
+import type { LaunchResult, LaunchProgress, CrashDialogState } from '../types/index.ts'
 
 export interface RunningInstance {
   instanceId: string
@@ -19,6 +20,8 @@ export interface RunningContextValue {
   cancelLaunch: (id?: string) => Promise<void>
   killInstance: (id: string) => Promise<void>
   setNotifyImpl: (fn: (msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void) => void
+  crashDialogState: CrashDialogState | null
+  clearCrashDialog: () => void
 }
 
 const RunningCtx = createContext<RunningContextValue | null>(null)
@@ -33,11 +36,14 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   const [runningInstances, setRunningInstances] = useState<RunningInstance[]>([])
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null)
+  const [crashDialogState, setCrashDialogState] = useState<CrashDialogState | null>(null)
   const pollRefs = useRef<Map<string, number>>(new Map())
   const notifyRef = useRef<(msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void>(() => {})
   const launchingIdRef = useRef<string | null>(null)
 
   const setNotifyImpl = useCallback((fn: typeof notifyRef.current) => { notifyRef.current = fn }, [])
+
+  const clearCrashDialog = useCallback(() => setCrashDialogState(null), [])
 
   const clearInstancePoll = useCallback((id: string) => {
     const ref = pollRefs.current.get(id)
@@ -61,6 +67,24 @@ export function RunningProvider({ children }: { children: ReactNode }) {
           setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
           setLaunchingInstanceId(null)
           notifyRef.current?.('游戏已崩溃', 'error')
+          // Auto-trigger crash analysis dialog
+          const crashTitle = p.stage === 'crashed' ? '游戏崩溃' : '启动失败'
+          const crashMessage = p.error || (p.stage === 'crashed' ? `游戏异常退出 (代码: ${p.exitCode ?? '?'})` : '启动过程中出现错误')
+          setCrashDialogState({
+            instanceId: id,
+            title: crashTitle,
+            message: crashMessage,
+            detail: p.error || null,
+            crashReport: p.crashReport || null,
+            loading: true,
+          })
+          analyzeCrash(id)
+            .then(res => {
+              setCrashDialogState(prev => prev ? { ...prev, analysis: res.analysis, mcloGsUrl: res.mcloGsUrl, qrCodeBase64: res.qrCodeBase64, loading: false } : null)
+            })
+            .catch(() => {
+              setCrashDialogState(prev => prev ? { ...prev, loading: false, error: '分析服务暂不可用' } : null)
+            })
         } else if (p.stage === 'completed') {
           setLaunchProgress(null)
           clearInstancePoll(id)
@@ -115,7 +139,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   }, [clearInstancePoll])
 
   return (
-    <RunningCtx.Provider value={{ runningInstances, launchProgress, launchingInstanceId, launchInstance, cancelLaunch, killInstance, setNotifyImpl }}>
+    <RunningCtx.Provider value={{ runningInstances, launchProgress, launchingInstanceId, launchInstance, cancelLaunch, killInstance, setNotifyImpl, crashDialogState, clearCrashDialog }}>
       {children}
     </RunningCtx.Provider>
   )
