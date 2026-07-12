@@ -112,7 +112,9 @@ function AppContent() {
           } catch {}
         }
         setPendingUpdate({ version: metadata.version, body, required, update: new Update(metadata) })
-      } catch {}
+      } catch (e) {
+        console.warn('[updater] background check failed:', e)
+      }
     }, 5000)
     return () => clearTimeout(timer)
   }, [backendState])

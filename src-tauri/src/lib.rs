@@ -157,27 +157,54 @@ async fn check_update_with_endpoint<R: tauri::Runtime>(
     webview: tauri::Webview<R>,
     endpoint: String,
 ) -> Result<Option<UpdateInfo>, String> {
-    let url = Url::parse(&endpoint).map_err(|e| e.to_string())?;
     let target = current_os_arch();
+    eprintln!("[updater] target={target} endpoint={endpoint}");
+
+    let url = Url::parse(&endpoint).map_err(|e| {
+        let msg = format!("URL 解析失败: {e}");
+        eprintln!("[updater] {msg}");
+        msg
+    })?;
 
     let version_comparator = move |current: Version, release: RemoteRelease| {
         let cur = transform_version(&current.to_string());
         let rel = transform_version(&release.version.to_string());
+        eprintln!(
+            "[updater] version_comparator current={} release={} cur_t={} rel_t={}",
+            current, release.version, cur, rel
+        );
         match (Version::parse(&cur), Version::parse(&rel)) {
-            (Ok(c), Ok(r)) => r > c,
-            _ => false,
+            (Ok(c), Ok(r)) => {
+                let should = r > c;
+                eprintln!("[updater] version_comparator result={should}");
+                should
+            }
+            _ => {
+                eprintln!("[updater] version_comparator parse failed");
+                false
+            }
         }
     };
 
-    let updater = webview
-        .updater_builder()
-        .endpoints(vec![url])
-        .map_err(|e| e.to_string())?
-        .target(target)
-        .version_comparator(version_comparator)
-        .build()
-        .map_err(|e| e.to_string())?;
-    let update = updater.check().await.map_err(|e| e.to_string())?;
+    let updater_builder = webview.updater_builder();
+    let updater_builder = updater_builder.endpoints(vec![url]).map_err(|e| {
+        let msg = format!("endpoints 设置失败: {e}");
+        eprintln!("[updater] {msg}");
+        msg
+    })?;
+    let updater_builder = updater_builder.target(target);
+    let updater_builder = updater_builder.version_comparator(version_comparator);
+    let updater = updater_builder.build().map_err(|e| {
+        let msg = format!("Updater 构建失败: {e}");
+        eprintln!("[updater] {msg}");
+        msg
+    })?;
+
+    let update = updater.check().await.map_err(|e| {
+        let msg = format!("更新检查失败: {e}");
+        eprintln!("[updater] {msg}");
+        msg
+    })?;
 
     Ok(update.map(|u| {
         let current_version = u.current_version.clone();
@@ -185,6 +212,7 @@ async fn check_update_with_endpoint<R: tauri::Runtime>(
         let body = u.body.clone();
         let raw_json = u.raw_json.clone();
         let rid = webview.resources_table().add(u);
+        eprintln!("[updater] update found: current={current_version} version={version}");
         UpdateInfo { rid, current_version, version, date: None, body, raw_json }
     }))
 }

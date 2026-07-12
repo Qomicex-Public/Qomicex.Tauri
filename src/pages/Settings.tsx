@@ -121,7 +121,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
       setUpdateState('available')
     } catch (e) {
       setUpdateState('error')
-      if (e instanceof Error) setUpdateError(e.message)
+      setUpdateError(String(e instanceof Error ? e.message : e))
     }
   }
 
