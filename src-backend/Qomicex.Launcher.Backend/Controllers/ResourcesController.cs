@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Services;
+using Qomicex.Core.Modules.Helpers.Resources.Expansion.CurseForge;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -17,6 +18,7 @@ public class ResourcesController : ControllerBase
     private readonly string _cfApiKey;
     private readonly FtbService _ftbService;
     private readonly McmodService _mcmod;
+    private readonly Mods _cfMods;
 
     private static readonly ConcurrentDictionary<string, CurseForgeVersionFetchState> CfFetchStates = new();
 
@@ -36,6 +38,7 @@ public class ResourcesController : ControllerBase
         _cfApiKey = config["CurseForge:ApiKey"] ?? "";
         _ftbService = ftbService;
         _mcmod = mcmod;
+        _cfMods = new Mods(_cfApiKey);
     }
 
     [HttpGet("search")]
