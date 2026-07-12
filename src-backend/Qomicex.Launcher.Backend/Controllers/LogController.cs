@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Models;
 using Qomicex.Launcher.Backend.Services;
@@ -13,11 +12,13 @@ namespace Qomicex.Launcher.Backend.Controllers;
 public class LogController : ControllerBase
 {
     private readonly IInstanceRepository _repository;
+    private readonly ILogger<LogController> _logger;
     private static readonly DateTime ProcessStartTime = Process.GetCurrentProcess().StartTime;
 
-    public LogController(IInstanceRepository repository)
+    public LogController(IInstanceRepository repository, ILogger<LogController> logger)
     {
         _repository = repository;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -71,7 +72,8 @@ public class LogController : ControllerBase
         {
             foreach (var old in backendLogs.Skip(10))
             {
-                try { System.IO.File.Delete(old.Path); } catch { }
+                try { System.IO.File.Delete(old.Path); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Failed to delete old backend log: {Path}", old.Path); }
             }
             entries.RemoveAll(e => !System.IO.File.Exists(e.Path));
         }
@@ -89,10 +91,9 @@ public class LogController : ControllerBase
         if (!System.IO.File.Exists(path))
             return NotFound();
 
-        long fileSize = new FileInfo(path).Length;
-        int readSize = (int)Math.Min(100_000, fileSize);
-
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var fileSize = fs.Length;
+        var readSize = (int)Math.Min(100_000, fileSize);
         if (fileSize > 100_000)
             fs.Seek(-100_000, SeekOrigin.End);
         var buffer = new byte[readSize];
@@ -135,7 +136,8 @@ public class LogController : ControllerBase
                     using var entryStream = entry.Open();
                     using var fileStream = System.IO.File.OpenRead(filePath);
                     fileStream.CopyTo(entryStream);
-                } catch { }
+                }
+                catch (Exception ex) { _logger.LogWarning(ex, "Failed to add log to export zip: {Path}", filePath); }
             }
         }
 
@@ -182,13 +184,4 @@ public class LogController : ControllerBase
 
         return result;
     }
-}
-
-public class LogEntry
-{
-    public string Path { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public long Size { get; set; }
-    public string LastModified { get; set; } = string.Empty;
-    public bool IsCurrentSession { get; set; }
 }

@@ -54,9 +54,14 @@ export default function LogTab() {
   }, [fetchLogs])
 
   useEffect(() => {
-    const handler = () => setContextMenu(null)
-    window.addEventListener('click', handler)
-    return () => window.removeEventListener('click', handler)
+    const close = () => setContextMenu(null)
+    const keydown = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    window.addEventListener('click', close)
+    window.addEventListener('keydown', keydown)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('keydown', keydown)
+    }
   }, [])
 
   const handlePreview = async (entry: LogEntry) => {
