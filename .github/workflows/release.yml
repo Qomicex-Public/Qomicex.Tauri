@@ -97,7 +97,7 @@ jobs:
       - name: Bump version
         shell: pwsh
         run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:PublishAot=true -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.exe src-tauri/binaries/backend.exe
@@ -168,7 +168,7 @@ jobs:
       - name: Bump version
         shell: pwsh
         run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime win-arm64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:PublishAot=true -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime win-arm64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.exe src-tauri/binaries/backend.exe
@@ -242,7 +242,7 @@ jobs:
       - name: Bump version
         shell: pwsh
         run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:PublishAot=true -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime linux-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
@@ -294,7 +294,7 @@ jobs:
       - name: Bump version
         shell: pwsh
         run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime linux-arm64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:PublishAot=true -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime linux-arm64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
@@ -343,7 +343,7 @@ jobs:
       - name: Bump version
         shell: pwsh
         run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime osx-arm64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:PublishAot=true -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime osx-arm64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
@@ -402,7 +402,7 @@ jobs:
       - name: Bump version
         shell: pwsh
         run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime osx-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:PublishAot=true -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime osx-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend
@@ -467,7 +467,7 @@ jobs:
       - name: Bump version
         shell: pwsh
         run: node scripts/bump-version.mjs ("${{ github.event.inputs.version }}" -replace '^v','')
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime linux-loongarch64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:PublishAot=true -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj --runtime linux-loongarch64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend src-tauri/binaries/backend

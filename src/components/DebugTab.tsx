@@ -57,38 +57,40 @@ function LogCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faServer} className="mr-2 h-4 w-4" />实时日志</CardTitle>
-        <div className="flex items-center gap-1.5">
-          <Button size="sm" variant={autoScroll ? 'default' : 'outline'} onClick={() => setAutoScroll(!autoScroll)} className="h-7 text-xs gap-1">
-            <FontAwesomeIcon icon={faRotate} className={cn('h-3 w-3', autoScroll && 'animate-spin')} />自动滚动
+        <CardTitle><FontAwesomeIcon icon={faServer} className="mr-2 h-4 w-4 text-primary" />实时日志</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant={autoScroll ? 'default' : 'outline'} onClick={() => setAutoScroll(!autoScroll)} className="gap-1">
+            <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', autoScroll && 'animate-spin')} />自动滚动
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setLogs([])} className="h-7 text-xs gap-1">
-            <FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" />清空
+          <Button size="sm" variant="outline" onClick={() => setLogs([])} className="gap-1">
+            <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />清空
           </Button>
-          <Button size="sm" variant="outline" onClick={handleExport} disabled={logs.length === 0} className="h-7 text-xs gap-1">
-            <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />导出日志
+          <Button size="sm" variant="outline" onClick={handleExport} disabled={logs.length === 0} className="gap-1">
+            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />导出日志
           </Button>
-          <Button size="sm" variant="outline" onClick={handleDump} className="h-7 text-xs gap-1">
-            <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />触发 Dump
+          <Button size="sm" variant="outline" onClick={handleDump} className="gap-1">
+            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />触发 Dump
           </Button>
         </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div
-          ref={containerRef}
-          onScroll={() => {
-            if (containerRef.current) {
-              const { scrollTop, scrollHeight, clientHeight } = containerRef.current
-              setAutoScroll(scrollTop + clientHeight >= scrollHeight - 20)
-            }
-          }}
-          className="h-80 overflow-y-auto bg-muted/30 p-3 font-mono text-xs leading-relaxed"
-        >
-          {logs.length === 0 ? (
-            <span className="text-muted-foreground">暂无日志...</span>
-          ) : (
-            logs.map((line, i) => <div key={i} className="text-foreground/80 whitespace-pre-wrap">{line}</div>)
-          )}
+        <div className="overflow-hidden rounded-lg border">
+          <div
+            ref={containerRef}
+            onScroll={() => {
+              if (containerRef.current) {
+                const { scrollTop, scrollHeight, clientHeight } = containerRef.current
+                setAutoScroll(scrollTop + clientHeight >= scrollHeight - 20)
+              }
+            }}
+            className="h-80 overflow-y-auto bg-muted/30 p-3 font-mono text-xs leading-relaxed"
+          >
+            {logs.length === 0 ? (
+              <span className="text-muted-foreground">暂无日志...</span>
+            ) : (
+              logs.map((line, i) => <div key={i} className="text-foreground/80 whitespace-pre-wrap">{line}</div>)
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -137,7 +139,7 @@ function DiagnosticsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4" />启动器诊断</CardTitle>
+        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />启动器诊断</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         {loading ? (
@@ -201,7 +203,7 @@ function TogglesCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4" />调试开关（临时，重启归零）</CardTitle>
+        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />调试开关（临时，重启归零）</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 gap-3">

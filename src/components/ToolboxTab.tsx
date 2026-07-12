@@ -73,8 +73,8 @@ export default function ToolboxTab() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />
+          <CardTitle>
+            <FontAwesomeIcon icon={faDownload} className="mr-2 h-4 w-4 text-primary" />
             自定义文件下载
           </CardTitle>
         </CardHeader>

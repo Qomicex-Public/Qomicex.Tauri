@@ -1,10 +1,10 @@
 [submodule "src-backend/Qomicex.Connector.Part.Scaffolding"]
 	path = src-backend/Qomicex.Connector.Part.Scaffolding
-	url = https://github.com/Qomicex-Public/Qomicex.Connector.Part.Scaffolding.git
+	url = git@github.com:Qomicex-Public/Qomicex.Connector.Part.Scaffolding.git
 [submodule "src-backend/Qomicex.Core"]
 	path = src-backend/Qomicex.Core
-	url = https://github.com/Qomicex-Public/Qomicex.Core.git
-	branch = main
+	url = git@github.com:Qomicex-Public/Qomicex.Core.git
+	branch = refactor/aot-migration
 [submodule "src-backend/Qomicex.Downloader"]
 	path = src-backend/Qomicex.Downloader
-	url = https://github.com/Qomicex-Public/Qomicex.Downloader.git
+	url = git@github.com:Qomicex-Public/Qomicex.Downloader.git
