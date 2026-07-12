@@ -22,8 +22,14 @@ export function previewLog(path: string): Promise<PreviewResult> {
   return get<PreviewResult>(`/logs/preview?path=${encodeURIComponent(path)}`)
 }
 
-export function getExportUrl(path: string): string {
-  return `${API_BASE}/logs/export?path=${encodeURIComponent(path)}`
+export async function exportLog(path: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/logs/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  if (!res.ok) throw new Error()
+  return res.blob()
 }
 
 export function getExportAllUrl(): string {

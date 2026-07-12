@@ -71,10 +71,11 @@ public class LogController : ControllerBase
         return Ok(new { content, totalSize = fileSize, previewSize = readSize });
     }
 
-    [HttpGet("export")]
-    public IActionResult Export([FromQuery] string path)
+    [HttpPost("export")]
+    public IActionResult Export([FromBody] JsonElement body)
     {
-        if (!System.IO.File.Exists(path))
+        var path = body.GetProperty("path").GetString();
+        if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
             return NotFound();
 
         var fileName = Path.GetFileName(path) + ".gz";

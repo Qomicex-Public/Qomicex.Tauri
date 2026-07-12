@@ -10,7 +10,7 @@ import { Badge } from './ui/badge.tsx'
 import { cn } from '../lib/utils.ts'
 import { useMessageBox } from './ui/message-box.tsx'
 import {
-  listLogs, previewLog, getExportUrl, getExportAllUrl, deleteLog, openLog, openLogDir,
+  listLogs, previewLog, exportLog, getExportAllUrl, deleteLog, openLog, openLogDir,
 } from '../api/logs.ts'
 import type { LogEntry, PreviewResult } from '../api/logs.ts'
 
@@ -72,18 +72,30 @@ export default function LogTab() {
     }
   }
 
-  const handleExport = (entry: LogEntry) => {
-    const a = document.createElement('a')
-    a.href = getExportUrl(entry.path)
-    a.download = ''
-    a.click()
+  const handleExport = async (entry: LogEntry) => {
+    try {
+      const blob = await exportLog(entry.path)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${entry.name}.gz`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch { notify('导出失败', 'error') }
   }
 
-  const handleExportAll = () => {
-    const a = document.createElement('a')
-    a.href = getExportAllUrl()
-    a.download = ''
-    a.click()
+  const handleExportAll = async () => {
+    try {
+      const res = await fetch(getExportAllUrl())
+      if (!res.ok) throw new Error()
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `logs-${Date.now()}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch { notify('导出失败', 'error') }
   }
 
   const handleDelete = async (entry: LogEntry) => {
@@ -232,7 +244,7 @@ export default function LogTab() {
             <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开所在目录
           </button>
           <button
-            onClick={() => { handleExport(contextMenu.entry); setContextMenu(null) }}
+            onClick={async () => { await handleExport(contextMenu.entry); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
             <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />导出 (.gz)
