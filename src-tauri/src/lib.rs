@@ -144,6 +144,60 @@ fn current_os_arch() -> String {
     format!("{os}-{arch}")
 }
 
+// GitHub release 代理镜像前缀（与 EasyTier 一致，空串=直连）
+const PROXY_PREFIXES: &[&str] = &[
+    "",
+    "https://edgeone.gh-proxy.org/",
+    "https://cdn.gh-proxy.org/",
+    "https://hk.gh-proxy.org/",
+    "https://v6.gh-proxy.org/",
+    "https://ghfast.top/",
+];
+
+/// 对原始 GitHub URL 顺序测试各代理的延迟，返回最快的前缀（空串=直连）
+async fn pick_fastest_proxy(original_url: &str) -> String {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+
+    let mut results: Vec<(&str, u128)> = Vec::new();
+
+    for &prefix in PROXY_PREFIXES {
+        let url = if prefix.is_empty() {
+            original_url.to_string()
+        } else {
+            format!("{}{}", prefix, original_url)
+        };
+        let start = std::time::Instant::now();
+        match client
+            .get(&url)
+            .header("Range", "bytes=0-0")
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                let ms = start.elapsed().as_millis();
+                eprintln!("[updater] proxy {prefix}: {ms}ms");
+                results.push((prefix, ms));
+            }
+            _ => {
+                eprintln!("[updater] proxy {prefix} 不可用");
+            }
+        }
+    }
+
+    if results.is_empty() {
+        eprintln!("[updater] 所有代理测速失败，回退直连");
+        return String::new();
+    }
+
+    results.sort_by_key(|(_, ms)| *ms);
+    let best = results[0].0.to_string();
+    eprintln!("[updater] 最快代理前缀='{best}' ({}ms)", results[0].1);
+    best
+}
+
 fn transform_version(v: &str) -> String {
     let v = v.split(".build").next().unwrap_or(v);
     v.replace("-alpha", "-0.")
@@ -159,8 +213,17 @@ async fn check_update_with_endpoint<R: tauri::Runtime>(
     let target = current_os_arch();
     eprintln!("[updater] target={target} endpoint={endpoint}");
 
-    // 1) 用 reqwest 预取 JSON，避免插件 check() 内部因平台缺失报错
-    let resp = reqwest::get(&endpoint)
+    // 0) 竞速测速选最快代理前缀
+    let proxy_prefix = pick_fastest_proxy(&endpoint).await;
+    eprintln!("[updater] 使用代理前缀='{proxy_prefix}'");
+
+    // 1) 通过最快代理获取 JSON
+    let fetch_url = if proxy_prefix.is_empty() {
+        endpoint.clone()
+    } else {
+        format!("{}{}", proxy_prefix, endpoint)
+    };
+    let resp = reqwest::get(&fetch_url)
         .await
         .map_err(|e| format!("HTTP 请求失败: {e}"))?;
     if !resp.status().is_success() {
@@ -170,7 +233,7 @@ async fn check_update_with_endpoint<R: tauri::Runtime>(
         .text()
         .await
         .map_err(|e| format!("读取响应体失败: {e}"))?;
-    let root: serde_json::Value =
+    let mut root: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("JSON 解析失败: {e}"))?;
 
     // 2) 检查当前目标平台在 platforms 中是否存在
@@ -210,8 +273,32 @@ async fn check_update_with_endpoint<R: tauri::Runtime>(
         return Ok(None);
     }
 
-    // 5) 确定有更新 → 用插件 check() 获取 Update 资源（用于后续 downloadAndInstall）
-    let url = Url::parse(&endpoint).map_err(|e| format!("URL 解析失败: {e}"))?;
+    // 5) 将 platforms.{target}.url 也替换为同一代理前缀，使新版本安装包走代理下载
+    if !proxy_prefix.is_empty() {
+        if let Some(platform) = root.get_mut("platforms").and_then(|p| p.get_mut(&target)) {
+            if let Some(url_val) = platform.get_mut("url") {
+                if let Some(url_str) = url_val.as_str() {
+                    let proxied_url = format!("{}{}", proxy_prefix, url_str);
+                    eprintln!("[updater] 替换下载 URL: {url_str} -> {proxied_url}");
+                    *url_val = serde_json::Value::String(proxied_url);
+                }
+            }
+        }
+    }
+
+    // 6) 写入临时文件，指向 Tauri 插件读取修改后的 manifest（含代理 URL）
+    let temp_dir = std::env::temp_dir().join("qomicex-updater");
+    let _ = std::fs::create_dir_all(&temp_dir);
+    let temp_path = temp_dir.join(format!("update-{}.json", std::process::id()));
+    let modified_json =
+        serde_json::to_string_pretty(&root).map_err(|e| format!("JSON 序列化失败: {e}"))?;
+    std::fs::write(&temp_path, &modified_json)
+        .map_err(|e| format!("临时文件写入失败: {e}"))?;
+    eprintln!("[updater] 修改后 JSON 写入: {}", temp_path.display());
+
+    // 7) 确定有更新 → 用插件 check() 获取 Update 资源（用于后续 downloadAndInstall）
+    let url = Url::from_file_path(&temp_path)
+        .map_err(|_| "临时文件路径转 URL 失败".to_string())?;
 
     let version_comparator = move |current: semver::Version, release: RemoteRelease| {
         let cur = transform_version(&current.to_string());
