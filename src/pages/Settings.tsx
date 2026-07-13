@@ -44,8 +44,8 @@ const CATEGORIES = [
   { id: 'java', label: 'Java 运行时', icon: faCoffee },
   { id: 'appearance', label: '外观', icon: faPalette },
   { id: 'toolbox', label: '工具箱', icon: faDownload },
-  { id: 'about', label: '关于', icon: faInfoCircle },
   { id: 'logs', label: '日志', icon: faFileLines },
+  { id: 'about', label: '关于', icon: faInfoCircle },
   { id: 'debug', label: '调试', icon: faBug },
 ]
 
@@ -121,7 +121,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
       setUpdateState('available')
     } catch (e) {
       setUpdateState('error')
-      if (e instanceof Error) setUpdateError(e.message)
+      setUpdateError(String(e instanceof Error ? e.message : e))
     }
   }
 
@@ -169,9 +169,14 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
                 <span className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted">{versionType}</span>
               </div>
             </div>
-            <Button size="sm" variant="ghost" onClick={() => openUrl(REPOSITORY_URL).catch(() => window.open(REPOSITORY_URL, '_blank'))} className="gap-1.5 h-7 text-xs shrink-0">
-              <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />查看仓库
-            </Button>
+            <div className="flex items-center gap-1 shrink-0">
+              <Button size="sm" variant="ghost" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))} className="gap-1.5 h-7 text-xs">
+                <FontAwesomeIcon icon={faBug} className="h-3 w-3" />反馈
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => openUrl(REPOSITORY_URL).catch(() => window.open(REPOSITORY_URL, '_blank'))} className="gap-1.5 h-7 text-xs">
+                <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />查看仓库
+              </Button>
+            </div>
           </div>
           <p className="text-sm leading-relaxed text-muted-foreground">{APP_INFO.description}</p>
         </CardContent>

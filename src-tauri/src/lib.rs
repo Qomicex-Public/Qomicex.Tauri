@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
 use tauri::Manager;
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{RemoteRelease, UpdaterExt};
 use url::Url;
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 
@@ -133,19 +133,108 @@ struct UpdateInfo {
     raw_json: serde_json::Value,
 }
 
+fn current_os_arch() -> String {
+    let os = if cfg!(target_os = "linux") { "linux" }
+    else if cfg!(target_os = "macos") { "darwin" }
+    else { "windows" };
+    let arch = if cfg!(target_arch = "x86_64") { "x86_64" }
+    else if cfg!(target_arch = "aarch64") { "aarch64" }
+    else if cfg!(target_arch = "x86") { "i686" }
+    else { "x86_64" };
+    format!("{os}-{arch}")
+}
+
+fn transform_version(v: &str) -> String {
+    let v = v.split(".build").next().unwrap_or(v);
+    v.replace("-alpha", "-0.")
+        .replace("-beta", "-1.")
+        .replace("-release", "-2.")
+}
+
 #[tauri::command]
 async fn check_update_with_endpoint<R: tauri::Runtime>(
     webview: tauri::Webview<R>,
     endpoint: String,
 ) -> Result<Option<UpdateInfo>, String> {
-    let url = Url::parse(&endpoint).map_err(|e| e.to_string())?;
+    let target = current_os_arch();
+    eprintln!("[updater] target={target} endpoint={endpoint}");
+
+    // 1) 用 reqwest 预取 JSON，避免插件 check() 内部因平台缺失报错
+    let resp = reqwest::get(&endpoint)
+        .await
+        .map_err(|e| format!("HTTP 请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应体失败: {e}"))?;
+    let root: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("JSON 解析失败: {e}"))?;
+
+    // 2) 检查当前目标平台在 platforms 中是否存在
+    if root
+        .get("platforms")
+        .and_then(|p| p.get(&target))
+        .is_none()
+    {
+        eprintln!("[updater] 当前平台 ({target}) 在 release 中无 artifact");
+        return Ok(None);
+    }
+
+    // 3) 获取真实当前版本 & 远端版本
+    let cur_ver = &webview.app_handle().package_info().version;
+    let raw_remote = root
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("0.0.0");
+    eprintln!(
+        "[updater] current={} remote={raw_remote}",
+        cur_ver.to_string()
+    );
+
+    // 4) 自定义版本比较
+    let cur_t = transform_version(&cur_ver.to_string());
+    let rel_t = transform_version(raw_remote.trim_start_matches('v'));
+    let should_update =
+        match (semver::Version::parse(&cur_t), semver::Version::parse(&rel_t)) {
+            (Ok(c), Ok(r)) => r > c,
+            _ => false,
+        };
+    eprintln!(
+        "[updater] transformed cur={cur_t} rel={rel_t} should_update={should_update}"
+    );
+
+    if !should_update {
+        return Ok(None);
+    }
+
+    // 5) 确定有更新 → 用插件 check() 获取 Update 资源（用于后续 downloadAndInstall）
+    let url = Url::parse(&endpoint).map_err(|e| format!("URL 解析失败: {e}"))?;
+
+    let version_comparator = move |current: semver::Version, release: RemoteRelease| {
+        let cur = transform_version(&current.to_string());
+        let rel = transform_version(&release.version.to_string());
+        match (semver::Version::parse(&cur), semver::Version::parse(&rel)) {
+            (Ok(c), Ok(r)) => r > c,
+            _ => false,
+        }
+    };
+
     let updater = webview
         .updater_builder()
         .endpoints(vec![url])
-        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("endpoints 设置失败: {e}"))?
+        .target(target)
+        .version_comparator(version_comparator)
         .build()
-        .map_err(|e| e.to_string())?;
-    let update = updater.check().await.map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Updater 构建失败: {e}"))?;
+
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("更新检查失败: {e}"))?;
 
     Ok(update.map(|u| {
         let current_version = u.current_version.clone();
