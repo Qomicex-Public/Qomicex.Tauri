@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Qomicex.Launcher.Backend.Services;
 using Qomicex.Core.Modules.Helpers.Resources.Expansion.CurseForge;
@@ -298,20 +297,15 @@ public class ResourcesController : ControllerBase
         try
         {
             var url = ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(id)}");
-            Trace.WriteLine($"[CF Detail] Fetching: {url}");
             var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("x-api-key", _cfApiKey);
             var httpResponse = await _curseforge.SendAsync(request);
-            Trace.WriteLine($"[CF Detail] Status: {(int)httpResponse.StatusCode}");
             httpResponse.EnsureSuccessStatusCode();
 
             var json = await httpResponse.Content.ReadFromJsonAsync<JsonObject>();
             var data = json?["data"]?.AsObject();
             if (data == null)
-            {
-                Trace.WriteLine($"[CF Detail] No data in response");
                 return NotFound(new { error = "Project not found" });
-            }
 
             var logo = data["logo"]?.AsObject();
             var detail = new ResourceDetail
@@ -326,12 +320,10 @@ public class ResourcesController : ControllerBase
                 Source = "curseforge",
                 ProjectUrl = $"https://www.curseforge.com/minecraft/mc-mods/{data["slug"]?.GetValue<string>()}",
             };
-            Trace.WriteLine($"[CF Detail] OK: {detail.Title}");
             return Ok(detail);
         }
         catch (Exception ex)
         {
-            Trace.WriteLine($"[CF Detail] Exception: {ex}");
             return StatusCode(502, new { error = $"CurseForge API error: {ex.Message}" });
         }
     }
@@ -557,24 +549,18 @@ public class ResourcesController : ControllerBase
     {
         if (source == "curseforge")
         {
-            Trace.WriteLine($"[CF Dep] GetDependencies curseforge: id={id}, versionId={versionId}, gv={gameVersion}, loader={loader}");
             if (string.IsNullOrEmpty(versionId))
-            {
-                Trace.WriteLine($"[CF Dep] versionId is null/empty, returning empty");
                 return Ok(Array.Empty<object>());
-            }
 
             try
             {
                 var visited = new HashSet<string>();
                 var result = new List<ResolvedDependency>();
                 await ResolveCurseForgeDependencies(id, versionId, gameVersion, loader, visited, result, 0);
-                Trace.WriteLine($"[CF Dep] Result count: {result.Count}");
                 return Ok(result);
             }
             catch (Exception ex)
             {
-                Trace.WriteLine($"[CF Dep] GetDependencies exception: {ex}");
                 return StatusCode(502, new { error = $"CurseForge API error: {ex.Message}" });
             }
         }
@@ -672,19 +658,12 @@ public class ResourcesController : ControllerBase
         string? gameVersion, string? loader,
         HashSet<string> visited, List<ResolvedDependency> result, int depth)
     {
-        Trace.WriteLine($"[CF Dep] Enter: modId={modId}, fileId={fileId}, gv={gameVersion}, loader={loader}, depth={depth}");
-
-        if (depth > 8 || !visited.Add(modId))
-        {
-            Trace.WriteLine($"[CF Dep] Skip: depth>8 or already visited modId={modId}");
-            return;
-        }
+        if (depth > 8 || !visited.Add(modId)) return;
 
         // 根层：获取文件依赖列表（使用 _curseforge HttpClient，与子层一致）
         if (fileId != null)
         {
             var url = ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(modId)}/files/{Uri.EscapeDataString(fileId)}");
-            Trace.WriteLine($"[CF Dep] Root fetch: {url}");
             try
             {
                 var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -695,14 +674,6 @@ public class ResourcesController : ControllerBase
                 var data = json?["data"];
                 if (data != null && data["dependencies"] is JsonArray depArr)
                 {
-                    Trace.WriteLine($"[CF Dep] Root deps count: {depArr.Count}");
-                    foreach (var d in depArr)
-                    {
-                        var relType = d?["relationType"]?.GetValue<int>();
-                        var depModId = d?["modId"]?.GetValue<int>();
-                        Trace.WriteLine($"[CF Dep] Dep entry: modId={depModId}, relationType={relType}");
-                    }
-
                     var depTasks = depArr
                         .Where(d => d?["relationType"]?.GetValue<int>() == 3)
                         .Select(d => ResolveCurseForgeDependencies(
@@ -710,15 +681,8 @@ public class ResourcesController : ControllerBase
                             null, gameVersion, loader, visited, result, depth + 1));
                     await Task.WhenAll(depTasks);
                 }
-                else
-                {
-                    Trace.WriteLine($"[CF Dep] No dependencies array in root file response, data={data != null}");
-                }
             }
-            catch (Exception ex)
-            {
-                Trace.WriteLine($"[CF Dep] Root fetch failed: {ex.Message}");
-            }
+            catch { }
             return;
         }
 
@@ -731,33 +695,21 @@ public class ResourcesController : ControllerBase
                 query += $"&gameVersion={Uri.EscapeDataString(gameVersion)}";
 
             var listUrl = ModApiMirror.MirrorCurseForge(query);
-            Trace.WriteLine($"[CF Dep] Sub fetch files: {listUrl}");
             var req = new HttpRequestMessage(HttpMethod.Get, listUrl);
             req.Headers.Add("x-api-key", _cfApiKey);
             var resp = await _curseforge.SendAsync(req);
             resp.EnsureSuccessStatusCode();
             var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
             var data = json?["data"]?.AsArray();
-            if (data == null || data.Count == 0)
-            {
-                Trace.WriteLine($"[CF Dep] No files returned for modId={modId}");
-                return;
-            }
+            if (data == null || data.Count == 0) return;
 
-            Trace.WriteLine($"[CF Dep] Files count: {data.Count}");
             subVersions = data
                 .Select(f => ParseCurseForgeFile(modId, f))
                 .ToList();
         }
-        catch (Exception ex)
-        {
-            Trace.WriteLine($"[CF Dep] Sub fetch failed: {ex.Message}");
-            return;
-        }
+        catch { return; }
 
         if (subVersions == null || subVersions.Count == 0) return;
-
-        Trace.WriteLine($"[CF Dep] Before loader filter: {subVersions.Count} versions");
 
         // 按 loader 过滤
         if (!string.IsNullOrWhiteSpace(loader))
@@ -767,25 +719,14 @@ public class ResourcesController : ControllerBase
                 .Where(v => v.Loaders.Count == 0 ||
                             v.Loaders.Any(l => l.Equals(normalized, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
-            Trace.WriteLine($"[CF Dep] After loader filter: {subVersions.Count} versions (loader={loader})");
         }
 
         // 取最新文件
         var best = subVersions.MaxBy(v => v.DatePublished);
-        if (best == null)
-        {
-            Trace.WriteLine($"[CF Dep] No best version found");
-            return;
-        }
-        Trace.WriteLine($"[CF Dep] Best version: id={best.Id}, name={best.Name}, date={best.DatePublished}");
+        if (best == null) return;
 
         var primaryDownload = best.Downloads?.FirstOrDefault(d => !string.IsNullOrEmpty(d.Url));
-        if (primaryDownload == null)
-        {
-            Trace.WriteLine($"[CF Dep] No download URL in best version");
-            return;
-        }
-        Trace.WriteLine($"[CF Dep] Download URL: {primaryDownload.Url}");
+        if (primaryDownload == null) return;
 
         // 获取 mod 名称/图标
         string name = modId, iconUrl = "";
@@ -802,15 +743,10 @@ public class ResourcesController : ControllerBase
             {
                 name = modData["name"]?.GetValue<string>() ?? modId;
                 iconUrl = modData["logo"]?["url"]?.GetValue<string>() ?? "";
-                Trace.WriteLine($"[CF Dep] Mod info: name={name}, icon={iconUrl}");
             }
         }
-        catch (Exception ex)
-        {
-            Trace.WriteLine($"[CF Dep] Mod info fetch failed: {ex.Message}");
-        }
+        catch { }
 
-        Trace.WriteLine($"[CF Dep] Adding to result: projId={modId}, versionId={best.Id}, file={primaryDownload.Filename}");
         result.Add(new ResolvedDependency
         {
             ProjectId = modId,
