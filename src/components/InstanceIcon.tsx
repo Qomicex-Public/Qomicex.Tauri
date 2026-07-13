@@ -4,6 +4,7 @@ const ICON_NAMES = [
   'Grass', 'GrassPath', 'CobbleStone', 'GoldBlock', 'RedstoneBlock',
   'RedstoneLampOn', 'RedstoneLampOff', 'CommandBlock', 'Anvil', 'Egg',
   'Fabric', 'Quilt', 'NeoForge', 'OptiFabric', 'LabyMod', 'Cleanroom',
+  'TNT',
 ] as const
 
 export type InstanceIconName = typeof ICON_NAMES[number]
