@@ -296,10 +296,8 @@ public class ResourcesController : ControllerBase
 
         try
         {
-            var url = ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(id)}");
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Add("x-api-key", _cfApiKey);
-            var httpResponse = await _curseforge.SendAsync(request);
+            var urls = ModApiMirror.MirrorCurseForgeUrls($"/v1/mods/{Uri.EscapeDataString(id)}");
+            var httpResponse = await _curseforge.SendWithFallbackAsync(HttpMethod.Get, urls, req => req.Headers.Add("x-api-key", _cfApiKey));
             httpResponse.EnsureSuccessStatusCode();
 
             var json = await httpResponse.Content.ReadFromJsonAsync<JsonObject>();
@@ -663,12 +661,10 @@ public class ResourcesController : ControllerBase
         // 根层：获取文件依赖列表（使用 _curseforge HttpClient，与子层一致）
         if (fileId != null)
         {
-            var url = ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(modId)}/files/{Uri.EscapeDataString(fileId)}");
             try
             {
-                var req = new HttpRequestMessage(HttpMethod.Get, url);
-                req.Headers.Add("x-api-key", _cfApiKey);
-                var resp = await _curseforge.SendAsync(req);
+                var urls = ModApiMirror.MirrorCurseForgeUrls($"/v1/mods/{Uri.EscapeDataString(modId)}/files/{Uri.EscapeDataString(fileId)}");
+                var resp = await _curseforge.SendWithFallbackAsync(HttpMethod.Get, urls, req => req.Headers.Add("x-api-key", _cfApiKey));
                 resp.EnsureSuccessStatusCode();
                 var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
                 var data = json?["data"];
@@ -694,10 +690,8 @@ public class ResourcesController : ControllerBase
             if (!string.IsNullOrWhiteSpace(gameVersion))
                 query += $"&gameVersion={Uri.EscapeDataString(gameVersion)}";
 
-            var listUrl = ModApiMirror.MirrorCurseForge(query);
-            var req = new HttpRequestMessage(HttpMethod.Get, listUrl);
-            req.Headers.Add("x-api-key", _cfApiKey);
-            var resp = await _curseforge.SendAsync(req);
+            var urls = ModApiMirror.MirrorCurseForgeUrls(query);
+            var resp = await _curseforge.SendWithFallbackAsync(HttpMethod.Get, urls, req => req.Headers.Add("x-api-key", _cfApiKey));
             resp.EnsureSuccessStatusCode();
             var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
             var data = json?["data"]?.AsArray();
@@ -732,10 +726,8 @@ public class ResourcesController : ControllerBase
         string name = modId, iconUrl = "";
         try
         {
-            var modReq = new HttpRequestMessage(HttpMethod.Get,
-                ModApiMirror.MirrorCurseForge($"/v1/mods/{Uri.EscapeDataString(modId)}"));
-            modReq.Headers.Add("x-api-key", _cfApiKey);
-            var modResp = await _curseforge.SendAsync(modReq);
+            var urls = ModApiMirror.MirrorCurseForgeUrls($"/v1/mods/{Uri.EscapeDataString(modId)}");
+            var modResp = await _curseforge.SendWithFallbackAsync(HttpMethod.Get, urls, req => req.Headers.Add("x-api-key", _cfApiKey));
             modResp.EnsureSuccessStatusCode();
             var modJson = await modResp.Content.ReadFromJsonAsync<JsonObject>();
             var modData = modJson?["data"];
