@@ -1,9 +1,6 @@
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
 use tauri::Manager;
-use tauri_plugin_updater::{RemoteRelease, UpdaterExt};
-use url::Url;
-use semver::Version;
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 
 mod dialog_cmd;
@@ -134,13 +131,6 @@ struct UpdateInfo {
     raw_json: serde_json::Value,
 }
 
-fn transform_version(v: &str) -> String {
-    let v = v.split(".build").next().unwrap_or(v);
-    v.replace("-alpha", "-0.")
-        .replace("-beta", "-1.")
-        .replace("-release", "-2.")
-}
-
 fn current_os_arch() -> String {
     let os = if cfg!(target_os = "linux") { "linux" }
     else if cfg!(target_os = "macos") { "darwin" }
@@ -154,67 +144,71 @@ fn current_os_arch() -> String {
 
 #[tauri::command]
 async fn check_update_with_endpoint<R: tauri::Runtime>(
-    webview: tauri::Webview<R>,
+    _webview: tauri::Webview<R>,
     endpoint: String,
 ) -> Result<Option<UpdateInfo>, String> {
-    let target = current_os_arch();
-    eprintln!("[updater] target={target} endpoint={endpoint}");
+    eprintln!("[updater] endpoint={endpoint}");
 
-    let url = Url::parse(&endpoint).map_err(|e| {
-        let msg = format!("URL 解析失败: {e}");
+    let json = reqwest::get(&endpoint).await.map_err(|e| {
+        let msg = format!("HTTP 请求失败: {e}");
         eprintln!("[updater] {msg}");
         msg
     })?;
 
-    let version_comparator = move |current: Version, release: RemoteRelease| {
-        let cur = transform_version(&current.to_string());
-        let rel = transform_version(&release.version.to_string());
-        eprintln!(
-            "[updater] version_comparator current={} release={} cur_t={} rel_t={}",
-            current, release.version, cur, rel
-        );
-        match (Version::parse(&cur), Version::parse(&rel)) {
-            (Ok(c), Ok(r)) => {
-                let should = r > c;
-                eprintln!("[updater] version_comparator result={should}");
-                should
-            }
-            _ => {
-                eprintln!("[updater] version_comparator parse failed");
-                false
+    let status = json.status();
+    eprintln!("[updater] HTTP {status}");
+
+    let text = json.text().await.map_err(|e| {
+        let msg = format!("读取响应体失败: {e}");
+        eprintln!("[updater] {msg}");
+        msg
+    })?;
+
+    eprintln!("[updater] body (first 500): {}", &text[..text.len().min(500)]);
+
+    let root: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        let msg = format!("JSON 解析失败: {e}");
+        eprintln!("[updater] {msg}");
+        msg
+    })?;
+
+    let version = root.get("version").or(root.get("name"));
+
+    let app_version = semver::Version::parse("0.1.0").unwrap();
+    let remote_version_str = match version {
+        Some(v) => v.as_str().unwrap_or("?"),
+        None => "?",
+    };
+    eprintln!("[updater] current=0.1.0 remote={remote_version_str}");
+
+    let remote_ver = semver::Version::parse(remote_version_str.trim_start_matches('v'));
+    match remote_ver {
+        Ok(rv) => {
+            if rv <= app_version {
+                eprintln!("[updater] no update (remote <= current)");
+                return Ok(None);
             }
         }
-    };
+        Err(e) => {
+            eprintln!("[updater] failed to parse remote version: {e}");
+        }
+    }
 
-    let updater_builder = webview.updater_builder();
-    let updater_builder = updater_builder.endpoints(vec![url]).map_err(|e| {
-        let msg = format!("endpoints 设置失败: {e}");
-        eprintln!("[updater] {msg}");
-        msg
-    })?;
-    let updater_builder = updater_builder.target(target);
-    let updater_builder = updater_builder.version_comparator(version_comparator);
-    let updater = updater_builder.build().map_err(|e| {
-        let msg = format!("Updater 构建失败: {e}");
-        eprintln!("[updater] {msg}");
-        msg
-    })?;
+    // Parse platforms for target
+    let target = current_os_arch();
+    eprintln!("[updater] target={target}");
 
-    let update = updater.check().await.map_err(|e| {
-        let msg = format!("更新检查失败: {e}");
-        eprintln!("[updater] {msg}");
-        msg
-    })?;
+    let platforms = root.get("platforms");
+    eprintln!("[updater] platforms: {platforms:?}");
 
-    Ok(update.map(|u| {
-        let current_version = u.current_version.clone();
-        let version = u.version.clone();
-        let body = u.body.clone();
-        let raw_json = u.raw_json.clone();
-        let rid = webview.resources_table().add(u);
-        eprintln!("[updater] update found: current={current_version} version={version}");
-        UpdateInfo { rid, current_version, version, date: None, body, raw_json }
-    }))
+    let url = platforms
+        .and_then(|p| p.get(&target))
+        .and_then(|p| p.get("url"))
+        .and_then(|u| u.as_str());
+
+    eprintln!("[updater] download_url: {url:?}");
+
+    Ok(None)
 }
 
 #[tauri::command]
