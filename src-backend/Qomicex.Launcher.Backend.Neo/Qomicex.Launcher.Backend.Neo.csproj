@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Qomicex.Launcher.Backend.Neo</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="appsettings.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Qomicex.Core.AOT\Qomicex.Core.AOT\Qomicex.Core.AOT.csproj" />
+    <ProjectReference Include="..\Qomicex.Downloader\Qomicex.Downloader.csproj" />
+  </ItemGroup>
+
+</Project>
