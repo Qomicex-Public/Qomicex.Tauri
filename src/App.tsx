@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
-import { Update } from '@tauri-apps/plugin-updater'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
 import Instances from './pages/Instances.tsx'
@@ -40,7 +39,7 @@ function AppContent() {
   const { alert } = useMessageBox()
   const { crashDialogState, clearCrashDialog } = useRunning()
   const javaChecked = useRef(false)
-  const [pendingUpdate, setPendingUpdate] = useState<{ version: string; body: string; required: boolean; update: Update } | null>(null)
+  const [pendingUpdate, setPendingUpdate] = useState<{ version: string; body: string; required: boolean; downloadUrl: string } | null>(null)
   const autoCheckDone = useRef(false)
 
   useEffect(() => {
@@ -111,7 +110,7 @@ function AppContent() {
             if (res.ok) body = (await res.json()).body ?? body
           } catch {}
         }
-        setPendingUpdate({ version: metadata.version, body, required, update: new Update(metadata) })
+        setPendingUpdate({ version: metadata.version, body, required, downloadUrl: metadata.downloadUrl })
       } catch (e) {
         console.warn('[updater] background check failed:', e)
       }
@@ -191,7 +190,7 @@ function AppContent() {
         version={pendingUpdate?.version ?? ''}
         body={pendingUpdate?.body ?? ''}
         required={pendingUpdate?.required ?? false}
-        update={pendingUpdate?.update ?? null}
+        downloadUrl={pendingUpdate?.downloadUrl ?? ''}
         onClose={() => {
           if (pendingUpdate) {
             localStorage.setItem('snooze-update', JSON.stringify({ version: pendingUpdate.version, until: Date.now() + 86400000 }))

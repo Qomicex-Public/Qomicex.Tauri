@@ -32,7 +32,6 @@ import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
-import { Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache } from '../api/settings.ts'
@@ -67,7 +66,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   const [expandedDep, setExpandedDep] = useState<string | null>(null)
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string } | null>(null)
-  const [updateObj, setUpdateObj] = useState<any>(null)
+  const [downloadUrl, setDownloadUrl] = useState<string>('')
   const [progress, setProgress] = useState(0)
   const [updateError, setUpdateError] = useState<string>()
   const [channel, setChannel] = useState(() => localStorage.getItem('update-channel') || 'stable')
@@ -115,9 +114,8 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
           if (res.ok) body = (await res.json()).body ?? body
         } catch {}
       }
-      const upd = new Update(metadata)
-      setUpdateObj(upd)
-      setUpdateInfo({ version: upd.version, body })
+      setDownloadUrl(metadata.downloadUrl ?? '')
+      setUpdateInfo({ version: metadata.version, body })
       setUpdateState('available')
     } catch (e) {
       setUpdateState('error')
@@ -126,22 +124,21 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   }
 
   async function downloadAndInstall() {
-    if (!updateObj) return
+    if (!downloadUrl) return
     setUpdateState('downloading')
     setProgress(0)
     try {
-      let contentLength = 0
-      let downloaded = 0
-      await updateObj.downloadAndInstall((event: any) => {
+      const { Channel } = await import('@tauri-apps/api/core')
+      const onEvent = new Channel()
+      onEvent.onmessage = (event: any) => {
         if (event.event === 'Started') {
-          contentLength = event.data.contentLength
+          const contentLength = event.data.contentLength ?? 0
+          if (contentLength > 0) setProgress(0)
         } else if (event.event === 'Progress') {
-          downloaded += event.data.chunkLength
-          if (contentLength > 0) {
-            setProgress(Math.round((downloaded / contentLength) * 100))
-          }
+          setProgress((prev) => Math.min(99, prev + 1))
         }
-      })
+      }
+      await invoke('download_and_install_update', { url: downloadUrl, onEvent })
       setUpdateState('installing')
       await relaunch()
     } catch {
