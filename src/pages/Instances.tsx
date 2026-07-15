@@ -43,12 +43,13 @@ const LOADER_COLORS: Record<string, string> = {
   LiteLoader: 'text-sky-400 bg-sky-400/10 border-sky-400/25',
 }
 
-const TYPE_LABEL: Record<string, string> = { release: '正式版', snapshot: '快照', old_beta: '远古测试版', old_alpha: '远古阿尔法' }
-const TYPE_ORDER: Record<string, number> = { release: 0, snapshot: 1, old_beta: 2, old_alpha: 3 }
+const TYPE_LABEL: Record<string, string> = { release: '正式版', snapshot: '快照', old_beta: '远古测试版', old_alpha: '远古阿尔法', april_fools: '愚人节版' }
+const TYPE_ORDER: Record<string, number> = { release: 0, snapshot: 1, april_fools: 1.5, old_beta: 2, old_alpha: 3 }
 const REMOTE_VERSION_CATEGORIES = [
   { key: 'all', label: '全部' },
   { key: 'release', label: '正式版' },
   { key: 'snapshot', label: '快照' },
+  { key: 'april_fools', label: '愚人节版' },
   { key: 'old_beta', label: '远古测试版' },
   { key: 'old_alpha', label: '远古阿尔法' },
 ]
@@ -304,7 +305,7 @@ export default function Instances() {
   }
 
   function selectRemoteVersion(v: RemoteVersionInfo) {
-    setForm((prev) => ({ ...prev, gameVersion: v.id, name: v.id }))
+    setForm({ name: v.id, gameVersion: v.id, loader: '', loaderVersion: '' })
     setStep('configure')
   }
 
@@ -323,6 +324,7 @@ export default function Instances() {
     }
 
     try {
+      const isAprilFools = remoteVersions.some((v) => v.id === form.gameVersion && v.type === 'april_fools')
       const data: CreateInstanceRequest = {
         name: form.name.trim(),
         gameVersion: form.gameVersion,
@@ -330,6 +332,7 @@ export default function Instances() {
         loaderVersion: resolvedVersion || undefined,
         gameDir: currentDir,
         maxMemory: 4096,
+        icon: isAprilFools ? 'TNT' : undefined,
       }
       const instance = await createInstance(data)
 
@@ -575,7 +578,7 @@ export default function Instances() {
                   <span className="truncate text-sm font-medium">{v.id}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{TYPE_LABEL[v.type] || v.type}</span>
+                  <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{TYPE_LABEL[v.type] || v.type}</span>
                 </div>
                 <span className="text-[10px] text-muted-foreground/60"><FontAwesomeIcon icon={faCalendar} className="mr-0.5 h-2.5 w-2.5" />{formatDate(v.releaseTime)}</span>
               </button>
@@ -591,7 +594,7 @@ export default function Instances() {
                       <FontAwesomeIcon icon={faCube} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       <span className="text-sm font-medium text-foreground">{v.id}</span>
                     </div>
-                    <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{TYPE_LABEL[v.type] || v.type}</span>
+                    <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{TYPE_LABEL[v.type] || v.type}</span>
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground/70">
                     <FontAwesomeIcon icon={faCalendar} className="mr-1 h-2.5 w-2.5" />
@@ -612,7 +615,7 @@ export default function Instances() {
     return (
       <div className="animate-in slide-up space-y-5 p-8">
         <div className="flex items-center gap-3">
-          <button onClick={() => setStep('select-version')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+            <button onClick={() => { setStep('select-version'); setLoaderVersions([]) }} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
           </button>
           <h2 className="text-lg font-semibold">配置下载</h2>
@@ -632,7 +635,7 @@ export default function Instances() {
                 <FontAwesomeIcon icon={faCube} className="h-3.5 w-3.5 shrink-0" />
                 <span className="font-medium text-foreground">{form.gameVersion}</span>
                 {selectedVer && (
-                  <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', selectedVer.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : selectedVer.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{TYPE_LABEL[selectedVer.type] || selectedVer.type}</span>
+                  <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', selectedVer.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : selectedVer.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : selectedVer.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{TYPE_LABEL[selectedVer.type] || selectedVer.type}</span>
                 )}
               </div>
             </div>
