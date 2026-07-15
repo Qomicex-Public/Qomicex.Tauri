@@ -51,7 +51,9 @@
     "updater": {
       "pubkey": "dW50cnRydGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU1RjFGQUNEOTY5MzgyMUQKUldRZGdwT1d6ZnJ4VlRUQWZJMWlJa0pGbjdJU1NPOTUrek1FbWFtdlU4dDdKT0V0NE9adzFLMGMK",
       "endpoints": [
-        "https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json"
+        {
+          "url": "https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json"
+        }
       ]
     }
   }
