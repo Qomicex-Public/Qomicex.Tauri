@@ -319,8 +319,12 @@ public class InstanceFilesController : ControllerBase
         var newPath = Path.Combine(modsDir, request.NewFileName);
         try
         {
+            var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
             using var client = _httpClientFactory.CreateClient();
-            var response = await client.GetAsync(request.DownloadUrl);
+            var req = new HttpRequestMessage(HttpMethod.Get, request.DownloadUrl);
+            if (!string.IsNullOrEmpty(apiKey))
+                req.Headers.Add("x-api-key", apiKey);
+            var response = await client.SendAsync(req);
             if (!response.IsSuccessStatusCode)
             {
                 RollbackBackups(oldBak, oldPath, disabledBak, disabledPath);
@@ -390,6 +394,7 @@ public class InstanceFilesController : ControllerBase
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
         var modsDir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
 
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
         var client = _httpClientFactory.CreateClient();
         foreach (var update in request.Updates)
         {
@@ -406,7 +411,10 @@ public class InstanceFilesController : ControllerBase
             var newPath = Path.Combine(modsDir, update.NewFileName);
             try
             {
-                var response = await client.GetAsync(update.DownloadUrl);
+                var req = new HttpRequestMessage(HttpMethod.Get, update.DownloadUrl);
+                if (!string.IsNullOrEmpty(apiKey))
+                    req.Headers.Add("x-api-key", apiKey);
+                var response = await client.SendAsync(req);
                 if (!response.IsSuccessStatusCode)
                 {
                     RollbackBackups(oldBak, oldPath, disabledBak, disabledPath);
@@ -436,8 +444,12 @@ public class InstanceFilesController : ControllerBase
         var isolation = inst.VersionIsolation ?? InstanceController.GetGlobalVersionIsolation();
         var dir = GetCategoryDir(gameDir, inst.Name, isolation, "mods");
         var path = Path.Combine(dir, request.FileName);
+        var apiKey = _configuration["CurseForge:ApiKey"] ?? "";
         using var client = _httpClientFactory.CreateClient();
-        var response = await client.GetAsync(request.DownloadUrl);
+        var req = new HttpRequestMessage(HttpMethod.Get, request.DownloadUrl);
+        if (!string.IsNullOrEmpty(apiKey))
+            req.Headers.Add("x-api-key", apiKey);
+        var response = await client.SendAsync(req);
         if (!response.IsSuccessStatusCode)
             return BadRequest(new { error = "下载失败" });
         await using var stream = await response.Content.ReadAsStreamAsync();

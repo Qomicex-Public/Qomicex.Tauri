@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
 using Qomicex.Downloader;
 using Qomicex.Core.Modules.Helpers;
 using Qomicex.Core.Modules.Helpers.Resources;
@@ -31,6 +32,7 @@ public class InstanceInstallService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly JavaRuntimeStore _javaRuntimeStore;
+    private readonly string? _cfApiKey;
     private readonly ConcurrentDictionary<string, IInstallTask> _tasks = new();
 
     public class InstallState
@@ -48,15 +50,16 @@ public class InstanceInstallService
         public bool IsPaused { get; set; }
     }
 
-    public InstanceInstallService(IHttpClientFactory httpClientFactory, JavaRuntimeStore javaRuntimeStore)
+    public InstanceInstallService(IHttpClientFactory httpClientFactory, JavaRuntimeStore javaRuntimeStore, IConfiguration configuration)
     {
         _httpClientFactory = httpClientFactory;
         _javaRuntimeStore = javaRuntimeStore;
+        _cfApiKey = configuration["CurseForge:ApiKey"];
     }
 
     [Obsolete("Use constructor without DownloadManager — InstallTask creates its own")]
-    public InstanceInstallService(IHttpClientFactory httpClientFactory, DownloadManager _, JavaRuntimeStore javaRuntimeStore)
-        : this(httpClientFactory, javaRuntimeStore) { }
+    public InstanceInstallService(IHttpClientFactory httpClientFactory, DownloadManager _, JavaRuntimeStore javaRuntimeStore, IConfiguration configuration)
+        : this(httpClientFactory, javaRuntimeStore, configuration) { }
 
     public InstallState? GetState(string instanceId)
     {
@@ -160,7 +163,7 @@ public class InstanceInstallService
                 if (installTask.IsCompleted && installTask.Error == null)
                 {
                     var modpackTask = new ModpackInstallTask(instanceId, gameDir, instName,
-                        files, overridesZip, versionIsolation);
+                        files, overridesZip, versionIsolation, _cfApiKey);
                     _tasks[instanceId] = modpackTask;
                     await modpackTask.StartAsync();
                 }

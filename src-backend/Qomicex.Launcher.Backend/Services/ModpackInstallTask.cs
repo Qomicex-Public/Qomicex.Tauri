@@ -14,6 +14,7 @@ public class ModpackInstallTask : IInstallTask
     private readonly CancellationTokenSource _cts = new();
 
     private readonly DownloadManager _downloadManager = new(intervalMs: 500);
+    private readonly string? _cfApiKey;
 
     public string InstanceId => _instanceId;
     public string Stage { get; private set; } = "queued";
@@ -30,7 +31,8 @@ public class ModpackInstallTask : IInstallTask
     public event Action<IInstallTask>? OnStateChanged;
 
     public ModpackInstallTask(string instanceId, string gameDir, string instName,
-        List<ModpackFileEntry> files, byte[]? overridesZip, bool versionIsolation)
+        List<ModpackFileEntry> files, byte[]? overridesZip, bool versionIsolation,
+        string? cfApiKey = null)
     {
         _instanceId = instanceId;
         _gameDir = gameDir;
@@ -38,6 +40,7 @@ public class ModpackInstallTask : IInstallTask
         _files = files;
         _overridesZip = overridesZip;
         _versionIsolation = versionIsolation;
+        _cfApiKey = cfApiKey;
 
         _downloadManager.OnTaskProgressUpdated += (taskId, info) =>
         {
@@ -113,7 +116,10 @@ public class ModpackInstallTask : IInstallTask
 
     private async Task RunWithProgress(int taskId, double stageStart, double stageEnd)
     {
-        var downloadTask = _downloadManager.StartTaskAsync(taskId, _cts.Token);
+        var headers = !string.IsNullOrEmpty(_cfApiKey)
+            ? new Dictionary<string, string> { ["x-api-key"] = _cfApiKey }
+            : null;
+        var downloadTask = _downloadManager.StartTaskAsync(taskId, _cts.Token, headers: headers);
         int lastCompleted = 0;
         while (!downloadTask.IsCompleted && !_cts.Token.IsCancellationRequested)
         {

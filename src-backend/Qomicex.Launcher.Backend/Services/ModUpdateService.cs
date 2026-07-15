@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 using Qomicex.Launcher.Backend.Common;
 
 namespace Qomicex.Launcher.Backend.Services;
@@ -9,10 +10,12 @@ namespace Qomicex.Launcher.Backend.Services;
 public sealed class ModUpdateService
 {
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly string? _cfApiKey;
 
-    public ModUpdateService(IHttpClientFactory httpClientFactory)
+    public ModUpdateService(IHttpClientFactory httpClientFactory, IConfiguration configuration)
     {
         _httpClientFactory = httpClientFactory;
+        _cfApiKey = configuration["CurseForge:ApiKey"];
     }
 
     public async Task<List<ModUpdateEntry>> CheckUpdates(List<ModUpdateCheckItem> items, string? gameVersion, string? loader)
@@ -98,6 +101,8 @@ public sealed class ModUpdateService
                 query += $"&gameVersion={Uri.EscapeDataString(gameVersion)}";
 
             var req = new HttpRequestMessage(HttpMethod.Get, ModApiMirror.MirrorCurseForge(query));
+            if (!string.IsNullOrEmpty(_cfApiKey))
+                req.Headers.Add("x-api-key", _cfApiKey);
             var resp = await client.SendAsync(req);
             resp.EnsureSuccessStatusCode();
             var json = await resp.Content.ReadFromJsonAsync<JsonObject>();

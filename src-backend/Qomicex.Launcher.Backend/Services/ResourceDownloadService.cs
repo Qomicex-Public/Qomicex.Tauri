@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Configuration;
 using Qomicex.Downloader;
 using DownloadCore = Qomicex.Downloader.Core;
 
@@ -28,11 +29,20 @@ public class ResourceDownloadService
     private readonly ConcurrentDictionary<string, ResourceDownloadState> _downloads = new();
     private readonly ConcurrentDictionary<string, DownloadCore> _engines = new();
     private readonly HttpClient _httpClient;
+    private readonly string? _cfApiKey;
 
-    public ResourceDownloadService(IHttpClientFactory httpClientFactory)
+    public ResourceDownloadService(IHttpClientFactory httpClientFactory, IConfiguration configuration)
     {
         _httpClient = httpClientFactory.CreateClient();
         _httpClient.Timeout = TimeSpan.FromMinutes(30);
+        _cfApiKey = configuration["CurseForge:ApiKey"];
+    }
+
+    private IReadOnlyDictionary<string, string>? ResolveHeaders(string url)
+    {
+        if (!string.IsNullOrEmpty(_cfApiKey) && url.Contains("forgecdn.net", StringComparison.OrdinalIgnoreCase))
+            return new Dictionary<string, string> { ["x-api-key"] = _cfApiKey };
+        return null;
     }
 
     public string StartDownload(string url, string targetDir, string fileName)
@@ -143,7 +153,8 @@ public class ResourceDownloadService
                 state.Progress = p.Progress;
             });
 
-            await core.DownloadFileAsync(state.Url, state.TargetPath, progress, state.Cts.Token);
+            await core.DownloadFileAsync(state.Url, state.TargetPath, progress, state.Cts.Token,
+                headers: ResolveHeaders(state.Url));
             state.Progress = 100;
             state.Speed = 0;
             state.Status = "completed";
@@ -183,7 +194,8 @@ public class ResourceDownloadService
                 state.Progress = p.Progress;
             });
 
-            await core.DownloadFileAsync(state.Url, filePath, progress, state.Cts.Token);
+            await core.DownloadFileAsync(state.Url, filePath, progress, state.Cts.Token,
+                headers: ResolveHeaders(state.Url));
 
             var sw = Stopwatch.StartNew();
             using var sha1 = SHA1.Create();

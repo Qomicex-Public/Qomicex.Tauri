@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
+using Qomicex.Downloader;
 using Qomicex.Launcher.Backend;
+using DownloadCore = Qomicex.Downloader.Core;
 
 namespace Qomicex.Launcher.Backend.Services;
 
@@ -389,11 +391,9 @@ public class ModpackService
         var tempPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip");
         try
         {
-            using (var httpStream = await client.GetStreamAsync(downloadUrl))
-            using (var fileStream = new FileStream(tempPath, FileMode.CreateNew))
-            {
-                await httpStream.CopyToAsync(fileStream);
-            }
+            var core = new DownloadCore(threadCount: 0, maxRetries: 3);
+            await core.DownloadFileAsync(downloadUrl, tempPath, null, CancellationToken.None,
+                headers: new Dictionary<string, string> { ["x-api-key"] = apiKey });
 
             var result = await ParseCurseForgeZipAsync(tempPath);
             result.Name = modName;
