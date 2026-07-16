@@ -41,6 +41,7 @@ const LOADER_COLORS: Record<string, string> = {
   Quilt: 'text-purple-400 bg-purple-400/10 border-purple-400/25',
   OptiFine: 'text-yellow-500 bg-yellow-500/10 border-yellow-500/25',
   LiteLoader: 'text-sky-400 bg-sky-400/10 border-sky-400/25',
+  Vanilla: 'text-muted-foreground bg-muted border-border',
 }
 
 const TYPE_LABEL: Record<string, string> = { release: '正式版', snapshot: '快照', old_beta: '远古测试版', old_alpha: '远古阿尔法', april_fools: '愚人节版' }
@@ -155,9 +156,13 @@ export default function Instances() {
   const doScan = useCallback(async (dir: string) => {
     if (!dir) { setScannedLocal([]); return }
     setScanning(true)
+
+    let versions: ScannedVersion[] = []
+    try { versions = await scanVersions(dir) }
+    catch {}
+    setScannedLocal(versions)
+
     try {
-      const versions = await scanVersions(dir)
-      setScannedLocal(versions)
       const instances = await getInstances()
       setBackedInstances(instances)
       const existingNames = new Set(instances.filter((i) => i.gameDir === dir).map((i) => i.name))
@@ -179,7 +184,8 @@ export default function Instances() {
         const valid = created.filter((c): c is GameInstance => c !== null)
         if (valid.length > 0) setBackedInstances((prev) => [...prev, ...valid])
       }
-    } catch { setScannedLocal([]) } finally { setScanning(false) }
+    } catch {}
+    finally { setScanning(false) }
   }, [])
 
   useEffect(() => {
@@ -224,12 +230,12 @@ export default function Instances() {
     if (!form.loader) { setLoaderAddons([]); return }
     let cancelled = false
     setLoadingAddons(true)
-    getLoaderAddons(form.loader)
+    getLoaderAddons(form.loader, form.gameVersion)
       .then((addons) => { if (!cancelled) setLoaderAddons(addons) })
       .catch(() => { if (!cancelled) setLoaderAddons([]) })
       .finally(() => { if (!cancelled) setLoadingAddons(false) })
     return () => { cancelled = true }
-  }, [form.loader])
+  }, [form.loader, form.gameVersion])
 
   useEffect(() => {
     setForm((prev) => {
@@ -1043,13 +1049,15 @@ export default function Instances() {
               <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={v.loaders?.[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
-                {v.loaders && v.loaders.filter((l) => l.type).length > 0 && (
-                  <div className="mt-1 flex flex-wrap justify-center gap-1">
-                    {v.loaders.filter((l) => l.type).map((l) => (
+                <div className="mt-1 flex flex-wrap justify-center gap-1">
+                  {v.loaders && v.loaders.filter((l) => l.type).length > 0 ? (
+                    v.loaders.filter((l) => l.type).map((l) => (
                       <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
-                    ))}
-                  </div>
-                )}
+                    ))
+                  ) : (
+                    <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', LOADER_COLORS.Vanilla)}>Vanilla</span>
+                  )}
+                </div>
                 <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/70">
                   <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
                     <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
@@ -1089,9 +1097,13 @@ export default function Instances() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="truncate text-sm font-medium">{v.name}</h3>
-                    {v.loaders && v.loaders.filter((l) => l.type).length > 0 && v.loaders.filter((l) => l.type).map((l) => (
-                      <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
-                    ))}
+                    {v.loaders && v.loaders.filter((l) => l.type).length > 0 ? (
+                      v.loaders.filter((l) => l.type).map((l) => (
+                        <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
+                      ))
+                    ) : (
+                      <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS.Vanilla)}>Vanilla</span>
+                    )}
                     <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
                       <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
                       {v.state === 'Available' ? '可用' : '异常'}

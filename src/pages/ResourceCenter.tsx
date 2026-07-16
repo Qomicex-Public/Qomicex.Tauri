@@ -173,7 +173,7 @@ function ResourceCard({
             安装
           </Button>
           <Button asChild variant="outline" className="flex-1 sm:w-full">
-            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId) + '&expandBody=1'}>查看详情</Link>
+            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>查看详情</Link>
           </Button>
           {item.projectUrl && (
             <Button asChild variant="ghost" className="px-3 sm:w-full">
@@ -315,7 +315,7 @@ export default function ResourceCenter() {
 
   const handleInstall = (item: ResourceItem) => {
     if (category === 'modpack') {
-      navigate(buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId))
+      navigate(buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId), { state: { iconUrl: item.iconUrl } })
     } else {
       setInstallDialogItem(item)
     }

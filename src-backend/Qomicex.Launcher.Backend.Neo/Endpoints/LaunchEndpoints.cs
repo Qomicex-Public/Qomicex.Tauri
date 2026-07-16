@@ -39,7 +39,10 @@ public static class LaunchEndpoints
             };
 
             var result = await core.Launch.LaunchAsync(launchOptions);
-            return Results.Json(result, ApiJsonContext.Default.LaunchResult);
+            var dto = new LaunchResultDto(
+                result.Success, result.ProcessId, result.Message,
+                Detail: result.Exception?.Message);
+            return Results.Json(dto, ApiJsonContext.Default.LaunchResultDto);
         });
 
         group.MapPost("/{pid}/kill", async (int pid) =>

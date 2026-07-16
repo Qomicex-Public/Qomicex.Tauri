@@ -8,6 +8,7 @@
     <PublishAot>true</PublishAot>
     <EnableAotAnalyzer>true</EnableAotAnalyzer>
     <IsAotCompatible>true</IsAotCompatible>
+
   </PropertyGroup>
 
   <ItemGroup>

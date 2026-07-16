@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
@@ -71,6 +71,8 @@ function LoaderBadge({ loader }: { loader: string }) {
 export default function ResourceDetailPage() {
   const { resourceId } = useParams()
   const [searchParams] = useSearchParams()
+  const location = useLocation()
+  const navIconUrl = (location.state as { iconUrl?: string } | null)?.iconUrl
   const { notify } = useMessageBox()
   const source = searchParams.get('source') ?? 'modrinth'
   const category = searchParams.get('category') ?? 'mod'
@@ -323,8 +325,8 @@ export default function ResourceDetailPage() {
             <CardContent className="p-0">
               <div className="grid gap-0 lg:grid-cols-[220px_minmax(0,1fr)]">
                 <div className="flex items-start justify-center bg-muted/30 p-6">
-                  {detail.iconUrl ? (
-                    <img src={detail.iconUrl} alt={detail.title} className="h-36 w-36 rounded-2xl object-cover ring-1 ring-border/50" />
+                  {detail.iconUrl || navIconUrl ? (
+                    <img src={detail.iconUrl || navIconUrl} alt={detail.title} className="h-36 w-36 rounded-2xl object-cover ring-1 ring-border/50" />
                   ) : (
                     <div className="flex h-36 w-36 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
                       <FontAwesomeIcon icon={faLayerGroup} className="h-10 w-10 opacity-50" />

@@ -20,18 +20,34 @@ builder.WebHost.ConfigureKestrel(options =>
 });
 
 var gameRoot = builder.Configuration["AppConfig:BaseDir"] ?? ".minecraft";
+var appVersion = typeof(Program).Assembly.GetName().Version ?? new Version(1, 0, 0);
+var curseForgeApiKey = builder.Configuration["CurseForge:ApiKey"] ?? "";
 var core = new GameCoreBuilder()
     .Configure(o =>
     {
-        o.LauncherName = "Qomicex";
+        o.LauncherName = "QML";
         o.GameRoot = gameRoot;
         o.MaxConcurrentDownloads = 8;
+        o.UserAgent = $"Qomicex.Launcher/{appVersion.Major}.{appVersion.Minor}.{appVersion.Build}";
+        o.CacheExpiry = TimeSpan.FromMinutes(30);
     })
+    .UseDownloadMirror(DownloadMirror.Official)
     .WithHttpClient(new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
     .Build();
 
+builder.Services.AddHttpClient();
 builder.Services.AddSingleton(core);
 builder.Services.AddSingleton<InstanceService>();
+builder.Services.AddSingleton<LaunchTracker>();
+builder.Services.AddSingleton<InstallTracker>();
+builder.Services.AddSingleton<CurseForgeVersionFetchService>();
+builder.Services.AddSingleton<JavaRuntimeStore>();
+builder.Services.AddSingleton(sp =>
+{
+    var clientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var store = sp.GetRequiredService<JavaRuntimeStore>();
+    return new JavaDownloadService(core, clientFactory.CreateClient("default"), store);
+});
 
 builder.Services.AddCors(options =>
 {
@@ -59,5 +75,9 @@ app.MapLaunchEndpoints(core);
 app.MapResourceEndpoints(core);
 app.MapInstanceEndpoints();
 app.MapSystemEndpoints();
+app.MapResourceCenterEndpoints(core, curseForgeApiKey);
+app.MapAccountEndpoints();
+app.MapJavaEndpoints();
+app.MapLoaderEndpoints();
 
 app.Run();

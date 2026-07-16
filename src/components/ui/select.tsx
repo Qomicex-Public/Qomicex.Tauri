@@ -149,22 +149,22 @@ export function Select({ value, onChange, children, className, placeholder, disa
                   opt.isDivider ? (
                     <div key={`div-${i}`} className="my-1 border-t border-border" />
                   ) : (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      disabled={opt.disabled}
-                      onClick={() => !opt.disabled && handleSelect(opt.value)}
-                      className={cn(
-                        'flex w-full items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors',
-                        opt.disabled
-                          ? 'cursor-not-allowed text-muted-foreground/50'
-                          : opt.value === value
-                            ? 'bg-primary/10 text-primary font-medium'
-                            : 'text-foreground hover:bg-accent'
-                      )}
-                    >
-                      {opt.label}
-                    </button>
+                      <button
+                          key={opt.value}
+                          type="button"
+                          disabled={opt.disabled}
+                          onClick={() => !opt.disabled && handleSelect(opt.value)}
+                          className={cn(
+                            'flex w-full items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors',
+                            opt.disabled
+                              ? 'cursor-not-allowed text-muted-foreground/50'
+                              : opt.value === value
+                                ? 'bg-primary/10 text-primary font-medium'
+                                : 'text-foreground hover:bg-accent'
+                          )}
+                        >
+                          {opt.label}
+                        </button>
                   )
                 )
               )

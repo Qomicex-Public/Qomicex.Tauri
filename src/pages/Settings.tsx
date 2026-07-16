@@ -681,11 +681,12 @@ export default function Settings() {
     try {
       const catalog = await getJavaDownloadCatalog()
       setDownloadVendors(catalog.vendors)
-      if (catalog.vendors.length > 0) {
-        setDownloadVendor(catalog.vendors[0].id)
-        setDownloadVersion(String(catalog.vendors[0].versions[0] ?? 17))
-        setDownloadPlatform(catalog.vendors[0].platforms[0] ?? 'windows')
-        setDownloadArch(catalog.vendors[0].architectures[0] ?? 'x64')
+      const preferred = catalog.vendors.find(v => v.isRecommended) ?? catalog.vendors[0]
+      if (preferred) {
+        setDownloadVendor(preferred.id)
+        setDownloadVersion(String(preferred.versions[0] ?? 17))
+        setDownloadPlatform(preferred.platforms[0] ?? 'windows')
+        setDownloadArch(preferred.architectures[0] ?? 'x64')
       }
       setDownloadDialogOpen(true)
     } catch (e: unknown) {
@@ -1521,7 +1522,9 @@ export default function Settings() {
                 <Label>发行版</Label>
                 <Select value={downloadVendor} onChange={setDownloadVendor}>
                   {downloadVendors.map((vendor) => (
-                    <SelectOption key={vendor.id} value={vendor.id}>{vendor.name}</SelectOption>
+                    <SelectOption key={vendor.id} value={vendor.id}>
+                      {vendor.name}{vendor.isRecommended ? ' (推荐)' : ''}
+                    </SelectOption>
                   ))}
                 </Select>
               </div>

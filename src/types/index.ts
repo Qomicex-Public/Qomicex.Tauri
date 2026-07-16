@@ -27,6 +27,7 @@ export interface JavaDownloadVendorInfo {
   platforms: string[]
   architectures: string[]
   versions: number[]
+  isRecommended?: boolean
 }
 
 export interface JavaDownloadCatalogResponse {
@@ -273,6 +274,12 @@ export interface LaunchProgress {
 export interface ScannedVersionLoader {
   type: string
   version: string
+}
+
+export interface ScanVersionsResponse {
+  path: string
+  versions: ScannedVersion[]
+  noJsonDirs: string[]
 }
 
 export interface ScannedVersion {

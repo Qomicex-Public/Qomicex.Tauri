@@ -82,11 +82,55 @@ public sealed class InstanceService
     {
         lock (_lock)
         {
+            if (_defaultId == id) _defaultId = null;
             var instance = _instances.FirstOrDefault(i => i.Id == id);
             if (instance == null) return null;
             _instances.RemoveAll(i => i.Id == id);
             SaveToFile();
             return instance;
+        }
+    }
+
+    private string? _defaultId;
+    private static readonly string DefaultFilePath =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "default_instance.json");
+
+    public string? GetDefaultId()
+    {
+        lock (_lock)
+        {
+            if (_defaultId != null) return _defaultId;
+            try
+            {
+                if (File.Exists(DefaultFilePath))
+                {
+                    _defaultId = File.ReadAllText(DefaultFilePath).Trim().Trim('"');
+                    return _defaultId;
+                }
+            }
+            catch { }
+            return null;
+        }
+    }
+
+    public void SetDefaultId(string id)
+    {
+        lock (_lock)
+        {
+            _defaultId = id;
+            var dir = Path.GetDirectoryName(DefaultFilePath)!;
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(DefaultFilePath, $"\"{id}\"");
+        }
+    }
+
+    public void ClearDefaultId()
+    {
+        lock (_lock)
+        {
+            _defaultId = null;
+            try { if (File.Exists(DefaultFilePath)) File.Delete(DefaultFilePath); }
+            catch { }
         }
     }
 }
