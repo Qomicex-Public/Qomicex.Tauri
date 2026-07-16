@@ -1,0 +1,135 @@
+name: Build Backend (AOT)
+
+on:
+  workflow_dispatch:
+    inputs:
+      buildPlatform:
+        description: '构建平台'
+        required: true
+        default: 'linux'
+        type: choice
+        options:
+          - windows
+          - linux
+          - macos
+          - loongarch64
+          - all
+
+env:
+  GITHUB_SHA: ${{ github.sha }}
+
+jobs:
+  windows-x64:
+    if: ${{ github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-x64 --self-contained true -p:DebugType=embedded -o artifacts/backend-win-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-win-x64
+          path: artifacts/backend-win-x64/
+
+  windows-arm64:
+    if: ${{ github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-arm64 --self-contained true -p:DebugType=embedded -o artifacts/backend-win-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-win-arm64
+          path: artifacts/backend-win-arm64/
+
+  linux-x64:
+    if: ${{ github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-x64 --self-contained true -p:DebugType=embedded -o artifacts/backend-linux-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-linux-x64
+          path: artifacts/backend-linux-x64/
+
+  linux-arm64:
+    if: ${{ github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all' }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-arm64 --self-contained true -p:DebugType=embedded -o artifacts/backend-linux-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-linux-arm64
+          path: artifacts/backend-linux-arm64/
+
+  linux-loongarch64:
+    if: ${{ github.event.inputs.buildPlatform == 'loongarch64' }}
+    runs-on: [self-hosted, loongarch64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - name: Setup .NET (LoongArch SDK)
+        run: |
+          curl -sL "https://github.com/loongson/dotnet/releases/download/v10.0.109-loongarch64/dotnet-sdk-10.0.109-linux-loongarch64.tar.gz" | tar xz -C /usr/local/dotnet
+          echo "/usr/local/dotnet" >> $GITHUB_PATH
+          dotnet nuget add source -n lnuget.loongnix.cn --protocol-version 3 https://lnuget.loongnix.cn/v3/index.json
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-loongarch64 --self-contained true -p:DebugType=embedded -o artifacts/backend-linux-loongarch64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-linux-loongarch64
+          path: artifacts/backend-linux-loongarch64/
+
+  macos-arm64:
+    if: ${{ github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-arm64 --self-contained true -p:DebugType=embedded -o artifacts/backend-osx-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-osx-arm64
+          path: artifacts/backend-osx-arm64/
+
+  macos-x64:
+    if: ${{ github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-x64 --self-contained true -p:DebugType=embedded -o artifacts/backend-osx-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-osx-x64
+          path: artifacts/backend-osx-x64/
