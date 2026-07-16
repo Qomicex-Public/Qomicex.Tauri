@@ -26,6 +26,8 @@
 
 **Qomicex Launcher 测试 ①群** [623362446](https://qm.qq.com/q/rKiwzrkg8w)
 
+> 鉴于启动器的AOT支持原因，我们正在重构支持AOT构建的启动器核心，启动器本体的更新将会放缓，新版核心将逐步接入启动器，直至替换原核心
+
 ## 小Tips - 读音
 Qomicex
 /kˈɑːmaɪsˌɛks/
