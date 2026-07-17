@@ -4,6 +4,16 @@ using Qomicex.Launcher.Backend.Neo.Services;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 
+public sealed record ProgressSsePayload(
+    string Type,
+    List<InstallProgressResponse> Installs,
+    List<JavaDownloadProgressResponse> JavaDownloads,
+    List<object> Resources,
+    ProgressSseSummary Summary
+);
+
+public sealed record ProgressSseSummary(int ActiveCount, double TotalSpeed);
+
 public static class ProgressSseEndpoints
 {
     public static void MapProgressSseEndpoints(this WebApplication app)
@@ -29,23 +39,15 @@ public static class ProgressSseEndpoints
                     foreach (var i in installs)
                         totalSpeed += i.Speed;
 
-                    var payload = new
-                    {
-                        type = "progress",
-                        installs,
-                        javaDownloads = Array.Empty<object>(),
-                        resources = Array.Empty<object>(),
-                        summary = new
-                        {
-                            activeCount = installs.Count,
-                            totalSpeed
-                        }
-                    };
+                    var payload = new ProgressSsePayload(
+                        Type: "progress",
+                        Installs: installs,
+                        JavaDownloads: [],
+                        Resources: [],
+                        Summary: new ProgressSseSummary(ActiveCount: installs.Count, TotalSpeed: totalSpeed)
+                    );
 
-                    var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
-                    {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                    });
+                    var json = JsonSerializer.Serialize(payload, ApiJsonContext.Default.ProgressSsePayload);
                     await context.Response.WriteAsync($"data: {json}\n\n", ct);
                     await context.Response.Body.FlushAsync(ct);
                 }

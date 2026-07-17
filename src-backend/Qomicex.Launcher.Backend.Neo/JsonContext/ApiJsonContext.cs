@@ -82,6 +82,9 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(JavaPathRequest))]
 [JsonSerializable(typeof(JavaRecommendRequest))]
 [JsonSerializable(typeof(StoredJavaRuntime))]
+// SSE progress
+[JsonSerializable(typeof(ProgressSsePayload))]
+[JsonSerializable(typeof(ProgressSseSummary))]
 [JsonSerializable(typeof(List<StoredJavaRuntime>))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
