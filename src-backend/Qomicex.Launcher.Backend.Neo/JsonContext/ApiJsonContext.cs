@@ -180,7 +180,8 @@ public sealed record LaunchProgressDto(
     string Stage, string Message, double Progress, bool IsRunning,
     int? ProcessId = null, int? ExitCode = null, string? Error = null,
     string? CrashReport = null, List<string>? MissingFiles = null,
-    string? Arguments = null
+    string? Arguments = null,
+    string? CurrentFile = null, int TotalFiles = 0, int CompletedFiles = 0
 );
 
 public sealed record InstallerRequest(
@@ -203,7 +204,8 @@ public sealed record InstallProgressResponse(
     int FailedFiles = 0,
     string CurrentFile = "",
     double Speed = 0,
-    bool IsPaused = false
+    bool IsPaused = false,
+    string Stage = ""
 );
 
 // Resource center DTOs
