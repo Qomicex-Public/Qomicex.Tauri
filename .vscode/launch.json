@@ -33,7 +33,7 @@
             "args": [
                 "run",
                 "--project",
-                "${workspaceFolder}/src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj",
+                "${workspaceFolder}/src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj",
                 "--urls=http://localhost:5000"
                 // 可显式指定端口，避免与 Tauri 默认端口冲突
             ],
