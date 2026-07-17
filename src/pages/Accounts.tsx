@@ -182,19 +182,19 @@ export default function Accounts() {
           return
         }
         try {
-          const result = await accountApi.microsoftPoll(data)
-          if (result.status === 'failed') {
-            stopPolling()
+          const result = await accountApi.microsoftPoll(data.deviceCode)
+          if (result.isPending) return
+          stopPolling()
+          if (result.success === false) {
             setMicrosoftStep('error')
-            setMicrosoftMsg(fmtOAuthError(result.error ?? 'unknown'))
+            setMicrosoftMsg(fmtOAuthError((result.errorMessage as string) ?? 'unknown'))
             return
           }
-          if (result.access_token) {
-            stopPolling()
+          if (result.accessToken) {
             setMicrosoftStep('fetching-info')
             setMicrosoftMsg('正在获取账户信息...')
             try {
-              await accountApi.microsoftUserInfo(result.access_token, result.refresh_token ?? '')
+              await accountApi.microsoftUserInfo(result.accessToken as string, (result.refreshToken as string) ?? '')
               await refresh()
               setMicrosoftStep('done')
               setMicrosoftMsg('登录成功')
@@ -244,7 +244,7 @@ export default function Accounts() {
     try {
       const result = await accountApi.yggdrasilLogin(yggEmail, yggPwd, yggServer)
       await refresh()
-      if (result.length > 0) navigate(`/accounts/${result[0].uuid}`)
+      if (result.uuid) navigate(`/accounts/${result.uuid}`)
       setAddOpen(false)
     } catch (e: unknown) {
       await msgError(fmtErr(e))
@@ -258,7 +258,7 @@ export default function Accounts() {
     try {
       const result = await accountApi.tongyiLogin(tyServerId, tyEmail, tyPwd)
       await refresh()
-      if (result.length > 0) navigate(`/accounts/${result[0].uuid}`)
+      if (result.uuid) navigate(`/accounts/${result.uuid}`)
       setAddOpen(false)
     } catch (e: unknown) {
       await msgError(fmtErr(e))

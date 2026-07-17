@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Qomicex.Core.AOT.Builder;
+using Qomicex.Launcher.Backend.Neo.Diagnostics;
 using Qomicex.Launcher.Backend.Neo.Endpoints;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Middleware;
@@ -38,6 +40,8 @@ var core = new GameCoreBuilder()
 
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton(core);
+
+// Services
 builder.Services.AddSingleton<InstanceService>();
 builder.Services.AddSingleton<LaunchTracker>();
 builder.Services.AddSingleton(sp =>
@@ -53,6 +57,16 @@ builder.Services.AddSingleton(sp =>
     var store = sp.GetRequiredService<JavaRuntimeStore>();
     return new JavaDownloadService(core, clientFactory.CreateClient("default"), store);
 });
+
+// Diagnostics
+var traceBuffer = new TraceBufferStore(2000);
+builder.Services.AddSingleton(traceBuffer);
+builder.Services.AddSingleton<TraceDumpService>();
+Trace.Listeners.Add(new BufferedTraceListener(traceBuffer));
+
+// Account & Skin
+builder.Services.AddSingleton<AccountService>();
+builder.Services.AddSingleton<SkinService>();
 
 builder.Services.AddCors(options =>
 {
@@ -74,14 +88,15 @@ var app = builder.Build();
 app.UseErrorHandling();
 app.UseCors();
 
-app.MapAuthEndpoints(core);
+app.MapAuthEndpoints(core, app.Services.GetRequiredService<AccountService>());
 app.MapVersionEndpoints(core);
 app.MapLaunchEndpoints(core);
 app.MapResourceEndpoints(core);
 app.MapInstanceEndpoints();
 app.MapSystemEndpoints();
 app.MapResourceCenterEndpoints(core, curseForgeApiKey);
-app.MapAccountEndpoints();
+app.MapAccountEndpoints(app.Services.GetRequiredService<AccountService>());
+app.MapSkinEndpoints(app.Services.GetRequiredService<SkinService>());
 app.MapJavaEndpoints();
 app.MapLoaderEndpoints();
 app.MapProgressSseEndpoints();

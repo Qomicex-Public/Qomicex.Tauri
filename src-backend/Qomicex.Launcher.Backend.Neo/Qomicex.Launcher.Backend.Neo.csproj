@@ -11,8 +11,18 @@
 
   </PropertyGroup>
 
+  <Target Name="SetGitHash" BeforeTargets="CoreCompile" Condition="'$(GitHash)' != ''">
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>GitHash</_Parameter1>
+        <_Parameter2>$(GitHash)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <EmbeddedResource Include="appsettings.json" />
+    <EmbeddedResource Include="Resources\Alex.png" />
   </ItemGroup>
 
   <ItemGroup>

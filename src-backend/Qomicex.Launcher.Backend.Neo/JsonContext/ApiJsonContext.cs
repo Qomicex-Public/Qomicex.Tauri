@@ -88,6 +88,19 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(ProgressSsePayload))]
 [JsonSerializable(typeof(ProgressSseSummary))]
 [JsonSerializable(typeof(List<StoredJavaRuntime>))]
+// Account types
+[JsonSerializable(typeof(StoredAccount))]
+[JsonSerializable(typeof(List<StoredAccount>))]
+[JsonSerializable(typeof(AccountInfo))]
+[JsonSerializable(typeof(List<AccountInfo>))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSerializable(typeof(SkinProfile))]
+[JsonSerializable(typeof(MicrosoftInfoRequest))]
+[JsonSerializable(typeof(TongyiLoginRequest))]
+[JsonSerializable(typeof(MicrosoftRefreshRequest))]
+[JsonSerializable(typeof(YggdrasilMetaResponse))]
+[JsonSerializable(typeof(OfflineUuidResponse))]
+[JsonSerializable(typeof(LostResponse))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
 }
@@ -95,7 +108,9 @@ public sealed partial class ApiJsonContext : JsonSerializerContext
 public sealed record HealthResponse(string Status, DateTime Timestamp);
 
 public sealed record SystemInfoResponse(
-    string Os, string Architecture, string Runtime, int ProcessorCount, string WorkingDirectory);
+    string Os, string Architecture, string OsName, string OsVersion,
+    string OsVersionId, string OsDisplayName, string GitCommit,
+    long Memory, long AvailableMemory);
 
 public sealed record AuthRequest(
     string Mode,
@@ -289,3 +304,10 @@ public sealed record LoaderAddonInfo(
     string ProjectUrl,
     int Downloads
 );
+
+public sealed record MicrosoftInfoRequest(string AccessToken, string RefreshToken);
+public sealed record TongyiLoginRequest(string ServerId, string Email, string Password);
+public sealed record MicrosoftRefreshRequest(string AccountUuid);
+public sealed record YggdrasilMetaResponse(string ServerName);
+public sealed record OfflineUuidResponse(string Uuid);
+public sealed record LostResponse(bool Lost);
