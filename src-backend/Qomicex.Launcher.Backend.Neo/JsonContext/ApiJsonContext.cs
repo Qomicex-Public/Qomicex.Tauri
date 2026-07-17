@@ -82,6 +82,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(JavaPathRequest))]
 [JsonSerializable(typeof(JavaRecommendRequest))]
 [JsonSerializable(typeof(StoredJavaRuntime))]
+// Open folder/logs
+[JsonSerializable(typeof(OpenPathRequest))]
 // SSE progress
 [JsonSerializable(typeof(ProgressSsePayload))]
 [JsonSerializable(typeof(ProgressSseSummary))]
@@ -275,6 +277,8 @@ public sealed record LoaderVersionInfo(
     bool IsRecommended,
     string? PublishedAt
 );
+
+public sealed record OpenPathRequest(string Path);
 
 public sealed record LoaderAddonInfo(
     string Id,

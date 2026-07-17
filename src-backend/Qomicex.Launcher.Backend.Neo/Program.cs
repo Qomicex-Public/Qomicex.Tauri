@@ -84,5 +84,6 @@ app.MapAccountEndpoints();
 app.MapJavaEndpoints();
 app.MapLoaderEndpoints();
 app.MapProgressSseEndpoints();
+app.MapLogEndpoints();
 
 app.Run();

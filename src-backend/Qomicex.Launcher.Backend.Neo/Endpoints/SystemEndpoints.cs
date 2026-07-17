@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Qomicex.Launcher.Backend.Neo.Common;
@@ -9,6 +10,8 @@ public static class SystemEndpoints
 {
     private static readonly string SettingsPath = Path.Combine(
         AppPaths.BaseDir, "data", "settings.json");
+    private static readonly string BackgroundsDir = Path.Combine(
+        AppPaths.BaseDir, "QML", "backgrounds");
 
     public static SettingsResponse LoadSettings()
     {
@@ -77,6 +80,32 @@ public static class SystemEndpoints
         {
             SaveSettings(body);
             return Results.NoContent();
+        });
+
+        group.MapPost("/settings/open-folder", (OpenPathRequest body) =>
+        {
+            var path = body.Path;
+            if (string.IsNullOrEmpty(path)) return Results.BadRequest();
+            if (!Path.IsPathRooted(path))
+                path = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), path));
+            try
+            {
+                Directory.CreateDirectory(path);
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true, Verb = "open" });
+            }
+            catch { }
+            return Results.Ok();
+        });
+
+        group.MapPost("/settings/open-backgrounds", () =>
+        {
+            Directory.CreateDirectory(BackgroundsDir);
+            try
+            {
+                Process.Start(new ProcessStartInfo(BackgroundsDir) { UseShellExecute = true });
+            }
+            catch { }
+            return Results.Ok();
         });
     }
 }
