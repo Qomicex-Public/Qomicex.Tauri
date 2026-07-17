@@ -124,7 +124,7 @@ public sealed class InstallTracker
         state.Stage = "scanning-base";
         state.CurrentFile = "扫描基础文件...";
 
-        var missFiles = await core.Locator.GetMissFilesAsync(jsonContent);
+        var missFiles = RemapPaths(await core.Locator.GetMissFilesAsync(jsonContent), core.GameRoot, gameDir);
 
         Task? baseDownloadTask = null;
         DownloadManager? baseDm = null;
@@ -203,6 +203,11 @@ public sealed class InstallTracker
         state.CurrentFile = "校验主 Jar 文件...";
 
         var missJar = await core.Locator.GetMissMainJarAsync(jsonContent);
+        if (missJar != null)
+        {
+            var remapped = RemapPaths([missJar], core.GameRoot, gameDir);
+            missJar = remapped.FirstOrDefault();
+        }
         if (missJar != null)
         {
             state.Stage = "downloading-jar";
@@ -408,6 +413,20 @@ public sealed class InstallTracker
         });
 
         await Task.WhenAll(tasks);
+    }
+
+    private static List<MissFileInfo> RemapPaths(List<MissFileInfo> files, string fromRoot, string toRoot)
+    {
+        var absFrom = Path.GetFullPath(fromRoot);
+        var absTo = Path.GetFullPath(toRoot);
+        if (string.Equals(absFrom, absTo, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            return files;
+
+        return files.Select(f =>
+        {
+            var rel = Path.GetRelativePath(absFrom, f.Path);
+            return new MissFileInfo(f.Name, f.Url, f.Sha1, Path.Combine(absTo, rel));
+        }).ToList();
     }
 
     private static void CleanupTempFiles(string? installerPath)

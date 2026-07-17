@@ -19,7 +19,8 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = 524288000;
 });
 
-var gameRoot = builder.Configuration["AppConfig:BaseDir"] ?? ".minecraft";
+var settings = SystemEndpoints.LoadSettings();
+var gameRoot = Path.GetFullPath(settings.GameDir ?? builder.Configuration["AppConfig:BaseDir"] ?? ".minecraft");
 var appVersion = typeof(Program).Assembly.GetName().Version ?? new Version(1, 0, 0);
 var curseForgeApiKey = builder.Configuration["CurseForge:ApiKey"] ?? "";
 var core = new GameCoreBuilder()

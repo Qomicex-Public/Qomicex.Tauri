@@ -124,6 +124,7 @@ public static class InstanceEndpoints
 
                         var jsonContent = await File.ReadAllTextAsync(versionJsonPath, cts.Token);
                         var missFiles = FilterMissFiles(await core.Locator.GetMissFilesAsync(jsonContent));
+                        missFiles = RemapPaths(missFiles, core.GameRoot, instance.GameDir);
 
                         if (missFiles.Count > 0)
                         {
@@ -186,6 +187,7 @@ public static class InstanceEndpoints
                     {
                         Version = instance.Name,
                         VersionIsolation = instance.VersionIsolation ?? false,
+                        GameRoot = instance.GameDir,
                         JavaOptions = new JavaOptions
                         {
                             JavaPath = instance.JavaPath ?? "java",
@@ -343,5 +345,20 @@ public static class InstanceEndpoints
             .Where(f => !string.IsNullOrEmpty(f.Path) && !string.IsNullOrEmpty(f.Url))
             .DistinctBy(f => f.Path, comparer)
             .ToList();
+    }
+
+    private static List<Qomicex.Core.AOT.Public.Models.MissFileInfo> RemapPaths(
+        List<Qomicex.Core.AOT.Public.Models.MissFileInfo> files, string fromRoot, string toRoot)
+    {
+        var absFrom = Path.GetFullPath(fromRoot);
+        var absTo = Path.GetFullPath(toRoot);
+        if (string.Equals(absFrom, absTo, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            return files;
+
+        return files.Select(f =>
+        {
+            var rel = Path.GetRelativePath(absFrom, f.Path);
+            return new Qomicex.Core.AOT.Public.Models.MissFileInfo(f.Name, f.Url, f.Sha1, Path.Combine(absTo, rel));
+        }).ToList();
     }
 }
