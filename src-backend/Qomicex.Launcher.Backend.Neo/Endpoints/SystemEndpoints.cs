@@ -9,7 +9,7 @@ namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 public static class SystemEndpoints
 {
     private static readonly string SettingsPath = Path.Combine(
-        AppPaths.BaseDir, "data", "settings.json");
+        AppPaths.BaseDir, "QML", "settings.json");
     private static readonly string BackgroundsDir = Path.Combine(
         AppPaths.BaseDir, "QML", "backgrounds");
 
