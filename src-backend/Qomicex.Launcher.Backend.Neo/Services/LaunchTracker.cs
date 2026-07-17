@@ -6,6 +6,8 @@ namespace Qomicex.Launcher.Backend.Neo.Services;
 public sealed class LaunchTracker
 {
     private readonly ConcurrentDictionary<string, ProcessState> _states = new();
+    private readonly ConcurrentDictionary<string, LaunchProgressState> _progress = new();
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _cts = new();
 
     public void Track(string instanceId, int processId)
     {
@@ -29,12 +31,39 @@ public sealed class LaunchTracker
 
     public ProcessState? Stop(string instanceId)
     {
+        CancelAndRemove(instanceId);
         if (_states.TryRemove(instanceId, out var state))
         {
             state.Kill();
             return state;
         }
         return null;
+    }
+
+    public LaunchProgressState? GetProgress(string instanceId)
+    {
+        _progress.TryGetValue(instanceId, out var state);
+        return state;
+    }
+
+    public void SetProgress(string instanceId, LaunchProgressState state)
+    {
+        _progress[instanceId] = state;
+    }
+
+    public CancellationTokenSource GetOrCreateCts(string instanceId)
+    {
+        return _cts.GetOrAdd(instanceId, _ => new CancellationTokenSource());
+    }
+
+    public void CancelAndRemove(string instanceId)
+    {
+        if (_cts.TryRemove(instanceId, out var cts))
+        {
+            try { cts.Cancel(); } catch { }
+            cts.Dispose();
+        }
+        _progress.TryRemove(instanceId, out _);
     }
 }
 
@@ -88,4 +117,18 @@ public sealed class ProcessState
         }
         catch { HasExited = true; }
     }
+}
+
+public sealed class LaunchProgressState
+{
+    public string Stage { get; set; } = "";
+    public string Message { get; set; } = "";
+    public double Progress { get; set; }
+    public string? Error { get; set; }
+    public string? CurrentFile { get; set; }
+    public int TotalFiles { get; set; }
+    public int CompletedFiles { get; set; }
+    public int? ProcessId { get; set; }
+    public bool IsRunning { get; set; }
+    public List<string> MissingFiles { get; set; } = [];
 }
