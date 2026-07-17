@@ -174,8 +174,11 @@ public static class InstanceEndpoints
             }
 
             var gameDir = Path.GetFullPath(instance.GameDir ?? ".minecraft");
+            var threads = req.DownloadThreads ?? 64;
+            var sourceId = req.DownloadSourceId ?? 0;
             tracker.Start(id, instance.GameVersion, gameDir,
-                req.Loader, req.LoaderVersion, req.DownloadSourceId, core);
+                req.Loader, req.LoaderVersion, req.Addons, threads,
+                req.VersionIsolation ?? false, sourceId, core);
 
             return Results.Accepted($"/api/instance/{id}/install/progress",
                 new MessageResponse($"Install started for {id}", id));
