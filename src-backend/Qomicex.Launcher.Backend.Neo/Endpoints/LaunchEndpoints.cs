@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Core.AOT.Builder;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
@@ -50,7 +51,7 @@ public static class LaunchEndpoints
             var killed = await core.Launch.KillAsync(pid);
             if (killed)
                 return Results.Json(new MessageResponse($"Process {pid} killed"), ApiJsonContext.Default.MessageResponse);
-            return Results.NotFound(new MessageResponse($"Process {pid} not found or could not be killed"));
+            throw ApiException.NotFound($"Process {pid} not found or could not be killed");
         });
     }
 }

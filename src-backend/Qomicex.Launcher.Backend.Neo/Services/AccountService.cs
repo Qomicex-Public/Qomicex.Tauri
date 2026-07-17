@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Qomicex.Launcher.Backend.Neo.JsonContext;
 
 namespace Qomicex.Launcher.Backend.Neo.Services;
 
@@ -26,6 +27,9 @@ public class AccountService
         {
             Name = a.Name,
             Uuid = a.Uuid,
+            Token = a.Token,
+            AccessToken = a.AccessToken,
+            RefreshToken = a.RefreshToken,
             LoginMethod = a.LoginMethod,
             LastUsed = a.LastUsed,
             HasToken = !string.IsNullOrEmpty(a.AccessToken),
@@ -171,7 +175,7 @@ public class AccountService
             var encrypted = await File.ReadAllBytesAsync(_filePath);
             var base64 = Encoding.UTF8.GetString(encrypted);
             var json = CryptHelper.DecryptFromBase64(base64);
-            return JsonSerializer.Deserialize<List<StoredAccount>>(json) ?? new();
+            return JsonSerializer.Deserialize(json, ApiJsonContext.Default.ListStoredAccount) ?? new();
         }
         catch (CryptographicException)
         {
@@ -185,7 +189,7 @@ public class AccountService
 
     private async Task WriteFileAsync(List<StoredAccount> accounts)
     {
-        var json = JsonSerializer.Serialize(accounts);
+        var json = JsonSerializer.Serialize(accounts, ApiJsonContext.Default.ListStoredAccount);
         var encryptedBase64 = CryptHelper.EncryptToBase64(json);
         await File.WriteAllBytesAsync(_filePath, Encoding.UTF8.GetBytes(encryptedBase64));
     }
@@ -208,6 +212,9 @@ public class AccountInfo
 {
     public string Name { get; set; } = string.Empty;
     public string Uuid { get; set; } = string.Empty;
+    public string Token { get; set; } = string.Empty;
+    public string AccessToken { get; set; } = string.Empty;
+    public string RefreshToken { get; set; } = string.Empty;
     public string LoginMethod { get; set; } = string.Empty;
     public long LastUsed { get; set; }
     public bool HasToken { get; set; }

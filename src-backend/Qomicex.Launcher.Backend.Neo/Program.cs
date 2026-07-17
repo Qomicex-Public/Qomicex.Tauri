@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Qomicex.Core.AOT.Builder;
 using Qomicex.Launcher.Backend.Neo.Diagnostics;
 using Qomicex.Launcher.Backend.Neo.Endpoints;
@@ -25,6 +26,7 @@ var settings = SystemEndpoints.LoadSettings();
 var gameRoot = Path.GetFullPath(settings.GameDir ?? builder.Configuration["AppConfig:BaseDir"] ?? ".minecraft");
 var appVersion = typeof(Program).Assembly.GetName().Version ?? new Version(1, 0, 0);
 var curseForgeApiKey = builder.Configuration["CurseForge:ApiKey"] ?? "";
+var microsoftClientId = builder.Configuration["Microsoft:ClientId"] ?? "";
 var core = new GameCoreBuilder()
     .Configure(o =>
     {
@@ -34,6 +36,7 @@ var core = new GameCoreBuilder()
         o.UserAgent = $"Qomicex.Launcher/{appVersion.Major}.{appVersion.Minor}.{appVersion.Build}";
         o.CacheExpiry = TimeSpan.FromMinutes(30);
     })
+    .UseMicrosoftAuth(microsoftClientId)
     .UseDownloadMirror(DownloadMirror.Official)
     .WithHttpClient(new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
     .Build();

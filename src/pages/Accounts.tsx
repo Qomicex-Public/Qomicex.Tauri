@@ -16,7 +16,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui/
 import { ApiError } from '../api/client.ts'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import * as accountApi from '../api/account.ts'
-import type { MicrosoftOAuthResponse, Account } from '../types/index.ts'
+import type { MicrosoftOAuthResponse, Account, YggdrasilProfileInfo } from '../types/index.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 function fmtErr(e: unknown): string {
@@ -87,6 +87,11 @@ export default function Accounts() {
   const [yggEmail, setYggEmail] = useState('')
   const [yggPwd, setYggPwd] = useState('')
   const [yggServer, setYggServer] = useState('https://littleskin.cn/api/yggdrasil')
+  const [yggStep, setYggStep] = useState<'form' | 'profiles'>('form')
+  const [yggProfiles, setYggProfiles] = useState<YggdrasilProfileInfo[]>([])
+  const [yggSelected, setYggSelected] = useState<Set<string>>(new Set())
+  const [yggAuthToken, setYggAuthToken] = useState('')
+  const [yggClientToken, setYggClientToken] = useState('')
 
   const [tyServerId, setTyServerId] = useState('')
   const [tyEmail, setTyEmail] = useState('')
@@ -242,15 +247,48 @@ export default function Accounts() {
   async function handleYggdrasilLogin() {
     setLoading(true)
     try {
-      const result = await accountApi.yggdrasilLogin(yggEmail, yggPwd, yggServer)
-      await refresh()
-      if (result.uuid) navigate(`/accounts/${result.uuid}`)
-      setAddOpen(false)
+      const result = await accountApi.yggdrasilGetProfiles(yggEmail, yggPwd, yggServer)
+      if (!result.success || !result.profiles?.length) {
+        await msgError(result.errorMessage || '未获取到可用角色')
+        return
+      }
+      setYggProfiles(result.profiles)
+      setYggAuthToken(result.accessToken ?? '')
+      setYggClientToken(result.clientToken ?? '')
+      setYggSelected(new Set(result.profiles.length > 0 ? [result.profiles[0].id] : []))
+      setYggStep('profiles')
     } catch (e: unknown) {
       await msgError(fmtErr(e))
     } finally {
       setLoading(false)
     }
+  }
+
+  async function handleYggdrasilConfirm() {
+    if (yggSelected.size === 0) return
+    setLoading(true)
+    try {
+      const selected = yggProfiles.filter((p) => yggSelected.has(p.id))
+      await accountApi.yggdrasilSelectProfiles(yggAuthToken, yggClientToken, yggServer, selected)
+      await refresh()
+      if (selected.length > 0) navigate(`/accounts/${selected[0].id}`)
+      setAddOpen(false)
+      setYggStep('form')
+      setYggProfiles([])
+      setYggSelected(new Set())
+    } catch (e: unknown) {
+      await msgError(fmtErr(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function toggleYggProfile(id: string) {
+    setYggSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
   }
 
   async function handleTongyiLogin() {
@@ -309,10 +347,13 @@ export default function Accounts() {
           const icon = getAccountIcon(acc.loginMethod)
           const isDefault = acc.uuid === defaultUuid
           return (
-            <button
+            <div
               key={acc.uuid}
               onClick={() => navigate(`/accounts/${acc.uuid}`)}
-              className="group flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3.5 py-3 text-left transition-colors hover:border-border"
+              className="group flex w-full cursor-pointer items-center gap-3 rounded-lg border border-transparent bg-card px-3.5 py-3 text-left transition-colors hover:border-border"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/accounts/${acc.uuid}`) } }}
             >
               <AccountAvatar account={acc} className="h-10 w-10 shrink-0" />
               <div className="min-w-0 flex-1">
@@ -332,6 +373,7 @@ export default function Accounts() {
                 ) : (
                   <Tooltip content="设为默认">
                     <button
+                      type="button"
                       onClick={(e) => { e.stopPropagation(); handleSetDefault(acc.uuid) }}
                       className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-primary/10 hover:text-primary group-hover:opacity-100"
                     >
@@ -340,13 +382,14 @@ export default function Accounts() {
                   </Tooltip>
                 )}
                 <button
+                  type="button"
                   onClick={(e) => { e.stopPropagation(); handleDelete(acc.uuid) }}
                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
                 >
                   <FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" />
                 </button>
               </div>
-            </button>
+            </div>
           )
         })}
 
@@ -460,42 +503,81 @@ export default function Accounts() {
 
           {addTab === 'yggdrasil' && (
             <div key="yggdrasil" className="animate-in slide-up space-y-4">
-              <div className="space-y-2">
-                <Label>预设服务器</Label>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { label: 'LittleSkin', url: 'https://littleskin.cn/api/yggdrasil' },
-                    { label: 'Blessing Skin', url: 'https://skin.prinzeugen.net/api/yggdrasil' },
-                  ].map((p) => (
-                    <button
-                      key={p.url}
-                      onClick={() => setYggServer(p.url)}
-                      className={cn(
-                        'rounded-md border px-2.5 py-1 text-xs transition-colors',
-                        yggServer === p.url ? 'border-primary/40 bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-foreground/30'
-                      )}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+              {yggStep === 'form' && (
+                <>
+                  <div className="space-y-2">
+                    <Label>预设服务器</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { label: 'LittleSkin', url: 'https://littleskin.cn/api/yggdrasil' },
+                        { label: 'Blessing Skin', url: 'https://skin.prinzeugen.net/api/yggdrasil' },
+                      ].map((p) => (
+                        <button
+                          key={p.url}
+                          onClick={() => setYggServer(p.url)}
+                          className={cn(
+                            'rounded-md border px-2.5 py-1 text-xs transition-colors',
+                            yggServer === p.url ? 'border-primary/40 bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-foreground/30'
+                          )}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ygg-email">邮箱</Label>
+                    <Input id="ygg-email" value={yggEmail} onChange={(e) => setYggEmail(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ygg-pwd">密码</Label>
+                    <Input id="ygg-pwd" type="password" value={yggPwd} onChange={(e) => setYggPwd(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ygg-server">自定义服务器地址</Label>
+                    <Input id="ygg-server" value={yggServer} onChange={(e) => setYggServer(e.target.value)} placeholder="https://example.com/api/yggdrasil" />
+                  </div>
+                  <Button className="w-full" onClick={handleYggdrasilLogin} disabled={loading}>
+                    <FontAwesomeIcon icon={faFingerprint} className="h-4 w-4" />
+                    {loading ? '登录中...' : '登录'}
+                  </Button>
+                </>
+              )}
+              {yggStep === 'profiles' && (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">选择要登录的角色：</p>
+                  <div className="max-h-60 space-y-1 overflow-y-auto rounded-lg border bg-background p-2">
+                    {yggProfiles.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => toggleYggProfile(p.id)}
+                        className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+                      >
+                        <div
+                          className={cn(
+                            'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+                            yggSelected.has(p.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30'
+                          )}
+                        >
+                          {yggSelected.has(p.id) && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+                        </div>
+                        <AccountAvatar account={{ uuid: p.id, name: p.name, loginMethod: 'Yggdrasil', serverUrl: yggServer }} className="h-8 w-8 shrink-0" />
+                        <span className="flex-1 truncate font-medium">{p.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" className="flex-1" onClick={() => { setYggStep('form'); setYggProfiles([]) }}>
+                      返回
+                    </Button>
+                    <Button className="flex-1" onClick={handleYggdrasilConfirm} disabled={yggSelected.size === 0 || loading}>
+                      <FontAwesomeIcon icon={faCheck} className="h-4 w-4" />
+                      {loading ? '保存中...' : `确认 (${yggSelected.size})`}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ygg-email">邮箱</Label>
-                <Input id="ygg-email" value={yggEmail} onChange={(e) => setYggEmail(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ygg-pwd">密码</Label>
-                <Input id="ygg-pwd" type="password" value={yggPwd} onChange={(e) => setYggPwd(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ygg-server">自定义服务器地址</Label>
-                <Input id="ygg-server" value={yggServer} onChange={(e) => setYggServer(e.target.value)} placeholder="https://example.com/api/yggdrasil" />
-              </div>
-              <Button className="w-full" onClick={handleYggdrasilLogin} disabled={loading}>
-                <FontAwesomeIcon icon={faFingerprint} className="h-4 w-4" />
-                {loading ? '登录中...' : '登录'}
-              </Button>
+              )}
             </div>
           )}
 

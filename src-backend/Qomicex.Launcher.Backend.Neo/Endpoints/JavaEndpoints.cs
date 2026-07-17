@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Core.AOT.Models.VersionMetadata;
 using Qomicex.Core.AOT.Public.Models;
@@ -49,7 +50,7 @@ public static class JavaEndpoints
         {
             var javaHome = Path.GetDirectoryName(Path.GetDirectoryName(req.Path));
             if (string.IsNullOrEmpty(javaHome))
-                return Results.NotFound(new { message = "无法识别该路径下的 Java 运行时" });
+                throw ApiException.NotFound("无法识别该路径下的 Java 运行时");
 
             var options = new JavaSearchOptions(
                 CustomExcludePaths: [],
@@ -72,7 +73,7 @@ public static class JavaEndpoints
             });
 
             if (match == null)
-                return Results.NotFound(new { message = "无法识别该路径下的 Java 运行时" });
+                throw ApiException.NotFound("无法识别该路径下的 Java 运行时");
 
             return Results.Ok(match);
         });

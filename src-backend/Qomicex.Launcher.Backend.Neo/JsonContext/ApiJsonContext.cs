@@ -101,6 +101,17 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(YggdrasilMetaResponse))]
 [JsonSerializable(typeof(OfflineUuidResponse))]
 [JsonSerializable(typeof(LostResponse))]
+[JsonSerializable(typeof(MicrosoftRefreshResponse))]
+[JsonSerializable(typeof(OpenPathResponse))]
+[JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(DownloadSourcePing))]
+[JsonSerializable(typeof(List<DownloadSourcePing>))]
+[JsonSerializable(typeof(ModSourcePing))]
+[JsonSerializable(typeof(List<ModSourcePing>))]
+[JsonSerializable(typeof(YggdrasilProfileInfo))]
+[JsonSerializable(typeof(List<YggdrasilProfileInfo>))]
+[JsonSerializable(typeof(YggdrasilProfilesResponse))]
+[JsonSerializable(typeof(YggdrasilSelectRequest))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
 }
@@ -311,3 +322,15 @@ public sealed record MicrosoftRefreshRequest(string AccountUuid);
 public sealed record YggdrasilMetaResponse(string ServerName);
 public sealed record OfflineUuidResponse(string Uuid);
 public sealed record LostResponse(bool Lost);
+public sealed record MicrosoftRefreshResponse(bool Success, bool? NeedReauth, string? Error);
+public sealed record OpenPathResponse(string Path);
+
+public sealed record DownloadSourcePing(int Id, string Name, string Url, long LatencyMs, bool Available);
+public sealed record ModSourcePing(int Id, string Name, string ModrinthUrl, bool ModrinthOk, long ModrinthLatency, bool Available);
+
+public sealed record YggdrasilProfileInfo(string Id, string Name);
+public sealed record YggdrasilProfilesResponse(
+    bool Success, string? AccessToken, string? ClientToken,
+    List<YggdrasilProfileInfo>? Profiles, string? ErrorMessage = null);
+public sealed record YggdrasilSelectRequest(
+    string AccessToken, string ClientToken, string ServerUrl, List<YggdrasilProfileInfo> SelectedProfiles);

@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
+using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
@@ -12,7 +14,7 @@ public static class AccountEndpoints
     {
         var group = app.MapGroup("/api/account");
 
-        group.MapGet("/", async () =>
+        group.MapGet("", async () =>
         {
             var accounts = await accountService.GetAccountsAsync();
             return Results.Json(accounts, ApiJsonContext.Default.ListAccountInfo);
@@ -26,7 +28,7 @@ public static class AccountEndpoints
                 : Results.NotFound();
         });
 
-        group.MapPost("/", async (StoredAccount body) =>
+        group.MapPost("", async (StoredAccount body) =>
         {
             await accountService.AutoSetDefaultOnSaveAsync(body);
             return Results.Json(body, ApiJsonContext.Default.StoredAccount);
@@ -73,7 +75,7 @@ public static class AccountEndpoints
         group.MapGet("/offline-uuid", (string name) =>
         {
             if (string.IsNullOrWhiteSpace(name))
-                return Results.BadRequest(new { error = "name is required" });
+                throw ApiException.BadRequest("name is required");
             var hash = MD5.HashData(Encoding.UTF8.GetBytes("OfflinePlayer:" + name));
             hash[6] = (byte)((hash[6] & 0x0f) | 0x40);
             hash[8] = (byte)((hash[8] & 0x3f) | 0x80);

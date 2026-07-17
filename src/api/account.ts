@@ -2,6 +2,8 @@ import { get, post, put, del } from './client.ts'
 import type {
   MicrosoftOAuthResponse,
   Account,
+  YggdrasilProfilesResponse,
+  YggdrasilProfileInfo,
 } from '../types'
 
 export function getAccounts(): Promise<Account[]> {
@@ -30,6 +32,14 @@ export function microsoftPoll(deviceCode: string): Promise<Record<string, unknow
 
 export function microsoftUserInfo(accessToken: string, refreshToken: string): Promise<Account> {
   return post<Account>('/auth/microsoft/info', { accessToken, refreshToken })
+}
+
+export function yggdrasilGetProfiles(email: string, password: string, serverUrl = 'https://littleskin.cn/api/yggdrasil'): Promise<YggdrasilProfilesResponse> {
+  return post<YggdrasilProfilesResponse>('/auth/yggdrasil', { username: email, password, serverUrl })
+}
+
+export function yggdrasilSelectProfiles(accessToken: string, clientToken: string, serverUrl: string, selectedProfiles: YggdrasilProfileInfo[]): Promise<Account[]> {
+  return post<Account[]>('/auth/yggdrasil/select', { accessToken, clientToken, serverUrl, selectedProfiles })
 }
 
 export function yggdrasilLogin(email: string, password: string, serverUrl = 'https://littleskin.cn/api/yggdrasil'): Promise<Account> {

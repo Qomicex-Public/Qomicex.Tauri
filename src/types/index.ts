@@ -105,6 +105,19 @@ export interface YggdrasilAccount {
   clientToken: string
 }
 
+export interface YggdrasilProfileInfo {
+  id: string
+  name: string
+}
+
+export interface YggdrasilProfilesResponse {
+  success: boolean
+  accessToken?: string
+  clientToken?: string
+  profiles?: YggdrasilProfileInfo[]
+  errorMessage?: string
+}
+
 export interface SuggestedSolution {
   title: string
   description: string

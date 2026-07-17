@@ -7,7 +7,6 @@ namespace Qomicex.Launcher.Backend.Neo.Services;
 public class SkinService
 {
     private readonly HttpClient _http;
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static byte[]? _defaultSkin;
 
     public SkinService(IHttpClientFactory httpFactory) { _http = httpFactory.CreateClient(); }
@@ -75,7 +74,8 @@ public class SkinService
         {
             var resp = await _http.GetAsync(url);
             if (!resp.IsSuccessStatusCode) return null;
-            var json = await resp.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            var jsonStr = await resp.Content.ReadAsStringAsync();
+            var json = JsonDocument.Parse(jsonStr).RootElement;
             return ParseProfile(json);
         }
         catch { return null; }
@@ -89,7 +89,7 @@ public class SkinService
             if (prop.GetProperty("name").GetString() != "textures") continue;
             var value = prop.GetProperty("value").GetString();
             if (value == null) continue;
-            var decoded = JsonSerializer.Deserialize<JsonElement>(Convert.FromBase64String(value));
+            var decoded = JsonDocument.Parse(Convert.FromBase64String(value)).RootElement;
             var profile = new SkinProfile();
             if (decoded.TryGetProperty("profileId", out var pid)) profile.ProfileId = pid.GetString();
             if (decoded.TryGetProperty("profileName", out var pn)) profile.ProfileName = pn.GetString();

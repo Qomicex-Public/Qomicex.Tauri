@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
+using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
@@ -13,7 +15,7 @@ public static class SkinEndpoints
         {
             var profile = await skinService.FetchProfile(uuid, type ?? "Microsoft", server);
             if (profile == null)
-                return Results.NotFound(new { error = "profile not found" });
+                throw ApiException.NotFound("profile not found");
             if (skinService.GetLocalSkin(uuid) != null)
                 profile.SkinSource = "local";
             return Results.Json(profile, ApiJsonContext.Default.SkinProfile);
@@ -41,22 +43,22 @@ public static class SkinEndpoints
         group.MapPost("/upload/{uuid}", async (string uuid, HttpRequest request) =>
         {
             if (!request.HasFormContentType)
-                return Results.BadRequest(new { error = "No file uploaded" });
+                throw ApiException.BadRequest("No file uploaded");
 
             var file = request.Form.Files.GetFile("file");
             if (file == null || file.Length == 0)
-                return Results.BadRequest(new { error = "No file uploaded" });
+                throw ApiException.BadRequest("No file uploaded");
 
             using var ms = new MemoryStream();
             await file.CopyToAsync(ms);
             skinService.SaveSkin(uuid, ms.ToArray());
-            return Results.Ok(new { message = "Skin uploaded" });
+            return Results.Json(new MessageResponse("Skin uploaded"), ApiJsonContext.Default.MessageResponse);
         });
 
         group.MapDelete("/upload/{uuid}", (string uuid) =>
         {
             skinService.DeleteSkin(uuid);
-            return Results.Ok(new { message = "Skin reset to default" });
+            return Results.Json(new MessageResponse("Skin reset to default"), ApiJsonContext.Default.MessageResponse);
         });
     }
 }

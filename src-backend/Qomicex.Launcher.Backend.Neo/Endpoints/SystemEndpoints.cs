@@ -2,9 +2,11 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.Diagnostics;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
+using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
@@ -78,12 +80,12 @@ public static class SystemEndpoints
         }
 
         group.MapGet("/diagnostics/trace", (TraceBufferStore store) =>
-            Results.Json(store.Snapshot()));
+            Results.Json(new List<string>(store.Snapshot()), ApiJsonContext.Default.ListString));
 
         group.MapPost("/diagnostics/dump", (TraceDumpService dumpService) =>
         {
             var path = dumpService.Dump("manual");
-            return Results.Json(new { path });
+            return Results.Json(new OpenPathResponse(path), ApiJsonContext.Default.OpenPathResponse);
         });
 
         group.MapGet("/settings", () =>
@@ -117,6 +119,31 @@ public static class SystemEndpoints
             catch { }
             return Results.Ok();
         });
+
+        group.MapGet("/settings/backgrounds", () =>
+        {
+            Directory.CreateDirectory(BackgroundsDir);
+            var files = Directory.EnumerateFiles(BackgroundsDir, "*", SearchOption.TopDirectoryOnly)
+                .Select(f => Path.GetFileName(f)!)
+                .Where(f => !string.IsNullOrEmpty(f))
+                .OrderBy(f => f)
+                .ToList();
+            return Results.Json(files, ApiJsonContext.Default.ListString);
+        });
+
+        group.MapGet("/settings/backgrounds/{name}", (string name) =>
+        {
+            var path = Path.Combine(BackgroundsDir, name);
+            if (!File.Exists(path))
+                throw ApiException.NotFound("BACKGROUND_NOT_FOUND", "Background image not found");
+            return Results.File(path, "image/png");
+        });
+
+        group.MapGet("/settings/download-sources/ping", () =>
+            Results.Json(Array.Empty<DownloadSourcePing>(), ApiJsonContext.Default.ListDownloadSourcePing));
+
+        group.MapGet("/settings/mod-sources/ping", () =>
+            Results.Json(Array.Empty<ModSourcePing>(), ApiJsonContext.Default.ListModSourcePing));
     }
 
     private static string GetOsName()

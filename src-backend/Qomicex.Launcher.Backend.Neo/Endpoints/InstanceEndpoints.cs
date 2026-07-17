@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Core.AOT.Builder;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
@@ -64,7 +65,7 @@ public static class InstanceEndpoints
             var instance = instances.GetById(id);
             return instance is not null
                 ? Results.Json(instance, ApiJsonContext.Default.GameInstance)
-                : Results.NotFound(new { Message = $"Instance {id} not found" });
+                : Results.NotFound();
         });
 
         group.MapPut("/{id}", (string id, UpdateInstanceRequest req, InstanceService instances) =>
@@ -92,7 +93,7 @@ public static class InstanceEndpoints
             var deleted = instances.Delete(id);
             if (deleted is not null)
                 return Results.Json(new MessageResponse($"Instance {id} deleted"), ApiJsonContext.Default.MessageResponse);
-            return Results.NotFound(new { Message = $"Instance {id} not found" });
+            return Results.NotFound();
         });
 
         group.MapPost("/{id}/launch", (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker) =>
