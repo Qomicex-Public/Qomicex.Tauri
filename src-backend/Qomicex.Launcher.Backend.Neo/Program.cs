@@ -39,7 +39,11 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton(core);
 builder.Services.AddSingleton<InstanceService>();
 builder.Services.AddSingleton<LaunchTracker>();
-builder.Services.AddSingleton<InstallTracker>();
+builder.Services.AddSingleton(sp =>
+{
+    var javaStore = sp.GetRequiredService<JavaRuntimeStore>();
+    return new InstallTracker(javaStore);
+});
 builder.Services.AddSingleton<CurseForgeVersionFetchService>();
 builder.Services.AddSingleton<JavaRuntimeStore>();
 builder.Services.AddSingleton(sp =>
