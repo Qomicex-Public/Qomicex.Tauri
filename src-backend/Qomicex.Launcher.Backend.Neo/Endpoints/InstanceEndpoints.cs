@@ -3,6 +3,7 @@ using Qomicex.Core.AOT.Core;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
+using Qomicex.Downloader;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 
@@ -94,56 +95,182 @@ public static class InstanceEndpoints
             return Results.NotFound(new { Message = $"Instance {id} not found" });
         });
 
-        group.MapPost("/{id}/launch", async (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker) =>
+        group.MapPost("/{id}/launch", (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker) =>
         {
             var instance = instances.GetById(id);
             if (instance is null)
                 throw ApiException.NotFound($"Instance {id} not found");
 
-            var launchOptions = new LaunchOptions
+            var cts = tracker.GetOrCreateCts(id);
+
+            Task.Run(async () =>
             {
-                Version = instance.Name,
-                VersionIsolation = instance.VersionIsolation ?? false,
-                JavaOptions = new JavaOptions
+                try
                 {
-                    JavaPath = instance.JavaPath ?? "java",
-                    MaxMemoryMB = instance.MaxMemory,
-                    ExtraJvmArgs = string.IsNullOrEmpty(instance.JvmArgs)
-                        ? null
-                        : instance.JvmArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries),
-                },
-            };
+                    var versionId = !string.IsNullOrEmpty(instance.VersionDirName)
+                        ? instance.VersionDirName : instance.Name;
 
-            var result = await core.Launch.LaunchAsync(launchOptions);
+                    if (!instance.SkipIntegrityCheck)
+                    {
+                        cts.Token.ThrowIfCancellationRequested();
+                        tracker.SetProgress(id, new LaunchProgressState
+                        {
+                            Stage = "checking", Message = "正在检查文件完整性...", Progress = 5
+                        });
 
-            if (result.Success)
-                tracker.Track(id, result.ProcessId);
+                        var versionJsonPath = Path.Combine(instance.GameDir, "versions", versionId, $"{versionId}.json");
+                        if (!File.Exists(versionJsonPath))
+                            throw new FileNotFoundException($"版本 JSON 不存在: {versionJsonPath}");
 
-            return Results.Json(new LaunchResultDto(
-                Success: result.Success,
-                ProcessId: result.Success ? result.ProcessId : -1,
-                Error: result.Success ? null : (result.Exception?.Message ?? result.Message),
-                Detail: result.Exception?.ToString()
-            ), ApiJsonContext.Default.LaunchResultDto);
+                        var jsonContent = await File.ReadAllTextAsync(versionJsonPath, cts.Token);
+                        var missFiles = FilterMissFiles(await core.Locator.GetMissFilesAsync(jsonContent));
+
+                        if (missFiles.Count > 0)
+                        {
+                            cts.Token.ThrowIfCancellationRequested();
+                            tracker.SetProgress(id, new LaunchProgressState
+                            {
+                                Stage = "repairing",
+                                Message = $"正在补全 {missFiles.Count} 个缺失文件...",
+                                Progress = 10,
+                                MissingFiles = missFiles.Select(f => f.Name).ToList(),
+                                TotalFiles = missFiles.Count
+                            });
+
+                            using var dm = new DownloadManager(intervalMs: 500);
+                            var tid = dm.CreateTask(maxConcurrentFiles: 4, maxRetries: 3);
+                            foreach (var f in missFiles)
+                                dm.AddFileToTask(tid, f.Url, f.Path);
+                            await dm.StartTaskAsync(tid, cts.Token);
+
+                            while (!cts.Token.IsCancellationRequested)
+                            {
+                                var infos = dm.GetAllTaskInfos();
+                                if (infos.TryGetValue(tid, out var info))
+                                {
+                                    var statuses = dm.GetTaskFileStatuses(tid);
+                                    var downloading = statuses.FirstOrDefault(s => s.Status == DownloadTask.FileStatus.Downloading);
+                                    string currentFileName = downloading.Name ?? "";
+
+                                    tracker.SetProgress(id, new LaunchProgressState
+                                    {
+                                        Stage = "repairing",
+                                        Message = $"正在补全: {currentFileName} ({Math.Round(info.Progress)}%)",
+                                        Progress = 10 + info.Progress * 0.20,
+                                        CurrentFile = currentFileName,
+                                        TotalFiles = missFiles.Count,
+                                        CompletedFiles = info.CompletedFiles,
+                                        MissingFiles = missFiles.Select(f => f.Name).ToList()
+                                    });
+
+                                    if (info.CompletedFiles + info.FailedFiles + info.CanceledFiles >= info.TotalFiles)
+                                    {
+                                        if (info.FailedFiles > 0)
+                                            throw new Exception("文件补全失败");
+                                        break;
+                                    }
+                                }
+                                await Task.Delay(500, cts.Token);
+                            }
+                        }
+                    }
+
+                    cts.Token.ThrowIfCancellationRequested();
+                    tracker.SetProgress(id, new LaunchProgressState
+                    {
+                        Stage = "preparing", Message = "正在准备环境...", Progress = 30
+                    });
+
+                    var launchOptions = new LaunchOptions
+                    {
+                        Version = instance.Name,
+                        VersionIsolation = instance.VersionIsolation ?? false,
+                        JavaOptions = new JavaOptions
+                        {
+                            JavaPath = instance.JavaPath ?? "java",
+                            MaxMemoryMB = instance.MaxMemory,
+                            ExtraJvmArgs = string.IsNullOrEmpty(instance.JvmArgs)
+                                ? null
+                                : instance.JvmArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries),
+                        },
+                    };
+
+                    tracker.SetProgress(id, new LaunchProgressState
+                    {
+                        Stage = "launching", Message = "正在启动游戏...", Progress = 50
+                    });
+
+                    var result = await core.Launch.LaunchAsync(launchOptions);
+
+                    if (result.Success)
+                    {
+                        tracker.Track(id, result.ProcessId);
+                        tracker.SetProgress(id, new LaunchProgressState
+                        {
+                            Stage = "running",
+                            Message = "游戏运行中",
+                            Progress = 100,
+                            ProcessId = result.ProcessId,
+                            IsRunning = true
+                        });
+                    }
+                    else
+                    {
+                        tracker.SetProgress(id, new LaunchProgressState
+                        {
+                            Stage = "failed",
+                            Message = "启动失败",
+                            Error = result.Exception?.Message ?? result.Message,
+                            Progress = 100
+                        });
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    tracker.SetProgress(id, new LaunchProgressState
+                    {
+                        Stage = "cancelled", Message = "已取消", Progress = 0
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tracker.SetProgress(id, new LaunchProgressState
+                    {
+                        Stage = "failed", Message = "启动失败", Error = ex.Message, Progress = 0
+                    });
+                }
+                finally
+                {
+                    tracker.CancelAndRemove(id);
+                }
+            });
+
+            return Results.Json(new MessageResponse($"Launch started for {id}"), ApiJsonContext.Default.MessageResponse);
         });
 
         group.MapGet("/{id}/launch/progress", (string id, LaunchTracker tracker) =>
         {
-            var state = tracker.GetState(id);
-            if (state is null)
+            var progress = tracker.GetProgress(id);
+            if (progress is null)
+            {
+                var procState = tracker.GetState(id);
+                if (procState is null)
+                    return Results.Json(new LaunchProgressDto(
+                        Stage: "completed", Message: "进程已结束", Progress: 100, IsRunning: false
+                    ), ApiJsonContext.Default.LaunchProgressDto);
+
                 return Results.Json(new LaunchProgressDto(
-                    Stage: "completed",
-                    Message: "进程已结束",
-                    Progress: 100,
-                    IsRunning: false
+                    Stage: "running", Message: "游戏运行中", Progress: 100,
+                    IsRunning: !procState.HasExited, ProcessId: procState.ProcessId
                 ), ApiJsonContext.Default.LaunchProgressDto);
+            }
 
             return Results.Json(new LaunchProgressDto(
-                Stage: "running",
-                Message: "游戏运行中",
-                Progress: 50,
-                IsRunning: true,
-                ProcessId: state.ProcessId
+                Stage: progress.Stage, Message: progress.Message, Progress: progress.Progress,
+                IsRunning: progress.IsRunning, ProcessId: progress.ProcessId,
+                Error: progress.Error, MissingFiles: progress.MissingFiles,
+                CurrentFile: progress.CurrentFile, TotalFiles: progress.TotalFiles,
+                CompletedFiles: progress.CompletedFiles
             ), ApiJsonContext.Default.LaunchProgressDto);
         });
 
@@ -153,43 +280,29 @@ public static class InstanceEndpoints
             return Results.Json(new MessageResponse($"Launch cancelled for {id}"), ApiJsonContext.Default.MessageResponse);
         });
 
-        group.MapPost("/{id}/install", async (string id, InstallerRequest req, InstanceService instances, DefaultGameCore core, InstallTracker tracker) =>
+        group.MapPost("/{id}/install", (string id, InstallerRequest req, InstanceService instances, DefaultGameCore core, InstallTracker tracker) =>
         {
             var instance = instances.GetById(id);
             if (instance is null)
                 throw ApiException.NotFound($"Instance {id} not found");
 
-            if (!string.IsNullOrEmpty(req.Loader))
-            {
-                var loaderType = MapLoaderType(req.Loader);
-                if (loaderType is null)
-                    throw ApiException.BadRequest($"加载器 {req.Loader} 不支持", "INSTALL_LOADER_INVALID");
-
-                var available = await core.InstallerProvider.GetAvailableModLoaders(instance.GameVersion, loaderType.Value);
-                if (available.Count == 0)
-                    throw ApiException.BadRequest($"游戏版本 {instance.GameVersion} 不支持加载器 {req.Loader}", "INSTALL_LOADER_NOT_AVAILABLE");
-
-                if (!string.IsNullOrEmpty(req.LoaderVersion) && !available.Any(l => l.Version == req.LoaderVersion))
-                    throw ApiException.BadRequest($"加载器版本 {req.LoaderVersion} 不可用", "INSTALL_LOADER_VERSION_INVALID");
-            }
-
-            var gameDir = Path.GetFullPath(instance.GameDir ?? ".minecraft");
             var threads = req.DownloadThreads ?? 64;
             var sourceId = req.DownloadSourceId ?? 0;
-            tracker.Start(id, instance.GameVersion, gameDir,
+
+            tracker.Start(id, instance.GameVersion, instance.GameDir,
                 req.Loader, req.LoaderVersion, req.Addons, threads,
                 req.VersionIsolation ?? false, sourceId, core);
 
-            return Results.Accepted($"/api/instance/{id}/install/progress",
-                new MessageResponse($"Install started for {id}", id));
+            return Results.Json(new MessageResponse($"Install started for {id}"), ApiJsonContext.Default.MessageResponse);
         });
 
         group.MapGet("/{id}/install/progress", (string id, InstallTracker tracker) =>
         {
             var state = tracker.GetState(id);
-            return state is not null
-                ? Results.Json(state.ToResponse(id), ApiJsonContext.Default.InstallProgressResponse)
-                : Results.Json(new InstallProgressResponse(id, "completed", 100), ApiJsonContext.Default.InstallProgressResponse);
+            if (state is null)
+                return Results.Json(new InstallProgressResponse(id, "not-started", 0), ApiJsonContext.Default.InstallProgressResponse);
+
+            return Results.Json(state.ToResponse(id), ApiJsonContext.Default.InstallProgressResponse);
         });
 
         group.MapPost("/{id}/install/cancel", (string id, InstallTracker tracker) =>
@@ -217,4 +330,16 @@ public static class InstanceEndpoints
         "optifine" => Qomicex.Core.AOT.Public.Models.ModLoaderType.OptiFine,
         _ => null
     };
+
+    private static List<Qomicex.Core.AOT.Public.Models.MissFileInfo> FilterMissFiles(
+        List<Qomicex.Core.AOT.Public.Models.MissFileInfo> raw)
+    {
+        var comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        return raw
+            .Where(f => !string.IsNullOrEmpty(f.Path) && !string.IsNullOrEmpty(f.Url))
+            .DistinctBy(f => f.Path, comparer)
+            .ToList();
+    }
 }
