@@ -141,7 +141,7 @@ public static class InstanceEndpoints
                             var tid = dm.CreateTask(maxConcurrentFiles: 4, maxRetries: 3);
                             foreach (var f in missFiles)
                                 dm.AddFileToTask(tid, f.Url, f.Path);
-                            await dm.StartTaskAsync(tid, cts.Token);
+                            var repairDownload = dm.StartTaskAsync(tid, cts.Token);
 
                             while (!cts.Token.IsCancellationRequested)
                             {
@@ -172,6 +172,7 @@ public static class InstanceEndpoints
                                 }
                                 await Task.Delay(500, cts.Token);
                             }
+                            await repairDownload;
                         }
                     }
 
@@ -241,7 +242,8 @@ public static class InstanceEndpoints
                 }
                 finally
                 {
-                    tracker.CancelAndRemove(id);
+                    if (tracker.GetProgress(id)?.IsRunning != true)
+                        tracker.CancelAndRemove(id);
                 }
             });
 

@@ -136,11 +136,11 @@ public sealed class InstallTracker
             var tid = baseDm.CreateTask(maxConcurrentFiles: downloadThreads, maxRetries: 3);
             foreach (var f in missFiles)
                 baseDm.AddFileToTask(tid, f.Url, f.Path);
-            baseDownloadTask = DownloadWithProgress(baseDm, tid, state, 5, 55, ct);
+            baseDownloadTask = DownloadWithProgress(baseDm, tid, state, 5, 35, ct);
         }
         else
         {
-            state.Progress = 55;
+            state.Progress = 35;
         }
 
         // Phase 4: Loader 库文件扫描与下载 (并行)
@@ -162,7 +162,7 @@ public sealed class InstallTracker
                 var tid = loaderDm.CreateTask(maxConcurrentFiles: 32, maxRetries: 3);
                 foreach (var f in missLibs)
                     loaderDm.AddFileToTask(tid, f.Url, f.Path);
-                loaderLibTask = DownloadWithProgress(loaderDm, tid, state, 5, 55, ct);
+                loaderLibTask = DownloadWithProgress(loaderDm, tid, state, 35, 55, ct);
             }
         }
 
@@ -242,7 +242,7 @@ public sealed class InstallTracker
     private async Task DownloadWithProgress(DownloadManager dm, int tid,
         InstallState state, double startPct, double endPct, CancellationToken ct)
     {
-        await dm.StartTaskAsync(tid, ct);
+        var downloadTask = dm.StartTaskAsync(tid, ct);
         while (!ct.IsCancellationRequested)
         {
             var infos = dm.GetAllTaskInfos();
@@ -260,10 +260,15 @@ public sealed class InstallTracker
                     state.Progress = startPct + (endPct - startPct) * info.Progress / 100.0;
 
                 if (info.CompletedFiles + info.FailedFiles + info.CanceledFiles >= info.TotalFiles)
+                {
+                    if (info.FailedFiles > 0)
+                        throw new Exception($"下载失败: {info.FailedFiles} 个文件下载失败");
                     break;
+                }
             }
             await Task.Delay(500, ct);
         }
+        await downloadTask;
     }
 
     private async Task<List<MissFileDto>> GetMissLoaderLibraries(string loader,
@@ -380,7 +385,7 @@ public sealed class InstallTracker
                 using var client = new HttpClient();
                 var url = $"https://api.modrinth.com/v2/project/{addonId}/version";
                 var json = await client.GetStringAsync(url);
-                var versions = JsonSerializer.Deserialize<List<ModrinthVersion>>(json);
+                var versions = JsonSerializer.Deserialize(json, ApiJsonContext.Default.ListModrinthVersion);
                 var match = versions?.FirstOrDefault(v =>
                     v.GameVersions.Contains(gameVersion) && v.Files.Count > 0);
 
@@ -458,7 +463,7 @@ public sealed class InstallState(CancellationTokenSource cts)
 
 internal sealed record MissFileDto(string Name, string Path, string Url, string Sha1);
 
-internal sealed class ModrinthVersion
+public sealed class ModrinthVersion
 {
     public List<string> GameVersions { get; set; } = [];
     public List<ModrinthFile> Files { get; set; } = [];

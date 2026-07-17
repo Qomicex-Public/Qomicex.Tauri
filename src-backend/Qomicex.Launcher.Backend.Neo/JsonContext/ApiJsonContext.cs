@@ -69,6 +69,10 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 // Java DTOs
 [JsonSerializable(typeof(JavaResult))]
 [JsonSerializable(typeof(List<JavaResult>))]
+// InstallTracker addon types
+[JsonSerializable(typeof(ModrinthVersion))]
+[JsonSerializable(typeof(List<ModrinthVersion>))]
+[JsonSerializable(typeof(ModrinthVersion.ModrinthFile))]
 [JsonSerializable(typeof(JavaDownloadVendorInfo))]
 [JsonSerializable(typeof(JavaDownloadCatalogResponse))]
 [JsonSerializable(typeof(JavaDownloadStartRequest))]
