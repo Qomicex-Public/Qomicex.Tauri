@@ -27,17 +27,19 @@ var gameRoot = Path.GetFullPath(settings.GameDir ?? builder.Configuration["AppCo
 var appVersion = typeof(Program).Assembly.GetName().Version ?? new Version(1, 0, 0);
 var curseForgeApiKey = builder.Configuration["CurseForge:ApiKey"] ?? "";
 var microsoftClientId = builder.Configuration["Microsoft:ClientId"] ?? "";
+var globalMirror = settings.DownloadSource == 1 ? DownloadMirror.BMCLAPI : DownloadMirror.Official;
+var userAgent = $"Qomicex.Launcher/{appVersion.Major}.{appVersion.Minor}.{appVersion.Build}";
 var core = new GameCoreBuilder()
     .Configure(o =>
     {
         o.LauncherName = "QML";
         o.GameRoot = gameRoot;
         o.MaxConcurrentDownloads = 8;
-        o.UserAgent = $"Qomicex.Launcher/{appVersion.Major}.{appVersion.Minor}.{appVersion.Build}";
+        o.UserAgent = userAgent;
         o.CacheExpiry = TimeSpan.FromMinutes(30);
     })
     .UseMicrosoftAuth(microsoftClientId)
-    .UseDownloadMirror(DownloadMirror.Official)
+    .UseDownloadMirror(globalMirror)
     .WithHttpClient(new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
     .Build();
 
@@ -50,7 +52,7 @@ builder.Services.AddSingleton<LaunchTracker>();
 builder.Services.AddSingleton(sp =>
 {
     var javaStore = sp.GetRequiredService<JavaRuntimeStore>();
-    return new InstallTracker(javaStore);
+    return new InstallTracker(javaStore, userAgent);
 });
 builder.Services.AddSingleton<CurseForgeVersionFetchService>();
 builder.Services.AddSingleton<JavaRuntimeStore>();

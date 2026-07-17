@@ -1,7 +1,8 @@
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Text.Json;
-using Qomicex.Core.AOT.Core;
+using System.Text.Json.Nodes;
+using Qomicex.Core.AOT.Builder;
 using Qomicex.Core.AOT.Models.VersionMetadata;
 using Qomicex.Core.AOT.Public.Models;
 using Qomicex.Core.AOT.Public.Services;
@@ -15,16 +16,17 @@ public sealed class InstallTracker
 {
     private readonly ConcurrentDictionary<string, InstallState> _states = new();
     private readonly JavaRuntimeStore _javaStore;
+    private readonly string _userAgent;
 
-    public InstallTracker(JavaRuntimeStore javaStore)
+    public InstallTracker(JavaRuntimeStore javaStore, string userAgent)
     {
         _javaStore = javaStore;
+        _userAgent = userAgent;
     }
 
     public void Start(string instanceId, string gameVersion, string gameDir,
         string? loader, string? loaderVersion, string[]? addons,
-        int downloadThreads, bool versionIsolation, int? downloadSourceId,
-        DefaultGameCore core)
+        int downloadThreads, bool versionIsolation, int? downloadSourceId)
     {
         var cts = new CancellationTokenSource();
         var state = new InstallState(cts);
@@ -36,7 +38,7 @@ public sealed class InstallTracker
             {
                 await RunInstallAsync(instanceId, gameVersion, gameDir,
                     loader, loaderVersion, addons, downloadThreads,
-                    versionIsolation, downloadSourceId ?? 0, core, state, cts.Token);
+                    versionIsolation, downloadSourceId ?? 0, state, cts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -54,8 +56,19 @@ public sealed class InstallTracker
     private async Task RunInstallAsync(string instanceId, string gameVersion,
         string gameDir, string? loader, string? loaderVersion, string[]? addons,
         int downloadThreads, bool versionIsolation, int downloadSourceId,
-        DefaultGameCore core, InstallState state, CancellationToken ct)
+        InstallState state, CancellationToken ct)
     {
+        var mirror = downloadSourceId == 1 ? DownloadMirror.BMCLAPI : DownloadMirror.Official;
+        using var core = new GameCoreBuilder()
+            .Configure(o =>
+            {
+                o.LauncherName = "QML";
+                o.GameRoot = gameDir;
+                o.UserAgent = _userAgent;
+                o.CacheExpiry = TimeSpan.FromMinutes(30);
+            })
+            .UseDownloadMirror(mirror)
+            .Build();
         var versionDirName = string.IsNullOrEmpty(loader)
             ? gameVersion
             : $"{gameVersion}-{loader}-{loaderVersion}";
@@ -124,7 +137,7 @@ public sealed class InstallTracker
         state.Stage = "scanning-base";
         state.CurrentFile = "扫描基础文件...";
 
-        var missFiles = RemapPaths(await core.Locator.GetMissFilesAsync(jsonContent), core.GameRoot, gameDir);
+        var missFiles = await core.Locator.GetMissFilesAsync(jsonContent);
 
         Task? baseDownloadTask = null;
         DownloadManager? baseDm = null;
@@ -165,6 +178,16 @@ public sealed class InstallTracker
                 loaderLibTask = DownloadWithProgress(loaderDm, tid, state, 35, 55, ct);
             }
         }
+        else if(string.IsNullOrEmpty(loader))
+        {
+            var jsonPath = Path.Combine(gameDir, "versions", versionDirName, $"{versionDirName}.json");
+
+            JsonNode root = JsonNode.Parse(jsonContent)!;
+            root["id"] = versionDirName;
+            string updatedJson = root.ToJsonString();
+
+            await File.WriteAllTextAsync(jsonPath,updatedJson);
+        }
 
         // Phase 6: 附加 Mod 下载 (并行)
         ct.ThrowIfCancellationRequested();
@@ -203,11 +226,6 @@ public sealed class InstallTracker
         state.CurrentFile = "校验主 Jar 文件...";
 
         var missJar = await core.Locator.GetMissMainJarAsync(jsonContent);
-        if (missJar != null)
-        {
-            var remapped = RemapPaths([missJar], core.GameRoot, gameDir);
-            missJar = remapped.FirstOrDefault();
-        }
         if (missJar != null)
         {
             state.Stage = "downloading-jar";
@@ -413,20 +431,6 @@ public sealed class InstallTracker
         });
 
         await Task.WhenAll(tasks);
-    }
-
-    private static List<MissFileInfo> RemapPaths(List<MissFileInfo> files, string fromRoot, string toRoot)
-    {
-        var absFrom = Path.GetFullPath(fromRoot);
-        var absTo = Path.GetFullPath(toRoot);
-        if (string.Equals(absFrom, absTo, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
-            return files;
-
-        return files.Select(f =>
-        {
-            var rel = Path.GetRelativePath(absFrom, f.Path);
-            return new MissFileInfo(f.Name, f.Url, f.Sha1, Path.Combine(absTo, rel));
-        }).ToList();
     }
 
     private static void CleanupTempFiles(string? installerPath)

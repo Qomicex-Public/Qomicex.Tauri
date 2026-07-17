@@ -315,7 +315,7 @@ public static class InstanceEndpoints
             return Results.Json(new MessageResponse($"Launch cancelled for {id}"), ApiJsonContext.Default.MessageResponse);
         });
 
-        group.MapPost("/{id}/install", (string id, InstallerRequest req, InstanceService instances, DefaultGameCore core, InstallTracker tracker) =>
+        group.MapPost("/{id}/install", (string id, InstallerRequest req, InstanceService instances, InstallTracker tracker) =>
         {
             var instance = instances.GetById(id);
             if (instance is null)
@@ -326,7 +326,7 @@ public static class InstanceEndpoints
 
             tracker.Start(id, instance.GameVersion, instance.GameDir,
                 req.Loader, req.LoaderVersion, req.Addons, threads,
-                req.VersionIsolation ?? false, sourceId, core);
+                req.VersionIsolation ?? false, sourceId);
 
             return Results.Json(new MessageResponse($"Install started for {id}"), ApiJsonContext.Default.MessageResponse);
         });
