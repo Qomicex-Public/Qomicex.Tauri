@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
@@ -7,7 +8,7 @@ namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 public static class SystemEndpoints
 {
     private static readonly string SettingsPath = Path.Combine(
-        AppDomain.CurrentDomain.BaseDirectory, "data", "settings.json");
+        AppPaths.BaseDir, "data", "settings.json");
 
     public static SettingsResponse LoadSettings()
     {

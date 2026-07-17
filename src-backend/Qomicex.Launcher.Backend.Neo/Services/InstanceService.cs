@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 
@@ -19,7 +20,7 @@ public sealed class InstanceService
 
     public InstanceService()
     {
-        var dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
+        var dataDir = Path.Combine(AppPaths.BaseDir, "data");
         Directory.CreateDirectory(dataDir);
         _filePath = Path.Combine(dataDir, "instances.json");
         _instances = LoadFromFile();
@@ -93,7 +94,7 @@ public sealed class InstanceService
 
     private string? _defaultId;
     private static readonly string DefaultFilePath =
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "default_instance.json");
+        Path.Combine(AppPaths.BaseDir, "data", "default_instance.json");
 
     public string? GetDefaultId()
     {
