@@ -83,5 +83,6 @@ app.MapResourceCenterEndpoints(core, curseForgeApiKey);
 app.MapAccountEndpoints();
 app.MapJavaEndpoints();
 app.MapLoaderEndpoints();
+app.MapProgressSseEndpoints();
 
 app.Run();

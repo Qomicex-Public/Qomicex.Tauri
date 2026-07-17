@@ -426,6 +426,14 @@ public sealed class InstallTracker
         return state;
     }
 
+    public List<InstallProgressResponse> GetAllActiveStates()
+    {
+        return _states
+            .Where(kv => kv.Value.Status != "completed" && kv.Value.Status != "failed")
+            .Select(kv => kv.Value.ToResponse(kv.Key))
+            .ToList();
+    }
+
     public void Cancel(string instanceId)
     {
         if (_states.TryRemove(instanceId, out var state))
