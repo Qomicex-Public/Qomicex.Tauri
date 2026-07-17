@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Core.AOT.Builder;
 using Qomicex.Core.AOT.Core;
+using Qomicex.Core.AOT.Interfaces;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
@@ -96,13 +97,20 @@ public static class InstanceEndpoints
             return Results.NotFound();
         });
 
-        group.MapPost("/{id}/launch", (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker) =>
+        group.MapPost("/{id}/launch", async (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker, AccountService accountService) =>
         {
             var instance = instances.GetById(id);
             if (instance is null)
                 throw ApiException.NotFound($"Instance {id} not found");
 
             var cts = tracker.GetOrCreateCts(id);
+
+            tracker.SetProgress(id, new LaunchProgressState
+            {
+                Stage = "starting", Message = "准备启动...", Progress = 0
+            });
+
+            var authOptions = await ResolveAuthOptions(accountService, core.Auth);
 
             Task.Run(async () =>
             {
@@ -186,8 +194,8 @@ public static class InstanceEndpoints
 
                     var launchOptions = new LaunchOptions
                     {
-                        Version = instance.Name,
-                        VersionIsolation = instance.VersionIsolation ?? false,
+                        Version = versionId,
+                        VersionIsolation = instance.VersionIsolation ?? SystemEndpoints.LoadSettings().VersionIsolation,
                         GameRoot = instance.GameDir,
                         JavaOptions = new JavaOptions
                         {
@@ -197,6 +205,7 @@ public static class InstanceEndpoints
                                 ? null
                                 : instance.JvmArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries),
                         },
+                        AuthOptions = authOptions,
                     };
 
                     tracker.SetProgress(id, new LaunchProgressState
@@ -224,7 +233,7 @@ public static class InstanceEndpoints
                         {
                             Stage = "failed",
                             Message = "启动失败",
-                            Error = result.Exception?.Message ?? result.Message,
+                            Error = result.Exception?.ToString() ?? result.Message,
                             Progress = 100
                         });
                     }
@@ -238,19 +247,27 @@ public static class InstanceEndpoints
                 }
                 catch (Exception ex)
                 {
+                    var logDir = System.IO.Path.Combine(Qomicex.Launcher.Backend.Neo.Common.AppPaths.BaseDir, "logs");
+                    System.IO.Directory.CreateDirectory(logDir);
+                    System.IO.File.AppendAllText(
+                        System.IO.Path.Combine(logDir, "launch-errors.log"),
+                        $"[{DateTime.UtcNow:O}] [{id}] {ex}\n\n");
                     tracker.SetProgress(id, new LaunchProgressState
                     {
-                        Stage = "failed", Message = "启动失败", Error = ex.Message, Progress = 0
+                        Stage = "failed", Message = "启动失败", Error = ex.ToString(), Progress = 0
                     });
                 }
                 finally
                 {
-                    if (tracker.GetProgress(id)?.IsRunning != true)
+                    var p = tracker.GetProgress(id);
+                    if (p != null && p.Stage is not ("running" or "failed" or "crashed"))
                         tracker.CancelAndRemove(id);
                 }
             });
 
-            return Results.Json(new MessageResponse($"Launch started for {id}"), ApiJsonContext.Default.MessageResponse);
+            return Results.Json(new LaunchResultDto(
+                Success: true, ProcessId: 0, Stage: "starting"
+            ), ApiJsonContext.Default.LaunchResultDto);
         });
 
         group.MapGet("/{id}/launch/progress", (string id, LaunchTracker tracker) =>
@@ -268,6 +285,19 @@ public static class InstanceEndpoints
                     Stage: "running", Message: "游戏运行中", Progress: 100,
                     IsRunning: !procState.HasExited, ProcessId: procState.ProcessId
                 ), ApiJsonContext.Default.LaunchProgressDto);
+            }
+
+            if (progress.Stage == "running")
+            {
+                var ps = tracker.GetState(id);
+                if (ps == null || ps.HasExited)
+                {
+                    tracker.CancelAndRemove(id);
+                    return Results.Json(new LaunchProgressDto(
+                        Stage: "completed", Message: "游戏已退出", Progress: 100, IsRunning: false,
+                        ExitCode: ps?.ExitCode
+                    ), ApiJsonContext.Default.LaunchProgressDto);
+                }
             }
 
             return Results.Json(new LaunchProgressDto(
@@ -361,5 +391,56 @@ public static class InstanceEndpoints
             var rel = Path.GetRelativePath(absFrom, f.Path);
             return new Qomicex.Core.AOT.Public.Models.MissFileInfo(f.Name, f.Url, f.Sha1, Path.Combine(absTo, rel));
         }).ToList();
+    }
+
+    private static async Task<AuthOptions> ResolveAuthOptions(AccountService accountService, IAuthProvider authProvider)
+    {
+        var account = await accountService.GetDefaultAsync();
+        if (account == null)
+            return new AuthOptions();
+
+        var mode = account.LoginMethod switch
+        {
+            "Microsoft" => AuthMode.Microsoft,
+            "Yggdrasil" or "统一通行证" => AuthMode.Yggdrasil,
+            _ => AuthMode.Offline
+        };
+
+        var name = account.Name;
+        var uuid = account.Uuid;
+        var accessToken = account.AccessToken;
+        var serverUrl = mode == AuthMode.Yggdrasil ? account.ServerUrl : null;
+
+        if (mode == AuthMode.Microsoft && !string.IsNullOrEmpty(account.RefreshToken))
+        {
+            try
+            {
+                var refreshed = await authProvider.RefreshLoginAsync(account.RefreshToken);
+                if (refreshed.Success)
+                {
+                    accessToken = refreshed.AccessToken ?? accessToken;
+                    name = refreshed.Username ?? name;
+                    uuid = refreshed.Uuid ?? uuid;
+
+                    account.AccessToken = accessToken;
+                    account.Name = name;
+                    account.Uuid = uuid;
+                    if (refreshed.RefreshToken != null)
+                        account.RefreshToken = refreshed.RefreshToken;
+                    await accountService.SaveAccountAsync(account);
+                }
+            }
+            catch { }
+        }
+
+        return new AuthOptions
+        {
+            Mode = mode,
+            Name = name,
+            Uuid = uuid,
+            AccessToken = accessToken ?? "0",
+            ServerUrl = serverUrl,
+            AuthlibInjectorParam = mode == AuthMode.Yggdrasil ? $"--authlibInjector={serverUrl}" : ""
+        };
     }
 }

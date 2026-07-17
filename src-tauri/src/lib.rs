@@ -338,6 +338,67 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[tauri::command]
+fn restart_backend(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<BackendChild>();
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    let child = guard.take();
+    drop(guard);
+    if let Some(mut child) = child {
+        let _ = child.kill();
+        let _ = child.wait();
+        eprintln!("[backend] killed for restart");
+    }
+    if std::env::var("QOMICEX_LAUNCHER_MANAGED").is_ok() {
+        eprintln!("[backend] launcher-managed, skipping spawn");
+        return Ok(());
+    }
+    if BACKEND.len() < 1024 {
+        eprintln!("[backend] placeholder ({} bytes), skipping", BACKEND.len());
+        return Ok(());
+    }
+    let exe_path = match extract_backend() {
+        Some(p) => p,
+        None => return Err("failed to extract backend".into()),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755));
+    }
+    let mut cmd = std::process::Command::new(&exe_path);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    #[cfg(windows)] { const CREATE_NO_WINDOW: u32 = 0x08000000; cmd.creation_flags(CREATE_NO_WINDOW); }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[backend] spawn failed: {e}");
+            let _ = std::fs::remove_file(&exe_path);
+            return Err(e.to_string());
+        }
+    };
+    let tag = BACKEND_EXE;
+    if let Some(out) = child.stdout.take() {
+        std::thread::spawn(move || {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                eprintln!("[{tag} out] {line}");
+            }
+        });
+    }
+    if let Some(err) = child.stderr.take() {
+        std::thread::spawn(move || {
+            for line in BufReader::new(err).lines().map_while(Result::ok) {
+                eprintln!("[{tag} err] {line}");
+            }
+        });
+    }
+    let state = app.state::<BackendChild>();
+    *state.0.lock().unwrap() = Some(child);
+    eprintln!("[backend] spawned: {} ({} bytes)", exe_path.display(), BACKEND.len());
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -357,7 +418,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             dialog_cmd::pick_dialog,
-            check_update_with_endpoint
+            check_update_with_endpoint,
+            restart_backend
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

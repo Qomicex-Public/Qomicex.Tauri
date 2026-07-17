@@ -171,8 +171,8 @@ export default function Instances() {
         const created = await Promise.all(toCreate.map((v) => createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
-          loader: v.loaders.find((l) => l.type)?.type,
-          loaderVersion: v.loaders.find((l) => l.version)?.version,
+          loader: v.loaders?.find((l) => l.type)?.type,
+          loaderVersion: v.loaders?.find((l) => l.version)?.version,
           gameDir: dir,
           maxMemory: 4096,
           iconData: v.modpack?.iconData,
@@ -392,8 +392,8 @@ export default function Instances() {
         inst = await createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
-          loader: v.loaders.find(l => l.type)?.type,
-          loaderVersion: v.loaders.find(l => l.version)?.version,
+          loader: v.loaders?.find(l => l.type)?.type,
+          loaderVersion: v.loaders?.find(l => l.version)?.version,
           gameDir: currentDir!,
           maxMemory: 4096,
           iconData: v.modpack?.iconData,
@@ -441,8 +441,8 @@ export default function Instances() {
       const created = await createInstance({
         name: v.name,
         gameVersion: v.gameVersion,
-        loader: v.loaders.find((l) => l.type)?.type,
-        loaderVersion: v.loaders.find((l) => l.version)?.version,
+        loader: v.loaders?.find((l) => l.type)?.type,
+        loaderVersion: v.loaders?.find((l) => l.version)?.version,
         maxMemory: 4096,
         gameDir: currentDir,
         iconData: v.modpack?.iconData,
@@ -465,8 +465,8 @@ export default function Instances() {
         inst = await createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
-          loader: v.loaders.find((l) => l.type)?.type,
-          loaderVersion: v.loaders.find((l) => l.version)?.version,
+          loader: v.loaders?.find((l) => l.type)?.type,
+          loaderVersion: v.loaders?.find((l) => l.version)?.version,
           gameDir: currentDir!,
           maxMemory: 4096,
           iconData: v.modpack?.iconData,

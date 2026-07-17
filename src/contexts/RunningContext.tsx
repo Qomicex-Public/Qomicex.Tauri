@@ -120,6 +120,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
           setLaunchProgress(null)
           setRunningInstances(prev => {
             if (prev.some(r => r.instanceId === id)) return prev
+            notifyRef.current?.('游戏已启动', 'success')
             return [...prev, { instanceId: id, name, startedAt: Date.now(), stage: 'running', processId: p.processId }]
           })
           pollRefs.current.set(id, window.setTimeout(poll, 5000))

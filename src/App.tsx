@@ -36,6 +36,7 @@ function RunningNotifyBridge() {
 
 function AppContent() {
   const [backendState, setBackendState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [retryCount, setRetryCount] = useState(0)
   const { closeWithGuard, Provider } = useCloseGuard()
   const { alert } = useMessageBox()
   const { crashDialogState, clearCrashDialog } = useRunning()
@@ -59,7 +60,27 @@ function AppContent() {
     }
     poll()
     return () => { cancelled = true }
-  }, [])
+  }, [retryCount])
+
+  useEffect(() => {
+    if (backendState !== 'ready') return
+    const interval = setInterval(async () => {
+      try {
+        await get('/diagnostics/health')
+      } catch {
+        setBackendState('error')
+      }
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [backendState])
+
+  const handleRetry = async () => {
+    setBackendState('loading')
+    try {
+      await invoke('restart_backend')
+    } catch { }
+    setRetryCount(c => c + 1)
+  }
 
   useEffect(() => {
     if (backendState !== 'ready' || javaChecked.current) return
@@ -156,7 +177,7 @@ function AppContent() {
                           后端进程异常退出，请检查日志后重试。
                         </p>
                         <div className="mt-4 flex items-center justify-center gap-3">
-                          <Button onClick={() => window.location.reload()}>重试</Button>
+                          <Button onClick={handleRetry}>重启后端</Button>
                           <Button variant="outline" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))}>
                             反馈问题
                           </Button>

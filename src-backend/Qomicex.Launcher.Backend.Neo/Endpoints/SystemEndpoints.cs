@@ -140,10 +140,10 @@ public static class SystemEndpoints
         });
 
         group.MapGet("/settings/download-sources/ping", () =>
-            Results.Json(Array.Empty<DownloadSourcePing>(), ApiJsonContext.Default.ListDownloadSourcePing));
+            Results.Json(new List<DownloadSourcePing>(), ApiJsonContext.Default.ListDownloadSourcePing));
 
         group.MapGet("/settings/mod-sources/ping", () =>
-            Results.Json(Array.Empty<ModSourcePing>(), ApiJsonContext.Default.ListModSourcePing));
+            Results.Json(new List<ModSourcePing>(), ApiJsonContext.Default.ListModSourcePing));
     }
 
     private static string GetOsName()
