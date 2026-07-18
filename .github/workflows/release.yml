@@ -110,13 +110,12 @@ jobs:
         run: |
           Write-Output "=== Bundle dir contents ==="
           Get-ChildItem -Recurse -Path "src-tauri/target/release/bundle" | Select-Object FullName
-          $sig = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
-          if (-not $sig) { throw "No .sig file found in bundle directory" }
-          $content = (Get-Content -Raw $sig.FullName).Trim()
-          $assetName = $sig.Name -replace '\.sig$', ''
+          $installer = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Include "*.exe","*.msi" | Select-Object -First 1
+          if (-not $installer) { throw "No installer (.exe/.msi) found in bundle directory" }
+          $assetName = $installer.Name
           $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$assetName"
           $platform = "windows-x86_64"
-          $fragment = @{ $platform = @{ signature = $content; url = $url } }
+          $fragment = @{ $platform = @{ url = $url } }
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
@@ -158,13 +157,12 @@ jobs:
         run: |
           Write-Output "=== Bundle dir contents ==="
           Get-ChildItem -Recurse -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" | Select-Object FullName
-          $sig = Get-ChildItem -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
-          if (-not $sig) { throw "No .sig file found in bundle directory" }
-          $content = (Get-Content -Raw $sig.FullName).Trim()
-          $assetName = $sig.Name -replace '\.sig$', ''
+          $installer = Get-ChildItem -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" -Recurse -Include "*.exe","*.msi" | Select-Object -First 1
+          if (-not $installer) { throw "No installer (.exe/.msi) found in bundle directory" }
+          $assetName = $installer.Name
           $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$assetName"
           $platform = "windows-aarch64"
-          $fragment = @{ $platform = @{ signature = $content; url = $url } }
+          $fragment = @{ $platform = @{ url = $url } }
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
@@ -208,17 +206,16 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
-            exit 1
+          INSTALLER=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          [ -z "$INSTALLER" ] && INSTALLER=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
+          if [ -z "$INSTALLER" ]; then
+            echo "No .deb/.rpm installer found, skipping update fragment"
+            exit 0
           fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          ASSET_NAME=$(basename "$INSTALLER")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="linux-x86_64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -260,17 +257,16 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
-            exit 1
+          INSTALLER=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          [ -z "$INSTALLER" ] && INSTALLER=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
+          if [ -z "$INSTALLER" ]; then
+            echo "No .deb/.rpm installer found, skipping update fragment"
+            exit 0
           fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          ASSET_NAME=$(basename "$INSTALLER")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="linux-aarch64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -319,17 +315,15 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+          DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then
+            echo "ERROR: No .dmg file found in $BUNDLE_DIR"
             exit 1
           fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          ASSET_NAME=$(basename "$DMG")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="darwin-aarch64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -378,17 +372,15 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+          DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then
+            echo "ERROR: No .dmg file found in $BUNDLE_DIR"
             exit 1
           fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          ASSET_NAME=$(basename "$DMG")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="darwin-x86_64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -431,17 +423,16 @@ jobs:
       - name: Generate update manifest fragment
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
-            exit 1
+          INSTALLER=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          [ -z "$INSTALLER" ] && INSTALLER=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
+          if [ -z "$INSTALLER" ]; then
+            echo "No .deb/.rpm installer found, skipping update fragment"
+            exit 0
           fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          ASSET_NAME=$(basename "$INSTALLER")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="linux-loongarch64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -475,7 +466,7 @@ jobs:
           echo "  \"version\": \"$VERSION\"," >> "$MANIFEST"
           echo "  \"notes\": \"$NOTES\"," >> "$MANIFEST"
           echo "  \"pub_date\": \"$PUB_DATE\"," >> "$MANIFEST"
-          echo "  \"required\": ${{ github.event.inputs.required == 'true' && 'true' || 'false' }},"
+          echo "  \"required\": ${{ github.event.inputs.required == 'true' && 'true' || 'false' }}," >> "$MANIFEST"
           echo "  \"platforms\": {" >> "$MANIFEST"
 
           FIRST=true
