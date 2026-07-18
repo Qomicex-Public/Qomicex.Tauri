@@ -47,6 +47,13 @@ public sealed class ConnectorService : IDisposable
 
     private static string? _cachedVendor;
     private static string? _cachedMachineId;
+    private static string? _cachedLauncherVersion;
+
+    private static string LauncherVersion =>
+        _cachedLauncherVersion ??= (typeof(ConnectorService).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(ConnectorService).Assembly.GetName().Version?.ToString()
+            ?? "0.0.0").Split('+')[0];
 
     public ConnectorService(
         ILogger<ConnectorService> logger,
@@ -66,7 +73,9 @@ public sealed class ConnectorService : IDisposable
         _skinService = skinService;
         _easyTier = easyTier;
         _launchService = launchService;
-        _client = new ScaffoldingClient(easyTierPath: EasyTierProvider.GetExecutablePath());
+        _client = new ScaffoldingClient(
+            easyTierPath: EasyTierProvider.GetExecutablePath(),
+            userAgent: $"QML/{LauncherVersion}");
     }
 
     private static string MachineId
@@ -87,10 +96,7 @@ public sealed class ConnectorService : IDisposable
         get
         {
             if (_cachedVendor != null) return _cachedVendor;
-            var launcherVersion = (typeof(ConnectorService).Assembly
-                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-                ?? typeof(ConnectorService).Assembly.GetName().Version?.ToString()
-                ?? "0.0.0").Split('+')[0];
+            var launcherVersion = LauncherVersion;
             var etVersion = GetEasyTierVersion();
             _cachedVendor = $"Qomicex.Launcher {launcherVersion}/Qomicex.Connector | EasyTier{etVersion}";
             return _cachedVendor;
