@@ -1,7 +1,10 @@
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Core.AOT.Builder;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Core.AOT.Interfaces;
+using Qomicex.Core.AOT.Models.VersionMetadata;
+using Qomicex.Core.AOT.Public.Models;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
@@ -97,7 +100,7 @@ public static class InstanceEndpoints
             return Results.NotFound();
         });
 
-        group.MapPost("/{id}/launch", async (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker, AccountService accountService) =>
+        group.MapPost("/{id}/launch", async (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker, AccountService accountService, JavaRuntimeStore store) =>
         {
             var instance = instances.GetById(id);
             if (instance is null)
@@ -112,7 +115,7 @@ public static class InstanceEndpoints
 
             var authOptions = await ResolveAuthOptions(accountService, core.Auth);
 
-            Task.Run(async () =>
+            _ = Task.Run(async () =>
             {
                 try
                 {
@@ -176,7 +179,12 @@ public static class InstanceEndpoints
                                     if (info.CompletedFiles + info.FailedFiles + info.CanceledFiles >= info.TotalFiles)
                                     {
                                         if (info.FailedFiles > 0)
-                                            throw new Exception("文件补全失败");
+                                        {
+                                            var failedNames = statuses
+                                                .Where(s => s.Status == DownloadTask.FileStatus.Failed)
+                                                .Select(s => s.Name ?? "?");
+                                            throw new Exception($"文件补全失败: {string.Join(", ", failedNames)}");
+                                        }
                                         break;
                                     }
                                 }
@@ -192,6 +200,48 @@ public static class InstanceEndpoints
                         Stage = "preparing", Message = "正在准备环境...", Progress = 30
                     });
 
+                    // 检测需要的 Java 版本
+                    var verJsonPath = Path.Combine(instance.GameDir, "versions", versionId, $"{versionId}.json");
+                    var requiredJava = 8;
+                    if (File.Exists(verJsonPath))
+                    {
+                        var verDoc = JsonNode.Parse(await File.ReadAllTextAsync(verJsonPath, cts.Token));
+                        requiredJava = GetRequiredJavaFromNode(verDoc, instance.GameDir);
+                    }
+                    Console.Error.WriteLine($"[启动] 需要 Java >= {requiredJava}");
+
+                    // 选择 Java 运行时
+                    string selectedJavaPath;
+                    if (!string.IsNullOrEmpty(instance.JavaPath))
+                    {
+                        Console.Error.WriteLine($"[启动] 用户指定 Java: {instance.JavaPath}");
+                        var javaList = await store.GetMergedAsync(JavaSearchMode.Quick);
+                        var matched = javaList.FirstOrDefault(j =>
+                            string.Equals(j.Path, instance.JavaPath, StringComparison.OrdinalIgnoreCase));
+                        if (matched != null)
+                            Console.Error.WriteLine($"[启动] 检测到 Java {matched.MajorVersion} (需要 {requiredJava})");
+                        selectedJavaPath = instance.JavaPath;
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine("[启动] 自动选择 Java...");
+                        var javaList = await store.GetMergedAsync(JavaSearchMode.Quick);
+                        Console.Error.WriteLine($"[启动] 扫描到 {javaList.Count} 个 Java 运行时");
+                        foreach (var j in javaList)
+                            Console.Error.WriteLine($"  {j.Name ?? "?"} (v{j.MajorVersion}) [{j.State}] {j.Path}");
+
+                        var meta = new CompleteVersionMetadata(
+                            Id: versionId, Type: "release", MainClass: "", InheritsFrom: null,
+                            Jar: null, Arguments: null, Libraries: [], AssetIndex: null, Downloads: null,
+                            JavaVersion: new JavaVersion("jre-legacy", requiredJava),
+                            MinimumLauncherVersion: 0, ReleaseTime: DateTimeOffset.MinValue, Time: DateTimeOffset.MinValue
+                        );
+
+                        var recommended = await core.JavaProvider.Recommand(javaList, meta);
+                        Console.Error.WriteLine($"[启动] 推荐 Java {recommended.MajorVersion} ({recommended.Path})");
+                        selectedJavaPath = recommended.Path;
+                    }
+
                     var launchOptions = new LaunchOptions
                     {
                         Version = versionId,
@@ -199,7 +249,7 @@ public static class InstanceEndpoints
                         GameRoot = instance.GameDir,
                         JavaOptions = new JavaOptions
                         {
-                            JavaPath = instance.JavaPath ?? "java",
+                            JavaPath = selectedJavaPath,
                             MaxMemoryMB = instance.MaxMemory,
                             ExtraJvmArgs = string.IsNullOrEmpty(instance.JvmArgs)
                                 ? null
@@ -247,6 +297,7 @@ public static class InstanceEndpoints
                 }
                 catch (Exception ex)
                 {
+                    Console.Error.WriteLine($"[启动] 错误: {ex}");
                     var logDir = System.IO.Path.Combine(Qomicex.Launcher.Backend.Neo.Common.AppPaths.BaseDir, "logs");
                     System.IO.Directory.CreateDirectory(logDir);
                     System.IO.File.AppendAllText(
@@ -351,13 +402,15 @@ public static class InstanceEndpoints
             var loaderType = type is not null ? MapLoaderType(type) : null;
             var loaders = await core.InstallerProvider.GetAvailableModLoaders(
                 gameVersion, loaderType ?? Qomicex.Core.AOT.Public.Models.ModLoaderType.All);
+#pragma warning disable IL2026, IL3050
             return Results.Json(loaders);
+#pragma warning restore IL2026, IL3050
         });
     }
 
     private static Qomicex.Core.AOT.Public.Models.ModLoaderType? MapLoaderType(string loader) => loader.ToLowerInvariant() switch
     {
-        "fabric" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Fabic,
+        "fabric" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Fabric,
         "quilt" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Quilt,
         "forge" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Forge,
         "neoforge" => Qomicex.Core.AOT.Public.Models.ModLoaderType.NeoForge,
@@ -391,6 +444,19 @@ public static class InstanceEndpoints
             var rel = Path.GetRelativePath(absFrom, f.Path);
             return new Qomicex.Core.AOT.Public.Models.MissFileInfo(f.Name, f.Url, f.Sha1, Path.Combine(absTo, rel));
         }).ToList();
+    }
+
+    private static int GetRequiredJavaFromNode(JsonNode? node, string gameDir)
+    {
+        if (node?["javaVersion"]?["majorVersion"] is JsonNode mv)
+            return mv.GetValue<int>();
+        if (node?["inheritsFrom"]?.GetValue<string>() is string inheritsFrom)
+        {
+            var path = Path.Combine(gameDir, "versions", inheritsFrom, $"{inheritsFrom}.json");
+            if (File.Exists(path))
+                return GetRequiredJavaFromNode(JsonNode.Parse(File.ReadAllText(path)), gameDir);
+        }
+        return 8;
     }
 
     private static async Task<AuthOptions> ResolveAuthOptions(AccountService accountService, IAuthProvider authProvider)

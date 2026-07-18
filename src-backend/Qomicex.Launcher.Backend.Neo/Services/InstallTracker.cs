@@ -285,7 +285,12 @@ public sealed class InstallTracker
                 if (info.CompletedFiles + info.FailedFiles + info.CanceledFiles >= info.TotalFiles)
                 {
                     if (info.FailedFiles > 0)
-                        throw new Exception($"下载失败: {info.FailedFiles} 个文件下载失败");
+                    {
+                        var failedNames = statuses
+                            .Where(s => s.Status == DownloadTask.FileStatus.Failed)
+                            .Select(s => s.Name ?? "?");
+                        throw new Exception($"下载失败 ({info.FailedFiles} 个): {string.Join(", ", failedNames)}");
+                    }
                     break;
                 }
             }

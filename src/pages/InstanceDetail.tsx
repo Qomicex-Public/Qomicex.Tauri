@@ -1539,7 +1539,7 @@ export default function InstanceDetailPage() {
       if (!ok) return
     }
     try {
-      await ctxLaunchInstance(id, instance?.name || id)
+      await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const code = e instanceof ApiError ? e.code : ''

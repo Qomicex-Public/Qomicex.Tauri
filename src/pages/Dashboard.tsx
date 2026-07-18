@@ -97,7 +97,7 @@ export default function Dashboard() {
       if (!ok) return
     }
     try {
-      await launchInstance(defaultInstance.id, defaultInstance.name)
+      await launchInstance(defaultInstance.id, defaultInstance.name, { path: defaultInstance.javaPath, gameVersion: defaultInstance.gameVersion, gameDir: defaultInstance.gameDir })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const code = e instanceof ApiError ? e.code : ''

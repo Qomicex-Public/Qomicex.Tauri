@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Core.AOT.Models.VersionMetadata;
@@ -76,6 +77,13 @@ public static class JavaEndpoints
                 throw ApiException.NotFound("无法识别该路径下的 Java 运行时");
 
             return Results.Ok(match);
+        });
+
+        java.MapGet("/requirement", (string gameDir, string version) =>
+        {
+            var path = Path.Combine(gameDir, "versions", version, $"{version}.json");
+            var required = GetRequiredJavaVersion(path);
+            return Results.Ok(new { requiredMajorVersion = required });
         });
 
         java.MapPost("/recommended", async (DefaultGameCore core, JavaRecommendRequest req) =>
@@ -169,6 +177,25 @@ public static class JavaEndpoints
         if (string.Equals(mode, "deep", StringComparison.OrdinalIgnoreCase))
             return JavaSearchMode.Deep;
         throw ApiException.BadRequest("无效的 Java 搜索模式", "JAVA_SEARCH_MODE_INVALID");
+    }
+
+    private static int GetRequiredJavaVersion(string jsonPath)
+    {
+        if (!File.Exists(jsonPath))
+            throw ApiException.NotFound("版本文件不存在");
+        var node = JsonNode.Parse(File.ReadAllText(jsonPath));
+        if (node?["javaVersion"]?["majorVersion"] is JsonNode mv)
+            return mv.GetValue<int>();
+        if (node?["inheritsFrom"]?.GetValue<string>() is string inheritsFrom)
+        {
+            var dir = Path.GetDirectoryName(jsonPath);
+            var parentDir = dir is not null ? Path.GetDirectoryName(dir) : null;
+            if (parentDir is not null)
+            {
+                return GetRequiredJavaVersion(Path.Combine(parentDir, "versions", inheritsFrom, $"{inheritsFrom}.json"));
+            }
+        }
+        return 8;
     }
 }
 

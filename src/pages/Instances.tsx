@@ -454,7 +454,7 @@ export default function Instances() {
     }
 
     try {
-      const result = await ctxLaunchInstance(inst!.id, inst!.name)
+      const result = await ctxLaunchInstance(inst!.id, inst!.name, { path: inst!.javaPath, gameVersion: inst!.gameVersion, gameDir: inst!.gameDir })
       if (!result.success) {
         await msgAlert(`启动失败: ${result.error}\n${result.detail || ''}`)
       }
