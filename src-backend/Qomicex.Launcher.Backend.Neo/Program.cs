@@ -55,6 +55,10 @@ builder.Services.AddSingleton(sp =>
     var javaStore = sp.GetRequiredService<JavaRuntimeStore>();
     return new InstallTracker(javaStore, userAgent);
 });
+builder.Services.AddSingleton(sp =>
+{
+    return new ContentService(core, curseForgeApiKey);
+});
 builder.Services.AddSingleton<CurseForgeVersionFetchService>();
 builder.Services.AddSingleton<JavaRuntimeStore>();
 builder.Services.AddSingleton(sp =>
@@ -114,6 +118,7 @@ app.MapLoaderEndpoints();
 app.MapProgressSseEndpoints();
 app.MapLogEndpoints();
 app.MapConnectorEndpoints();
+app.MapInstanceFilesEndpoints();
 
 // LAN listener lifecycle
 var lanListener = app.Services.GetRequiredService<LanGameListenerService>();

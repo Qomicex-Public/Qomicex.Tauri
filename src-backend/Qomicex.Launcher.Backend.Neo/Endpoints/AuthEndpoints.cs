@@ -3,8 +3,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Qomicex.Core.AOT.Builder;
 using Qomicex.Core.AOT.Core;
-using Qomicex.Core.AOT.Services;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
@@ -216,7 +216,10 @@ public static class AuthEndpoints
         group.MapPost("/tongyi", async (TongyiLoginRequest req, IHttpClientFactory httpFactory) =>
         {
             var serverUrl = $"https://auth.mc-user.com:233/{req.ServerId}/";
-            var ygg = new YggdrasilAuthProvider(httpFactory.CreateClient(), serverUrl);
+            using var authCore = new GameCoreBuilder()
+                .UseYggdrasilAuth(serverUrl)
+                .WithHttpClient(httpFactory.CreateClient())
+                .Build();
             var authReq = new Qomicex.Core.AOT.Interfaces.AuthRequest
             {
                 Username = req.Email,
@@ -224,7 +227,7 @@ public static class AuthEndpoints
                 ServerUrl = serverUrl,
                 IsOffline = false
             };
-            var result = await ygg.AuthenticateAsync(authReq);
+            var result = await authCore.Auth.AuthenticateAsync(authReq);
             if (!result.Success || result.Uuid == null)
                 return Results.Json(new AuthResponse(
                     Success: false, Username: null, AccessToken: null, Uuid: null,

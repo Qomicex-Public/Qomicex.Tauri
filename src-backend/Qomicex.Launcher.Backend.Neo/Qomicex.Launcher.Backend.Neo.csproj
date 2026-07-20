@@ -28,6 +28,8 @@
     <EmbeddedResource Include="appsettings.json" />
     <EmbeddedResource Include="Resources\Alex.png" />
     <EmbeddedResource Include="Resources\mcmod_data.json" />
+    <EmbeddedResource Include="Resources\GameSettings\options.json" />
+    <EmbeddedResource Include="Resources\GameSettings\descriptions.json" />
   </ItemGroup>
 
   <ItemGroup>

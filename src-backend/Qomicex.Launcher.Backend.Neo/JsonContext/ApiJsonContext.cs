@@ -1,9 +1,11 @@
 using System.Text.Json.Serialization;
 using Qomicex.Core.AOT.Models.Expansion.CurseForge;
+using Qomicex.Core.AOT.Models.Expansion.Local;
 using Qomicex.Core.AOT.Models.Expansion.Modrinth;
 using Qomicex.Core.AOT.Models.Local;
 using Qomicex.Core.AOT.Models.VersionManifest;
 using Qomicex.Core.AOT.Public.Models;
+using Qomicex.Core.AOT.Services.Options;
 using Qomicex.Launcher.Backend.Neo.Endpoints;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
@@ -67,6 +69,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(List<LoaderVersionInfo>))]
 [JsonSerializable(typeof(LoaderAddonInfo))]
 [JsonSerializable(typeof(List<LoaderAddonInfo>))]
+// Version manifest
+[JsonSerializable(typeof(VersionManifestRoot))]
 // Java DTOs
 [JsonSerializable(typeof(JavaResult))]
 [JsonSerializable(typeof(List<JavaResult>))]
@@ -126,6 +130,34 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(StatusResponse))]
 [JsonSerializable(typeof(ScanPortsResponse))]
 [JsonSerializable(typeof(AutoSelectResponse))]
+// Instance files — Local resource types (Core.AOT)
+[JsonSerializable(typeof(ModInfo))]
+[JsonSerializable(typeof(List<ModInfo>))]
+[JsonSerializable(typeof(SaveInfo))]
+[JsonSerializable(typeof(List<SaveInfo>))]
+[JsonSerializable(typeof(ResourcePackInfo))]
+[JsonSerializable(typeof(List<ResourcePackInfo>))]
+[JsonSerializable(typeof(ShaderInfo))]
+[JsonSerializable(typeof(List<ShaderInfo>))]
+[JsonSerializable(typeof(ScreenshotInfo))]
+[JsonSerializable(typeof(List<ScreenshotInfo>))]
+[JsonSerializable(typeof(DataPackInfo))]
+[JsonSerializable(typeof(List<DataPackInfo>))]
+// Instance files — Server & Options types (Core.AOT)
+[JsonSerializable(typeof(ServerEntry))]
+[JsonSerializable(typeof(List<ServerEntry>))]
+[JsonSerializable(typeof(ServerState))]
+[JsonSerializable(typeof(LanServerEntry))]
+[JsonSerializable(typeof(List<LanServerEntry>))]
+[JsonSerializable(typeof(OptionViewItem))]
+[JsonSerializable(typeof(List<OptionViewItem>))]
+[JsonSerializable(typeof(OptionDefinition))]
+// Instance files — Request DTOs
+[JsonSerializable(typeof(FileOperationRequest))]
+[JsonSerializable(typeof(BatchFileRequest))]
+[JsonSerializable(typeof(SaveCopyRequest))]
+[JsonSerializable(typeof(SaveRenameRequest))]
+[JsonSerializable(typeof(SetOptionRequest))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
 }

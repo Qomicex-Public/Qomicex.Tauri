@@ -165,7 +165,7 @@ public sealed class InstallTracker
         {
             state.CurrentFile = "扫描加载器库文件...";
 
-            var missLibs = await GetMissLoaderLibraries(
+            var missLibs = await GetMissLoaderLibraries(core.Installer,
                 loader, loaderVersion, gameVersion, gameDir,
                 versionDirName, installerPath, downloadSourceId);
 
@@ -214,7 +214,7 @@ public sealed class InstallTracker
             state.CurrentFile = $"安装 {loader}...";
             state.Progress = 88;
 
-            await InstallLoader(versionDirName, jsonContent, gameDir,
+            await InstallLoader(core.Installer, versionDirName, jsonContent, gameDir,
                 loader, loaderVersion, gameVersion, installerPath, downloadSourceId, ct);
 
             state.Progress = 92;
@@ -299,51 +299,36 @@ public sealed class InstallTracker
         await downloadTask;
     }
 
-    private async Task<List<MissFileDto>> GetMissLoaderLibraries(string loader,
-        string loaderVersion, string gameVersion, string gameDir,
+    private async Task<List<MissFileData>> GetMissLoaderLibraries(IInstallerFactory installerFactory,
+        string loader, string loaderVersion, string gameVersion, string gameDir,
         string versionDirName, string? installerPath, int downloadSourceId)
     {
         var lower = loader.ToLowerInvariant();
         if (lower == "forge" && installerPath != null)
         {
-            var inst = new ForgeInstaller(downloadSourceId, gameDir, gameVersion);
-            var sources = inst.GetMissForgeLibraries(installerPath, versionDirName);
-            var result = new List<MissFileDto>(sources.Count);
-            foreach (var f in sources)
-                result.Add(new MissFileDto(f.Name, f.Path, f.Url, f.Sha1));
-            return result;
+            var inst = installerFactory.CreateForge(downloadSourceId, gameDir, gameVersion);
+            return await inst.GetMissLibrariesAsync(installerPath, versionDirName, null);
         }
         if (lower == "neoforge" && installerPath != null)
         {
-            var inst = new NeoForgeInstaller(downloadSourceId, gameDir, gameVersion);
-            var sources = inst.GetMissNeoForgeLibraries(installerPath, versionDirName);
-            var result = new List<MissFileDto>(sources.Count);
-            foreach (var f in sources)
-                result.Add(new MissFileDto(f.Name, f.Path, f.Url, f.Sha1));
-            return result;
+            var inst = installerFactory.CreateNeoForge(downloadSourceId, gameDir, gameVersion);
+            return await inst.GetMissLibrariesAsync(installerPath, versionDirName, null);
         }
         if (lower == "fabric")
         {
-            var inst = new FabricInstaller(downloadSourceId, gameDir);
-            var sources = await inst.GetMissFabricLibraries(loaderVersion, gameVersion, gameDir);
-            var result = new List<MissFileDto>(sources.Count);
-            foreach (var f in sources)
-                result.Add(new MissFileDto(f.Name, f.Path, f.Url, f.Sha1));
-            return result;
+            var inst = installerFactory.CreateFabric(downloadSourceId, gameDir);
+            return await inst.GetMissLibrariesAsync(loaderVersion, gameVersion, gameDir);
         }
         if (lower == "quilt")
         {
-            var inst = new QuiltInstaller(downloadSourceId, gameDir);
-            var sources = await inst.GetMissQuiltLibraries(loaderVersion, gameVersion, gameDir);
-            var result = new List<MissFileDto>(sources.Count);
-            foreach (var f in sources)
-                result.Add(new MissFileDto(f.Name, f.Path, f.Url, f.Sha1));
-            return result;
+            var inst = installerFactory.CreateQuilt(downloadSourceId, gameDir);
+            return await inst.GetMissLibrariesAsync(loaderVersion, gameVersion, gameDir);
         }
         return [];
     }
 
-    private async Task InstallLoader(string versionId, string inheritsFromJson,
+    private async Task InstallLoader(IInstallerFactory installerFactory,
+        string versionId, string inheritsFromJson,
         string gameDir, string loader, string loaderVersion, string gameVersion,
         string? installerPath, int downloadSourceId, CancellationToken ct)
     {
@@ -357,8 +342,8 @@ public sealed class InstallTracker
             var javaPath = await ResolveJavaPath();
 
             IInstaller installer = lower == "forge"
-                ? new ForgeInstaller(downloadSourceId, gameDir, gameVersion)
-                : new NeoForgeInstaller(downloadSourceId, gameDir, gameVersion);
+                ? installerFactory.CreateForge(downloadSourceId, gameDir, gameVersion)
+                : installerFactory.CreateNeoForge(downloadSourceId, gameDir, gameVersion);
 
             await installer.InstallAsync(versionId, inheritsFromJson,
                 javaPath, installerPath, null, null);
@@ -367,7 +352,7 @@ public sealed class InstallTracker
 
         if (lower == "fabric")
         {
-            var inst = new FabricInstaller(downloadSourceId, gameDir);
+            var inst = installerFactory.CreateFabric(downloadSourceId, gameDir);
             await inst.InstallAsync(versionId, inheritsFromJson,
                 loaderVersion, gameVersion, null, null);
             return;
@@ -375,7 +360,7 @@ public sealed class InstallTracker
 
         if (lower == "quilt")
         {
-            var inst = new QuiltInstaller(downloadSourceId, gameDir);
+            var inst = installerFactory.CreateQuilt(downloadSourceId, gameDir);
             await inst.InstallAsync(versionId, inheritsFromJson,
                 loaderVersion, gameVersion, null, null);
             return;
@@ -383,7 +368,7 @@ public sealed class InstallTracker
 
         if (lower == "liteloader")
         {
-            var inst = new LiteloaderInstaller(downloadSourceId, gameDir, gameVersion);
+            var inst = installerFactory.CreateLiteLoader(downloadSourceId, gameDir, gameVersion);
             await inst.InstallAsync(versionId, inheritsFromJson,
                 loaderVersion, gameVersion, null, null);
             return;
@@ -496,8 +481,6 @@ public sealed class InstallState(CancellationTokenSource cts)
 
     public void Cancel() => cts.Cancel();
 }
-
-internal sealed record MissFileDto(string Name, string Path, string Url, string Sha1);
 
 public sealed class ModrinthVersion
 {
