@@ -53,7 +53,7 @@ builder.Services.AddSingleton<LaunchTracker>();
 builder.Services.AddSingleton(sp =>
 {
     var javaStore = sp.GetRequiredService<JavaRuntimeStore>();
-    return new InstallTracker(javaStore, userAgent);
+    return new InstallTracker(javaStore, userAgent, curseForgeApiKey);
 });
 builder.Services.AddSingleton(sp =>
 {

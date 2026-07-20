@@ -17,11 +17,13 @@ public sealed class InstallTracker
     private readonly ConcurrentDictionary<string, InstallState> _states = new();
     private readonly JavaRuntimeStore _javaStore;
     private readonly string _userAgent;
+    private readonly Dictionary<string, string> _cfHeaders;
 
-    public InstallTracker(JavaRuntimeStore javaStore, string userAgent)
+    public InstallTracker(JavaRuntimeStore javaStore, string userAgent, string curseForgeApiKey)
     {
         _javaStore = javaStore;
         _userAgent = userAgent;
+        _cfHeaders = new Dictionary<string, string> { ["x-api-key"] = curseForgeApiKey };
     }
 
     public void Start(string instanceId, string gameVersion, string gameDir,
@@ -265,7 +267,7 @@ public sealed class InstallTracker
     private async Task DownloadWithProgress(DownloadManager dm, int tid,
         InstallState state, double startPct, double endPct, CancellationToken ct)
     {
-        var downloadTask = dm.StartTaskAsync(tid, ct);
+        var downloadTask = dm.StartTaskAsync(tid, ct, _userAgent, _cfHeaders);
         while (!ct.IsCancellationRequested)
         {
             var infos = dm.GetAllTaskInfos();
