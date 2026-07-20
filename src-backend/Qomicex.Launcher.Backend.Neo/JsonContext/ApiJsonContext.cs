@@ -7,6 +7,7 @@ using Qomicex.Core.AOT.Public.Models;
 using Qomicex.Launcher.Backend.Neo.Endpoints;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
+using Qomicex.Launcher.Backend.Neo.Services.Connector;
 
 namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 
@@ -112,6 +113,19 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(List<YggdrasilProfileInfo>))]
 [JsonSerializable(typeof(YggdrasilProfilesResponse))]
 [JsonSerializable(typeof(YggdrasilSelectRequest))]
+[JsonSerializable(typeof(CnNameResponse))]
+[JsonSerializable(typeof(TranslateResponse))]
+// Connector DTOs
+[JsonSerializable(typeof(ConnectorPlayerDto))]
+[JsonSerializable(typeof(List<ConnectorPlayerDto>))]
+[JsonSerializable(typeof(ConnectorStatusDto))]
+[JsonSerializable(typeof(GameInfoDto))]
+[JsonSerializable(typeof(EasyTierDownloadStatus))]
+[JsonSerializable(typeof(HostResponse))]
+[JsonSerializable(typeof(JoinResponse))]
+[JsonSerializable(typeof(StatusResponse))]
+[JsonSerializable(typeof(ScanPortsResponse))]
+[JsonSerializable(typeof(AutoSelectResponse))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
 }
@@ -334,3 +348,6 @@ public sealed record YggdrasilProfilesResponse(
     List<YggdrasilProfileInfo>? Profiles, string? ErrorMessage = null);
 public sealed record YggdrasilSelectRequest(
     string AccessToken, string ClientToken, string ServerUrl, List<YggdrasilProfileInfo> SelectedProfiles);
+
+public sealed record TranslateResponse(string? Original, string? Translated, string? TranslatedAt);
+public sealed record AutoSelectResponse(int Id, long LatencyMs);

@@ -21,13 +21,19 @@
   </Target>
 
   <ItemGroup>
+    <PackageReference Include="System.Management" Version="9.0.0" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="appsettings.json" />
     <EmbeddedResource Include="Resources\Alex.png" />
+    <EmbeddedResource Include="Resources\mcmod_data.json" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Qomicex.Core.AOT\Qomicex.Core.AOT\Qomicex.Core.AOT.csproj" />
     <ProjectReference Include="..\Qomicex.Downloader\Qomicex.Downloader.csproj" />
+    <ProjectReference Include="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
   </ItemGroup>
 
 </Project>

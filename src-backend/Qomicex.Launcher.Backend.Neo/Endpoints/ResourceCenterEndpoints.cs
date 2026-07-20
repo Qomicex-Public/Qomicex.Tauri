@@ -11,6 +11,7 @@ public static class ResourceCenterEndpoints
     public static void MapResourceCenterEndpoints(this WebApplication app, DefaultGameCore core, string curseForgeApiKey)
     {
         var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ResourceCenter");
+        var mcmod = app.Services.GetRequiredService<McmodService>();
         var group = app.MapGroup("/api/resources");
 
         group.MapGet("/search", async (
@@ -18,12 +19,20 @@ public static class ResourceCenterEndpoints
             string? gameVersion, string? loader, string? category, string? sort) =>
         {
             var src = source?.ToLowerInvariant() ?? "modrinth";
+            var query = keyword;
+
+            if ((string.Equals(category, "mod", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(category, "datapack", StringComparison.OrdinalIgnoreCase)))
+            {
+                var alt = mcmod.ResolveChineseSearch(keyword);
+                if (!string.IsNullOrEmpty(alt)) query = alt;
+            }
 
             if (src == "modrinth")
             {
                 var mr = core.CreateModrinthSource();
                 var result = await mr.SearchAsync(
-                    query: keyword ?? "",
+                    query: query ?? "",
                     projectType: category,
                     gameVersion: gameVersion,
                     categories: null,
@@ -50,7 +59,7 @@ public static class ResourceCenterEndpoints
             {
                 var cf = core.CreateCurseForgeSource(curseForgeApiKey);
                 var result = await cf.SearchAsync(
-                    searchFilter: keyword ?? "",
+                    searchFilter: query ?? "",
                     gameVersions: gameVersion is not null ? [gameVersion] : null,
                     categories: null,
                     modLoaderTypes: loader is not null ? MapCfLoader(loader) : null,
@@ -80,7 +89,7 @@ public static class ResourceCenterEndpoints
 
                 var ftb = core.CreateFTBSource();
                 var packs = await ftb.SearchAsync(
-                    query: keyword,
+                    query: query,
                     mcVersion: gameVersion,
                     loader: loader,
                     sort: MapFtSort(sort),
@@ -276,6 +285,36 @@ public static class ResourceCenterEndpoints
             var state = fetchService.GetResult(taskId);
             if (state == null) return Results.NotFound();
             return Results.Json(state.Results, ApiJsonContext.Default.ListResourceVersionDto);
+        });
+
+        group.MapGet("/{id}/translate", async (string id, string? source) =>
+        {
+            try
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
+                var src = source?.ToLowerInvariant() ?? "modrinth";
+                var url = src switch
+                {
+                    "curseforge" => $"https://mod.mcimirror.top/translate/curseforge/{id}",
+                    _ => $"https://mod.mcimirror.top/translate/modrinth/{id}",
+                };
+                var response = await client.GetAsync(url);
+                if (!response.IsSuccessStatusCode)
+                    return Results.Json(new TranslateResponse(null, null, null), ApiJsonContext.Default.TranslateResponse);
+
+                var body = await response.Content.ReadAsStringAsync();
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                var original = root.TryGetProperty("original", out var o) ? o.GetString() : null;
+                var translated = root.TryGetProperty("translated", out var t) ? t.GetString() : null;
+                var translatedAt = root.TryGetProperty("translatedAt", out var ta) ? ta.GetString() : null;
+                return Results.Json(new TranslateResponse(original, translated, translatedAt), ApiJsonContext.Default.TranslateResponse);
+            }
+            catch
+            {
+                return Results.Json(new TranslateResponse(null, null, null), ApiJsonContext.Default.TranslateResponse);
+            }
         });
     }
 

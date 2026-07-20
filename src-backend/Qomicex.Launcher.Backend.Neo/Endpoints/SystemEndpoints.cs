@@ -19,6 +19,18 @@ public static class SystemEndpoints
         .GetCustomAttributes<AssemblyMetadataAttribute>()
         .FirstOrDefault(a => a.Key == "GitHash")?.Value ?? "unknown";
 
+    private static readonly (int Id, string Name, string Url)[] DownloadSources =
+    [
+        (0, "官方源", "https://libraries.minecraft.net"),
+        (1, "BMCLAPI 镜像", "https://bmclapi2.bangbang93.com"),
+    ];
+
+    private static readonly (int Id, string Name, string ModrinthUrl)[] ModSources =
+    [
+        (0, "Modrinth 官方", "https://api.modrinth.com/v2/statistics"),
+        (1, "MCIM 镜像", "https://mod.mcimirror.top/statistics?modrinth=true"),
+    ];
+
     public static SettingsResponse LoadSettings()
     {
         try
@@ -139,11 +151,95 @@ public static class SystemEndpoints
             return Results.File(path, "image/png");
         });
 
-        group.MapGet("/settings/download-sources/ping", () =>
-            Results.Json(new List<DownloadSourcePing>(), ApiJsonContext.Default.ListDownloadSourcePing));
+        group.MapGet("/settings/download-sources/ping", async () =>
+        {
+            var results = new List<DownloadSourcePing>();
+            foreach (var (id, name, url) in DownloadSources)
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                    var sw = Stopwatch.StartNew();
+                    using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, url), cts.Token);
+                    sw.Stop();
+                    results.Add(new DownloadSourcePing(id, name, url, sw.ElapsedMilliseconds, response.IsSuccessStatusCode));
+                }
+                catch
+                {
+                    results.Add(new DownloadSourcePing(id, name, url, -1, false));
+                }
+            }
+            return Results.Json(results, ApiJsonContext.Default.ListDownloadSourcePing);
+        });
 
-        group.MapGet("/settings/mod-sources/ping", () =>
-            Results.Json(new List<ModSourcePing>(), ApiJsonContext.Default.ListModSourcePing));
+        group.MapGet("/settings/mod-sources/ping", async () =>
+        {
+            var results = new List<ModSourcePing>();
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            foreach (var (id, name, modrinthUrl) in ModSources)
+            {
+                var ok = false; var latency = -1L;
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    var sw = Stopwatch.StartNew();
+                    using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, modrinthUrl), cts.Token);
+                    sw.Stop();
+                    ok = response.IsSuccessStatusCode;
+                    latency = sw.ElapsedMilliseconds;
+                }
+                catch { }
+                results.Add(new ModSourcePing(id, name, modrinthUrl, ok, latency, ok));
+            }
+            return Results.Json(results, ApiJsonContext.Default.ListModSourcePing);
+        });
+
+        group.MapGet("/settings/download-source/auto-select", async () =>
+        {
+            var bestId = 0; var bestLatency = long.MaxValue;
+            foreach (var (id, _, url) in DownloadSources)
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                    var sw = Stopwatch.StartNew();
+                    using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, url), cts.Token);
+                    sw.Stop();
+                    if (response.IsSuccessStatusCode && sw.ElapsedMilliseconds < bestLatency)
+                    { bestLatency = sw.ElapsedMilliseconds; bestId = id; }
+                }
+                catch { }
+            }
+            var settings = LoadSettings();
+            settings = settings with { DownloadSource = bestId };
+            SaveSettings(settings);
+            return Results.Json(new AutoSelectResponse(bestId, bestLatency == long.MaxValue ? -1 : bestLatency), ApiJsonContext.Default.AutoSelectResponse);
+        });
+
+        group.MapGet("/settings/mod-source/auto-select", async () =>
+        {
+            var bestId = 0; var bestLatency = long.MaxValue;
+            foreach (var (id, _, modrinthUrl) in ModSources)
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                    var sw = Stopwatch.StartNew();
+                    using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, modrinthUrl), cts.Token);
+                    sw.Stop();
+                    if (response.IsSuccessStatusCode && sw.ElapsedMilliseconds < bestLatency)
+                    { bestLatency = sw.ElapsedMilliseconds; bestId = id; }
+                }
+                catch { }
+            }
+            var settings = LoadSettings();
+            settings = settings with { ModMirror = bestId };
+            SaveSettings(settings);
+            return Results.Json(new AutoSelectResponse(bestId, bestLatency == long.MaxValue ? -1 : bestLatency), ApiJsonContext.Default.AutoSelectResponse);
+        });
     }
 
     private static string GetOsName()

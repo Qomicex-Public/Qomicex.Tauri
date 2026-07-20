@@ -133,7 +133,6 @@ public static class VersionEndpoints
         group.MapGet("/scan", (string gameDir, ILogger<Program> logger) =>
         {
             var result = new List<ScannedVersionEntry>();
-            var noJsonDirs = new List<string>();
             string absDir;
             try
             {
@@ -149,7 +148,11 @@ public static class VersionEndpoints
                     {
                         var name = Path.GetFileName(dir);
                         var jsonPath = Path.Combine(dir, $"{name}.json");
-                        if (!File.Exists(jsonPath)) { noJsonDirs.Add(dir); continue; }
+                        if (!File.Exists(jsonPath))
+                        {
+                            result.Add(new ScannedVersionEntry(name, name, "Corrupted", "版本文件缺失", null));
+                            continue;
+                        }
 
                         try
                         {
@@ -168,16 +171,16 @@ public static class VersionEndpoints
                         catch (Exception ex) { logger.LogWarning(ex, "Scan: failed to parse {Name}", name); }
                     }
 
-                    logger.LogInformation("Scan: found {Count} versions, {NoJson} no-json dirs", result.Count, noJsonDirs.Count);
+                    logger.LogInformation("Scan: found {Count} versions", result.Count);
                 }
 
-                return Results.Json(new ScanVersionsResponse(absDir, result, noJsonDirs), ApiJsonContext.Default.ScanVersionsResponse);
+                return Results.Json(new ScanVersionsResponse(absDir, result, new List<string>()), ApiJsonContext.Default.ScanVersionsResponse);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Scan: unexpected error for {GameDir}", gameDir);
                 absDir = gameDir;
-                return Results.Json(new ScanVersionsResponse(absDir, result, noJsonDirs), ApiJsonContext.Default.ScanVersionsResponse);
+                return Results.Json(new ScanVersionsResponse(absDir, result, new List<string>()), ApiJsonContext.Default.ScanVersionsResponse);
             }
         });
 

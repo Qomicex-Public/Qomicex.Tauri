@@ -7,6 +7,7 @@ using Qomicex.Launcher.Backend.Neo.Endpoints;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Middleware;
 using Qomicex.Launcher.Backend.Neo.Services;
+using Qomicex.Launcher.Backend.Neo.Services.Connector;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -73,6 +74,11 @@ Trace.Listeners.Add(new BufferedTraceListener(traceBuffer));
 builder.Services.AddSingleton<AccountService>();
 builder.Services.AddSingleton<SkinService>();
 
+// Connector
+builder.Services.AddSingleton<LanGameListenerService>();
+builder.Services.AddSingleton<ConnectorService>();
+builder.Services.AddSingleton<McmodService>();
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -100,11 +106,22 @@ app.MapResourceEndpoints(core);
 app.MapInstanceEndpoints();
 app.MapSystemEndpoints();
 app.MapResourceCenterEndpoints(core, curseForgeApiKey);
+app.MapMcmodEndpoints();
 app.MapAccountEndpoints(app.Services.GetRequiredService<AccountService>());
 app.MapSkinEndpoints(app.Services.GetRequiredService<SkinService>());
 app.MapJavaEndpoints();
 app.MapLoaderEndpoints();
 app.MapProgressSseEndpoints();
 app.MapLogEndpoints();
+app.MapConnectorEndpoints();
+
+// LAN listener lifecycle
+var lanListener = app.Services.GetRequiredService<LanGameListenerService>();
+lanListener.Start();
+app.Lifetime.ApplicationStopping.Register(() => lanListener.Stop());
+
+// Auto leave room on shutdown
+var connector = app.Services.GetRequiredService<ConnectorService>();
+app.Lifetime.ApplicationStopping.Register(() => { try { connector.LeaveAsync().GetAwaiter().GetResult(); } catch { } });
 
 app.Run();

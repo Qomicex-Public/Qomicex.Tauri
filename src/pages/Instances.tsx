@@ -389,41 +389,6 @@ export default function Instances() {
     }
   }
 
-  async function handleRedownload(inst: GameInstance) {
-    const settings = loadSettings()
-    const threads = settings.downloadThreads || 64
-    const versionIsolation = settings.versionIsolation !== false
-    let downloadSource = settings.downloadSource ?? 0
-    const downloadTimeout = settings.downloadTimeout ?? 15
-
-    if (settings.autoSelectDownloadSource) {
-      try {
-        const result = await autoSelectDownloadSource()
-        downloadSource = result.id
-      } catch {}
-    }
-
-    const task: DownloadTask = {
-      id: inst.id,
-      name: inst.name,
-      type: 'game',
-      gameVersion: inst.gameVersion,
-      loader: inst.loader ?? undefined,
-      loaderVersion: inst.loaderVersion ?? undefined,
-      status: 'queued',
-      progress: 0,
-      createdAt: new Date().toISOString(),
-      instanceId: inst.id,
-    }
-    addTask(task)
-
-    startInstall(inst.id, inst.loader ?? undefined, inst.loaderVersion ?? undefined, undefined, threads, versionIsolation, downloadSource, downloadTimeout).catch((e) => {
-      updateTask(inst.id, { status: 'failed', error: e instanceof Error ? e.message : String(e) })
-    })
-
-    navigate('/downloads')
-  }
-
   async function handleLaunch(v: ScannedVersion) {
     let inst = getInstanceForVersion(v)
     if (!inst) {
@@ -556,13 +521,6 @@ export default function Instances() {
     const tb = TYPE_ORDER[b.type] ?? 99
     return ta !== tb ? ta - tb : new Date(b.releaseTime).getTime() - new Date(a.releaseTime).getTime()
   }), [filteredRemote, remoteSort])
-
-  // 在 backedInstances 中存在、但在磁盘扫描结果中找不到的实例（下载未完成或失败）
-  const orphanedInstances = useMemo(() => {
-    if (!currentDir) return []
-    const scannedNames = new Set(scannedLocal.map(v => v.name))
-    return backedInstances.filter(inst => inst.gameDir === currentDir && !scannedNames.has(inst.name))
-  }, [backedInstances, scannedLocal, currentDir])
 
   if (step === 'select-version') {
     return (
@@ -1082,7 +1040,7 @@ export default function Instances() {
             ))}
           </div>
         )
-      ) : scannedLocal.length === 0 && orphanedInstances.length === 0 ? (
+      ) : scannedLocal.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
           <FontAwesomeIcon icon={faCube} className="h-10 w-10 opacity-30" />
           <p className="text-sm">{search ? '没有匹配的版本' : '该目录下未检测到任何 Minecraft 版本'}</p>
@@ -1090,51 +1048,6 @@ export default function Instances() {
         </div>
       ) : (
         <div className="space-y-6">
-          {orphanedInstances.length > 0 && (
-            <div className="space-y-2">
-              <p className="px-1 text-xs font-medium uppercase tracking-wider text-amber-400/80">下载未完成 ({orphanedInstances.length})</p>
-              {viewMode === 'grid' ? (
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                  {orphanedInstances.map((inst) => (
-                    <div key={inst.id} className="group relative flex cursor-pointer flex-col items-center rounded-xl border border-dashed border-amber-500/40 bg-card p-5 text-center transition-all hover:border-amber-500/60">
-                      <InstanceIcon icon={inst.icon ?? null} iconData={inst.iconData ?? null} loader={inst.loader ?? undefined} className="mb-3 h-16 w-16 rounded-2xl opacity-50" />
-                      <h3 className="w-full truncate text-sm font-medium leading-tight text-muted-foreground">{inst.name}</h3>
-                      <div className="mt-1">
-                        <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">未下载</span>
-                      </div>
-                      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
-                        <Tooltip content="重新下载">
-                          <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={(e) => { e.stopPropagation(); handleRedownload(inst) }}>
-                            <FontAwesomeIcon icon={faDownload} className="h-5 w-5" />
-                          </Button>
-                        </Tooltip>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {orphanedInstances.map((inst) => (
-                    <div key={inst.id} className="flex items-center gap-4 rounded-xl border border-dashed border-amber-500/40 bg-card px-5 py-4">
-                      <InstanceIcon icon={inst.icon ?? null} iconData={inst.iconData ?? null} loader={inst.loader ?? undefined} className="h-12 w-12 shrink-0 rounded-xl opacity-50" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="truncate text-sm font-medium text-muted-foreground">{inst.name}</h3>
-                          <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400 shrink-0">未下载</span>
-                        </div>
-                        <div className="mt-0.5 text-xs text-muted-foreground/60">{inst.gameVersion}{inst.loader ? ` · ${inst.loader}` : ''}</div>
-                      </div>
-                      <Tooltip content="重新下载">
-                        <Button size="icon" variant="outline" className="h-8 w-8 shrink-0" onClick={() => handleRedownload(inst)}>
-                          <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />
-                        </Button>
-                      </Tooltip>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
           {scannedLocal.length > 0 && (viewMode === 'grid' ? (
           <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
@@ -1153,7 +1066,7 @@ export default function Instances() {
                 <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/70">
                   <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
                     <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
-                    {v.state === 'Available' ? '可用' : '异常'}
+                    {v.state === 'Available' ? '可用' : '不可用'}
                   </span>
                 </div>
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
@@ -1198,10 +1111,10 @@ export default function Instances() {
                     )}
                     <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
                       <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
-                      {v.state === 'Available' ? '可用' : '异常'}
+                    {v.state === 'Available' ? '可用' : '不可用'}
                     </span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
                     {v.loaders && v.loaders.filter((l) => l.version).length > 0 && (
                       <span className="flex items-center gap-1">
                         <FontAwesomeIcon icon={faTag} className="h-3 w-3" />
