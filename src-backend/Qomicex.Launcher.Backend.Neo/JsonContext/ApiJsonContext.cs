@@ -130,6 +130,9 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(StatusResponse))]
 [JsonSerializable(typeof(ScanPortsResponse))]
 [JsonSerializable(typeof(AutoSelectResponse))]
+[JsonSerializable(typeof(HostByPortRequest))]
+[JsonSerializable(typeof(HostByInstanceRequest))]
+[JsonSerializable(typeof(JoinRequest))]
 // Instance files — Local resource types (Core.AOT)
 [JsonSerializable(typeof(ModInfo))]
 [JsonSerializable(typeof(List<ModInfo>))]

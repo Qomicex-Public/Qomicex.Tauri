@@ -80,7 +80,9 @@ builder.Services.AddSingleton<SkinService>();
 
 // Connector
 builder.Services.AddSingleton<LanGameListenerService>();
+builder.Services.AddSingleton<GameProcessInspector>();
 builder.Services.AddSingleton<ConnectorService>();
+builder.Services.AddSingleton<EasyTierProvider>();
 builder.Services.AddSingleton<McmodService>();
 
 builder.Services.AddCors(options =>

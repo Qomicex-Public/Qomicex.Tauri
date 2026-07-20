@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Core.AOT.Models.Expansion.Local;
 using Qomicex.Core.AOT.Services.Options;
+using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
@@ -105,7 +106,7 @@ public static class InstanceFilesEndpoints
 
     private static void MapShadersEndpoints(RouteGroupBuilder group)
     {
-        group.MapGet("/shaders", async (string id, InstanceService instances, ContentService content) =>
+        group.MapGet("/shaderpacks", async (string id, InstanceService instances, ContentService content) =>
         {
             var (gameDir, version, isolated) = ResolveInstance(id, instances, content);
             var s = content.CreateShaders(version, isolated);
@@ -113,7 +114,7 @@ public static class InstanceFilesEndpoints
             return Results.Json(list, ApiJsonContext.Default.ListShaderInfo);
         });
 
-        group.MapPost("/shaders/delete", (FileOperationRequest req) =>
+        group.MapPost("/shaderpacks/delete", (FileOperationRequest req) =>
         {
             if (File.Exists(req.Path))
                 File.Delete(req.Path);
@@ -230,7 +231,7 @@ public static class InstanceFilesEndpoints
                 : Results.NotFound();
         });
 
-        group.MapGet("/servers/ping/{address}", (string address, string id, InstanceService instances, ContentService content) =>
+        group.MapGet("/server-ping", (string address, string id, InstanceService instances, ContentService content) =>
         {
             var (gameDir, version, isolated) = ResolveInstance(id, instances, content);
             var state = content.CreateServerManager(gameDir, version, isolated).GetServerStateByAddress(address);
@@ -239,7 +240,7 @@ public static class InstanceFilesEndpoints
                 : Results.NotFound();
         });
 
-        group.MapGet("/lan-servers", (string id, InstanceService instances, ContentService content) =>
+        group.MapGet("/lan-games", (string id, InstanceService instances, ContentService content) =>
         {
             var (gameDir, version, isolated) = ResolveInstance(id, instances, content);
             var servers = content.CreateServerManager(gameDir, version, isolated)
