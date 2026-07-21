@@ -435,7 +435,7 @@ export interface ResourceSearchResponse {
 
 export interface ResourceFile {
   url: string
-  filename: string
+  fileName: string
   size: number
 }
 

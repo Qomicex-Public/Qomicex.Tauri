@@ -37,6 +37,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(List<ManifestVersionInfo>))]
 [JsonSerializable(typeof(LatestVersionInfo))]
 [JsonSerializable(typeof(HealthResponse))]
+[JsonSerializable(typeof(DiagnosticsHealthResponse))]
+[JsonSerializable(typeof(PingResult))]
 [JsonSerializable(typeof(SystemInfoResponse))]
 [JsonSerializable(typeof(SettingsResponse))]
 [JsonSerializable(typeof(List<SettingsResponse>))]
@@ -158,14 +160,46 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 // Instance files — Request DTOs
 [JsonSerializable(typeof(FileOperationRequest))]
 [JsonSerializable(typeof(BatchFileRequest))]
-[JsonSerializable(typeof(SaveCopyRequest))]
-[JsonSerializable(typeof(SaveRenameRequest))]
+[JsonSerializable(typeof(SaveCopyRequestDto))]
+[JsonSerializable(typeof(SaveRenameRequestDto))]
 [JsonSerializable(typeof(SetOptionRequest))]
+[JsonSerializable(typeof(AddServerRequest))]
+// Resource download
+[JsonSerializable(typeof(ResourceDownloadEndpoints.StartDownloadRequest))]
+[JsonSerializable(typeof(ResourceDownloadEndpoints.CancelBatchRequest))]
+[JsonSerializable(typeof(ResourceDownloadEndpoints.DownloadStartResponse))]
+[JsonSerializable(typeof(ResourceDownloadEndpoints.StatusResponse))]
+[JsonSerializable(typeof(ResourceDownloadEndpoints.DownloadProgressResponse))]
+[JsonSerializable(typeof(ResourceDownloadEndpoints.DownloadToRequest))]
+[JsonSerializable(typeof(ResourceDownloadEndpoints.DownloadToResponse))]
+[JsonSerializable(typeof(JavaRequirementResponse))]
+[JsonSerializable(typeof(ModLoadProgress))]
+// Instance files — Response DTOs
+[JsonSerializable(typeof(FileEntryDto))]
+[JsonSerializable(typeof(List<FileEntryDto>))]
+[JsonSerializable(typeof(ModMetadataDto))]
+[JsonSerializable(typeof(List<ModMetadataDto>))]
+[JsonSerializable(typeof(ResourcePackMetadataDto))]
+[JsonSerializable(typeof(List<ResourcePackMetadataDto>))]
+[JsonSerializable(typeof(ShaderMetadataDto))]
+[JsonSerializable(typeof(List<ShaderMetadataDto>))]
+[JsonSerializable(typeof(DataPackMetadataDto))]
+[JsonSerializable(typeof(List<DataPackMetadataDto>))]
+[JsonSerializable(typeof(ScreenshotMetadataDto))]
+[JsonSerializable(typeof(List<ScreenshotMetadataDto>))]
+[JsonSerializable(typeof(SaveMetadataDto))]
+[JsonSerializable(typeof(List<SaveMetadataDto>))]
+[JsonSerializable(typeof(OldServerEntryDto))]
+[JsonSerializable(typeof(List<OldServerEntryDto>))]
+[JsonSerializable(typeof(ServerStateResultDto))]
+[JsonSerializable(typeof(Dictionary<string, int>))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
 }
 
 public sealed record HealthResponse(string Status, DateTime Timestamp);
+public sealed record PingResult(bool Ok, long Latency);
+public sealed record DiagnosticsHealthResponse(bool Backend, PingResult Modrinth, PingResult Curseforge);
 
 public sealed record SystemInfoResponse(
     string Os, string Architecture, string OsName, string OsVersion,
@@ -331,7 +365,8 @@ public sealed record ResourceDependencyDto(
 public sealed record ResolvedDependencyDto(
     string ProjectId, string Name, string IconUrl,
     string VersionId, string VersionNumber, string DownloadUrl,
-    string FileName, string Category, string Source
+    string FileName, string Category, string Source,
+    string? CurseForgeId = null, string? ModrinthId = null
 );
 
 public sealed record CurseForgeVersionFetchStartResponse(

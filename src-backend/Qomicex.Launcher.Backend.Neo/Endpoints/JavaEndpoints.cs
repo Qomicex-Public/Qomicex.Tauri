@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Core.AOT.Models.VersionMetadata;
 using Qomicex.Core.AOT.Public.Models;
+using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
 
@@ -83,7 +84,7 @@ public static class JavaEndpoints
         {
             var path = Path.Combine(gameDir, "versions", version, $"{version}.json");
             var required = GetRequiredJavaVersion(path);
-            return Results.Ok(new { requiredMajorVersion = required });
+            return Results.Json(new JavaRequirementResponse(required), ApiJsonContext.Default.JavaRequirementResponse);
         });
 
         java.MapPost("/recommended", async (DefaultGameCore core, JavaRecommendRequest req) =>
@@ -202,3 +203,5 @@ public static class JavaEndpoints
 public sealed record JavaPathRequest(string Path);
 
 public sealed record JavaRecommendRequest(string MinecraftVersion, string GameDir);
+
+public sealed record JavaRequirementResponse(int RequiredMajorVersion);

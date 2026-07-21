@@ -44,6 +44,17 @@ var core = new GameCoreBuilder()
     .WithHttpClient(new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
     .Build();
 
+builder.Services.AddHttpClient("Modrinth", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+});
+builder.Services.AddHttpClient("CurseForge", client =>
+{
+    client.BaseAddress = new Uri("https://api.curseforge.com");
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
+});
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton(core);
 
@@ -59,7 +70,8 @@ builder.Services.AddSingleton(sp =>
 {
     return new ContentService(core, curseForgeApiKey);
 });
-builder.Services.AddSingleton<CurseForgeVersionFetchService>();
+builder.Services.AddSingleton(sp => new CurseForgeVersionFetchService(
+    sp.GetRequiredService<IHttpClientFactory>(), curseForgeApiKey));
 builder.Services.AddSingleton<JavaRuntimeStore>();
 builder.Services.AddSingleton(sp =>
 {
@@ -72,7 +84,9 @@ builder.Services.AddSingleton(sp =>
 var traceBuffer = new TraceBufferStore(2000);
 builder.Services.AddSingleton(traceBuffer);
 builder.Services.AddSingleton<TraceDumpService>();
+Trace.Listeners.Add(new ConsoleTraceListener());
 Trace.Listeners.Add(new BufferedTraceListener(traceBuffer));
+Trace.AutoFlush = true;
 
 // Account & Skin
 builder.Services.AddSingleton<AccountService>();
@@ -112,6 +126,7 @@ app.MapResourceEndpoints(core);
 app.MapInstanceEndpoints();
 app.MapSystemEndpoints();
 app.MapResourceCenterEndpoints(core, curseForgeApiKey);
+app.MapResourceDownloadEndpoints(curseForgeApiKey);
 app.MapMcmodEndpoints();
 app.MapAccountEndpoints(app.Services.GetRequiredService<AccountService>());
 app.MapSkinEndpoints(app.Services.GetRequiredService<SkinService>());
@@ -120,7 +135,7 @@ app.MapLoaderEndpoints();
 app.MapProgressSseEndpoints();
 app.MapLogEndpoints();
 app.MapConnectorEndpoints();
-app.MapInstanceFilesEndpoints();
+app.MapInstanceFilesEndpoints(curseForgeApiKey);
 
 // LAN listener lifecycle
 var lanListener = app.Services.GetRequiredService<LanGameListenerService>();

@@ -61,6 +61,12 @@ public static class SystemEndpoints
         return new SettingsResponse(GameDir: defaultDir);
     }
 
+    public static bool GetGlobalVersionIsolation()
+    {
+        try { return LoadSettings().VersionIsolation; }
+        catch { return true; }
+    }
+
     public static void MapSystemEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api");
@@ -68,8 +74,15 @@ public static class SystemEndpoints
         group.MapGet("/health", () =>
             Results.Json(new HealthResponse("OK", DateTime.UtcNow), ApiJsonContext.Default.HealthResponse));
 
-        group.MapGet("/diagnostics/health", () =>
-            Results.Json(new HealthResponse("OK", DateTime.UtcNow), ApiJsonContext.Default.HealthResponse));
+        group.MapGet("/diagnostics/health", async (IHttpClientFactory httpFactory) =>
+        {
+            var result = new DiagnosticsHealthResponse(
+                Backend: true,
+                Modrinth: await PingUrl(httpFactory, "https://api.modrinth.com/v2/statistics"),
+                Curseforge: await PingUrl(httpFactory, "https://api.curseforge.com")
+            );
+            return Results.Json(result, ApiJsonContext.Default.DiagnosticsHealthResponse);
+        });
 
         group.MapGet("/system/info", () => SysInfo());
         group.MapGet("/systeminfo", () => SysInfo());
@@ -340,5 +353,22 @@ public static class SystemEndpoints
         catch { }
         var parts = osDescription.Split(' ');
         return parts.Length > 1 ? string.Join(" ", parts[1..]) : osDescription;
+    }
+
+    private static async Task<PingResult> PingUrl(IHttpClientFactory httpFactory, string url)
+    {
+        try
+        {
+            var client = httpFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(10);
+            var sw = Stopwatch.StartNew();
+            var resp = await client.GetAsync(url);
+            sw.Stop();
+            return new PingResult(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        }
+        catch
+        {
+            return new PingResult(false, -1);
+        }
     }
 }

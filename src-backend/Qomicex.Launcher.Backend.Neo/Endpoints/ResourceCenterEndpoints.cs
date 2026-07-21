@@ -1,5 +1,9 @@
+using System.Diagnostics;
+using System.Net.Http;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Qomicex.Core.AOT.Core;
+using Qomicex.Core.AOT.Models.Expansion.Modrinth;
 using Qomicex.Core.AOT.Public.Expansion;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Services;
@@ -156,6 +160,7 @@ public static class ResourceCenterEndpoints
         group.MapGet("/{id}/versions", async (string id, string? source, string? gameVersion, string? loader) =>
         {
             var src = source?.ToLowerInvariant() ?? "modrinth";
+            Trace.WriteLine($"[versions] id={id} source={src} gameVersion={gameVersion} loader={loader}");
 
             if (src == "modrinth")
             {
@@ -182,23 +187,92 @@ public static class ResourceCenterEndpoints
 
             if (src == "curseforge")
             {
-                var cf = core.CreateCurseForgeSource(curseForgeApiKey);
-                var info = await cf.GetModInfoAsync(id);
-                var files = info.Files ?? [];
-                var filtered = files.AsEnumerable();
-                if (!string.IsNullOrEmpty(gameVersion))
-                    filtered = filtered.Where(f => f.GameVersion == gameVersion);
+                Trace.WriteLine($"[CF versions] START id={id} apiKey={(string.IsNullOrEmpty(curseForgeApiKey) ? "EMPTY" : "SET")}");
+                if (string.IsNullOrEmpty(curseForgeApiKey))
+                    return Results.Json(new List<ResourceVersionDto>(), ApiJsonContext.Default.ListResourceVersionDto);
 
-                var dtos = filtered.Select(f => new ResourceVersionDto(
-                    Id: f.FileId.ToString(), Name: f.FileName ?? f.FileId.ToString(),
-                    VersionNumber: f.GameVersion ?? "",
-                    GameVersions: f.GameVersion is not null ? [f.GameVersion] : [],
-                    Loaders: [],
-                    Downloads: [new ResourceFileDto("", f.FileName ?? "", 0)],
-                    DatePublished: null
-                )).ToList();
+                var http = app.Services.GetRequiredService<IHttpClientFactory>().CreateClient("CurseForge");
 
-                return Results.Json(dtos, ApiJsonContext.Default.ListResourceVersionDto);
+                async Task<(List<JsonObject?> Data, int Total)> FetchPage(int index)
+                {
+                    var url = $"https://api.curseforge.com/v1/mods/{Uri.EscapeDataString(id)}/files?pageSize=50&index={index}";
+                    if (!string.IsNullOrEmpty(gameVersion))
+                        url += $"&gameVersion={Uri.EscapeDataString(gameVersion)}";
+                    using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                    req.Headers.Add("x-api-key", curseForgeApiKey);
+                    req.Headers.Accept.ParseAdd("application/json");
+                    var resp = await http.SendAsync(req);
+                    resp.EnsureSuccessStatusCode();
+                    var json = JsonNode.Parse(await resp.Content.ReadAsStringAsync());
+                    var total = json?["pagination"]?["totalCount"]?.GetValue<int>() ?? 0;
+                    return (json?["data"]?.AsArray()?.Select(n => n?.AsObject()).ToList() ?? [], total);
+                }
+
+                try
+                {
+                    var (firstData, totalCount) = await FetchPage(0);
+                    var firstItem = firstData.FirstOrDefault();
+                    Trace.WriteLine($"[CF versions] totalCount={totalCount} firstDataCount={firstData.Count} firstKeys={(firstItem is not null ? string.Join(",", ((IDictionary<string, JsonNode?>)firstItem).Keys.Take(8)) : "null")}");
+                    if (firstItem is not null)
+                        Trace.WriteLine($"[CF versions] firstItem: id={firstItem["id"]} displayName={firstItem["displayName"]} downloadUrl={firstItem["downloadUrl"]}");
+                    if (firstData.Count == 0 || totalCount == 0)
+                        return Results.Json(new List<ResourceVersionDto>(), ApiJsonContext.Default.ListResourceVersionDto);
+
+                    var allItems = new List<JsonObject?>(firstData);
+                    var pageSize = 50;
+                    var totalPages = (totalCount + pageSize - 1) / pageSize;
+                    if (totalPages > 1)
+                    {
+                        var sem = new SemaphoreSlim(5);
+                        var tasks = Enumerable.Range(1, totalPages - 1).Select(async p =>
+                        {
+                            await sem.WaitAsync();
+                            try { var (data, _) = await FetchPage(p * pageSize); return data; }
+                            finally { sem.Release(); }
+                        }).ToList();
+                        var pages = await Task.WhenAll(tasks);
+                        foreach (var p in pages) allItems.AddRange(p);
+                    }
+
+                    var dtos = allItems.Select(f => new ResourceVersionDto(
+                        Id: f?["id"]?.GetValue<int>().ToString() ?? "",
+                        Name: f?["displayName"]?.GetValue<string>() ?? f?["fileName"]?.GetValue<string>() ?? "",
+                        VersionNumber: f?["fileName"]?.GetValue<string>() ?? "",
+                        GameVersions: f?["gameVersions"]?.AsArray()
+                            ?.Select(gv => gv?.GetValue<string>())
+                            .Where(v => !string.IsNullOrEmpty(v))
+                            .Select(v => v!)
+                            .ToList() ?? [],
+                        Loaders: ExtractCFLoaders(f?["gameVersions"]?.AsArray(), f?["modLoader"]?.GetValue<int>()),
+                        Downloads: [new ResourceFileDto(
+                            f?["downloadUrl"]?.GetValue<string>() ?? "",
+                            f?["fileName"]?.GetValue<string>() ?? "",
+                            f?["fileLength"]?.GetValue<long>() ?? 0
+                        )],
+                        Dependencies: f?["dependencies"] is JsonArray depArr
+                            ? depArr
+                                .Where(d => d?["relationType"]?.GetValue<int>() == 3)
+                                .Select(d => new ResourceDependencyDto(null, d!["modId"]?.GetValue<int>().ToString() ?? "", null, "required"))
+                                .ToList()
+                            : null,
+                        DatePublished: f?["fileDate"]?.GetValue<DateTimeOffset>().ToString("o")
+                    )).ToList();
+
+                    if (!string.IsNullOrEmpty(gameVersion))
+                        dtos = dtos.Where(v => v.GameVersions.Any(gv => gv == gameVersion)).ToList();
+                    if (!string.IsNullOrEmpty(loader))
+                    {
+                        var norm = loader.Trim().ToLowerInvariant();
+                        dtos = dtos.Where(v => v.Loaders.Count == 0 || v.Loaders.Any(l => l.Equals(norm, StringComparison.OrdinalIgnoreCase))).ToList();
+                    }
+
+                    return Results.Json(dtos, ApiJsonContext.Default.ListResourceVersionDto);
+                }
+                catch (Exception ex)
+                {
+                    Trace.WriteLine($"[CF versions] error: {ex.GetType().Name}: {ex.Message}");
+                    return Results.Json(new List<ResourceVersionDto>(), ApiJsonContext.Default.ListResourceVersionDto);
+                }
             }
 
             return Results.Json(new List<ResourceVersionDto>(), ApiJsonContext.Default.ListResourceVersionDto);
@@ -233,23 +307,14 @@ public static class ResourceCenterEndpoints
             if (src == "modrinth")
             {
                 var mr = core.CreateModrinthSource();
-                var versions = await mr.GetProjectVersionInfoAsync(id);
-                var target = !string.IsNullOrEmpty(versionId)
-                    ? versions.FirstOrDefault(v => v.Id == versionId)
-                    : versions.FirstOrDefault();
+                var deps = await ResolveMRDeps(mr, id, versionId, gameVersion, loader);
+                return Results.Json(deps, ApiJsonContext.Default.ListResolvedDependencyDto);
+            }
 
-                if (target?.DependenciesInfos is null)
-                    return Results.Json(new List<ResolvedDependencyDto>(), ApiJsonContext.Default.ListResolvedDependencyDto);
-
-                var deps = target.DependenciesInfos
-                    .Where(d => d.DependencyType == "required" && d.ProjectId is not null)
-                    .Select(d => new ResolvedDependencyDto(
-                        ProjectId: d.ProjectId!, Name: "", IconUrl: "",
-                        VersionId: d.VersionId ?? "", VersionNumber: "",
-                        DownloadUrl: "", FileName: d.FileName ?? "",
-                        Category: "mod", Source: "modrinth"
-                    )).ToList();
-
+            if (src == "curseforge")
+            {
+                var http = app.Services.GetRequiredService<IHttpClientFactory>().CreateClient("CurseForge");
+                var deps = await ResolveCFDeps(http, id, versionId, gameVersion, loader, curseForgeApiKey);
                 return Results.Json(deps, ApiJsonContext.Default.ListResolvedDependencyDto);
             }
 
@@ -263,8 +328,7 @@ public static class ResourceCenterEndpoints
             var fetchService = app.Services.GetRequiredService<CurseForgeVersionFetchService>();
             var settings = SystemEndpoints.LoadSettings();
             var maxConcurrency = Math.Max(1, settings.DownloadThreads);
-            var cf = core.CreateCurseForgeSource(curseForgeApiKey);
-            var taskId = fetchService.Start(id, gameVersion, loader, cf, logger, maxConcurrency);
+            var taskId = fetchService.Start(id, gameVersion, loader, maxConcurrency);
             return Results.Json(new CurseForgeVersionFetchStartResponse(taskId, 0, 0),
                 ApiJsonContext.Default.CurseForgeVersionFetchStartResponse);
         });
@@ -362,4 +426,206 @@ public static class ResourceCenterEndpoints
         "name" => "name",
         _ => "downloads"
     };
+
+    private static List<string> ExtractCFLoaders(JsonArray? gameVersions, int? modLoader)
+    {
+        var loaders = new List<string>();
+        if (gameVersions is not null)
+        {
+            foreach (var gv in gameVersions)
+            {
+                var s = gv?.GetValue<string>()?.ToLowerInvariant();
+                if (s is "forge" or "fabric" or "quilt" or "neoforge" or "liteloader")
+                    loaders.Add(s);
+                if (s is "fabric" or "quilt" or "neoforge")
+                    loaders.Add(s);
+            }
+        }
+        if (modLoader is 2) loaders.Add("forge");
+        if (modLoader is 4) loaders.Add("fabric");
+        if (modLoader is 5) loaders.Add("quilt");
+        if (modLoader is 6) loaders.Add("neoforge");
+        return loaders;
+    }
+
+    private static async Task<List<ResolvedDependencyDto>> ResolveCFDeps(
+        HttpClient http, string modId, string? fileId, string? gameVersion, string? loader, string apiKey,
+        HashSet<string>? visited = null, int depth = 0)
+    {
+    visited ??= [];
+    if (depth > 8 || !visited.Add(modId)) return [];
+
+        var result = new List<ResolvedDependencyDto>();
+
+        if (fileId is not null && depth == 0)
+        {
+            // Root: get file's dependency list
+            var url = $"https://api.curseforge.com/v1/mods/{Uri.EscapeDataString(modId)}/files/{Uri.EscapeDataString(fileId)}";
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Add("x-api-key", apiKey);
+            req.Headers.Accept.ParseAdd("application/json");
+            var resp = await http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return result;
+            var json = JsonNode.Parse(await resp.Content.ReadAsStringAsync());
+            var data = json?["data"];
+
+            if (data?["dependencies"] is JsonArray depArr)
+            {
+                var tasks = depArr
+                    .Where(d => d?["relationType"]?.GetValue<int>() == 3)
+                    .Select(d => ResolveCFDeps(http,
+                        d!["modId"]?.GetValue<int>().ToString() ?? "",
+                        null, gameVersion, loader, apiKey, visited, depth + 1));
+                var subResults = await Task.WhenAll(tasks);
+                foreach (var sr in subResults) result.AddRange(sr);
+            }
+            return result;
+        }
+
+        // Sub-level: fetch mod info + find best file
+        try
+        {
+            var modUrl = $"https://api.curseforge.com/v1/mods/{Uri.EscapeDataString(modId)}";
+            using var modReq = new HttpRequestMessage(HttpMethod.Get, modUrl);
+            modReq.Headers.Add("x-api-key", apiKey);
+            modReq.Headers.Accept.ParseAdd("application/json");
+            var modResp = await http.SendAsync(modReq);
+            if (!modResp.IsSuccessStatusCode) return result;
+            var modJson = JsonNode.Parse(await modResp.Content.ReadAsStringAsync());
+            var modData = modJson?["data"];
+            var modName = modData?["name"]?.GetValue<string>() ?? modId;
+            var modSlug = modData?["slug"]?.GetValue<string>() ?? modId;
+            var modIcon = modData?["logo"]?["url"]?.GetValue<string>() ?? "";
+
+            // Fetch best matching file
+            var query = $"https://api.curseforge.com/v1/mods/{Uri.EscapeDataString(modId)}/files?pageSize=50";
+            if (!string.IsNullOrEmpty(gameVersion))
+                query += $"&gameVersion={Uri.EscapeDataString(gameVersion)}";
+            using var filesReq = new HttpRequestMessage(HttpMethod.Get, query);
+            filesReq.Headers.Add("x-api-key", apiKey);
+            filesReq.Headers.Accept.ParseAdd("application/json");
+            var filesResp = await http.SendAsync(filesReq);
+            if (!filesResp.IsSuccessStatusCode) return result;
+            var filesJson = JsonNode.Parse(await filesResp.Content.ReadAsStringAsync());
+            var filesData = filesJson?["data"]?.AsArray();
+
+            if (filesData is null || filesData.Count == 0) return result;
+
+            var best = filesData
+                .Select(f => f?.AsObject())
+                .Where(f => f is not null)
+                .Select(f => f!)
+                .OrderByDescending(f => f["fileDate"]?.GetValue<DateTimeOffset>() ?? DateTimeOffset.MinValue)
+                .FirstOrDefault();
+
+            if (best is null) return result;
+
+            var bestFileId = best["id"]?.GetValue<int>().ToString() ?? "";
+            var bestFileName = best["fileName"]?.GetValue<string>() ?? best["displayName"]?.GetValue<string>() ?? "";
+            var bestDownloadUrl = best["downloadUrl"]?.GetValue<string>() ?? "";
+
+            result.Add(new ResolvedDependencyDto(
+                ProjectId: modId, Name: modName, IconUrl: modIcon,
+                VersionId: bestFileId, VersionNumber: best["displayName"]?.GetValue<string>() ?? best["fileName"]?.GetValue<string>() ?? "",
+                DownloadUrl: bestDownloadUrl, FileName: bestFileName,
+                Category: "mod", Source: "curseforge",
+                CurseForgeId: modId
+            ));
+
+            // Recurse into sub-dependencies
+            try
+            {
+                var depsUrl = $"https://api.curseforge.com/v1/mods/{Uri.EscapeDataString(modId)}/files/{Uri.EscapeDataString(bestFileId)}";
+                using var depsReq = new HttpRequestMessage(HttpMethod.Get, depsUrl);
+                depsReq.Headers.Add("x-api-key", apiKey);
+                depsReq.Headers.Accept.ParseAdd("application/json");
+                var depsResp = await http.SendAsync(depsReq);
+                if (depsResp.IsSuccessStatusCode)
+                {
+                    var depsJson = JsonNode.Parse(await depsResp.Content.ReadAsStringAsync());
+                    if (depsJson?["data"]?["dependencies"] is JsonArray subDeps)
+                    {
+                        var tasks = subDeps
+                            .Where(d => d?["relationType"]?.GetValue<int>() == 3)
+                            .Select(d => ResolveCFDeps(http,
+                                d!["modId"]?.GetValue<int>().ToString() ?? "",
+                                null, gameVersion, loader, apiKey, visited, depth + 1));
+                        var subResults = await Task.WhenAll(tasks);
+                        foreach (var sr in subResults) result.AddRange(sr);
+                    }
+                }
+            }
+            catch { }
+        }
+        catch { }
+
+        return result;
+    }
+
+    private static async Task<List<ResolvedDependencyDto>> ResolveMRDeps(
+        IModrinthSource mr, string projectId, string? versionId, string? gameVersion, string? loader,
+        HashSet<string>? visited = null, int depth = 0)
+    {
+        if (depth > 5) return [];
+        visited ??= [];
+        if (!visited.Add(projectId)) return [];
+
+        var result = new List<ResolvedDependencyDto>();
+
+        try
+        {
+            var versions = await mr.GetProjectVersionInfoAsync(projectId);
+            if (versions.Count == 0) return result;
+
+            var best = versionId is not null && depth == 0
+                ? versions.FirstOrDefault(v => v.Id == versionId)
+                : versions
+                    .Where(v => (gameVersion == null || v.GameVersionIds?.Contains(gameVersion) == true)
+                             && (loader == null || v.Loaders == null || v.Loaders.Count == 0 || v.Loaders.Contains(loader)))
+                    .MaxBy(v => v.PublishedAt)
+                    ?? versions.MaxBy(v => v.PublishedAt);
+            if (best is null) return result;
+
+            if (depth > 0)
+            {
+                var primaryFile = best.Files?.FirstOrDefault(f => !string.IsNullOrEmpty(f.DownloadUrl));
+                if (primaryFile is not null)
+                {
+                    string name = projectId, iconUrl = "";
+                    var category = "mods";
+                    try
+                    {
+                        var proj = await mr.GetProjectInfoAsync(projectId);
+                        if (proj is not null)
+                        {
+                            name = proj.Name ?? projectId;
+                            iconUrl = proj.IconUrl ?? "";
+                            category = proj.Type switch { "resourcepack" => "resourcepacks", "shader" => "shaderpacks", _ => "mods" };
+                        }
+                    }
+                    catch { }
+
+                    result.Add(new ResolvedDependencyDto(
+                        ProjectId: projectId, Name: name, IconUrl: iconUrl,
+                        VersionId: best.Id, VersionNumber: best.VersionNumber ?? "",
+                        DownloadUrl: primaryFile.DownloadUrl, FileName: primaryFile.Filename ?? "",
+                        Category: category, Source: "modrinth",
+                        ModrinthId: projectId
+                    ));
+                }
+            }
+
+            if (best.DependenciesInfos is not null)
+            {
+                var tasks = best.DependenciesInfos
+                    .Where(d => d.DependencyType == "required" && d.ProjectId is not null)
+                    .Select(d => ResolveMRDeps(mr, d.ProjectId!, null, gameVersion, loader, visited, depth + 1));
+                var subResults = await Task.WhenAll(tasks);
+                foreach (var sr in subResults) result.AddRange(sr);
+            }
+        }
+        catch { }
+
+        return result;
+    }
 }

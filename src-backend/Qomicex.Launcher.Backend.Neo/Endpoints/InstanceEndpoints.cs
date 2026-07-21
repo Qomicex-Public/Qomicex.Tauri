@@ -50,6 +50,9 @@ public static class InstanceEndpoints
 
         group.MapPost("/", (CreateInstanceRequest req, InstanceService instances) =>
         {
+            var versionDirName = req.Loader is not null && req.LoaderVersion is not null
+                ? $"{req.GameVersion}-{req.Loader}-{req.LoaderVersion}"
+                : req.GameVersion;
             var instance = new GameInstance
             {
                 Name = req.Name,
@@ -59,6 +62,7 @@ public static class InstanceEndpoints
                 JavaPath = req.JavaPath,
                 MaxMemory = req.MaxMemory,
                 GameDir = req.GameDir,
+                VersionDirName = versionDirName,
             };
             var created = instances.Create(instance);
             return Results.Created($"/api/instance/{created.Id}", created);
@@ -377,7 +381,7 @@ public static class InstanceEndpoints
 
             tracker.Start(id, instance.GameVersion, instance.GameDir,
                 req.Loader, req.LoaderVersion, req.Addons, threads,
-                req.VersionIsolation ?? false, sourceId);
+                req.VersionIsolation ?? SystemEndpoints.GetGlobalVersionIsolation(), sourceId);
 
             return Results.Json(new MessageResponse($"Install started for {id}"), ApiJsonContext.Default.MessageResponse);
         });
@@ -402,9 +406,16 @@ public static class InstanceEndpoints
             var loaderType = type is not null ? MapLoaderType(type) : null;
             var loaders = await core.InstallerProvider.GetAvailableModLoaders(
                 gameVersion, loaderType ?? Qomicex.Core.AOT.Public.Models.ModLoaderType.All);
-#pragma warning disable IL2026, IL3050
-            return Results.Json(loaders);
-#pragma warning restore IL2026, IL3050
+            var result = loaders.Select(l => new LoaderVersionInfo(
+                (int)l.Type,
+                l.Version,
+                l.GameVersion,
+                l.Url,
+                l.Sha1,
+                l.isRecommand,
+                l.ReleaseTime.ToString("o")
+            )).ToList();
+            return Results.Json(result, ApiJsonContext.Default.ListLoaderVersionInfo);
         });
     }
 
