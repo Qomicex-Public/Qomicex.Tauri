@@ -24,6 +24,7 @@ interface ResourceInstallDialogProps {
   source: string
   category: string
   instanceId?: string
+  initialVersionId?: string
 }
 
 interface InstallProgress {
@@ -39,7 +40,7 @@ function versionCacheKey(resourceId: string, gameVersion: string, loader: string
 }
 
 export default function ResourceInstallDialog({
-  open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId,
+  open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId, initialVersionId,
 }: ResourceInstallDialogProps) {
   const { notify } = useMessageBox()
   const [instances, setInstances] = useState<GameInstance[]>([])
@@ -91,10 +92,18 @@ export default function ResourceInstallDialog({
   // on instance change, fetch versions filtered by gameVersion + loader
   useEffect(() => {
     if (!selectedInstance) { setVersions([]); return }
-    const key = versionCacheKey(resourceId, selectedInstance.gameVersion, selectedInstance.loader || '')
+    const loaderFilter = category === 'mod'
+      ? (selectedInstance.loader || '').toLowerCase() || undefined
+      : category === 'datapack' ? 'datapack' : undefined
+    const key = versionCacheKey(resourceId, selectedInstance.gameVersion, loaderFilter || '')
     const cached = versionCache.get(key)
     if (cached) {
       setVersions(cached)
+      // auto-select initial version from cache
+      if (initialVersionId) {
+        const match = cached.find(v => v.id === initialVersionId)
+        if (match) setSelectedVersion(match)
+      }
       return
     }
     setLoadingVersions(true)
@@ -108,16 +117,21 @@ export default function ResourceInstallDialog({
         const vlist = await getResourceVersions(
           resourceId, source,
           selectedInstance.gameVersion,
-          category === 'mod' ? (selectedInstance.loader || '').toLowerCase() || undefined : undefined
+          loaderFilter
         )
         if (cancelled) return
         versionCache.set(key, vlist)
         setVersions(vlist)
+        // auto-select initial version
+        if (initialVersionId) {
+          const match = vlist.find(v => v.id === initialVersionId)
+          if (match) setSelectedVersion(match)
+        }
       } catch { notify('加载版本列表失败', 'error') }
       if (!cancelled) setLoadingVersions(false)
     })()
     return () => { cancelled = true }
-  }, [selectedInstance, resourceId, source, notify])
+  }, [selectedInstance, resourceId, source, notify, initialVersionId])
 
   const versionOptions = useMemo(() => {
     return [...versions].sort((a, b) => new Date(b.datePublished).getTime() - new Date(a.datePublished).getTime())
@@ -125,6 +139,7 @@ export default function ResourceInstallDialog({
 
   useEffect(() => {
     if (!selectedInstance || !selectedVersion) { setDeps([]); return }
+    if (category !== 'mod') { setDeps([]); return }
     setLoadingDeps(true)
     let cancelled = false
     ;(async () => {
@@ -151,8 +166,9 @@ export default function ResourceInstallDialog({
         if (cancelled) return
         const pidMap = new Map<string, { fileName: string; version: string }>()
         for (const m of meta) {
-          const pid = m.modrinthId ?? (m.curseForgeId ? String(m.curseForgeId) : null)
-          if (pid) pidMap.set(pid, { fileName: m.fileName, version: m.version })
+          const entry = { fileName: m.fileName, version: m.version }
+          if (m.modrinthId) pidMap.set(m.modrinthId, entry)
+          if (m.curseForgeId) pidMap.set(String(m.curseForgeId), entry)
         }
         setInstalledByProjectId(pidMap)
       } catch { notify('加载前置模组失败', 'error') }
@@ -162,7 +178,7 @@ export default function ResourceInstallDialog({
   }, [selectedInstance, selectedVersion, source, resourceId, notify])
 
   useEffect(() => {
-    const pending = deps.filter(d => !installedNames.has(d.fileName))
+    const pending = deps.filter(d => !installedNames.has(d.fileName) && !installedByProjectId.has(d.projectId))
     if (pending.length === 0 || !selectedInstance) { setDepVersionOptions({}); return }
     let cancelled = false
     ;(async () => {
@@ -180,7 +196,7 @@ export default function ResourceInstallDialog({
       setDepVersionOptions(map)
     })()
     return () => { cancelled = true }
-  }, [deps, installedNames, selectedInstance])
+  }, [deps, installedNames, installedByProjectId, selectedInstance])
 
   useEffect(() => {
     if (!depPickerOpen) return
@@ -190,14 +206,6 @@ export default function ResourceInstallDialog({
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [depPickerOpen])
-
-  useEffect(() => {
-    if (!selectedInstance) return
-    setSelectedVersion(null)
-    setDeps([])
-    setDepSelectedVersion({})
-    setDepVersionOptions({})
-  }, [selectedInstance])
 
   const handleInstall = useCallback(async () => {
     if (!selectedInstance || !selectedVersion) return
@@ -224,7 +232,7 @@ export default function ResourceInstallDialog({
     }
     const mainFile = selectedVersion.downloads[0]
     if (!mainFile) { setInstallError('该版本没有可下载的文件'); setInstalling(false); return }
-    allItems.push({ url: mainFile.url, fileName: mainFile.filename, category, name: resourceTitle })
+    allItems.push({ url: mainFile.url, fileName: mainFile.fileName, category, name: resourceTitle })
 
     const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const taskIds: string[] = []
@@ -372,7 +380,7 @@ export default function ResourceInstallDialog({
             ) : (
               <div className="grid gap-1.5 max-h-[200px] overflow-y-auto">
                 {deps.map(d => {
-                  const installed = installedNames.has(d.fileName)
+                  const installed = installedNames.has(d.fileName) || installedByProjectId.has(d.projectId)
                   const depVersions = depVersionOptions[d.projectId]
                   const sel = depSelectedVersion[d.projectId]
                   const currentUrl = sel?.downloadUrl ?? d.downloadUrl
@@ -418,7 +426,7 @@ export default function ResourceInstallDialog({
                                     key={v.id}
                                     type="button"
                                     onClick={() => {
-                                      setDepSelectedVersion(prev => ({ ...prev, [d.projectId]: { downloadUrl: url, fileName: v.downloads[0]!.filename } }))
+                                      setDepSelectedVersion(prev => ({ ...prev, [d.projectId]: { downloadUrl: url, fileName: v.downloads[0]!.fileName } }))
                                       setDepPickerOpen(null)
                                     }}
                                     className={cn(

@@ -15,7 +15,7 @@ import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting } from '../api/instance.ts'
-import { openFolder } from '../api/settings.ts'
+import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
@@ -1432,6 +1432,16 @@ export default function InstanceDetailPage() {
   const [tab, setTab] = useState<TabId>('overview')
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
+  const gameDir = useMemo(() => {
+    if (!instance) return ''
+    if (instance.resolvedGameDir) return instance.resolvedGameDir
+    const isolated = instance.versionIsolation ?? getSettings().versionIsolation
+    if (isolated) {
+      const vn = instance.versionDirName || instance.name
+      return `${instance.gameDir.replace(/\\/g, '/')}/versions/${vn}`
+    }
+    return instance.gameDir
+  }, [instance])
   const [saving, setSaving] = useState(false)
   const [runtimes, setRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -1683,7 +1693,7 @@ export default function InstanceDetailPage() {
               <FontAwesomeIcon icon={faStar} className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />
             </Button>
           </Tooltip>
-          <Button variant="outline" size="icon" onClick={() => openFolder(instance.resolvedGameDir ?? instance.gameDir).catch(() => {})}>
+          <Button variant="outline" size="icon" onClick={() => openFolder(gameDir).catch(() => {})}>
             <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
           </Button>
         </div>
@@ -1784,7 +1794,7 @@ export default function InstanceDetailPage() {
                     {repairing && (
                       <span className="self-center text-xs text-muted-foreground">正在补全 {repairProgress}%</span>
                     )}
-                    <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(instance.resolvedGameDir ?? instance.gameDir).catch(() => {})}>
+                    <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch(() => {})}>
                       <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开游戏目录
                     </Button>
                     <Button size="sm" variant="outline" className="gap-2 text-destructive hover:text-destructive" onClick={handleDelete}>
@@ -1869,7 +1879,7 @@ export default function InstanceDetailPage() {
                 <div className="space-y-2">
                   <Label>版本隔离</Label>
                   <Select
-                    value={form.versionIsolation === null ? 'global' : form.versionIsolation ? 'on' : 'off'}
+                    value={form.versionIsolation == null ? 'global' : form.versionIsolation ? 'on' : 'off'}
                     onChange={(v) => update('versionIsolation', v === 'global' ? null : v === 'on')}
                   >
                     <SelectOption value="global">跟随全局设置</SelectOption>
@@ -1979,12 +1989,12 @@ export default function InstanceDetailPage() {
             </Card>
           )}
 
-          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} />}
-          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} />}
-          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} />}
-          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} />}
-          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} />}
-          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} />}
+          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} />}
+          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} />}
+          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} />}
+          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} />}
+          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} />}
+          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} />}
           {tab === 'servers' && <ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} />}
           {tab === 'gamesettings' && <GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} />}
         </div>
