@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Qomicex.Downloader;
 using DownloadCore = Qomicex.Downloader.Core;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
+using Qomicex.Launcher.Backend.Neo.Services;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 
@@ -14,8 +15,9 @@ public static class ResourceDownloadEndpoints
 
         var group = app.MapGroup("/api/resource-download");
 
-        group.MapPost("/start", (StartDownloadRequest req) =>
+        group.MapPost("/start", async (StartDownloadRequest req, IHttpClientFactory httpFactory) =>
         {
+            await LicenseValidator.ValidateAsync(httpFactory);
             var targetDir = req.TargetPath;
             if (string.IsNullOrEmpty(targetDir))
             {
@@ -49,8 +51,9 @@ public static class ResourceDownloadEndpoints
             return Results.Json(new DownloadStartResponse(taskId, req.FileName!), ApiJsonContext.Default.DownloadStartResponse);
         });
 
-        group.MapPost("/download-to", (DownloadToRequest req) =>
+        group.MapPost("/download-to", async (DownloadToRequest req, IHttpClientFactory httpFactory) =>
         {
+            await LicenseValidator.ValidateAsync(httpFactory);
             var targetDir = Path.GetDirectoryName(req.TargetPath)!;
             Directory.CreateDirectory(targetDir);
             var taskId = Guid.NewGuid().ToString();

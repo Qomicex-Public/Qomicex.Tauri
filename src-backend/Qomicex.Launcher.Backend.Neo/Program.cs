@@ -99,6 +99,13 @@ builder.Services.AddSingleton<ConnectorService>();
 builder.Services.AddSingleton<EasyTierProvider>();
 builder.Services.AddSingleton<McmodService>();
 
+builder.Services.AddHttpClient("QomicexWeb", client =>
+{
+    client.BaseAddress = new Uri(LicenseConfig.QomicexWebBaseUrl);
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+});
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -136,6 +143,7 @@ app.MapProgressSseEndpoints();
 app.MapLogEndpoints();
 app.MapConnectorEndpoints();
 app.MapInstanceFilesEndpoints(curseForgeApiKey);
+app.MapLicenseEndpoints();
 
 // LAN listener lifecycle
 var lanListener = app.Services.GetRequiredService<LanGameListenerService>();

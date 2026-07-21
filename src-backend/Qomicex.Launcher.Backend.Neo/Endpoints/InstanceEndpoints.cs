@@ -104,8 +104,9 @@ public static class InstanceEndpoints
             return Results.NotFound();
         });
 
-        group.MapPost("/{id}/launch", async (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker, AccountService accountService, JavaRuntimeStore store) =>
+        group.MapPost("/{id}/launch", async (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker, AccountService accountService, JavaRuntimeStore store, IHttpClientFactory httpFactory) =>
         {
+            await LicenseValidator.ValidateAsync(httpFactory);
             var instance = instances.GetById(id);
             if (instance is null)
                 throw ApiException.NotFound($"Instance {id} not found");
@@ -370,8 +371,9 @@ public static class InstanceEndpoints
             return Results.Json(new MessageResponse($"Launch cancelled for {id}"), ApiJsonContext.Default.MessageResponse);
         });
 
-        group.MapPost("/{id}/install", (string id, InstallerRequest req, InstanceService instances, InstallTracker tracker) =>
+        group.MapPost("/{id}/install", (string id, InstallerRequest req, InstanceService instances, InstallTracker tracker, IHttpClientFactory httpFactory) =>
         {
+            LicenseValidator.ValidateAsync(httpFactory).GetAwaiter().GetResult();
             var instance = instances.GetById(id);
             if (instance is null)
                 throw ApiException.NotFound($"Instance {id} not found");

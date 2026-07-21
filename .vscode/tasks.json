@@ -7,9 +7,23 @@
 			"command": "dotnet",
 			"args": [
 				"build",
-				"${workspaceFolder}/src-backend/Qomicex.Launcher.Backend/Qomicex.Launcher.Backend.csproj",
+				"${workspaceFolder}/src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj",
 				"--configuration",
 				"Debug"
+			],
+			"group": "build",
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "build-backend-license",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"${workspaceFolder}/src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj",
+				"--configuration",
+				"Debug",
+				"-p:LicenseRequired=true"
 			],
 			"group": "build",
 			"problemMatcher": "$msCompile"

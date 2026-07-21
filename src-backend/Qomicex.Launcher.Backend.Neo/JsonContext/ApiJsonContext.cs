@@ -193,6 +193,10 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(List<OldServerEntryDto>))]
 [JsonSerializable(typeof(ServerStateResultDto))]
 [JsonSerializable(typeof(Dictionary<string, int>))]
+[JsonSerializable(typeof(LicenseStatusResponse))]
+[JsonSerializable(typeof(LicenseActivateRequest))]
+[JsonSerializable(typeof(LicenseActivateResponse))]
+[JsonSerializable(typeof(PublicKeyResponse))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
 }

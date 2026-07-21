@@ -7,6 +7,11 @@ on:
         description: '版本号 (如 v0.2.0-beta)'
         required: true
         default: 'v0.1.0'
+      licenseRequired:
+        description: '需要许可证验证（构建包含LICENSE_REQUIRED编译符号的版本）'
+        required: false
+        default: false
+        type: boolean
       buildPlatform:
         description: '构建平台'
         required: true
@@ -79,7 +84,7 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
@@ -124,7 +129,7 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
@@ -172,7 +177,7 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
@@ -220,7 +225,7 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
@@ -271,7 +276,7 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-loongarch64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-loongarch64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
@@ -314,7 +319,7 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
@@ -369,7 +374,7 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp

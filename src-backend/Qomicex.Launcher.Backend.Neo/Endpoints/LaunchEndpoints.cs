@@ -13,8 +13,9 @@ public static class LaunchEndpoints
     {
         var group = app.MapGroup("/api/launch");
 
-        group.MapPost("/", async (LaunchRequest req, InstanceService instances) =>
+        group.MapPost("/", async (LaunchRequest req, InstanceService instances, IHttpClientFactory httpFactory) =>
         {
+            await LicenseValidator.ValidateAsync(httpFactory);
             var instance = instances.GetById(req.InstanceId);
             if (instance == null)
                 throw ApiException.NotFound($"Instance {req.InstanceId} not found");

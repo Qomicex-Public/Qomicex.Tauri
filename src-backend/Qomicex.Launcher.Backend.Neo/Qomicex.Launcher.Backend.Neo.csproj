@@ -8,6 +8,8 @@
     <PublishAot>true</PublishAot>
     <EnableAotAnalyzer>true</EnableAotAnalyzer>
     <IsAotCompatible>true</IsAotCompatible>
+    <LicenseRequired>false</LicenseRequired>
+    <DefineConstants Condition="'$(LicenseRequired)' == 'true'">$(DefineConstants);LICENSE_REQUIRED</DefineConstants>
 
   </PropertyGroup>
 
@@ -21,6 +23,7 @@
   </Target>
 
   <ItemGroup>
+    <PackageReference Include="Chaos.NaCl.Standard" Version="1.0.0" />
     <PackageReference Include="System.Management" Version="9.0.0" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
   </ItemGroup>
 

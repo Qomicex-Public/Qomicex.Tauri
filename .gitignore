@@ -64,3 +64,7 @@ docs/
 docs/superpowers/
 skills-lock.json
 *.sdd.md
+
+# License secrets (sensitive keys — deployer provides at build time)
+**/LicenseSecrets*.cs
+**/LicenseCore.cs

@@ -1,7 +1,3 @@
-
-// 使用 IntelliSense 了解相关属性。
-// 悬停以查看现有属性的描述。
-// 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
 {
     "version": "0.2.0",
     "configurations": [
@@ -15,34 +11,53 @@
                 "tauri",
                 "dev"
             ],
-            "cwd": "${workspaceFolder}", // 若 package.json 在项目根，否则改为具体路径
+            "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "skipFiles": [
                 "<node_internals>/**"
             ],
             "env": {
-                // 可选：如果前端需要特定环境变量，可在此设置
             }
         },
         {
             "name": "启动 ASP.NET Core",
             "type": "coreclr",
             "request": "launch",
-            "preLaunchTask": "build-backend", // 可选：确保每次启动前重新生成
+            "preLaunchTask": "build-backend",
             "program": "dotnet",
             "args": [
                 "run",
                 "--project",
                 "${workspaceFolder}/src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj",
+                "--",
                 "--urls=http://localhost:5000"
-                // 可显式指定端口，避免与 Tauri 默认端口冲突
             ],
             "cwd": "${workspaceFolder}/src-backend",
             "console": "integratedTerminal",
             "stopAtEntry": false,
             "env": {
-                "ASPNETCORE_ENVIRONMENT": "Development",
-                // 其他需要的环境变量
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            }
+        },
+        {
+            "name": "启动 ASP.NET Core (许可证验证)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-backend-license",
+            "program": "dotnet",
+            "args": [
+                "run",
+                "--project",
+                "${workspaceFolder}/src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj",
+                "-p:LicenseRequired=true",
+                "--",
+                "--urls=http://localhost:5000"
+            ],
+            "cwd": "${workspaceFolder}/src-backend",
+            "console": "integratedTerminal",
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
             }
         }
     ],
@@ -53,7 +68,15 @@
                 "启动 ASP.NET Core",
                 "启动 Tauri"
             ],
-            "stopAll": true // 停止一个时自动终止另一个
+            "stopAll": true
+        },
+        {
+            "name": "启动 Qomicex.Tauri (许可证验证)",
+            "configurations": [
+                "启动 ASP.NET Core (许可证验证)",
+                "启动 Tauri"
+            ],
+            "stopAll": true
         }
     ]
 }

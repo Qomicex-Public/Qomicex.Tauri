@@ -22,7 +22,9 @@ import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
+import LicenseActivationDialog from './components/LicenseActivationDialog.tsx'
 import { get } from './api/client.ts'
+import { fetchLicenseStatus } from './api/license.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { Button } from './components/ui/button.tsx'
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
@@ -43,6 +45,8 @@ function AppContent() {
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<{ version: string; body: string; required: boolean; update: Update } | null>(null)
   const autoCheckDone = useRef(false)
+  const [licenseDialogOpen, setLicenseDialogOpen] = useState(false)
+  const licenseChecked = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -95,6 +99,16 @@ function AppContent() {
       } catch {}
     })()
   }, [backendState, alert])
+
+  useEffect(() => {
+    if (backendState !== 'ready' || licenseChecked.current) return
+    licenseChecked.current = true
+    fetchLicenseStatus().then(s => {
+      if (!s.valid && s.error === 'LICENSE_NOT_FOUND') {
+        setLicenseDialogOpen(true)
+      }
+    }).catch(() => {})
+  }, [backendState])
 
   useEffect(() => {
     if (backendState !== 'ready' || autoCheckDone.current) return
@@ -219,6 +233,10 @@ function AppContent() {
           }
           setPendingUpdate(null)
         }}
+      />
+      <LicenseActivationDialog
+        open={licenseDialogOpen}
+        onActivated={() => setLicenseDialogOpen(false)}
       />
     </Provider>
   )
