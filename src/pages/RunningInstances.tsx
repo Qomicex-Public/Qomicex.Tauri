@@ -30,7 +30,7 @@ export default function RunningInstances() {
   }, [runningInstances.length])
 
   return (
-    <div ref={pageRef} className="flex h-full flex-col p-8">
+    <div ref={pageRef} className="flex flex-1 min-h-0 flex-col overflow-y-auto p-8">
       <PageHeader
         title="运行中的游戏"
         subtitle={runningInstances.length > 0 ? `${runningInstances.length} 个实例正在运行` : undefined}

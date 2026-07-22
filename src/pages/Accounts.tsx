@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
-import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faStar, faRotate } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faStar, faRotate, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
@@ -11,6 +11,8 @@ import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { invalidateAvatarCache } from '../api/skin.ts'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
+import { Select, SelectOption } from '../components/ui/select.tsx'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui/dialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -62,6 +64,23 @@ export default function Accounts() {
   const [addOpen, setAddOpen] = useState(false)
   const [addTab, setAddTab] = useState<'microsoft' | 'offline' | 'yggdrasil' | 'tongyi'>('microsoft')
   const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('')
+  const [filterType, setFilterType] = useState<'all' | 'name' | 'loginMethod' | 'server'>('all')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const lastClickedRef = useRef<number>(-1)
+  // ponytail: shift-select uses filteredAccounts index — drifts if search changes mid-range. Fine for MVP.
+  const filteredAccounts = useMemo(() => {
+    if (!search) return accounts
+    const q = search.toLowerCase()
+    return accounts.filter(a => {
+      if (filterType === 'name') return a.name.toLowerCase().includes(q)
+      if (filterType === 'loginMethod') return getAccountLabel(a.loginMethod, a.serverUrl).toLowerCase().includes(q)
+      if (filterType === 'server') return (a.serverUrl || '').toLowerCase().includes(q)
+      return a.name.toLowerCase().includes(q) ||
+        getAccountLabel(a.loginMethod, a.serverUrl).toLowerCase().includes(q) ||
+        (a.serverUrl || '').toLowerCase().includes(q)
+    })
+  }, [accounts, search, filterType])
 
   const [oauthData, setOauthData] = useState<MicrosoftOAuthResponse | null>(null)
   const [microsoftStep, setMicrosoftStep] = useState<MicrosoftStep>('idle')
@@ -316,6 +335,38 @@ export default function Accounts() {
     }
   }
 
+  function toggleSelect(uuid: string, index: number, shift: boolean) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (shift && lastClickedRef.current >= 0) {
+        const start = Math.min(lastClickedRef.current, index)
+        const end = Math.max(lastClickedRef.current, index)
+        for (let i = start; i <= end; i++)
+          next.add(filteredAccounts[i].uuid)
+      } else {
+        if (next.has(uuid)) next.delete(uuid); else next.add(uuid)
+      }
+      return next
+    })
+    lastClickedRef.current = index
+  }
+
+  async function handleBatchDelete() {
+    if (selected.size === 0) return
+    const ok = await msgConfirm(`确定要删除选中的 ${selected.size} 个账户吗？`, '批量删除')
+    if (!ok) return
+    setLoading(true)
+    try {
+      for (const uuid of selected) { await accountApi.deleteAccount(uuid) }
+      setSelected(new Set())
+      await refresh()
+    } catch (e: unknown) {
+      await msgError(fmtErr(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   function StatusDot({ step, active }: { step: MicrosoftStep; active: MicrosoftStep }) {
     if (step === active) {
       if (step === 'done') return <FontAwesomeIcon icon={faCheck} className="h-3 w-3 text-emerald-400" />
@@ -331,75 +382,129 @@ export default function Accounts() {
   }
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
-      <PageHeader title="账户管理"
-        actions={
-          <Tooltip content="刷新">
-            <button onClick={forceRefresh} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-              <FontAwesomeIcon icon={loading ? faSpinner : faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-            </button>
-          </Tooltip>
-        }
-      />
-
-      <div className="flex flex-col gap-1.5">
-        {accounts.map((acc) => {
-          const icon = getAccountIcon(acc.loginMethod)
-          const isDefault = acc.uuid === defaultUuid
-          return (
-            <div
-              key={acc.uuid}
-              onClick={() => navigate(`/accounts/${acc.uuid}`)}
-              className="group flex w-full cursor-pointer items-center gap-3 rounded-lg border border-transparent bg-card px-3.5 py-3 text-left transition-colors hover:border-border"
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/accounts/${acc.uuid}`) } }}
-            >
-              <AccountAvatar account={acc} className="h-10 w-10 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">{acc.name}</div>
-                <div className="flex items-center gap-1">
-                  <FontAwesomeIcon icon={icon.icon} className={cn('h-2.5 w-2.5', icon.color)} />
-                  <Tooltip content={acc.serverUrl}>
-                    <span className="text-[11px] text-muted-foreground">{getAccountLabel(acc.loginMethod, acc.serverUrl)}</span>
-                  </Tooltip>
-                </div>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                {isDefault ? (
-                  <span className="flex h-7 w-7 items-center justify-center">
-                    <FontAwesomeIcon icon={faStar} className="h-3 w-3 text-amber-400" />
-                  </span>
-                ) : (
-                  <Tooltip content="设为默认">
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); handleSetDefault(acc.uuid) }}
-                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-primary/10 hover:text-primary group-hover:opacity-100"
-                    >
-                      <FontAwesomeIcon icon={faStar} className="h-3 w-3" />
-                    </button>
-                  </Tooltip>
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); handleDelete(acc.uuid) }}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
-                >
-                  <FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" />
+    <>
+    <PageShell>
+      <div className="shrink-0 space-y-4 px-8 pt-8">
+        <PageHeader title="账户管理"
+          actions={
+            <>
+              <Tooltip content="刷新">
+                <button onClick={forceRefresh} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+                  <FontAwesomeIcon icon={loading ? faSpinner : faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
                 </button>
-              </div>
-            </div>
-          )
-        })}
+              </Tooltip>
+              <Tooltip content="添加账户">
+                <button onClick={startAdd} className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+                  <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                  <span className="text-sm">添加</span>
+                </button>
+              </Tooltip>
+            </>
+          }
+        />
 
-        <Button variant="outline" className="mt-2 justify-start gap-2" onClick={startAdd}>
-          <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
-          添加账户
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select value={filterType} onChange={(v) => setFilterType(v as typeof filterType)} className="w-28">
+            <SelectOption value="all">全部筛选</SelectOption>
+            <SelectOption value="name">名称</SelectOption>
+            <SelectOption value="loginMethod">登录方式</SelectOption>
+            <SelectOption value="server">服务器</SelectOption>
+          </Select>
+          <div className="relative flex-1">
+            <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索账户..." className="h-9 pl-9" />
+          </div>
+        </div>
       </div>
 
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} className="max-w-md" closeOnBackdrop={false}>
+      <div className="flex-1 min-h-0 overflow-y-auto px-8 pb-8">
+        <div className="flex flex-col gap-1.5 pt-4">
+          {filteredAccounts.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+              <FontAwesomeIcon icon={faUser} className="h-10 w-10 opacity-30" />
+              <p className="text-sm">{search ? '无匹配账户' : '暂无账户'}</p>
+            </div>
+          ) : filteredAccounts.map((acc, index) => {
+            const icon = getAccountIcon(acc.loginMethod)
+            const isDefault = acc.uuid === defaultUuid
+            const isSelected = selected.has(acc.uuid)
+            return (
+              <div
+                key={acc.uuid}
+                onClick={() => { if (selected.size > 0) toggleSelect(acc.uuid, index, false); else navigate(`/accounts/${acc.uuid}`) }}
+                className={cn(
+                  'group flex w-full cursor-pointer items-center gap-3 rounded-lg border bg-card px-3.5 py-3 text-left transition-colors hover:border-border',
+                  isSelected ? 'border-primary/40 bg-primary/[0.03]' : 'border-transparent'
+                )}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (selected.size > 0) toggleSelect(acc.uuid, index, false); else navigate(`/accounts/${acc.uuid}`) } }}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); toggleSelect(acc.uuid, index, e.shiftKey) }}
+                  className={cn(
+                    'flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors',
+                    isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30 hover:border-foreground/50'
+                  )}
+                >
+                  {isSelected && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+                </button>
+                <AccountAvatar account={acc} className="h-10 w-10 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{acc.name}</div>
+                  <div className="flex items-center gap-1">
+                    <FontAwesomeIcon icon={icon.icon} className={cn('h-2.5 w-2.5', icon.color)} />
+                    <Tooltip content={acc.serverUrl}>
+                      <span className="text-[11px] text-muted-foreground">{getAccountLabel(acc.loginMethod, acc.serverUrl)}</span>
+                    </Tooltip>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {isDefault ? (
+                    <span className="flex h-7 w-7 items-center justify-center">
+                      <FontAwesomeIcon icon={faStar} className="h-3 w-3 text-amber-400" />
+                    </span>
+                  ) : (
+                    <Tooltip content="设为默认">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleSetDefault(acc.uuid) }}
+                        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-primary/10 hover:text-primary group-hover:opacity-100"
+                      >
+                        <FontAwesomeIcon icon={faStar} className="h-3 w-3" />
+                      </button>
+                    </Tooltip>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleDelete(acc.uuid) }}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+                  >
+                    <FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+
+        </div>
+      </div>
+    </PageShell>
+
+    {selected.size > 0 && (
+      <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
+        <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
+        <div className="h-5 w-px bg-border" />
+        <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
+        <Button variant="destructive" size="sm" onClick={handleBatchDelete} disabled={loading}>
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          删除 {selected.size}
+        </Button>
+      </div>
+    )}
+
+    <Dialog open={addOpen} onClose={() => setAddOpen(false)} className="max-w-md" closeOnBackdrop={false}>
         <DialogHeader onClose={() => setAddOpen(false)}>
           <DialogTitle>添加账户</DialogTitle>
         </DialogHeader>
@@ -606,6 +711,6 @@ export default function Accounts() {
           )}
         </DialogBody>
       </Dialog>
-    </div>
+    </>
   )
 }

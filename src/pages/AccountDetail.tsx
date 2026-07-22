@@ -9,6 +9,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { SkinViewer3D } from '../components/SkinViewer3D.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { Button } from '../components/ui/button.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import type { Account, SkinProfile } from '../types/index.ts'
 
 export default function AccountDetail() {
@@ -68,13 +69,13 @@ export default function AccountDetail() {
   }
 
   if (loading || !account) {
-    return <div className="flex h-full items-center justify-center text-muted-foreground">加载中...</div>
+    return <div className="flex h-full items-center justify-center overflow-y-auto text-muted-foreground">加载中...</div>
   }
 
   const textureUrl = `${API_BASE}/skin/texture/${uuid}?type=${account.loginMethod}${account.serverUrl ? `&server=${encodeURIComponent(account.serverUrl)}` : ''}`
 
   return (
-    <div className="space-y-6 p-8">
+    <PageShell className="space-y-6 p-8 overflow-y-auto">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/accounts')}>
           <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -161,6 +162,6 @@ export default function AccountDetail() {
           </div>
         </div>
       </div>
-    </div>
+    </PageShell>
   )
 }

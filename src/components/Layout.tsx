@@ -138,9 +138,12 @@ export default function Layout() {
         <Sidebar />
         <div className="flex flex-1 flex-col min-w-0">
           {!isLinux && !isMacos && <TitleBar />}
-          <main className="flex-1 overflow-y-auto overflow-x-hidden bg-background/50 backdrop-blur-sm">
-            <Outlet />
-          </main>
+          <div className="relative flex flex-1 min-w-0 overflow-hidden">
+            <div className="absolute inset-0 bg-background/50 backdrop-blur-sm" />
+            <main className="relative z-10 flex min-h-0 overflow-hidden flex-1">
+              <Outlet />
+            </main>
+          </div>
         </div>
       </div>
       <ScrollToTop />

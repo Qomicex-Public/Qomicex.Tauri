@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '../components/ui/button.tsx'
@@ -524,7 +525,7 @@ export default function Instances() {
 
   if (step === 'select-version') {
     return (
-      <div className="animate-in slide-up space-y-5 p-8">
+      <PageShell className="p-8 space-y-5 overflow-y-auto">
         <div className="flex items-center gap-3">
           <button onClick={() => setStep('list')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -616,14 +617,14 @@ export default function Instances() {
             ))}
           </div>
         )}
-      </div>
+      </PageShell>
     )
   }
 
   if (step === 'configure') {
     const selectedVer = remoteVersions.find((v) => v.id === form.gameVersion)
     return (
-      <div className="animate-in slide-up space-y-5 p-8">
+      <PageShell className="p-8 space-y-5 overflow-y-auto">
         <div className="flex items-center gap-3">
             <button onClick={() => { setStep('select-version'); setLoaderVersions([]) }} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -762,7 +763,7 @@ export default function Instances() {
             </div>
           </CardContent>
         </Card>
-      </div>
+      </PageShell>
     )
   }
 
@@ -804,7 +805,7 @@ export default function Instances() {
   }
 
   return (
-      <div className="animate-in slide-up space-y-6 p-8">
+      <PageShell className="p-8 space-y-6 overflow-y-auto">
         <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`}
           actions={
             <Tooltip content="刷新">
@@ -1178,6 +1179,6 @@ export default function Instances() {
         gameDir={loadSettings().gameDir || currentDir}
         versionIsolation={loadSettings().versionIsolation !== false}
       />
-      </div>
+      </PageShell>
     )
   }

@@ -13,6 +13,7 @@ import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Checkbox } from '../components/ui/checkbox.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import DebugTab from '../components/DebugTab.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
@@ -842,7 +843,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
+    <PageShell className="p-8 space-y-6 overflow-y-auto">
       <PageHeader title="设置" />
 
       <div className="flex gap-4">
@@ -1649,6 +1650,6 @@ export default function Settings() {
           />
         </div>
       </div>
-    </div>
+    </PageShell>
   )
 }

@@ -8,6 +8,7 @@ import { Separator } from '../components/ui/separator.tsx'
 import { Textarea } from '../components/ui/textarea.tsx'
 import { analyzeLog } from '../api/logAnalysis.ts'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import type { LogAnalysisResult } from '../types/index.ts'
 
 export default function LogAnalysis() {
@@ -53,7 +54,7 @@ export default function LogAnalysis() {
   }
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
+    <PageShell className="p-8 space-y-6 overflow-y-auto">
       <PageHeader title="日志分析" />
 
       <Card>
@@ -145,6 +146,6 @@ export default function LogAnalysis() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </PageShell>
   )
 }

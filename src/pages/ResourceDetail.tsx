@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import {
   faArrowLeft,
@@ -117,7 +118,6 @@ function DependenciesCard({ resourceId, source, versions, gameVersion, loader }:
               <Link
                 key={d.projectId}
                 to={`/resource-center/${encodeURIComponent(d.projectId)}?source=${d.source || 'modrinth'}&category=mod`}
-                state={{ iconUrl: d.iconUrl }}
                 className="flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs transition-colors hover:bg-accent/30"
               >
                 {d.iconUrl ? (
@@ -352,35 +352,40 @@ export default function ResourceDetailPage() {
   }
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
-      <PageHeader
-        title={
-          <>
-            <Link to={`/resource-center?${backQuery.toString()}`} className="mr-2 text-sm font-normal text-muted-foreground transition-colors hover:text-foreground">
-              <FontAwesomeIcon icon={faArrowLeft} className="mr-1 h-3.5 w-3.5" />
-              返回
-            </Link>
-            资源详情
-          </>
-        }
-        actions={
-          <div className="flex items-center gap-2">
-            <Tooltip content="刷新">
-              <Button variant="outline" size="sm" onClick={refreshDetail}>
-                <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-              </Button>
-            </Tooltip>
-            {detail?.projectUrl ? (
-              <Button asChild variant="outline" size="sm">
-                <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
-                  <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3.5 w-3.5" />
-                  原始页面
-                </a>
-              </Button>
-            ) : null}
-          </div>
-        }
-      />
+    <PageShell>
+      <div className="shrink-0 px-8 pt-8">
+        <PageHeader
+          title={
+            <>
+              <Link to={`/resource-center?${backQuery.toString()}`} className="mr-2 text-sm font-normal text-muted-foreground transition-colors hover:text-foreground">
+                <FontAwesomeIcon icon={faArrowLeft} className="mr-1 h-3.5 w-3.5" />
+                返回
+              </Link>
+              资源详情
+            </>
+          }
+          actions={
+            <div className="flex items-center gap-2">
+              <Tooltip content="刷新">
+                <Button variant="outline" size="sm" onClick={refreshDetail}>
+                  <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                </Button>
+              </Tooltip>
+              {detail?.projectUrl ? (
+                <Button asChild variant="outline" size="sm">
+                  <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
+                    <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3.5 w-3.5" />
+                    原始页面
+                  </a>
+                </Button>
+              ) : null}
+            </div>
+          }
+        />
+      </div>
+      
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="space-y-6 p-8">
 
       {loading ? (
         <Card className="p-8">
@@ -694,6 +699,8 @@ export default function ResourceDetailPage() {
           </div>
         </>
       )}
+        </div>
+      </div>
 
       {modpackInstallVersion && (
         <ModpackInstallDialog
@@ -721,6 +728,6 @@ export default function ResourceDetailPage() {
           initialVersionId={installVersion.id}
         />
       )}
-    </div>
+    </PageShell>
   )
 }

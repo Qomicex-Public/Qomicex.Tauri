@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer, faCoffee } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useNavigate } from 'react-router-dom'
@@ -188,7 +189,7 @@ export default function DownloadCenter() {
   }), [tasks, filter])
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
+    <PageShell className="p-8 space-y-6 overflow-y-auto">
       <PageHeader title="下载中心" subtitle={`${tasks.length} 个任务`} actions={
         tasks.some((t) => t.status === 'completed') ? (
           <Button variant="outline" size="sm" onClick={clearCompleted} className="gap-1.5">
@@ -393,6 +394,6 @@ export default function DownloadCenter() {
           })}
         </div>
       )}
-    </div>
+    </PageShell>
   )
 }

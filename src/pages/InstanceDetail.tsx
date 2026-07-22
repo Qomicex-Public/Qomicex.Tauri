@@ -28,6 +28,7 @@ import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
 import { useRunning } from '../contexts/RunningContext.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import ModCard from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
 import ModUpdateDialog from '../components/ModUpdateDialog.tsx'
@@ -1666,7 +1667,7 @@ export default function InstanceDetailPage() {
   }
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
+    <PageShell className="p-8 space-y-6 overflow-y-auto">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/instances')}>
           <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -2019,6 +2020,6 @@ export default function InstanceDetailPage() {
         }}
       />
       <ConfirmDialog open={deleteConfirmOpen} title="删除实例" message={`确定要删除实例「${instance?.name ?? ''}」吗？其版本文件夹将被移至回收站。`} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
-    </div>
+    </PageShell>
   )
 }

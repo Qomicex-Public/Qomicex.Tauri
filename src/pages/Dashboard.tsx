@@ -110,7 +110,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div ref={pageRef} className="relative flex h-full flex-col p-8">
+    <div ref={pageRef} className="relative flex flex-1 min-h-0 flex-col overflow-y-auto p-8">
       {/* Center branding */}
       <div className="flex flex-1 flex-col items-center justify-center">
         {watermarkEnabled && (
