@@ -62,6 +62,8 @@ public static class ResourceCenterEndpoints
             if (src == "curseforge")
             {
                 var cf = core.CreateCurseForgeSource(curseForgeApiKey);
+                var cfClassId = MapCfClassId(category);
+                var cfUrlSlug = MapCfUrlSlug(category);
                 var result = await cf.SearchAsync(
                     searchFilter: query ?? "",
                     gameVersions: gameVersion is not null ? [gameVersion] : null,
@@ -69,7 +71,8 @@ public static class ResourceCenterEndpoints
                     modLoaderTypes: loader is not null ? MapCfLoader(loader) : null,
                     sortField: MapCfSort(sort),
                     page: page ?? 1,
-                    pageSize: pageSize ?? 25
+                    pageSize: pageSize ?? 25,
+                    classId: cfClassId
                 );
 
                 var items = result.Select(r => new ResourceItemDto(
@@ -78,7 +81,7 @@ public static class ResourceCenterEndpoints
                     DownloadCount: int.TryParse(r.DownloadCount, out var dc) ? dc : 0,
                     Source: "curseforge",
                     Categories: r.Categories.Select(c => c.Slug ?? c.Name).ToList(),
-                    ProjectUrl: $"https://www.curseforge.com/minecraft/mc-mods/{r.Slug}",
+                    ProjectUrl: $"https://www.curseforge.com/minecraft/{cfUrlSlug}/{r.Slug}",
                     Slug: r.Slug
                 )).ToList();
 
@@ -399,6 +402,15 @@ public static class ResourceCenterEndpoints
         "resourcepack" => 12,
         "datapack" => 6945,
         _ => null
+    };
+
+    private static string MapCfUrlSlug(string? category) => category?.ToLowerInvariant() switch
+    {
+        "modpack" => "modpacks",
+        "shader" => "shaders",
+        "resourcepack" => "texture-packs",
+        "datapack" => "data-packs",
+        _ => "mc-mods"
     };
 
     private static string MapMrSort(string? sort) => sort?.ToLowerInvariant() switch
