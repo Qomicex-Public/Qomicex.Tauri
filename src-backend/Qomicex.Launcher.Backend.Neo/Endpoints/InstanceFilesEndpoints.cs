@@ -478,6 +478,15 @@ public static class InstanceFilesEndpoints
             return Results.Json(result, ApiJsonContext.Default.ListScreenshotMetadataDto);
         });
 
+        group.MapGet("/screenshots/{fileName}", (string id, string fileName, InstanceService instances) =>
+        {
+            var (gameDir, version, isolated) = Resolve(id, instances);
+            var dir = GetCategoryDir(gameDir, version, isolated, "screenshots");
+            var path = Path.Combine(dir, fileName);
+            if (!File.Exists(path)) return Results.NotFound();
+            return Results.File(path, "image/png");
+        });
+
         group.MapDelete("/screenshots", (string name, string id, InstanceService instances) =>
         {
             var (gameDir, version, isolated) = Resolve(id, instances);

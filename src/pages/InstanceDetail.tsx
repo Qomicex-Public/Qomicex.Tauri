@@ -119,26 +119,26 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { 
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  const toggleSelect = useCallback((name: string, shift?: boolean, ctrl?: boolean) => {
+  const toggleSelect = useCallback((filePath: string, shift?: boolean, ctrl?: boolean) => {
     setSelected(prev => {
       const next = new Set(prev)
       if (ctrl) {
-        if (next.has(name)) next.delete(name); else next.add(name)
+        if (next.has(filePath)) next.delete(filePath); else next.add(filePath)
       } else if (shift && lastClickedRef.current >= 0) {
-        const start = Math.min(lastClickedRef.current, saves.findIndex(s => s.name === name))
-        const end = Math.max(lastClickedRef.current, saves.findIndex(s => s.name === name))
-        for (let i = start; i <= end; i++) next.add(saves[i].name)
+        const start = Math.min(lastClickedRef.current, saves.findIndex(s => s.filePath === filePath))
+        const end = Math.max(lastClickedRef.current, saves.findIndex(s => s.filePath === filePath))
+        for (let i = start; i <= end; i++) next.add(saves[i].filePath)
       } else {
-        next.clear(); next.add(name)
+        next.clear(); next.add(filePath)
       }
       return next
     })
-    lastClickedRef.current = saves.findIndex(s => s.name === name)
+    lastClickedRef.current = saves.findIndex(s => s.filePath === filePath)
   }, [saves])
 
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
-    const names = Array.from(selected)
+    const names = Array.from(selected).map(fp => saves.find(s => s.filePath === fp)?.name).filter((n): n is string => !!n)
     try {
       const { deleteSave } = await import('../api/instance-files.ts')
       for (const name of names) {
@@ -149,7 +149,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { 
     setBatchDeleteOpen(false)
     setBatchDeleting(false)
     load()
-  }, [instanceId, selected, load])
+  }, [instanceId, selected, saves, load])
 
   const filtered = useMemo(() => {
     if (!search) return saves
@@ -188,7 +188,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { 
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((save) => (
-              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.name)} onSelect={(e) => toggleSelect(save.name, e.shiftKey, e.ctrlKey)} />
+              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} />
             ))}
           </div>
         )}
@@ -197,7 +197,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { 
         <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
           <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
           <div className="h-5 w-px bg-border" />
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.name)))}>全选</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.filePath)))}>全选</Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
           <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
             <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
@@ -241,26 +241,26 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
+  const toggleSelect = useCallback((filePath: string, shift?: boolean, ctrl?: boolean) => {
     setSelected(prev => {
       const next = new Set(prev)
       if (ctrl) {
-        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
+        if (next.has(filePath)) next.delete(filePath); else next.add(filePath)
       } else if (shift && lastClickedRef.current >= 0) {
-        const start = Math.min(lastClickedRef.current, screenshots.findIndex(s => s.fileName === fileName))
-        const end = Math.max(lastClickedRef.current, screenshots.findIndex(s => s.fileName === fileName))
-        for (let i = start; i <= end; i++) next.add(screenshots[i].fileName)
+        const start = Math.min(lastClickedRef.current, screenshots.findIndex(s => s.filePath === filePath))
+        const end = Math.max(lastClickedRef.current, screenshots.findIndex(s => s.filePath === filePath))
+        for (let i = start; i <= end; i++) next.add(screenshots[i].filePath)
       } else {
-        next.clear(); next.add(fileName)
+        next.clear(); next.add(filePath)
       }
       return next
     })
-    lastClickedRef.current = screenshots.findIndex(s => s.fileName === fileName)
+    lastClickedRef.current = screenshots.findIndex(s => s.filePath === filePath)
   }, [screenshots])
 
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
-    const names = Array.from(selected)
+    const names = Array.from(selected).map(fp => screenshots.find(s => s.filePath === fp)?.fileName).filter((n): n is string => !!n)
     try {
       const { deleteScreenshot } = await import('../api/instance-files.ts')
       for (const name of names) {
@@ -271,7 +271,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
     setBatchDeleteOpen(false)
     setBatchDeleting(false)
     load()
-  }, [instanceId, selected, load])
+  }, [instanceId, selected, screenshots, load])
 
   const filtered = useMemo(() => {
     if (!search) return screenshots
@@ -318,7 +318,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map((s) => (
-              <ScreenshotCard key={s.filePath} screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.fileName)} onSelect={(e) => toggleSelect(s.fileName, e.shiftKey, e.ctrlKey)} />
+              <ScreenshotCard key={s.filePath} screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.filePath)} onSelect={(e) => toggleSelect(s.filePath, e.shiftKey, e.ctrlKey)} />
             ))}
           </div>
         )}
@@ -327,7 +327,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
         <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
           <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
           <div className="h-5 w-px bg-border" />
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.fileName)))}>全选</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.filePath)))}>全选</Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
           <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
             <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
