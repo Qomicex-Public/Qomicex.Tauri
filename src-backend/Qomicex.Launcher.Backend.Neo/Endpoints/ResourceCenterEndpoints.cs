@@ -75,7 +75,7 @@ public static class ResourceCenterEndpoints
                     classId: cfClassId
                 );
 
-                var items = result.Select(r => new ResourceItemDto(
+                var items = result.Results.Select(r => new ResourceItemDto(
                     Id: r.Id, Title: r.Name, Description: r.Summary,
                     Author: r.Authors.FirstOrDefault()?.Name ?? "", IconUrl: r.IconUrl,
                     DownloadCount: int.TryParse(r.DownloadCount, out var dc) ? dc : 0,
@@ -85,7 +85,7 @@ public static class ResourceCenterEndpoints
                     Slug: r.Slug
                 )).ToList();
 
-                return Results.Json(new ResourceSearchResponse(items, items.Count, page ?? 1, pageSize ?? 25),
+                return Results.Json(new ResourceSearchResponse(items, result.TotalCount, page ?? 1, pageSize ?? 25),
                     ApiJsonContext.Default.ResourceSearchResponse);
             }
 
