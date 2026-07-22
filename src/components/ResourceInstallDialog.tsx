@@ -8,7 +8,7 @@ import { Button } from './ui/button.tsx'
 import { Select, SelectOption } from './ui/select.tsx'
 import { getInstances } from '../api/instance.ts'
 import { getResourceVersions, getResourceDependencies } from '../api/resource.ts'
-import { getSettings } from '../api/settings.ts'
+import { loadSettings } from '../api/settings.ts'
 import { getInstalledFileNames, getModsMetadata, deleteMod } from '../api/instance-files.ts'
 import { startResourceDownload } from '../api/resource-download.ts'
 import { addTask, updateTask } from '../stores/downloadStore.ts'
@@ -77,7 +77,8 @@ export default function ResourceInstallDialog({
       setLoadingInstance(true)
       setLoadStage('加载实例列表中...')
       try {
-        const all = (await getInstances()).filter(i => i.gameDir === getSettings().gameDir)
+        const settings = await loadSettings()
+        const all = (await getInstances()).filter(i => i.gameDir === settings.gameDir)
         setInstances(all)
         if (all.length > 0) {
           const target = instanceId ? all.find(i => i.id === instanceId) : undefined

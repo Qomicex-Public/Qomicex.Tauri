@@ -117,6 +117,7 @@ function DependenciesCard({ resourceId, source, versions, gameVersion, loader }:
               <Link
                 key={d.projectId}
                 to={`/resource-center/${encodeURIComponent(d.projectId)}?source=${d.source || 'modrinth'}&category=mod`}
+                state={{ iconUrl: d.iconUrl }}
                 className="flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs transition-colors hover:bg-accent/30"
               >
                 {d.iconUrl ? (
