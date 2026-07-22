@@ -224,7 +224,7 @@ public static class InstanceFilesEndpoints
                 var disabledPath = path + ".disabled";
                 if (File.Exists(disabledPath)) File.Delete(disabledPath);
             }
-            return Results.Ok();
+            return Results.NoContent();
         });
 
         group.MapPost("/mods/batch-enable", (List<string> names, string id, InstanceService instances, ContentService content) =>
@@ -369,7 +369,7 @@ public static class InstanceFilesEndpoints
             var dir = GetCategoryDir(gameDir, version, isolated, "resourcepacks");
             var path = Path.Combine(dir, name);
             if (File.Exists(path)) File.Delete(path);
-            return Results.Ok();
+            return Results.NoContent();
         });
     }
 
@@ -408,7 +408,7 @@ public static class InstanceFilesEndpoints
             var dir = GetCategoryDir(gameDir, version, isolated, "shaderpacks");
             var path = Path.Combine(dir, name);
             if (File.Exists(path)) File.Delete(path);
-            return Results.Ok();
+            return Results.NoContent();
         });
     }
 
@@ -448,7 +448,7 @@ public static class InstanceFilesEndpoints
             var dir = GetCategoryDir(gameDir, version, isolated, "datapacks");
             var path = Path.Combine(dir, name);
             if (File.Exists(path)) File.Delete(path);
-            return Results.Ok();
+            return Results.NoContent();
         });
     }
 
@@ -493,7 +493,7 @@ public static class InstanceFilesEndpoints
             var dir = GetCategoryDir(gameDir, version, isolated, "screenshots");
             var path = Path.Combine(dir, name);
             if (File.Exists(path)) File.Delete(path);
-            return Results.Ok();
+            return Results.NoContent();
         });
     }
 
@@ -558,7 +558,7 @@ public static class InstanceFilesEndpoints
             var savesDir = GetCategoryDir(gameDir, version, isolated, "saves");
             var path = Path.Combine(savesDir, name);
             if (Directory.Exists(path)) Directory.Delete(path, true);
-            return Results.Ok();
+            return Results.NoContent();
         });
     }
 
@@ -594,7 +594,7 @@ public static class InstanceFilesEndpoints
             var (gameDir, version, isolated) = Resolve(id, instances);
             var sm = content.CreateServerManager(gameDir, version, isolated);
             sm.RemoveServer(ip);
-            return Results.Ok();
+            return Results.NoContent();
         });
 
         group.MapGet("/server-ping", async (string address, string id, InstanceService instances, ContentService content) =>

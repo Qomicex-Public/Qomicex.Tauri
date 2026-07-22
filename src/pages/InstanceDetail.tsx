@@ -111,6 +111,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { 
   const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     setLoading(true)
     try { const data = await getSavesMetadata(instanceId); setSaves(data) }
     catch { setSaves([]) }
@@ -138,7 +139,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { 
 
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
-    const names = Array.from(selected).map(fp => saves.find(s => s.filePath === fp)?.name).filter((n): n is string => !!n)
+    const names = Array.from(selected).map(fp => fp.replace(/\\/g, '/').split('/').pop()!).filter(Boolean)
     try {
       const { deleteSave } = await import('../api/instance-files.ts')
       for (const name of names) {
@@ -233,6 +234,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
   const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     setLoading(true)
     try { const data = await getScreenshotsMetadata(instanceId); setScreenshots(data) }
     catch { setScreenshots([]) }
@@ -375,6 +377,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [batchProcessing, setBatchProcessing] = useState(false)
 
   const loadMods = useCallback(async () => {
+    setSelected(new Set())
     const cacheKey = `api-instance-${instanceId}-mods`
     const fresh = cacheFresh<ModMetadata[]>(cacheKey)
     if (fresh) { setMods(fresh); setLoading(false); return }
@@ -634,6 +637,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
   const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     const cacheKey = `api-instance-${instanceId}-resourcepacks`
     const fresh = cacheFresh<ResourcePackMetadata[]>(cacheKey)
     if (fresh) { setPacks(fresh); setLoading(false); return }
@@ -784,6 +788,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
   const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     const cacheKey = `api-instance-${instanceId}-shaders`
     const fresh = cacheFresh<ShaderMetadata[]>(cacheKey)
     if (fresh) { setShaders(fresh); setLoading(false); return }
@@ -933,6 +938,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
   const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     const cacheKey = `api-instance-${instanceId}-datapacks`
     const fresh = cacheFresh<DataPackMetadata[]>(cacheKey)
     if (fresh) { setPacks(fresh); setLoading(false); return }

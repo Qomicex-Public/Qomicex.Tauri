@@ -48,10 +48,11 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
     setDeleting(true)
     try {
       const { deleteSave } = await import('../api/instance-files.ts')
-      await deleteSave(instanceId, save.name)
+      const folderName = save.filePath.replace(/\\/g, '/').split('/').pop() ?? save.name
+      await deleteSave(instanceId, folderName)
       onRefresh()
     } catch { setDeleting(false) }
-  }, [instanceId, save.name, onRefresh])
+  }, [instanceId, save.name, save.filePath, onRefresh])
 
   return (
     <Card className={cn('group cursor-pointer border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
