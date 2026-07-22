@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
-import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faStar } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faStar, faRotate } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
@@ -336,7 +336,7 @@ export default function Accounts() {
         actions={
           <Tooltip content="刷新">
             <button onClick={forceRefresh} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-              <FontAwesomeIcon icon={faSpinner} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              <FontAwesomeIcon icon={loading ? faSpinner : faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
             </button>
           </Tooltip>
         }
@@ -399,7 +399,7 @@ export default function Accounts() {
         </Button>
       </div>
 
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} className="max-w-md">
+      <Dialog open={addOpen} onClose={() => setAddOpen(false)} className="max-w-md" closeOnBackdrop={false}>
         <DialogHeader onClose={() => setAddOpen(false)}>
           <DialogTitle>添加账户</DialogTitle>
         </DialogHeader>

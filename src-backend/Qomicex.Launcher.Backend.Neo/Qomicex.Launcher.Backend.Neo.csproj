@@ -24,7 +24,7 @@
 
   <ItemGroup>
     <PackageReference Include="Chaos.NaCl.Standard" Version="1.0.0" />
-    <PackageReference Include="System.Management" Version="9.0.0" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <PackageReference Include="System.Management" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>

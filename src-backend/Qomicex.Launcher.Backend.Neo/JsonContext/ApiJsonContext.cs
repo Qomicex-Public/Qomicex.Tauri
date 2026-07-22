@@ -168,7 +168,7 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(ResourceDownloadEndpoints.StartDownloadRequest))]
 [JsonSerializable(typeof(ResourceDownloadEndpoints.CancelBatchRequest))]
 [JsonSerializable(typeof(ResourceDownloadEndpoints.DownloadStartResponse))]
-[JsonSerializable(typeof(ResourceDownloadEndpoints.StatusResponse))]
+[JsonSerializable(typeof(ResourceDownloadEndpoints.StatusResponse), TypeInfoPropertyName = "ResourceDownloadStatusResponse")]
 [JsonSerializable(typeof(ResourceDownloadEndpoints.DownloadProgressResponse))]
 [JsonSerializable(typeof(ResourceDownloadEndpoints.DownloadToRequest))]
 [JsonSerializable(typeof(ResourceDownloadEndpoints.DownloadToResponse))]
