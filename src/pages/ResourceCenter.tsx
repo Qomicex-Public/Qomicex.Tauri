@@ -333,141 +333,137 @@ export default function ResourceCenter() {
   const activeCategoryLabel = useMemo(() => CATEGORIES.find((item) => item.key === category)?.label ?? category, [category])
 
   return (
-    <PageShell>
-      <div className="shrink-0 space-y-6 p-8 pb-0">
-        <PageHeader title="资源中心" />
+    <PageShell className="p-8 space-y-6 overflow-y-auto">
+      <PageHeader title="资源中心" />
 
-        <Card className="border-border/60 bg-muted/20 p-4">
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
-              <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源源</p>
-                <div className="flex flex-wrap gap-2">
-                  {SOURCES.map((f) => (
-                    <button key={f.key} onClick={() => handleSourceChange(f.key)} className={cn('h-9 rounded-md px-4 text-sm font-medium transition-all', source === f.key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground')}>
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="space-y-2 xl:ml-auto">
-                <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源分类</p>
-                <div className="flex flex-wrap gap-2">
-                  {CATEGORIES.map((item) => (
-                    <button key={item.key} onClick={() => handleCategoryChange(item.key)} disabled={source === 'ftb' && item.key !== 'modpack'} className={cn('h-9 rounded-md px-4 text-sm font-medium transition-all', category === item.key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground', source === 'ftb' && item.key !== 'modpack' && 'cursor-not-allowed opacity-40 hover:bg-background hover:text-muted-foreground')}>
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_110px]">
-              <div className="relative">
-                <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
-                <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={`搜索${activeCategoryLabel}...`} className="h-10 rounded-xl border-border/60 bg-background pl-9" />
-              </div>
-              <Select value={sort} onChange={setSort} className="h-10">
-                {currentSortOptions.map((item) => (
-                  <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+      <Card className="border-border/60 bg-muted/20 p-4">
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源源</p>
+              <div className="flex flex-wrap gap-2">
+                {SOURCES.map((f) => (
+                  <button key={f.key} onClick={() => handleSourceChange(f.key)} className={cn('h-9 rounded-md px-4 text-sm font-medium transition-all', source === f.key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground')}>
+                    {f.label}
+                  </button>
                 ))}
-              </Select>
-              <Button onClick={handleSearch} className="h-10 rounded-xl">
-                <FontAwesomeIcon icon={faMagnifyingGlass} className="h-3.5 w-3.5" />
-                搜索
-              </Button>
-            </div>
-
-            <div className="flex flex-wrap items-start gap-4">
-              <div className="space-y-1">
-                <p className="text-[11px] font-medium text-muted-foreground">游戏版本</p>
-                <div className="flex items-center gap-1">
-                  <Combobox value={gameVersion} onChange={setGameVersion} options={GAME_VERSIONS.map((v) => ({ value: v, label: v }))} placeholder="全部版本" className="w-[150px]" />
-                  {gameVersion && (
-                    <button onClick={clearVersion} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                      <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
               </div>
-              <div className="space-y-1">
-                <p className="text-[11px] font-medium text-muted-foreground">加载器</p>
-                <div className="flex items-center gap-1">
-                  <Select value={loader} onChange={(v) => setLoader(v.toLowerCase())} className="h-9 min-w-[120px]" placeholder="全部加载器">
-                    {LOADERS.map((l) => (
-                      <SelectOption key={l.key} value={l.key}>{l.label}</SelectOption>
-                    ))}
-                  </Select>
-                  {loader && (
-                    <button onClick={clearLoader} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                      <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
+            </div>
+            <div className="space-y-2 xl:ml-auto">
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源分类</p>
+              <div className="flex flex-wrap gap-2">
+                {CATEGORIES.map((item) => (
+                  <button key={item.key} onClick={() => handleCategoryChange(item.key)} disabled={source === 'ftb' && item.key !== 'modpack'} className={cn('h-9 rounded-md px-4 text-sm font-medium transition-all', category === item.key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground', source === 'ftb' && item.key !== 'modpack' && 'cursor-not-allowed opacity-40 hover:bg-background hover:text-muted-foreground')}>
+                    {item.label}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
-        </Card>
 
-      </div>
-
-      <div className="flex-1 min-h-0 overflow-y-auto px-8 pb-8">
-        <div className="flex flex-col gap-3 pt-3">
-
-        {(initialLoading || isReplacing) ? (
-          <div className="flex flex-col gap-3">
-            {Array.from({ length: 5 }).map((_, index) => (
-              <Card key={index} className="animate-pulse p-4">
-                <div className="flex gap-4">
-                  <div className="h-16 w-16 rounded-2xl bg-muted" />
-                  <div className="flex-1 space-y-3">
-                    <div className="h-5 w-1/3 rounded bg-muted" />
-                    <div className="h-4 w-3/4 rounded bg-muted" />
-                    <div className="h-4 w-1/4 rounded bg-muted" />
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        ) : error ? (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 text-destructive/60" />
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_110px]">
+            <div className="relative">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
+              <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={`搜索${activeCategoryLabel}...`} className="h-10 rounded-xl border-border/60 bg-background pl-9" />
             </div>
-            <p className="text-sm font-medium text-foreground/80">搜索失败</p>
-            <p className="mt-1 text-xs text-muted-foreground/60">{error}</p>
-            <Button size="sm" variant="outline" onClick={() => doSearch(1, false)} className="mt-4">
-              <FontAwesomeIcon icon={faRotate} className="mr-1.5 h-3 w-3" />
-              重试
+            <Select value={sort} onChange={setSort} className="h-10">
+              {currentSortOptions.map((item) => (
+                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+              ))}
+            </Select>
+            <Button onClick={handleSearch} className="h-10 rounded-xl">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="h-3.5 w-3.5" />
+              搜索
             </Button>
           </div>
-        ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 opacity-40" />
-            </div>
-            <p className="text-sm font-medium text-foreground/80">未找到相关资源</p>
-            <p className="mt-1 text-xs text-muted-foreground/60">尝试更换关键词、资源源或分类</p>
-          </div>
-        ) : (
-          items.map((item) => (
-            <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} onInstall={handleInstall} cnName={cnNames[item.title]} />
-          ))
-        )}
-        </div>
 
-        {!initialLoading && !isReplacing && !error && items.length > 0 && (
-          items.length < total ? (
-            <div className="mt-5 flex justify-center">
-              <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
-                {loading ? <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />加载中...</> : <>加载更多（{items.length}/{total}）</>}
-              </Button>
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">游戏版本</p>
+              <div className="flex items-center gap-1">
+                <Combobox value={gameVersion} onChange={setGameVersion} options={GAME_VERSIONS.map((v) => ({ value: v, label: v }))} placeholder="全部版本" className="w-[150px]" />
+                {gameVersion && (
+                  <button onClick={clearVersion} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                    <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
-          ) : (
-            <p className="mt-5 text-center text-xs text-muted-foreground/50">已显示全部 {total} 个结果</p>
-          )
-        )}
-      </div>
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">加载器</p>
+              <div className="flex items-center gap-1">
+                <Select value={loader} onChange={(v) => setLoader(v.toLowerCase())} className="h-9 min-w-[120px]" placeholder="全部加载器">
+                  {LOADERS.map((l) => (
+                    <SelectOption key={l.key} value={l.key}>{l.label}</SelectOption>
+                  ))}
+                </Select>
+                {loader && (
+                  <button onClick={clearLoader} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                    <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {(initialLoading || isReplacing) ? (
+        <div className="flex flex-col gap-3">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Card key={index} className="animate-pulse p-4">
+              <div className="flex gap-4">
+                <div className="h-16 w-16 rounded-2xl bg-muted" />
+                <div className="flex-1 space-y-3">
+                  <div className="h-5 w-1/3 rounded bg-muted" />
+                  <div className="h-4 w-3/4 rounded bg-muted" />
+                  <div className="h-4 w-1/4 rounded bg-muted" />
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
+            <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 text-destructive/60" />
+          </div>
+          <p className="text-sm font-medium text-foreground/80">搜索失败</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">{error}</p>
+          <Button size="sm" variant="outline" onClick={() => doSearch(1, false)} className="mt-4">
+            <FontAwesomeIcon icon={faRotate} className="mr-1.5 h-3 w-3" />
+            重试
+          </Button>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+            <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 opacity-40" />
+          </div>
+          <p className="text-sm font-medium text-foreground/80">未找到相关资源</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">尝试更换关键词、资源源或分类</p>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-col gap-3">
+            {items.map((item) => (
+              <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} onInstall={handleInstall} cnName={cnNames[item.title]} />
+            ))}
+          </div>
+
+          {!initialLoading && !isReplacing && !error && items.length > 0 && (
+            items.length < total ? (
+              <div className="mt-5 flex justify-center">
+                <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
+                  {loading ? <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />加载中...</> : <>加载更多（{items.length}/{total}）</>}
+                </Button>
+              </div>
+            ) : (
+              <p className="mt-5 text-center text-xs text-muted-foreground/50">已显示全部 {total} 个结果</p>
+            )
+          )}
+        </>
+      )}
 
       {installDialogItem && (
         <ResourceInstallDialog

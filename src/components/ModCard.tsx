@@ -21,15 +21,14 @@ interface ModCardProps {
   onRefresh: () => void
   onToggle: (fileName: string) => void
   onChangeVersion: (mod: ModMetadata) => void
-  batchMode?: boolean
   selected?: boolean
-  onSelect?: (fileName: string) => void
+  onSelect?: (fileName: string, shiftKey: boolean, ctrlKey: boolean) => void
   hasUpdate?: boolean
 }
 
 export default function ModCard({
   mod, instanceId, gameVersion, loader, onRefresh, onToggle, onChangeVersion,
-  batchMode, selected, onSelect, hasUpdate,
+  selected, onSelect, hasUpdate,
 }: ModCardProps) {
   const navigate = useNavigate()
   const [toggling, setToggling] = useState(false)
@@ -94,9 +93,9 @@ export default function ModCard({
           className={cn(
             'group cursor-pointer select-none border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm',
             !mod.active && 'opacity-50',
-            batchMode && selected && 'ring-2 ring-primary border-primary/30'
+            selected && 'ring-2 ring-primary border-primary/30'
           )}
-          onClick={() => batchMode && onSelect?.(mod.fileName)}
+          onClick={(e) => onSelect?.(mod.fileName, e.shiftKey, e.ctrlKey || e.metaKey)}
         >
           <CardContent className="flex items-center gap-4 p-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">

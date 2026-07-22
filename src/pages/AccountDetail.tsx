@@ -69,7 +69,7 @@ export default function AccountDetail() {
   }
 
   if (loading || !account) {
-    return <div className="flex h-full items-center justify-center overflow-y-auto text-muted-foreground">加载中...</div>
+    return <div className="flex flex-1 h-full items-center justify-center overflow-y-auto text-muted-foreground">加载中...</div>
   }
 
   const textureUrl = `${API_BASE}/skin/texture/${uuid}?type=${account.loginMethod}${account.serverUrl ? `&server=${encodeURIComponent(account.serverUrl)}` : ''}`

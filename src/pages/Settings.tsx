@@ -847,7 +847,7 @@ export default function Settings() {
       <PageHeader title="设置" />
 
       <div className="flex gap-4">
-        <div className="flex w-48 shrink-0 flex-col gap-0.5">
+        <div className="sticky top-0 self-start flex w-48 shrink-0 flex-col gap-0.5">
           {CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map((cat) => (
             <button
               key={cat.id}
@@ -1200,8 +1200,8 @@ export default function Settings() {
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">{j.name}</span>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Tooltip content={j.name}><span className="min-w-0 truncate text-sm font-medium">{j.name}</span></Tooltip>
                               <Badge variant="outline" className="h-5 px-1.5 text-[10px]">{j.type}</Badge>
                               {j.discoveredBy === 'Custom' && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">手动添加</Badge>}
                               {j.state === 'Valid' ? (

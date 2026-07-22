@@ -177,7 +177,7 @@ function AppContent() {
               </>
             ) : (
               <Route path="*" element={
-                <div className="flex h-full items-center justify-center">
+                <div className="flex flex-1 h-full items-center justify-center">
                   <div className="text-center">
                     {backendState === 'loading' ? (
                       <>
