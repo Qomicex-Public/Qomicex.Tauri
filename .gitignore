@@ -68,3 +68,12 @@ skills-lock.json
 # License secrets (sensitive keys — deployer provides at build time)
 **/LicenseSecrets*.cs
 **/LicenseCore.cs
+
+# Minecraft runtime artifacts (config, logs, mixin output)
+src-backend/**/.mixin.out/
+src-backend/**/config/
+src-backend/**/defaultconfigs/
+src-backend/**/logs/
+
+# Website submodule (separate repo)
+/website/
