@@ -1,9 +1,12 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Core.AOT.JsonContext;
 using Qomicex.Core.AOT.Models.VersionManifest;
+using Qomicex.Core.AOT.Utils;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
+using Qomicex.Launcher.Backend.Neo.Services;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 
@@ -130,7 +133,7 @@ public static class VersionEndpoints
             }
         });
 
-        group.MapGet("/scan", (string gameDir, ILogger<Program> logger) =>
+        group.MapGet("/scan", (string gameDir, InstanceService instances, ILogger<Program> logger) =>
         {
             var result = new List<ScannedVersionEntry>();
             string absDir;
@@ -162,8 +165,11 @@ public static class VersionEndpoints
                             var id = root.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? name : name;
                             var inheritsFrom = root.TryGetProperty("inheritsFrom", out var infEl) ? infEl.GetString() : null;
                             var mcVersion = root.TryGetProperty("minecraftVersion", out var mcEl) ? mcEl.GetString() : null;
-                            var gameVersion = mcVersion ?? inheritsFrom ?? id;
+                            var clientVersion = root.TryGetProperty("clientVersion", out var cvEl) ? cvEl.GetString() : null;
                             var mainClass = root.TryGetProperty("mainClass", out var mcEl2) ? mcEl2.GetString() : "";
+
+                            // 6-level fallback for game version detection
+                            var gameVersion = ResolveGameVersion(root, id, inheritsFrom, clientVersion, mcVersion, dir, logger);
 
                             var loaders = DetectLoaders(root, mainClass, id, inheritsFrom);
                             result.Add(new ScannedVersionEntry(id, gameVersion, "Available", "", loaders.Count > 0 ? loaders : null));
@@ -172,6 +178,9 @@ public static class VersionEndpoints
                     }
 
                     logger.LogInformation("Scan: found {Count} versions", result.Count);
+
+                    // Auto-fix existing instances with incorrect gameVersion
+                    FixInstanceGameVersions(instances, result, gameDir, logger);
                 }
 
                 return Results.Json(new ScanVersionsResponse(absDir, result, new List<string>()), ApiJsonContext.Default.ScanVersionsResponse);
@@ -203,5 +212,95 @@ public static class VersionEndpoints
             await core.Version.UninstallVersionAsync(name);
             return Results.Json(new MessageResponse($"Uninstalled version {name}"), ApiJsonContext.Default.MessageResponse);
         });
+    }
+
+    /// <summary>
+    /// 6-level fallback game version detection: JAR → clientVersion → minecraftVersion → inheritsFrom → arguments → regex
+    /// </summary>
+    private static string ResolveGameVersion(JsonElement root, string id, string? inheritsFrom, string? clientVersion, string? mcVersion, string versionDir, ILogger logger)
+    {
+        // 1. Try reading from JAR file (highest accuracy)
+        var jarId = inheritsFrom ?? id;
+        var jarPath = Path.Combine(versionDir, $"{jarId}.jar");
+        if (!File.Exists(jarPath) && jarId != id)
+            jarPath = Path.Combine(versionDir, $"{id}.jar");
+        if (File.Exists(jarPath))
+        {
+            try
+            {
+                var fromJar = GameVersionHelper.FromJar(jarPath);
+                if (!string.IsNullOrEmpty(fromJar))
+                    return fromJar;
+            }
+            catch { /* fall through */ }
+        }
+
+        // 2. clientVersion (written by our installers after MergeVersionJson)
+        if (!string.IsNullOrEmpty(clientVersion))
+            return clientVersion;
+
+        // 3. minecraftVersion (vanilla JSON standard field)
+        if (!string.IsNullOrEmpty(mcVersion))
+            return mcVersion;
+
+        // 4. inheritsFrom (standard Forge/NeoForge unmerged JSON)
+        if (!string.IsNullOrEmpty(inheritsFrom))
+            return inheritsFrom;
+
+        // 5. --fml.mcVersion from arguments.game (Forge 1.13+)
+        if (root.TryGetProperty("arguments", out var argsEl) && argsEl.ValueKind == JsonValueKind.Object)
+        {
+            if (argsEl.TryGetProperty("game", out var gameEl) && gameEl.ValueKind == JsonValueKind.Array)
+            {
+                var gameArgs = gameEl.EnumerateArray().ToArray();
+                for (int i = 0; i < gameArgs.Length - 1; i++)
+                {
+                    var argStr = gameArgs[i].ValueKind == JsonValueKind.String ? gameArgs[i].GetString() : null;
+                    if (argStr == "--fml.mcVersion")
+                    {
+                        var val = gameArgs[i + 1].ValueKind == JsonValueKind.String ? gameArgs[i + 1].GetString() : null;
+                        if (!string.IsNullOrEmpty(val))
+                            return val;
+                    }
+                }
+            }
+        }
+
+        // 6. Regex extract from id (final fallback)
+        var match = Regex.Match(id, @"^(\d+\.\d+(?:\.\d+)?)");
+        if (match.Success)
+            return match.Value;
+
+        return id;
+    }
+
+    /// <summary>
+    /// Auto-fix existing instances whose gameVersion doesn't match scan results
+    /// </summary>
+    private static void FixInstanceGameVersions(InstanceService instances, List<ScannedVersionEntry> scanned, string gameDir, ILogger logger)
+    {
+        try
+        {
+            var allInstances = instances.GetAll();
+            foreach (var inst in allInstances)
+            {
+                if (inst.GameDir != gameDir) continue;
+
+                var scannedVersion = scanned.FirstOrDefault(s => s.Name == inst.Name);
+                if (scannedVersion == null) continue;
+
+                if (inst.GameVersion != scannedVersion.GameVersion)
+                {
+                    logger.LogInformation("Scan: fixing instance {Name} gameVersion {Old} → {New}",
+                        inst.Name, inst.GameVersion, scannedVersion.GameVersion);
+                    inst.GameVersion = scannedVersion.GameVersion;
+                    instances.Update(inst.Id, inst);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Scan: failed to fix instance game versions");
+        }
     }
 }
