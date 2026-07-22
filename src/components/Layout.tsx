@@ -138,7 +138,7 @@ export default function Layout() {
         <Sidebar />
         <div className="flex flex-1 flex-col min-w-0">
           {!isLinux && !isMacos && <TitleBar />}
-          <div className="relative flex-1 min-w-0 overflow-hidden">
+          <div className="relative flex-1 min-w-0">
             <div className="absolute inset-0 bg-background/50 backdrop-blur-sm" />
             <main className="relative z-10 flex-1 overflow-y-auto overflow-x-hidden">
               <Outlet />
