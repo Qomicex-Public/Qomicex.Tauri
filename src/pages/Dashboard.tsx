@@ -18,6 +18,7 @@ import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { AnnouncementCard } from '../components/AnnouncementCard.tsx'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -175,6 +176,8 @@ export default function Dashboard() {
           )}
         </div>
 
+        {/* 公告卡片 */}
+        <AnnouncementCard />
       </div>
 
       {/* Bottom action bar */}

@@ -144,6 +144,7 @@ app.MapLogEndpoints();
 app.MapConnectorEndpoints();
 app.MapInstanceFilesEndpoints(curseForgeApiKey);
 app.MapLicenseEndpoints();
+app.MapAnnouncementEndpoints();
 
 // LAN listener lifecycle
 var lanListener = app.Services.GetRequiredService<LanGameListenerService>();
