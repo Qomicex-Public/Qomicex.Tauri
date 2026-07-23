@@ -631,7 +631,6 @@ jobs:
       - windows-arm64
       - linux-x64
       - linux-arm64
-      - loongarch64
       - macos-arm64
       - macos-x64
     runs-on: ubuntu-latest
