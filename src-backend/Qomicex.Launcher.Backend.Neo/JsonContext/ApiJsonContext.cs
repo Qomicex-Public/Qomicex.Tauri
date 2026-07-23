@@ -197,6 +197,7 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(LicenseStatusResponse))]
 [JsonSerializable(typeof(LicenseActivateRequest))]
 [JsonSerializable(typeof(LicenseActivateResponse))]
+[JsonSerializable(typeof(UpdateCheckResponse))]
 [JsonSerializable(typeof(PublicKeyResponse))]
 [JsonSerializable(typeof(AnnouncementDto))]
 [JsonSerializable(typeof(List<AnnouncementDto>))]

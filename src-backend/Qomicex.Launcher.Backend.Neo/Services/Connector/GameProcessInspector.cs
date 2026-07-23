@@ -32,16 +32,19 @@ public sealed class GameProcessInspector
         return new GameProcessInfo(name, uuid, isMicrosoft, version);
     }
 
-    public int? ScanJavaPort()
+    public int? ScanJavaPort() => ScanAllJavaPorts().FirstOrDefault() as int?;
+
+    public List<int> ScanAllJavaPorts()
     {
-        if (OperatingSystem.IsWindows()) return ScanJavaPortWindows();
-        if (OperatingSystem.IsLinux()) return ScanJavaPortLinux();
-        if (OperatingSystem.IsMacOS()) return ScanJavaPortMac();
-        return null;
+        if (OperatingSystem.IsWindows()) return ScanJavaPortsWindows();
+        if (OperatingSystem.IsLinux()) return ScanJavaPortsLinux();
+        if (OperatingSystem.IsMacOS()) return ScanJavaPortsMac();
+        return new List<int>();
     }
 
-    private int? ScanJavaPortWindows()
+    private List<int> ScanJavaPortsWindows()
     {
+        var ports = new List<int>();
         try
         {
             int bufferSize = 0;
@@ -51,7 +54,7 @@ public sealed class GameProcessInspector
             try
             {
                 if (GetExtendedTcpTable(buffer, ref bufferSize, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != 0)
-                    return null;
+                    return ports;
 
                 int rowCount = Marshal.ReadInt32(buffer);
                 var rowPtr = IntPtr.Add(buffer, 4);
@@ -65,7 +68,7 @@ public sealed class GameProcessInspector
                         var proc = System.Diagnostics.Process.GetProcessById((int)row.owningPid);
                         var name = proc.ProcessName.ToLowerInvariant();
                         if (name is "java" or "javaw")
-                            return localPort;
+                            ports.Add(localPort);
                     }
                     catch { }
                 }
@@ -73,11 +76,12 @@ public sealed class GameProcessInspector
             finally { Marshal.FreeHGlobal(buffer); }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Windows Java 端口扫描失败"); }
-        return null;
+        return ports;
     }
 
-    private int? ScanJavaPortLinux()
+    private List<int> ScanJavaPortsLinux()
     {
+        var ports = new List<int>();
         try
         {
             var portToInode = new Dictionary<int, string>();
@@ -95,7 +99,7 @@ public sealed class GameProcessInspector
                         portToInode[p] = parts[9];
                 }
             }
-            if (portToInode.Count == 0) return null;
+            if (portToInode.Count == 0) return ports;
 
             foreach (var procDir in Directory.EnumerateDirectories("/proc"))
             {
@@ -117,7 +121,7 @@ public sealed class GameProcessInspector
                         foreach (var kv in portToInode)
                         {
                             if (link.Contains($"socket:[{kv.Value}]"))
-                                return kv.Key;
+                                ports.Add(kv.Key);
                         }
                     }
                 }
@@ -125,11 +129,12 @@ public sealed class GameProcessInspector
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Linux Java 端口扫描失败"); }
-        return null;
+        return ports;
     }
 
-    private int? ScanJavaPortMac()
+    private List<int> ScanJavaPortsMac()
     {
+        var ports = new List<int>();
         try
         {
             var output = RunProcess("lsof", "-nP -iTCP -sTCP:LISTEN -c java -F pn");
@@ -143,12 +148,14 @@ public sealed class GameProcessInspector
                         port = p;
                 }
                 if (line.StartsWith('p') && port.HasValue)
-                    return port.Value;
+                {
+                    ports.Add(port.Value);
+                    port = null;
+                }
             }
-            if (port.HasValue) return port.Value;
         }
         catch (Exception ex) { _logger.LogWarning(ex, "macOS Java 端口扫描失败"); }
-        return null;
+        return ports;
     }
 
     private int? FindPidByPort(int port)
@@ -272,13 +279,7 @@ public sealed class GameProcessInspector
         try
         {
             if (OperatingSystem.IsWindows())
-            {
-                using var searcher = new System.Management.ManagementObjectSearcher(
-                    $"SELECT CommandLine FROM Win32_Process WHERE ProcessId={pid}");
-                foreach (var o in searcher.Get())
-                    return o["CommandLine"]?.ToString();
-                return null;
-            }
+                return GetCommandLineWindows(pid);
             if (OperatingSystem.IsLinux())
             {
                 var path = $"/proc/{pid}/cmdline";
@@ -289,6 +290,59 @@ public sealed class GameProcessInspector
                 return RunProcess("ps", $"-p {pid} -o command=").Trim();
         }
         catch (Exception ex) { _logger.LogWarning(ex, "读取 PID {Pid} 命令行失败", pid); }
+        return null;
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private string? GetCommandLineWindows(int pid)
+    {
+        // 1) in-process WMI
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                $"SELECT CommandLine FROM Win32_Process WHERE ProcessId={pid}");
+            foreach (var o in searcher.Get())
+            {
+                var cmd = o["CommandLine"]?.ToString();
+                if (!string.IsNullOrEmpty(cmd)) return cmd;
+            }
+        }
+        catch (Exception ex) { _logger.LogDebug(ex, "WMI 内联查询 CommandLine 失败 (PID {Pid})", pid); }
+
+        // 2) wmic external fallback
+        try
+        {
+            var output = RunProcess("wmic", $"process where ProcessId={pid} get CommandLine /format:csv");
+            var cmd = ParseWmicCsv(output);
+            if (!string.IsNullOrEmpty(cmd)) return cmd;
+        }
+        catch (Exception ex) { _logger.LogDebug(ex, "wmic 备选查询 CommandLine 失败 (PID {Pid})", pid); }
+
+        // 3) PowerShell CIM fallback
+        try
+        {
+            var args = $"-NoProfile -NonInteractive -Command \"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine\"";
+            var output = RunProcess("powershell", args);
+            var cmd = output?.Trim();
+            if (!string.IsNullOrEmpty(cmd)) return cmd;
+        }
+        catch (Exception ex) { _logger.LogDebug(ex, "PowerShell CIM 备选查询 CommandLine 失败 (PID {Pid})", pid); }
+
+        return null;
+    }
+
+    private static string? ParseWmicCsv(string output)
+    {
+        foreach (var line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.StartsWith("Node", StringComparison.OrdinalIgnoreCase)) continue;
+            var commaIdx = line.IndexOf(',');
+            if (commaIdx < 0) continue;
+            var cmd = line[(commaIdx + 1)..].Trim();
+            if (cmd.Length >= 2 && cmd.StartsWith('"') && cmd.EndsWith('"'))
+                cmd = cmd[1..^1];
+            if (!string.IsNullOrEmpty(cmd)) return cmd;
+        }
         return null;
     }
 

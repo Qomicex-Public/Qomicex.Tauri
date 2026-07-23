@@ -19,6 +19,7 @@ import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
+import { checkUpdate } from '../api/update.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
@@ -94,37 +95,13 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     setUpdateState('checking')
     setUpdateError(undefined)
     try {
-      let endpoint: string
-      if (channel === 'stable') {
-        endpoint = 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json'
-      } else {
-        const res = await fetch('https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases?per_page=5')
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
-          if (body.message?.includes?.('rate limit')) throw new Error('GitHub API 速率限制，请稍后重试')
-          throw new Error('获取更新信息失败')
-        }
-        const releases: any[] = await res.json()
-        const pre = releases.find(r => r.prerelease && !r.draft)
-        if (!pre) throw new Error('没有测试版更新')
-        const asset = pre.assets.find((a: any) => a.name === 'beta.json')
-        if (!asset) throw new Error('测试版更新清单不存在')
-        endpoint = asset.browser_download_url
-      }
-      const metadata: any = await invoke('check_update_with_endpoint', { endpoint })
-      if (!metadata) {
+      const result = await checkUpdate(channel)
+      if (!result.hasUpdate) {
         setUpdateState('uptodate')
         return
       }
-      let body = metadata.body ?? ''
-      if (!body || body.startsWith('Release ')) {
-        try {
-          const res = await fetch(`https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases/tags/v${metadata.version}`)
-          if (res.ok) body = (await res.json()).body ?? body
-        } catch {}
-      }
-      setDownloadUrl(metadata.downloadUrl ?? '')
-      setUpdateInfo({ version: metadata.version, body })
+      setDownloadUrl(result.downloadUrl ?? '')
+      setUpdateInfo({ version: result.version!, body: result.changelog ?? '' })
       setUpdateState('available')
     } catch (e) {
       setUpdateState('error')
@@ -276,6 +253,9 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             <Select value={channel} onChange={setChannelAndSave} className="w-28">
               <SelectOption value="stable">稳定版</SelectOption>
               <SelectOption value="beta">测试版</SelectOption>
+              {licenseStatus?.valid && licenseStatus?.channel === 'alpha' && (
+                <SelectOption value="alpha">Alpha</SelectOption>
+              )}
             </Select>
             <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
               <FontAwesomeIcon icon={updateState === 'checking' ? faRotate : faArrowUp} className={cn('mr-1 h-3 w-3', updateState === 'checking' && 'animate-spin')} />

@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { invoke } from '@tauri-apps/api/core'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
 import Instances from './pages/Instances.tsx'
@@ -22,6 +21,7 @@ import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
+import { checkUpdate } from './api/update.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { Button } from './components/ui/button.tsx'
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
@@ -80,37 +80,23 @@ function AppContent() {
     const timer = setTimeout(async () => {
       try {
         const channel = localStorage.getItem('update-channel') || 'stable'
-        let endpoint: string
-        if (channel === 'stable') {
-          endpoint = 'https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest/download/latest.json'
-        } else {
-          const res = await fetch('https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases?per_page=5')
-          if (!res.ok) return
-          const releases: any[] = await res.json()
-          const pre = releases.find(r => r.prerelease && !r.draft)
-          if (!pre) return
-          const asset = pre.assets.find((a: any) => a.name === 'beta.json')
-          if (!asset) return
-          endpoint = asset.browser_download_url
-        }
-        const metadata: any = await invoke('check_update_with_endpoint', { endpoint })
-        if (!metadata) return
-        const required = !!(metadata.rawJson?.required)
+        const result = await checkUpdate(channel)
+        if (!result.hasUpdate) return
+
         const snooze = localStorage.getItem('snooze-update')
         if (snooze) {
           try {
             const s = JSON.parse(snooze)
-            if (s.version === metadata.version && s.until > Date.now()) return
+            if (s.version === result.version && s.until > Date.now()) return
           } catch {}
         }
-        let body = metadata.body ?? ''
-        if (!body || body.startsWith('Release ')) {
-          try {
-            const res = await fetch(`https://api.github.com/repos/Qomicex-Public/Qomicex.Tauri/releases/tags/v${metadata.version}`)
-            if (res.ok) body = (await res.json()).body ?? body
-          } catch {}
-        }
-        setPendingUpdate({ version: metadata.version, body, required, downloadUrl: metadata.downloadUrl })
+
+        setPendingUpdate({
+          version: result.version!,
+          body: result.changelog ?? '',
+          required: result.required,
+          downloadUrl: result.downloadUrl!,
+        })
       } catch (e) {
         console.warn('[updater] background check failed:', e)
       }
