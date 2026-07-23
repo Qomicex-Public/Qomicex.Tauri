@@ -641,6 +641,11 @@ jobs:
           pattern: update-fragment-*
           merge-multiple: true
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qomicex-launcher-*
+          merge-multiple: true
+
       - name: Merge update fragments into latest.json
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -670,4 +675,5 @@ jobs:
           prerelease: ${{ needs.setup.outputs.prerelease }}
           files: |
             latest.json
+            qomicex-launcher-*/**/*
           fail_on_unmatched_files: false
