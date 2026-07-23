@@ -58,9 +58,11 @@ Types: `feat`, `fix`, `build`, `chore`, `ci`, `docs`, `perf`, `refactor`, `rever
 
 ## CI/CD
 
-`.github/workflows/build-backend.yml` — `workflow_dispatch` (with `prerelease` boolean input) or `release: [published]`. Select platform (`windows`/`linux`/`macos`/`all`), bundles, and macOS arch.
+`.github/workflows/release.yml` — `workflow_dispatch` (填版本各部分，自动构造标准版本号) 或 `release: [published]` (从 tag 解析版本)。版本格式: `v<major>.<minor>.<patch>-<type><序数>.<补丁/构建>`，其中 release/beta 用人工输入的序数，alpha 自动取当天日期+当日构建序号。
 
-Requires `QOMICEX_PAT` secret for submodule checkout. Builds publish backend per-RID, embed it into `src-tauri/binaries/`, then build Tauri bundle. Marked as pre-release when the input or the GitHub release has `prerelease: true`.
+构建时可选择: 平台、打包格式、架构、是否启用许可证验证 (`-p:LicenseRequired=true`)，是否标记 GitHub Pre-release。
+
+requires `QOMICEX_PAT` secret for submodule checkout. Builds publish backend per-RID, embed it into `src-tauri/binaries/`, then build Tauri bundle.
 
 ## Import rules (critical)
 

@@ -1,0 +1,619 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      major:
+        description: '主版本号'
+        required: true
+        default: '0'
+      minor:
+        description: '次版本号'
+        required: true
+        default: '1'
+      patch:
+        description: '补丁版本号'
+        required: true
+        default: '0'
+      releaseType:
+        description: '发布类型'
+        required: true
+        type: choice
+        options:
+          - release
+          - beta
+          - alpha
+      releaseNum:
+        description: '发布序数（仅 release/beta，如 release5 的 5）'
+        required: false
+        default: '1'
+      licenseRequired:
+        description: '启用许可证验证'
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: '标记为 GitHub Pre-release'
+        required: false
+        default: false
+        type: boolean
+      buildPlatform:
+        description: '构建平台'
+        required: true
+        default: 'linux'
+        type: choice
+        options:
+          - windows
+          - linux
+          - macos
+          - loongarch64
+          - all
+      linuxBundles:
+        description: 'Linux 打包格式（仅 linux/all 时有效）'
+        required: false
+        default: 'appimage,deb,rpm'
+        type: choice
+        options:
+          - appimage,deb,rpm
+          - appimage,deb
+          - appimage,rpm
+          - deb,rpm
+          - appimage
+          - deb
+          - rpm
+      macosArch:
+        description: 'macOS 架构（仅 macos/all 时有效）'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - arm64
+          - x64
+      windowsArch:
+        description: 'Windows 架构（仅 windows/all 时有效）'
+        required: false
+        default: 'x64'
+        type: choice
+        options:
+          - both
+          - arm64
+          - x64
+      linuxArch:
+        description: 'Linux 架构（仅 linux/all 时有效）'
+        required: false
+        default: 'x64'
+        type: choice
+        options:
+          - both
+          - arm64
+          - x64
+  release:
+    types: [published]
+
+env:
+  CARGO_TERM_COLORS: always
+  GITHUB_SHA: ${{ github.sha }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.construct.outputs.version }}
+      displayVersion: ${{ steps.construct.outputs.displayVersion }}
+      releaseType: ${{ steps.construct.outputs.releaseType }}
+      prerelease: ${{ steps.construct.outputs.prerelease }}
+      licenseRequired: ${{ steps.construct.outputs.licenseRequired }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+
+      - name: Construct version
+        id: construct
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            TAG="${TAG#v}"
+            echo "version=$TAG" >> "$GITHUB_OUTPUT"
+            echo "displayVersion=v$TAG" >> "$GITHUB_OUTPUT"
+            TYPE=$(echo "$TAG" | sed -n 's/^[0-9.]*-\([a-z]*\)[0-9].*/\1/p')
+            echo "releaseType=$TYPE" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${{ github.event.release.prerelease }}" >> "$GITHUB_OUTPUT"
+            echo "licenseRequired=false" >> "$GITHUB_OUTPUT"
+          else
+            RTYPE="${{ github.event.inputs.releaseType }}"
+            MAJOR="${{ github.event.inputs.major }}"
+            MINOR="${{ github.event.inputs.minor }}"
+            PATCH="${{ github.event.inputs.patch }}"
+            RNUM="${{ github.event.inputs.releaseNum }}"
+
+            if [ "$RTYPE" = "alpha" ]; then
+              DATE=$(date +%Y%m%d)
+              MAX_N=-1
+              for TAG in $(git tag -l "v*-alpha${DATE}.*" 2>/dev/null); do
+                N=$(echo "$TAG" | sed "s/.*alpha${DATE}\\.\\([0-9]*\\)/\\1/")
+                if [ "$N" -gt "$MAX_N" ] 2>/dev/null; then MAX_N=$N; fi
+              done
+              BUILD=$((MAX_N + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}-alpha${DATE}.${BUILD}"
+            else
+              VERSION="${MAJOR}.${MINOR}.${PATCH}-${RTYPE}${RNUM}.0"
+            fi
+
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "displayVersion=v$VERSION" >> "$GITHUB_OUTPUT"
+            echo "releaseType=$RTYPE" >> "$GITHUB_OUTPUT"
+
+            PR="${{ github.event.inputs.prerelease }}"
+            if [ "$RTYPE" = "release" ]; then
+              echo "prerelease=${PR}" >> "$GITHUB_OUTPUT"
+            else
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            fi
+            echo "licenseRequired=${{ github.event.inputs.licenseRequired }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version files
+        if: github.event_name == 'workflow_dispatch'
+        run: node scripts/bump-version.mjs "${{ steps.construct.outputs.version }}"
+
+      - name: Show version
+        run: |
+          echo "Version: ${{ steps.construct.outputs.displayVersion }}"
+          echo "Type: ${{ steps.construct.outputs.releaseType }}"
+          echo "Prerelease: ${{ steps.construct.outputs.prerelease }}"
+          echo "License: ${{ steps.construct.outputs.licenseRequired }}"
+
+  windows-x64:
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'x64'))
+    needs: [setup]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-pc-windows-msvc }
+      - uses: swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+        shell: pwsh
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+        shell: pwsh
+      - run: |
+          Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
+          Remove-Item -Recurse -Force src-tauri/binaries/tmp
+        shell: pwsh
+      - run: npm ci
+      - run: npm run tauri -- build --bundles nsis
+      - name: Generate update manifest fragment
+        shell: pwsh
+        run: |
+          $version = "${{ needs.setup.outputs.displayVersion }}"
+          Write-Output "=== Bundle dir contents ==="
+          Get-ChildItem -Recurse -Path "src-tauri/target/release/bundle" | Select-Object FullName
+          $sig = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
+          if (-not $sig) { throw "No .sig file found in bundle directory" }
+          $content = (Get-Content -Raw $sig.FullName).Trim()
+          $assetName = $sig.Name -replace '\.sig$', ''
+          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$assetName"
+          $platform = "windows-x86_64"
+          $fragment = @{ $platform = @{ signature = $content; url = $url } }
+          $json = $fragment | ConvertTo-Json -Compress -Depth 10
+          Set-Content -Path "update-fragment-$platform.json" -Value $json
+          Write-Output "Fragment: $json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v4
+        with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
+
+  windows-arm64:
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'arm64'))
+    needs: [setup]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-pc-windows-msvc }
+      - uses: swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+        shell: pwsh
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+        shell: pwsh
+      - run: |
+          Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
+          Remove-Item -Recurse -Force src-tauri/binaries/tmp
+        shell: pwsh
+      - run: npm ci
+      - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
+      - name: Generate update manifest fragment
+        shell: pwsh
+        run: |
+          $version = "${{ needs.setup.outputs.displayVersion }}"
+          Write-Output "=== Bundle dir contents ==="
+          Get-ChildItem -Recurse -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" | Select-Object FullName
+          $sig = Get-ChildItem -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
+          if (-not $sig) { throw "No .sig file found in bundle directory" }
+          $content = (Get-Content -Raw $sig.FullName).Trim()
+          $assetName = $sig.Name -replace '\.sig$', ''
+          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$assetName"
+          $platform = "windows-aarch64"
+          $fragment = @{ $platform = @{ signature = $content; url = $url } }
+          $json = $fragment | ConvertTo-Json -Compress -Depth 10
+          Set-Content -Path "update-fragment-$platform.json" -Value $json
+          Write-Output "Fragment: $json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v4
+        with: { name: qomicex-launcher-windows-arm64, path: src-tauri/target/aarch64-pc-windows-msvc/release/bundle/ }
+
+  linux-x64:
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'x64'))
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-unknown-linux-gnu }
+      - uses: swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+      - run: |
+          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
+          rm -rf src-tauri/binaries/tmp
+      - run: npm ci
+      - run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
+          fi
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+          PLATFORM="linux-x86_64"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v4
+        with: { name: qomicex-launcher-linux-x64, path: src-tauri/target/release/bundle/ }
+
+  linux-arm64:
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'arm64'))
+    needs: [setup]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-unknown-linux-gnu }
+      - uses: swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+      - run: |
+          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
+          rm -rf src-tauri/binaries/tmp
+      - run: npm ci
+      - run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
+          fi
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+          PLATFORM="linux-aarch64"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v4
+        with: { name: qomicex-launcher-linux-arm64, path: src-tauri/target/release/bundle/ }
+
+  loongarch64:
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'loongarch64'))
+    needs: [setup]
+    runs-on: [self-hosted, loongarch64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: loongarch64-unknown-linux-gnu }
+      - uses: swatinem/rust-cache@v2
+      - name: Setup .NET (LoongArch SDK)
+        run: |
+          curl -sL "https://github.com/loongson/dotnet/releases/download/v10.0.109-loongarch64/dotnet-sdk-10.0.109-linux-loongarch64.tar.gz" | tar xz -C /usr/local/dotnet
+          echo "/usr/local/dotnet" >> $GITHUB_PATH
+          dotnet nuget add source -n lnuget.loongnix.cn --protocol-version 3 https://lnuget.loongnix.cn/v3/index.json
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-loongarch64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+      - run: |
+          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
+          rm -rf src-tauri/binaries/tmp
+      - run: npm ci
+      - run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
+          fi
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+          PLATFORM="linux-loongarch64"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v4
+        with: { name: qomicex-launcher-linux-loongarch64, path: src-tauri/target/release/bundle/ }
+
+  macos-arm64:
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'arm64'))
+    needs: [setup]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-apple-darwin }
+      - uses: swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+      - run: |
+          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
+          rm -rf src-tauri/binaries/tmp
+      - run: npm ci
+      - run: npm run tauri -- build --bundles app
+      - name: Create DMG
+        run: |
+          APP="src-tauri/target/release/bundle/macos/qomicex-launcher.app"
+          DMG_DIR="src-tauri/target/release/bundle/dmg"
+          mkdir -p "$DMG_DIR"
+          codesign --force --deep --sign - "$APP"
+          hdiutil create -volname "Qomicex Launcher" \
+            -srcfolder "$APP" \
+            -ov -format UDZO \
+            "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_$(uname -m).dmg"
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
+          fi
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+          PLATFORM="darwin-aarch64"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v4
+        with: { name: qomicex-launcher-macos-arm64, path: src-tauri/target/release/bundle/ }
+
+  macos-x64:
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'x64'))
+    needs: [setup]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-apple-darwin }
+      - uses: swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm }
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+      - run: |
+          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
+          rm -rf src-tauri/binaries/tmp
+      - run: npm ci
+      - run: npm run tauri -- build --bundles app
+      - name: Create DMG
+        run: |
+          APP="src-tauri/target/release/bundle/macos/qomicex-launcher.app"
+          DMG_DIR="src-tauri/target/release/bundle/dmg"
+          mkdir -p "$DMG_DIR"
+          codesign --force --deep --sign - "$APP"
+          hdiutil create -volname "Qomicex Launcher" \
+            -srcfolder "$APP" \
+            -ov -format UDZO \
+            "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_$(uname -m).dmg"
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
+          fi
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+          PLATFORM="darwin-x86_64"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v4
+        with: { name: qomicex-launcher-macos-x64, path: src-tauri/target/release/bundle/ }
+
+  release:
+    if: success()
+    needs:
+      - setup
+      - windows-x64
+      - windows-arm64
+      - linux-x64
+      - linux-arm64
+      - loongarch64
+      - macos-arm64
+      - macos-x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: update-fragment-*
+          merge-multiple: true
+
+      - name: Merge update fragments into latest.json
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          echo '{"version":"'"$VERSION"'","platforms":{}}' > latest.json
+          for f in update-fragment-*.json; do
+            if [ -f "$f" ]; then
+              KEY=$(jq -r 'keys[0]' "$f")
+              VAL=$(jq '.[keys[0]]' "$f")
+              jq --arg k "$KEY" --argjson v "$VAL" '.platforms[$k] = $v' latest.json > tmp.json
+              mv tmp.json latest.json
+            fi
+          done
+          jq '.pub_date = (now | strftime("%Y-%m-%dT%H:%M:%SZ"))' latest.json > tmp.json
+          mv tmp.json latest.json
+          echo "=== latest.json ==="
+          cat latest.json
+
+      - name: Create/update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.setup.outputs.displayVersion }}
+          name: Qomicex Launcher ${{ needs.setup.outputs.displayVersion }}
+          body: |
+            ## Qomicex Launcher ${{ needs.setup.outputs.displayVersion }}
+
+            ${{ needs.setup.outputs.releaseType }} release.
+          prerelease: ${{ needs.setup.outputs.prerelease }}
+          files: |
+            latest.json
+          fail_on_unmatched_files: false
