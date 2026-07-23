@@ -610,23 +610,23 @@ jobs:
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
-      - run: npm run tauri -- build --bundles app
+      - run: npm run tauri -- build --bundles app --target x86_64-apple-darwin
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Create DMG
         run: |
-          APP="src-tauri/target/release/bundle/macos/qomicex-launcher.app"
-          DMG_DIR="src-tauri/target/release/bundle/dmg"
+          APP="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/qomicex-launcher.app"
+          DMG_DIR="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg"
           mkdir -p "$DMG_DIR"
           codesign --force --deep --sign - "$APP"
           hdiutil create -volname "Qomicex Launcher" \
             -srcfolder "$APP" \
             -ov -format UDZO \
-            "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_$(uname -m).dmg"
+            "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_x86_64.dmg"
       - name: Sign DMG for updater
         run: |
-          DMG=$(find src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
+          DMG=$(find src-tauri/target/x86_64-apple-darwin/release/bundle/dmg -name '*.dmg' | head -1)
           if [ -z "$DMG" ]; then
             echo "ERROR: No DMG found to sign"
             exit 1
@@ -638,7 +638,7 @@ jobs:
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
-          BUNDLE_DIR="src-tauri/target/release/bundle"
+          BUNDLE_DIR="src-tauri/target/x86_64-apple-darwin/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
           DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
@@ -656,8 +656,8 @@ jobs:
         with:
           name: qomicex-launcher-macos-x64
           path: |
-            src-tauri/target/release/bundle/**/*.dmg
-            src-tauri/target/release/bundle/**/*.dmg.sig
+            src-tauri/target/x86_64-apple-darwin/release/bundle/**/*.dmg
+            src-tauri/target/x86_64-apple-darwin/release/bundle/**/*.dmg.sig
 
   release:
     if: success()
