@@ -124,49 +124,47 @@ function AppContent() {
         <RunningNotifyBridge />
         <TaskCompletionNotifier />
         <Routes>
-          <Route element={<Layout />}>
-            {backendState === 'ready' ? (
-              <>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/instances" element={<Instances />} />
-                <Route path="/instances/:id" element={<InstanceDetailPage />} />
-                <Route path="/downloads" element={<DownloadCenter />} />
-                <Route path="/accounts" element={<Accounts />} />
-                <Route path="/accounts/:uuid" element={<AccountDetail />} />
-                <Route path="/resource-center" element={<ResourceCenter />} />
-                <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
-                <Route path="/connect" element={<Connect />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/running" element={<RunningInstances />} />
-              </>
-            ) : (
-              <Route path="*" element={
-                <div className="flex h-full items-center justify-center">
-                  <div className="text-center">
-                    {backendState === 'loading' ? (
-                      <>
-                        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                        <p className="mt-4 text-sm text-muted-foreground">启动后端服务...</p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-destructive font-medium">后端启动失败</p>
-                        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                          后端进程异常退出，请检查日志后重试。
-                        </p>
-                        <div className="mt-4 flex items-center justify-center gap-3">
-                          <Button onClick={() => window.location.reload()}>重试</Button>
-                          <Button variant="outline" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))}>
-                            反馈问题
-                          </Button>
-                        </div>
-                      </>
-                    )}
-                  </div>
+          {backendState === 'ready' ? (
+            <Route element={<Layout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/instances" element={<Instances />} />
+              <Route path="/instances/:id" element={<InstanceDetailPage />} />
+              <Route path="/downloads" element={<DownloadCenter />} />
+              <Route path="/accounts" element={<Accounts />} />
+              <Route path="/accounts/:uuid" element={<AccountDetail />} />
+              <Route path="/resource-center" element={<ResourceCenter />} />
+              <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
+              <Route path="/connect" element={<Connect />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/running" element={<RunningInstances />} />
+            </Route>
+          ) : (
+            <Route path="*" element={
+              <div className="flex h-screen items-center justify-center bg-background">
+                <div className="text-center">
+                  {backendState === 'loading' ? (
+                    <>
+                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                      <p className="mt-4 text-sm text-muted-foreground">启动后端服务...</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-destructive font-medium">后端启动失败</p>
+                      <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                        后端进程异常退出，请检查日志后重试。
+                      </p>
+                      <div className="mt-4 flex items-center justify-center gap-3">
+                        <Button onClick={() => window.location.reload()}>重试</Button>
+                        <Button variant="outline" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))}>
+                          反馈问题
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </div>
-              } />
-            )}
-          </Route>
+              </div>
+            } />
+          )}
         </Routes>
       </BrowserRouter>
       <LaunchProgressDialog />
