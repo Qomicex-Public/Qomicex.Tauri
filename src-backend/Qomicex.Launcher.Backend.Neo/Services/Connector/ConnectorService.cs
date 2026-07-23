@@ -69,7 +69,8 @@ public sealed class ConnectorService : IDisposable
         LanGameListenerService lanListener,
         InstanceService instances,
         SkinService skinService,
-        EasyTierProvider easyTier)
+        EasyTierProvider easyTier,
+        PrivateRelayNodeFetcher relayFetcher)
     {
         _logger = logger;
         _inspector = inspector;
@@ -78,7 +79,11 @@ public sealed class ConnectorService : IDisposable
         _instances = instances;
         _skinService = skinService;
         _easyTier = easyTier;
-        _client = new ScaffoldingClient(easyTierPath: EasyTierProvider.GetExecutablePath(), userAgent: $"QML/{LauncherVersion}");
+        var privateNodes = relayFetcher.FetchAsync().GetAwaiter().GetResult();
+        _client = new ScaffoldingClient(
+            easyTierPath: EasyTierProvider.GetExecutablePath(),
+            userAgent: $"QML/{LauncherVersion}",
+            relayNodes: privateNodes.Length > 0 ? privateNodes : null);
     }
 
     private static string MachineId

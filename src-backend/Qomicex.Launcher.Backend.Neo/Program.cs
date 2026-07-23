@@ -95,6 +95,14 @@ builder.Services.AddSingleton<SkinService>();
 // Connector
 builder.Services.AddSingleton<LanGameListenerService>();
 builder.Services.AddSingleton<GameProcessInspector>();
+builder.Services.AddSingleton(sp =>
+{
+    var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+    var apiUrl = builder.Configuration["Connector:RelayApi"] ?? "";
+    var logger = sp.GetRequiredService<ILogger<PrivateRelayNodeFetcher>>();
+    return new PrivateRelayNodeFetcher(client, apiUrl, logger);
+});
 builder.Services.AddSingleton<ConnectorService>();
 builder.Services.AddSingleton<EasyTierProvider>();
 builder.Services.AddSingleton<McmodService>();
