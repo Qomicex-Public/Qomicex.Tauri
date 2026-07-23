@@ -226,7 +226,9 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-windows-x64
+          path: src-tauri/target/release/bundle/**/*.exe
 
   windows-arm64:
     if: |
@@ -286,7 +288,9 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-windows-arm64, path: src-tauri/target/aarch64-pc-windows-msvc/release/bundle/ }
+        with:
+          name: qomicex-launcher-windows-arm64
+          path: src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
 
   linux-x64:
     if: |
@@ -347,7 +351,12 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-linux-x64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-linux-x64
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
 
   linux-arm64:
     if: |
@@ -408,7 +417,12 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-linux-arm64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-linux-arm64
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
 
   loongarch64:
     if: |
@@ -471,7 +485,12 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-linux-loongarch64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-linux-loongarch64
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
 
   macos-arm64:
     if: |
@@ -546,7 +565,11 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-macos-arm64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-macos-arm64
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.dmg.sig
 
   macos-x64:
     if: |
@@ -621,7 +644,11 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-macos-x64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-macos-x64
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.dmg.sig
 
   release:
     if: success()
