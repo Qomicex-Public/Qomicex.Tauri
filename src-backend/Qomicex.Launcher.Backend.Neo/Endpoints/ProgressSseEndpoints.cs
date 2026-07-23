@@ -21,6 +21,7 @@ public static class ProgressSseEndpoints
         app.MapGet("/api/progress/stream", async (
             HttpContext context,
             InstallTracker installTracker,
+            JavaDownloadService javaDownloadService,
             CancellationToken ct) =>
         {
             context.Response.ContentType = "text/event-stream";
@@ -34,17 +35,20 @@ public static class ProgressSseEndpoints
                     await Task.Delay(300, ct);
 
                     var installs = installTracker.GetAllActiveStates();
+                    var javaDownloads = javaDownloadService.GetAllActiveStates();
 
                     double totalSpeed = 0;
                     foreach (var i in installs)
                         totalSpeed += i.Speed;
+                    foreach (var j in javaDownloads)
+                        totalSpeed += j.Speed;
 
                     var payload = new ProgressSsePayload(
                         Type: "progress",
                         Installs: installs,
-                        JavaDownloads: [],
+                        JavaDownloads: javaDownloads,
                         Resources: [],
-                        Summary: new ProgressSseSummary(ActiveCount: installs.Count, TotalSpeed: totalSpeed)
+                        Summary: new ProgressSseSummary(ActiveCount: installs.Count + javaDownloads.Count, TotalSpeed: totalSpeed)
                     );
 
                     var json = JsonSerializer.Serialize(payload, ApiJsonContext.Default.ProgressSsePayload);
