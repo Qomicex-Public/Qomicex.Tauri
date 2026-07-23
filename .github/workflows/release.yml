@@ -190,6 +190,11 @@ jobs:
         with: { node-version: '20', cache: npm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
+      - name: Fetch LicenseCore.cs
+        env:
+          PAT: ${{ secrets.QOMICEX_PAT }}
+        run: scripts/fetch-license-core.ps1 -licenseRequired "${{ needs.setup.outputs.licenseRequired }}" -pat "$env:PAT"
+        shell: pwsh
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
@@ -242,6 +247,11 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+        shell: pwsh
+      - name: Fetch LicenseCore.cs
+        env:
+          PAT: ${{ secrets.QOMICEX_PAT }}
+        run: scripts/fetch-license-core.ps1 -licenseRequired "${{ needs.setup.outputs.licenseRequired }}" -pat "$env:PAT"
         shell: pwsh
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
         shell: pwsh
@@ -298,6 +308,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Fetch LicenseCore.cs
+        env:
+          PAT: ${{ secrets.QOMICEX_PAT }}
+        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
@@ -355,6 +369,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Fetch LicenseCore.cs
+        env:
+          PAT: ${{ secrets.QOMICEX_PAT }}
+        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
@@ -414,6 +432,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Fetch LicenseCore.cs
+        env:
+          PAT: ${{ secrets.QOMICEX_PAT }}
+        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-loongarch64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
@@ -466,6 +488,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Fetch LicenseCore.cs
+        env:
+          PAT: ${{ secrets.QOMICEX_PAT }}
+        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
@@ -528,6 +554,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Fetch LicenseCore.cs
+        env:
+          PAT: ${{ secrets.QOMICEX_PAT }}
+        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
       - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
