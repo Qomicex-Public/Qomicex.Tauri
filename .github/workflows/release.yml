@@ -206,40 +206,18 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - name: Diagnose and sign bundle for updater
-        shell: pwsh
-        run: |
-          $keyLen = if ($env:TAURI_SIGNING_PRIVATE_KEY) { $env:TAURI_SIGNING_PRIVATE_KEY.Length } else { 0 }
-          Write-Output "TAURI_SIGNING_PRIVATE_KEY length: $keyLen"
-          $target = if (Test-Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle") { "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" } else { "src-tauri/target/release/bundle" }
-          Write-Output "=== Bundle dir: $target ==="
-          Get-ChildItem -Recurse -Path $target -ErrorAction SilentlyContinue | Select-Object FullName, Length
-          $sig = Get-ChildItem -Path $target -Recurse -Filter "*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($sig) {
-            Write-Output "Signature already exists: $($sig.FullName) — skipping manual sign"
-            exit 0
-          }
-          Write-Output "No .sig found — attempting manual sign..."
-          $exe = Get-ChildItem -Path $target -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
-          if (-not $exe) { throw "No installer .exe found to sign" }
-          Write-Output "Signing $($exe.FullName)..."
-          npx tauri signer sign --file "$($exe.FullName)"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         shell: pwsh
         run: |
           $version = "${{ needs.setup.outputs.displayVersion }}"
           Write-Output "=== Bundle dir contents ==="
-          Get-ChildItem -Recurse -Path "src-tauri/target/release/bundle" | Select-Object FullName
-          $sig = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
-          if (-not $sig) { throw "No .sig file found in bundle directory" }
-          $content = (Get-Content -Raw $sig.FullName).Trim()
-          $assetName = $sig.Name -replace '\.sig$', ''
-          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$assetName"
+          $bundleDir = if (Test-Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle") { "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" } else { "src-tauri/target/release/bundle" }
+          Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
+          $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+          if (-not $exe) { throw "No installer .exe found" }
+          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
           $platform = "windows-x86_64"
-          $fragment = @{ $platform = @{ signature = $content; url = $url } }
+          $fragment = @{ $platform = @{ url = $url } }
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
@@ -288,40 +266,18 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - name: Diagnose and sign bundle for updater
-        shell: pwsh
-        run: |
-          $keyLen = if ($env:TAURI_SIGNING_PRIVATE_KEY) { $env:TAURI_SIGNING_PRIVATE_KEY.Length } else { 0 }
-          Write-Output "TAURI_SIGNING_PRIVATE_KEY length: $keyLen"
-          $target = if (Test-Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle") { "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" } else { "src-tauri/target/release/bundle" }
-          Write-Output "=== Bundle dir: $target ==="
-          Get-ChildItem -Recurse -Path $target -ErrorAction SilentlyContinue | Select-Object FullName, Length
-          $sig = Get-ChildItem -Path $target -Recurse -Filter "*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($sig) {
-            Write-Output "Signature already exists: $($sig.FullName) — skipping manual sign"
-            exit 0
-          }
-          Write-Output "No .sig found — attempting manual sign..."
-          $exe = Get-ChildItem -Path $target -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
-          if (-not $exe) { throw "No installer .exe found to sign" }
-          Write-Output "Signing $($exe.FullName)..."
-          npx tauri signer sign --file "$($exe.FullName)"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         shell: pwsh
         run: |
           $version = "${{ needs.setup.outputs.displayVersion }}"
           Write-Output "=== Bundle dir contents ==="
-          Get-ChildItem -Recurse -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" | Select-Object FullName
-          $sig = Get-ChildItem -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
-          if (-not $sig) { throw "No .sig file found in bundle directory" }
-          $content = (Get-Content -Raw $sig.FullName).Trim()
-          $assetName = $sig.Name -replace '\.sig$', ''
-          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$assetName"
+          $bundleDir = if (Test-Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle") { "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" } else { "src-tauri/target/release/bundle" }
+          Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
+          $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+          if (-not $exe) { throw "No installer .exe found" }
+          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
           $platform = "windows-aarch64"
-          $fragment = @{ $platform = @{ signature = $content; url = $url } }
+          $fragment = @{ $platform = @{ url = $url } }
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
@@ -371,44 +327,20 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - name: Diagnose and sign bundle for updater
-        run: |
-          KEY_LEN=${#TAURI_SIGNING_PRIVATE_KEY}
-          echo "TAURI_SIGNING_PRIVATE_KEY length: $KEY_LEN"
-          echo "=== Bundle dir: src-tauri/target/release/bundle ==="
-          find "src-tauri/target/release/bundle" -type f 2>/dev/null | head -30
-          SIG=$(find "src-tauri/target/release/bundle" -name '*.sig' 2>/dev/null | head -1)
-          if [ -n "$SIG" ]; then
-            echo "Signature already exists: $SIG — skipping manual sign"
-            exit 0
-          fi
-          echo "No .sig found — attempting manual sign..."
-          BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.AppImage' 2>/dev/null | head -1)
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.deb' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.rpm' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found to sign"; exit 1; fi
-          echo "Signing $BUNDLE..."
-          npx tauri signer sign --file "$BUNDLE"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
-            exit 1
-          fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
+          ASSET_NAME=$(basename "$BUNDLE")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="linux-x86_64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -456,44 +388,20 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - name: Diagnose and sign bundle for updater
-        run: |
-          KEY_LEN=${#TAURI_SIGNING_PRIVATE_KEY}
-          echo "TAURI_SIGNING_PRIVATE_KEY length: $KEY_LEN"
-          echo "=== Bundle dir: src-tauri/target/release/bundle ==="
-          find "src-tauri/target/release/bundle" -type f 2>/dev/null | head -30
-          SIG=$(find "src-tauri/target/release/bundle" -name '*.sig' 2>/dev/null | head -1)
-          if [ -n "$SIG" ]; then
-            echo "Signature already exists: $SIG — skipping manual sign"
-            exit 0
-          fi
-          echo "No .sig found — attempting manual sign..."
-          BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.AppImage' 2>/dev/null | head -1)
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.deb' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.rpm' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found to sign"; exit 1; fi
-          echo "Signing $BUNDLE..."
-          npx tauri signer sign --file "$BUNDLE"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
-            exit 1
-          fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
+          ASSET_NAME=$(basename "$BUNDLE")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="linux-aarch64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -543,42 +451,20 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - name: Diagnose and sign bundle for updater
-        run: |
-          KEY_LEN=${#TAURI_SIGNING_PRIVATE_KEY}
-          echo "TAURI_SIGNING_PRIVATE_KEY length: $KEY_LEN"
-          echo "=== Bundle dir: src-tauri/target/release/bundle ==="
-          find "src-tauri/target/release/bundle" -type f 2>/dev/null | head -30
-          SIG=$(find "src-tauri/target/release/bundle" -name '*.sig' 2>/dev/null | head -1)
-          if [ -n "$SIG" ]; then
-            echo "Signature already exists: $SIG — skipping manual sign"
-            exit 0
-          fi
-          echo "No .sig found — attempting manual sign..."
-          BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.AppImage' 2>/dev/null | head -1)
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.deb' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.rpm' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found to sign"; exit 1; fi
-          echo "Signing $BUNDLE..."
-          npx tauri signer sign --file "$BUNDLE"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
-            exit 1
-          fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
+          ASSET_NAME=$(basename "$BUNDLE")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="linux-loongarch64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -648,17 +534,12 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
-            exit 1
-          fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then echo "ERROR: No DMG found"; exit 1; fi
+          ASSET_NAME=$(basename "$DMG")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="darwin-aarch64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -728,17 +609,12 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
-          if [ -z "$SIG" ]; then
-            echo "ERROR: No .sig file found in $BUNDLE_DIR"
-            exit 1
-          fi
-          SIG_CONTENT=$(cat "$SIG")
-          SIG_BASENAME=$(basename "$SIG")
-          ASSET_NAME="${SIG_BASENAME%.sig}"
+          DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then echo "ERROR: No DMG found"; exit 1; fi
+          ASSET_NAME=$(basename "$DMG")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="darwin-x86_64"
-          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:

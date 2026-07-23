@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { relaunch } from '@tauri-apps/plugin-process'
-import { Update } from '@tauri-apps/plugin-updater'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import { Button } from './ui/button.tsx'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -12,31 +12,36 @@ interface Props {
   version: string
   body: string
   required: boolean
-  update?: Update | null
+  downloadUrl: string
   onClose: () => void
 }
 
-export default function UpdateDialog({ open, version, body, required, update, onClose }: Props) {
+export default function UpdateDialog({ open, version, body, required, downloadUrl, onClose }: Props) {
   const [state, setState] = useState<'idle' | 'downloading' | 'installing' | 'error'>('idle')
   const [progress, setProgress] = useState(0)
 
   const handleDownload = useCallback(async () => {
-    if (!update) return
+    if (!downloadUrl) return
     setState('downloading')
     setProgress(0)
     try {
-      await update.download((event) => {
-        if (event.event === 'Progress') {
-          setProgress(prev => Math.min(99, prev + 1))
+      const { Channel } = await import('@tauri-apps/api/core')
+      const onEvent = new Channel()
+      onEvent.onmessage = (event: any) => {
+        if (event.event === 'Started') {
+          const contentLength = event.data.contentLength ?? 0
+          if (contentLength > 0) setProgress(0)
+        } else if (event.event === 'Progress') {
+          setProgress((prev) => Math.min(99, prev + 1))
         }
-      })
+      }
+      await invoke('download_and_install_update', { url: downloadUrl, onEvent })
       setState('installing')
-      await update.install()
       await relaunch()
     } catch {
       setState('error')
     }
-  }, [update])
+  }, [downloadUrl])
 
   return (
     <Dialog open={open} onClose={required ? () => {} : onClose} closeOnBackdrop={!required} closeOnEsc={!required}>
