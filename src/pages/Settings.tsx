@@ -85,6 +85,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const isPreRelease = /-/.test(APP_INFO.version)
   const versionType = isPreRelease ? '测试版' : '稳定版'
 
+  useEffect(() => {
+    if (licenseStatus?.valid && licenseStatus?.channel === 'alpha') {
+      setChannelAndSave('alpha')
+    }
+  }, [licenseStatus?.valid, licenseStatus?.channel])
+
   function setChannelAndSave(v: string) {
     setChannel(v)
     if (channelTimerRef.current) clearTimeout(channelTimerRef.current)
@@ -251,10 +257,13 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
             <Select value={channel} onChange={setChannelAndSave} className="w-28">
-              <SelectOption value="stable">稳定版</SelectOption>
-              <SelectOption value="beta">测试版</SelectOption>
-              {licenseStatus?.valid && licenseStatus?.channel === 'alpha' && (
+              {licenseStatus?.valid && licenseStatus?.channel === 'alpha' ? (
                 <SelectOption value="alpha">Alpha</SelectOption>
+              ) : (
+                <>
+                  <SelectOption value="stable">稳定版</SelectOption>
+                  <SelectOption value="beta">测试版</SelectOption>
+                </>
               )}
             </Select>
             <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
