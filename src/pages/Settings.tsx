@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
@@ -542,6 +542,7 @@ export default function Settings() {
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(() => getCachedLicenseStatus())
   const [downloadVendors, setDownloadVendors] = useState<JavaDownloadVendorInfo[]>([])
   const [downloadLoading, setDownloadLoading] = useState(false)
+  const [startDownloadLoading, setStartDownloadLoading] = useState(false)
   const [downloadVendor, setDownloadVendor] = useState('temurin')
   const [downloadVersion, setDownloadVersion] = useState('17')
   const [downloadPlatform, setDownloadPlatform] = useState('windows')
@@ -772,7 +773,8 @@ export default function Settings() {
   }
 
   async function handleStartJavaDownload() {
-    if (!selectedVendor) return
+    if (!selectedVendor || startDownloadLoading) return
+    setStartDownloadLoading(true)
     try {
       const task = await startJavaDownload({
         vendor: downloadVendor,
@@ -795,6 +797,8 @@ export default function Settings() {
       setJavaStatus(`已加入下载中心: ${dlTask.name}`)
     } catch (e: unknown) {
       await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '启动 Java 下载失败')
+    } finally {
+      setStartDownloadLoading(false)
     }
   }
 
@@ -1633,7 +1637,9 @@ export default function Settings() {
               </div>
             </DialogBody>
             <DialogFooter>
-              <Button onClick={handleStartJavaDownload} disabled={!selectedVendor}>开始下载</Button>
+              <Button onClick={handleStartJavaDownload} disabled={!selectedVendor || startDownloadLoading}>
+                {startDownloadLoading ? <><FontAwesomeIcon icon={faSpinner} className="h-4 w-4 animate-spin mr-2" />解析中...</> : '开始下载'}
+              </Button>
             </DialogFooter>
           </Dialog>
 

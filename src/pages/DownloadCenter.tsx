@@ -81,6 +81,7 @@ export default function DownloadCenter() {
   const sseData = useDownloadSSE()
   const prevInstallIds = useRef<Set<string>>(new Set())
   const prevJavaIds = useRef<Set<string>>(new Set())
+  const checkedStaleJavaIds = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     if (!sseData) return
@@ -108,6 +109,22 @@ export default function DownloadCenter() {
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
           })
           if (newStatus === 'completed') refreshCustomRuntimes()
+        } else if (!checkedStaleJavaIds.current.has(task.taskId)) {
+          checkedStaleJavaIds.current.add(task.taskId)
+          getJavaDownloadProgress(task.taskId).then(p => {
+            if (!p) {
+              updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
+            } else if (p.status === 'failed') {
+              updateTask(task.id, { status: 'failed', error: p.error || '下载失败' })
+            } else if (p.status === 'cancelled') {
+              updateTask(task.id, { status: 'cancelled' })
+            } else if (p.status === 'completed') {
+              updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+              refreshCustomRuntimes()
+            }
+          }).catch(() => {
+            updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })
+          })
         }
         continue
       }

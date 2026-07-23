@@ -43,8 +43,8 @@ public sealed class JavaDownloadService
         var hostPlatform = GetHostPlatform();
         return Task.FromResult(new JavaDownloadCatalogResponse(
         [
-            new("zulu", "Zulu", [hostPlatform], ["x64", "arm64", "x86"], [8, 11, 17, 21, 25], IsRecommended: true),
-            new("temurin", "Temurin", [hostPlatform], ["x64", "arm64", "x86"], [8, 11, 17, 21, 25]),
+            new("temurin", "Temurin", [hostPlatform], ["x64", "arm64", "x86"], [8, 11, 17, 21, 25], IsRecommended: true),
+            new("zulu", "Zulu", [hostPlatform], ["x64", "arm64", "x86"], [8, 11, 17, 21, 25]),
         ]));
     }
 
@@ -53,6 +53,8 @@ public sealed class JavaDownloadService
         if (!string.Equals(request.Platform, GetHostPlatform(), StringComparison.OrdinalIgnoreCase))
             throw ApiException.BadRequest("首版仅支持下载当前宿主平台的 Java 包", "JAVA_DOWNLOAD_PLATFORM_NOT_SUPPORTED");
 
+        var (url, fileName) = await ResolvePackageAsync(request);
+
         var taskId = Guid.NewGuid().ToString("N")[..12];
         var targetDir = Path.Combine(GetBaseDir(), request.Vendor, request.Version.ToString(), $"{request.Platform}-{request.Architecture}");
         var state = new JavaDownloadTaskState
@@ -60,6 +62,8 @@ public sealed class JavaDownloadService
             TaskId = taskId,
             Status = "queued",
             TargetDir = targetDir,
+            DownloadUrl = url,
+            FileName = fileName,
         };
         _tasks[taskId] = state;
 
@@ -150,17 +154,12 @@ public sealed class JavaDownloadService
         string? tmpDir = null;
         try
         {
-            state.Status = "resolving";
-            var (url, fileName) = await ResolvePackageAsync(request);
-            state.DownloadUrl = url;
-            state.FileName = fileName;
-
             state.Status = "downloading";
             tmpDir = Path.Combine(GetBaseDir(), ".tmp", state.TaskId);
             Directory.CreateDirectory(tmpDir);
             var archivePath = Path.Combine(tmpDir, state.FileName);
 
-            using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, state.Cancellation.Token);
+            using var response = await _httpClient.GetAsync(state.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, state.Cancellation.Token);
             response.EnsureSuccessStatusCode();
 
             var totalBytes = response.Content.Headers.ContentLength ?? -1;
