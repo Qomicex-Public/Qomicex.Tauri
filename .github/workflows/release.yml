@@ -206,6 +206,27 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Diagnose and sign bundle for updater
+        shell: pwsh
+        run: |
+          $keyLen = if ($env:TAURI_SIGNING_PRIVATE_KEY) { $env:TAURI_SIGNING_PRIVATE_KEY.Length } else { 0 }
+          Write-Output "TAURI_SIGNING_PRIVATE_KEY length: $keyLen"
+          $target = if (Test-Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle") { "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" } else { "src-tauri/target/release/bundle" }
+          Write-Output "=== Bundle dir: $target ==="
+          Get-ChildItem -Recurse -Path $target -ErrorAction SilentlyContinue | Select-Object FullName, Length
+          $sig = Get-ChildItem -Path $target -Recurse -Filter "*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($sig) {
+            Write-Output "Signature already exists: $($sig.FullName) — skipping manual sign"
+            exit 0
+          }
+          Write-Output "No .sig found — attempting manual sign..."
+          $exe = Get-ChildItem -Path $target -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+          if (-not $exe) { throw "No installer .exe found to sign" }
+          Write-Output "Signing $($exe.FullName)..."
+          npx tauri signer sign --file "$($exe.FullName)"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         shell: pwsh
         run: |
@@ -264,6 +285,27 @@ jobs:
         shell: pwsh
       - run: npm ci
       - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Diagnose and sign bundle for updater
+        shell: pwsh
+        run: |
+          $keyLen = if ($env:TAURI_SIGNING_PRIVATE_KEY) { $env:TAURI_SIGNING_PRIVATE_KEY.Length } else { 0 }
+          Write-Output "TAURI_SIGNING_PRIVATE_KEY length: $keyLen"
+          $target = if (Test-Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle") { "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" } else { "src-tauri/target/release/bundle" }
+          Write-Output "=== Bundle dir: $target ==="
+          Get-ChildItem -Recurse -Path $target -ErrorAction SilentlyContinue | Select-Object FullName, Length
+          $sig = Get-ChildItem -Path $target -Recurse -Filter "*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($sig) {
+            Write-Output "Signature already exists: $($sig.FullName) — skipping manual sign"
+            exit 0
+          }
+          Write-Output "No .sig found — attempting manual sign..."
+          $exe = Get-ChildItem -Path $target -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+          if (-not $exe) { throw "No installer .exe found to sign" }
+          Write-Output "Signing $($exe.FullName)..."
+          npx tauri signer sign --file "$($exe.FullName)"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -326,6 +368,27 @@ jobs:
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
           npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Diagnose and sign bundle for updater
+        run: |
+          KEY_LEN=${#TAURI_SIGNING_PRIVATE_KEY}
+          echo "TAURI_SIGNING_PRIVATE_KEY length: $KEY_LEN"
+          echo "=== Bundle dir: src-tauri/target/release/bundle ==="
+          find "src-tauri/target/release/bundle" -type f 2>/dev/null | head -30
+          SIG=$(find "src-tauri/target/release/bundle" -name '*.sig' 2>/dev/null | head -1)
+          if [ -n "$SIG" ]; then
+            echo "Signature already exists: $SIG — skipping manual sign"
+            exit 0
+          fi
+          echo "No .sig found — attempting manual sign..."
+          BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.AppImage' 2>/dev/null | head -1)
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.deb' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.rpm' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found to sign"; exit 1; fi
+          echo "Signing $BUNDLE..."
+          npx tauri signer sign --file "$BUNDLE"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -393,6 +456,27 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Diagnose and sign bundle for updater
+        run: |
+          KEY_LEN=${#TAURI_SIGNING_PRIVATE_KEY}
+          echo "TAURI_SIGNING_PRIVATE_KEY length: $KEY_LEN"
+          echo "=== Bundle dir: src-tauri/target/release/bundle ==="
+          find "src-tauri/target/release/bundle" -type f 2>/dev/null | head -30
+          SIG=$(find "src-tauri/target/release/bundle" -name '*.sig' 2>/dev/null | head -1)
+          if [ -n "$SIG" ]; then
+            echo "Signature already exists: $SIG — skipping manual sign"
+            exit 0
+          fi
+          echo "No .sig found — attempting manual sign..."
+          BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.AppImage' 2>/dev/null | head -1)
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.deb' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.rpm' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found to sign"; exit 1; fi
+          echo "Signing $BUNDLE..."
+          npx tauri signer sign --file "$BUNDLE"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -456,6 +540,27 @@ jobs:
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
           npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Diagnose and sign bundle for updater
+        run: |
+          KEY_LEN=${#TAURI_SIGNING_PRIVATE_KEY}
+          echo "TAURI_SIGNING_PRIVATE_KEY length: $KEY_LEN"
+          echo "=== Bundle dir: src-tauri/target/release/bundle ==="
+          find "src-tauri/target/release/bundle" -type f 2>/dev/null | head -30
+          SIG=$(find "src-tauri/target/release/bundle" -name '*.sig' 2>/dev/null | head -1)
+          if [ -n "$SIG" ]; then
+            echo "Signature already exists: $SIG — skipping manual sign"
+            exit 0
+          fi
+          echo "No .sig found — attempting manual sign..."
+          BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.AppImage' 2>/dev/null | head -1)
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.deb' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "src-tauri/target/release/bundle" -name '*.rpm' 2>/dev/null | head -1); fi
+          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found to sign"; exit 1; fi
+          echo "Signing $BUNDLE..."
+          npx tauri signer sign --file "$BUNDLE"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -526,6 +631,17 @@ jobs:
             -srcfolder "$APP" \
             -ov -format UDZO \
             "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_$(uname -m).dmg"
+      - name: Sign DMG for updater
+        run: |
+          DMG=$(find src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then
+            echo "ERROR: No DMG found to sign"
+            exit 1
+          fi
+          npx tauri signer sign --file "$DMG"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -595,6 +711,17 @@ jobs:
             -srcfolder "$APP" \
             -ov -format UDZO \
             "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_$(uname -m).dmg"
+      - name: Sign DMG for updater
+        run: |
+          DMG=$(find src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then
+            echo "ERROR: No DMG found to sign"
+            exit 1
+          fi
+          npx tauri signer sign --file "$DMG"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
