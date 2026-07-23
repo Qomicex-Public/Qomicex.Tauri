@@ -106,6 +106,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<ConnectorService>();
 builder.Services.AddSingleton<EasyTierProvider>();
 builder.Services.AddSingleton<McmodService>();
+builder.Services.AddSingleton<UpdateService>();
 
 builder.Services.AddHttpClient("QomicexWeb", client =>
 {
@@ -153,6 +154,7 @@ app.MapConnectorEndpoints();
 app.MapInstanceFilesEndpoints(curseForgeApiKey);
 app.MapLicenseEndpoints();
 app.MapAnnouncementEndpoints();
+app.MapUpdateEndpoints();
 
 // LAN listener lifecycle
 var lanListener = app.Services.GetRequiredService<LanGameListenerService>();

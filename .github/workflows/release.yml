@@ -700,6 +700,25 @@ jobs:
           echo "=== latest.json ==="
           cat latest.json
 
+      - name: Generate alpha.json (alpha only)
+        if: needs.setup.outputs.releaseType == 'alpha'
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          REQUIRED=${{ needs.setup.outputs.required }}
+          echo '{"version":"'"$VERSION"'","required":'"$REQUIRED"',"channel":"alpha","platforms":{}}' > alpha.json
+          for f in update-fragment-*.json; do
+            if [ -f "$f" ]; then
+              KEY=$(jq -r 'keys[0]' "$f")
+              VAL=$(jq '.[keys[0]]' "$f")
+              jq --arg k "$KEY" --argjson v "$VAL" '.platforms[$k] = $v' alpha.json > tmp.json
+              mv tmp.json alpha.json
+            fi
+          done
+          jq '.pub_date = (now | strftime("%Y-%m-%dT%H:%M:%SZ"))' alpha.json > tmp.json
+          mv tmp.json alpha.json
+          echo "=== alpha.json ==="
+          cat alpha.json
+
       - name: Create/update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -712,6 +731,7 @@ jobs:
           prerelease: ${{ needs.setup.outputs.prerelease }}
           files: |
             latest.json
+            alpha.json
             qomicex-launcher-*/**/*
           fail_on_unmatched_files: false
 
