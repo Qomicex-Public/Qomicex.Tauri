@@ -16,7 +16,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     WriteIndented = false,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UseStringEnumConverter = true)]
 [JsonSerializable(typeof(ApiError))]
 [JsonSerializable(typeof(GameInstance))]
 [JsonSerializable(typeof(List<GameInstance>))]
