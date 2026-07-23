@@ -13,7 +13,7 @@ export interface UpdateCheckResult {
 const CHANNEL_TYPES: Record<string, string[]> = {
   stable: ['release'],
   beta: ['release', 'beta'],
-  alpha: ['release', 'beta', 'alpha'],
+  alpha: ['alpha'],
 }
 
 export async function checkUpdate(channel: string): Promise<UpdateCheckResult> {
