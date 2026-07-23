@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
@@ -13,9 +13,13 @@ import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Checkbox } from '../components/ui/checkbox.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import DebugTab from '../components/DebugTab.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
+import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
+import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
+import type { LicenseStatus } from '../api/license.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
@@ -62,7 +66,11 @@ function saveSettings(settings: AppSettings) {
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
 
-function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
+function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
+  sysInfo: SystemInfo | null
+  licenseStatus: LicenseStatus | null
+  onOpenLicenseDialog: () => void
+}) {
   const [expandedDep, setExpandedDep] = useState<string | null>(null)
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string } | null>(null)
@@ -71,6 +79,7 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
   const [updateError, setUpdateError] = useState<string>()
   const [channel, setChannel] = useState(() => localStorage.getItem('update-channel') || 'stable')
   const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const [licenseCopied, setLicenseCopied] = useState(false)
 
   const isPreRelease = /-/.test(APP_INFO.version)
   const versionType = isPreRelease ? '测试版' : '稳定版'
@@ -194,6 +203,67 @@ function AboutTab({ sysInfo }: { sysInfo: SystemInfo | null }) {
           </div>
         </CardContent>
       </Card>
+
+      {licenseStatus && !(licenseStatus.valid && !licenseStatus.licenseId) && (
+      <Card>
+        <CardHeader><CardTitle>
+          <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-primary" />
+          许可证
+        </CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            {licenseStatus.valid ? (
+              <Badge variant="default" className="gap-1">
+                <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />
+                已激活
+              </Badge>
+            ) : (
+              <Badge variant="destructive" className="gap-1">
+                {licenseStatus.error === 'LICENSE_NOT_FOUND' ? '未激活' : '无效'}
+              </Badge>
+            )}
+            {licenseStatus.licenseId && (
+              <span className="text-sm text-muted-foreground">ID: {licenseStatus.licenseId}</span>
+            )}
+          </div>
+          <div className="rounded-lg bg-muted p-3 text-sm space-y-1.5">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">频道</span>
+              <span>{licenseStatus.channel || '-'}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">到期</span>
+              <span>{licenseStatus.isPermanent ? '永久有效' : (licenseStatus.expireAt || '-')}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">机器码</span>
+              <span className="font-mono text-[10px] max-w-[200px] truncate select-all">{licenseStatus.machineCode || '-'}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={onOpenLicenseDialog} className="gap-1.5">
+              <FontAwesomeIcon icon={faKey} className="h-3 w-3" />
+              {licenseStatus.valid ? '更换许可证' : '激活许可证'}
+            </Button>
+            <Tooltip content={licenseCopied ? '已复制' : '复制机器码'}>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 px-2"
+                onClick={async () => {
+                  if (!licenseStatus.machineCode) return
+                  await navigator.clipboard.writeText(licenseStatus.machineCode)
+                  setLicenseCopied(true)
+                  setTimeout(() => setLicenseCopied(false), 2000)
+                }}
+              >
+                <FontAwesomeIcon icon={licenseCopied ? faCheck : faCopy} className="h-3 w-3" />
+              </Button>
+            </Tooltip>
+          </div>
+        </CardContent>
+      </Card>
+      )}
 
       {/* Update */}
       <Card>
@@ -468,6 +538,8 @@ export default function Settings() {
   const [addPath, setAddPath] = useState('')
   const [adding, setAdding] = useState(false)
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false)
+  const [licenseDialogOpen, setLicenseDialogOpen] = useState(false)
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(() => getCachedLicenseStatus())
   const [downloadVendors, setDownloadVendors] = useState<JavaDownloadVendorInfo[]>([])
   const [downloadLoading, setDownloadLoading] = useState(false)
   const [downloadVendor, setDownloadVendor] = useState('temurin')
@@ -515,6 +587,12 @@ export default function Settings() {
     if (!loadedRef.current) return
     refreshModPings()
   }, [settings.autoSelectModMirror])
+
+  useEffect(() => {
+    if (category === 'about') {
+      fetchLicenseStatus().then(setLicenseStatus).catch(() => {})
+    }
+  }, [category])
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     const next = { ...settings, [key]: value }
@@ -678,11 +756,12 @@ export default function Settings() {
     try {
       const catalog = await getJavaDownloadCatalog()
       setDownloadVendors(catalog.vendors)
-      if (catalog.vendors.length > 0) {
-        setDownloadVendor(catalog.vendors[0].id)
-        setDownloadVersion(String(catalog.vendors[0].versions[0] ?? 17))
-        setDownloadPlatform(catalog.vendors[0].platforms[0] ?? 'windows')
-        setDownloadArch(catalog.vendors[0].architectures[0] ?? 'x64')
+      const preferred = catalog.vendors.find(v => v.isRecommended) ?? catalog.vendors[0]
+      if (preferred) {
+        setDownloadVendor(preferred.id)
+        setDownloadVersion(String(preferred.versions[0] ?? 17))
+        setDownloadPlatform(preferred.platforms[0] ?? 'windows')
+        setDownloadArch(preferred.architectures[0] ?? 'x64')
       }
       setDownloadDialogOpen(true)
     } catch (e: unknown) {
@@ -761,11 +840,11 @@ export default function Settings() {
   }
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
+    <PageShell className="p-8 space-y-6 overflow-y-auto">
       <PageHeader title="设置" />
 
       <div className="flex gap-4">
-        <div className="flex w-48 shrink-0 flex-col gap-0.5">
+        <div className="sticky top-0 self-start flex w-48 shrink-0 flex-col gap-0.5">
           {CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map((cat) => (
             <button
               key={cat.id}
@@ -1118,8 +1197,8 @@ export default function Settings() {
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">{j.name}</span>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Tooltip content={j.name}><span className="min-w-0 truncate text-sm font-medium">{j.name}</span></Tooltip>
                               <Badge variant="outline" className="h-5 px-1.5 text-[10px]">{j.type}</Badge>
                               {j.discoveredBy === 'Custom' && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">手动添加</Badge>}
                               {j.state === 'Valid' ? (
@@ -1473,7 +1552,7 @@ export default function Settings() {
           {category === 'toolbox' && <ToolboxTab />}
 
           {category === 'about' && (
-            <AboutTab sysInfo={sysInfo} />
+            <AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} />
           )}
 
           {category === 'logs' && <LogTab />}
@@ -1518,7 +1597,9 @@ export default function Settings() {
                 <Label>发行版</Label>
                 <Select value={downloadVendor} onChange={setDownloadVendor}>
                   {downloadVendors.map((vendor) => (
-                    <SelectOption key={vendor.id} value={vendor.id}>{vendor.name}</SelectOption>
+                    <SelectOption key={vendor.id} value={vendor.id}>
+                      {vendor.name}{vendor.isRecommended ? ' (推荐)' : ''}
+                    </SelectOption>
                   ))}
                 </Select>
               </div>
@@ -1555,8 +1636,17 @@ export default function Settings() {
               <Button onClick={handleStartJavaDownload} disabled={!selectedVendor}>开始下载</Button>
             </DialogFooter>
           </Dialog>
+
+          <LicenseActivationDialog
+            open={licenseDialogOpen}
+            onActivated={() => {
+              setLicenseDialogOpen(false)
+              fetchLicenseStatus().then(setLicenseStatus).catch(() => {})
+            }}
+            onClose={() => setLicenseDialogOpen(false)}
+          />
         </div>
       </div>
-    </div>
+    </PageShell>
   )
 }

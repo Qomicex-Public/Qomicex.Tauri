@@ -117,7 +117,7 @@ function DiagnosticsCard() {
         setSysInfo(sys)
         setHealth(h)
       } catch { setBackendOk(false); console.warn('Failed to fetch system info / health') }
-      const endpoints = ['/instances', '/settings', '/resources/search?category=mod&pageSize=1']
+      const endpoints = ['/instance', '/settings', '/resources/search?category=mod&pageSize=1']
       const results: typeof apiTests = {}
       for (const ep of endpoints) {
         const start = performance.now()

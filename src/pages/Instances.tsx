@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '../components/ui/button.tsx'
@@ -41,6 +42,7 @@ const LOADER_COLORS: Record<string, string> = {
   Quilt: 'text-purple-400 bg-purple-400/10 border-purple-400/25',
   OptiFine: 'text-yellow-500 bg-yellow-500/10 border-yellow-500/25',
   LiteLoader: 'text-sky-400 bg-sky-400/10 border-sky-400/25',
+  Vanilla: 'text-muted-foreground bg-muted border-border',
 }
 
 const TYPE_LABEL: Record<string, string> = { release: '正式版', snapshot: '快照', old_beta: '远古测试版', old_alpha: '远古阿尔法', april_fools: '愚人节版' }
@@ -155,9 +157,13 @@ export default function Instances() {
   const doScan = useCallback(async (dir: string) => {
     if (!dir) { setScannedLocal([]); return }
     setScanning(true)
+
+    let versions: ScannedVersion[] = []
+    try { versions = await scanVersions(dir) }
+    catch {}
+    setScannedLocal(versions)
+
     try {
-      const versions = await scanVersions(dir)
-      setScannedLocal(versions)
       const instances = await getInstances()
       setBackedInstances(instances)
       const existingNames = new Set(instances.filter((i) => i.gameDir === dir).map((i) => i.name))
@@ -166,8 +172,8 @@ export default function Instances() {
         const created = await Promise.all(toCreate.map((v) => createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
-          loader: v.loaders.find((l) => l.type)?.type,
-          loaderVersion: v.loaders.find((l) => l.version)?.version,
+          loader: v.loaders?.find((l) => l.type)?.type,
+          loaderVersion: v.loaders?.find((l) => l.version)?.version,
           gameDir: dir,
           maxMemory: 4096,
           iconData: v.modpack?.iconData,
@@ -179,7 +185,8 @@ export default function Instances() {
         const valid = created.filter((c): c is GameInstance => c !== null)
         if (valid.length > 0) setBackedInstances((prev) => [...prev, ...valid])
       }
-    } catch { setScannedLocal([]) } finally { setScanning(false) }
+    } catch {}
+    finally { setScanning(false) }
   }, [])
 
   useEffect(() => {
@@ -224,12 +231,12 @@ export default function Instances() {
     if (!form.loader) { setLoaderAddons([]); return }
     let cancelled = false
     setLoadingAddons(true)
-    getLoaderAddons(form.loader)
+    getLoaderAddons(form.loader, form.gameVersion)
       .then((addons) => { if (!cancelled) setLoaderAddons(addons) })
       .catch(() => { if (!cancelled) setLoaderAddons([]) })
       .finally(() => { if (!cancelled) setLoadingAddons(false) })
     return () => { cancelled = true }
-  }, [form.loader])
+  }, [form.loader, form.gameVersion])
 
   useEffect(() => {
     setForm((prev) => {
@@ -311,6 +318,10 @@ export default function Instances() {
 
   async function handleDownload() {
     if (!form.gameVersion || !form.name.trim()) return
+    if (!currentDir) {
+      await msgAlert('请先选择一个游戏目录，再开始下载。')
+      return
+    }
 
     let resolvedVersion = form.loaderVersion
 
@@ -386,8 +397,8 @@ export default function Instances() {
         inst = await createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
-          loader: v.loaders.find(l => l.type)?.type,
-          loaderVersion: v.loaders.find(l => l.version)?.version,
+          loader: v.loaders?.find(l => l.type)?.type,
+          loaderVersion: v.loaders?.find(l => l.version)?.version,
           gameDir: currentDir!,
           maxMemory: 4096,
           iconData: v.modpack?.iconData,
@@ -409,7 +420,7 @@ export default function Instances() {
     }
 
     try {
-      const result = await ctxLaunchInstance(inst!.id, inst!.name)
+      const result = await ctxLaunchInstance(inst!.id, inst!.name, { path: inst!.javaPath, gameVersion: inst!.gameVersion, gameDir: inst!.gameDir })
       if (!result.success) {
         await msgAlert(`启动失败: ${result.error}\n${result.detail || ''}`)
       }
@@ -435,8 +446,8 @@ export default function Instances() {
       const created = await createInstance({
         name: v.name,
         gameVersion: v.gameVersion,
-        loader: v.loaders.find((l) => l.type)?.type,
-        loaderVersion: v.loaders.find((l) => l.version)?.version,
+        loader: v.loaders?.find((l) => l.type)?.type,
+        loaderVersion: v.loaders?.find((l) => l.version)?.version,
         maxMemory: 4096,
         gameDir: currentDir,
         iconData: v.modpack?.iconData,
@@ -459,8 +470,8 @@ export default function Instances() {
         inst = await createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
-          loader: v.loaders.find((l) => l.type)?.type,
-          loaderVersion: v.loaders.find((l) => l.version)?.version,
+          loader: v.loaders?.find((l) => l.type)?.type,
+          loaderVersion: v.loaders?.find((l) => l.version)?.version,
           gameDir: currentDir!,
           maxMemory: 4096,
           iconData: v.modpack?.iconData,
@@ -514,7 +525,7 @@ export default function Instances() {
 
   if (step === 'select-version') {
     return (
-      <div className="animate-in slide-up space-y-5 p-8">
+      <PageShell className="p-8 space-y-5 overflow-y-auto">
         <div className="flex items-center gap-3">
           <button onClick={() => setStep('list')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -606,14 +617,14 @@ export default function Instances() {
             ))}
           </div>
         )}
-      </div>
+      </PageShell>
     )
   }
 
   if (step === 'configure') {
     const selectedVer = remoteVersions.find((v) => v.id === form.gameVersion)
     return (
-      <div className="animate-in slide-up space-y-5 p-8">
+      <PageShell className="p-8 space-y-5 overflow-y-auto">
         <div className="flex items-center gap-3">
             <button onClick={() => { setStep('select-version'); setLoaderVersions([]) }} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -752,7 +763,7 @@ export default function Instances() {
             </div>
           </CardContent>
         </Card>
-      </div>
+      </PageShell>
     )
   }
 
@@ -794,7 +805,7 @@ export default function Instances() {
   }
 
   return (
-      <div className="animate-in slide-up space-y-6 p-8">
+      <PageShell className="p-8 space-y-6 overflow-y-auto">
         <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`}
           actions={
             <Tooltip content="刷新">
@@ -1037,23 +1048,26 @@ export default function Instances() {
           <p className="text-xs text-muted-foreground/70">请确认目录下存在 versions/ 文件夹</p>
         </div>
       ) : (
-        viewMode === 'grid' ? (
+        <div className="space-y-6">
+          {scannedLocal.length > 0 && (viewMode === 'grid' ? (
           <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
               <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={v.loaders?.[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
-                {v.loaders && v.loaders.filter((l) => l.type).length > 0 && (
-                  <div className="mt-1 flex flex-wrap justify-center gap-1">
-                    {v.loaders.filter((l) => l.type).map((l) => (
+                <div className="mt-1 flex flex-wrap justify-center gap-1">
+                  {v.loaders && v.loaders.filter((l) => l.type).length > 0 ? (
+                    v.loaders.filter((l) => l.type).map((l) => (
                       <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
-                    ))}
-                  </div>
-                )}
+                    ))
+                  ) : (
+                    <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', LOADER_COLORS.Vanilla)}>Vanilla</span>
+                  )}
+                </div>
                 <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/70">
                   <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
                     <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
-                    {v.state === 'Available' ? '可用' : '异常'}
+                    {v.state === 'Available' ? '可用' : '不可用'}
                   </span>
                 </div>
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
@@ -1089,15 +1103,19 @@ export default function Instances() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="truncate text-sm font-medium">{v.name}</h3>
-                    {v.loaders && v.loaders.filter((l) => l.type).length > 0 && v.loaders.filter((l) => l.type).map((l) => (
-                      <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
-                    ))}
+                    {v.loaders && v.loaders.filter((l) => l.type).length > 0 ? (
+                      v.loaders.filter((l) => l.type).map((l) => (
+                        <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
+                      ))
+                    ) : (
+                      <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS.Vanilla)}>Vanilla</span>
+                    )}
                     <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
                       <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
-                      {v.state === 'Available' ? '可用' : '异常'}
+                    {v.state === 'Available' ? '可用' : '不可用'}
                     </span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
                     {v.loaders && v.loaders.filter((l) => l.version).length > 0 && (
                       <span className="flex items-center gap-1">
                         <FontAwesomeIcon icon={faTag} className="h-3 w-3" />
@@ -1133,7 +1151,8 @@ export default function Instances() {
               </div>
             ))}
           </div>
-        )
+        ))}
+        </div>
       )}
       <AccountSelectDialog
         open={showSelectAccount}
@@ -1160,6 +1179,6 @@ export default function Instances() {
         gameDir={loadSettings().gameDir || currentDir}
         versionIsolation={loadSettings().versionIsolation !== false}
       />
-      </div>
+      </PageShell>
     )
   }

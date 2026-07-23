@@ -2,6 +2,8 @@ import { get, post, put, del } from './client.ts'
 import type {
   MicrosoftOAuthResponse,
   Account,
+  YggdrasilProfilesResponse,
+  YggdrasilProfileInfo,
 } from '../types'
 
 export function getAccounts(): Promise<Account[]> {
@@ -21,23 +23,31 @@ export function deleteAccount(uuid: string): Promise<void> {
 }
 
 export function microsoftOAuth(): Promise<MicrosoftOAuthResponse> {
-  return post<MicrosoftOAuthResponse>('/account/microsoft/oauth')
+  return post<MicrosoftOAuthResponse>('/auth/microsoft/device-code')
 }
 
-export function microsoftPoll(data: MicrosoftOAuthResponse): Promise<Record<string, string>> {
-  return post('/account/microsoft/poll', data)
+export function microsoftPoll(deviceCode: string): Promise<Record<string, unknown>> {
+  return post<Record<string, unknown>>('/auth/microsoft/poll', { accessToken: deviceCode })
 }
 
 export function microsoftUserInfo(accessToken: string, refreshToken: string): Promise<Account> {
-  return post<Account>('/account/microsoft/info', { accessToken, refreshToken })
+  return post<Account>('/auth/microsoft/info', { accessToken, refreshToken })
 }
 
-export function yggdrasilLogin(email: string, password: string, serverUrl = 'https://littleskin.cn/api/yggdrasil'): Promise<Account[]> {
-  return post<Account[]>('/account/yggdrasil/login', { email, password, serverUrl })
+export function yggdrasilGetProfiles(email: string, password: string, serverUrl = 'https://littleskin.cn/api/yggdrasil'): Promise<YggdrasilProfilesResponse> {
+  return post<YggdrasilProfilesResponse>('/auth/yggdrasil', { username: email, password, serverUrl })
 }
 
-export function tongyiLogin(serverId: string, email: string, password: string): Promise<Account[]> {
-  return post<Account[]>('/account/tongyi/login', { serverId, email, password })
+export function yggdrasilSelectProfiles(accessToken: string, clientToken: string, serverUrl: string, selectedProfiles: YggdrasilProfileInfo[]): Promise<Account[]> {
+  return post<Account[]>('/auth/yggdrasil/select', { accessToken, clientToken, serverUrl, selectedProfiles })
+}
+
+export function yggdrasilLogin(email: string, password: string, serverUrl = 'https://littleskin.cn/api/yggdrasil'): Promise<Account> {
+  return post<Account>('/auth/yggdrasil', { username: email, password, serverUrl })
+}
+
+export function tongyiLogin(serverId: string, email: string, password: string): Promise<Account> {
+  return post<Account>('/auth/tongyi', { serverId, email: email, password })
 }
 
 export function getOfflineUuid(name: string): Promise<{ uuid: string }> {

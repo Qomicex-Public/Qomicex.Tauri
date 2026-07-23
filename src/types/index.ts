@@ -27,6 +27,7 @@ export interface JavaDownloadVendorInfo {
   platforms: string[]
   architectures: string[]
   versions: number[]
+  isRecommended?: boolean
 }
 
 export interface JavaDownloadCatalogResponse {
@@ -102,6 +103,19 @@ export interface YggdrasilAccount {
   uuid: string
   accessToken: string
   clientToken: string
+}
+
+export interface YggdrasilProfileInfo {
+  id: string
+  name: string
+}
+
+export interface YggdrasilProfilesResponse {
+  success: boolean
+  accessToken?: string
+  clientToken?: string
+  profiles?: YggdrasilProfileInfo[]
+  errorMessage?: string
 }
 
 export interface SuggestedSolution {
@@ -275,6 +289,12 @@ export interface ScannedVersionLoader {
   version: string
 }
 
+export interface ScanVersionsResponse {
+  path: string
+  versions: ScannedVersion[]
+  noJsonDirs: string[]
+}
+
 export interface ScannedVersion {
   name: string
   gameVersion: string
@@ -415,7 +435,7 @@ export interface ResourceSearchResponse {
 
 export interface ResourceFile {
   url: string
-  filename: string
+  fileName: string
   size: number
 }
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import { Card } from '../components/ui/card.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Input } from '../components/ui/input.tsx'
@@ -199,7 +200,7 @@ export default function Connect() {
   const etReady = easyTier?.installed ?? false
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
+    <PageShell className="p-8 space-y-6 overflow-y-auto">
       <PageHeader title="联机" subtitle="创建或加入联机房间" />
 
       {easyTier && !etReady && (
@@ -386,6 +387,6 @@ export default function Connect() {
           </div>
         </Card>
       )}
-    </div>
+    </PageShell>
   )
 }

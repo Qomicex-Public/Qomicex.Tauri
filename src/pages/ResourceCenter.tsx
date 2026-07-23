@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowUpRightFromSquare, faDownload, faMagnifyingGlass, faRotate, faTag, faUser, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { Input } from '../components/ui/input.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Card } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
@@ -173,7 +174,7 @@ function ResourceCard({
             安装
           </Button>
           <Button asChild variant="outline" className="flex-1 sm:w-full">
-            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId) + '&expandBody=1'}>查看详情</Link>
+            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>查看详情</Link>
           </Button>
           {item.projectUrl && (
             <Button asChild variant="ghost" className="px-3 sm:w-full">
@@ -315,7 +316,7 @@ export default function ResourceCenter() {
 
   const handleInstall = (item: ResourceItem) => {
     if (category === 'modpack') {
-      navigate(buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId))
+      navigate(buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId), { state: { iconUrl: item.iconUrl } })
     } else {
       setInstallDialogItem(item)
     }
@@ -332,7 +333,7 @@ export default function ResourceCenter() {
   const activeCategoryLabel = useMemo(() => CATEGORIES.find((item) => item.key === category)?.label ?? category, [category])
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
+    <PageShell className="p-8 space-y-6 overflow-y-auto">
       <PageHeader title="资源中心" />
 
       <Card className="border-border/60 bg-muted/20 p-4">
@@ -407,70 +408,51 @@ export default function ResourceCenter() {
         </div>
       </Card>
 
-      <div>
-        {(initialLoading || isReplacing) ? (
-          <div className="flex flex-col gap-3">
-            {Array.from({ length: 5 }).map((_, index) => (
-              <Card key={index} className="animate-pulse p-4">
-                <div className="flex gap-4">
-                  <div className="h-16 w-16 rounded-2xl bg-muted" />
-                  <div className="flex-1 space-y-3">
-                    <div className="h-5 w-1/3 rounded bg-muted" />
-                    <div className="h-4 w-3/4 rounded bg-muted" />
-                    <div className="h-4 w-1/4 rounded bg-muted" />
-                  </div>
+      {(initialLoading || isReplacing) ? (
+        <div className="flex flex-col gap-3">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Card key={index} className="animate-pulse p-4">
+              <div className="flex gap-4">
+                <div className="h-16 w-16 rounded-2xl bg-muted" />
+                <div className="flex-1 space-y-3">
+                  <div className="h-5 w-1/3 rounded bg-muted" />
+                  <div className="h-4 w-3/4 rounded bg-muted" />
+                  <div className="h-4 w-1/4 rounded bg-muted" />
                 </div>
-              </Card>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
+            <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 text-destructive/60" />
+          </div>
+          <p className="text-sm font-medium text-foreground/80">搜索失败</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">{error}</p>
+          <Button size="sm" variant="outline" onClick={() => doSearch(1, false)} className="mt-4">
+            <FontAwesomeIcon icon={faRotate} className="mr-1.5 h-3 w-3" />
+            重试
+          </Button>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+            <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 opacity-40" />
+          </div>
+          <p className="text-sm font-medium text-foreground/80">未找到相关资源</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">尝试更换关键词、资源源或分类</p>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-col gap-3">
+            {items.map((item) => (
+              <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} onInstall={handleInstall} cnName={cnNames[item.title]} />
             ))}
           </div>
-        ) : error ? (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 text-destructive/60" />
-            </div>
-            <p className="text-sm font-medium text-foreground/80">搜索失败</p>
-            <p className="mt-1 text-xs text-muted-foreground/60">{error}</p>
-            <Button size="sm" variant="outline" onClick={() => doSearch(1, false)} className="mt-4">
-              <FontAwesomeIcon icon={faRotate} className="mr-1.5 h-3 w-3" />
-              重试
-            </Button>
-          </div>
-        ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 opacity-40" />
-            </div>
-            <p className="text-sm font-medium text-foreground/80">未找到相关资源</p>
-            <p className="mt-1 text-xs text-muted-foreground/60">尝试更换关键词、资源源或分类</p>
-          </div>
-        ) : (
-          <>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-0.5">
-              <p className="text-sm text-muted-foreground">
-                当前显示 <span className="font-medium text-foreground">{activeCategoryLabel}</span>，共 <span className="font-medium text-foreground">{total}</span> 个结果
-                {gameVersion && <span className="ml-1">（{gameVersion}）</span>}
-              </p>
-              <div className="flex items-center gap-2">
-                {page > 1 && <p className="text-xs text-muted-foreground/70">已加载 {items.length} 个</p>}
-                <button
-                  onClick={() => {
-                    const key = cacheKey(category, keyword, sort, source, gameVersion, loader)
-                    searchCache.delete(key)
-                    doSearch(1, false)
-                  }}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  title="刷新"
-                >
-                  <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-                </button>
-              </div>
-            </div>
-            <div className="flex flex-col gap-3">
-              {items.map((item) => (
-                <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} onInstall={handleInstall} cnName={cnNames[item.title]} />
-              ))}
-            </div>
-            {items.length < total ? (
+
+          {!initialLoading && !isReplacing && !error && items.length > 0 && (
+            items.length < total ? (
               <div className="mt-5 flex justify-center">
                 <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
                   {loading ? <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />加载中...</> : <>加载更多（{items.length}/{total}）</>}
@@ -478,10 +460,10 @@ export default function ResourceCenter() {
               </div>
             ) : (
               <p className="mt-5 text-center text-xs text-muted-foreground/50">已显示全部 {total} 个结果</p>
-            )}
-          </>
-        )}
-      </div>
+            )
+          )}
+        </>
+      )}
 
       {installDialogItem && (
         <ResourceInstallDialog
@@ -495,7 +477,6 @@ export default function ResourceCenter() {
           instanceId={instanceId}
         />
       )}
-
-    </div>
+    </PageShell>
   )
 }

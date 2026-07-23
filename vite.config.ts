@@ -19,7 +19,7 @@ export default defineConfig(() => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
@@ -31,6 +31,11 @@ export default defineConfig(() => ({
       ignored: ["**/src-tauri/**", "**/.minecraft/**", "**/.vs/**"],
     },
     proxy: {
+      "/announcements-proxy": {
+        target: "https://api.qomicex.top",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/announcements-proxy/, "/api/client/announcements"),
+      },
       "/api": {
         target: "http://localhost:5000",
         changeOrigin: true,

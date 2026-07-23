@@ -7,6 +7,11 @@ on:
         description: '版本号 (如 v0.2.0-beta)'
         required: true
         default: 'v0.1.0'
+      licenseRequired:
+        description: '需要许可证验证（构建包含LICENSE_REQUIRED编译符号的版本）'
+        required: false
+        default: false
+        type: boolean
       buildPlatform:
         description: '构建平台'
         required: true
@@ -79,7 +84,7 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
@@ -92,12 +97,13 @@ jobs:
         run: |
           Write-Output "=== Bundle dir contents ==="
           Get-ChildItem -Recurse -Path "src-tauri/target/release/bundle" | Select-Object FullName
-          $installer = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Include "*.exe","*.msi" | Select-Object -First 1
-          if (-not $installer) { throw "No installer (.exe/.msi) found in bundle directory" }
-          $assetName = $installer.Name
+          $sig = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
+          if (-not $sig) { throw "No .sig file found in bundle directory" }
+          $content = (Get-Content -Raw $sig.FullName).Trim()
+          $assetName = $sig.Name -replace '\.sig$', ''
           $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$assetName"
           $platform = "windows-x86_64"
-          $fragment = @{ $platform = @{ url = $url } }
+          $fragment = @{ $platform = @{ signature = $content; url = $url } }
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
@@ -123,7 +129,7 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
         shell: pwsh
       - run: |
           Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
@@ -136,12 +142,13 @@ jobs:
         run: |
           Write-Output "=== Bundle dir contents ==="
           Get-ChildItem -Recurse -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" | Select-Object FullName
-          $installer = Get-ChildItem -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" -Recurse -Include "*.exe","*.msi" | Select-Object -First 1
-          if (-not $installer) { throw "No installer (.exe/.msi) found in bundle directory" }
-          $assetName = $installer.Name
+          $sig = Get-ChildItem -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" -Recurse -Filter "*.sig" | Select-Object -First 1
+          if (-not $sig) { throw "No .sig file found in bundle directory" }
+          $content = (Get-Content -Raw $sig.FullName).Trim()
+          $assetName = $sig.Name -replace '\.sig$', ''
           $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$assetName"
           $platform = "windows-aarch64"
-          $fragment = @{ $platform = @{ url = $url } }
+          $fragment = @{ $platform = @{ signature = $content; url = $url } }
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
@@ -170,7 +177,7 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
@@ -181,16 +188,17 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          INSTALLER=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
-          [ -z "$INSTALLER" ] && INSTALLER=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
-          if [ -z "$INSTALLER" ]; then
-            echo "No .deb/.rpm installer found, skipping update fragment"
-            exit 0
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
           fi
-          ASSET_NAME=$(basename "$INSTALLER")
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="linux-x86_64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -217,7 +225,7 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
@@ -228,16 +236,17 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          INSTALLER=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
-          [ -z "$INSTALLER" ] && INSTALLER=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
-          if [ -z "$INSTALLER" ]; then
-            echo "No .deb/.rpm installer found, skipping update fragment"
-            exit 0
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
           fi
-          ASSET_NAME=$(basename "$INSTALLER")
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="linux-aarch64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -267,7 +276,7 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-loongarch64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-loongarch64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
@@ -276,16 +285,17 @@ jobs:
       - name: Generate update manifest fragment
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          INSTALLER=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
-          [ -z "$INSTALLER" ] && INSTALLER=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
-          if [ -z "$INSTALLER" ]; then
-            echo "No .deb/.rpm installer found, skipping update fragment"
-            exit 0
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
+            exit 1
           fi
-          ASSET_NAME=$(basename "$INSTALLER")
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="linux-loongarch64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -309,7 +319,7 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
@@ -330,15 +340,17 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
-          if [ -z "$DMG" ]; then
-            echo "ERROR: No .dmg file found in $BUNDLE_DIR"
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
             exit 1
           fi
-          ASSET_NAME=$(basename "$DMG")
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="darwin-aarch64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -362,7 +374,7 @@ jobs:
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -o src-tauri/binaries/tmp
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ github.event.inputs.licenseRequired }} -o src-tauri/binaries/tmp
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
@@ -383,15 +395,17 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
-          if [ -z "$DMG" ]; then
-            echo "ERROR: No .dmg file found in $BUNDLE_DIR"
+          SIG=$(find "$BUNDLE_DIR" -name '*.sig' | head -1)
+          if [ -z "$SIG" ]; then
+            echo "ERROR: No .sig file found in $BUNDLE_DIR"
             exit 1
           fi
-          ASSET_NAME=$(basename "$DMG")
+          SIG_CONTENT=$(cat "$SIG")
+          SIG_BASENAME=$(basename "$SIG")
+          ASSET_NAME="${SIG_BASENAME%.sig}"
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/$ASSET_NAME"
           PLATFORM="darwin-x86_64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          echo "{\"$PLATFORM\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:

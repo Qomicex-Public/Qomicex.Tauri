@@ -1,7 +1,10 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { launchInstance as apiLaunchInstance, getLaunchProgress, cancelLaunch as apiCancelLaunch } from '../api/instance.ts'
+import { getJavaRequirement } from '../api/java.ts'
 import { analyzeCrash } from '../api/crashDiagnostics.ts'
+import { getRuntimes } from '../stores/javaStore.ts'
+import { useMessageBox } from '../components/ui/message-box.tsx'
 import type { LaunchResult, LaunchProgress, CrashDialogState } from '../types/index.ts'
 
 export interface RunningInstance {
@@ -12,11 +15,17 @@ export interface RunningInstance {
   processId?: number | null
 }
 
+export interface JavaCheckInfo {
+  path?: string | null
+  gameVersion?: string
+  gameDir?: string
+}
+
 export interface RunningContextValue {
   runningInstances: RunningInstance[]
   launchProgress: LaunchProgress | null
   launchingInstanceId: string | null
-  launchInstance: (id: string, name: string) => Promise<LaunchResult>
+  launchInstance: (id: string, name: string, javaInfo?: JavaCheckInfo) => Promise<LaunchResult>
   cancelLaunch: (id?: string) => Promise<void>
   killInstance: (id: string) => Promise<void>
   setNotifyImpl: (fn: (msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void) => void
@@ -34,6 +43,7 @@ export function useRunning(): RunningContextValue {
 }
 
 export function RunningProvider({ children }: { children: ReactNode }) {
+  const { confirm } = useMessageBox()
   const [runningInstances, setRunningInstances] = useState<RunningInstance[]>([])
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null)
@@ -63,9 +73,35 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     if (ref) { clearTimeout(ref); pollRefs.current.delete(id) }
   }, [])
 
-  const launchInstance = useCallback(async (id: string, name: string): Promise<LaunchResult> => {
+  const launchInstance = useCallback(async (id: string, name: string, javaInfo?: JavaCheckInfo): Promise<LaunchResult> => {
+    launchingIdRef.current = id
+    setLaunchingInstanceId(id)
+    setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
+
+    if (javaInfo?.path && javaInfo.gameVersion && javaInfo.gameDir) {
+      try {
+        const req = await getJavaRequirement(javaInfo.gameDir, javaInfo.gameVersion)
+        const rt = getRuntimes().find(r => r.path === javaInfo.path)
+        if (rt && rt.versionID < req.requiredMajorVersion) {
+          const ok = await confirm(
+            `当前选择的 Java ${rt.versionID} 不满足 Minecraft ${javaInfo.gameVersion} 的需求（需要 Java ${req.requiredMajorVersion}），是否继续启动？`,
+            'Java 版本不兼容'
+          )
+          if (!ok) {
+            setLaunchProgress(null)
+            setLaunchingInstanceId(null)
+            launchingIdRef.current = null
+            return { success: false, processId: 0 } as LaunchResult
+          }
+        }
+      } catch { /* 检查失败不影响启动 */ }
+    }
+
     const result = await apiLaunchInstance(id)
     if (!result.success) {
+      setLaunchProgress(null)
+      setLaunchingInstanceId(null)
+      launchingIdRef.current = null
       setCrashDialogState({
         instanceId: id,
         title: '启动失败',
@@ -77,10 +113,6 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       })
       return result
     }
-
-    launchingIdRef.current = id
-    setLaunchingInstanceId(id)
-    setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
 
     const poll = async () => {
       try {
@@ -120,6 +152,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
           setLaunchProgress(null)
           setRunningInstances(prev => {
             if (prev.some(r => r.instanceId === id)) return prev
+            notifyRef.current?.('游戏已启动', 'success')
             return [...prev, { instanceId: id, name, startedAt: Date.now(), stage: 'running', processId: p.processId }]
           })
           pollRefs.current.set(id, window.setTimeout(poll, 5000))
@@ -136,7 +169,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     }
     pollRefs.current.set(id, window.setTimeout(poll, 500))
     return result
-  }, [clearInstancePoll])
+  }, [clearInstancePoll, confirm])
 
   const cancelLaunch = useCallback(async (id?: string) => {
     const targetId = id || launchingIdRef.current

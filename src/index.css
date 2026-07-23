@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+*, *::before, *::after {
+  user-select: none;
+  -webkit-user-select: none;
+}
+input, textarea, [contenteditable] {
+  user-select: auto;
+  -webkit-user-select: auto;
+}
+
 @layer base {
   :root {
     --background: 230 20% 6%;

@@ -1,7 +1,8 @@
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
 use tauri::Manager;
-use tauri::ipc::Channel;
+use tauri_plugin_updater::{RemoteRelease, UpdaterExt};
+use url::Url;
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 
 mod dialog_cmd;
@@ -123,12 +124,12 @@ fn spawn_backend(app: &tauri::App) {
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateMetadata {
+struct UpdateInfo {
+    rid: tauri::ResourceId,
     current_version: String,
     version: String,
     date: Option<String>,
     body: Option<String>,
-    download_url: String,
     raw_json: serde_json::Value,
 }
 
@@ -208,7 +209,7 @@ fn transform_version(v: &str) -> String {
 async fn check_update_with_endpoint<R: tauri::Runtime>(
     webview: tauri::Webview<R>,
     endpoint: String,
-) -> Result<Option<UpdateMetadata>, String> {
+) -> Result<Option<UpdateInfo>, String> {
     let target = current_os_arch();
     eprintln!("[updater] target={target} endpoint={endpoint}");
 
@@ -250,8 +251,7 @@ async fn check_update_with_endpoint<R: tauri::Runtime>(
     let raw_remote = root
         .get("version")
         .and_then(|v| v.as_str())
-        .unwrap_or("0.0.0")
-        .to_string();
+        .unwrap_or("0.0.0");
     eprintln!(
         "[updater] current={} remote={raw_remote}",
         cur_ver.to_string()
@@ -286,182 +286,117 @@ async fn check_update_with_endpoint<R: tauri::Runtime>(
         }
     }
 
-    // 6) 提取下载 URL，直接返回元数据（不使用 updater 插件）
-    let download_url = root
-        .get("platforms")
-        .and_then(|p| p.get(&target))
-        .and_then(|p| p.get("url"))
-        .and_then(|u| u.as_str())
-        .unwrap_or("")
-        .to_string();
-    eprintln!("[updater] download_url={download_url}");
-
-    Ok(Some(UpdateMetadata {
-        current_version: cur_ver.to_string(),
-        version: raw_remote.clone(),
-        date: None,
-        body: root.get("notes").and_then(|n| n.as_str()).map(|s| s.to_string()),
-        download_url,
-        raw_json: root,
-    }))
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DownloadEvent {
-    event: String,
-    data: DownloadEventData,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DownloadEventData {
-    content_length: Option<u64>,
-    chunk_length: Option<usize>,
-}
-
-#[tauri::command]
-async fn download_and_install_update<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    url: String,
-    on_event: Channel<DownloadEvent>,
-) -> Result<(), String> {
-    eprintln!("[updater] 开始下载: {url}");
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-        .map_err(|e| format!("HTTP 客户端创建失败: {e}"))?;
-
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("下载请求失败: {e}"))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("下载失败: HTTP {}", resp.status()));
-    }
-
-    let content_length = resp.content_length().unwrap_or(0);
-    eprintln!("[updater] 文件大小: {content_length} bytes");
-
-    let _ = on_event.send(DownloadEvent {
-        event: "Started".to_string(),
-        data: DownloadEventData {
-            content_length: Some(content_length),
-            chunk_length: None,
-        },
-    });
-
+    // 6) 写入临时文件，指向 Tauri 插件读取修改后的 manifest（含代理 URL）
     let temp_dir = std::env::temp_dir().join("qomicex-updater");
     let _ = std::fs::create_dir_all(&temp_dir);
+    let temp_path = temp_dir.join(format!("update-{}.json", std::process::id()));
+    let modified_json =
+        serde_json::to_string_pretty(&root).map_err(|e| format!("JSON 序列化失败: {e}"))?;
+    std::fs::write(&temp_path, &modified_json)
+        .map_err(|e| format!("临时文件写入失败: {e}"))?;
+    eprintln!("[updater] 修改后 JSON 写入: {}", temp_path.display());
 
-    // 根据 URL 确定文件扩展名
-    let ext = if url.contains(".msi") {
-        "msi"
-    } else if url.contains(".exe") {
-        "exe"
-    } else if url.contains(".deb") {
-        "deb"
-    } else if url.contains(".rpm") {
-        "rpm"
-    } else if url.contains(".dmg") {
-        "dmg"
-    } else if url.contains(".tar.gz") || url.contains(".tgz") {
-        "tar.gz"
-    } else {
-        "bin"
+    // 7) 确定有更新 → 用插件 check() 获取 Update 资源（用于后续 downloadAndInstall）
+    let url = Url::from_file_path(&temp_path)
+        .map_err(|_| "临时文件路径转 URL 失败".to_string())?;
+
+    let version_comparator = move |current: semver::Version, release: RemoteRelease| {
+        let cur = transform_version(&current.to_string());
+        let rel = transform_version(&release.version.to_string());
+        match (semver::Version::parse(&cur), semver::Version::parse(&rel)) {
+            (Ok(c), Ok(r)) => r > c,
+            _ => false,
+        }
     };
 
-    let file_path = temp_dir.join(format!("update.{ext}"));
-    let mut file = std::fs::File::create(&file_path)
-        .map_err(|e| format!("创建临时文件失败: {e}"))?;
+    let updater = webview
+        .updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| format!("endpoints 设置失败: {e}"))?
+        .target(target)
+        .version_comparator(version_comparator)
+        .build()
+        .map_err(|e| format!("Updater 构建失败: {e}"))?;
 
-    let mut downloaded: u64 = 0;
-    let mut stream = resp.bytes_stream();
-    use futures_util::StreamExt;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("更新检查失败: {e}"))?;
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("读取下载数据失败: {e}"))?;
-        std::io::Write::write_all(&mut file, &chunk)
-            .map_err(|e| format!("写入文件失败: {e}"))?;
-        downloaded += chunk.len() as u64;
-
-        let _ = on_event.send(DownloadEvent {
-            event: "Progress".to_string(),
-            data: DownloadEventData {
-                content_length: None,
-                chunk_length: Some(chunk.len()),
-            },
-        });
-    }
-
-    eprintln!("[updater] 下载完成: {} bytes -> {}", downloaded, file_path.display());
-
-    // 运行安装程序
-    #[cfg(target_os = "windows")]
-    {
-        if ext == "msi" {
-            let status = std::process::Command::new("msiexec")
-                .args(["/i", file_path.to_str().unwrap(), "/quiet", "/norestart"])
-                .status()
-                .map_err(|e| format!("启动 msiexec 失败: {e}"))?;
-            if !status.success() {
-                return Err(format!("msiexec 安装失败: exit code {}", status.code().unwrap_or(-1)));
-            }
-        } else if ext == "exe" {
-            let status = std::process::Command::new(&file_path)
-                .status()
-                .map_err(|e| format!("启动安装程序失败: {e}"))?;
-            if !status.success() {
-                return Err(format!("安装程序失败: exit code {}", status.code().unwrap_or(-1)));
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        if ext == "deb" {
-            let status = std::process::Command::new("pkexec")
-                .args(["dpkg", "-i", file_path.to_str().unwrap()])
-                .status()
-                .map_err(|e| format!("启动 dpkg 失败: {e}"))?;
-            if !status.success() {
-                return Err(format!("dpkg 安装失败: exit code {}", status.code().unwrap_or(-1)));
-            }
-        } else if ext == "rpm" {
-            let status = std::process::Command::new("pkexec")
-                .args(["rpm", "-U", file_path.to_str().unwrap()])
-                .status()
-                .map_err(|e| format!("启动 rpm 失败: {e}"))?;
-            if !status.success() {
-                return Err(format!("rpm 安装失败: exit code {}", status.code().unwrap_or(-1)));
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        if ext == "dmg" {
-            let status = std::process::Command::new("open")
-                .arg(file_path.to_str().unwrap())
-                .status()
-                .map_err(|e| format!("打开 DMG 失败: {e}"))?;
-            if !status.success() {
-                return Err(format!("打开 DMG 失败: exit code {}", status.code().unwrap_or(-1)));
-            }
-        }
-    }
-
-    eprintln!("[updater] 安装完成，准备重启");
-    // 重启应用（此调用不会返回）
-    app.restart();
+    Ok(update.map(|u| {
+        let current_version = u.current_version.clone();
+        let version = u.version.clone();
+        let body = u.body.clone();
+        let raw_json = u.raw_json.clone();
+        let rid = webview.resources_table().add(u);
+        UpdateInfo { rid, current_version, version, date: None, body, raw_json }
+    }))
 }
 
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+fn restart_backend(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<BackendChild>();
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    let child = guard.take();
+    drop(guard);
+    if let Some(mut child) = child {
+        let _ = child.kill();
+        let _ = child.wait();
+        eprintln!("[backend] killed for restart");
+    }
+    if std::env::var("QOMICEX_LAUNCHER_MANAGED").is_ok() {
+        eprintln!("[backend] launcher-managed, skipping spawn");
+        return Ok(());
+    }
+    if BACKEND.len() < 1024 {
+        eprintln!("[backend] placeholder ({} bytes), skipping", BACKEND.len());
+        return Ok(());
+    }
+    let exe_path = match extract_backend() {
+        Some(p) => p,
+        None => return Err("failed to extract backend".into()),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755));
+    }
+    let mut cmd = std::process::Command::new(&exe_path);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    #[cfg(windows)] { const CREATE_NO_WINDOW: u32 = 0x08000000; cmd.creation_flags(CREATE_NO_WINDOW); }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[backend] spawn failed: {e}");
+            let _ = std::fs::remove_file(&exe_path);
+            return Err(e.to_string());
+        }
+    };
+    let tag = BACKEND_EXE;
+    if let Some(out) = child.stdout.take() {
+        std::thread::spawn(move || {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                eprintln!("[{tag} out] {line}");
+            }
+        });
+    }
+    if let Some(err) = child.stderr.take() {
+        std::thread::spawn(move || {
+            for line in BufReader::new(err).lines().map_while(Result::ok) {
+                eprintln!("[{tag} err] {line}");
+            }
+        });
+    }
+    let state = app.state::<BackendChild>();
+    *state.0.lock().unwrap() = Some(child);
+    eprintln!("[backend] spawned: {} ({} bytes)", exe_path.display(), BACKEND.len());
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -471,6 +406,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(BackendChild(Mutex::new(None)))
         .setup(|app| {
+            #[cfg(desktop)]
+            let _ = app.handle().plugin(tauri_plugin_updater::Builder::new().build());
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_decorations(false);
@@ -482,7 +419,7 @@ pub fn run() {
             greet,
             dialog_cmd::pick_dialog,
             check_update_with_endpoint,
-            download_and_install_update
+            restart_backend
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

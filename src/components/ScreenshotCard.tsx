@@ -1,18 +1,21 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faTrashCan } from '@fortawesome/free-solid-svg-icons'
+import { faTrashCan, faCheck, faExpand } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui/tooltip.tsx'
 import { Button } from './ui/button.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import type { ScreenshotMetadata } from '../types/index.ts'
+import { cn } from '../lib/utils.ts'
 
 interface Props {
   screenshot: ScreenshotMetadata
   instanceId: string
   onRefresh: () => void
+  selected?: boolean
+  onSelect?: React.MouseEventHandler
 }
 
-export default function ScreenshotCard({ screenshot, instanceId, onRefresh }: Props) {
+export default function ScreenshotCard({ screenshot, instanceId, onRefresh, selected, onSelect }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [preview, setPreview] = useState(false)
@@ -22,10 +25,8 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh }: Pr
   useEffect(() => {
     if (imgInited.current) return
     imgInited.current = true
-    const filePath = screenshot.filePath.replace(/\\/g, '/')
-    const fallback = 'file:///' + filePath.replace(/^\//, '')
-    import('@tauri-apps/api/core').then(mod => setImgSrc(mod.convertFileSrc(filePath))).catch(() => setImgSrc(fallback))
-  }, [screenshot.filePath])
+    import('../api/client.ts').then(mod => setImgSrc(`${mod.API_BASE}/instance/${instanceId}/files/screenshots/${encodeURIComponent(screenshot.fileName)}`))
+  }, [screenshot.filePath, screenshot.fileName, instanceId])
 
   const handleDelete = useCallback(async () => {
     setDeleting(true)
@@ -38,24 +39,34 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh }: Pr
 
   return (
     <>
-      <div className="group relative overflow-hidden rounded-lg border border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
-        <div className="flex items-center gap-3 p-4">
-          <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-muted cursor-pointer" onClick={() => setPreview(true)}>
-            <img src={imgSrc} alt={screenshot.fileName} className="h-full w-full object-cover" loading="lazy" />
+      <div className={cn('group relative overflow-hidden rounded-lg border bg-card transition-all hover:shadow-md hover:border-primary/20 cursor-pointer', selected && 'border-primary/40 ring-1 ring-primary/30')} onClick={onSelect}>
+        <div className="aspect-[4/3] overflow-hidden bg-muted" onClick={(e) => { e.stopPropagation(); setPreview(true) }}>
+          {imgSrc && <img src={imgSrc} alt={screenshot.fileName} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />}
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onSelect?.(e) }}
+          className={cn(
+            'absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded border bg-background/80 transition-colors',
+            selected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/50 hover:border-foreground/70'
+          )}
+        >
+          {selected && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+        </button>
+        <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Tooltip content="删除">
+            <button onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">
+              <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+        <div className="flex items-center gap-2 px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium">{screenshot.fileName}</p>
+            <p className="text-[11px] text-muted-foreground">{(screenshot.fileSize / 1024 / 1024).toFixed(1)} MB</p>
           </div>
-          <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setPreview(true)}>
-            <p className="truncate text-sm font-medium">{screenshot.fileName}</p>
-            <p className="text-xs text-muted-foreground">
-              {(screenshot.fileSize / 1024 / 1024).toFixed(1)} MB
-            </p>
-          </div>
-          <div className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-            <Tooltip content="删除">
-              <button onClick={() => setConfirmOpen(true)} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">
-                <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-          </div>
+          <button onClick={(e) => { e.stopPropagation(); setPreview(true) }} className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">
+            <FontAwesomeIcon icon={faExpand} className="h-3.5 w-3.5" />
+          </button>
         </div>
       </div>
 

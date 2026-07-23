@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faList, faGrip } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen} from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Separator } from '../components/ui/separator.tsx'
@@ -15,7 +15,7 @@ import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting } from '../api/instance.ts'
-import { openFolder } from '../api/settings.ts'
+import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
@@ -28,6 +28,7 @@ import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
 import { useRunning } from '../contexts/RunningContext.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import ModCard from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
 import ModUpdateDialog from '../components/ModUpdateDialog.tsx'
@@ -100,12 +101,17 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   )
 }
 
-function SavesTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
+function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [saves, setSaves] = useState<SaveMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const lastClickedRef = useRef(-1)
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
+  const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     setLoading(true)
     try { const data = await getSavesMetadata(instanceId); setSaves(data) }
     catch { setSaves([]) }
@@ -113,6 +119,38 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: 
   }, [instanceId])
 
   useEffect(() => { load() }, [load, refreshKey])
+
+  const toggleSelect = useCallback((filePath: string, shift?: boolean, ctrl?: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (ctrl) {
+        if (next.has(filePath)) next.delete(filePath); else next.add(filePath)
+      } else if (shift && lastClickedRef.current >= 0) {
+        const start = Math.min(lastClickedRef.current, saves.findIndex(s => s.filePath === filePath))
+        const end = Math.max(lastClickedRef.current, saves.findIndex(s => s.filePath === filePath))
+        for (let i = start; i <= end; i++) next.add(saves[i].filePath)
+      } else {
+        next.clear(); next.add(filePath)
+      }
+      return next
+    })
+    lastClickedRef.current = saves.findIndex(s => s.filePath === filePath)
+  }, [saves])
+
+  const handleBatchDelete = useCallback(async () => {
+    setBatchDeleting(true)
+    const names = Array.from(selected).map(fp => fp.replace(/\\/g, '/').split('/').pop()!).filter(Boolean)
+    try {
+      const { deleteSave } = await import('../api/instance-files.ts')
+      for (const name of names) {
+        try { await deleteSave(instanceId, name) } catch {}
+      }
+    } catch {}
+    setSelected(new Set())
+    setBatchDeleteOpen(false)
+    setBatchDeleting(false)
+    load()
+  }, [instanceId, selected, saves, load])
 
   const filtered = useMemo(() => {
     if (!search) return saves
@@ -135,11 +173,6 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: 
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <Tooltip content="刷新">
-              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
-                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
-              </Button>
-            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
@@ -156,21 +189,52 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: 
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((save) => (
-              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} />
+              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} />
             ))}
           </div>
         )}
       </CardContent>
+      {selected.size > 0 && (
+        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
+          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
+          <div className="h-5 w-px bg-border" />
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.filePath)))}>全选</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
+          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+            删除 {selected.size}
+          </Button>
+        </div>
+      )}
+      <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+        <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+          <DialogTitle>批量删除存档</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个存档吗？将被移至回收站。</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
+            {batchDeleting ? '删除中...' : '删除'}
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </Card>
   )
 }
 
-function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
+function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [screenshots, setScreenshots] = useState<ScreenshotMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const lastClickedRef = useRef(-1)
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
+  const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     setLoading(true)
     try { const data = await getScreenshotsMetadata(instanceId); setScreenshots(data) }
     catch { setScreenshots([]) }
@@ -178,6 +242,38 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instan
   }, [instanceId])
 
   useEffect(() => { load() }, [load, refreshKey])
+
+  const toggleSelect = useCallback((filePath: string, shift?: boolean, ctrl?: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (ctrl) {
+        if (next.has(filePath)) next.delete(filePath); else next.add(filePath)
+      } else if (shift && lastClickedRef.current >= 0) {
+        const start = Math.min(lastClickedRef.current, screenshots.findIndex(s => s.filePath === filePath))
+        const end = Math.max(lastClickedRef.current, screenshots.findIndex(s => s.filePath === filePath))
+        for (let i = start; i <= end; i++) next.add(screenshots[i].filePath)
+      } else {
+        next.clear(); next.add(filePath)
+      }
+      return next
+    })
+    lastClickedRef.current = screenshots.findIndex(s => s.filePath === filePath)
+  }, [screenshots])
+
+  const handleBatchDelete = useCallback(async () => {
+    setBatchDeleting(true)
+    const names = Array.from(selected).map(fp => screenshots.find(s => s.filePath === fp)?.fileName).filter((n): n is string => !!n)
+    try {
+      const { deleteScreenshot } = await import('../api/instance-files.ts')
+      for (const name of names) {
+        try { await deleteScreenshot(instanceId, name) } catch {}
+      }
+    } catch {}
+    setSelected(new Set())
+    setBatchDeleteOpen(false)
+    setBatchDeleting(false)
+    load()
+  }, [instanceId, selected, screenshots, load])
 
   const filtered = useMemo(() => {
     if (!search) return screenshots
@@ -200,11 +296,6 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instan
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <Tooltip content="刷新">
-              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
-                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
-              </Button>
-            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
@@ -229,16 +320,42 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh }: { instan
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map((s) => (
-              <ScreenshotCard key={s.filePath} screenshot={s} instanceId={instanceId} onRefresh={load} />
+              <ScreenshotCard key={s.filePath} screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.filePath)} onSelect={(e) => toggleSelect(s.filePath, e.shiftKey, e.ctrlKey)} />
             ))}
           </div>
         )}
       </CardContent>
+      {selected.size > 0 && (
+        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
+          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
+          <div className="h-5 w-px bg-border" />
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.filePath)))}>全选</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
+          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+            删除 {selected.size}
+          </Button>
+        </div>
+      )}
+      <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+        <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+          <DialogTitle>批量删除截图</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个截图吗？将被移至回收站。</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
+            {batchDeleting ? '删除中...' : '删除'}
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </Card>
   )
 }
 
-function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefresh }: {
+function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefresh: _onRefresh }: {
   instanceId: string
   gameVersion?: string
   loader?: string
@@ -255,12 +372,12 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [updateFileNames, setUpdateFileNames] = useState<Set<string>>(new Set())
 
-  const [batchMode, setBatchMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchConfirm, setBatchConfirm] = useState<{ type: 'enable' | 'disable' | 'delete' } | null>(null)
   const [batchProcessing, setBatchProcessing] = useState(false)
 
   const loadMods = useCallback(async () => {
+    setSelected(new Set())
     const cacheKey = `api-instance-${instanceId}-mods`
     const fresh = cacheFresh<ModMetadata[]>(cacheKey)
     if (fresh) { setMods(fresh); setLoading(false); return }
@@ -311,24 +428,28 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     )
   }, [mods, search])
 
-  const toggleSelect = useCallback((fileName: string) => {
-    setSelected((prev) => {
+  const lastClickedRef = useRef(-1)
+  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
+    const index = filtered.findIndex(m => m.fileName === fileName)
+    if (index === -1) return
+    const prevLastClicked = lastClickedRef.current
+    setSelected(prev => {
       const next = new Set(prev)
-      if (next.has(fileName)) next.delete(fileName)
-      else next.add(fileName)
+      if (shift && prevLastClicked >= 0) {
+        const start = Math.min(prevLastClicked, index)
+        const end = Math.max(prevLastClicked, index)
+        for (let i = start; i <= end; i++)
+          next.add(filtered[i].fileName)
+      } else if (ctrl) {
+        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
+      } else {
+        next.clear()
+        next.add(fileName)
+      }
       return next
     })
-  }, [])
-
-  const enterBatchMode = useCallback(() => {
-    setBatchMode(true)
-    setSelected(new Set())
-  }, [])
-
-  const exitBatchMode = useCallback(() => {
-    setBatchMode(false)
-    setSelected(new Set())
-  }, [])
+    lastClickedRef.current = index
+  }, [filtered])
 
   const handleBatchAction = useCallback(async () => {
     if (!batchConfirm) return
@@ -340,11 +461,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       else if (batchConfirm.type === 'delete') await batchDeleteMods(instanceId, names)
       cacheInvalidate(`api-instance-${instanceId}-mods`)
       await loadMods()
-      exitBatchMode()
+      setSelected(new Set())
     } catch (e) { console.error('Batch action failed:', e) }
     setBatchProcessing(false)
     setBatchConfirm(null)
-  }, [batchConfirm, selected, instanceId, loadMods, exitBatchMode])
+  }, [batchConfirm, selected, instanceId, loadMods])
 
   if (!loader) {
     return (
@@ -380,40 +501,21 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               </div>
             </div>
             <div className="flex items-center gap-1.5">
-              {batchMode ? (
-                <>
-                  <Button size="sm" variant="outline" onClick={exitBatchMode} className="gap-1.5 h-7 text-xs">取消</Button>
-                  <Button size="sm" variant="outline" onClick={() => setBatchConfirm({ type: 'enable' })} disabled={selected.size === 0} className="gap-1.5 h-7 text-xs">启用</Button>
-                  <Button size="sm" variant="outline" onClick={() => setBatchConfirm({ type: 'disable' })} disabled={selected.size === 0} className="gap-1.5 h-7 text-xs">禁用</Button>
-                  <Button size="sm" variant="outline" onClick={() => setBatchConfirm({ type: 'delete' })} disabled={selected.size === 0} className="gap-1.5 h-7 text-xs text-destructive hover:text-destructive">删除</Button>
-                </>
-              ) : (
-                <>
-                  <Tooltip content="刷新">
-                    <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
-                      <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
-                    </Button>
-                  </Tooltip>
-                  <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
-                    <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setUpdateDialogOpen(true)} className="gap-1.5 h-7 text-xs">
-                    <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />检查更新
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={enterBatchMode} className="gap-1.5 h-7 text-xs">
-                    批量操作
-                  </Button>
-                  <Button size="sm" onClick={() => {
-                    const p = new URLSearchParams({ category: 'mod', source: 'modrinth' })
-                    if (gameVersion) p.set('gameVersion', gameVersion)
-                    if (loader) p.set('loader', loader.toLowerCase())
-                    if (instanceId) p.set('instanceId', instanceId)
-                    navigate(`/resource-center?${p.toString()}`)
-                  }} className="gap-1.5 h-7 text-xs">
-                    <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装 Mod
-                  </Button>
-                </>
-              )}
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
+                <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setUpdateDialogOpen(true)} className="gap-1.5 h-7 text-xs">
+                <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />检查更新
+              </Button>
+              <Button size="sm" onClick={() => {
+                const p = new URLSearchParams({ category: 'mod', source: 'modrinth' })
+                if (gameVersion) p.set('gameVersion', gameVersion)
+                if (loader) p.set('loader', loader.toLowerCase())
+                if (instanceId) p.set('instanceId', instanceId)
+                navigate(`/resource-center?${p.toString()}`)
+              }} className="gap-1.5 h-7 text-xs">
+                <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装 Mod
+              </Button>
             </div>
           </div>
 
@@ -457,9 +559,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                     onRefresh={loadMods}
                     onToggle={toggleModLocal}
                     onChangeVersion={setVersionDialogMod}
-                    batchMode={batchMode}
                     selected={selected.has(mod.fileName)}
-                    onSelect={toggleSelect}
+                    onSelect={(fileName, shift, ctrl) => toggleSelect(fileName, shift, ctrl)}
                     hasUpdate={updateFileNames.has(mod.fileName)}
                   />
               ))}
@@ -468,6 +569,20 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         </CardContent>
       </Card>
 
+      {selected.size > 0 && (
+        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
+          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
+          <div className="h-5 w-px bg-border" />
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(m => m.fileName)))}>全选</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchConfirm({ type: 'enable' })}>启用</Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchConfirm({ type: 'disable' })}>禁用</Button>
+          <Button variant="destructive" size="sm" onClick={() => setBatchConfirm({ type: 'delete' })}>
+            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+            删除 {selected.size}
+          </Button>
+        </div>
+      )}
       <Dialog open={batchConfirm !== null} onClose={() => setBatchConfirm(null)}>
         <DialogHeader onClose={() => setBatchConfirm(null)}>
           <DialogTitle>
@@ -510,25 +625,19 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   )
 }
 
-function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
+function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<ResourcePackMetadata[]>([])
   const [loading, setLoading] = useState(true)
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>(
-    () => (localStorage.getItem('rp-view-mode') as 'grid' | 'list') || 'grid'
-  )
   const { notify } = useMessageBox()
-
-  const toggleView = useCallback(() => {
-    setViewMode(prev => {
-      const next = prev === 'grid' ? 'list' : 'grid'
-      localStorage.setItem('rp-view-mode', next)
-      return next
-    })
-  }, [])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const lastClickedRef = useRef(-1)
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
+  const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     const cacheKey = `api-instance-${instanceId}-resourcepacks`
     const fresh = cacheFresh<ResourcePackMetadata[]>(cacheKey)
     if (fresh) { setPacks(fresh); setLoading(false); return }
@@ -545,15 +654,43 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
 
   useEffect(() => { load() }, [load, refreshKey])
 
+  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (ctrl) {
+        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
+      } else if (shift && lastClickedRef.current >= 0) {
+        const start = Math.min(lastClickedRef.current, packs.findIndex(p => p.fileName === fileName))
+        const end = Math.max(lastClickedRef.current, packs.findIndex(p => p.fileName === fileName))
+        for (let i = start; i <= end; i++) next.add(packs[i].fileName)
+      } else {
+        next.clear(); next.add(fileName)
+      }
+      return next
+    })
+    lastClickedRef.current = packs.findIndex(p => p.fileName === fileName)
+  }, [packs])
+
+  const handleBatchDelete = useCallback(async () => {
+    setBatchDeleting(true)
+    const names = Array.from(selected)
+    try {
+      const { deleteResourcePack } = await import('../api/instance-files.ts')
+      for (const name of names) {
+        try { await deleteResourcePack(instanceId, name) } catch {}
+      }
+    } catch {}
+    setSelected(new Set())
+    setBatchDeleteOpen(false)
+    setBatchDeleting(false)
+    load()
+  }, [instanceId, selected, load])
+
   const filtered = useMemo(() => {
     if (!search) return packs
     const q = search.toLowerCase()
     return packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
   }, [packs, search])
-
-  const handleDelete = useCallback((fileName: string) => {
-    setPacks(prev => prev.filter(p => p.fileName !== fileName))
-  }, [])
 
   return (
     <Card>
@@ -570,19 +707,9 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <Tooltip content="刷新">
-              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
-                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
-              </Button>
-            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
-            <Tooltip content={viewMode === 'grid' ? '切换列表' : '切换网格'}>
-              <Button size="sm" variant="ghost" onClick={toggleView} className="h-7 w-7 px-0">
-                <FontAwesomeIcon icon={viewMode === 'grid' ? faList : faGrip} className="h-3.5 w-3.5" />
-              </Button>
-            </Tooltip>
             <Button size="sm" onClick={() => {
               const p = new URLSearchParams({ category: 'resourcepack', source: 'modrinth' })
               if (gameVersion) p.set('gameVersion', gameVersion)
@@ -611,43 +738,57 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? '无匹配资源包' : '暂无资源包'}
           </div>
-        ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {filtered.map((pack) => (
-              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
-            ))}
-          </div>
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((pack) => (
-              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
+              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
             ))}
           </div>
         )}
       </CardContent>
+      {selected.size > 0 && (
+        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
+          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
+          <div className="h-5 w-px bg-border" />
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(p => p.fileName)))}>全选</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
+          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+            删除 {selected.size}
+          </Button>
+        </div>
+      )}
+      <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+        <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+          <DialogTitle>批量删除资源包</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个资源包吗？将被移至回收站。</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
+            {batchDeleting ? '删除中...' : '删除'}
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </Card>
   )
 }
 
-function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
+function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [shaders, setShaders] = useState<ShaderMetadata[]>([])
   const [loading, setLoading] = useState(true)
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>(
-    () => (localStorage.getItem('shader-view-mode') as 'grid' | 'list') || 'grid'
-  )
   const { notify } = useMessageBox()
-
-  const toggleView = useCallback(() => {
-    setViewMode(prev => {
-      const next = prev === 'grid' ? 'list' : 'grid'
-      localStorage.setItem('shader-view-mode', next)
-      return next
-    })
-  }, [])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const lastClickedRef = useRef(-1)
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
+  const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     const cacheKey = `api-instance-${instanceId}-shaders`
     const fresh = cacheFresh<ShaderMetadata[]>(cacheKey)
     if (fresh) { setShaders(fresh); setLoading(false); return }
@@ -664,15 +805,43 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
 
   useEffect(() => { load() }, [load, refreshKey])
 
+  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (ctrl) {
+        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
+      } else if (shift && lastClickedRef.current >= 0) {
+        const start = Math.min(lastClickedRef.current, shaders.findIndex(s => s.fileName === fileName))
+        const end = Math.max(lastClickedRef.current, shaders.findIndex(s => s.fileName === fileName))
+        for (let i = start; i <= end; i++) next.add(shaders[i].fileName)
+      } else {
+        next.clear(); next.add(fileName)
+      }
+      return next
+    })
+    lastClickedRef.current = shaders.findIndex(s => s.fileName === fileName)
+  }, [shaders])
+
+  const handleBatchDelete = useCallback(async () => {
+    setBatchDeleting(true)
+    const names = Array.from(selected)
+    try {
+      const { deleteShaderPack } = await import('../api/instance-files.ts')
+      for (const name of names) {
+        try { await deleteShaderPack(instanceId, name) } catch {}
+      }
+    } catch {}
+    setSelected(new Set())
+    setBatchDeleteOpen(false)
+    setBatchDeleting(false)
+    load()
+  }, [instanceId, selected, load])
+
   const filtered = useMemo(() => {
     if (!search) return shaders
     const q = search.toLowerCase()
     return shaders.filter(s => s.name.toLowerCase().includes(q) || s.fileName.toLowerCase().includes(q))
   }, [shaders, search])
-
-  const handleDelete = useCallback((fileName: string) => {
-    setShaders(prev => prev.filter(s => s.fileName !== fileName))
-  }, [])
 
   return (
     <Card>
@@ -689,19 +858,9 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <Tooltip content="刷新">
-              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
-                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
-              </Button>
-            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
-            <Tooltip content={viewMode === 'grid' ? '切换列表' : '切换网格'}>
-              <Button size="sm" variant="ghost" onClick={toggleView} className="h-7 w-7 px-0">
-                <FontAwesomeIcon icon={viewMode === 'grid' ? faList : faGrip} className="h-3.5 w-3.5" />
-              </Button>
-            </Tooltip>
             <Button size="sm" onClick={() => {
               const p = new URLSearchParams({ category: 'shader', source: 'modrinth' })
               if (gameVersion) p.set('gameVersion', gameVersion)
@@ -730,31 +889,56 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? '无匹配光影包' : '暂无光影包'}
           </div>
-        ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {filtered.map((shader) => (
-              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
-            ))}
-          </div>
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((shader) => (
-              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
+              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(shader.fileName)} onSelect={(e) => toggleSelect(shader.fileName, e.shiftKey, e.ctrlKey)} />
             ))}
           </div>
         )}
       </CardContent>
+      {selected.size > 0 && (
+        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
+          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
+          <div className="h-5 w-px bg-border" />
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.fileName)))}>全选</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
+          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+            删除 {selected.size}
+          </Button>
+        </div>
+      )}
+      <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+        <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+          <DialogTitle>批量删除光影包</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个光影包吗？将被移至回收站。</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
+            {batchDeleting ? '删除中...' : '删除'}
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </Card>
   )
 }
 
-function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
+function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<DataPackMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const lastClickedRef = useRef(-1)
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
+  const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
+    setSelected(new Set())
     const cacheKey = `api-instance-${instanceId}-datapacks`
     const fresh = cacheFresh<DataPackMetadata[]>(cacheKey)
     if (fresh) { setPacks(fresh); setLoading(false); return }
@@ -768,15 +952,43 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
 
   useEffect(() => { load() }, [load, refreshKey])
 
+  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (ctrl) {
+        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
+      } else if (shift && lastClickedRef.current >= 0) {
+        const start = Math.min(lastClickedRef.current, packs.findIndex(p => p.fileName === fileName))
+        const end = Math.max(lastClickedRef.current, packs.findIndex(p => p.fileName === fileName))
+        for (let i = start; i <= end; i++) next.add(packs[i].fileName)
+      } else {
+        next.clear(); next.add(fileName)
+      }
+      return next
+    })
+    lastClickedRef.current = packs.findIndex(p => p.fileName === fileName)
+  }, [packs])
+
+  const handleBatchDelete = useCallback(async () => {
+    setBatchDeleting(true)
+    const names = Array.from(selected)
+    try {
+      const { deleteDataPack } = await import('../api/instance-files.ts')
+      for (const name of names) {
+        try { await deleteDataPack(instanceId, name) } catch {}
+      }
+    } catch {}
+    setSelected(new Set())
+    setBatchDeleteOpen(false)
+    setBatchDeleting(false)
+    load()
+  }, [instanceId, selected, load])
+
   const filtered = useMemo(() => {
     if (!search) return packs
     const q = search.toLowerCase()
     return packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
   }, [packs, search])
-
-  const handleDelete = useCallback((fileName: string) => {
-    setPacks(prev => prev.filter(p => p.fileName !== fileName))
-  }, [])
 
   return (
     <Card>
@@ -793,11 +1005,6 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <Tooltip content="刷新">
-              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
-                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
-              </Button>
-            </Tooltip>
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
             </Button>
@@ -832,16 +1039,42 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((pack) => (
-              <DataPackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={handleDelete} />
+              <DataPackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
             ))}
           </div>
         )}
       </CardContent>
+      {selected.size > 0 && (
+        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
+          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
+          <div className="h-5 w-px bg-border" />
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(p => p.fileName)))}>全选</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
+          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+            删除 {selected.size}
+          </Button>
+        </div>
+      )}
+      <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+        <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+          <DialogTitle>批量删除数据包</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个数据包吗？将被移至回收站。</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
+            {batchDeleting ? '删除中...' : '删除'}
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </Card>
   )
 }
 
-function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
+function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [servers, setServers] = useState<ServerEntry[]>([])
   const [lanGames, setLanGames] = useState<LanGameEntry[]>([])
@@ -965,11 +1198,6 @@ function ServersTab({ instanceId, refreshKey, onRefresh }: { instanceId: string;
               </div>
             </div>
             <div className="flex items-center gap-1.5">
-              <Tooltip content="刷新">
-                <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
-                  <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
-                </Button>
-              </Tooltip>
               <Tooltip content="全部测速">
                 <Button size="sm" variant="ghost" onClick={() => {
                   servers.forEach(s => handlePing(s.ip))
@@ -1228,7 +1456,7 @@ function mapJSCodeToMinecraft(code: string): string | null {
   return null
 }
 
-function GameSettingsTab({ instanceId, refreshKey, onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
+function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
   const [search, setSearch] = useState('')
   const [settings, setSettings] = useState<GameSettingDto[]>([])
   const [loading, setLoading] = useState(true)
@@ -1319,11 +1547,6 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh }: { instanceId: st
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索设置项..." className="h-8 pl-8 text-xs" />
             </div>
-            <Tooltip content="刷新">
-              <Button size="sm" variant="ghost" onClick={onRefresh} className="h-7 w-7 px-0">
-                <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
-              </Button>
-            </Tooltip>
           </div>
         </div>
         {loading ? (
@@ -1432,6 +1655,16 @@ export default function InstanceDetailPage() {
   const [tab, setTab] = useState<TabId>('overview')
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
+  const gameDir = useMemo(() => {
+    if (!instance) return ''
+    if (instance.resolvedGameDir) return instance.resolvedGameDir
+    const isolated = instance.versionIsolation ?? getSettings().versionIsolation
+    if (isolated) {
+      const vn = instance.versionDirName || instance.name
+      return `${instance.gameDir.replace(/\\/g, '/')}/versions/${vn}`
+    }
+    return instance.gameDir
+  }, [instance])
   const [saving, setSaving] = useState(false)
   const [runtimes, setRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -1459,6 +1692,14 @@ export default function InstanceDetailPage() {
     cacheInvalidate('api-instance-')
     cacheInvalidate('api-instances')
     setDetailRefreshKey(k => k + 1)
+    setSavesRefresh(k => k + 1)
+    setScreenshotsRefresh(k => k + 1)
+    setModsRefresh(k => k + 1)
+    setResourcePacksRefresh(k => k + 1)
+    setShadersRefresh(k => k + 1)
+    setDataPacksRefresh(k => k + 1)
+    setServersRefresh(k => k + 1)
+    setGameSettingsRefresh(k => k + 1)
   }, [])
 
   useEffect(() => {
@@ -1539,7 +1780,7 @@ export default function InstanceDetailPage() {
       if (!ok) return
     }
     try {
-      await ctxLaunchInstance(id, instance?.name || id)
+      await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const code = e instanceof ApiError ? e.code : ''
@@ -1656,8 +1897,8 @@ export default function InstanceDetailPage() {
   }
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
-      <div className="flex items-center gap-3">
+    <PageShell className="flex h-screen flex-col space-y-6 overflow-hidden p-8">
+      <div className="flex shrink-0 items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/instances')}>
           <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
         </Button>
@@ -1683,13 +1924,13 @@ export default function InstanceDetailPage() {
               <FontAwesomeIcon icon={faStar} className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />
             </Button>
           </Tooltip>
-          <Button variant="outline" size="icon" onClick={() => openFolder(instance.resolvedGameDir ?? instance.gameDir).catch(() => {})}>
+          <Button variant="outline" size="icon" onClick={() => openFolder(gameDir).catch(() => {})}>
             <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      <div className="flex gap-4 min-w-0">
+      <div className="flex-1 min-h-0 flex gap-4">
         <div className="flex w-44 shrink-0 flex-col gap-0.5">
           {TABS.filter(t => t.id !== 'gamesettings' || debugState.showGameSettings).map((t) => (
             <button
@@ -1706,7 +1947,7 @@ export default function InstanceDetailPage() {
           ))}
         </div>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 overflow-y-auto">
           {tab === 'overview' && (
             <div className="space-y-4">
               <Card>
@@ -1784,7 +2025,7 @@ export default function InstanceDetailPage() {
                     {repairing && (
                       <span className="self-center text-xs text-muted-foreground">正在补全 {repairProgress}%</span>
                     )}
-                    <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(instance.resolvedGameDir ?? instance.gameDir).catch(() => {})}>
+                    <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch(() => {})}>
                       <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开游戏目录
                     </Button>
                     <Button size="sm" variant="outline" className="gap-2 text-destructive hover:text-destructive" onClick={handleDelete}>
@@ -1869,7 +2110,7 @@ export default function InstanceDetailPage() {
                 <div className="space-y-2">
                   <Label>版本隔离</Label>
                   <Select
-                    value={form.versionIsolation === null ? 'global' : form.versionIsolation ? 'on' : 'off'}
+                    value={form.versionIsolation == null ? 'global' : form.versionIsolation ? 'on' : 'off'}
                     onChange={(v) => update('versionIsolation', v === 'global' ? null : v === 'on')}
                   >
                     <SelectOption value="global">跟随全局设置</SelectOption>
@@ -1979,12 +2220,12 @@ export default function InstanceDetailPage() {
             </Card>
           )}
 
-          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} />}
-          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} />}
-          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={instance.resolvedGameDir ?? instance.gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} />}
-          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} />}
-          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} />}
-          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={instance.resolvedGameDir ?? instance.gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} />}
+          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} />}
+          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} />}
+          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} />}
+          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} />}
+          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} />}
+          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} />}
           {tab === 'servers' && <ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} />}
           {tab === 'gamesettings' && <GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} />}
         </div>
@@ -2009,6 +2250,6 @@ export default function InstanceDetailPage() {
         }}
       />
       <ConfirmDialog open={deleteConfirmOpen} title="删除实例" message={`确定要删除实例「${instance?.name ?? ''}」吗？其版本文件夹将被移至回收站。`} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
-    </div>
+    </PageShell>
   )
 }

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Qomicex.Launcher.Backend.Neo</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <IsAotCompatible>true</IsAotCompatible>
+    <LicenseRequired>false</LicenseRequired>
+    <DefineConstants Condition="'$(LicenseRequired)' == 'true'">$(DefineConstants);LICENSE_REQUIRED</DefineConstants>
+
+  </PropertyGroup>
+
+  <Target Name="SetGitHash" BeforeTargets="CoreCompile" Condition="'$(GitHash)' != ''">
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>GitHash</_Parameter1>
+        <_Parameter2>$(GitHash)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Chaos.NaCl.Standard" Version="1.0.0" />
+    <PackageReference Include="System.Management" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="appsettings.json" />
+    <EmbeddedResource Include="Resources\Alex.png" />
+    <EmbeddedResource Include="Resources\mcmod_data.json" />
+    <EmbeddedResource Include="Resources\GameSettings\options.json" />
+    <EmbeddedResource Include="Resources\GameSettings\descriptions.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Qomicex.Core.AOT\Qomicex.Core.AOT\Qomicex.Core.AOT.csproj" />
+    <ProjectReference Include="..\Qomicex.Downloader\Qomicex.Downloader.csproj" />
+    <ProjectReference Include="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
+  </ItemGroup>
+
+</Project>

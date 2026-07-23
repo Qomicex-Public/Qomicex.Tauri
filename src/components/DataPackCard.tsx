@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { MinecraftText } from './MinecraftText.tsx'
-import { faDatabase } from '@fortawesome/free-solid-svg-icons'
+import { faDatabase, faCheck } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui/card.tsx'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { useMessageBox } from './ui/message-box.tsx'
@@ -11,6 +11,7 @@ import { openFolder } from '../api/settings.ts'
 import { Button } from './ui/button.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import type { DataPackMetadata } from '../types/index.ts'
+import { cn } from '../lib/utils.ts'
 
 interface Props {
   pack: DataPackMetadata
@@ -19,9 +20,11 @@ interface Props {
   gameVersion?: string
   loader?: string
   onDelete: (fileName: string) => void
+  selected?: boolean
+  onSelect?: React.MouseEventHandler
 }
 
-export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, loader, onDelete }: Props) {
+export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, loader, onDelete, selected, onSelect }: Props) {
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const [deleting, setDeleting] = useState(false)
@@ -72,8 +75,17 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
   return (
     <>
     <ContextMenu items={contextItems}>
-      <Card className="group border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
+      <Card className={cn('group cursor-pointer border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
         <CardContent className="flex items-center gap-4 p-4">
+          <button
+            onClick={(e) => { e.stopPropagation(); onSelect?.(e) }}
+            className={cn(
+              'flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors',
+              selected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30 hover:border-foreground/50'
+            )}
+          >
+            {selected && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+          </button>
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
             {pack.iconBase64 ? (
               <img src={`data:image/png;base64,${pack.iconBase64}`} alt={pack.name} className="h-full w-full object-cover" loading="lazy" />

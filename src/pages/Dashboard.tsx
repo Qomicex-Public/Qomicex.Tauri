@@ -18,6 +18,7 @@ import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { AnnouncementCard } from '../components/AnnouncementCard.tsx'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -97,7 +98,7 @@ export default function Dashboard() {
       if (!ok) return
     }
     try {
-      await launchInstance(defaultInstance.id, defaultInstance.name)
+      await launchInstance(defaultInstance.id, defaultInstance.name, { path: defaultInstance.javaPath, gameVersion: defaultInstance.gameVersion, gameDir: defaultInstance.gameDir })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const code = e instanceof ApiError ? e.code : ''
@@ -110,7 +111,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div ref={pageRef} className="relative flex h-full flex-col p-8">
+    <div ref={pageRef} className="relative flex flex-1 min-h-0 flex-col overflow-y-auto p-8">
       {/* Center branding */}
       <div className="flex flex-1 flex-col items-center justify-center">
         {watermarkEnabled && (
@@ -175,6 +176,8 @@ export default function Dashboard() {
           )}
         </div>
 
+        {/* 公告卡片 */}
+        <AnnouncementCard />
       </div>
 
       {/* Bottom action bar */}

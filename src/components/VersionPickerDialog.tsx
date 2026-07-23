@@ -44,10 +44,10 @@ export default function VersionPickerDialog({
     console.log('VersionPicker: installing version', version.versionNumber, 'downloads:', version.downloads)
     setInstalling(version.id)
     try {
-      const jarFile = version.downloads.find(f => f.filename.endsWith('.jar'))
+      const jarFile = version.downloads.find(f => f.fileName.endsWith('.jar'))
       if (jarFile) {
-        console.log('VersionPicker: installing', jarFile.filename, jarFile.url)
-        await changeModVersion(instanceId, mod.fileName, jarFile.url, jarFile.filename)
+        console.log('VersionPicker: installing', jarFile.fileName, jarFile.url)
+        await changeModVersion(instanceId, mod.fileName, jarFile.url, jarFile.fileName)
         onDone()
         onClose()
       } else {

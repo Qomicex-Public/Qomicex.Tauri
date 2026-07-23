@@ -9,6 +9,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { SkinViewer3D } from '../components/SkinViewer3D.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { Button } from '../components/ui/button.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import type { Account, SkinProfile } from '../types/index.ts'
 
 export default function AccountDetail() {
@@ -18,6 +19,7 @@ export default function AccountDetail() {
   const [account, setAccount] = useState<Account | null>(null)
   const [profile, setProfile] = useState<SkinProfile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showNameTag, setShowNameTag] = useState(true)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -67,13 +69,13 @@ export default function AccountDetail() {
   }
 
   if (loading || !account) {
-    return <div className="flex h-full items-center justify-center text-muted-foreground">加载中...</div>
+    return <div className="flex flex-1 h-full items-center justify-center overflow-y-auto text-muted-foreground">加载中...</div>
   }
 
   const textureUrl = `${API_BASE}/skin/texture/${uuid}?type=${account.loginMethod}${account.serverUrl ? `&server=${encodeURIComponent(account.serverUrl)}` : ''}`
 
   return (
-    <div className="space-y-6 p-8">
+    <PageShell className="space-y-6 p-8 overflow-y-auto">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/accounts')}>
           <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -83,8 +85,14 @@ export default function AccountDetail() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1">
-            <div className="flex items-center justify-center rounded-xl border bg-card p-6">
-              <SkinViewer3D textureUrl={textureUrl} model={profile?.model === 'slim' ? 'slim' : 'classic'} width={280} height={380} className="rounded-lg" />
+            <div className="flex flex-col items-center gap-3 rounded-xl border bg-card p-6">
+              <SkinViewer3D textureUrl={textureUrl} model={profile?.model === 'slim' ? 'slim' : 'classic'} width={280} height={380} className="rounded-lg" name={account.name} showNameTag={showNameTag} panoramaUrl="/panorama.png" />
+              <button onClick={() => setShowNameTag(v => !v)} className={`flex items-center gap-2 text-xs ${showNameTag ? 'text-primary' : 'text-muted-foreground'}`}>
+                <div className={`h-3.5 w-7 rounded-full p-0.5 transition-colors ${showNameTag ? 'bg-primary' : 'bg-input'}`}>
+                  <div className={`h-2.5 w-2.5 rounded-full bg-background transition-transform ${showNameTag ? 'translate-x-3' : ''}`} />
+                </div>
+                显示名称标签
+              </button>
             </div>
         </div>
 
@@ -154,6 +162,6 @@ export default function AccountDetail() {
           </div>
         </div>
       </div>
-    </div>
+    </PageShell>
   )
 }

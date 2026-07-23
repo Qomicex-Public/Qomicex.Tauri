@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
+import { Update } from '@tauri-apps/plugin-updater'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
 import Instances from './pages/Instances.tsx'
@@ -21,7 +22,9 @@ import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
+import LicenseActivationDialog from './components/LicenseActivationDialog.tsx'
 import { get } from './api/client.ts'
+import { fetchLicenseStatus } from './api/license.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { Button } from './components/ui/button.tsx'
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
@@ -35,12 +38,15 @@ function RunningNotifyBridge() {
 
 function AppContent() {
   const [backendState, setBackendState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [retryCount, setRetryCount] = useState(0)
   const { closeWithGuard, Provider } = useCloseGuard()
   const { alert } = useMessageBox()
   const { crashDialogState, clearCrashDialog } = useRunning()
   const javaChecked = useRef(false)
-  const [pendingUpdate, setPendingUpdate] = useState<{ version: string; body: string; required: boolean; downloadUrl: string } | null>(null)
+  const [pendingUpdate, setPendingUpdate] = useState<{ version: string; body: string; required: boolean; update: Update } | null>(null)
   const autoCheckDone = useRef(false)
+  const [licenseDialogOpen, setLicenseDialogOpen] = useState(false)
+  const licenseChecked = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -58,7 +64,27 @@ function AppContent() {
     }
     poll()
     return () => { cancelled = true }
-  }, [])
+  }, [retryCount])
+
+  useEffect(() => {
+    if (backendState !== 'ready') return
+    const interval = setInterval(async () => {
+      try {
+        await get('/diagnostics/health')
+      } catch {
+        setBackendState('error')
+      }
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [backendState])
+
+  const handleRetry = async () => {
+    setBackendState('loading')
+    try {
+      await invoke('restart_backend')
+    } catch { }
+    setRetryCount(c => c + 1)
+  }
 
   useEffect(() => {
     if (backendState !== 'ready' || javaChecked.current) return
@@ -73,6 +99,16 @@ function AppContent() {
       } catch {}
     })()
   }, [backendState, alert])
+
+  useEffect(() => {
+    if (backendState !== 'ready' || licenseChecked.current) return
+    licenseChecked.current = true
+    fetchLicenseStatus().then(s => {
+      if (!s.valid && s.error === 'LICENSE_NOT_FOUND') {
+        setLicenseDialogOpen(true)
+      }
+    }).catch(() => {})
+  }, [backendState])
 
   useEffect(() => {
     if (backendState !== 'ready' || autoCheckDone.current) return
@@ -110,7 +146,7 @@ function AppContent() {
             if (res.ok) body = (await res.json()).body ?? body
           } catch {}
         }
-        setPendingUpdate({ version: metadata.version, body, required, downloadUrl: metadata.downloadUrl })
+        setPendingUpdate({ version: metadata.version, body, required, update: new Update(metadata) })
       } catch (e) {
         console.warn('[updater] background check failed:', e)
       }
@@ -141,7 +177,7 @@ function AppContent() {
               </>
             ) : (
               <Route path="*" element={
-                <div className="flex h-full items-center justify-center">
+                <div className="flex flex-1 h-full items-center justify-center">
                   <div className="text-center">
                     {backendState === 'loading' ? (
                       <>
@@ -155,7 +191,7 @@ function AppContent() {
                           后端进程异常退出，请检查日志后重试。
                         </p>
                         <div className="mt-4 flex items-center justify-center gap-3">
-                          <Button onClick={() => window.location.reload()}>重试</Button>
+                          <Button onClick={handleRetry}>重启后端</Button>
                           <Button variant="outline" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))}>
                             反馈问题
                           </Button>
@@ -190,13 +226,17 @@ function AppContent() {
         version={pendingUpdate?.version ?? ''}
         body={pendingUpdate?.body ?? ''}
         required={pendingUpdate?.required ?? false}
-        downloadUrl={pendingUpdate?.downloadUrl ?? ''}
+        update={pendingUpdate?.update ?? null}
         onClose={() => {
           if (pendingUpdate) {
             localStorage.setItem('snooze-update', JSON.stringify({ version: pendingUpdate.version, until: Date.now() + 86400000 }))
           }
           setPendingUpdate(null)
         }}
+      />
+      <LicenseActivationDialog
+        open={licenseDialogOpen}
+        onActivated={() => setLicenseDialogOpen(false)}
       />
     </Provider>
   )

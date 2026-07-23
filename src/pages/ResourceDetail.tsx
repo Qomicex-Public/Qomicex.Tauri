@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { PageHeader } from '../components/PageHeader.tsx'
+import { PageShell } from '../components/PageShell.tsx'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import {
   faArrowLeft,
   faArrowUpRightFromSquare,
   faDownload,
+  faFloppyDisk,
   faLanguage,
   faLayerGroup,
   faRotate,
@@ -24,16 +26,17 @@ import { Badge } from '../components/ui/badge.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { get } from '../api/client.ts'
-import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
+import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, getResourceDependencies, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
 import { lookupChineseName } from '../api/mcmod.ts'
 import { downloadTo } from '../api/resource-download.ts'
 import { getInstance, getDefaultInstance } from '../api/instance.ts'
-import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance } from '../types/index.ts'
+import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance, ResolvedDependency } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { save } from '@tauri-apps/plugin-dialog'
 import { loadSettings } from '../api/settings.ts'
 import ModpackInstallDialog from '../components/ModpackInstallDialog.tsx'
+import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 
 
 function formatDownloads(n: number): string {
@@ -68,9 +71,78 @@ function LoaderBadge({ loader }: { loader: string }) {
   )
 }
 
+function DependenciesCard({ resourceId, source, versions, gameVersion, loader }: {
+  resourceId: string
+  source: string
+  versions: ResourceVersion[]
+  gameVersion: string
+  loader: string
+}) {
+  const [deps, setDeps] = useState<ResolvedDependency[] | null>(null)
+  const latest = versions[0]
+  const latestId = latest?.id
+  const latestNumber = latest?.versionNumber
+
+  useEffect(() => {
+    if (!latestId) { setDeps(null); return }
+    let cancelled = false
+    setDeps(null)
+    getResourceDependencies(
+      resourceId, source, latestId,
+      gameVersion === 'all' ? '' : gameVersion,
+      loader === 'all' ? undefined : loader
+    )
+      .then(d => { if (!cancelled) setDeps(d.filter(x => x.projectId !== resourceId)) })
+      .catch(() => { if (!cancelled) setDeps([]) })
+    return () => { cancelled = true }
+  }, [resourceId, source, latestId, gameVersion, loader])
+
+  if (!latestId) return null
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-6">
+        <div className="flex items-baseline justify-between">
+          <h3 className="text-lg font-semibold">前置模组</h3>
+          <span className="text-[11px] text-muted-foreground/60">基于 {latestNumber} 解析</span>
+        </div>
+        {deps === null ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+            正在解析前置模组...
+          </div>
+        ) : deps.length === 0 ? (
+          <p className="text-xs text-muted-foreground">此版本没有前置模组</p>
+        ) : (
+          <div className="grid gap-1.5">
+            {deps.map(d => (
+              <Link
+                key={d.projectId}
+                to={`/resource-center/${encodeURIComponent(d.projectId)}?source=${d.source || 'modrinth'}&category=mod`}
+                className="flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs transition-colors hover:bg-accent/30"
+              >
+                {d.iconUrl ? (
+                  <img src={d.iconUrl} alt="" className="h-6 w-6 rounded object-cover" loading="lazy" />
+                ) : (
+                  <div className="flex h-6 w-6 items-center justify-center rounded bg-muted text-muted-foreground">
+                    <FontAwesomeIcon icon={faLayerGroup} className="h-3 w-3" />
+                  </div>
+                )}
+                <span className="min-w-0 flex-1 truncate font-medium">{d.name}</span>
+                <span className="max-w-[45%] shrink-0 truncate text-muted-foreground">{d.versionNumber}</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function ResourceDetailPage() {
   const { resourceId } = useParams()
   const [searchParams] = useSearchParams()
+  const location = useLocation()
+  const navIconUrl = (location.state as { iconUrl?: string } | null)?.iconUrl
   const { notify } = useMessageBox()
   const source = searchParams.get('source') ?? 'modrinth'
   const category = searchParams.get('category') ?? 'mod'
@@ -95,6 +167,7 @@ export default function ResourceDetailPage() {
   const [downloadingFor, setDownloadingFor] = useState<string | null>(null)
 
   const [modpackInstallVersion, setModpackInstallVersion] = useState<ResourceVersion | null>(null)
+  const [installVersion, setInstallVersion] = useState<ResourceVersion | null>(null)
   const [modpackGameDir, setModpackGameDir] = useState('')
   const [modpackIsolation, setModpackIsolation] = useState(true)
   const [cnName, setCnName] = useState<string | null>(null)
@@ -113,10 +186,16 @@ export default function ResourceDetailPage() {
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
     setDownloadingFor(versionId)
     try {
-      const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shader: 'shaderpacks', save: 'saves' }
+      const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shader: 'shaderpacks', save: 'saves', datapack: 'datapacks' }
       const subDir = folderMap[category] || ''
-      const defaultDir = instance?.gameDir ? instance.gameDir.replace(/\\/g, '/') + (subDir ? `/${subDir}` : '') : undefined
-      const defaultPath = defaultDir ? `${defaultDir}/${fileName}` : fileName
+      let defaultPath = fileName
+      if (instance && subDir) {
+        const base = instance.gameDir.replace(/\\/g, '/')
+        const isolated = instance.versionIsolation ?? true
+        const vn = instance.versionDirName || instance.name
+        const dir = isolated ? `${base}/versions/${vn}/${subDir}` : `${base}/${subDir}`
+        defaultPath = `${dir}/${fileName}`
+      }
       const targetPath = await save({ defaultPath })
       if (!targetPath) { setDownloadingFor(null); return }
       await downloadTo(url, targetPath)
@@ -273,35 +352,40 @@ export default function ResourceDetailPage() {
   }
 
   return (
-    <div className="animate-in slide-up space-y-6 p-8">
-      <PageHeader
-        title={
-          <>
-            <Link to={`/resource-center?${backQuery.toString()}`} className="mr-2 text-sm font-normal text-muted-foreground transition-colors hover:text-foreground">
-              <FontAwesomeIcon icon={faArrowLeft} className="mr-1 h-3.5 w-3.5" />
-              返回
-            </Link>
-            资源详情
-          </>
-        }
-        actions={
-          <div className="flex items-center gap-2">
-            <Tooltip content="刷新">
-              <Button variant="outline" size="sm" onClick={refreshDetail}>
-                <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-              </Button>
-            </Tooltip>
-            {detail?.projectUrl ? (
-              <Button asChild variant="outline" size="sm">
-                <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
-                  <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3.5 w-3.5" />
-                  原始页面
-                </a>
-              </Button>
-            ) : null}
-          </div>
-        }
-      />
+    <PageShell>
+      <div className="shrink-0 px-8 pt-8">
+        <PageHeader
+          title={
+            <>
+              <Link to={`/resource-center?${backQuery.toString()}`} className="mr-2 text-sm font-normal text-muted-foreground transition-colors hover:text-foreground">
+                <FontAwesomeIcon icon={faArrowLeft} className="mr-1 h-3.5 w-3.5" />
+                返回
+              </Link>
+              资源详情
+            </>
+          }
+          actions={
+            <div className="flex items-center gap-2">
+              <Tooltip content="刷新">
+                <Button variant="outline" size="sm" onClick={refreshDetail}>
+                  <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                </Button>
+              </Tooltip>
+              {detail?.projectUrl ? (
+                <Button asChild variant="outline" size="sm">
+                  <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
+                    <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3.5 w-3.5" />
+                    原始页面
+                  </a>
+                </Button>
+              ) : null}
+            </div>
+          }
+        />
+      </div>
+      
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="space-y-6 p-8">
 
       {loading ? (
         <Card className="p-8">
@@ -323,8 +407,8 @@ export default function ResourceDetailPage() {
             <CardContent className="p-0">
               <div className="grid gap-0 lg:grid-cols-[220px_minmax(0,1fr)]">
                 <div className="flex items-start justify-center bg-muted/30 p-6">
-                  {detail.iconUrl ? (
-                    <img src={detail.iconUrl} alt={detail.title} className="h-36 w-36 rounded-2xl object-cover ring-1 ring-border/50" />
+                  {detail.iconUrl || navIconUrl ? (
+                    <img src={detail.iconUrl || navIconUrl} alt={detail.title} className="h-36 w-36 rounded-2xl object-cover ring-1 ring-border/50" />
                   ) : (
                     <div className="flex h-36 w-36 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
                       <FontAwesomeIcon icon={faLayerGroup} className="h-10 w-10 opacity-50" />
@@ -421,6 +505,17 @@ export default function ResourceDetailPage() {
                 </div>
               </CardContent>
             </Card>
+
+            <div className="space-y-6">
+              {category === 'mod' && !loadingVersions && !versionsError && resourceId && (
+                <DependenciesCard
+                  resourceId={resourceId}
+                  source={source}
+                  versions={filteredVersions}
+                  gameVersion={selectedGameVersion}
+                  loader={selectedLoader}
+                />
+              )}
 
             <Card>
               <CardContent className="space-y-4 p-6">
@@ -535,7 +630,7 @@ export default function ResourceDetailPage() {
                                     size="sm"
                                     className="shrink-0"
                                     disabled={downloadingFor === version.id}
-                                    onClick={() => handleDownload(version.id, downloadsByVersion[version.id][0].url, downloadsByVersion[version.id][0].filename)}
+                                    onClick={() => handleDownload(version.id, downloadsByVersion[version.id][0].url, downloadsByVersion[version.id][0].fileName)}
                                   >
                                     <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faDownload} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
                                     {downloadingFor === version.id ? '安装中...' : '安装'}
@@ -552,15 +647,25 @@ export default function ResourceDetailPage() {
                                   </Button>
                                 )
                               ) : version.downloads?.[0]?.url ? (
-                                <Button
-                                  size="sm"
-                                  className="shrink-0"
-                                  disabled={downloadingFor === version.id}
-                                  onClick={() => handleDownload(version.id, version.downloads[0].url, version.downloads[0].filename)}
-                                >
-                                  <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faDownload} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
-                                  {downloadingFor === version.id ? '下载中...' : '安装'}
-                                </Button>
+                                <div className="flex shrink-0 gap-1.5">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => setInstallVersion(version)}
+                                  >
+                                    <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                    安装
+                                  </Button>
+                                  <Tooltip content="另存为">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={downloadingFor === version.id}
+                                      onClick={() => handleDownload(version.id, version.downloads[0].url, version.downloads[0].fileName)}
+                                    >
+                                      <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faFloppyDisk} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
+                                    </Button>
+                                  </Tooltip>
+                                </div>
                               ) : (
                                 <Button
                                   size="sm"
@@ -590,9 +695,12 @@ export default function ResourceDetailPage() {
                 </div>
               </CardContent>
             </Card>
+            </div>
           </div>
         </>
       )}
+        </div>
+      </div>
 
       {modpackInstallVersion && (
         <ModpackInstallDialog
@@ -606,6 +714,20 @@ export default function ResourceDetailPage() {
           versionIsolation={modpackIsolation}
         />
       )}
-    </div>
+
+      {installVersion && (
+        <ResourceInstallDialog
+          open={!!installVersion}
+          onClose={() => setInstallVersion(null)}
+          resourceId={resourceId || ''}
+          resourceTitle={detail?.title || ''}
+          resourceIcon={detail?.iconUrl || ''}
+          source={source}
+          category={category}
+          instanceId={instanceIdParam || undefined}
+          initialVersionId={installVersion.id}
+        />
+      )}
+    </PageShell>
   )
 }

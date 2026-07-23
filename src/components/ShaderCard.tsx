@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { MinecraftText } from './MinecraftText.tsx'
-import { faSun } from '@fortawesome/free-solid-svg-icons'
+import { faSun, faCheck } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui/card.tsx'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { useMessageBox } from './ui/message-box.tsx'
@@ -11,6 +11,7 @@ import { openFolder } from '../api/settings.ts'
 import { Button } from './ui/button.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import type { ShaderMetadata } from '../types/index.ts'
+import { cn } from '../lib/utils.ts'
 
 interface Props {
   shader: ShaderMetadata
@@ -20,9 +21,11 @@ interface Props {
   loader?: string
   onDelete: (fileName: string) => void
   compact?: boolean
+  selected?: boolean
+  onSelect?: React.MouseEventHandler
 }
 
-export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, loader, onDelete, compact }: Props) {
+export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, loader, onDelete, compact, selected, onSelect }: Props) {
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -73,8 +76,17 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
   return (
     <>
     <ContextMenu items={contextItems}>
-      <Card className="group border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
+      <Card className={cn('group cursor-pointer border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
         <CardContent className={`flex items-center gap-4 ${compact ? 'p-3' : 'p-4'}`}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onSelect?.(e) }}
+            className={cn(
+              'flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors',
+              selected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30 hover:border-foreground/50'
+            )}
+          >
+            {selected && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+          </button>
           <div className={`flex ${compact ? 'h-10 w-10' : 'h-12 w-12'} shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden`}>
             {shader.iconBase64 ? (
               <img src={`data:image/png;base64,${shader.iconBase64}`} alt={shader.name} className="h-full w-full object-cover" loading="lazy" />

@@ -29,6 +29,10 @@ export function removeCustomJavaRuntime(path: string): Promise<void> {
   return del<void>('/java/custom', { path })
 }
 
+export function getJavaRequirement(gameDir: string, version: string): Promise<{ requiredMajorVersion: number }> {
+  return get<{ requiredMajorVersion: number }>(`/java/requirement?gameDir=${encodeURIComponent(gameDir)}&version=${encodeURIComponent(version)}`)
+}
+
 export function getRecommendedJava(minecraftVersion: string, gameDir: string): Promise<JavaRuntime[]> {
   return post<JavaRuntime[]>('/java/recommended', { minecraftVersion, gameDir })
 }

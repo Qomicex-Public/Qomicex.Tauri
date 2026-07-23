@@ -12,11 +12,13 @@ const stageLabels: Record<string, string> = {
   authlib: '配置外置登录',
   natives: '解压原生库',
   building: '构建启动参数',
+  preparing: '准备环境',
   launching: '启动游戏',
   running: '游戏运行中',
   crashed: '游戏异常退出',
   failed: '启动失败',
   completed: '游戏已退出',
+  cancelled: '已取消',
 }
 
 export default function LaunchProgressDialog() {
