@@ -37,6 +37,11 @@ on:
         required: false
         default: false
         type: boolean
+      required:
+        description: '强制更新（用户必须更新才能继续使用）'
+        required: false
+        default: false
+        type: boolean
       buildPlatform:
         description: '构建平台'
         required: true
@@ -104,6 +109,7 @@ jobs:
       releaseType: ${{ steps.construct.outputs.releaseType }}
       prerelease: ${{ steps.construct.outputs.prerelease }}
       licenseRequired: ${{ steps.construct.outputs.licenseRequired }}
+      required: ${{ steps.construct.outputs.required }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,6 +130,7 @@ jobs:
             echo "releaseType=$TYPE" >> "$GITHUB_OUTPUT"
             echo "prerelease=${{ github.event.release.prerelease }}" >> "$GITHUB_OUTPUT"
             echo "licenseRequired=false" >> "$GITHUB_OUTPUT"
+            echo "required=false" >> "$GITHUB_OUTPUT"
           else
             RTYPE="${{ github.event.inputs.releaseType }}"
             MAJOR="${{ github.event.inputs.major }}"
@@ -155,6 +162,7 @@ jobs:
               echo "prerelease=true" >> "$GITHUB_OUTPUT"
             fi
             echo "licenseRequired=${{ github.event.inputs.licenseRequired }}" >> "$GITHUB_OUTPUT"
+            echo "required=${{ github.event.inputs.required == 'true' && 'true' || 'false' }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Bump version files
@@ -167,6 +175,7 @@ jobs:
           echo "Type: ${{ steps.construct.outputs.releaseType }}"
           echo "Prerelease: ${{ steps.construct.outputs.prerelease }}"
           echo "License: ${{ steps.construct.outputs.licenseRequired }}"
+          echo "Required: ${{ steps.construct.outputs.required }}"
 
   windows-x64:
     if: |
@@ -187,7 +196,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: npm }
+        with: { node-version: '22', cache: npm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
       - name: Fetch LicenseCore.cs
@@ -226,7 +235,9 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-windows-x64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-windows-x64
+          path: src-tauri/target/release/bundle/**/*.exe
 
   windows-arm64:
     if: |
@@ -247,7 +258,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: npm }
+        with: { node-version: '22', cache: npm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
       - name: Fetch LicenseCore.cs
@@ -286,7 +297,9 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-windows-arm64, path: src-tauri/target/aarch64-pc-windows-msvc/release/bundle/ }
+        with:
+          name: qomicex-launcher-windows-arm64
+          path: src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
 
   linux-x64:
     if: |
@@ -307,7 +320,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: npm }
+        with: { node-version: '22', cache: npm }
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
@@ -347,7 +360,12 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-linux-x64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-linux-x64
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
 
   linux-arm64:
     if: |
@@ -368,7 +386,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: npm }
+        with: { node-version: '22', cache: npm }
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
@@ -408,7 +426,12 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-linux-arm64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-linux-arm64
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
 
   loongarch64:
     if: |
@@ -431,7 +454,7 @@ jobs:
           echo "/usr/local/dotnet" >> $GITHUB_PATH
           dotnet nuget add source -n lnuget.loongnix.cn --protocol-version 3 https://lnuget.loongnix.cn/v3/index.json
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: npm }
+        with: { node-version: '22', cache: npm }
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
@@ -471,7 +494,12 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-linux-loongarch64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-linux-loongarch64
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
 
   macos-arm64:
     if: |
@@ -492,7 +520,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: npm }
+        with: { node-version: '22', cache: npm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Fetch LicenseCore.cs
         env:
@@ -546,7 +574,11 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-macos-arm64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-macos-arm64
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.dmg.sig
 
   macos-x64:
     if: |
@@ -567,7 +599,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: npm }
+        with: { node-version: '22', cache: npm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Fetch LicenseCore.cs
         env:
@@ -621,17 +653,22 @@ jobs:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
       - uses: actions/upload-artifact@v4
-        with: { name: qomicex-launcher-macos-x64, path: src-tauri/target/release/bundle/ }
+        with:
+          name: qomicex-launcher-macos-x64
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.dmg.sig
 
   release:
     if: success()
+    permissions:
+      contents: write
     needs:
       - setup
       - windows-x64
       - windows-arm64
       - linux-x64
       - linux-arm64
-      - loongarch64
       - macos-arm64
       - macos-x64
     runs-on: ubuntu-latest
@@ -644,12 +681,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: qomicex-launcher-*
-          merge-multiple: true
 
       - name: Merge update fragments into latest.json
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
-          echo '{"version":"'"$VERSION"'","platforms":{}}' > latest.json
+          REQUIRED=${{ needs.setup.outputs.required }}
+          echo '{"version":"'"$VERSION"'","required":'"$REQUIRED"',"platforms":{}}' > latest.json
           for f in update-fragment-*.json; do
             if [ -f "$f" ]; then
               KEY=$(jq -r 'keys[0]' "$f")
@@ -677,3 +714,6 @@ jobs:
             latest.json
             qomicex-launcher-*/**/*
           fail_on_unmatched_files: false
+
+      - name: Trigger website rebuild
+        run: curl -X POST ${{ secrets.VERCEL_DEPLOY_HOOK }}
