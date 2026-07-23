@@ -203,6 +203,9 @@ jobs:
         shell: pwsh
       - run: npm ci
       - run: npm run tauri -- build --bundles nsis
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         shell: pwsh
         run: |
@@ -261,6 +264,9 @@ jobs:
         shell: pwsh
       - run: npm ci
       - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         shell: pwsh
         run: |
@@ -320,6 +326,9 @@ jobs:
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
           npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -381,6 +390,9 @@ jobs:
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
           npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -444,6 +456,9 @@ jobs:
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
           npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -498,6 +513,9 @@ jobs:
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
       - run: npm run tauri -- build --bundles app
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
       - name: Create DMG
         run: |
           APP="src-tauri/target/release/bundle/macos/qomicex-launcher.app"
@@ -564,6 +582,9 @@ jobs:
           rm -rf src-tauri/binaries/tmp
       - run: npm ci
       - run: npm run tauri -- build --bundles app
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
       - name: Create DMG
         run: |
           APP="src-tauri/target/release/bundle/macos/qomicex-launcher.app"
