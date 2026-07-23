@@ -1,6 +1,0 @@
-<Solution>
-  <Project Path="Qomicex.Launcher.Backend.csproj" />
-  <Project Path="..\Qomicex.Core\Qomicex.Core.csproj" />
-  <Project Path="..\Qomicex.Downloader\Qomicex.Downloader.csproj" />
-  <Project Path="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
-</Solution>

@@ -6,23 +6,23 @@
 |-------|------|-----|------|
 | Desktop shell | Tauri v2 (Rust) | `src-tauri/` | — |
 | Frontend | React 19 + Vite 7 + TS + Tailwind | `src/` | 1420 |
-| Backend API | ASP.NET Core 10 | `src-backend/Qomicex.Launcher.Backend/` | 5000 |
+| Backend API | ASP.NET Core 10 (NativeAOT) | `src-backend/Qomicex.Launcher.Backend.Neo/` | 5000 |
 
 Vite proxies `/api/*` → `http://localhost:5000` (`vite.config.ts`).
 
-`src-backend/` has 5 projects: `Qomicex.Launcher.Backend` (main API), `Qomicex.Downloader` (download lib), `Qomicex.Connector.Part.Scaffolding/` (submodule), `Qomicex.Launcher/` (Windows standalone launcher), plus `Directory.Build.props`. Core lives in `Qomicex.Avalonia/` submodule at `Qomicex.Avalonia/Qomicex.Core/`.
+`src-backend/` has 4 projects: `Qomicex.Launcher.Backend.Neo` (main API, NativeAOT), `Qomicex.Core.AOT/` (submodule), `Qomicex.Downloader` (download lib), `Qomicex.Connector.Part.Scaffolding/` (submodule).
 
-Backend references Core (via `Qomicex.Avalonia/Qomicex.Core/`) and `Qomicex.Connector`.
+Backend references Core (via `Qomicex.Core.AOT/`) and `Qomicex.Connector`.
 
-Submodules (recursive checkout): `Qomicex.Avalonia/`, `src-backend/Qomicex.Connector.Part.Scaffolding/`.
+Submodules (recursive checkout): `src-backend/Qomicex.Core.AOT/`, `src-backend/Qomicex.Connector.Part.Scaffolding/`.
 
-`Qomicex.Avalonia/` is a **separate repo** (own `.git`). Do not assume shared toolchain.
+Legacy code (pre-Neo) is preserved on the `legacy` branch.
 
 ## Commands
 
 ```bash
 # Backend dev
-cd src-backend/Qomicex.Launcher.Backend && dotnet run
+cd src-backend/Qomicex.Launcher.Backend.Neo && dotnet run
 
 # Frontend dev (plain Vite)
 npm run dev          # on :1420
@@ -58,7 +58,7 @@ Types: `feat`, `fix`, `build`, `chore`, `ci`, `docs`, `perf`, `refactor`, `rever
 
 ## CI/CD
 
-`.github/workflows/release.yml` — `workflow_dispatch` (with `prerelease` boolean input) or `release: [published]`. Select platform (`windows`/`linux`/`macos`/`all`), bundles, and macOS arch.
+`.github/workflows/build-backend.yml` — `workflow_dispatch` (with `prerelease` boolean input) or `release: [published]`. Select platform (`windows`/`linux`/`macos`/`all`), bundles, and macOS arch.
 
 Requires `QOMICEX_PAT` secret for submodule checkout. Builds publish backend per-RID, embed it into `src-tauri/binaries/`, then build Tauri bundle. Marked as pre-release when the input or the GitHub release has `prerelease: true`.
 
@@ -84,8 +84,8 @@ import { x } from './baz'                  // WRONG — Vite will error
 
 ## Backend conventions
 
-- **20 controllers** in `Controllers/` → `api/<name>` routes. Includes `DiagnosticsController` (`/api/diagnostics/health`, `/api/diagnostics/trace`, `/api/diagnostics/dump`).
-- `Program.cs` registers: controllers, CORS (any origin), 5 named `HttpClient`s (Modrinth, CurseForge, FTB, AuthlibInjector, default), `DownloadManager`, `InstanceInstallService`, `LaunchService`, `FtbService`, `ModpackService`, `ResourceDownloadService`, `JavaRuntimeStore`, `JavaDownloadService`, `SkinService`, `McmodService`, `AccountService`, `MsAccount`, `TraceBufferStore`/`TraceDumpService`, `LanGameListenerService`, `ConnectorService`/`GameProcessInspector`/`EasyTierProvider`.
+- **20 endpoint modules** in `Endpoints/` → `api/<name>` routes. Includes `DiagnosticsController` (`/api/diagnostics/health`, `/api/diagnostics/trace`, `/api/diagnostics/dump`).
+- `Program.cs` registers: CORS (any origin), 5 named `HttpClient`s (Modrinth, CurseForge, FTB, AuthlibInjector, default), `DownloadManager`, `InstanceInstallService`, `LaunchService`, `FtbService`, `ModpackService`, `ResourceDownloadService`, `JavaRuntimeStore`, `JavaDownloadService`, `SkinService`, `McmodService`, `AccountService`, `MsAccount`, `TraceBufferStore`/`TraceDumpService`, `LanGameListenerService`, `ConnectorService`/`GameProcessInspector`/`EasyTierProvider`.
 - Embedded resources: `Alex.png`, `mcmod_data.json` (in `.csproj`).
 - `appsettings.json` includes a `CurseForge:ApiKey` (set in repo).
 - OpenAPI endpoint available in dev mode (`/openapi/v1.json`).
@@ -118,7 +118,7 @@ The launcher ships on **Windows, Linux, macOS**. Never assume Windows.
 - Shell: `/bin/sh` fallback (not `/bin/bash`).
 - `dotnet publish` needs `-p:IncludeNativeLibrariesForSelfExtract=true` (SkiaSharp).
 - Data dir: `LocalApplicationData` + app name, with `QOMICEX_HOME` env override for portable mode. Never write to `AppContext.BaseDirectory`.
-- Qomicex.Core: check `ContainsKey(osName)` before accessing `obj["natives"]`. Detect `aarch64`/`ARM64` before falling to `x86`.
+- Qomicex.Core.AOT: check `ContainsKey(osName)` before accessing `obj["natives"]`. Detect `aarch64`/`ARM64` before falling to `x86`.
 
 ### Frontend (TS)
 - Normalize backend paths: `.replace(/\\/g, '/')`.
