@@ -524,7 +524,7 @@ jobs:
             echo "ERROR: No DMG found to sign"
             exit 1
           fi
-          npx tauri signer sign --file "$DMG"
+          npx tauri signer sign "$DMG"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -599,7 +599,7 @@ jobs:
             echo "ERROR: No DMG found to sign"
             exit 1
           fi
-          npx tauri signer sign --file "$DMG"
+          npx tauri signer sign "$DMG"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
