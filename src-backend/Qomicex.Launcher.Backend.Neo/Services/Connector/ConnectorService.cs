@@ -184,21 +184,45 @@ public sealed class ConnectorService : IDisposable
     {
         try
         {
-            var knownPorts = _lanListener.GetGames().Select(g => g.Port).ToHashSet();
+            var knownLanPorts = _lanListener.GetGames().Select(g => g.Port).ToHashSet();
+            var existingJavaPorts = _inspector.ScanAllJavaPorts().ToHashSet();
 
             using var resp = await _localHttp.PostAsync($"/api/instance/{instance.Id}/launch", null, ct);
             resp.EnsureSuccessStatusCode();
 
             var deadline = DateTime.UtcNow.AddMinutes(5);
             int? newPort = null;
+            var iterations = 0;
+            const int graceIterations = 23;          // ~46 s grace before TCP scan
+            const int scanInterval = 5;               // scan every 5th iteration (10 s)
+
             while (DateTime.UtcNow < deadline)
             {
                 ct.ThrowIfCancellationRequested();
+
                 var candidate = _lanListener.GetGames()
-                    .Where(g => !knownPorts.Contains(g.Port))
+                    .Where(g => !knownLanPorts.Contains(g.Port))
                     .OrderByDescending(g => g.LastSeen)
                     .FirstOrDefault();
                 if (candidate != null) { newPort = candidate.Port; break; }
+
+                iterations++;
+                if (iterations >= graceIterations && iterations % scanInterval == 0)
+                {
+                    foreach (var scannedPort in _inspector.ScanAllJavaPorts())
+                    {
+                        if (existingJavaPorts.Contains(scannedPort)) continue;
+                        try
+                        {
+                            _inspector.Inspect(scannedPort);
+                            newPort = scannedPort;
+                            break;
+                        }
+                        catch (ApiException) { }
+                    }
+                    if (newPort.HasValue) break;
+                }
+
                 await Task.Delay(2000, ct);
             }
 
