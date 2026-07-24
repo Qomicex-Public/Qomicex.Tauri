@@ -201,6 +201,10 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(PublicKeyResponse))]
 [JsonSerializable(typeof(AnnouncementDto))]
 [JsonSerializable(typeof(List<AnnouncementDto>))]
+// Modpack DTOs
+[JsonSerializable(typeof(ModpackParseResult))]
+[JsonSerializable(typeof(ModpackInstallRequest))]
+[JsonSerializable(typeof(ModpackResolveRequest))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
 }
@@ -429,3 +433,48 @@ public sealed record YggdrasilSelectRequest(
 
 public sealed record TranslateResponse(string? Original, string? Translated, string? TranslatedAt);
 public sealed record AutoSelectResponse(int Id, long LatencyMs);
+
+public sealed record ModpackParseResult(
+    string Name,
+    string? Summary,
+    string? Author,
+    string? Version,
+    string GameVersion,
+    string Loader,
+    string? LoaderVersion,
+    string Source,
+    ModpackFileEntry[] Files,
+    bool HasOverrides,
+    int FileCount,
+    string? OverridesZip,
+    string? IconData
+);
+
+public sealed record ModpackFileEntry(
+    string Path,
+    string? DownloadUrl,
+    long? Size
+);
+
+public sealed record ModpackInstallRequest(
+    string Name,
+    string GameVersion,
+    string? Loader,
+    string? LoaderVersion,
+    int? MaxMemory,
+    string GameDir,
+    bool VersionIsolation,
+    ModpackFileEntry[]? ModpackFiles,
+    string? OverridesZip,
+    string? IconData,
+    string? ModpackName,
+    string? ModpackVersion,
+    string? ModpackAuthor,
+    string? ModpackSummary
+);
+
+public sealed record ModpackResolveRequest(
+    string Source,
+    string ProjectId,
+    string VersionId
+);

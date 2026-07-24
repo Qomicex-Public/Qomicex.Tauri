@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Qomicex.Core.AOT.Builder;
+using Qomicex.Core.AOT.Core;
 using Qomicex.Launcher.Backend.Neo.Diagnostics;
 using Qomicex.Launcher.Backend.Neo.Endpoints;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
@@ -105,6 +106,14 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddSingleton<ConnectorService>();
 builder.Services.AddSingleton<EasyTierProvider>();
+builder.Services.AddSingleton(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<ModpackService>>();
+    var core = sp.GetRequiredService<DefaultGameCore>();
+    var installTracker = sp.GetRequiredService<InstallTracker>();
+    var instanceService = sp.GetRequiredService<InstanceService>();
+    return new ModpackService(logger, core, installTracker, instanceService, curseForgeApiKey);
+});
 builder.Services.AddSingleton<McmodService>();
 builder.Services.AddSingleton<UpdateService>();
 
@@ -155,6 +164,7 @@ app.MapInstanceFilesEndpoints(curseForgeApiKey);
 app.MapLicenseEndpoints();
 app.MapAnnouncementEndpoints();
 app.MapUpdateEndpoints();
+app.MapModpackEndpoints();
 
 // LAN listener lifecycle
 var lanListener = app.Services.GetRequiredService<LanGameListenerService>();
