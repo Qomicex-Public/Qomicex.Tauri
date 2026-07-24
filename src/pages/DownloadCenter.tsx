@@ -320,6 +320,19 @@ export default function DownloadCenter() {
                         </Tooltip>
                       </>
                     )}
+                    {isActive && task.type === 'file' && task.status !== 'queued' && (
+                      <Tooltip content="取消">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
+                          if (task.taskId) {
+                            cancelResourceDownload(task.taskId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
+                          } else {
+                            removeTask(task.id)
+                          }
+                        }}>
+                          <FontAwesomeIcon icon={faStop} className="h-3.5 w-3.5" />
+                        </Button>
+                      </Tooltip>
+                    )}
                     {isActive && task.type !== 'file' && task.type !== 'java' && task.status !== 'queued' && (
                       <>
                         {task.status === 'paused' ? (

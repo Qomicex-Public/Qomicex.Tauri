@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -65,6 +66,7 @@ public sealed class InstallTracker
         InstallState state, CancellationToken ct)
     {
         var mirror = downloadSourceId == 1 ? DownloadMirror.BMCLAPI : DownloadMirror.Official;
+        Trace.WriteLine($"[Install] [{instanceId}] 开始安装: 版本={gameVersion}, 加载器={loader ?? "无"}, 镜像={mirror}, 线程={downloadThreads}");
         using var core = new GameCoreBuilder()
             .Configure(o =>
             {
@@ -91,6 +93,7 @@ public sealed class InstallTracker
             ?? throw new Exception($"未找到版本 {gameVersion}");
 
         var jsonContent = await core.HttpClient.GetStringAsync(versionInfo.Url);
+        Trace.WriteLine($"[Install] [{instanceId}] Phase 1 完成: 获取版本 JSON");
         state.Progress = 3;
 
         // Phase 2: Loader 预下载 (并行)
@@ -144,10 +147,12 @@ public sealed class InstallTracker
         state.CurrentFile = "扫描基础文件...";
 
         var missFiles = await core.Locator.GetMissFilesAsync(jsonContent);
+        Trace.WriteLine($"[Install] [{instanceId}] Phase 3 扫描: 缺失 {missFiles.Count} 个基础文件");
 
         Task? baseDownloadTask = null;
         if (missFiles.Count > 0)
         {
+            Trace.WriteLine($"[Install] [{instanceId}] Phase 3 开始下载基础文件 ({missFiles.Count} 个, {downloadThreads} 线程)");
             state.Stage = "downloading-base";
             state.TotalFiles = missFiles.Count;
             var baseTasks = missFiles.Select(f => new DownloadTask { Url = f.Url, SavePath = f.Path }).ToList();
@@ -172,6 +177,7 @@ public sealed class InstallTracker
 
             if (missLibs.Count > 0)
             {
+                Trace.WriteLine($"[Install] [{instanceId}] Phase 4 开始下载加载器库文件 ({missLibs.Count} 个, 32 线程)");
                 var loaderTasks = missLibs.Select(f => new DownloadTask { Url = f.Url, SavePath = f.Path }).ToList();
                 loaderLibTask = DownloadWithProgress(loaderTasks, state, 35, 55, ct, 32);
             }
@@ -193,6 +199,7 @@ public sealed class InstallTracker
 
         if (addons != null && addons.Length > 0)
         {
+            Trace.WriteLine($"[Install] [{instanceId}] Phase 6 开始下载附加 Mod ({addons.Length} 个)");
             addonTask = DownloadAddons(addons, gameVersion, gameDir, downloadSourceId, state, ct);
         }
 
@@ -233,6 +240,7 @@ public sealed class InstallTracker
         var missJar = await core.Locator.GetMissMainJarAsync(jsonContent);
         if (missJar != null)
         {
+            Trace.WriteLine($"[Install] [{instanceId}] Phase 5 缺失主 Jar: 开始下载");
             state.Stage = "downloading-jar";
             var jarTask = new DownloadTask { Url = missJar.Url, SavePath = missJar.Path };
             await DownloadWithProgress(new[] { jarTask }, state, 92, 98, ct, 1);
@@ -258,6 +266,7 @@ public sealed class InstallTracker
         state.Stage = "completed";
         state.Progress = 100;
         state.CurrentFile = "";
+        Trace.WriteLine($"[Install] [{instanceId}] 安装完成");
 
         // 清理
         CleanupTempFiles(installerPath);

@@ -49,7 +49,7 @@ public static class ResourceDownloadEndpoints
             var taskId = Guid.NewGuid().ToString();
             var state = new DownloadState { Url = req.Url, FileName = req.FileName, TargetPath = targetDir };
             states[taskId] = state;
-            StartDownloadTask(state, cfHeaders);
+            StartDownloadTask(state, cfHeaders, state.Cts.Token);
 
             return Results.Json(new DownloadStartResponse(taskId, req.FileName!), ApiJsonContext.Default.DownloadStartResponse);
         });
@@ -62,7 +62,7 @@ public static class ResourceDownloadEndpoints
             var taskId = Guid.NewGuid().ToString();
             var state = new DownloadState { Url = req.Url, FileName = Path.GetFileName(req.TargetPath), TargetPath = targetDir };
             states[taskId] = state;
-            StartDownloadTask(state, cfHeaders);
+            StartDownloadTask(state, cfHeaders, state.Cts.Token);
 
             return Results.Json(new DownloadToResponse(taskId, req.TargetPath), ApiJsonContext.Default.DownloadToResponse);
         });
@@ -76,19 +76,23 @@ public static class ResourceDownloadEndpoints
 
         group.MapPost("/{taskId}/cancel", (string taskId) =>
         {
-            states.TryRemove(taskId, out _);
-            return Results.Json(new StatusResponse("cancelled"), ApiJsonContext.Default.StatusResponse);
+            if (states.TryRemove(taskId, out var state))
+                state.Cts.Cancel();
+            return Results.Ok(new { Status = "cancelled" });
         });
 
         group.MapPost("/cancel-batch", (CancelBatchRequest req) =>
         {
             foreach (var tid in req.TaskIds)
-                states.TryRemove(tid, out _);
-            return Results.Json(new StatusResponse("cancelled"), ApiJsonContext.Default.StatusResponse);
+            {
+                if (states.TryRemove(tid, out var state))
+                    state.Cts.Cancel();
+            }
+            return Results.Ok(new { Status = "cancelled" });
         });
     }
 
-    private static void StartDownloadTask(DownloadState state, Dictionary<string, string> cfHeaders)
+    private static void StartDownloadTask(DownloadState state, Dictionary<string, string> cfHeaders, CancellationToken ct)
     {
         _ = Task.Run(async () =>
         {
@@ -113,7 +117,7 @@ public static class ResourceDownloadEndpoints
                     .WithDefaultHeaders(headers)
                     .WithProgress(null, fileProgress, DownloaderTrace.CreateLogProgress()));
                 var task = new DownloadTask { Url = state.Url!, SavePath = Path.Combine(state.TargetPath, state.FileName!) };
-                await downloader.DownloadAsync(task, default);
+                await downloader.DownloadAsync(task, ct);
                 state.Progress = 100;
                 state.Status = "completed";
             }
@@ -147,6 +151,7 @@ public static class ResourceDownloadEndpoints
         public long TotalBytes { get; set; }
         public string Status { get; set; } = "pending";
         public string? Error { get; set; }
+        public CancellationTokenSource Cts { get; set; } = new();
     }
 
     public sealed record StartDownloadRequest(
