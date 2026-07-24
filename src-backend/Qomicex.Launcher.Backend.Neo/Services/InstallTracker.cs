@@ -200,11 +200,18 @@ public sealed class InstallTracker
             addonTask = DownloadAddons(addons, gameVersion, gameDir, downloadSourceId, state, ct);
         }
 
-        // 等待并行下载完成
-        if (loaderJarTask != null) await loaderJarTask;
-        if (baseDownloadTask != null) await baseDownloadTask;
-        if (loaderLibTask != null) await loaderLibTask;
-        if (addonTask != null) await addonTask;
+        // 等待并行下载完成——确保所有阶段都完成再判断失败
+        Exception? downloadError = null;
+        async Task WaitSafe(Task? t)
+        {
+            if (t == null) return;
+            try { await t; } catch (Exception ex) { downloadError ??= ex; }
+        }
+        await WaitSafe(loaderJarTask);
+        await WaitSafe(baseDownloadTask);
+        await WaitSafe(loaderLibTask);
+        await WaitSafe(addonTask);
+        if (downloadError != null) throw downloadError;
 
         state.Progress = 85;
 
@@ -268,7 +275,6 @@ public sealed class InstallTracker
         InstallState state, double startPct, double endPct, CancellationToken ct)
     {
         var downloadTask = dm.StartTaskAsync(tid, ct, _userAgent, _cfHeaders);
-        var retried = false;
         while (!ct.IsCancellationRequested)
         {
             var infos = dm.GetAllTaskInfos();
@@ -287,27 +293,6 @@ public sealed class InstallTracker
 
                 if (info.CompletedFiles + info.FailedFiles + info.CanceledFiles >= info.TotalFiles)
                 {
-                    if (info.FailedFiles > 0 && !retried)
-                    {
-                        retried = true;
-                        var failedFiles = statuses
-                            .Where(s => s.Status == DownloadTask.FileStatus.Failed)
-                            .Select(s =>
-                            {
-                                var meta = dm.GetFileMeta(tid, s.Id);
-                                return (Url: meta?.Url ?? "", Path: meta?.Path ?? "", Name: s.Name);
-                            })
-                            .Where(f => !string.IsNullOrEmpty(f.Url))
-                            .ToArray();
-                        state.CurrentFile = $"重试 {failedFiles.Length} 个失败文件...";
-                        await Task.Delay(3000, ct);
-                        using var retryDm = new DownloadManager(intervalMs: 500);
-                        var retryTid = retryDm.CreateTask(maxConcurrentFiles: 2, maxRetries: 3);
-                        foreach (var f in failedFiles)
-                            retryDm.AddFileToTask(retryTid, f.Url, f.Path);
-                        await DownloadWithProgress(retryDm, retryTid, state, startPct, endPct, ct);
-                        return;
-                    }
                     if (info.FailedFiles > 0)
                     {
                         var failedNames = statuses
