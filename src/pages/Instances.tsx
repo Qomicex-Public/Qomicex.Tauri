@@ -771,6 +771,12 @@ export default function Instances() {
     return backedInstances.find((i) => i.gameDir === currentDir && i.name === v.name)
   }
 
+  function getLoadersForVersion(v: ScannedVersion) {
+    const inst = getInstanceForVersion(v)
+    if (inst?.loader) return [{ type: inst.loader, version: inst.loaderVersion ?? '' }]
+    return v.loaders?.filter((l) => l.type) ?? []
+  }
+
   async function handleRepairStart() {
     if (!settingsVersion) return
     const instance = getInstanceForVersion(settingsVersion)
@@ -1053,11 +1059,11 @@ export default function Instances() {
           <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
               <div key={v.name} className="group relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
-                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={v.loaders?.[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
+                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 <div className="mt-1 flex flex-wrap justify-center gap-1">
-                  {v.loaders && v.loaders.filter((l) => l.type).length > 0 ? (
-                    v.loaders.filter((l) => l.type).map((l) => (
+                  {getLoadersForVersion(v).length > 0 ? (
+                    getLoadersForVersion(v).map((l) => (
                       <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
                     ))
                   ) : (
@@ -1099,12 +1105,12 @@ export default function Instances() {
           <div className="space-y-3">
             {filtered.map((v) => (
               <div key={v.name} className="group flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
-                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={v.loaders?.[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
+                <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="truncate text-sm font-medium">{v.name}</h3>
-                    {v.loaders && v.loaders.filter((l) => l.type).length > 0 ? (
-                      v.loaders.filter((l) => l.type).map((l) => (
+                    {getLoadersForVersion(v).length > 0 ? (
+                      getLoadersForVersion(v).map((l) => (
                         <span key={l.type} className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border')}>{l.type}</span>
                       ))
                     ) : (
@@ -1116,10 +1122,10 @@ export default function Instances() {
                     </span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
-                    {v.loaders && v.loaders.filter((l) => l.version).length > 0 && (
+                    {getLoadersForVersion(v).filter((l) => l.version).length > 0 && (
                       <span className="flex items-center gap-1">
                         <FontAwesomeIcon icon={faTag} className="h-3 w-3" />
-                        {v.loaders.filter((l) => l.version).map((l) => l.version).join(', ')}
+                        {getLoadersForVersion(v).filter((l) => l.version).map((l) => l.version).join(', ')}
                       </span>
                     )}
                     <span className="flex items-center gap-1">
