@@ -326,7 +326,7 @@ public static class InstanceEndpoints
             ), ApiJsonContext.Default.LaunchResultDto);
         });
 
-        group.MapGet("/{id}/launch/progress", (string id, LaunchTracker tracker) =>
+        group.MapGet("/{id}/launch/progress", (string id, LaunchTracker tracker, InstanceService instances) =>
         {
             var progress = tracker.GetProgress(id);
             if (progress is null)
@@ -348,6 +348,17 @@ public static class InstanceEndpoints
                 var ps = tracker.GetState(id);
                 if (ps == null || ps.HasExited)
                 {
+                    // ponytail: global lock on InstanceService, per-instance locks if contention matters
+                    var instance = instances.GetById(id);
+                    if (instance != null && ps != null)
+                    {
+                        var elapsed = (long)(DateTime.UtcNow - ps.StartedAt).TotalMinutes;
+                        if (elapsed < 1) elapsed = 1;
+                        instance.PlayTime += elapsed;
+                        instance.LastPlayed = DateTime.UtcNow;
+                        instances.Update(id, instance);
+                    }
+
                     tracker.CancelAndRemove(id);
                     return Results.Json(new LaunchProgressDto(
                         Stage: "completed", Message: "游戏已退出", Progress: 100, IsRunning: false,
