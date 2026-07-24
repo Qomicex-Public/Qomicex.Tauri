@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import Markdown from 'react-markdown'
 import { invoke } from '@tauri-apps/api/core'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
@@ -57,8 +58,8 @@ export default function UpdateDialog({ open, version, body, required, downloadUr
             此版本包含重要更新，必须安装后才能继续使用
           </div>
         )}
-        <div className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg bg-background p-3 text-sm leading-relaxed text-muted-foreground">
-          {body || '暂无更新说明'}
+        <div className="max-h-56 overflow-y-auto rounded-lg bg-background p-3 text-sm leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
+          <Markdown>{body || '暂无更新说明'}</Markdown>
         </div>
       </DialogBody>
       <DialogFooter className="gap-2">

@@ -539,12 +539,16 @@ jobs:
         run: |
           APP="src-tauri/target/release/bundle/macos/qomicex-launcher.app"
           DMG_DIR="src-tauri/target/release/bundle/dmg"
+          STAGING=$(mktemp -d)
           mkdir -p "$DMG_DIR"
           codesign --force --deep --sign - "$APP"
+          cp -R "$APP" "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
           hdiutil create -volname "Qomicex Launcher" \
-            -srcfolder "$APP" \
+            -srcfolder "$STAGING" \
             -ov -format UDZO \
             "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_$(uname -m).dmg"
+          rm -rf "$STAGING"
       - name: Sign DMG for updater
         run: |
           DMG=$(find src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
@@ -618,12 +622,16 @@ jobs:
         run: |
           APP="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/qomicex-launcher.app"
           DMG_DIR="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg"
+          STAGING=$(mktemp -d)
           mkdir -p "$DMG_DIR"
           codesign --force --deep --sign - "$APP"
+          cp -R "$APP" "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
           hdiutil create -volname "Qomicex Launcher" \
-            -srcfolder "$APP" \
+            -srcfolder "$STAGING" \
             -ov -format UDZO \
             "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_x86_64.dmg"
+          rm -rf "$STAGING"
       - name: Sign DMG for updater
         run: |
           DMG=$(find src-tauri/target/x86_64-apple-darwin/release/bundle/dmg -name '*.dmg' | head -1)
