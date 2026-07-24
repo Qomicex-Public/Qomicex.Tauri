@@ -110,31 +110,31 @@ function AppContent() {
         <RunningNotifyBridge />
         <TaskCompletionNotifier />
         <Routes>
-          {backendState === 'ready' ? (
-            <Route element={<Layout />}>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/instances" element={<Instances />} />
-              <Route path="/instances/:id" element={<InstanceDetailPage />} />
-              <Route path="/downloads" element={<DownloadCenter />} />
-              <Route path="/accounts" element={<Accounts />} />
-              <Route path="/accounts/:uuid" element={<AccountDetail />} />
-              <Route path="/resource-center" element={<ResourceCenter />} />
-              <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
-              <Route path="/connect" element={<Connect />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/running" element={<RunningInstances />} />
-            </Route>
-          ) : (
-            <Route path="*" element={
-              <div className="flex h-screen items-center justify-center bg-background">
-                <div className="text-center">
+          <Route element={<Layout />}>
+            {backendState === 'ready' ? (
+              <>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/instances" element={<Instances />} />
+                <Route path="/instances/:id" element={<InstanceDetailPage />} />
+                <Route path="/downloads" element={<DownloadCenter />} />
+                <Route path="/accounts" element={<Accounts />} />
+                <Route path="/accounts/:uuid" element={<AccountDetail />} />
+                <Route path="/resource-center" element={<ResourceCenter />} />
+                <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
+                <Route path="/connect" element={<Connect />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/running" element={<RunningInstances />} />
+              </>
+            ) : (
+              <Route path="*" element={
+                <div className="flex flex-1 items-center justify-center">
                   {backendState === 'loading' ? (
-                    <>
+                    <div className="text-center">
                       <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                       <p className="mt-4 text-sm text-muted-foreground">启动后端服务...</p>
-                    </>
+                    </div>
                   ) : (
-                    <>
+                    <div className="text-center">
                       <p className="text-destructive font-medium">后端启动失败</p>
                       <p className="mt-2 max-w-sm text-sm text-muted-foreground">
                         后端进程异常退出，请检查日志后重试。
@@ -145,12 +145,12 @@ function AppContent() {
                           反馈问题
                         </Button>
                       </div>
-                    </>
+                    </div>
                   )}
                 </div>
-              </div>
-            } />
-          )}
+              } />
+            )}
+          </Route>
         </Routes>
       </BrowserRouter>
       <LaunchProgressDialog />

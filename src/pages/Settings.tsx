@@ -517,8 +517,6 @@ export default function Settings() {
   const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
   const settingsRef = useRef(settings)
   settingsRef.current = settings
-  const [saved, setSaved] = useState(false)
-
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [runtimes, setRuntimesState] = useState<JavaRuntime[]>(() => getRuntimes())
   const [scanning, setScanning] = useState<'idle' | 'quick' | 'deep'>('idle')
@@ -545,13 +543,6 @@ export default function Settings() {
   const [pingLoading, setPingLoading] = useState(false)
   const [modPings, setModPings] = useState<ModSourcePing[]>([])
   const [modPingLoading, setModPingLoading] = useState(false)
-
-  useEffect(() => {
-    if (saved) {
-      const t = setTimeout(() => setSaved(false), 2000)
-      return () => clearTimeout(t)
-    }
-  }, [saved])
 
   useEffect(() => {
     apiLoadSettings().then((s) => {
@@ -588,7 +579,7 @@ export default function Settings() {
     const next = { ...settings, [key]: value }
     setSettings(next)
     saveSettings(next)
-    setSaved(true)
+    notify('设置已保存', 'success')
   }
 
   const validCount = runtimes.filter((j) => j.state === 'Valid').length
@@ -1271,7 +1262,7 @@ export default function Settings() {
                         if (sysInfo) next.defaultMaxMemory = Math.max(512, Math.floor(sysInfo.availableMemory * 0.7))
                         setSettings(next)
                         saveSettings(next)
-                        setSaved(true)
+                        notify('设置已保存', 'success')
                       }} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
                         <FontAwesomeIcon icon={faRobot} className="mr-1.5 h-3.5 w-3.5" />自动
                       </button>
@@ -1432,7 +1423,7 @@ export default function Settings() {
                               const next = { ...settings, backgroundImage: name, backgroundRandom: false }
                               setSettings(next)
                               saveSettings(next)
-                              setSaved(true)
+                              notify('设置已保存', 'success')
                             }}
                             className={cn(
                               'group relative h-16 w-28 overflow-hidden rounded-lg border-2 transition-colors',
@@ -1551,13 +1542,6 @@ export default function Settings() {
           {category === 'logs' && <LogTab />}
 
           {category === 'debug' && <DebugTab />}
-
-          {saved && (
-            <div className="fixed bottom-6 right-6 flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg">
-              <FontAwesomeIcon icon={faCheck} className="h-4 w-4" />
-              设置已保存
-            </div>
-          )}
 
           <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)}>
             <DialogHeader onClose={() => setAddDialogOpen(false)}>
