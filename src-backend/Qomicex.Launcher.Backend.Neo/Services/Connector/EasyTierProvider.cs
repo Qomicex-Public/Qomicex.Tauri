@@ -1,5 +1,8 @@
 using System.IO.Compression;
-using Qomicex.Downloader;
+using Qomicex.Downloader.Refactor.Configuration;
+using Qomicex.Downloader.Refactor.Model;
+using Qomicex.Downloader.Refactor.Progress;
+using RefDl = Qomicex.Downloader.Refactor.Downloader;
 using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.Models;
 
@@ -104,18 +107,20 @@ public sealed class EasyTierProvider
             _logger.LogInformation("下载 EasyTier (镜像前缀='{Prefix}'): {Url}", prefix, url);
 
             lock (_lock) _status.Status = "downloading";
-            using var manager = new DownloadManager(intervalMs: 500);
-            var tid = manager.CreateTask(maxConcurrentFiles: 1, maxRetries: 3, ignoreRangeProbe200Ok: true);
-            manager.AddFileToTask(tid, url, archivePath);
-            manager.OnTaskProgressUpdated += (_, info) =>
+            var fileProgress = new Progress<FileProgressInfo>(fp =>
             {
                 lock (_lock)
                 {
-                    _status.Progress = info.Progress;
-                    _status.Speed = info.Speed;
+                    _status.Progress = fp.ProgressPercent;
+                    _status.Speed = fp.SpeedBytesPerSec;
                 }
-            };
-            await manager.StartTaskAsync(tid, CancellationToken.None);
+            });
+            using var downloader = new RefDl(builder => builder
+                .WithMaxConcurrency(1)
+                .WithRetry(3, TimeSpan.FromSeconds(1))
+                .WithProgress(null, fileProgress, null));
+            var task = new DownloadTask { Url = url, SavePath = archivePath };
+            await downloader.DownloadAsync(task, CancellationToken.None);
 
             lock (_lock) _status.Status = "extracting";
 

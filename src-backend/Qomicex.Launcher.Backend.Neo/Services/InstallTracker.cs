@@ -7,7 +7,10 @@ using Qomicex.Core.AOT.Models.VersionMetadata;
 using Qomicex.Core.AOT.Public.Models;
 using Qomicex.Core.AOT.Public.Services;
 using Qomicex.Core.AOT.Services.Installers;
-using Qomicex.Downloader;
+using Qomicex.Downloader.Refactor.Configuration;
+using Qomicex.Downloader.Refactor.Model;
+using Qomicex.Downloader.Refactor.Progress;
+using RefDl = Qomicex.Downloader.Refactor.Downloader;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 
 namespace Qomicex.Launcher.Backend.Neo.Services;
@@ -142,16 +145,12 @@ public sealed class InstallTracker
         var missFiles = await core.Locator.GetMissFilesAsync(jsonContent);
 
         Task? baseDownloadTask = null;
-        DownloadManager? baseDm = null;
         if (missFiles.Count > 0)
         {
             state.Stage = "downloading-base";
             state.TotalFiles = missFiles.Count;
-            baseDm = new DownloadManager(intervalMs: 500);
-            var tid = baseDm.CreateTask(maxConcurrentFiles: downloadThreads, maxRetries: 3);
-            foreach (var f in missFiles)
-                baseDm.AddFileToTask(tid, f.Url, f.Path);
-            baseDownloadTask = DownloadWithProgress(baseDm, tid, state, 5, 35, ct);
+            var baseTasks = missFiles.Select(f => new DownloadTask { Url = f.Url, SavePath = f.Path }).ToList();
+            baseDownloadTask = DownloadWithProgress(baseTasks, state, 5, 35, ct, downloadThreads);
         }
         else
         {
@@ -161,7 +160,6 @@ public sealed class InstallTracker
         // Phase 4: Loader 库文件扫描与下载 (并行)
         ct.ThrowIfCancellationRequested();
         Task? loaderLibTask = null;
-        DownloadManager? loaderDm = null;
 
         if (!string.IsNullOrEmpty(loader) && !string.IsNullOrEmpty(loaderVersion))
         {
@@ -173,11 +171,8 @@ public sealed class InstallTracker
 
             if (missLibs.Count > 0)
             {
-                loaderDm = new DownloadManager(intervalMs: 500);
-                var tid = loaderDm.CreateTask(maxConcurrentFiles: 32, maxRetries: 3);
-                foreach (var f in missLibs)
-                    loaderDm.AddFileToTask(tid, f.Url, f.Path);
-                loaderLibTask = DownloadWithProgress(loaderDm, tid, state, 35, 55, ct);
+                var loaderTasks = missLibs.Select(f => new DownloadTask { Url = f.Url, SavePath = f.Path }).ToList();
+                loaderLibTask = DownloadWithProgress(loaderTasks, state, 35, 55, ct, 32);
             }
         }
         else if(string.IsNullOrEmpty(loader))
@@ -238,10 +233,8 @@ public sealed class InstallTracker
         if (missJar != null)
         {
             state.Stage = "downloading-jar";
-            var dm = new DownloadManager(intervalMs: 500);
-            var tid = dm.CreateTask(maxConcurrentFiles: 1, maxRetries: 3);
-            dm.AddFileToTask(tid, missJar.Url, missJar.Path);
-            await DownloadWithProgress(dm, tid, state, 92, 98, ct);
+            var jarTask = new DownloadTask { Url = missJar.Url, SavePath = missJar.Path };
+            await DownloadWithProgress(new[] { jarTask }, state, 92, 98, ct, 1);
         }
         else
         {
@@ -266,46 +259,53 @@ public sealed class InstallTracker
         state.CurrentFile = "";
 
         // 清理
-        if (baseDm != null) baseDm.StopTask(-1);
-        if (loaderDm != null) loaderDm.StopTask(-1);
         CleanupTempFiles(installerPath);
     }
 
-    private async Task DownloadWithProgress(DownloadManager dm, int tid,
-        InstallState state, double startPct, double endPct, CancellationToken ct)
+    private async Task DownloadWithProgress(IReadOnlyList<DownloadTask> tasks,
+        InstallState state, double startPct, double endPct, CancellationToken ct, int maxConcurrency)
     {
-        var downloadTask = dm.StartTaskAsync(tid, ct, _userAgent, _cfHeaders);
-        while (!ct.IsCancellationRequested)
+        var totalFiles = tasks.Count;
+        var failedFileNames = new ConcurrentBag<string>();
+
+        var fileProgress = new Progress<FileProgressInfo>(fp =>
         {
-            var infos = dm.GetAllTaskInfos();
-            if (infos.TryGetValue(tid, out var info))
+            if (fp.Status == FileProgressStatus.Downloading)
             {
-                state.CompletedFiles = info.CompletedFiles;
-                state.FailedFiles = info.FailedFiles;
-                state.Speed = info.Speed;
-
-                var statuses = dm.GetTaskFileStatuses(tid);
-                var downloading = statuses.FirstOrDefault(s => s.Status == DownloadTask.FileStatus.Downloading);
-                state.CurrentFile = downloading.Name ?? "";
-
-                if (info.TotalFiles > 0)
-                    state.Progress = startPct + (endPct - startPct) * info.Progress / 100.0;
-
-                if (info.CompletedFiles + info.FailedFiles + info.CanceledFiles >= info.TotalFiles)
-                {
-                    if (info.FailedFiles > 0)
-                    {
-                        var failedNames = statuses
-                            .Where(s => s.Status == DownloadTask.FileStatus.Failed)
-                            .Select(s => s.Name ?? "?");
-                        throw new Exception($"下载失败 ({info.FailedFiles} 个): {string.Join(", ", failedNames)}");
-                    }
-                    break;
-                }
+                state.CurrentFile = fp.FileName ?? "";
             }
-            await Task.Delay(500, ct);
+            else if (fp.Status == FileProgressStatus.Failed)
+            {
+                failedFileNames.Add(fp.FileName ?? "?");
+            }
+        });
+
+        var globalProgress = new Progress<GlobalProgressInfo>(gp =>
+        {
+            var completed = gp.CompletedTasks + gp.FailedTasks;
+            state.CompletedFiles = gp.CompletedTasks;
+            state.FailedFiles = gp.FailedTasks;
+            state.Speed = gp.GlobalSpeedBytesPerSec;
+            if (totalFiles > 0)
+                state.Progress = startPct + (endPct - startPct) * completed / totalFiles;
+        });
+
+        using var downloader = new RefDl(builder => builder
+            .WithMaxConcurrency(maxConcurrency)
+            .WithRetry(3, TimeSpan.FromSeconds(1))
+            .WithUserAgent(_userAgent)
+            .WithDefaultHeaders(_cfHeaders)
+            .WithProgress(globalProgress, fileProgress, null)
+            .WithProgressInterval(200));
+
+        var results = await downloader.DownloadBatchAsync(tasks, ct);
+
+        var failed = results.Where(r => !r.IsSuccess).ToList();
+        if (failed.Count > 0)
+        {
+            var names = failedFileNames.Any() ? failedFileNames : failed.Select(r => r.TaskId);
+            throw new Exception($"下载失败 ({failed.Count} 个): {string.Join(", ", names)}");
         }
-        await downloadTask;
     }
 
     private async Task<List<MissFileData>> GetMissLoaderLibraries(IInstallerFactory installerFactory,
@@ -416,12 +416,13 @@ public sealed class InstallTracker
                     var modsDir = Path.Combine(gameDir, "mods");
                     Directory.CreateDirectory(modsDir);
                     var destPath = Path.Combine(modsDir, file.Filename);
-                    if (!File.Exists(destPath))
+                     if (!File.Exists(destPath))
                     {
-                        using var dm = new DownloadManager(intervalMs: 500);
-                        var tid = dm.CreateTask(maxConcurrentFiles: 1, maxRetries: 3);
-                        dm.AddFileToTask(tid, file.Url, destPath);
-                        await dm.StartTaskAsync(tid, ct);
+                        using var downloader = new RefDl(builder => builder
+                            .WithMaxConcurrency(1)
+                            .WithRetry(3, TimeSpan.FromSeconds(1)));
+                        var task = new DownloadTask { Url = file.Url, SavePath = destPath };
+                        await downloader.DownloadAsync(task, ct);
                     }
                 }
             }

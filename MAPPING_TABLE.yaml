@@ -1,0 +1,94 @@
+# Qomicex.Downloader → Qomicex.Downloader.Refactor 映射表
+# 生成时间: 2026-07-25
+# 迁移分支: migrate/downloader-refactor
+
+namespaces:
+  old: Qomicex.Downloader
+  new: Qomicex.Downloader.Refactor
+  additional:
+    - Qomicex.Downloader.Refactor.Model
+    - Qomicex.Downloader.Refactor.Progress
+    - Qomicex.Downloader.Refactor.Configuration
+
+classes:
+  DownloadManager:
+    new: Downloader
+    notes: "入口类改名，不再区分 Manager/Core，统一为 Downloader"
+  
+  Core:
+    new: Downloader
+    notes: "DownloadCore 合并到 Downloader 类"
+    method_mapping:
+      DownloadFileAsync(url, path, progress, ct, userAgent, headers):
+        new: DownloadAsync(task, ct)
+        notes: "进度从 IProgress<DownloadProgress> 改为 IProgress<FileProgressInfo>，UA/headers 改为 Builder 配置"
+
+  DownloadOptions:
+    new: DownloaderOptions
+    notes: "重命名，字段名和结构有变化"
+
+  DownloadTask:
+    new: DownloadTask
+    notes: "同名但属性变化：Id 自动生成，Url→Url, Path→SavePath, 新增 MirrorUrls/Headers/Priority"
+    property_mapping:
+      Url: Url  (不变)
+      Path: SavePath
+      task_id (int): Id (string, 自动 GUID)
+
+  DownloadProgress:
+    new: FileProgressInfo
+    notes: "重命名并重组字段"
+    property_mapping:
+      DownloadedBytes: DownloadedBytes
+      TotalBytes: TotalBytes
+      Progress: ProgressPercent
+      Speed: 无直接对应 → 使用 GlobalProgressInfo.GlobalSpeedBytesPerSec
+
+progress:
+  polling: GetTaskInfos()/GetAllTaskInfos()/GetTaskFileStatuses()
+  new: IProgress<GlobalProgressInfo> + IProgress<FileProgressInfo> 回调
+  notes: "从主动轮询改为推送回调，DownloaderOptions 在构造时注入"
+
+events:
+  OnTaskProgressUpdated:
+    new: IProgress<FileProgressInfo> (在 DownloaderOptions.FileProgress 中配置)
+    notes: "从事件改为 IProgress<T> 模式"
+
+enums:
+  DownloadTask.FileStatus:
+    new: FileProgressStatus
+    value_mapping:
+      Downloading: Downloading
+      Completed: Completed
+      Failed: Failed
+      Pending: Pending (新增)
+
+methods:
+  CreateTask(maxConcurrentFiles, maxRetries, ...):
+    new: DownloaderOptions.MaxConcurrency / DownloaderOptions.DefaultMaxRetries
+    notes: "不再显式创建任务，改为在 DownloaderOptions 或 Builder 中配置全局参数"
+
+  AddFileToTask(tid, url, path):
+    new: 构建 DownloadTask 列表传给 DownloadBatchAsync
+    notes: "不再有 '将文件添加到任务 ID' 的步骤"
+
+  StartTaskAsync(tid, ct, userAgent, headers):
+    new: DownloadBatchAsync(tasks, ct) / DownloadAsync(task, ct)
+    notes: "UA/headers 移到 DownloaderOptions.DefaultUserAgent/DefaultHeaders"
+
+  StopTask(-1):
+    new: Dispose() 或 CancellationToken 取消
+    notes: "不再需要显式 StopTask，Downloader Dispose 自动清理"
+
+  GetAllTaskInfos():
+    new: IProgress<GlobalProgressInfo>
+    notes: "不再轮询，通过 GlobalProgressInfo 回调获取 CompletedTasks/FailedTasks/TotalTasks"
+
+  GetTaskFileStatuses(tid):
+    new: IProgress<FileProgressInfo>
+    notes: "不再轮询，通过 FileProgressInfo 回调获取每个文件进度"
+
+removed:
+  - ignoreRangeProbe200Ok 参数 (Watchdog 机制替代)
+  - singleFileThreadCount 参数 (不再暴露)
+  - .qdtmp 临时文件后缀 (FileWriter 内部处理)

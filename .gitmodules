@@ -1,9 +1,9 @@
 [submodule "src-backend/Qomicex.Connector.Part.Scaffolding"]
 	path = src-backend/Qomicex.Connector.Part.Scaffolding
 	url = git@github.com:Qomicex-Public/Qomicex.Connector.Part.Scaffolding.git
-[submodule "src-backend/Qomicex.Downloader"]
-	path = src-backend/Qomicex.Downloader
-	url = git@github.com:Qomicex-Public/Qomicex.Downloader.git
 [submodule "src-backend/Qomicex.Core.AOT"]
 	path = src-backend/Qomicex.Core.AOT
 	url = git@github.com:Qomicex-Public/Qomicex.Core.AOT.git
+[submodule "src-backend/Qomicex.Downloader.Refactor"]
+	path = src-backend/Qomicex.Downloader.Refactor
+	url = git@github.com:Qomicex-Public/Qomicex.Downloader.Refactor.git

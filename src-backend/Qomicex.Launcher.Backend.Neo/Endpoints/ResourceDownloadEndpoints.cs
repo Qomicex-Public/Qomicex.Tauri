@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
-using Qomicex.Downloader;
-using DownloadCore = Qomicex.Downloader.Core;
+using Qomicex.Downloader.Refactor.Configuration;
+using Qomicex.Downloader.Refactor.Model;
+using Qomicex.Downloader.Refactor.Progress;
+using RefDl = Qomicex.Downloader.Refactor.Downloader;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Services;
 
@@ -91,20 +93,26 @@ public static class ResourceDownloadEndpoints
         {
             try
             {
-                using var core = new DownloadCore();
                 var headers = new Dictionary<string, string>();
                 if (state.Url?.Contains("forgecdn.net") == true || state.Url?.Contains("curseforge.com") == true)
                 {
                     foreach (var (k, v) in cfHeaders) headers[k] = v;
                 }
+
+                var fileProgress = new Progress<FileProgressInfo>(p =>
+                {
+                    state.DownloadedBytes = p.DownloadedBytes;
+                    state.TotalBytes = p.TotalBytes;
+                    state.Progress = p.ProgressPercent;
+                });
+
                 state.Progress = 0;
-                await core.DownloadFileAsync(state.Url!, Path.Combine(state.TargetPath, state.FileName!),
-                    new Progress<DownloadProgress>(p =>
-                    {
-                        state.DownloadedBytes = (long)p.DownloadedBytes;
-                        state.TotalBytes = (long)p.TotalBytes;
-                        state.Progress = p.Progress;
-                    }), default, "QomicexLauncher/1.0", headers);
+                using var downloader = new RefDl(builder => builder
+                    .WithUserAgent("QomicexLauncher/1.0")
+                    .WithDefaultHeaders(headers)
+                    .WithProgress(null, fileProgress, null));
+                var task = new DownloadTask { Url = state.Url!, SavePath = Path.Combine(state.TargetPath, state.FileName!) };
+                await downloader.DownloadAsync(task, default);
                 state.Progress = 100;
                 state.Status = "completed";
             }

@@ -37,7 +37,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Qomicex.Core.AOT\Qomicex.Core.AOT\Qomicex.Core.AOT.csproj" />
-    <ProjectReference Include="..\Qomicex.Downloader\Qomicex.Downloader.csproj" />
+    <ProjectReference Include="..\Qomicex.Downloader.Refactor\Qomicex.Downloader.Refactor\Qomicex.Downloader.Refactor.csproj" />
     <ProjectReference Include="..\Qomicex.Connector.Part.Scaffolding\Qomicex.Connector\Qomicex.Connector.csproj" />
   </ItemGroup>
 

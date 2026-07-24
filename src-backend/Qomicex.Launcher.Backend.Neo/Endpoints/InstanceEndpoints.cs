@@ -8,7 +8,10 @@ using Qomicex.Core.AOT.Public.Models;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
-using Qomicex.Downloader;
+using Qomicex.Downloader.Refactor.Configuration;
+using Qomicex.Downloader.Refactor.Model;
+using Qomicex.Downloader.Refactor.Progress;
+using RefDl = Qomicex.Downloader.Refactor.Downloader;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 
@@ -155,47 +158,53 @@ public static class InstanceEndpoints
                                 TotalFiles = missFiles.Count
                             });
 
-                            using var dm = new DownloadManager(intervalMs: 500);
-                            var tid = dm.CreateTask(maxConcurrentFiles: 4, maxRetries: 3);
-                            foreach (var f in missFiles)
-                                dm.AddFileToTask(tid, f.Url, f.Path);
-                            var repairDownload = dm.StartTaskAsync(tid, cts.Token);
+                            var totalFiles = missFiles.Count;
+                            var missingFileNames = missFiles.Select(f => f.Name).ToList();
 
-                            while (!cts.Token.IsCancellationRequested)
+                            var fileProgress = new Progress<FileProgressInfo>(fp =>
                             {
-                                var infos = dm.GetAllTaskInfos();
-                                if (infos.TryGetValue(tid, out var info))
+                                if (fp.Status == FileProgressStatus.Downloading)
                                 {
-                                    var statuses = dm.GetTaskFileStatuses(tid);
-                                    var downloading = statuses.FirstOrDefault(s => s.Status == DownloadTask.FileStatus.Downloading);
-                                    string currentFileName = downloading.Name ?? "";
-
                                     tracker.SetProgress(id, new LaunchProgressState
                                     {
                                         Stage = "repairing",
-                                        Message = $"正在补全: {currentFileName} ({Math.Round(info.Progress)}%)",
-                                        Progress = 10 + info.Progress * 0.20,
-                                        CurrentFile = currentFileName,
-                                        TotalFiles = missFiles.Count,
-                                        CompletedFiles = info.CompletedFiles,
-                                        MissingFiles = missFiles.Select(f => f.Name).ToList()
+                                        Message = $"正在补全: {fp.FileName ?? ""} ({Math.Round(fp.ProgressPercent)}%)",
+                                        Progress = 10 + fp.ProgressPercent * 0.20,
+                                        CurrentFile = fp.FileName ?? "",
+                                        TotalFiles = totalFiles,
+                                        MissingFiles = missingFileNames
                                     });
-
-                                    if (info.CompletedFiles + info.FailedFiles + info.CanceledFiles >= info.TotalFiles)
-                                    {
-                                        if (info.FailedFiles > 0)
-                                        {
-                                            var failedNames = statuses
-                                                .Where(s => s.Status == DownloadTask.FileStatus.Failed)
-                                                .Select(s => s.Name ?? "?");
-                                            throw new Exception($"文件补全失败: {string.Join(", ", failedNames)}");
-                                        }
-                                        break;
-                                    }
                                 }
-                                await Task.Delay(500, cts.Token);
+                            });
+
+                            var globalProgress = new Progress<GlobalProgressInfo>(gp =>
+                            {
+                                var progressPct = gp.TotalBytes > 0 ? (double)gp.DownloadedBytes / gp.TotalBytes * 100.0 : 0;
+                                tracker.SetProgress(id, new LaunchProgressState
+                                {
+                                    Stage = "repairing",
+                                    Message = $"正在补全 ({gp.CompletedTasks}/{totalFiles})...",
+                                    Progress = 10 + progressPct * 0.20,
+                                    TotalFiles = totalFiles,
+                                    CompletedFiles = gp.CompletedTasks,
+                                    MissingFiles = missingFileNames
+                                });
+                            });
+
+                            using var downloader = new RefDl(builder => builder
+                                .WithMaxConcurrency(4)
+                                .WithRetry(3, TimeSpan.FromSeconds(1))
+                                .WithProgress(globalProgress, fileProgress, null)
+                                .WithProgressInterval(200));
+
+                            var tasks = missFiles.Select(f => new DownloadTask { Url = f.Url, SavePath = f.Path }).ToList();
+                            var results = await downloader.DownloadBatchAsync(tasks, cts.Token);
+
+                            var failed = results.Where(r => !r.IsSuccess).ToList();
+                            if (failed.Count > 0)
+                            {
+                                throw new Exception($"文件补全失败: {string.Join(", ", failed.Select(r => r.TaskId))}");
                             }
-                            await repairDownload;
                         }
                     }
 

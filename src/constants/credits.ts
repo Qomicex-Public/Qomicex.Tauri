@@ -43,7 +43,7 @@ export const BACKEND_DEPENDENCIES: Record<string, Dependency[]> = {
   '核心库': [
     { name: 'Qomicex.Core', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Core', license: '自研' },
     { name: 'Qomicex.Connector', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Connector.Part.Scaffolding', license: '自研' },
-    { name: 'Qomicex.Downloader', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Downloader', license: '自研' },
+    { name: 'Qomicex.Downloader', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Downloader.Refactor', license: '自研' },
   ],
 }
 
