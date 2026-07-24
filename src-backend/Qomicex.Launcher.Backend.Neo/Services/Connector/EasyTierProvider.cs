@@ -118,7 +118,7 @@ public sealed class EasyTierProvider
             using var downloader = new RefDl(builder => builder
                 .WithMaxConcurrency(1)
                 .WithRetry(3, TimeSpan.FromSeconds(1))
-                .WithProgress(null, fileProgress, null));
+                .WithProgress(null, fileProgress, DownloaderTrace.CreateLogProgress()));
             var task = new DownloadTask { Url = url, SavePath = archivePath };
             await downloader.DownloadAsync(task, CancellationToken.None);
 

@@ -11,6 +11,7 @@ using Qomicex.Downloader.Refactor.Configuration;
 using Qomicex.Downloader.Refactor.Model;
 using Qomicex.Downloader.Refactor.Progress;
 using RefDl = Qomicex.Downloader.Refactor.Downloader;
+using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 
 namespace Qomicex.Launcher.Backend.Neo.Services;
@@ -295,7 +296,7 @@ public sealed class InstallTracker
             .WithRetry(3, TimeSpan.FromSeconds(1))
             .WithUserAgent(_userAgent)
             .WithDefaultHeaders(_cfHeaders)
-            .WithProgress(globalProgress, fileProgress, null)
+            .WithProgress(globalProgress, fileProgress, DownloaderTrace.CreateLogProgress())
             .WithProgressInterval(200));
 
         var results = await downloader.DownloadBatchAsync(tasks, ct);
@@ -420,7 +421,8 @@ public sealed class InstallTracker
                     {
                         using var downloader = new RefDl(builder => builder
                             .WithMaxConcurrency(1)
-                            .WithRetry(3, TimeSpan.FromSeconds(1)));
+                            .WithRetry(3, TimeSpan.FromSeconds(1))
+                            .WithProgress(null, null, DownloaderTrace.CreateLogProgress()));
                         var task = new DownloadTask { Url = file.Url, SavePath = destPath };
                         await downloader.DownloadAsync(task, ct);
                     }

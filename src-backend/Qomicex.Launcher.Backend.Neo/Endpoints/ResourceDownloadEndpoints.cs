@@ -3,6 +3,7 @@ using Qomicex.Downloader.Refactor.Configuration;
 using Qomicex.Downloader.Refactor.Model;
 using Qomicex.Downloader.Refactor.Progress;
 using RefDl = Qomicex.Downloader.Refactor.Downloader;
+using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Services;
 
@@ -110,7 +111,7 @@ public static class ResourceDownloadEndpoints
                 using var downloader = new RefDl(builder => builder
                     .WithUserAgent("QomicexLauncher/1.0")
                     .WithDefaultHeaders(headers)
-                    .WithProgress(null, fileProgress, null));
+                    .WithProgress(null, fileProgress, DownloaderTrace.CreateLogProgress()));
                 var task = new DownloadTask { Url = state.Url!, SavePath = Path.Combine(state.TargetPath, state.FileName!) };
                 await downloader.DownloadAsync(task, default);
                 state.Progress = 100;

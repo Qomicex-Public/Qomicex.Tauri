@@ -6,6 +6,7 @@ using Qomicex.Core.AOT.Interfaces;
 using Qomicex.Core.AOT.Models.VersionMetadata;
 using Qomicex.Core.AOT.Public.Models;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
+using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
 using Qomicex.Downloader.Refactor.Configuration;
@@ -194,7 +195,7 @@ public static class InstanceEndpoints
                             using var downloader = new RefDl(builder => builder
                                 .WithMaxConcurrency(4)
                                 .WithRetry(3, TimeSpan.FromSeconds(1))
-                                .WithProgress(globalProgress, fileProgress, null)
+                                .WithProgress(globalProgress, fileProgress, DownloaderTrace.CreateLogProgress())
                                 .WithProgressInterval(200));
 
                             var tasks = missFiles.Select(f => new DownloadTask { Url = f.Url, SavePath = f.Path }).ToList();
