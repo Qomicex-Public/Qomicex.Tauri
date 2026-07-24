@@ -98,10 +98,10 @@ builder.Services.AddSingleton<GameProcessInspector>();
 builder.Services.AddSingleton(sp =>
 {
     var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-    client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+    var relayUserAgent = $"QML/{appVersion.Major}.{appVersion.Minor}.{appVersion.Build}";
     var apiUrl = builder.Configuration["Connector:RelayApi"] ?? "";
     var logger = sp.GetRequiredService<ILogger<PrivateRelayNodeFetcher>>();
-    return new PrivateRelayNodeFetcher(client, apiUrl, logger);
+    return new PrivateRelayNodeFetcher(client, apiUrl, relayUserAgent, logger);
 });
 builder.Services.AddSingleton<ConnectorService>();
 builder.Services.AddSingleton<EasyTierProvider>();

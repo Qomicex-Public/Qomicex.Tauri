@@ -7,15 +7,18 @@ public class PrivateRelayNodeFetcher
 {
     private readonly HttpClient _http;
     private readonly string _apiUrl;
+    private readonly string _userAgent;
     private readonly ILogger<PrivateRelayNodeFetcher>? _logger;
 
     public PrivateRelayNodeFetcher(
         HttpClient http,
         string apiUrl,
+        string userAgent,
         ILogger<PrivateRelayNodeFetcher>? logger = null)
     {
         _http = http;
         _apiUrl = apiUrl;
+        _userAgent = userAgent;
         _logger = logger;
     }
 
@@ -26,7 +29,13 @@ public class PrivateRelayNodeFetcher
 
         try
         {
-            var json = await _http.GetStringAsync(_apiUrl, ct);
+            using var request = new HttpRequestMessage(HttpMethod.Get, _apiUrl);
+            request.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
+
+            using var response = await _http.SendAsync(request, ct);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync(ct);
             var nodes = RelayNodeProvider.ParseNodes(json);
 
             nodes = await ResolveHttpNodesAsync(nodes, ct);
