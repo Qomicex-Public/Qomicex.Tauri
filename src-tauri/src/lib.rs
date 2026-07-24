@@ -226,12 +226,9 @@ async fn download_and_install_update<R: tauri::Runtime>(
                 return Err(format!("msiexec 安装失败: exit code {}", status.code().unwrap_or(-1)));
             }
         } else if ext == "exe" {
-            let status = std::process::Command::new(&file_path)
-                .status()
+            std::process::Command::new(&file_path)
+                .spawn()
                 .map_err(|e| format!("启动安装程序失败: {e}"))?;
-            if !status.success() {
-                return Err(format!("安装程序失败: exit code {}", status.code().unwrap_or(-1)));
-            }
         }
     }
 
@@ -270,6 +267,16 @@ async fn download_and_install_update<R: tauri::Runtime>(
     }
 
     eprintln!("[updater] 安装完成，准备重启");
+
+    // .exe 安装器需要先退出当前进程以便替换文件
+    #[cfg(target_os = "windows")]
+    if ext == "exe" {
+        eprintln!("[updater] 安装器已后台启动，退出当前进程");
+        let _ = app.exit(0);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::process::exit(0);
+    }
+
     // 重启应用（此调用不会返回）
     app.restart();
 }

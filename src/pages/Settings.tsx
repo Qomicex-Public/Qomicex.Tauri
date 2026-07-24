@@ -21,6 +21,7 @@ import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { checkUpdate } from '../api/update.ts'
 import type { LicenseStatus } from '../api/license.ts'
+import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { cn } from '../lib/utils.ts'
@@ -37,7 +38,6 @@ import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
-import { relaunch } from '@tauri-apps/plugin-process'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
@@ -76,11 +76,11 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string } | null>(null)
   const [downloadUrl, setDownloadUrl] = useState<string>('')
-  const [progress, setProgress] = useState(0)
   const [updateError, setUpdateError] = useState<string>()
   const [channel, setChannel] = useState(() => localStorage.getItem('update-channel') || 'stable')
   const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [licenseCopied, setLicenseCopied] = useState(false)
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
 
   const isPreRelease = /-/.test(APP_INFO.version)
   const versionType = isPreRelease ? '测试版' : '稳定版'
@@ -109,32 +109,10 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       setDownloadUrl(result.downloadUrl ?? '')
       setUpdateInfo({ version: result.version!, body: result.changelog ?? '' })
       setUpdateState('available')
+      setUpdateDialogOpen(true)
     } catch (e) {
       setUpdateState('error')
       setUpdateError(String(e instanceof Error ? e.message : e))
-    }
-  }
-
-  async function downloadAndInstall() {
-    if (!downloadUrl) return
-    setUpdateState('downloading')
-    setProgress(0)
-    try {
-      const { Channel } = await import('@tauri-apps/api/core')
-      const onEvent = new Channel()
-      onEvent.onmessage = (event: any) => {
-        if (event.event === 'Started') {
-          const contentLength = event.data.contentLength ?? 0
-          if (contentLength > 0) setProgress(0)
-        } else if (event.event === 'Progress') {
-          setProgress((prev) => Math.min(99, prev + 1))
-        }
-      }
-      await invoke('download_and_install_update', { url: downloadUrl, onEvent })
-      setUpdateState('installing')
-      await relaunch()
-    } catch {
-      setUpdateState('error')
     }
   }
 
@@ -283,46 +261,17 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             )}
           </div>
 
-          {updateState === 'available' && updateInfo && (
-            <div className="space-y-3 rounded-lg border bg-background p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium">新版本 {updateInfo.version}</div>
-                  <div className="text-xs text-muted-foreground">当前版本 {APP_INFO.version}</div>
-                </div>
-                <Button size="sm" onClick={downloadAndInstall}>
-                  <FontAwesomeIcon icon={faDownload} className="mr-1 h-3 w-3" />
-                  下载并安装
-                </Button>
-              </div>
-              {updateInfo.body && (
-                <div className="max-h-32 overflow-y-auto rounded bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
-                  {updateInfo.body}
-                </div>
-              )}
-            </div>
-          )}
-
-          {updateState === 'downloading' && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>正在下载更新...</span>
-                <span>{progress}%</span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
-              </div>
-            </div>
-          )}
-
-          {updateState === 'installing' && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin text-primary" />
-              正在安装更新，即将重启...
-            </div>
-          )}
         </CardContent>
       </Card>
+
+      <UpdateDialog
+        open={updateDialogOpen}
+        version={updateInfo?.version ?? ''}
+        body={updateInfo?.body ?? ''}
+        required={false}
+        downloadUrl={downloadUrl}
+        onClose={() => setUpdateDialogOpen(false)}
+      />
 
       {/* Contributors */}
       <Card>
