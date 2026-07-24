@@ -18,7 +18,12 @@
 [![Tauri v2](https://img.shields.io/badge/Tauri-2-FFC131?style=flat-square&logo=tauri)](https://tauri.app)
 [![License: GPLv3](https://img.shields.io/badge/License-GPL%20V3-yellow?style=flat-square)](LICENSE)
 
+<div align="center">
+  
+[官方网站](https://www.qomicex.top)
 [立即下载](https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest)
+
+</div>
 
 </div>
 
