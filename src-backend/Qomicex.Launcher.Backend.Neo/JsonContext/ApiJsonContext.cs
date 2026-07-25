@@ -90,6 +90,11 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(JavaPathRequest))]
 [JsonSerializable(typeof(JavaRecommendRequest))]
 [JsonSerializable(typeof(StoredJavaRuntime))]
+// Log management
+[JsonSerializable(typeof(LogEntry))]
+[JsonSerializable(typeof(List<LogEntry>))]
+[JsonSerializable(typeof(ExportRequest))]
+[JsonSerializable(typeof(ExportAllRequest))]
 // Open folder/logs
 [JsonSerializable(typeof(OpenPathRequest))]
 // SSE progress
@@ -294,7 +299,8 @@ public sealed record SettingsResponse(
     string? WatermarkText = null,
     string? WatermarkSubtext = null,
     List<string>? Directories = null,
-    List<CustomJavaEntryDto>? CustomJavaRuntimes = null
+    List<CustomJavaEntryDto>? CustomJavaRuntimes = null,
+    string? LogLevel = "info"
 );
 
 public sealed record CustomJavaEntryDto(
@@ -403,6 +409,9 @@ public sealed record LoaderVersionInfo(
     string? PublishedAt
 );
 
+public sealed record LogEntry(string Path, string Name, long Size, string LastModified, bool IsCurrentSession);
+public sealed record ExportRequest(string Path, string Dest);
+public sealed record ExportAllRequest(string Dest);
 public sealed record OpenPathRequest(string Path);
 
 public sealed record LoaderAddonInfo(

@@ -87,7 +87,7 @@ public static class AuthEndpoints
 
         group.MapPost("/microsoft/info", async (MicrosoftInfoRequest req, IHttpClientFactory httpFactory) =>
         {
-            var http = httpFactory.CreateClient();
+            var http = httpFactory.CreateClient("default");
             using var profileReq = new HttpRequestMessage(HttpMethod.Get,
                 "https://api.minecraftservices.com/minecraft/profile");
             profileReq.Headers.Authorization =
@@ -145,7 +145,7 @@ public static class AuthEndpoints
 
         group.MapPost("/yggdrasil", async (AuthRequest req, IHttpClientFactory httpFactory) =>
         {
-            var http = httpFactory.CreateClient();
+            var http = httpFactory.CreateClient("default");
             var baseUrl = (req.ServerUrl ?? "https://littleskin.cn/api/yggdrasil").TrimEnd('/');
 
             var authPayload = new JsonObject
@@ -218,7 +218,7 @@ public static class AuthEndpoints
             var serverUrl = $"https://auth.mc-user.com:233/{req.ServerId}/";
             using var authCore = new GameCoreBuilder()
                 .UseYggdrasilAuth(serverUrl)
-                .WithHttpClient(httpFactory.CreateClient())
+                .WithHttpClient(httpFactory.CreateClient("default"))
                 .Build();
             var authReq = new Qomicex.Core.AOT.Interfaces.AuthRequest
             {

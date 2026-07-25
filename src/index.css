@@ -5,6 +5,7 @@
 *, *::before, *::after {
   user-select: none;
   -webkit-user-select: none;
+  -webkit-user-drag: none;
 }
 input, textarea, [contenteditable] {
   user-select: auto;

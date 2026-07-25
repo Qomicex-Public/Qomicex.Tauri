@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
 using Qomicex.Core.AOT.Core;
@@ -12,6 +13,7 @@ public sealed class JavaDownloadService
     private readonly DefaultGameCore _core;
     private readonly HttpClient _httpClient;
     private readonly JavaRuntimeStore _javaRuntimeStore;
+    private readonly ILogger<JavaDownloadService> _logger;
     private readonly ConcurrentDictionary<string, JavaDownloadTaskState> _tasks = new();
 
     private sealed class JavaDownloadTaskState
@@ -31,11 +33,12 @@ public sealed class JavaDownloadService
         public bool Paused { get; set; }
     }
 
-    public JavaDownloadService(DefaultGameCore core, HttpClient httpClient, JavaRuntimeStore javaRuntimeStore)
+    public JavaDownloadService(DefaultGameCore core, HttpClient httpClient, JavaRuntimeStore javaRuntimeStore, ILogger<JavaDownloadService> logger)
     {
         _core = core;
         _httpClient = httpClient;
         _javaRuntimeStore = javaRuntimeStore;
+        _logger = logger;
     }
 
     public Task<JavaDownloadCatalogResponse> GetCatalogAsync()
@@ -239,6 +242,8 @@ public sealed class JavaDownloadService
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Java download failed: task={TaskId} url={Url}", state.TaskId, state.DownloadUrl);
+            Trace.WriteLine($"[JavaDownloadService] Java download failed: task={state.TaskId} url={state.DownloadUrl} error={ex.Message}");
             state.Status = "failed";
             state.Error = ex.Message;
         }

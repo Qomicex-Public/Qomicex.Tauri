@@ -8,18 +8,8 @@ export interface LogEntry {
   isCurrentSession: boolean
 }
 
-export interface PreviewResult {
-  content: string
-  totalSize: number
-  previewSize: number
-}
-
 export function listLogs(): Promise<LogEntry[]> {
   return get<LogEntry[]>('/logs')
-}
-
-export function previewLog(path: string): Promise<PreviewResult> {
-  return get<PreviewResult>(`/logs/preview?path=${encodeURIComponent(path)}`)
 }
 
 export function getExportUrl(path: string): string {

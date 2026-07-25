@@ -116,9 +116,10 @@ public static class SystemEndpoints
         group.MapGet("/settings", () =>
             Results.Json(LoadSettings(), ApiJsonContext.Default.SettingsResponse));
 
-        group.MapPut("/settings", (SettingsResponse body) =>
+        group.MapPut("/settings", (SettingsResponse body, LogLevelManager levelManager) =>
         {
             SaveSettings(body);
+            levelManager.SetLevel(body.LogLevel);
             return Results.NoContent();
         });
 
@@ -359,7 +360,7 @@ public static class SystemEndpoints
     {
         try
         {
-            var client = httpFactory.CreateClient();
+            var client = httpFactory.CreateClient("default");
             client.Timeout = TimeSpan.FromSeconds(10);
             var sw = Stopwatch.StartNew();
             var resp = await client.GetAsync(url);

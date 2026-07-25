@@ -15,7 +15,8 @@ import RunningInstances from './pages/RunningInstances.tsx'
 import { MessageBoxProvider, useMessageBox } from './components/ui/message-box.tsx'
 import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
 import useCloseGuard from './hooks/useCloseGuard.ts'
-import { loadSettings, onSettingsChange } from './api/settings.ts'
+import ErrorBoundary from './components/ErrorBoundary.tsx'
+import { loadSettings, onSettingsChange, type AppSettings } from './api/settings.ts'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
@@ -186,23 +187,63 @@ function AppContent() {
   )
 }
 
+const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error'] as const
+
+const _console = {
+  log: console.log.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
+  debug: console.debug.bind(console),
+  trace: console.trace.bind(console),
+}
+
+function setConsoleLevel(level: string) {
+  const idx = LOG_LEVELS.indexOf(level as typeof LOG_LEVELS[number])
+  if (idx < 0) return
+  const shouldLog = (minIdx: number) => idx >= minIdx
+  console.log = shouldLog(2) ? _console.log : () => {}
+  console.warn = shouldLog(3) ? _console.warn : () => {}
+  console.error = shouldLog(4) ? _console.error : () => {}
+  console.debug = shouldLog(1) ? _console.debug : () => {}
+  console.trace = shouldLog(0) ? _console.trace : () => {}
+}
+
 function App() {
   useEffect(() => {
-    loadSettings()
-    const unsub = onSettingsChange((s) => {
+    loadSettings().then(s => setConsoleLevel(s.logLevel ?? 'info'))
+    const unsub = onSettingsChange((s: AppSettings) => {
       const enabled = s.animationsEnabled !== false
       const speed = s.animationSpeed ?? 1
       document.documentElement.dataset.animEnabled = String(enabled)
       document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
       window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
+      setConsoleLevel(s.logLevel ?? 'info')
     })
     return unsub
+  }, [])
+
+  useEffect(() => {
+    const handler = (event: PromiseRejectionEvent) => {
+      console.error('[GLOBAL] Unhandled Promise Rejection:', event.reason)
+    }
+    window.addEventListener('unhandledrejection', handler)
+    return () => window.removeEventListener('unhandledrejection', handler)
+  }, [])
+
+  useEffect(() => {
+    const handler = (event: ErrorEvent) => {
+      console.error('[GLOBAL] Uncaught Error:', event.error ?? event.message)
+    }
+    window.addEventListener('error', handler)
+    return () => window.removeEventListener('error', handler)
   }, [])
 
   return (
     <RunningProvider>
       <MessageBoxProvider>
-        <AppContent />
+        <ErrorBoundary>
+          <AppContent />
+        </ErrorBoundary>
       </MessageBoxProvider>
     </RunningProvider>
   )

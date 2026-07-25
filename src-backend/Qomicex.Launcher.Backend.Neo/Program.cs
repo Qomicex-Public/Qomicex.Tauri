@@ -4,6 +4,7 @@ using System.Text.Json.Serialization.Metadata;
 using Qomicex.Core.AOT.Builder;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Downloader.Refactor.Configuration;
+using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.Diagnostics;
 using Qomicex.Launcher.Backend.Neo.Endpoints;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
@@ -50,14 +51,14 @@ builder.Services.AddHttpClient("Modrinth", client =>
 {
     client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
     client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-});
+}).AddHttpMessageHandler<HttpClientLoggingHandler>();
 builder.Services.AddHttpClient("CurseForge", client =>
 {
     client.BaseAddress = new Uri("https://api.curseforge.com");
     client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
     client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
-});
-builder.Services.AddHttpClient();
+}).AddHttpMessageHandler<HttpClientLoggingHandler>();
+builder.Services.AddHttpClient("default").AddHttpMessageHandler<HttpClientLoggingHandler>();
 builder.Services.AddSingleton(core);
 
 // Services
@@ -89,15 +90,19 @@ builder.Services.AddSingleton(sp =>
 {
     var clientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var store = sp.GetRequiredService<JavaRuntimeStore>();
-    return new JavaDownloadService(core, clientFactory.CreateClient("default"), store);
+    var logger = sp.GetRequiredService<ILogger<JavaDownloadService>>();
+    return new JavaDownloadService(core, clientFactory.CreateClient("default"), store, logger);
 });
 
 // Diagnostics
 var traceBuffer = new TraceBufferStore(2000);
 builder.Services.AddSingleton(traceBuffer);
 builder.Services.AddSingleton<TraceDumpService>();
+builder.Services.AddSingleton<LogLevelManager>();
+builder.Services.AddTransient<HttpClientLoggingHandler>();
 Trace.Listeners.Add(new ConsoleTraceListener());
 Trace.Listeners.Add(new BufferedTraceListener(traceBuffer));
+Trace.Listeners.Add(new RollingFileTraceListener());
 Trace.AutoFlush = true;
 
 // Account & Skin
@@ -134,7 +139,7 @@ builder.Services.AddHttpClient("QomicexWeb", client =>
     client.BaseAddress = new Uri(LicenseConfig.QomicexWebBaseUrl);
     client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
     client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
-});
+}).AddHttpMessageHandler<HttpClientLoggingHandler>();
 
 builder.Services.AddCors(options =>
 {
@@ -153,6 +158,12 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 var app = builder.Build();
 
+// Apply saved log level on startup
+var levelManager = app.Services.GetRequiredService<LogLevelManager>();
+var savedSettings = SystemEndpoints.LoadSettings();
+levelManager.SetLevel(savedSettings.LogLevel);
+
+app.UseRequestLogging();
 app.UseErrorHandling();
 app.UseCors();
 
