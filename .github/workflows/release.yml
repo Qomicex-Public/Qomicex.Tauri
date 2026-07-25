@@ -681,6 +681,20 @@ jobs:
       - macos-x64
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate changelog
+        run: |
+          node scripts/generate-changelog.mjs \
+            "${{ needs.setup.outputs.displayVersion }}" \
+            "${{ needs.setup.outputs.releaseType }}" \
+            RELEASE_NOTES.md
+
       - uses: actions/download-artifact@v4
         with:
           pattern: update-fragment-*
@@ -732,10 +746,7 @@ jobs:
         with:
           tag_name: ${{ needs.setup.outputs.displayVersion }}
           name: Qomicex Launcher ${{ needs.setup.outputs.displayVersion }}
-          body: |
-            ## Qomicex Launcher ${{ needs.setup.outputs.displayVersion }}
-
-            ${{ needs.setup.outputs.releaseType }} release.
+          body_path: RELEASE_NOTES.md
           prerelease: ${{ needs.setup.outputs.prerelease }}
           files: |
             latest.json
