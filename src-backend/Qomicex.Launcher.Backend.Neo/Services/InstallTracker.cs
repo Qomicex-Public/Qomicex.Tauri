@@ -459,9 +459,12 @@ public sealed class InstallTracker
 
     public List<InstallProgressResponse> GetAllActiveStates()
     {
-        using var e = _sessionManager.GetActiveSnapshots()
-            .Where(s => s.Type == "install")
-            .Select(s => new InstallProgressResponse(
+        var list = new List<InstallProgressResponse>();
+        var seenSessionIds = new HashSet<string>();
+
+        foreach (var s in _sessionManager.GetActiveSnapshots().Where(s => s.Type == "install"))
+        {
+            list.Add(new InstallProgressResponse(
                 InstanceId: s.InstanceId ?? s.SessionId,
                 Status: s.Status,
                 Progress: s.Progress,
@@ -473,11 +476,31 @@ public sealed class InstallTracker
                 Speed: s.Speed,
                 IsPaused: s.IsPaused,
                 Stage: s.Stage
-            ))
-            .GetEnumerator();
-        var list = new List<InstallProgressResponse>();
-        while (e.MoveNext())
-            list.Add(e.Current);
+            ));
+            if (s.InstanceId is not null)
+                seenSessionIds.Add(s.InstanceId);
+        }
+
+        foreach (var (id, state) in _states)
+        {
+            if (seenSessionIds.Contains(id)) continue;
+            if (state.Status is "completed" or "failed" or "cancelled" or "not-started") continue;
+            var snap = _sessionManager.GetSession($"install-{id}")?.GetSnapshot();
+            list.Add(new InstallProgressResponse(
+                InstanceId: id,
+                Status: state.Status,
+                Progress: state.Progress,
+                Error: state.Error,
+                TotalFiles: state.TotalFiles,
+                CompletedFiles: state.CompletedFiles,
+                FailedFiles: state.FailedFiles,
+                CurrentFile: state.CurrentFile,
+                Speed: state.Speed,
+                IsPaused: false,
+                Stage: state.Stage
+            ));
+        }
+
         return list;
     }
 
