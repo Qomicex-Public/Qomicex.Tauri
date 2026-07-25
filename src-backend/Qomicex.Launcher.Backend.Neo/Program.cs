@@ -11,6 +11,7 @@ using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Middleware;
 using Qomicex.Launcher.Backend.Neo.Services;
 using Qomicex.Launcher.Backend.Neo.Services.Connector;
+using Qomicex.Launcher.Backend.Neo.Services.Translation;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -133,6 +134,17 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddSingleton<McmodService>();
 builder.Services.AddSingleton<UpdateService>();
+
+builder.Services.AddSingleton(sp =>
+{
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return new MyMemoryTranslationService(factory.CreateClient("default"));
+});
+builder.Services.AddSingleton(sp =>
+{
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return new GoogleTranslationService(factory.CreateClient("default"));
+});
 
 builder.Services.AddHttpClient("QomicexWeb", client =>
 {

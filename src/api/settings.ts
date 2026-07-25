@@ -40,6 +40,8 @@ export interface AppSettings {
   directories?: string[]
   customJavaRuntimes?: CustomJavaEntry[]
   logLevel: string
+  translationProvider: string
+  bingApiKey?: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -70,6 +72,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   watermarkText: 'Qomicex',
   watermarkSubtext: '启动器',
   logLevel: 'info',
+  translationProvider: 'mymemory',
+  bingApiKey: '',
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }

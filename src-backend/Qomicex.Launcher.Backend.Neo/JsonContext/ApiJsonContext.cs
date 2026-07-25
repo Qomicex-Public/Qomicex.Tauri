@@ -129,6 +129,7 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(YggdrasilSelectRequest))]
 [JsonSerializable(typeof(CnNameResponse))]
 [JsonSerializable(typeof(TranslateResponse))]
+[JsonSerializable(typeof(TranslateTextRequest))]
 // Connector DTOs
 [JsonSerializable(typeof(ConnectorPlayerDto))]
 [JsonSerializable(typeof(List<ConnectorPlayerDto>))]
@@ -301,7 +302,9 @@ public sealed record SettingsResponse(
     string? WatermarkSubtext = null,
     List<string>? Directories = null,
     List<CustomJavaEntryDto>? CustomJavaRuntimes = null,
-    string? LogLevel = "info"
+    string? LogLevel = "info",
+    string TranslationProvider = "mymemory",
+    string? BingApiKey = null
 );
 
 public sealed record CustomJavaEntryDto(
@@ -445,6 +448,7 @@ public sealed record YggdrasilSelectRequest(
     string AccessToken, string ClientToken, string ServerUrl, List<YggdrasilProfileInfo> SelectedProfiles);
 
 public sealed record TranslateResponse(string? Original, string? Translated, string? TranslatedAt);
+public sealed record TranslateTextRequest(string Text);
 public sealed record DataDirResponse(string Path);
 
 public sealed record AutoSelectResponse(int Id, long LatencyMs);

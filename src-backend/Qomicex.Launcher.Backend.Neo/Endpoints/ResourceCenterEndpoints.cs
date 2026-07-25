@@ -7,6 +7,7 @@ using Qomicex.Core.AOT.Models.Expansion.Modrinth;
 using Qomicex.Core.AOT.Public.Expansion;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Services;
+using Qomicex.Launcher.Backend.Neo.Services.Translation;
 
 namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 
@@ -381,6 +382,45 @@ public static class ResourceCenterEndpoints
             catch
             {
                 return Results.Json(new TranslateResponse(null, null, null), ApiJsonContext.Default.TranslateResponse);
+            }
+        });
+
+        group.MapPost("/translate-text", async (TranslateTextRequest request) =>
+        {
+            try
+            {
+                var settings = SystemEndpoints.LoadSettings();
+                var provider = settings.TranslationProvider ?? "mymemory";
+                ITranslationService service = provider switch
+                {
+                    "google" => app.Services.GetRequiredService<GoogleTranslationService>(),
+                    "bing" => new BingTranslationService(
+                        app.Services.GetRequiredService<IHttpClientFactory>().CreateClient("default"),
+                        settings.BingApiKey),
+                    _ => app.Services.GetRequiredService<MyMemoryTranslationService>(),
+                };
+
+                var (protectedText, urlMap) = TextProtector.Protect(request.Text);
+                var translated = await service.TranslateAsync(protectedText);
+                if (translated != null)
+                    translated = TextProtector.Restore(translated, urlMap);
+
+                return Results.Json(
+                    new TranslateResponse(request.Text, translated, null),
+                    ApiJsonContext.Default.TranslateResponse);
+            }
+            catch (NotImplementedException)
+            {
+                return Results.Json(
+                    new TranslateResponse(null, null, null),
+                    ApiJsonContext.Default.TranslateResponse,
+                    statusCode: 501);
+            }
+            catch
+            {
+                return Results.Json(
+                    new TranslateResponse(null, null, null),
+                    ApiJsonContext.Default.TranslateResponse);
             }
         });
     }

@@ -1033,6 +1033,36 @@ export default function Settings() {
                 </div>
 
                 <div className="space-y-2">
+                  <Label>翻译接口</Label>
+                  <Select
+                    value={settings.translationProvider}
+                    onChange={(v) => update('translationProvider', v)}
+                    className="w-48"
+                  >
+                    <SelectOption value="mymemory">MyMemory (默认)</SelectOption>
+                    <SelectOption value="google">Google Translate (需梯子)</SelectOption>
+                    <SelectOption value="bing">Bing Translator</SelectOption>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">选择翻译资源详细介绍和简介时使用的翻译服务</p>
+                  {settings.translationProvider === 'bing' && (
+                    <div className="mt-3">
+                      <Label htmlFor="bingApiKey">Bing API Key</Label>
+                      <Input
+                        id="bingApiKey"
+                        type="password"
+                        value={settings.bingApiKey || ''}
+                        onChange={(e) => update('bingApiKey', e.target.value)}
+                        placeholder="输入 Azure Translator API Key"
+                        className="mt-1 max-w-sm"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        在 Azure Portal 创建 Translator 资源获取 Key，区域需设为 global
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="downloadTimeout">下载超时 (秒)</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.max(0, settings.downloadTimeout - 5))} disabled={settings.downloadTimeout <= 0}>

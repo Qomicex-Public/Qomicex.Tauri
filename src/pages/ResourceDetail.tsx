@@ -25,7 +25,7 @@ import { Card, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
-import { get } from '../api/client.ts'
+import { get, post } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, getResourceDependencies, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
 import { lookupChineseName } from '../api/mcmod.ts'
 import { downloadTo } from '../api/resource-download.ts'
@@ -173,6 +173,8 @@ export default function ResourceDetailPage() {
   const [cnName, setCnName] = useState<string | null>(null)
   const [translation, setTranslation] = useState<{ original: string; translated: string; translatedAt: string } | null>(null)
   const [translating, setTranslating] = useState(false)
+  const [bodyTranslation, setBodyTranslation] = useState<string | null>(null)
+  const [translatingBody, setTranslatingBody] = useState(false)
   const [visibleCount, setVisibleCount] = useState(0)
   const [detailRefreshKey, setDetailRefreshKey] = useState(0)
   const PAGE_SIZE = 30
@@ -218,6 +220,7 @@ export default function ResourceDetailPage() {
       setDownloadsByVersion({})
       setLoadingDownloadsFor(null)
       setTranslation(null)
+      setBodyTranslation(null)
 
       // Phase 1: load detail only — show page ASAP
       try {
@@ -490,18 +493,50 @@ export default function ResourceDetailPage() {
               <CardContent className="space-y-4 p-6">
                 <div className="space-y-1 flex items-center justify-between">
                   <h3 className="text-lg font-semibold">详细介绍</h3>
-                  <button onClick={() => setBodyCollapsed(!bodyCollapsed)} className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-                    {bodyCollapsed ? '展开' : '收起'}
-                    <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 transition-transform', !bodyCollapsed && 'rotate-180')} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        if (bodyTranslation) {
+                          setBodyTranslation(null)
+                          return
+                        }
+                        const bodyText = detail.body?.trim() || detail.description
+                        if (!bodyText) return
+                        setTranslatingBody(true)
+                        try {
+                          const data = await post<{ original: string; translated: string }>('/resources/translate-text', { text: bodyText })
+                          setBodyTranslation(data.translated)
+                        } catch {
+                          setBodyTranslation(null)
+                        }
+                        setTranslatingBody(false)
+                      }}
+                      className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <FontAwesomeIcon icon={faLanguage} className="h-3 w-3" />
+                      {translatingBody ? '翻译中...' : bodyTranslation ? '显示原文' : '翻译详细介绍'}
+                    </button>
+                    <button onClick={() => setBodyCollapsed(!bodyCollapsed)} className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                      {bodyCollapsed ? '展开' : '收起'}
+                      <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 transition-transform', !bodyCollapsed && 'rotate-180')} />
+                    </button>
+                  </div>
                 </div>
                 <div className={cn('rounded-xl border border-border/60 bg-muted/20 p-4 overflow-hidden transition-all', bodyCollapsed ? 'max-h-[180px] relative' : '')}>
                   {bodyCollapsed && <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-muted/20 to-transparent pointer-events-none" />}
-                  <article className="prose prose-invert prose-sm max-w-none prose-headings:mt-5 prose-headings:mb-3 prose-headings:font-semibold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-p:my-3 prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-3 prose-ol:pl-5 prose-li:my-1.5 prose-strong:text-foreground prose-code:rounded prose-code:bg-background prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-pre:rounded-xl prose-pre:border prose-pre:border-border/60 prose-pre:bg-background prose-a:text-primary hover:prose-a:text-primary/80 prose-img:rounded-xl prose-img:border prose-img:border-border/60 prose-img:shadow-sm prose-hr:border-border/60 prose-blockquote:border-l-primary prose-blockquote:text-muted-foreground break-words">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                      {detail.body?.trim() || detail.description || '暂无更多介绍'}
-                    </ReactMarkdown>
-                  </article>
+                  {bodyTranslation ? (
+                    <article className="prose prose-invert prose-sm max-w-none prose-headings:mt-5 prose-headings:mb-3 prose-headings:font-semibold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-p:my-3 prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-3 prose-ol:pl-5 prose-li:my-1.5 prose-strong:text-foreground prose-code:rounded prose-code:bg-background prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-pre:rounded-xl prose-pre:border prose-pre:border-border/60 prose-pre:bg-background prose-a:text-primary hover:prose-a:text-primary/80 prose-img:rounded-xl prose-img:border prose-img:border-border/60 prose-img:shadow-sm prose-hr:border-border/60 prose-blockquote:border-l-primary prose-blockquote:text-muted-foreground break-words">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                        {bodyTranslation}
+                      </ReactMarkdown>
+                    </article>
+                  ) : (
+                    <article className="prose prose-invert prose-sm max-w-none prose-headings:mt-5 prose-headings:mb-3 prose-headings:font-semibold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-p:my-3 prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-3 prose-ol:pl-5 prose-li:my-1.5 prose-strong:text-foreground prose-code:rounded prose-code:bg-background prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-pre:rounded-xl prose-pre:border prose-pre:border-border/60 prose-pre:bg-background prose-a:text-primary hover:prose-a:text-primary/80 prose-img:rounded-xl prose-img:border prose-img:border-border/60 prose-img:shadow-sm prose-hr:border-border/60 prose-blockquote:border-l-primary prose-blockquote:text-muted-foreground break-words">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                        {detail.body?.trim() || detail.description || '暂无更多介绍'}
+                      </ReactMarkdown>
+                    </article>
+                  )}
                 </div>
               </CardContent>
             </Card>
