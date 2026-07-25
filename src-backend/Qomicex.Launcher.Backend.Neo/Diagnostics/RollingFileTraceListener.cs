@@ -33,7 +33,8 @@ public sealed class RollingFileTraceListener : TraceListener
                 _writer = null;
                 _currentDate = date;
                 var path = Path.Combine(_logDir, $"backend-{date}.log");
-                _writer = new StreamWriter(path, append: true) { AutoFlush = true };
+                var fs = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                _writer = new StreamWriter(fs) { AutoFlush = true };
             }
             _writer?.WriteLine(message);
         }

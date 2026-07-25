@@ -93,7 +93,6 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 // Log management
 [JsonSerializable(typeof(LogEntry))]
 [JsonSerializable(typeof(List<LogEntry>))]
-[JsonSerializable(typeof(PreviewResult))]
 [JsonSerializable(typeof(ExportRequest))]
 [JsonSerializable(typeof(ExportAllRequest))]
 // Open folder/logs
@@ -411,7 +410,6 @@ public sealed record LoaderVersionInfo(
 );
 
 public sealed record LogEntry(string Path, string Name, long Size, string LastModified, bool IsCurrentSession);
-public sealed record PreviewResult(string Content, long TotalSize, long PreviewSize);
 public sealed record ExportRequest(string Path, string Dest);
 public sealed record ExportAllRequest(string Dest);
 public sealed record OpenPathRequest(string Path);

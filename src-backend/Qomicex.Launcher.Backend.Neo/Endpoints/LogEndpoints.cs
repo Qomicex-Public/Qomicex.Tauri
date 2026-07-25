@@ -41,33 +41,6 @@ public static class LogEndpoints
             return Results.Json(files, ApiJsonContext.Default.ListLogEntry);
         });
 
-        group.MapGet("/preview", ([Microsoft.AspNetCore.Mvc.FromQuery] string path) =>
-        {
-            var resolved = ResolveLogPath(path);
-            if (resolved == null) return Results.NotFound();
-            var info = new FileInfo(resolved);
-            var totalSize = info.Length;
-            const int maxPreview = 100 * 1024;
-            string content;
-            if (totalSize <= maxPreview)
-            {
-                content = File.ReadAllText(resolved);
-            }
-            else
-            {
-                using var stream = new FileStream(resolved, FileMode.Open, FileAccess.Read);
-                stream.Seek(-maxPreview, SeekOrigin.End);
-                var reader = new StreamReader(stream);
-                content = reader.ReadToEnd();
-                if (content.Length > 0 && content[0] != '\n')
-                {
-                    var idx = content.IndexOf('\n');
-                    if (idx > 0) content = content[(idx + 1)..];
-                }
-            }
-            return Results.Json(new PreviewResult(content, totalSize, maxPreview), ApiJsonContext.Default.PreviewResult);
-        });
-
         group.MapGet("/export", ([Microsoft.AspNetCore.Mvc.FromQuery] string path) =>
         {
             string? decoded;
