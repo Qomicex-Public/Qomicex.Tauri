@@ -50,6 +50,8 @@
     "updater": {
       "pubkey": "",
       "endpoints": [
+        "https://api.qomicex.top/api/client/update/manifest?current_version={{current_version}}&target={{target}}&arch={{arch}}",
+        "http://localhost:8787/api/client/update/manifest?current_version={{current_version}}&target={{target}}&arch={{arch}}",
         "http://localhost:5000/api/update/manifest?current={{current_version}}&target={{target}}&arch={{arch}}"
       ]
     }
