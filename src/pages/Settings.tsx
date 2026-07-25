@@ -1029,6 +1029,22 @@ export default function Settings() {
                   </div>
                   <p className="text-xs text-muted-foreground">单个文件下载无响应超过此时间则自动重试（0=不超时，1-120 秒）</p>
                 </div>
+
+                <div className="space-y-2">
+                  <Label>日志等级</Label>
+                  <Select
+                    value={settings.logLevel}
+                    onChange={(v) => update('logLevel', v)}
+                    className="w-48"
+                  >
+                    <SelectOption value="error">错误</SelectOption>
+                    <SelectOption value="warn">警告</SelectOption>
+                    <SelectOption value="info">信息</SelectOption>
+                    <SelectOption value="debug">调试</SelectOption>
+                    <SelectOption value="trace">跟踪</SelectOption>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">控制控制台和日志文件的输出详细程度，信息等级为默认</p>
+                </div>
               </CardContent>
             </Card>
 

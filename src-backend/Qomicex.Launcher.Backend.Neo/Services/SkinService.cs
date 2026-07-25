@@ -9,7 +9,7 @@ public class SkinService
     private readonly HttpClient _http;
     private static byte[]? _defaultSkin;
 
-    public SkinService(IHttpClientFactory httpFactory) { _http = httpFactory.CreateClient(); }
+    public SkinService(IHttpClientFactory httpFactory) { _http = httpFactory.CreateClient("default"); }
 
     private static string SkinDir => Path.Combine(AppPaths.BaseDir, "QML", "skins");
     private static string SkinPath(string uuid) => Path.Combine(SkinDir, $"{uuid.Replace("-", "")}.png");

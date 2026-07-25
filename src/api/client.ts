@@ -36,15 +36,13 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const debug = window.__DEBUG__
-
-  if (debug?.networkLogging) {
-    console.log(`[API] ${options?.method ?? 'GET'} ${path}`)
-  }
+  const start = performance.now()
+  const method = options?.method ?? 'GET'
 
   if (debug?.simulateApiErrors && Math.random() < 0.3) {
     const fakeError: ApiErrorResponse = {
       code: 'DEBUG_SIMULATED',
-      message: `[调试模拟] 请求失败: ${options?.method ?? 'GET'} ${path}`,
+      message: `[调试模拟] 请求失败: ${method} ${path}`,
       detail: null,
       traceId: 'debug-trace-id',
       timestamp: new Date().toISOString(),
@@ -61,6 +59,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   })
+  const duration = Math.round(performance.now() - start)
+
+  if (debug?.networkLogging) {
+    console.log(`[API] ${method} ${path} => ${res.status} in ${duration}ms`)
+  }
+
   if (!res.ok) {
     let parsed: ApiErrorResponse | null = null
     try {
@@ -69,7 +73,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
         parsed = json as ApiErrorResponse
       }
     } catch { }
-    if (parsed) throw new ApiError(parsed)
+    if (parsed) {
+      console.error(`[API] ${method} ${path} => ${res.status} [${parsed.code}] ${parsed.message}${parsed.detail ? ` (${parsed.detail})` : ''}`)
+      throw new ApiError(parsed)
+    }
+    console.error(`[API] ${method} ${path} => ${res.status} UNKNOWN_ERROR`)
     throw new ApiError({
       code: 'UNKNOWN_ERROR', message: `请求失败 (${res.status})`,
       detail: null, traceId: '', timestamp: new Date().toISOString(), status: res.status,

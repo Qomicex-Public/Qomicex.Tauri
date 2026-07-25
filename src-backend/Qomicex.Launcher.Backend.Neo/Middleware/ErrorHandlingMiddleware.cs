@@ -34,9 +34,14 @@ public sealed class ErrorHandlingMiddleware
         var traceId = Activity.Current?.Id ?? context.TraceIdentifier;
         var (statusCode, errorCode, message, detail) = MapException(exception);
 
-        _logger.LogError(exception,
-            "[{ErrorCode}] {Message} | TraceId={TraceId} | Path={Path}",
-            errorCode, exception.Message, traceId, context.Request.Path);
+        if (statusCode >= 500)
+            _logger.LogError(exception,
+                "[{ErrorCode}] {Message} | TraceId={TraceId} | Path={Path}",
+                errorCode, exception.Message, traceId, context.Request.Path);
+        else
+            _logger.LogWarning(exception,
+                "[{ErrorCode}] {Message} | TraceId={TraceId} | Path={Path}",
+                errorCode, exception.Message, traceId, context.Request.Path);
 
         var error = ApiError.Create(statusCode, errorCode, message, traceId, detail);
 
