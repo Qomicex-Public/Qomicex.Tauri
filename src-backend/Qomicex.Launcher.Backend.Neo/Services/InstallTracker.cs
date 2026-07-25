@@ -161,7 +161,15 @@ public sealed class InstallTracker
 
         if (!string.IsNullOrEmpty(loader) && !string.IsNullOrEmpty(loaderVersion))
         {
+            if (loaderJarTask is not null)
+            {
+                Trace.WriteLine($"[Install] [{instanceId}] 等待加载器安装包下载完成...");
+                await loaderJarTask;
+                Trace.WriteLine($"[Install] [{instanceId}] 加载器安装包下载完成");
+            }
+
             session.SetStage("scanning-loader-libs", 35, "扫描加载器库文件...");
+            Trace.WriteLine($"[Install] [{instanceId}] Phase 4 开始扫描加载器库文件");
 
             var missLibs = await GetMissLoaderLibraries(core.Installer,
                 loader, loaderVersion, gameVersion, gameDir,
