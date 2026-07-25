@@ -128,9 +128,23 @@ public sealed class InstallTracker
 
             if (!File.Exists(installerPath))
             {
+                Trace.WriteLine($"[Install] [{instanceId}] 开始下载加载器安装包: {match.Url}");
                 var loaderTask = new DownloadTask { Url = match.Url, SavePath = installerPath };
                 var loaderHeaders = IsCfDomain(match.Url) ? cfHeaders : null;
                 loaderJarTask = session.RunSingleAsync(loaderTask, ct, 4, 5, loaderHeaders);
+            }
+            else
+            {
+                var existingInfo = new FileInfo(installerPath);
+                Trace.WriteLine($"[Install] [{instanceId}] 加载器安装包已存在: {installerPath} ({existingInfo.Length} bytes)");
+                if (existingInfo.Length == 0)
+                {
+                    Trace.WriteLine($"[Install] [{instanceId}] 安装包为空文件，删除后重新下载");
+                    File.Delete(installerPath);
+                    var loaderTask = new DownloadTask { Url = match.Url, SavePath = installerPath };
+                    var loaderHeaders = IsCfDomain(match.Url) ? cfHeaders : null;
+                    loaderJarTask = session.RunSingleAsync(loaderTask, ct, 4, 5, loaderHeaders);
+                }
             }
         }
 
@@ -169,11 +183,28 @@ public sealed class InstallTracker
             }
 
             session.SetStage("scanning-loader-libs", 35, "扫描加载器库文件...");
-            Trace.WriteLine($"[Install] [{instanceId}] Phase 4 开始扫描加载器库文件");
+            Trace.WriteLine($"[Install] [{instanceId}] Phase 4 开始扫描加载器库文件, installerPath={installerPath ?? "null"}");
 
-            var missLibs = await GetMissLoaderLibraries(core.Installer,
-                loader, loaderVersion, gameVersion, gameDir,
-                versionDirName, installerPath, downloadSourceId);
+            List<MissFileData> missLibs;
+            try
+            {
+                missLibs = await GetMissLoaderLibraries(core.Installer,
+                    loader, loaderVersion, gameVersion, gameDir,
+                    versionDirName, installerPath, downloadSourceId);
+                Trace.WriteLine($"[Install] [{instanceId}] Phase 4 扫描完成: 缺失 {missLibs.Count} 个加载器库文件");
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[Install] [{instanceId}] Phase 4 扫描失败: {ex}");
+                if (installerPath is not null && File.Exists(installerPath))
+                {
+                    Trace.WriteLine($"[Install] [{instanceId}] 删除可能损坏的安装包并重试...");
+                    File.Delete(installerPath);
+                    var loaderTask = new DownloadTask { Url = "", SavePath = installerPath };
+                    // 找不到原始URL了，需要让上层重试。直接抛异常
+                }
+                throw;
+            }
 
             if (missLibs.Count > 0)
             {
