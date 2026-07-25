@@ -221,8 +221,11 @@ function App() {
     const unsub = onSettingsChange((s: AppSettings) => {
       const enabled = s.animationsEnabled !== false
       const speed = s.animationSpeed ?? 1
+      const maxFps = s.maxFrameRate ?? 0
+      const fpsScale = maxFps > 0 ? 60 / maxFps : 1
       document.documentElement.dataset.animEnabled = String(enabled)
-      document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
+      document.documentElement.dataset.maxFps = String(maxFps)
+      document.documentElement.style.setProperty('--anim-duration-multiplier', String((1 / speed) * fpsScale))
       window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
       setConsoleLevel(s.logLevel ?? 'info')
       setTheme(s.theme ?? 'dark')

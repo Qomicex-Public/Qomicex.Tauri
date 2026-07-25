@@ -293,6 +293,7 @@ public sealed record SettingsResponse(
     int DownloadTimeout = 15,
     bool? AnimationsEnabled = null,
     int? AnimationSpeed = null,
+    int? MaxFrameRate = null,
     string? BackgroundImage = null,
     bool? BackgroundRandom = null,
     int? BgOverlayOpacity = null,
@@ -306,7 +307,8 @@ public sealed record SettingsResponse(
     string? LogLevel = "info",
     string TranslationProvider = "mymemory",
     string? BingApiKey = null,
-    int CornerRadius = 8
+    int CornerRadius = 8,
+    bool WindowCorners = true
 );
 
 public sealed record CustomJavaEntryDto(

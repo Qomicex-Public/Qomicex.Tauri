@@ -63,8 +63,11 @@ function saveSettings(settings: AppSettings) {
   apiSaveSettings(settings)
   const enabled = settings.animationsEnabled !== false
   const speed = settings.animationSpeed ?? 1
+  const maxFps = settings.maxFrameRate ?? 0
+  const fpsScale = maxFps > 0 ? 60 / maxFps : 1
   document.documentElement.dataset.animEnabled = String(enabled)
-  document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
+  document.documentElement.dataset.maxFps = String(maxFps)
+  document.documentElement.style.setProperty('--anim-duration-multiplier', String((1 / speed) * fpsScale))
   document.documentElement.style.setProperty('--radius', `${settings.cornerRadius ?? 8}px`)
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
@@ -1414,6 +1417,18 @@ export default function Settings() {
                       </div>
                     )}
                   </div>
+
+                  <div className="space-y-2 pt-3 border-t border-border/50">
+                    <Label>帧率上限</Label>
+                    <Select value={String(settings.maxFrameRate)} onChange={(v) => update('maxFrameRate', Number(v))} className="w-48">
+                      <SelectOption value="0">不限</SelectOption>
+                      <SelectOption value="30">30 FPS</SelectOption>
+                      <SelectOption value="60">60 FPS</SelectOption>
+                      <SelectOption value="120">120 FPS</SelectOption>
+                      <SelectOption value="144">144 FPS</SelectOption>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">限制启动器界面的渲染帧率，降低资源占用。设为不限则使用显示器的原始刷新率。</p>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -1425,6 +1440,17 @@ export default function Settings() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <Checkbox
+                      checked={settings.windowCorners}
+                      onCheckedChange={(c) => update('windowCorners', c === true)}
+                    />
+                    <div>
+                      <div className="text-sm font-medium">窗口圆角</div>
+                      <div className="text-xs text-muted-foreground">仅在不使用系统框架时生效</div>
+                    </div>
+                  </label>
+                  <Separator />
                   <div className="space-y-2">
                     <div className="flex items-center gap-3">
                       <input
@@ -1440,7 +1466,7 @@ export default function Settings() {
                     </div>
                     <div className="flex justify-between text-[11px] text-muted-foreground">
                       <span>直角</span>
-                      <span>Win11（8px）</span>
+                      <span>默认（8px）</span>
                       <span>大圆角</span>
                     </div>
                     <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">

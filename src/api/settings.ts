@@ -31,6 +31,7 @@ export interface AppSettings {
   theme: 'dark' | 'light'
   animationsEnabled: boolean
   animationSpeed: number
+  maxFrameRate: number
   backgroundImage: string
   backgroundRandom: boolean
   bgOverlayOpacity: number
@@ -44,6 +45,7 @@ export interface AppSettings {
   translationProvider: string
   bingApiKey?: string
   cornerRadius: number
+  windowCorners: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   animationsEnabled: true,
   animationSpeed: 1,
+  maxFrameRate: 0,
   backgroundImage: '',
   backgroundRandom: false,
   bgOverlayOpacity: 78,
@@ -78,6 +81,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   translationProvider: 'mymemory',
   bingApiKey: '',
   cornerRadius: 8,
+  windowCorners: true,
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }

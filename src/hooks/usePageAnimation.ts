@@ -14,12 +14,14 @@ export function usePageAnimation() {
     const s = getSettings()
     const enabled = s.animationsEnabled !== false
     const speed = s.animationSpeed ?? 1
+    const maxFps = s.maxFrameRate ?? 0
+    const fpsScale = maxFps > 0 ? 60 / maxFps : 1
     if (!enabled) return
 
     gsap.from(el, {
       autoAlpha: 0,
       y: 12,
-      duration: 0.35 / speed,
+      duration: 0.35 / speed * fpsScale,
       ease: 'power2.out',
       clearProps: 'y',
     })
@@ -37,6 +39,8 @@ export function useStaggerAnimation(deps: unknown[] = []) {
     const s = getSettings()
     const enabled = s.animationsEnabled !== false
     const speed = s.animationSpeed ?? 1
+    const maxFps = s.maxFrameRate ?? 0
+    const fpsScale = maxFps > 0 ? 60 / maxFps : 1
     if (!enabled) return
 
     const children = el.children
@@ -46,8 +50,8 @@ export function useStaggerAnimation(deps: unknown[] = []) {
       autoAlpha: 0,
       y: 8,
       scale: 0.97,
-      duration: 0.3 / speed,
-      stagger: Math.min(0.06, 0.3 / children.length) / speed,
+      duration: 0.3 / speed * fpsScale,
+      stagger: Math.min(0.06, 0.3 / children.length) / speed * fpsScale,
       ease: 'power2.out',
       clearProps: 'all',
     })
