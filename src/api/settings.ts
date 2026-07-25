@@ -28,6 +28,7 @@ export interface AppSettings {
   modMirror: number
   autoSelectModMirror: boolean
   downloadTimeout: number
+  theme: 'dark' | 'light'
   animationsEnabled: boolean
   animationSpeed: number
   backgroundImage: string
@@ -60,6 +61,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   modMirror: 0,
   autoSelectModMirror: false,
   downloadTimeout: 15,
+  theme: 'dark',
   animationsEnabled: true,
   animationSpeed: 1,
   backgroundImage: '',
@@ -82,7 +84,7 @@ export async function loadSettings(): Promise<AppSettings> {
       get<Partial<AppSettings>>('/settings'),
       get<{ path: string }>('/settings/data-dir'),
     ])
-    cached = { ...DEFAULT_SETTINGS, ...data, dataDir }
+    cached = { ...DEFAULT_SETTINGS, ...data, dataDir, theme: data.theme ?? cached.theme ?? DEFAULT_SETTINGS.theme }
   } catch {
     cached = { ...DEFAULT_SETTINGS }
   }

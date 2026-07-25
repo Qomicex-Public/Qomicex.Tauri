@@ -210,7 +210,14 @@ function setConsoleLevel(level: string) {
 
 function App() {
   useEffect(() => {
-    loadSettings().then(s => setConsoleLevel(s.logLevel ?? 'info'))
+    function setTheme(theme: 'dark' | 'light') {
+      document.documentElement.classList.toggle('dark', theme === 'dark')
+      document.documentElement.classList.toggle('light', theme === 'light')
+    }
+    loadSettings().then(s => {
+      setConsoleLevel(s.logLevel ?? 'info')
+      setTheme(s.theme ?? 'dark')
+    })
     const unsub = onSettingsChange((s: AppSettings) => {
       const enabled = s.animationsEnabled !== false
       const speed = s.animationSpeed ?? 1
@@ -218,6 +225,7 @@ function App() {
       document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
       window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
       setConsoleLevel(s.logLevel ?? 'info')
+      setTheme(s.theme ?? 'dark')
     })
     return unsub
   }, [])

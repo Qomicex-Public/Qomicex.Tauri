@@ -301,6 +301,7 @@ public sealed record SettingsResponse(
     string? WatermarkSubtext = null,
     List<string>? Directories = null,
     List<CustomJavaEntryDto>? CustomJavaRuntimes = null,
+    string? Theme = null,
     string? LogLevel = "info"
 );
 

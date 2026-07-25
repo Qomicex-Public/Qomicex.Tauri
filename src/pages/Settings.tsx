@@ -1349,6 +1349,14 @@ export default function Settings() {
                     </Select>
                   </div>
 
+                  <div className="space-y-2">
+                    <Label>主题</Label>
+                    <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
+                      <SelectOption value="dark">深色</SelectOption>
+                      <SelectOption value="light">亮色</SelectOption>
+                    </Select>
+                  </div>
+
                   <div className="space-y-3">
                     <Label>页面动画</Label>
                     <label className="flex items-center gap-3 cursor-pointer">
