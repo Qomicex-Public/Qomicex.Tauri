@@ -47,6 +47,9 @@ public static class ConnectorEndpoints
 
         group.MapGet("/scan-ports", (ConnectorService connector) =>
             Results.Json(new ScanPortsResponse(connector.ScanJavaPort()), ApiJsonContext.Default.ScanPortsResponse));
+
+        group.MapGet("/nat-type", async (NatTypeDetector detector, CancellationToken ct) =>
+            Results.Json(await detector.DetectAsync(ct), ApiJsonContext.Default.NatTypeResult));
     }
 }
 

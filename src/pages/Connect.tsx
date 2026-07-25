@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus } from '@fortawesome/free-solid-svg-icons'
+import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus, faWifi } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { Card } from '../components/ui/card.tsx'
 import { Button } from '../components/ui/button.tsx'
+import { Badge } from '../components/ui/badge.tsx'
 import { Input } from '../components/ui/input.tsx'
 import { Label } from '../components/ui/label.tsx'
 import { Select, SelectOption } from '../components/ui/select.tsx'
@@ -13,7 +14,7 @@ import { ApiError } from '../api/client.ts'
 import * as connectorApi from '../api/connector.ts'
 import { getInstances } from '../api/instance.ts'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
-import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus } from '../types/index.ts'
+import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult } from '../types/index.ts'
 
 function fmtSpeed(bytesPerSec: number): string {
   if (bytesPerSec <= 0) return ''
@@ -98,6 +99,8 @@ export default function Connect() {
   const [tab, setTab] = useState<'create' | 'join'>('create')
   const [scanning, setScanning] = useState(false)
   const [detectedPort, setDetectedPort] = useState<number | null>(null)
+  const [natType, setNatType] = useState<NatTypeResult | null>(null)
+  const [natTypeBusy, setNatTypeBusy] = useState(false)
 
   const refreshStatus = useCallback(async () => {
     try { setStatus(await connectorApi.getStatus()) } catch { /* ignore poll errors */ }
@@ -149,7 +152,7 @@ export default function Connect() {
     const interval = setInterval(async () => {
       try {
         const result = await connectorApi.scanPorts()
-        if (!cancelled && result.port !== null) {
+        if (!cancelled && typeof result.port === 'number') {
           setDetectedPort(result.port)
           setPort(String(result.port))
           setScanning(false)
@@ -194,6 +197,26 @@ export default function Connect() {
 
   const copy = (text: string) => navigator.clipboard.writeText(text)
 
+  const testNatType = async () => {
+    setNatTypeBusy(true)
+    setNatType(null)
+    try { setNatType(await connectorApi.getNatType()) }
+    catch { msgError('NAT 类型检测失败') }
+    finally { setNatTypeBusy(false) }
+  }
+
+  const natTypeBadge = (() => {
+    if (!natType) return null
+    const cfg: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
+      cone: { label: 'UDP: 宽松  TCP: 中等', variant: 'default' },
+      symmetric: { label: 'UDP: 严格(对称)  TCP: 严格', variant: 'destructive' },
+      blocked: { label: 'UDP: 阻断  TCP: 阻断', variant: 'destructive' },
+      unknown: { label: '不确定', variant: 'secondary' },
+    }
+    const c = cfg[natType.type] ?? { label: natType.type, variant: 'secondary' as const }
+    return <Badge variant={c.variant}>{c.label}</Badge>
+  })()
+
   const isHost = status.mode === 'host'
   const isGuest = status.mode === 'guest'
   const isStarting = status.mode === 'starting'
@@ -201,7 +224,15 @@ export default function Connect() {
 
   return (
     <PageShell className="p-8 space-y-6 overflow-y-auto">
-      <PageHeader title="联机" subtitle="创建或加入联机房间" />
+      <PageHeader title="联机" subtitle="创建或加入联机房间" actions={
+        <div className="flex items-center gap-2">
+          {natTypeBadge}
+          <Button variant="outline" size="sm" onClick={testNatType} disabled={natTypeBusy}>
+            {natTypeBusy ? <FontAwesomeIcon icon={faSpinner} spin className="mr-1" /> : <FontAwesomeIcon icon={faWifi} className="mr-1" />}
+            NAT 检测
+          </Button>
+        </div>
+      } />
 
       {easyTier && !etReady && (
         <Card className="space-y-2 border p-4">

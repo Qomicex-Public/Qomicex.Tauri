@@ -79,11 +79,11 @@ public sealed class ConnectorService : IDisposable
         _instances = instances;
         _skinService = skinService;
         _easyTier = easyTier;
-        var privateNodes = relayFetcher.FetchAsync().GetAwaiter().GetResult();
+        _ = relayFetcher.FetchAsync(); // fire-and-forget, don't block startup
         _client = new ScaffoldingClient(
             easyTierPath: EasyTierProvider.GetExecutablePath(),
             userAgent: $"QML/{LauncherVersion}",
-            relayNodes: privateNodes.Length > 0 ? privateNodes : null);
+            relayNodes: null);
     }
 
     private static string MachineId
@@ -193,8 +193,8 @@ public sealed class ConnectorService : IDisposable
             var deadline = DateTime.UtcNow.AddMinutes(5);
             int? newPort = null;
             var iterations = 0;
-            const int graceIterations = 23;          // ~46 s grace before TCP scan
-            const int scanInterval = 5;               // scan every 5th iteration (10 s)
+            const int graceIterations = 5;           // ~10 s grace before TCP scan
+            const int scanInterval = 2;               // scan every 2nd iteration (4 s)
 
             while (DateTime.UtcNow < deadline)
             {
@@ -370,7 +370,11 @@ public sealed class ConnectorService : IDisposable
 
     public void EnsureEasyTierDownloadStarted() => _easyTier.EnsureDownloadStarted();
 
-    public int? ScanJavaPort() => _inspector.ScanJavaPort();
+    public int? ScanJavaPort()
+    {
+        var games = _lanListener.GetGames();
+        return games.Count > 0 ? games[0].Port : null;
+    }
 
     private void EnsureIdle()
     {

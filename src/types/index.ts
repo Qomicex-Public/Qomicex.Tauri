@@ -633,6 +633,12 @@ export interface ModpackInstallRequest {
   modpackSummary?: string | null
 }
 
+export interface NatTypeResult {
+  type: 'cone' | 'symmetric' | 'blocked' | 'unknown'
+  publicIp: string | null
+  publicPort: number | null
+}
+
 export interface SkinProfile {
   profileId: string | null
   profileName: string | null
