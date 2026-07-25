@@ -305,7 +305,8 @@ public sealed record SettingsResponse(
     string? Theme = null,
     string? LogLevel = "info",
     string TranslationProvider = "mymemory",
-    string? BingApiKey = null
+    string? BingApiKey = null,
+    int CornerRadius = 8
 );
 
 public sealed record CustomJavaEntryDto(
