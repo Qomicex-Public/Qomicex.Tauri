@@ -43,6 +43,7 @@ export interface AppSettings {
   logLevel: string
   translationProvider: string
   bingApiKey?: string
+  cornerRadius: number
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -76,6 +77,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   logLevel: 'info',
   translationProvider: 'mymemory',
   bingApiKey: '',
+  cornerRadius: 8,
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }

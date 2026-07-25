@@ -94,11 +94,13 @@ export default function Layout() {
 
   useEffect(() => {
     const s = getSettings()
+    document.documentElement.style.setProperty('--radius', `${s.cornerRadius ?? 8}px`)
     prevBgRef.current = { image: s.backgroundImage, random: s.backgroundRandom }
     resolveBg()
     return onSettingsChange((s) => {
       setOpacity(s.bgOverlayOpacity ?? 78)
       setBlur(s.bgBlur ?? 0)
+      document.documentElement.style.setProperty('--radius', `${s.cornerRadius ?? 8}px`)
       const prev = prevBgRef.current
       if (s.backgroundImage !== prev.image || s.backgroundRandom !== prev.random) {
         prevBgRef.current = { image: s.backgroundImage, random: s.backgroundRandom }

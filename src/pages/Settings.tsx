@@ -65,6 +65,7 @@ function saveSettings(settings: AppSettings) {
   const speed = settings.animationSpeed ?? 1
   document.documentElement.dataset.animEnabled = String(enabled)
   document.documentElement.style.setProperty('--anim-duration-multiplier', String(1 / speed))
+  document.documentElement.style.setProperty('--radius', `${settings.cornerRadius ?? 8}px`)
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
 
@@ -1412,6 +1413,46 @@ export default function Settings() {
                         </div>
                       </div>
                     )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    <FontAwesomeIcon icon={faDesktop} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    圆角
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min={0}
+                        max={16}
+                        step={1}
+                        value={settings.cornerRadius}
+                        onChange={(e) => update('cornerRadius', parseInt(e.target.value))}
+                        className="flex-1"
+                      />
+                      <span className="w-10 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.cornerRadius}px</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-muted-foreground">
+                      <span>直角</span>
+                      <span>Win11（8px）</span>
+                      <span>大圆角</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+                      <span className="inline-block h-3 w-3 rounded-sm border border-muted-foreground/30" />
+                      <span>小</span>
+                      <span className="mx-0.5">·</span>
+                      <span className="inline-block h-3 w-3 rounded border border-muted-foreground/30" />
+                      <span>中</span>
+                      <span className="mx-0.5">·</span>
+                      <span className="inline-block h-3 w-3 rounded-lg border border-muted-foreground/30" />
+                      <span>大</span>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

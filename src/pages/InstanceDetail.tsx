@@ -1293,14 +1293,14 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanc
             <>
               <Separator className="my-3" />
               <div className="mb-2 flex items-center gap-2">
-                <FontAwesomeIcon icon={faWifi} className="h-3.5 w-3.5 text-primary" />
+                <FontAwesomeIcon icon={faWifi} className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="text-xs font-medium text-muted-foreground">局域网游戏 ({lanGames.length})</span>
               </div>
               <div className="space-y-2">
                 {lanGames.map((g, i) => (
                   <Card key={`${g.ip}:${g.port}-${i}`} className="group border-dashed border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
                     <CardContent className="flex items-start gap-3 p-4">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted/50 text-muted-foreground">
                         <FontAwesomeIcon icon={faWifi} className="h-5 w-5" />
                       </div>
                       <div className="min-w-0 flex-1">

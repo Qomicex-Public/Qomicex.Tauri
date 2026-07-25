@@ -956,7 +956,7 @@ export default function Instances() {
                 !currentDir && 'border-dashed text-muted-foreground'
               )}
             >
-              <FontAwesomeIcon icon={faFolder} className={cn('h-3.5 w-3.5', currentDir ? 'text-primary' : 'text-muted-foreground')} />
+              <FontAwesomeIcon icon={faFolder} className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="max-w-[140px] truncate">{currentDir ? dirName(currentDir) : '选择游戏目录'}</span>
               <FontAwesomeIcon icon={faChevronDown} className={cn('h-2.5 w-2.5 text-muted-foreground transition-transform', dirPopover && 'rotate-180')} />
             </button>
