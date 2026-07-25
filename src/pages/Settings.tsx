@@ -674,8 +674,9 @@ export default function Settings() {
       addRuntime(result)
       setJavaStatus(`已添加 ${result.name} ${result.version}`)
       setAddDialogOpen(false)
-    } catch {
-      setJavaStatus('无法识别该路径下的 Java 运行时')
+    } catch (e: unknown) {
+      setJavaStatus(e instanceof ApiError ? e.displayMessage : '无法识别该路径下的 Java 运行时')
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '无法识别该路径下的 Java 运行时')
     } finally {
       setAdding(false)
     }

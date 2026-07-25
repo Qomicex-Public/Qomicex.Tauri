@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
 using Qomicex.Core.AOT.Core;
@@ -240,6 +241,7 @@ public sealed class JavaDownloadService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Java download failed: task={TaskId} url={Url}", state.TaskId, state.DownloadUrl);
+            Trace.WriteLine($"[JavaDownloadService] Java download failed: task={state.TaskId} url={state.DownloadUrl} error={ex.Message}");
             state.Status = "failed";
             state.Error = ex.Message;
         }
