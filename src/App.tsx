@@ -22,7 +22,8 @@ import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
-import { checkUpdate } from './api/update.ts'
+import { check } from '@tauri-apps/plugin-updater'
+import type { Update } from '@tauri-apps/plugin-updater'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { Button } from './components/ui/button.tsx'
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
@@ -40,7 +41,7 @@ function AppContent() {
   const { alert } = useMessageBox()
   const { crashDialogState, clearCrashDialog } = useRunning()
   const javaChecked = useRef(false)
-  const [pendingUpdate, setPendingUpdate] = useState<{ version: string; body: string; required: boolean; downloadUrl: string } | null>(null)
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
   const autoCheckDone = useRef(false)
 
   useEffect(() => {
@@ -81,23 +82,20 @@ function AppContent() {
     const timer = setTimeout(async () => {
       try {
         const channel = localStorage.getItem('update-channel') || 'stable'
-        const result = await checkUpdate(channel)
-        if (!result.hasUpdate) return
+        const update = await check({
+          headers: { 'X-Updater-Channel': channel }
+        })
+        if (!update) return
 
         const snooze = localStorage.getItem('snooze-update')
         if (snooze) {
           try {
             const s = JSON.parse(snooze)
-            if (s.version === result.version && s.until > Date.now()) return
+            if (s.version === update.version && s.until > Date.now()) return
           } catch {}
         }
 
-        setPendingUpdate({
-          version: result.version!,
-          body: result.changelog ?? '',
-          required: result.required,
-          downloadUrl: result.downloadUrl!,
-        })
+        setPendingUpdate(update)
       } catch (e) {
         console.warn('[updater] background check failed:', e)
       }
@@ -172,10 +170,7 @@ function AppContent() {
       />
       <UpdateDialog
         open={pendingUpdate !== null}
-        version={pendingUpdate?.version ?? ''}
-        body={pendingUpdate?.body ?? ''}
-        required={pendingUpdate?.required ?? false}
-        downloadUrl={pendingUpdate?.downloadUrl ?? ''}
+        update={pendingUpdate}
         onClose={() => {
           if (pendingUpdate) {
             localStorage.setItem('snooze-update', JSON.stringify({ version: pendingUpdate.version, until: Date.now() + 86400000 }))

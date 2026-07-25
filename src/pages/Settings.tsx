@@ -20,7 +20,8 @@ import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
-import { checkUpdate } from '../api/update.ts'
+import { check } from '@tauri-apps/plugin-updater'
+import type { Update } from '@tauri-apps/plugin-updater'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
@@ -79,8 +80,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 }) {
   const [expandedDep, setExpandedDep] = useState<string | null>(null)
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
-  const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string } | null>(null)
-  const [downloadUrl, setDownloadUrl] = useState<string>('')
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
   const [updateError, setUpdateError] = useState<string>()
   const [channel, setChannel] = useState(() => localStorage.getItem('update-channel') || 'stable')
   const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -106,13 +106,14 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     setUpdateState('checking')
     setUpdateError(undefined)
     try {
-      const result = await checkUpdate(channel)
-      if (!result.hasUpdate) {
+      const update = await check({
+        headers: { 'X-Updater-Channel': channel }
+      })
+      if (!update) {
         setUpdateState('uptodate')
         return
       }
-      setDownloadUrl(result.downloadUrl ?? '')
-      setUpdateInfo({ version: result.version!, body: result.changelog ?? '' })
+      setPendingUpdate(update)
       setUpdateState('available')
       setUpdateDialogOpen(true)
     } catch (e) {
@@ -271,10 +272,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       <UpdateDialog
         open={updateDialogOpen}
-        version={updateInfo?.version ?? ''}
-        body={updateInfo?.body ?? ''}
-        required={false}
-        downloadUrl={downloadUrl}
+        update={pendingUpdate}
         onClose={() => setUpdateDialogOpen(false)}
       />
 
