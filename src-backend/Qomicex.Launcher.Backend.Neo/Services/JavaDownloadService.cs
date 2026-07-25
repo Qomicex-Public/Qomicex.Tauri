@@ -163,35 +163,37 @@ public sealed class JavaDownloadService
             response.EnsureSuccessStatusCode();
 
             var totalBytes = response.Content.Headers.ContentLength ?? -1;
-            using var contentStream = await response.Content.ReadAsStreamAsync(state.Cancellation.Token);
-            using var fileStream = File.Create(archivePath);
-
-            var buffer = new byte[81920];
-            long bytesRead = 0;
-            state.LastSample = DateTime.UtcNow;
-            state.LastBytes = 0;
-
-            int read;
-            while ((read = await contentStream.ReadAsync(buffer, state.Cancellation.Token)) > 0)
             {
-                while (state.Paused)
-                {
-                    await Task.Delay(200, state.Cancellation.Token);
-                    state.LastSample = DateTime.UtcNow;
-                    state.LastBytes = bytesRead;
-                }
+                using var contentStream = await response.Content.ReadAsStreamAsync(state.Cancellation.Token);
+                using var fileStream = File.Create(archivePath);
 
-                await fileStream.WriteAsync(buffer.AsMemory(0, read), state.Cancellation.Token);
-                bytesRead += read;
+                var buffer = new byte[81920];
+                long bytesRead = 0;
+                state.LastSample = DateTime.UtcNow;
+                state.LastBytes = 0;
 
-                var now = DateTime.UtcNow;
-                var elapsed = (now - state.LastSample).TotalSeconds;
-                if (elapsed >= 0.5)
+                int read;
+                while ((read = await contentStream.ReadAsync(buffer, state.Cancellation.Token)) > 0)
                 {
-                    state.Progress = totalBytes > 0 ? (double)bytesRead / totalBytes * 80 : 0;
-                    state.Speed = (bytesRead - state.LastBytes) / elapsed;
-                    state.LastSample = now;
-                    state.LastBytes = bytesRead;
+                    while (state.Paused)
+                    {
+                        await Task.Delay(200, state.Cancellation.Token);
+                        state.LastSample = DateTime.UtcNow;
+                        state.LastBytes = bytesRead;
+                    }
+
+                    await fileStream.WriteAsync(buffer.AsMemory(0, read), state.Cancellation.Token);
+                    bytesRead += read;
+
+                    var now = DateTime.UtcNow;
+                    var elapsed = (now - state.LastSample).TotalSeconds;
+                    if (elapsed >= 0.5)
+                    {
+                        state.Progress = totalBytes > 0 ? (double)bytesRead / totalBytes * 80 : 0;
+                        state.Speed = (bytesRead - state.LastBytes) / elapsed;
+                        state.LastSample = now;
+                        state.LastBytes = bytesRead;
+                    }
                 }
             }
 
