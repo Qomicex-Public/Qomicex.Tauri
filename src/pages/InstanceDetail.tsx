@@ -2249,7 +2249,7 @@ export default function InstanceDetailPage() {
           navigate('/accounts')
         }}
       />
-      <ConfirmDialog open={deleteConfirmOpen} title="删除实例" message={`确定要删除实例「${instance?.name ?? ''}」吗？其版本文件夹将被移至回收站。`} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
+      <ConfirmDialog open={deleteConfirmOpen} title="删除实例" message={`确定要删除实例「${instance?.name ?? ''}」吗？其版本文件夹将被永久删除。`} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
     </PageShell>
   )
 }
