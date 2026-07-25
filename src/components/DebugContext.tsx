@@ -9,6 +9,7 @@ export interface DebugState {
   disableCaching: boolean
   logOverlay: boolean
   showGameSettings: boolean
+  showFps: boolean
 }
 
 const INITIAL: DebugState = {
@@ -20,6 +21,7 @@ const INITIAL: DebugState = {
   disableCaching: false,
   logOverlay: false,
   showGameSettings: false,
+  showFps: false,
 }
 
 interface DebugContextValue {

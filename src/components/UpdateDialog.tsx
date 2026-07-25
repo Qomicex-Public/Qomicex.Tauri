@@ -48,7 +48,7 @@ export default function UpdateDialog({ open, version, body, required, downloadUr
     <Dialog open={open} onClose={required ? () => {} : onClose} closeOnBackdrop={!required} closeOnEsc={!required}>
       <DialogHeader onClose={required ? undefined : onClose}>
         <DialogTitle>
-          <FontAwesomeIcon icon={faArrowUp} className="mr-2 h-4 w-4 text-primary" />
+          <FontAwesomeIcon icon={faArrowUp} className="mr-2 h-4 w-4 text-muted-foreground" />
           发现新版本 {version}
         </DialogTitle>
       </DialogHeader>

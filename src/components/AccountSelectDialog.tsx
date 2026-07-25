@@ -74,7 +74,7 @@ export function AccountSelectDialog({ open, onClose, onSelect }: Props) {
                     </div>
                   </div>
                   {isSelected && (
-                    <FontAwesomeIcon icon={faStar} className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    <FontAwesomeIcon icon={faStar} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   )}
                 </button>
               )

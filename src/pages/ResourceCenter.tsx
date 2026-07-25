@@ -14,6 +14,7 @@ import { searchResources } from '../api/resource.ts'
 import { batchLookupChineseNames } from '../api/mcmod.ts'
 import type { ResourceItem } from '../types/index.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
+import { Tabs } from '../components/ui/tabs.tsx'
 
 interface PageCache {
   items: ResourceItem[]
@@ -87,10 +88,6 @@ const SORT_OPTIONS: Record<string, { key: string; label: string }[]> = {
     { key: 'name', label: '名称' },
     { key: 'newest', label: '最新发布' },
   ],
-}
-
-function cn(...classes: (string | boolean | undefined | null)[]): string {
-  return classes.filter(Boolean).join(' ')
 }
 
 function formatDownloads(n: number): string {
@@ -333,7 +330,7 @@ export default function ResourceCenter() {
   const activeCategoryLabel = useMemo(() => CATEGORIES.find((item) => item.key === category)?.label ?? category, [category])
 
   return (
-    <PageShell className="p-8 space-y-6 overflow-y-auto">
+    <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
       <PageHeader title="资源中心" />
 
       <Card className="border-border/60 bg-muted/20 p-4">
@@ -341,23 +338,11 @@ export default function ResourceCenter() {
           <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
             <div className="space-y-2">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源源</p>
-              <div className="flex flex-wrap gap-2">
-                {SOURCES.map((f) => (
-                  <button key={f.key} onClick={() => handleSourceChange(f.key)} className={cn('h-9 rounded-md px-4 text-sm font-medium transition-all', source === f.key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground')}>
-                    {f.label}
-                  </button>
-                ))}
-              </div>
+              <Tabs tabs={SOURCES.map(s => ({ id: s.key, label: s.label }))} activeTab={source} onChange={handleSourceChange} />
             </div>
             <div className="space-y-2 xl:ml-auto">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源分类</p>
-              <div className="flex flex-wrap gap-2">
-                {CATEGORIES.map((item) => (
-                  <button key={item.key} onClick={() => handleCategoryChange(item.key)} disabled={source === 'ftb' && item.key !== 'modpack'} className={cn('h-9 rounded-md px-4 text-sm font-medium transition-all', category === item.key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground', source === 'ftb' && item.key !== 'modpack' && 'cursor-not-allowed opacity-40 hover:bg-background hover:text-muted-foreground')}>
-                    {item.label}
-                  </button>
-                ))}
-              </div>
+              <Tabs tabs={CATEGORIES.map(c => ({ id: c.key, label: c.label, disabled: source === 'ftb' && c.key !== 'modpack' }))} activeTab={category} onChange={handleCategoryChange} />
             </div>
           </div>
 

@@ -75,7 +75,7 @@ export default function AccountDetail() {
   const textureUrl = `${API_BASE}/skin/texture/${uuid}?type=${account.loginMethod}${account.serverUrl ? `&server=${encodeURIComponent(account.serverUrl)}` : ''}`
 
   return (
-    <PageShell className="space-y-6 p-8 overflow-y-auto">
+    <PageShell className="space-y-6 p-8 overflow-y-auto scroll-fade-mask">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/accounts')}>
           <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />

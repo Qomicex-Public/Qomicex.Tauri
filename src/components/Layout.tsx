@@ -8,6 +8,7 @@ import { get, API_BASE } from '../api/client.ts'
 import { useMessageBox } from './ui/message-box.tsx'
 import { DebugProvider, useDebug } from './DebugContext.tsx'
 import LogOverlay from './LogOverlay.tsx'
+import FpsOverlay from './FpsOverlay.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 function DebugEffects() {
@@ -61,7 +62,12 @@ function DebugEffects() {
     }
   }, [state.showComponentBoundaries])
 
-  return state.logOverlay ? <LogOverlay /> : null
+  return (
+    <>
+      {state.logOverlay && <LogOverlay />}
+      {state.showFps && <FpsOverlay />}
+    </>
+  )
 }
 
 export default function Layout() {
@@ -131,7 +137,7 @@ export default function Layout() {
       {bg && (
         <>
           <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: `blur(${blur}px)` }} />
-          <div className="fixed inset-0 z-0" style={{ backgroundColor: `rgba(19,19,19,${(opacity / 100).toFixed(2)})` }} />
+          <div className="fixed inset-0 z-0" style={{ backgroundColor: `hsl(var(--background)/${(opacity / 100).toFixed(2)})` }} />
         </>
       )}
       <div className="relative z-10 flex flex-1 min-w-0">

@@ -57,7 +57,7 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
     <Dialog open={open} onClose={onClose ?? (() => {})} closeOnBackdrop={!!onClose} closeOnEsc={!!onClose}>
       <DialogHeader onClose={onClose}>
         <DialogTitle>
-          <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-primary" />
+          <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-muted-foreground" />
           激活许可证
         </DialogTitle>
       </DialogHeader>

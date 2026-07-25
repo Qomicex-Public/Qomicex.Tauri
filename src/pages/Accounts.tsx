@@ -12,6 +12,7 @@ import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { invalidateAvatarCache } from '../api/skin.ts'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
+import { BatchToolbar } from '../components/ui/batch-toolbar.tsx'
 import { Select, SelectOption } from '../components/ui/select.tsx'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui/dialog.tsx'
@@ -492,17 +493,15 @@ export default function Accounts() {
       </div>
     </PageShell>
 
-    {selected.size > 0 && (
-      <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
-        <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
-        <div className="h-5 w-px bg-border" />
-        <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
-        <Button variant="destructive" size="sm" onClick={handleBatchDelete} disabled={loading}>
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-          删除 {selected.size}
-        </Button>
-      </div>
-    )}
+    <BatchToolbar
+      selectedCount={selected.size}
+      onClear={() => setSelected(new Set())}
+    >
+      <Button variant="destructive" size="sm" onClick={handleBatchDelete} disabled={loading}>
+        <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+        删除 {selected.size}
+      </Button>
+    </BatchToolbar>
 
     <Dialog open={addOpen} onClose={() => setAddOpen(false)} className="max-w-md" closeOnBackdrop={false}>
         <DialogHeader onClose={() => setAddOpen(false)}>

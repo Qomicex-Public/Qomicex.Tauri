@@ -198,6 +198,7 @@ function TogglesCard() {
     { key: 'disableCaching', label: '禁用缓存' },
     { key: 'logOverlay', label: '日志浮层（全局）' },
     { key: 'showGameSettings', label: '显示游戏设置入口' },
+    { key: 'showFps', label: '帧率显示（右上角）' },
   ]
 
   return (

@@ -6,6 +6,7 @@ import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
+import { Button } from '../components/ui/button.tsx'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import {
   faArrowLeft,
@@ -20,7 +21,6 @@ import {
   faChevronDown,
 } from '@fortawesome/free-solid-svg-icons'
 import { Select, SelectOption } from '../components/ui/select.tsx'
-import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
@@ -360,11 +360,10 @@ export default function ResourceDetailPage() {
         <PageHeader
           title={
             <>
-              <Link to={`/resource-center?${backQuery.toString()}`} className="mr-2 text-sm font-normal text-muted-foreground transition-colors hover:text-foreground">
-                <FontAwesomeIcon icon={faArrowLeft} className="mr-1 h-3.5 w-3.5" />
-                返回
+              <Link to={`/resource-center?${backQuery.toString()}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
+                <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
               </Link>
-              资源详情
+              <span className="ml-2">资源详情</span>
             </>
           }
           actions={
@@ -387,7 +386,7 @@ export default function ResourceDetailPage() {
         />
       </div>
       
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto scroll-fade-mask">
         <div className="space-y-6 p-8">
 
       {loading ? (

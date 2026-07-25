@@ -525,9 +525,9 @@ export default function Instances() {
 
   if (step === 'select-version') {
     return (
-      <PageShell className="p-8 space-y-5 overflow-y-auto">
+      <PageShell className="p-8 space-y-5 overflow-y-auto scroll-fade-mask">
         <div className="flex items-center gap-3">
-          <button onClick={() => setStep('list')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+          <button onClick={() => setStep('list')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
           </button>
           <h2 className="text-lg font-semibold">下载新版本</h2>
@@ -624,7 +624,7 @@ export default function Instances() {
   if (step === 'configure') {
     const selectedVer = remoteVersions.find((v) => v.id === form.gameVersion)
     return (
-      <PageShell className="p-8 space-y-5 overflow-y-auto">
+      <PageShell className="p-8 space-y-5 overflow-y-auto scroll-fade-mask">
         <div className="flex items-center gap-3">
             <button onClick={() => { setStep('select-version'); setLoaderVersions([]) }} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
@@ -811,7 +811,7 @@ export default function Instances() {
   }
 
   return (
-      <PageShell className="p-8 space-y-6 overflow-y-auto">
+      <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
         <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`}
           actions={
             <Tooltip content="刷新">

@@ -11,6 +11,7 @@ import { Badge } from '../components/ui/badge.tsx'
 import { Separator } from '../components/ui/separator.tsx'
 import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
+import { Tabs, TabContent } from '../components/ui/tabs.tsx'
 import { Checkbox } from '../components/ui/checkbox.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
@@ -122,7 +123,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       <Card>
         <CardHeader>
           <CardTitle>
-            <FontAwesomeIcon icon={faInfoCircle} className="mr-2 h-4 w-4 text-primary" />
+            <FontAwesomeIcon icon={faInfoCircle} className="mr-2 h-4 w-4 text-muted-foreground" />
             关于 {APP_INFO.name}
           </CardTitle>
         </CardHeader>
@@ -168,7 +169,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       {licenseStatus && !(licenseStatus.valid && !licenseStatus.licenseId) && (
       <Card>
         <CardHeader><CardTitle>
-          <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-primary" />
+          <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-muted-foreground" />
           许可证
         </CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -229,7 +230,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       {/* Update */}
       <Card>
         <CardHeader><CardTitle>
-          <FontAwesomeIcon icon={faArrowUp} className="mr-2 h-4 w-4 text-primary" />
+          <FontAwesomeIcon icon={faArrowUp} className="mr-2 h-4 w-4 text-muted-foreground" />
           更新
         </CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -774,35 +775,26 @@ export default function Settings() {
   }
 
   return (
-    <PageShell className="p-8 space-y-6 overflow-y-auto">
+    <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
       <PageHeader title="设置" />
 
       <div className="flex gap-4">
-        <div className="sticky top-0 self-start flex w-48 shrink-0 flex-col gap-0.5">
-          {CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => setCategory(cat.id)}
-              className={cn(
-                'flex items-center gap-2.5 rounded-lg px-3.5 py-2.5 text-left text-sm transition-colors',
-                category === cat.id
-                  ? 'bg-primary/10 font-medium text-primary'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              )}
-            >
-              <FontAwesomeIcon icon={cat.icon} className="h-4 w-4" />
-              {cat.label}
-            </button>
-          ))}
+        <div className="sticky top-0 self-start flex w-48 shrink-0 flex-col">
+          <Tabs
+            tabs={CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map(cat => ({ id: cat.id, label: cat.label, icon: <FontAwesomeIcon icon={cat.icon} className="h-4 w-4" /> }))}
+            activeTab={category}
+            onChange={(id) => setCategory(id)}
+            orientation="vertical"
+          />
         </div>
 
         <div className="flex-1 min-w-0 space-y-4">
-          {category === 'launcher' && (
-            <div key="launcher" className="animate-in slide-up space-y-6">
+          <TabContent activeTab={category} tabId="launcher">
+            <div className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>
-                  <FontAwesomeIcon icon={faRocket} className="mr-2 h-4 w-4 text-primary" />
+                  <FontAwesomeIcon icon={faRocket} className="mr-2 h-4 w-4 text-muted-foreground" />
                   启动器设置
                 </CardTitle>
               </CardHeader>
@@ -1105,7 +1097,7 @@ export default function Settings() {
             <Card>
               <CardHeader>
                 <CardTitle>
-                  <FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-primary" />
+                  <FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-muted-foreground" />
                   存储与缓存
                 </CardTitle>
               </CardHeader>
@@ -1123,15 +1115,15 @@ export default function Settings() {
               </CardContent>
             </Card>
             </div>
-          )}
+          </TabContent>
 
-          {category === 'java' && (
-            <div key="java" className="animate-in slide-up space-y-6">
+          <TabContent activeTab={category} tabId="java">
+            <div className="space-y-6">
               <Card>
                 <CardHeader className="flex-row items-center justify-between">
                   <div>
                     <CardTitle>
-                      <FontAwesomeIcon icon={faCoffee} className="mr-2 h-4 w-4 text-primary" />
+                      <FontAwesomeIcon icon={faCoffee} className="mr-2 h-4 w-4 text-muted-foreground" />
                       Java 运行时
                     </CardTitle>
                   </div>
@@ -1359,14 +1351,14 @@ export default function Settings() {
                 </CardContent>
               </Card>
             </div>
-          )}
+          </TabContent>
 
-          {category === 'appearance' && (
-            <div key="appearance" className="animate-in slide-up space-y-6">
+          <TabContent activeTab={category} tabId="appearance">
+            <div className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-primary" />
+                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
                     界面
                   </CardTitle>
                 </CardHeader>
@@ -1376,6 +1368,14 @@ export default function Settings() {
                     <Select value={settings.language} onChange={(v) => update('language', v)} className="w-48">
                       <SelectOption value="zh-CN">简体中文</SelectOption>
                       <SelectOption value="en">English</SelectOption>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>主题</Label>
+                    <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
+                      <SelectOption value="dark">深色</SelectOption>
+                      <SelectOption value="light">亮色</SelectOption>
                     </Select>
                   </div>
 
@@ -1419,7 +1419,7 @@ export default function Settings() {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-primary" />
+                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
                     背景
                   </CardTitle>
                 </CardHeader>
@@ -1524,7 +1524,7 @@ export default function Settings() {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-primary" />
+                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
                     水印
                   </CardTitle>
                 </CardHeader>
@@ -1550,17 +1550,12 @@ export default function Settings() {
                 </CardContent>
               </Card>
             </div>
-          )}
+          </TabContent>
 
-          {category === 'toolbox' && <ToolboxTab />}
-
-          {category === 'about' && (
-            <AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} />
-          )}
-
-          {category === 'logs' && <LogTab />}
-
-          {category === 'debug' && <DebugTab />}
+          <TabContent activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
+          <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} /></TabContent>
+          <TabContent activeTab={category} tabId="logs"><LogTab /></TabContent>
+          <TabContent activeTab={category} tabId="debug"><DebugTab /></TabContent>
 
           <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)}>
             <DialogHeader onClose={() => setAddDialogOpen(false)}>

@@ -74,7 +74,7 @@ export default function ToolboxTab() {
       <Card>
         <CardHeader>
           <CardTitle>
-            <FontAwesomeIcon icon={faDownload} className="mr-2 h-4 w-4 text-primary" />
+            <FontAwesomeIcon icon={faDownload} className="mr-2 h-4 w-4 text-muted-foreground" />
             自定义文件下载
           </CardTitle>
         </CardHeader>

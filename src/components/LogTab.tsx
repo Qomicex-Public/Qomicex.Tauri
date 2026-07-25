@@ -116,7 +116,7 @@ export default function LogTab() {
       <Card>
         <CardHeader>
           <CardTitle>
-            <FontAwesomeIcon icon={faFileLines} className="mr-2 h-4 w-4 text-primary" />
+            <FontAwesomeIcon icon={faFileLines} className="mr-2 h-4 w-4 text-muted-foreground" />
             日志管理
           </CardTitle>
         </CardHeader>

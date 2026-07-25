@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus, faWifi } from '@fortawesome/free-solid-svg-icons'
+import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus, faWifi, faArrowLeft } from '@fortawesome/free-solid-svg-icons'
+import { Tabs, TabContent } from '../components/ui/tabs.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { Card } from '../components/ui/card.tsx'
@@ -223,7 +224,7 @@ export default function Connect() {
   const etReady = easyTier?.installed ?? false
 
   return (
-    <PageShell className="p-8 space-y-6 overflow-y-auto">
+    <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
       <PageHeader title="联机" subtitle="创建或加入联机房间" actions={
         <div className="flex items-center gap-2">
           {natTypeBadge}
@@ -260,16 +261,17 @@ export default function Connect() {
 
       {status.mode === 'idle' && (
         <>
-          <div className="flex gap-2 border-b border-border pb-2 mb-4">
-            <Button variant={tab === 'create' ? 'default' : 'ghost'} onClick={() => setTab('create')}>
-              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />创建房间
-            </Button>
-            <Button variant={tab === 'join' ? 'default' : 'ghost'} onClick={() => setTab('join')}>
-              <FontAwesomeIcon icon={faRightToBracket} className="mr-2" />加入房间
-            </Button>
-          </div>
+          <Tabs
+            tabs={[
+              { id: 'create', label: '创建房间', icon: <FontAwesomeIcon icon={faDoorOpen} className="h-4 w-4" /> },
+              { id: 'join', label: '加入房间', icon: <FontAwesomeIcon icon={faRightToBracket} className="h-4 w-4" /> },
+            ]}
+            activeTab={tab}
+            onChange={(id) => setTab(id as 'create' | 'join')}
+          />
 
-          {tab === 'create' && hostSubMode === 'instance' && (
+          <TabContent activeTab={tab} tabId="create">
+            {hostSubMode === 'instance' && (
             <Card className="space-y-4 border p-5">
               <h2 className="text-lg font-semibold">启动实例并创建房间</h2>
               <Label>选择实例</Label>
@@ -292,11 +294,11 @@ export default function Connect() {
             </Card>
           )}
 
-          {tab === 'create' && hostSubMode === 'scan' && (
+          {hostSubMode === 'scan' && (
             <Card className="space-y-4 border p-5">
               <div className="flex items-center gap-2">
-                <button className="text-sm text-muted-foreground hover:text-foreground" onClick={() => setHostSubMode('instance')}>
-                  &larr; 返回实例选择
+                <button onClick={() => setHostSubMode('instance')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
+                  <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
                 </button>
               </div>
               <h2 className="text-lg font-semibold">扫描本地端口</h2>
@@ -346,8 +348,9 @@ export default function Connect() {
                 </div>
             </Card>
           )}
+          </TabContent>
 
-          {tab === 'join' && (
+          <TabContent activeTab={tab} tabId="join">
             <Card className="space-y-4 border p-5">
               <h2 className="text-lg font-semibold">加入房间</h2>
               <Label>房间码</Label>
@@ -356,7 +359,7 @@ export default function Connect() {
                 {busy ? <><FontAwesomeIcon icon={faSpinner} spin className="mr-2" />正在加入…</> : <><FontAwesomeIcon icon={faRightToBracket} className="mr-2" />加入房间</>}
               </Button>
             </Card>
-          )}
+          </TabContent>
         </>
       )}
 

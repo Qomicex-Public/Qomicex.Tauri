@@ -13,7 +13,7 @@ input, textarea, [contenteditable] {
 }
 
 @layer base {
-  :root {
+  :root, .dark {
     --background: 230 20% 6%;
     --foreground: 220 20% 93%;
     --card: 228 18% 10%;
@@ -35,6 +35,28 @@ input, textarea, [contenteditable] {
     --ring: 142 71% 48%;
     --radius: 0.625rem;
     --anim-duration-multiplier: 1;
+  }
+
+  .light {
+    --background: 0 0% 100%;
+    --foreground: 228 20% 10%;
+    --card: 0 0% 98%;
+    --card-foreground: 228 20% 10%;
+    --popover: 0 0% 98%;
+    --popover-foreground: 228 20% 10%;
+    --primary: 142 71% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 228 15% 94%;
+    --secondary-foreground: 228 20% 10%;
+    --muted: 228 15% 94%;
+    --muted-foreground: 228 8% 48%;
+    --accent: 228 15% 94%;
+    --accent-foreground: 228 20% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 228 12% 88%;
+    --input: 228 12% 88%;
+    --ring: 142 71% 42%;
   }
 
   :root[data-anim-enabled="false"] {
@@ -132,6 +154,21 @@ input, textarea, [contenteditable] {
     }
   }
 
+  @keyframes slideUpIn {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .slide-up-in {
+    animation-name: slideUpIn;
+  }
+
   @keyframes scaleIn {
     from {
       opacity: 0;
@@ -145,6 +182,36 @@ input, textarea, [contenteditable] {
 
   .scale-in {
     animation-name: scaleIn;
+  }
+
+  @keyframes slideInRight {
+    from {
+      opacity: 0;
+      transform: translateX(-12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .slide-in-right {
+    animation-name: slideInRight;
+  }
+
+  @keyframes slideInLeft {
+    from {
+      opacity: 0;
+      transform: translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .slide-in-left {
+    animation-name: slideInLeft;
   }
 
   .anim-stagger > * {
@@ -164,6 +231,24 @@ input, textarea, [contenteditable] {
 
   [data-anim-enabled="false"] .anim-stagger > * {
     animation: none !important;
+  }
+
+  .scroll-fade-mask {
+    -webkit-mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
+    mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+  }
+
+  .scroll-fade-mask-both {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 4%, black 95%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0%, black 4%, black 95%, transparent 100%);
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
   }
 
   input[type="range"] {

@@ -40,7 +40,7 @@ export function AnnouncementCard() {
         className="cursor-pointer rounded-xl border border-border/30 bg-card/70 p-4 backdrop-blur-md transition-colors hover:bg-card/80"
       >
         <div className="flex items-start gap-2">
-          <FontAwesomeIcon icon={faBullhorn} className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/70" />
+          <FontAwesomeIcon icon={faBullhorn} className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <p className="flex-1 truncate text-sm font-medium">{current.title}</p>
           <button
             onClick={handleClose}
