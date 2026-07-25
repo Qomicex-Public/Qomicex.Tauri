@@ -89,7 +89,7 @@ public static class AccountEndpoints
                 return Results.BadRequest();
             try
             {
-                var http = httpFactory.CreateClient();
+                var http = httpFactory.CreateClient("default");
                 var resp = await http.GetStringAsync(serverUrl);
                 var json = JsonDocument.Parse(resp);
                 var name = json.RootElement.GetProperty("meta").GetProperty("serverName").GetString();

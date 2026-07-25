@@ -38,6 +38,7 @@ export interface AppSettings {
   watermarkSubtext: string
   directories?: string[]
   customJavaRuntimes?: CustomJavaEntry[]
+  logLevel: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -66,6 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   watermarkEnabled: true,
   watermarkText: 'Qomicex',
   watermarkSubtext: '启动器',
+  logLevel: 'info',
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }

@@ -12,7 +12,7 @@ export interface DebugState {
 }
 
 const INITIAL: DebugState = {
-  unlocked: false,
+  unlocked: import.meta.env.DEV,
   disableAnimations: false,
   showComponentBoundaries: false,
   simulateApiErrors: false,

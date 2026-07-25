@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFileLines, faDownload, faTrashCan, faRotate,
-  faEye, faFolderOpen, faTimes, faInfoCircle,
+  faEye, faFolderOpen, faInfoCircle,
 } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card.tsx'
 import { Button } from './ui/button.tsx'
@@ -11,9 +11,9 @@ import { Tooltip } from './ui/tooltip.tsx'
 import { cn } from '../lib/utils.ts'
 import { useMessageBox } from './ui/message-box.tsx'
 import {
-  listLogs, previewLog, getExportUrl, getExportAllUrl, exportLogTo, exportAllLogsTo, deleteLog, openLog, openLogDir,
+  listLogs, getExportUrl, getExportAllUrl, exportLogTo, exportAllLogsTo, deleteLog, openLog, openLogDir,
 } from '../api/logs.ts'
-import type { LogEntry, PreviewResult } from '../api/logs.ts'
+import type { LogEntry } from '../api/logs.ts'
 import { save } from '@tauri-apps/plugin-dialog'
 
 function formatSize(bytes: number): string {
@@ -34,8 +34,6 @@ export default function LogTab() {
   const { notify, confirm: msgConfirm } = useMessageBox()
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
-  const [preview, setPreview] = useState<{ entry: LogEntry; result: PreviewResult } | null>(null)
-  const [previewLoading, setPreviewLoading] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: LogEntry } | null>(null)
 
   const fetchLogs = useCallback(async () => {
@@ -61,18 +59,6 @@ export default function LogTab() {
       window.removeEventListener('keydown', keydown)
     }
   }, [])
-
-  const handlePreview = async (entry: LogEntry) => {
-    if (preview?.entry.path === entry.path) { setPreview(null); return }
-    setPreviewLoading(true)
-    try {
-      setPreview({ entry, result: await previewLog(entry.path) })
-    } catch {
-      notify('预览失败', 'error')
-    } finally {
-      setPreviewLoading(false)
-    }
-  }
 
   const handleExport = async (entry: LogEntry) => {
     try {
@@ -107,7 +93,6 @@ export default function LogTab() {
     if (!ok) return
     try {
       await deleteLog(entry.path)
-      if (preview?.entry.path === entry.path) setPreview(null)
       notify('已删除', 'success')
       fetchLogs()
     } catch {
@@ -170,15 +155,8 @@ export default function LogTab() {
               {logs.map((entry, i) => (
                 <div key={`${entry.path}-${i}`}>
                   <div
-                    onClick={() => handlePreview(entry)}
                     onContextMenu={(e) => handleContextMenu(e, entry)}
-                    className={cn(
-                      'flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors cursor-pointer',
-                      'hover:border-muted-foreground/30',
-                      preview?.entry.path === entry.path
-                        ? 'border-primary/30 bg-accent'
-                        : 'border-border bg-background'
-                    )}
+                    className="flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors cursor-pointer hover:border-muted-foreground/30 border-border bg-background"
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                       <FontAwesomeIcon icon={faFileLines} className="h-4 w-4" />
@@ -215,30 +193,6 @@ export default function LogTab() {
                     </div>
                   </div>
 
-                  {preview?.entry.path === entry.path && (
-                    <div className="mx-3 mb-1 rounded-lg border border-border/50 overflow-hidden">
-                      <div className="flex items-center justify-between bg-muted/30 px-3 py-1.5">
-                        <span className="text-xs text-muted-foreground">
-                          <FontAwesomeIcon icon={faEye} className="mr-1.5 h-3 w-3" />
-                          预览 ({formatSize(preview.result.totalSize)}
-                          {preview.result.totalSize > 100_000 && `, 显示末尾 ${formatSize(preview.result.previewSize)}`})
-                        </span>
-                        <button
-                          onClick={() => setPreview(null)}
-                          className="rounded p-0.5 text-muted-foreground hover:text-foreground"
-                        >
-                          <FontAwesomeIcon icon={faTimes} className="h-3 w-3" />
-                        </button>
-                      </div>
-                      <pre className="max-h-60 overflow-y-auto p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                        {previewLoading ? (
-                          <span className="text-muted-foreground">加载中...</span>
-                        ) : (
-                          preview.result.content || <span className="text-muted-foreground">（空）</span>
-                        )}
-                      </pre>
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
