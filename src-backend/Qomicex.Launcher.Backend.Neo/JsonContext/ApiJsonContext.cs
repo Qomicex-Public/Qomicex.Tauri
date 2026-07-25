@@ -132,6 +132,7 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(JoinResponse))]
 [JsonSerializable(typeof(StatusResponse))]
 [JsonSerializable(typeof(ScanPortsResponse))]
+[JsonSerializable(typeof(NatTypeResult))]
 [JsonSerializable(typeof(AutoSelectResponse))]
 [JsonSerializable(typeof(HostByPortRequest))]
 [JsonSerializable(typeof(HostByInstanceRequest))]

@@ -96,6 +96,7 @@ builder.Services.AddSingleton<SkinService>();
 // Connector
 builder.Services.AddSingleton<LanGameListenerService>();
 builder.Services.AddSingleton<GameProcessInspector>();
+builder.Services.AddSingleton<NatTypeDetector>();
 builder.Services.AddSingleton(sp =>
 {
     var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };

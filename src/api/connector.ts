@@ -1,5 +1,5 @@
 import { get, post } from './client.ts'
-import type { ConnectorStatus, EasyTierStatus } from '../types/index.ts'
+import type { ConnectorStatus, EasyTierStatus, NatTypeResult } from '../types/index.ts'
 
 export function hostByPort(port: number): Promise<{ roomCode: string }> {
   return post('/connector/host/port', { port })
@@ -31,4 +31,8 @@ export function downloadEasyTier(): Promise<EasyTierStatus> {
 
 export function scanPorts(): Promise<{ port: number | null }> {
   return get('/connector/scan-ports')
+}
+
+export function getNatType(): Promise<NatTypeResult> {
+  return get<NatTypeResult>('/connector/nat-type')
 }
