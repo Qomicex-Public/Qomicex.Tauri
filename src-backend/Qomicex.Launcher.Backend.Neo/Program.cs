@@ -90,7 +90,8 @@ builder.Services.AddSingleton(sp =>
 {
     var clientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var store = sp.GetRequiredService<JavaRuntimeStore>();
-    return new JavaDownloadService(core, clientFactory.CreateClient("default"), store);
+    var logger = sp.GetRequiredService<ILogger<JavaDownloadService>>();
+    return new JavaDownloadService(core, clientFactory.CreateClient("default"), store, logger);
 });
 
 // Diagnostics
