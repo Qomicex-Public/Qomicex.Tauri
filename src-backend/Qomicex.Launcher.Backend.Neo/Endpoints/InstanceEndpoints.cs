@@ -144,8 +144,13 @@ public static class InstanceEndpoints
                             throw new FileNotFoundException($"版本 JSON 不存在: {versionJsonPath}");
 
                         var jsonContent = await File.ReadAllTextAsync(versionJsonPath, cts.Token);
-                        var missFiles = FilterMissFiles(await core.Locator.GetMissFilesAsync(jsonContent));
-                        missFiles = RemapPaths(missFiles, core.GameRoot, instance.GameDir);
+                        var repairMirror = SystemEndpoints.LoadSettings().DownloadSource == 1 ? DownloadMirror.BMCLAPI : DownloadMirror.Official;
+                        using var repairCore = new GameCoreBuilder()
+                            .Configure(o => { o.GameRoot = instance.GameDir; })
+                            .UseDownloadMirror(repairMirror)
+                            .Build();
+                        var missFiles = FilterMissFiles(await repairCore.Locator.GetMissFilesAsync(jsonContent));
+                        missFiles = RemapPaths(missFiles, repairCore.GameRoot, instance.GameDir);
 
                         if (missFiles.Count > 0)
                         {
