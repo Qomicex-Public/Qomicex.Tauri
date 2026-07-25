@@ -95,6 +95,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 // SSE progress
 [JsonSerializable(typeof(ProgressSsePayload))]
 [JsonSerializable(typeof(ProgressSseSummary))]
+[JsonSerializable(typeof(Qomicex.Downloader.Refactor.Model.SessionSnapshot))]
+[JsonSerializable(typeof(List<Qomicex.Downloader.Refactor.Model.SessionSnapshot>))]
 [JsonSerializable(typeof(List<StoredJavaRuntime>))]
 // Account types
 [JsonSerializable(typeof(StoredAccount))]

@@ -3,6 +3,7 @@ import { API_BASE } from '../api/client.ts'
 
 export interface InstallState {
   instanceId: string
+  status: string
   stage: string
   progress: number
   error: string | null
@@ -25,16 +26,23 @@ export interface JavaDownloadState {
 }
 
 export interface ResourceDownloadState {
-  taskId: string
-  url: string
-  targetPath: string
-  fileName: string
+  sessionId: string
+  type: string
+  status: string
+  stage: string
   progress: number
   speed: number
-  status: string
+  currentFile: string | null
   error: string | null
+  totalFiles: number
+  completedFiles: number
+  failedFiles: number
   downloadedBytes: number
   totalBytes: number
+  isPaused: boolean
+  instanceId?: string | null
+  url?: string | null
+  targetPath?: string | null
 }
 
 export interface ProgressPayload {

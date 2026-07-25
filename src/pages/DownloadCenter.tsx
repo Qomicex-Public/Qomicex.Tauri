@@ -130,7 +130,7 @@ export default function DownloadCenter() {
       }
 
       if (task.type === 'file' && task.taskId) {
-        const match = sseData.resources.find((r) => r.taskId === task.taskId)
+        const match = sseData.resources.find((r) => r.sessionId === task.taskId)
         if (match) {
           let newStatus: DownloadTask['status'] = 'downloading'
           if (match.status === 'completed') newStatus = 'completed'
@@ -141,7 +141,7 @@ export default function DownloadCenter() {
             progress: Math.round(match.progress),
             speed: match.speed,
             error: match.error || undefined,
-            currentFile: match.fileName || undefined,
+            currentFile: match.currentFile || undefined,
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
           })
         }
@@ -152,9 +152,9 @@ export default function DownloadCenter() {
         const match = sseData.installs.find((i) => i.instanceId === task.instanceId)
         if (match) {
           let newStatus: DownloadTask['status'] = 'downloading'
-          if (match.stage === 'completed') newStatus = 'completed'
-          else if (match.stage === 'cancelled') newStatus = 'cancelled'
-          else if (match.stage === 'failed') newStatus = 'failed'
+          if (match.status === 'completed') newStatus = 'completed'
+          else if (match.status === 'cancelled') newStatus = 'cancelled'
+          else if (match.status === 'failed') newStatus = 'failed'
           else if (match.isPaused) newStatus = 'paused'
           updateTask(task.id, {
             status: newStatus,

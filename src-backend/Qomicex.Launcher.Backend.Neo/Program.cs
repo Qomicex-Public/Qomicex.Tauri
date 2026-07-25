@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Qomicex.Core.AOT.Builder;
 using Qomicex.Core.AOT.Core;
+using Qomicex.Downloader.Refactor.Configuration;
 using Qomicex.Launcher.Backend.Neo.Diagnostics;
 using Qomicex.Launcher.Backend.Neo.Endpoints;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
@@ -62,10 +63,20 @@ builder.Services.AddSingleton(core);
 // Services
 builder.Services.AddSingleton<InstanceService>();
 builder.Services.AddSingleton<LaunchTracker>();
+
+var downloadSessionManager = new DownloadSessionManagerBuilder()
+    .WithUserAgent(userAgent)
+    .WithMaxConcurrency(64)
+    .WithRetry(3, TimeSpan.FromSeconds(1))
+    .WithLogProgress(Qomicex.Launcher.Backend.Neo.Common.DownloaderTrace.CreateLogProgress())
+    .Build();
+builder.Services.AddSingleton(downloadSessionManager);
+
 builder.Services.AddSingleton(sp =>
 {
     var javaStore = sp.GetRequiredService<JavaRuntimeStore>();
-    return new InstallTracker(javaStore, userAgent, curseForgeApiKey);
+    var sessionManager = sp.GetRequiredService<Qomicex.Downloader.Refactor.Core.DownloadSessionManager>();
+    return new InstallTracker(javaStore, sessionManager, curseForgeApiKey);
 });
 builder.Services.AddSingleton(sp =>
 {

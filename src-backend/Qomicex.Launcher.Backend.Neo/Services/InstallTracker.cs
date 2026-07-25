@@ -1,17 +1,13 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Qomicex.Core.AOT.Builder;
-using Qomicex.Core.AOT.Models.VersionMetadata;
 using Qomicex.Core.AOT.Public.Models;
 using Qomicex.Core.AOT.Public.Services;
 using Qomicex.Core.AOT.Services.Installers;
-using Qomicex.Downloader.Refactor.Configuration;
+using Qomicex.Downloader.Refactor.Core;
 using Qomicex.Downloader.Refactor.Model;
-using Qomicex.Downloader.Refactor.Progress;
-using RefDl = Qomicex.Downloader.Refactor.Downloader;
 using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 
@@ -21,14 +17,20 @@ public sealed class InstallTracker
 {
     private readonly ConcurrentDictionary<string, InstallState> _states = new();
     private readonly JavaRuntimeStore _javaStore;
-    private readonly string _userAgent;
-    private readonly Dictionary<string, string> _cfHeaders;
+    private readonly DownloadSessionManager _sessionManager;
+    private readonly string _curseForgeApiKey;
 
-    public InstallTracker(JavaRuntimeStore javaStore, string userAgent, string curseForgeApiKey)
+    private static readonly HashSet<string> CfDomains = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "forgecdn.net", "curseforge.com", "cursecdn.com", "edge.forgecdn.net",
+        "media.forgecdn.net", "mediafilez.forgecdn.net"
+    };
+
+    public InstallTracker(JavaRuntimeStore javaStore, DownloadSessionManager sessionManager, string curseForgeApiKey)
     {
         _javaStore = javaStore;
-        _userAgent = userAgent;
-        _cfHeaders = new Dictionary<string, string> { ["x-api-key"] = curseForgeApiKey };
+        _sessionManager = sessionManager;
+        _curseForgeApiKey = curseForgeApiKey;
     }
 
     public void Start(string instanceId, string gameVersion, string gameDir,
@@ -72,7 +74,7 @@ public sealed class InstallTracker
             {
                 o.LauncherName = "QML";
                 o.GameRoot = gameDir;
-                o.UserAgent = _userAgent;
+                o.UserAgent = "QomicexLauncher/1.0";
                 o.CacheExpiry = TimeSpan.FromMinutes(30);
             })
             .UseDownloadMirror(mirror)
@@ -81,12 +83,13 @@ public sealed class InstallTracker
             ? gameVersion
             : $"{gameVersion}-{loader}-{loaderVersion}";
 
-        // Phase 1: 版本 JSON 获取 (0% → 3%)
+        using var session = _sessionManager.CreateSession($"install-{instanceId}", "install", instanceId);
+
+        var cfHeaders = new Dictionary<string, string> { ["x-api-key"] = _curseForgeApiKey };
+
         ct.ThrowIfCancellationRequested();
-        state.Stage = "fetching-json";
+        session.SetStage("fetching-json", 0, "获取版本信息...");
         state.Status = "downloading";
-        state.CurrentFile = "获取版本信息...";
-        state.Progress = 0;
 
         var manifest = await core.Version.GetManifestAsync();
         var versionInfo = manifest.Versions.FirstOrDefault(v => v.Id == gameVersion)
@@ -94,9 +97,8 @@ public sealed class InstallTracker
 
         var jsonContent = await core.HttpClient.GetStringAsync(versionInfo.Url);
         Trace.WriteLine($"[Install] [{instanceId}] Phase 1 完成: 获取版本 JSON");
-        state.Progress = 3;
+        session.SetStage("fetching-json", 3);
 
-        // Phase 2: Loader 预下载 (并行)
         ct.ThrowIfCancellationRequested();
         string? installerPath = null;
         Task? loaderJarTask = null;
@@ -106,8 +108,7 @@ public sealed class InstallTracker
 
         if (isForge || isNeoForge)
         {
-            state.Stage = "downloading-installer";
-            state.CurrentFile = "下载加载器安装包...";
+            session.SetStage("downloading-installer", 4, "下载加载器安装包...");
 
             var loaderType = isForge
                 ? ModLoaderType.Forge
@@ -127,49 +128,40 @@ public sealed class InstallTracker
 
             if (!File.Exists(installerPath))
             {
-                loaderJarTask = Task.Run(async () =>
-                {
-                    using var resp = await core.HttpClient.GetAsync(match.Url, ct);
-                    resp.EnsureSuccessStatusCode();
-                    var dir = Path.GetDirectoryName(installerPath)!;
-                    Directory.CreateDirectory(dir);
-                    using var fs = new FileStream(installerPath, FileMode.Create, FileAccess.Write);
-                    await resp.Content.CopyToAsync(fs, ct);
-                }, ct);
+                var loaderTask = new DownloadTask { Url = match.Url, SavePath = installerPath };
+                var loaderHeaders = IsCfDomain(match.Url) ? cfHeaders : null;
+                loaderJarTask = session.RunSingleAsync(loaderTask, ct, 4, 5, loaderHeaders);
             }
         }
 
-        state.Progress = 5;
-
-        // Phase 3: 基础文件扫描与下载
-        ct.ThrowIfCancellationRequested();
-        state.Stage = "scanning-base";
-        state.CurrentFile = "扫描基础文件...";
+        session.SetStage("scanning-base", 5, "扫描基础文件...");
 
         var missFiles = await core.Locator.GetMissFilesAsync(jsonContent);
         Trace.WriteLine($"[Install] [{instanceId}] Phase 3 扫描: 缺失 {missFiles.Count} 个基础文件");
 
-        Task? baseDownloadTask = null;
+        Task<BatchResult>? baseDownloadTask = null;
         if (missFiles.Count > 0)
         {
             Trace.WriteLine($"[Install] [{instanceId}] Phase 3 开始下载基础文件 ({missFiles.Count} 个, {downloadThreads} 线程)");
-            state.Stage = "downloading-base";
-            state.TotalFiles = missFiles.Count;
-            var baseTasks = missFiles.Select(f => new DownloadTask { Url = f.Url, SavePath = f.Path }).ToList();
-            baseDownloadTask = DownloadWithProgress(baseTasks, state, 5, 35, ct, downloadThreads);
+            session.SetStage("downloading-base", 5);
+            var baseTasks = missFiles.Select(f =>
+            {
+                var headers = IsCfDomain(f.Url) ? cfHeaders : null;
+                return new DownloadTask { Url = f.Url, SavePath = f.Path, Headers = headers };
+            }).ToList();
+            baseDownloadTask = session.RunBatchAsync(baseTasks, ct, 5, 35, maxConcurrency: downloadThreads);
         }
         else
         {
-            state.Progress = 35;
+            session.SetStage("downloading-base", 35);
         }
 
-        // Phase 4: Loader 库文件扫描与下载 (并行)
         ct.ThrowIfCancellationRequested();
-        Task? loaderLibTask = null;
+        Task<BatchResult>? loaderLibTask = null;
 
         if (!string.IsNullOrEmpty(loader) && !string.IsNullOrEmpty(loaderVersion))
         {
-            state.CurrentFile = "扫描加载器库文件...";
+            session.SetStage("scanning-loader-libs", 35, "扫描加载器库文件...");
 
             var missLibs = await GetMissLoaderLibraries(core.Installer,
                 loader, loaderVersion, gameVersion, gameDir,
@@ -177,33 +169,34 @@ public sealed class InstallTracker
 
             if (missLibs.Count > 0)
             {
-                Trace.WriteLine($"[Install] [{instanceId}] Phase 4 开始下载加载器库文件 ({missLibs.Count} 个, 32 线程)");
-                var loaderTasks = missLibs.Select(f => new DownloadTask { Url = f.Url, SavePath = f.Path }).ToList();
-                loaderLibTask = DownloadWithProgress(loaderTasks, state, 35, 55, ct, 32);
+                Trace.WriteLine($"[Install] [{instanceId}] Phase 4 开始下载加载器库文件 ({missLibs.Count} 个)");
+                session.SetStage("downloading-loader-libs", 35);
+                var libTasks = missLibs.Select(f =>
+                {
+                    var headers = IsCfDomain(f.Url) ? cfHeaders : null;
+                    return new DownloadTask { Url = f.Url, SavePath = f.Path, Headers = headers };
+                }).ToList();
+                loaderLibTask = session.RunBatchAsync(libTasks, ct, 35, 55, maxConcurrency: 32);
             }
         }
-        else if(string.IsNullOrEmpty(loader))
+        else if (string.IsNullOrEmpty(loader))
         {
             var jsonPath = Path.Combine(gameDir, "versions", versionDirName, $"{versionDirName}.json");
-
             JsonNode root = JsonNode.Parse(jsonContent)!;
             root["id"] = versionDirName;
             string updatedJson = root.ToJsonString();
-
-            await File.WriteAllTextAsync(jsonPath,updatedJson);
+            await File.WriteAllTextAsync(jsonPath, updatedJson);
         }
 
-        // Phase 6: 附加 Mod 下载 (并行)
         ct.ThrowIfCancellationRequested();
         Task? addonTask = null;
 
         if (addons != null && addons.Length > 0)
         {
             Trace.WriteLine($"[Install] [{instanceId}] Phase 6 开始下载附加 Mod ({addons.Length} 个)");
-            addonTask = DownloadAddons(addons, gameVersion, gameDir, downloadSourceId, state, ct);
+            addonTask = DownloadAddons(addons, gameVersion, gameDir, cfHeaders, ct);
         }
 
-        // 等待并行下载完成——确保所有阶段都完成再判断失败
         Exception? downloadError = null;
         async Task WaitSafe(Task? t)
         {
@@ -211,49 +204,69 @@ public sealed class InstallTracker
             try { await t; } catch (Exception ex) { downloadError ??= ex; }
         }
         await WaitSafe(loaderJarTask);
-        await WaitSafe(baseDownloadTask);
+        if (baseDownloadTask is not null)
+        {
+            try
+            {
+                var baseResult = await baseDownloadTask;
+                if (baseResult.FailedTasks > 0)
+                {
+                    var retried = await RetryFailedFiles(baseResult.FailedTaskList, downloadThreads, session, ct, 5, 35);
+                    if (retried.FailedTasks > 0)
+                        throw new Exception($"基础文件下载失败 ({retried.FailedTasks} 个)");
+                }
+            }
+            catch (Exception ex) { downloadError ??= ex; }
+        }
         await WaitSafe(loaderLibTask);
+
+        if (loaderLibTask is not null)
+        {
+            try
+            {
+                var libResult = await loaderLibTask;
+                if (libResult.FailedTasks > 0)
+                {
+                    var retried = await RetryFailedFiles(libResult.FailedTaskList, 32, session, ct, 35, 55);
+                    if (retried.FailedTasks > 0)
+                        throw new Exception($"加载器库文件下载失败 ({retried.FailedTasks} 个)");
+                }
+            }
+            catch (Exception ex) { downloadError ??= ex; }
+        }
+
         await WaitSafe(addonTask);
         if (downloadError != null) throw downloadError;
 
-        state.Progress = 85;
+        session.SetStage("post-download", 85);
 
-        // Phase 4b: Loader 安装
         ct.ThrowIfCancellationRequested();
         if (!string.IsNullOrEmpty(loader) && !string.IsNullOrEmpty(loaderVersion))
         {
-            state.Stage = "installing-loader";
-            state.CurrentFile = $"安装 {loader}...";
-            state.Progress = 88;
-
+            session.SetStage("installing-loader", 88, $"安装 {loader}...");
             await InstallLoader(core.Installer, versionDirName, jsonContent, gameDir,
                 loader, loaderVersion, gameVersion, installerPath, downloadSourceId, ct);
-
-            state.Progress = 92;
+            session.SetStage("installing-loader", 92);
         }
 
-        // Phase 5: 主 JAR 校验
         ct.ThrowIfCancellationRequested();
-        state.Stage = "verifying-jar";
-        state.CurrentFile = "校验主 Jar 文件...";
+        session.SetStage("verifying-jar", 92, "校验主 Jar 文件...");
 
         var missJar = await core.Locator.GetMissMainJarAsync(jsonContent);
         if (missJar != null)
         {
             Trace.WriteLine($"[Install] [{instanceId}] Phase 5 缺失主 Jar: 开始下载");
-            state.Stage = "downloading-jar";
             var jarTask = new DownloadTask { Url = missJar.Url, SavePath = missJar.Path };
-            await DownloadWithProgress(new[] { jarTask }, state, 92, 98, ct, 1);
+            var jarHeaders = IsCfDomain(missJar.Url) ? cfHeaders : null;
+            await session.RunSingleAsync(jarTask, ct, 92, 98, jarHeaders);
         }
         else
         {
-            state.Progress = 98;
+            session.SetStage("verifying-jar", 98);
         }
 
-        // 收尾
         ct.ThrowIfCancellationRequested();
-        state.Stage = "finishing";
-        state.CurrentFile = "完成安装...";
+        session.SetStage("finishing", 98, "完成安装...");
 
         if (versionIsolation && !string.IsNullOrEmpty(loader))
         {
@@ -263,59 +276,19 @@ public sealed class InstallTracker
         }
 
         state.Status = "completed";
-        state.Stage = "completed";
-        state.Progress = 100;
-        state.CurrentFile = "";
+        session.ReportCompleted();
         Trace.WriteLine($"[Install] [{instanceId}] 安装完成");
 
-        // 清理
         CleanupTempFiles(installerPath);
+        SyncStateFromSession(state, session);
     }
 
-    private async Task DownloadWithProgress(IReadOnlyList<DownloadTask> tasks,
-        InstallState state, double startPct, double endPct, CancellationToken ct, int maxConcurrency)
+    private async Task<BatchResult> RetryFailedFiles(
+        IReadOnlyList<DownloadTask> failedTasks, int maxConcurrency,
+        DownloadSession session, CancellationToken ct, double startPct, double endPct)
     {
-        var totalFiles = tasks.Count;
-        var failedFileNames = new ConcurrentBag<string>();
-
-        var fileProgress = new Progress<FileProgressInfo>(fp =>
-        {
-            if (fp.Status == FileProgressStatus.Downloading)
-            {
-                state.CurrentFile = fp.FileName ?? "";
-            }
-            else if (fp.Status == FileProgressStatus.Failed)
-            {
-                failedFileNames.Add(fp.FileName ?? "?");
-            }
-        });
-
-        var globalProgress = new Progress<GlobalProgressInfo>(gp =>
-        {
-            var completed = gp.CompletedTasks + gp.FailedTasks;
-            state.CompletedFiles = gp.CompletedTasks;
-            state.FailedFiles = gp.FailedTasks;
-            state.Speed = gp.GlobalSpeedBytesPerSec;
-            if (totalFiles > 0)
-                state.Progress = startPct + (endPct - startPct) * completed / totalFiles;
-        });
-
-        using var downloader = new RefDl(builder => builder
-            .WithMaxConcurrency(maxConcurrency)
-            .WithRetry(3, TimeSpan.FromSeconds(1))
-            .WithUserAgent(_userAgent)
-            .WithDefaultHeaders(_cfHeaders)
-            .WithProgress(globalProgress, fileProgress, DownloaderTrace.CreateLogProgress())
-            .WithProgressInterval(200));
-
-        var results = await downloader.DownloadBatchAsync(tasks, ct);
-
-        var failed = results.Where(r => !r.IsSuccess).ToList();
-        if (failed.Count > 0)
-        {
-            var names = failedFileNames.Any() ? failedFileNames : failed.Select(r => r.TaskId);
-            throw new Exception($"下载失败 ({failed.Count} 个): {string.Join(", ", names)}");
-        }
+        Trace.WriteLine($"[Install] 重试 {failedTasks.Count} 个失败文件");
+        return await session.RunBatchAsync(failedTasks, ct, startPct, endPct, maxConcurrency: maxConcurrency);
     }
 
     private async Task<List<MissFileData>> GetMissLoaderLibraries(IInstallerFactory installerFactory,
@@ -406,7 +379,7 @@ public sealed class InstallTracker
     }
 
     private async Task DownloadAddons(string[] addonIds, string gameVersion,
-        string gameDir, int downloadSourceId, InstallState state, CancellationToken ct)
+        string gameDir, Dictionary<string, string> cfHeaders, CancellationToken ct)
     {
         using var semaphore = new SemaphoreSlim(12);
         var tasks = addonIds.Select(async addonId =>
@@ -426,22 +399,28 @@ public sealed class InstallTracker
                     var modsDir = Path.Combine(gameDir, "mods");
                     Directory.CreateDirectory(modsDir);
                     var destPath = Path.Combine(modsDir, file.Filename);
-                     if (!File.Exists(destPath))
+                    if (!File.Exists(destPath))
                     {
-                        using var downloader = new RefDl(builder => builder
+                        var downloader = new Qomicex.Downloader.Refactor.Downloader(builder => builder
                             .WithMaxConcurrency(1)
                             .WithRetry(3, TimeSpan.FromSeconds(1))
-                            .WithProgress(null, null, DownloaderTrace.CreateLogProgress()));
+                            .WithProgress(null, null, Common.DownloaderTrace.CreateLogProgress()));
                         var task = new DownloadTask { Url = file.Url, SavePath = destPath };
                         await downloader.DownloadAsync(task, ct);
                     }
                 }
             }
-            catch { /* skip failed addon */ }
+            catch { }
             finally { semaphore.Release(); }
         });
 
         await Task.WhenAll(tasks);
+    }
+
+    private static bool IsCfDomain(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        return CfDomains.Any(d => uri.Host.EndsWith(d, StringComparison.OrdinalIgnoreCase));
     }
 
     private static void CleanupTempFiles(string? installerPath)
@@ -454,24 +433,59 @@ public sealed class InstallTracker
         catch { }
     }
 
+    private static void SyncStateFromSession(InstallState state, DownloadSession session)
+    {
+        var snap = session.GetSnapshot();
+        state.Progress = snap.Progress;
+        state.Stage = snap.Stage;
+        state.CurrentFile = snap.CurrentFile ?? "";
+        state.TotalFiles = snap.TotalFiles;
+        state.CompletedFiles = snap.CompletedFiles;
+        state.FailedFiles = snap.FailedFiles;
+        state.Speed = snap.Speed;
+    }
+
     public InstallState? GetState(string instanceId)
     {
         _states.TryGetValue(instanceId, out var state);
+        if (state is not null)
+        {
+            var session = _sessionManager.GetSession($"install-{instanceId}");
+            if (session is not null)
+                SyncStateFromSession(state, session);
+        }
         return state;
     }
 
     public List<InstallProgressResponse> GetAllActiveStates()
     {
-        return _states
-            .Where(kv => kv.Value.Status != "completed" && kv.Value.Status != "failed")
-            .Select(kv => kv.Value.ToResponse(kv.Key))
-            .ToList();
+        using var e = _sessionManager.GetActiveSnapshots()
+            .Where(s => s.Type == "install")
+            .Select(s => new InstallProgressResponse(
+                InstanceId: s.InstanceId ?? s.SessionId,
+                Status: s.Status,
+                Progress: s.Progress,
+                Error: s.Error,
+                TotalFiles: s.TotalFiles,
+                CompletedFiles: s.CompletedFiles,
+                FailedFiles: s.FailedFiles,
+                CurrentFile: s.CurrentFile ?? "",
+                Speed: s.Speed,
+                IsPaused: s.IsPaused,
+                Stage: s.Stage
+            ))
+            .GetEnumerator();
+        var list = new List<InstallProgressResponse>();
+        while (e.MoveNext())
+            list.Add(e.Current);
+        return list;
     }
 
     public void Cancel(string instanceId)
     {
         if (_states.TryRemove(instanceId, out var state))
             state.Cancel();
+        _sessionManager.CancelSession($"install-{instanceId}");
     }
 }
 

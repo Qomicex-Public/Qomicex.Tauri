@@ -351,6 +351,7 @@ export interface RepairResourcesResult {
 export interface InstallProgressResponse {
   instanceId: string
   status: string
+  stage: string
   progress: number
   error: string | null
   totalFiles: number

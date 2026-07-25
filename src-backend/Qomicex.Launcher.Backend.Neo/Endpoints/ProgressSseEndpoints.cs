@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Qomicex.Downloader.Refactor.Core;
+using Qomicex.Downloader.Refactor.Model;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Services;
 
@@ -8,7 +10,7 @@ public sealed record ProgressSsePayload(
     string Type,
     List<InstallProgressResponse> Installs,
     List<JavaDownloadProgressResponse> JavaDownloads,
-    List<object> Resources,
+    List<SessionSnapshot> Resources,
     ProgressSseSummary Summary
 );
 
@@ -22,6 +24,7 @@ public static class ProgressSseEndpoints
             HttpContext context,
             InstallTracker installTracker,
             JavaDownloadService javaDownloadService,
+            DownloadSessionManager sessionManager,
             CancellationToken ct) =>
         {
             context.Response.ContentType = "text/event-stream";
@@ -37,18 +40,24 @@ public static class ProgressSseEndpoints
                     var installs = installTracker.GetAllActiveStates();
                     var javaDownloads = javaDownloadService.GetAllActiveStates();
 
+                    var resourceSessions = sessionManager.GetActiveSnapshots()
+                        .Where(s => s.Type == "resource")
+                        .ToList();
+
                     double totalSpeed = 0;
                     foreach (var i in installs)
                         totalSpeed += i.Speed;
                     foreach (var j in javaDownloads)
                         totalSpeed += j.Speed;
 
+                    var activeCount = installs.Count + javaDownloads.Count + resourceSessions.Count;
+
                     var payload = new ProgressSsePayload(
                         Type: "progress",
                         Installs: installs,
                         JavaDownloads: javaDownloads,
-                        Resources: [],
-                        Summary: new ProgressSseSummary(ActiveCount: installs.Count + javaDownloads.Count, TotalSpeed: totalSpeed)
+                        Resources: resourceSessions,
+                        Summary: new ProgressSseSummary(ActiveCount: activeCount, TotalSpeed: totalSpeed)
                     );
 
                     var json = JsonSerializer.Serialize(payload, ApiJsonContext.Default.ProgressSsePayload);
