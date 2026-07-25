@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlay, faChevronDown, faUser, faCheck, faCube } from '@fortawesome/free-solid-svg-icons'
+import { cn } from '../lib/utils.ts'
 import { Button } from '../components/ui/button.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
 import { ApiError } from '../api/client.ts'
@@ -111,7 +112,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div ref={pageRef} className="relative flex flex-1 min-h-0 flex-col overflow-y-auto p-8">
+    <div ref={pageRef} className="relative flex flex-1 min-h-0 flex-col overflow-y-auto scroll-fade-mask p-8">
       {/* Center branding */}
       <div className="flex flex-1 flex-col items-center justify-center">
         {watermarkEnabled && (
@@ -141,12 +142,12 @@ export default function Dashboard() {
                 <p className="text-[10px] text-muted-foreground/60">{defaultAccount ? '默认账户' : '在设置中添加'}</p>
               </div>
               <Button variant="ghost" size="sm" onClick={openAccountDropdown} className="h-6 w-6 shrink-0 p-0">
-                <FontAwesomeIcon icon={faChevronDown} className="h-3 w-3" />
+                <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 transition-transform duration-200', accountsOpen && 'rotate-180')} />
               </Button>
             </div>
           </div>
           {accountsOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border bg-popover p-1 shadow-lg">
+            <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-top-2 zoom-in-95 duration-200">
               <div className="max-h-60 overflow-y-auto">
                 {allAccounts.map((acc) => {
                   const isDefault = acc.uuid === defaultAccount?.uuid
@@ -154,7 +155,7 @@ export default function Dashboard() {
                     <button
                       key={acc.uuid}
                       onMouseDown={() => handleSwitchAccount(acc.uuid)}
-                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent"
+                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent transition-colors"
                     >
                       <AccountAvatar account={acc} className="h-6 w-6 shrink-0" />
                       <span className="flex-1 truncate">{acc.name}</span>
@@ -166,7 +167,7 @@ export default function Dashboard() {
               <div className="border-t border-border pt-1 mt-1">
                 <button
                   onMouseDown={() => { navigate('/accounts'); setAccountsOpen(false) }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-muted-foreground hover:bg-accent"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-muted-foreground hover:bg-accent transition-colors"
                 >
                   <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
                   管理账户

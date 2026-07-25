@@ -8,6 +8,7 @@ import { get, API_BASE } from '../api/client.ts'
 import { useMessageBox } from './ui/message-box.tsx'
 import { DebugProvider, useDebug } from './DebugContext.tsx'
 import LogOverlay from './LogOverlay.tsx'
+import FpsOverlay from './FpsOverlay.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 function DebugEffects() {
@@ -61,7 +62,12 @@ function DebugEffects() {
     }
   }, [state.showComponentBoundaries])
 
-  return state.logOverlay ? <LogOverlay /> : null
+  return (
+    <>
+      {state.logOverlay && <LogOverlay />}
+      {state.showFps && <FpsOverlay />}
+    </>
+  )
 }
 
 export default function Layout() {

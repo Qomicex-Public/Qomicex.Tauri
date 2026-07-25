@@ -10,6 +10,8 @@ import { Label } from '../components/ui/label.tsx'
 import { Checkbox } from '../components/ui/checkbox.tsx'
 import { Select, SelectOption } from '../components/ui/select.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
+import { Tabs, TabContent } from '../components/ui/tabs.tsx'
+import { BatchToolbar } from '../components/ui/batch-toolbar.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
@@ -163,7 +165,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { 
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faSave} className="mr-2 h-4 w-4 text-primary" />存档
+            <FontAwesomeIcon icon={faSave} className="mr-2 h-4 w-4 text-muted-foreground" />存档
             {saves.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({saves.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
@@ -194,18 +196,16 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { 
           </div>
         )}
       </CardContent>
-      {selected.size > 0 && (
-        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
-          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
-          <div className="h-5 w-px bg-border" />
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.filePath)))}>全选</Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
-          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-            删除 {selected.size}
-          </Button>
-        </div>
-      )}
+      <BatchToolbar
+        selectedCount={selected.size}
+        onClear={() => setSelected(new Set())}
+        onSelectAll={() => setSelected(new Set(filtered.map(s => s.filePath)))}
+      >
+        <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          删除 {selected.size}
+        </Button>
+      </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>批量删除存档</DialogTitle>
@@ -286,7 +286,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faCamera} className="mr-2 h-4 w-4 text-primary" />截图
+            <FontAwesomeIcon icon={faCamera} className="mr-2 h-4 w-4 text-muted-foreground" />截图
             {screenshots.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({screenshots.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
@@ -325,18 +325,16 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
           </div>
         )}
       </CardContent>
-      {selected.size > 0 && (
-        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
-          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
-          <div className="h-5 w-px bg-border" />
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.filePath)))}>全选</Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
-          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-            删除 {selected.size}
-          </Button>
-        </div>
-      )}
+      <BatchToolbar
+        selectedCount={selected.size}
+        onClear={() => setSelected(new Set())}
+        onSelectAll={() => setSelected(new Set(filtered.map(s => s.filePath)))}
+      >
+        <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          删除 {selected.size}
+        </Button>
+      </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>批量删除截图</DialogTitle>
@@ -491,7 +489,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         <CardContent className="p-5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h3 className="text-sm font-medium shrink-0">
-              <FontAwesomeIcon icon={faCube} className="mr-2 h-4 w-4 text-primary" />Mod
+              <FontAwesomeIcon icon={faCube} className="mr-2 h-4 w-4 text-muted-foreground" />Mod
               {mods.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({mods.length})</span>}
             </h3>
             <div className="flex items-center gap-2 flex-1 max-w-sm">
@@ -569,20 +567,18 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         </CardContent>
       </Card>
 
-      {selected.size > 0 && (
-        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
-          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
-          <div className="h-5 w-px bg-border" />
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(m => m.fileName)))}>全选</Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
-          <Button variant="outline" size="sm" onClick={() => setBatchConfirm({ type: 'enable' })}>启用</Button>
-          <Button variant="outline" size="sm" onClick={() => setBatchConfirm({ type: 'disable' })}>禁用</Button>
-          <Button variant="destructive" size="sm" onClick={() => setBatchConfirm({ type: 'delete' })}>
-            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-            删除 {selected.size}
-          </Button>
-        </div>
-      )}
+      <BatchToolbar
+        selectedCount={selected.size}
+        onClear={() => setSelected(new Set())}
+        onSelectAll={() => setSelected(new Set(filtered.map(m => m.fileName)))}
+      >
+        <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'enable' })}>启用</Button>
+        <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'disable' })}>禁用</Button>
+        <Button variant="destructive" size="sm" onClick={() => setBatchConfirm({ type: 'delete' })}>
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          删除 {selected.size}
+        </Button>
+      </BatchToolbar>
       <Dialog open={batchConfirm !== null} onClose={() => setBatchConfirm(null)}>
         <DialogHeader onClose={() => setBatchConfirm(null)}>
           <DialogTitle>
@@ -697,7 +693,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faBox} className="mr-2 h-4 w-4 text-primary" />资源包
+            <FontAwesomeIcon icon={faBox} className="mr-2 h-4 w-4 text-muted-foreground" />资源包
             {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
@@ -746,18 +742,16 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           </div>
         )}
       </CardContent>
-      {selected.size > 0 && (
-        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
-          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
-          <div className="h-5 w-px bg-border" />
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(p => p.fileName)))}>全选</Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
-          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-            删除 {selected.size}
-          </Button>
-        </div>
-      )}
+      <BatchToolbar
+        selectedCount={selected.size}
+        onClear={() => setSelected(new Set())}
+        onSelectAll={() => setSelected(new Set(filtered.map(p => p.fileName)))}
+      >
+        <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          删除 {selected.size}
+        </Button>
+      </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>批量删除资源包</DialogTitle>
@@ -848,7 +842,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faSun} className="mr-2 h-4 w-4 text-primary" />光影包
+            <FontAwesomeIcon icon={faSun} className="mr-2 h-4 w-4 text-muted-foreground" />光影包
             {shaders.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({shaders.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
@@ -897,18 +891,16 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           </div>
         )}
       </CardContent>
-      {selected.size > 0 && (
-        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
-          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
-          <div className="h-5 w-px bg-border" />
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(s => s.fileName)))}>全选</Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
-          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-            删除 {selected.size}
-          </Button>
-        </div>
-      )}
+      <BatchToolbar
+        selectedCount={selected.size}
+        onClear={() => setSelected(new Set())}
+        onSelectAll={() => setSelected(new Set(filtered.map(s => s.fileName)))}
+      >
+        <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          删除 {selected.size}
+        </Button>
+      </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>批量删除光影包</DialogTitle>
@@ -995,7 +987,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faDatabase} className="mr-2 h-4 w-4 text-primary" />数据包
+            <FontAwesomeIcon icon={faDatabase} className="mr-2 h-4 w-4 text-muted-foreground" />数据包
             {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
@@ -1044,18 +1036,16 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           </div>
         )}
       </CardContent>
-      {selected.size > 0 && (
-        <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border bg-card px-5 py-3 shadow-lg shadow-black/10">
-          <span className="text-sm text-muted-foreground">已选 <span className="font-semibold text-foreground">{selected.size}</span> 个</span>
-          <div className="h-5 w-px bg-border" />
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map(p => p.fileName)))}>全选</Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
-          <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-            删除 {selected.size}
-          </Button>
-        </div>
-      )}
+      <BatchToolbar
+        selectedCount={selected.size}
+        onClear={() => setSelected(new Set())}
+        onSelectAll={() => setSelected(new Set(filtered.map(p => p.fileName)))}
+      >
+        <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          删除 {selected.size}
+        </Button>
+      </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>批量删除数据包</DialogTitle>
@@ -1188,7 +1178,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanc
         <CardContent className="p-5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h3 className="text-sm font-medium shrink-0">
-              <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-primary" />服务器
+              <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />服务器
               {servers.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({servers.length})</span>}
             </h3>
             <div className="flex items-center gap-2 flex-1 max-w-sm">
@@ -1539,7 +1529,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
       <CardContent className="p-5 overflow-hidden">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faGamepad} className="mr-2 h-4 w-4 text-primary" />游戏设置
+            <FontAwesomeIcon icon={faGamepad} className="mr-2 h-4 w-4 text-muted-foreground" />游戏设置
             {!loading && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({settings.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
@@ -1931,24 +1921,17 @@ export default function InstanceDetailPage() {
       </div>
 
       <div className="flex-1 min-h-0 flex gap-4">
-        <div className="flex w-44 shrink-0 flex-col gap-0.5">
-          {TABS.filter(t => t.id !== 'gamesettings' || debugState.showGameSettings).map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={cn(
-                'flex items-center gap-2.5 rounded-lg px-3.5 py-2.5 text-left text-sm transition-colors',
-                tab === t.id ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              )}
-            >
-              <FontAwesomeIcon icon={t.icon} className="h-4 w-4" />
-              {t.label}
-            </button>
-          ))}
+        <div className="flex w-44 shrink-0 flex-col">
+          <Tabs
+            tabs={TABS.filter(t => t.id !== 'gamesettings' || debugState.showGameSettings).map(t => ({ id: t.id, label: t.label, icon: <FontAwesomeIcon icon={t.icon} className="h-4 w-4" /> }))}
+            activeTab={tab}
+            onChange={(id) => setTab(id as typeof tab)}
+            orientation="vertical"
+          />
         </div>
 
-        <div className="flex-1 min-w-0 overflow-y-auto">
-          {tab === 'overview' && (
+        <div className="flex-1 min-w-0 overflow-y-auto scroll-fade-mask">
+          <TabContent activeTab={tab} tabId="overview">
             <div className="space-y-4">
               <Card>
                 <CardContent className="p-5 space-y-4">
@@ -2035,7 +2018,7 @@ export default function InstanceDetailPage() {
                 </CardContent>
               </Card>
             </div>
-          )}
+          </TabContent>
 
           {tab === 'settings' && (
             <Card>
@@ -2220,14 +2203,14 @@ export default function InstanceDetailPage() {
             </Card>
           )}
 
-          {tab === 'saves' && <SavesTab instanceId={id!} gameDir={gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} />}
-          {tab === 'screenshots' && <ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} />}
-          {tab === 'mods' && <ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} />}
-          {tab === 'resourcepacks' && <ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} />}
-          {tab === 'shaderpacks' && <ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} />}
-          {tab === 'datapacks' && <DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} />}
-          {tab === 'servers' && <ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} />}
-          {tab === 'gamesettings' && <GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} />}
+          <TabContent activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} /></TabContent>
+          <TabContent activeTab={tab} tabId="screenshots"><ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} /></TabContent>
+          <TabContent activeTab={tab} tabId="mods"><ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} /></TabContent>
+          <TabContent activeTab={tab} tabId="resourcepacks"><ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} /></TabContent>
+          <TabContent activeTab={tab} tabId="shaderpacks"><ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} /></TabContent>
+          <TabContent activeTab={tab} tabId="datapacks"><DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} /></TabContent>
+          <TabContent activeTab={tab} tabId="servers"><ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} /></TabContent>
+          <TabContent activeTab={tab} tabId="gamesettings"><GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} /></TabContent>
         </div>
       </div>
       <AccountSelectDialog

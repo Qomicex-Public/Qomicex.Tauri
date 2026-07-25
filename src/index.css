@@ -154,6 +154,21 @@ input, textarea, [contenteditable] {
     }
   }
 
+  @keyframes slideUpIn {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .slide-up-in {
+    animation-name: slideUpIn;
+  }
+
   @keyframes scaleIn {
     from {
       opacity: 0;
@@ -167,6 +182,36 @@ input, textarea, [contenteditable] {
 
   .scale-in {
     animation-name: scaleIn;
+  }
+
+  @keyframes slideInRight {
+    from {
+      opacity: 0;
+      transform: translateX(-12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .slide-in-right {
+    animation-name: slideInRight;
+  }
+
+  @keyframes slideInLeft {
+    from {
+      opacity: 0;
+      transform: translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .slide-in-left {
+    animation-name: slideInLeft;
   }
 
   .anim-stagger > * {
@@ -186,6 +231,24 @@ input, textarea, [contenteditable] {
 
   [data-anim-enabled="false"] .anim-stagger > * {
     animation: none !important;
+  }
+
+  .scroll-fade-mask {
+    -webkit-mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
+    mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+  }
+
+  .scroll-fade-mask-both {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 4%, black 95%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0%, black 4%, black 95%, transparent 100%);
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
   }
 
   input[type="range"] {

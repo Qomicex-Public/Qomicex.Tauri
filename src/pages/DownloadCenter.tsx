@@ -5,6 +5,8 @@ import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { Button } from '../components/ui/button.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
+import { Tabs } from '../components/ui/tabs.tsx'
+import type { Tab } from '../components/ui/tabs.tsx'
 import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
 import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '../api/instance.ts'
@@ -60,12 +62,12 @@ const STAGE_LABELS: Record<string, string> = {
   'modpack-overrides': '解压覆盖文件',
 }
 
-const FILTERS: { key: FilterMode; label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'downloading', label: '下载中' },
-  { key: 'paused', label: '已暂停' },
-  { key: 'completed', label: '已完成' },
-  { key: 'failed', label: '失败' },
+const FILTER_TABS: Tab[] = [
+  { id: 'all', label: '全部' },
+  { id: 'downloading', label: '下载中' },
+  { id: 'paused', label: '已暂停' },
+  { id: 'completed', label: '已完成' },
+  { id: 'failed', label: '失败' },
 ]
 
 export default function DownloadCenter() {
@@ -206,7 +208,7 @@ export default function DownloadCenter() {
   }), [tasks, filter])
 
   return (
-    <PageShell className="p-8 space-y-6 overflow-y-auto">
+    <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
       <PageHeader title="下载中心" subtitle={`${tasks.length} 个任务`} actions={
         tasks.some((t) => t.status === 'completed') ? (
           <Button variant="outline" size="sm" onClick={clearCompleted} className="gap-1.5">
@@ -215,22 +217,9 @@ export default function DownloadCenter() {
         ) : undefined
       } />
 
-      <div className="flex flex-wrap items-center gap-2">
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            className={cn(
-              'h-9 rounded-md px-3 text-sm font-medium transition-all',
-              filter === f.key
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
-        <span className="ml-auto text-xs text-muted-foreground">
+      <div className="flex items-center gap-2">
+        <Tabs tabs={FILTER_TABS} activeTab={filter} onChange={(id) => setFilter(id as FilterMode)} className="flex-1 min-w-0" />
+        <span className="shrink-0 text-xs text-muted-foreground">
           {filter === 'all' ? tasks.length : filtered.length} 个任务
         </span>
       </div>

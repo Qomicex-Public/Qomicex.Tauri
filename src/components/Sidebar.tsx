@@ -14,6 +14,73 @@ const links = [
   { to: '/connect', label: '联机', icon: faNetworkWired },
 ]
 
+function NavItem({ to, label, icon, end }: { to: string; label: string; icon: typeof faHouse; end: boolean }) {
+  return (
+    <li className="w-full flex justify-center relative">
+      <NavLink to={to} end={end} className="w-full flex justify-center">
+        {({ isActive }) => (
+          <>
+            <div
+              className={cn(
+                'absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200',
+                isActive ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0'
+              )}
+            />
+            <Tooltip content={label} side="right">
+              <div
+                className={cn(
+                  'flex h-11 w-11 items-center justify-center rounded-lg text-lg transition-all duration-200',
+                  isActive
+                    ? 'bg-primary/10 text-primary [&>svg]:text-primary'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                )}
+              >
+                <FontAwesomeIcon icon={icon} className="h-5 w-5" />
+              </div>
+            </Tooltip>
+          </>
+        )}
+      </NavLink>
+    </li>
+  )
+}
+
+function BottomNavItem({ to, label, icon, showPingDot }: { to: string; label: string; icon: typeof faGamepad; showPingDot?: boolean }) {
+  return (
+    <div className="w-full flex justify-center relative">
+      <NavLink to={to} className="w-full flex justify-center">
+        {({ isActive }) => (
+          <>
+            <div
+              className={cn(
+                'absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200',
+                isActive ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0'
+              )}
+            />
+            <Tooltip content={label} side="right">
+              <div
+                className={cn(
+                  'flex h-9 w-9 items-center justify-center rounded-lg text-base transition-all duration-200 relative',
+                  isActive
+                    ? 'bg-primary/10 text-primary'
+                    : showPingDot
+                      ? 'text-green-500 hover:bg-green-500/10'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                )}
+              >
+                <FontAwesomeIcon icon={icon} className="h-4 w-4" />
+                {showPingDot && (
+                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-green-500 animate-ping" />
+                )}
+              </div>
+            </Tooltip>
+          </>
+        )}
+      </NavLink>
+    </div>
+  )
+}
+
 export default function Sidebar() {
   const { runningInstances } = useRunning()
   const hasRunning = runningInstances.length > 0
@@ -28,63 +95,13 @@ export default function Sidebar() {
 
       <ul className="flex w-full flex-1 flex-col items-center gap-0.5 px-2 py-2">
         {links.map((link) => (
-          <li key={link.to} className="w-full flex justify-center">
-            <Tooltip content={link.label} side="right">
-              <NavLink
-                to={link.to}
-                end={link.to === '/'}
-                className={({ isActive }) =>
-                  `flex h-11 w-11 items-center justify-center rounded-lg text-lg transition-colors ${
-                    isActive
-                      ? 'bg-primary/10 text-primary [&>svg]:text-primary'
-                      : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                  }`
-                }
-              >
-                <FontAwesomeIcon icon={link.icon} className="h-5 w-5" />
-              </NavLink>
-            </Tooltip>
-          </li>
+          <NavItem key={link.to} to={link.to} label={link.label} icon={link.icon} end={link.to === '/'} />
         ))}
       </ul>
 
       <div className="flex w-full flex-col items-center border-t border-border px-2 py-2 pb-4 gap-1">
-        <Tooltip content="运行中" side="right">
-          <NavLink
-            to="/running"
-            className={({ isActive }) =>
-              cn(
-                'flex h-9 w-9 items-center justify-center rounded-lg text-base transition-colors relative',
-                isActive
-                  ? 'bg-primary/10 text-primary'
-                  : hasRunning
-                    ? 'text-green-500 hover:bg-green-500/10'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              )
-            }
-          >
-            <div className="relative">
-              <FontAwesomeIcon icon={faGamepad} className="h-4 w-4" />
-              {hasRunning && (
-                <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-green-500 animate-ping" />
-              )}
-            </div>
-          </NavLink>
-        </Tooltip>
-        <Tooltip content="设置" side="right">
-          <NavLink
-            to="/settings"
-            className={({ isActive }) =>
-              `flex h-9 w-9 items-center justify-center rounded-lg text-base transition-colors ${
-                isActive
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              }`
-            }
-          >
-            <FontAwesomeIcon icon={faGear} className="h-4 w-4" />
-          </NavLink>
-        </Tooltip>
+        <BottomNavItem to="/running" label="运行中" icon={faGamepad} showPingDot={hasRunning} />
+        <BottomNavItem to="/settings" label="设置" icon={faGear} />
       </div>
     </nav>
   )
