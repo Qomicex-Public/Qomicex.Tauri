@@ -11,6 +11,7 @@ interface CustomJavaEntry {
 }
 
 export interface AppSettings {
+  dataDir: string
   gameDir: string
   downloadThreads: number
   fileChunkThreads: number
@@ -42,6 +43,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  dataDir: '',
   gameDir: '.minecraft',
   downloadThreads: 64,
   fileChunkThreads: 0,
@@ -76,8 +78,11 @@ const listeners = new Set<(s: AppSettings) => void>()
 
 export async function loadSettings(): Promise<AppSettings> {
   try {
-    const data = await get<Partial<AppSettings>>('/settings')
-    cached = { ...DEFAULT_SETTINGS, ...data }
+    const [data, { path: dataDir }] = await Promise.all([
+      get<Partial<AppSettings>>('/settings'),
+      get<{ path: string }>('/settings/data-dir'),
+    ])
+    cached = { ...DEFAULT_SETTINGS, ...data, dataDir }
   } catch {
     cached = { ...DEFAULT_SETTINGS }
   }
@@ -143,6 +148,20 @@ export async function autoSelectModSource(): Promise<{ id: number; latencyMs: nu
 export async function autoSelectDownloadSource(): Promise<{ id: number; latencyMs: number }> {
   const result = await get<{ id: number; latencyMs: number }>('/settings/download-source/auto-select')
   cached = { ...cached, downloadSource: result.id }
+  return result
+}
+
+export async function getDataDir(): Promise<string> {
+  try {
+    const { path } = await get<{ path: string }>('/settings/data-dir')
+    return path
+  } catch {
+    return DEFAULT_SETTINGS.dataDir
+  }
+}
+
+export async function setDataDir(path: string): Promise<string> {
+  const { path: result } = await put<{ path: string }>('/settings/data-dir', { path })
   return result
 }
 

@@ -39,7 +39,7 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache, setDataDir } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS } from '../constants/credits.ts'
 
@@ -807,6 +807,29 @@ export default function Settings() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-5">
+                <div className="space-y-2">
+                  <Label>数据目录</Label>
+                  <div className="flex items-center gap-2">
+                    <Input value={settings.dataDir} readOnly className="font-mono text-xs" />
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={async () => {
+                      const { open } = await import('@tauri-apps/plugin-dialog')
+                      const result = await open({ directory: true, multiple: false })
+                      if (result) {
+                        try {
+                          const newPath = await setDataDir(result)
+                          update('dataDir', newPath)
+                          notify('数据目录已更改，重启启动器后生效', 'success')
+                        } catch {
+                          notify('设置失败', 'error')
+                        }
+                      }
+                    }}>
+                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">启动器数据存储位置，更改后需重启启动器生效</p>
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="downloadThreads">下载线程数</Label>
                   <div className="flex items-center gap-2">

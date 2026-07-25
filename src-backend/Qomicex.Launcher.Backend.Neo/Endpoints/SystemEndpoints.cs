@@ -123,6 +123,17 @@ public static class SystemEndpoints
             return Results.NoContent();
         });
 
+        group.MapGet("/settings/data-dir", () =>
+            Results.Json(new DataDirResponse(AppPaths.BaseDir), ApiJsonContext.Default.DataDirResponse));
+
+        group.MapPut("/settings/data-dir", (DataDirResponse body) =>
+        {
+            if (string.IsNullOrWhiteSpace(body.Path))
+                throw ApiException.BadRequest("INVALID_PATH", "Data directory path cannot be empty");
+            AppPaths.SetBaseDir(body.Path);
+            return Results.Json(new DataDirResponse(body.Path), ApiJsonContext.Default.DataDirResponse);
+        });
+
         group.MapPost("/settings/open-folder", (OpenPathRequest body) =>
         {
             var path = body.Path;

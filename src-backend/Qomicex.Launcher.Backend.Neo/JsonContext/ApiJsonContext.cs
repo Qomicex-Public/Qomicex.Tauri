@@ -140,6 +140,7 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(StatusResponse))]
 [JsonSerializable(typeof(ScanPortsResponse))]
 [JsonSerializable(typeof(NatTypeResult))]
+[JsonSerializable(typeof(DataDirResponse))]
 [JsonSerializable(typeof(AutoSelectResponse))]
 [JsonSerializable(typeof(HostByPortRequest))]
 [JsonSerializable(typeof(HostByInstanceRequest))]
@@ -444,6 +445,8 @@ public sealed record YggdrasilSelectRequest(
     string AccessToken, string ClientToken, string ServerUrl, List<YggdrasilProfileInfo> SelectedProfiles);
 
 public sealed record TranslateResponse(string? Original, string? Translated, string? TranslatedAt);
+public sealed record DataDirResponse(string Path);
+
 public sealed record AutoSelectResponse(int Id, long LatencyMs);
 
 public sealed record ModpackParseResult(

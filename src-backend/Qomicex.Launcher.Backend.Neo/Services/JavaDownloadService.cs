@@ -4,6 +4,7 @@ using System.Formats.Tar;
 using System.IO.Compression;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Core.AOT.Public.Models;
+using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.Models;
 
 namespace Qomicex.Launcher.Backend.Neo.Services;
@@ -128,9 +129,7 @@ public sealed class JavaDownloadService
 
     private static string GetBaseDir()
     {
-        var root = Environment.GetEnvironmentVariable("QOMICEX_HOME")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "qomicex-launcher");
-        var dir = Path.Combine(root, "QML", "Runtime", "Java");
+        var dir = Path.Combine(AppPaths.BaseDir, "QML", "Runtime", "Java");
         Directory.CreateDirectory(dir);
         return dir;
     }

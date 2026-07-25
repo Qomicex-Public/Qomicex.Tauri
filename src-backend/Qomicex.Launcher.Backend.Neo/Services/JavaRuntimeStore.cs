@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Qomicex.Core.AOT.Core;
 using Qomicex.Core.AOT.Public.Models;
+using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 
@@ -198,12 +199,7 @@ public sealed class JavaRuntimeStore
         await File.WriteAllTextAsync(_filePath, json);
     }
 
-    private static string GetBaseDir()
-    {
-        var root = Environment.GetEnvironmentVariable("QOMICEX_HOME")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "qomicex-launcher");
-        return Path.Combine(root, "QML");
-    }
+    private static string GetBaseDir() => Path.Combine(AppPaths.BaseDir, "QML");
 
 }
 
