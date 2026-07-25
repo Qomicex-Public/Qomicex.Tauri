@@ -36,34 +36,25 @@ public static class UpdateEndpoints
             if (!result.HasUpdate || string.IsNullOrEmpty(result.DownloadUrl))
                 return Results.NoContent();
 
-            // The download URL from UpdateService already has proxy prefix applied
-            // Use empty signature since we skip validation in dev
-
-            // ponytail: hardcoded platform map, extend when adding more targets
-            var platform = target switch
+            // result.DownloadUrl points to latest.json (Tauri update manifest),
+            // download it and extract per-platform installer URL + signature
+            try
             {
-                "windows-x86_64" => new TauriPlatformEntry("", result.DownloadUrl),
-                "windows-x86" => new TauriPlatformEntry("", result.DownloadUrl),
-                "darwin-x86_64" => new TauriPlatformEntry("", result.DownloadUrl),
-                "darwin-aarch64" => new TauriPlatformEntry("", result.DownloadUrl),
-                "linux-x86_64" => new TauriPlatformEntry("", result.DownloadUrl),
-                _ => null
-            };
+                using var client = httpFactory.CreateClient();
+                var remoteManifest = await client.GetFromJsonAsync(
+                    result.DownloadUrl,
+                    ApiJsonContext.Default.TauriManifestResponse,
+                    ct);
 
-            if (platform is null)
+                if (remoteManifest?.Platforms is null || !remoteManifest.Platforms.TryGetValue(target, out var platform))
+                    return Results.NoContent();
+
+                return Results.Json(remoteManifest, ApiJsonContext.Default.TauriManifestResponse);
+            }
+            catch
+            {
                 return Results.NoContent();
-
-            var manifest = new TauriManifestResponse(
-                Version: result.Version!,
-                Notes: result.Changelog,
-                PubDate: DateTime.UtcNow.ToString("o"),
-                Platforms: new Dictionary<string, TauriPlatformEntry>
-                {
-                    [target] = platform
-                }
-            );
-
-            return Results.Json(manifest, ApiJsonContext.Default.TauriManifestResponse);
+            }
         });
     }
 }

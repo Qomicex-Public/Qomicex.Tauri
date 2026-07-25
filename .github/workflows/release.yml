@@ -220,13 +220,25 @@ jobs:
         run: |
           $version = "${{ needs.setup.outputs.displayVersion }}"
           Write-Output "=== Bundle dir contents ==="
-          $bundleDir = if (Test-Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle") { "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" } else { "src-tauri/target/release/bundle" }
+          $bundleDir = "src-tauri/target/release/bundle"
           Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
-          $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
-          if (-not $exe) { throw "No installer .exe found" }
-          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
+          $archive = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.nsis.zip" | Select-Object -First 1
           $platform = "windows-x86_64"
-          $fragment = @{ $platform = @{ url = $url } }
+          if ($archive) {
+            $sigFile = Get-ChildItem -Path $bundleDir -Recurse -Filter "$($archive.Name).sig" | Select-Object -First 1
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($archive.Name)"
+            if ($sigFile) {
+              $signature = (Get-Content -Path $sigFile.FullName -Raw).Trim()
+              $fragment = @{ $platform = @{ url = $url; signature = $signature } }
+            } else {
+              $fragment = @{ $platform = @{ url = $url } }
+            }
+          } else {
+            $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+            if (-not $exe) { throw "No installer found" }
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
+            $fragment = @{ $platform = @{ url = $url } }
+          }
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
@@ -282,13 +294,25 @@ jobs:
         run: |
           $version = "${{ needs.setup.outputs.displayVersion }}"
           Write-Output "=== Bundle dir contents ==="
-          $bundleDir = if (Test-Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle") { "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" } else { "src-tauri/target/release/bundle" }
+          $bundleDir = "src-tauri/target/aarch64-pc-windows-msvc/release/bundle"
           Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
-          $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
-          if (-not $exe) { throw "No installer .exe found" }
-          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
+          $archive = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.nsis.zip" | Select-Object -First 1
           $platform = "windows-aarch64"
-          $fragment = @{ $platform = @{ url = $url } }
+          if ($archive) {
+            $sigFile = Get-ChildItem -Path $bundleDir -Recurse -Filter "$($archive.Name).sig" | Select-Object -First 1
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($archive.Name)"
+            if ($sigFile) {
+              $signature = (Get-Content -Path $sigFile.FullName -Raw).Trim()
+              $fragment = @{ $platform = @{ url = $url; signature = $signature } }
+            } else {
+              $fragment = @{ $platform = @{ url = $url } }
+            }
+          } else {
+            $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+            if (-not $exe) { throw "No installer found" }
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
+            $fragment = @{ $platform = @{ url = $url } }
+          }
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
@@ -346,14 +370,28 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
-          ASSET_NAME=$(basename "$BUNDLE")
-          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="linux-x86_64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          # Prefer update archive (.tar.gz) with signature
+          ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
+          if [ -n "$ARCHIVE" ]; then
+            ASSET_NAME=$(basename "$ARCHIVE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            SIG_FILE="${ARCHIVE}.sig"
+            if [ -f "$SIG_FILE" ]; then
+              SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+            else
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+            fi
+          else
+            BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
+            ASSET_NAME=$(basename "$BUNDLE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -412,14 +450,27 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
-          ASSET_NAME=$(basename "$BUNDLE")
-          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="linux-aarch64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
+          if [ -n "$ARCHIVE" ]; then
+            ASSET_NAME=$(basename "$ARCHIVE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            SIG_FILE="${ARCHIVE}.sig"
+            if [ -f "$SIG_FILE" ]; then
+              SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+            else
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+            fi
+          else
+            BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
+            ASSET_NAME=$(basename "$BUNDLE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -480,14 +531,27 @@ jobs:
           BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
-          BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
-          if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
-          ASSET_NAME=$(basename "$BUNDLE")
-          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="linux-loongarch64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
+          if [ -n "$ARCHIVE" ]; then
+            ASSET_NAME=$(basename "$ARCHIVE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            SIG_FILE="${ARCHIVE}.sig"
+            if [ -f "$SIG_FILE" ]; then
+              SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+            else
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+            fi
+          else
+            BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
+            ASSET_NAME=$(basename "$BUNDLE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -571,7 +635,13 @@ jobs:
           ASSET_NAME=$(basename "$DMG")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="darwin-aarch64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          SIG_FILE="${DMG}.sig"
+          if [ -f "$SIG_FILE" ]; then
+            SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+          else
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -654,7 +724,13 @@ jobs:
           ASSET_NAME=$(basename "$DMG")
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
           PLATFORM="darwin-x86_64"
-          echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          SIG_FILE="${DMG}.sig"
+          if [ -f "$SIG_FILE" ]; then
+            SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+          else
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
           cat "update-fragment-$PLATFORM.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -708,7 +784,13 @@ jobs:
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
           REQUIRED=${{ needs.setup.outputs.required }}
-          echo '{"version":"'"$VERSION"'","required":'"$REQUIRED"',"platforms":{}}' > latest.json
+          NOTES_JSON=$(cat RELEASE_NOTES.md | jq -Rs '.')
+          jq -n \
+            --arg version "$VERSION" \
+            --argjson required "$REQUIRED" \
+            --argjson notes "$NOTES_JSON" \
+            '{version: $version, required: $required, notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: {}}' \
+            > latest.json
           for f in update-fragment-*.json; do
             if [ -f "$f" ]; then
               KEY=$(jq -r 'keys[0]' "$f")
@@ -717,8 +799,6 @@ jobs:
               mv tmp.json latest.json
             fi
           done
-          jq '.pub_date = (now | strftime("%Y-%m-%dT%H:%M:%SZ"))' latest.json > tmp.json
-          mv tmp.json latest.json
           echo "=== latest.json ==="
           cat latest.json
 
@@ -727,7 +807,13 @@ jobs:
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
           REQUIRED=${{ needs.setup.outputs.required }}
-          echo '{"version":"'"$VERSION"'","required":'"$REQUIRED"',"channel":"alpha","platforms":{}}' > alpha.json
+          NOTES_JSON=$(cat RELEASE_NOTES.md | jq -Rs '.')
+          jq -n \
+            --arg version "$VERSION" \
+            --argjson required "$REQUIRED" \
+            --argjson notes "$NOTES_JSON" \
+            '{version: $version, required: $required, channel: "alpha", notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: {}}' \
+            > alpha.json
           for f in update-fragment-*.json; do
             if [ -f "$f" ]; then
               KEY=$(jq -r 'keys[0]' "$f")
@@ -736,8 +822,6 @@ jobs:
               mv tmp.json alpha.json
             fi
           done
-          jq '.pub_date = (now | strftime("%Y-%m-%dT%H:%M:%SZ"))' alpha.json > tmp.json
-          mv tmp.json alpha.json
           echo "=== alpha.json ==="
           cat alpha.json
 
