@@ -128,8 +128,7 @@ public static class InstanceEndpoints
             {
                 try
                 {
-                    var versionId = !string.IsNullOrEmpty(instance.VersionDirName)
-                        ? instance.VersionDirName : instance.Name;
+                    var versionId = instance.Name;
 
                     if (!instance.SkipIntegrityCheck)
                     {
@@ -409,7 +408,7 @@ public static class InstanceEndpoints
 
             tracker.Start(id, instance.GameVersion, instance.GameDir,
                 req.Loader, req.LoaderVersion, req.Addons, threads,
-                req.VersionIsolation ?? SystemEndpoints.GetGlobalVersionIsolation(), sourceId);
+                req.VersionIsolation ?? SystemEndpoints.GetGlobalVersionIsolation(), sourceId, instance.Name);
 
             return Results.Json(new MessageResponse($"Install started for {id}"), ApiJsonContext.Default.MessageResponse);
         });
