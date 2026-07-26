@@ -1080,7 +1080,18 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanc
 
   const load = useCallback(async () => {
     setLoading(true)
-    try { const data = await getServers(instanceId); setServers(data) }
+    try {
+      const data = await getServers(instanceId)
+      setServers(data)
+      const results: Record<string, ServerState> = {}
+      for (const s of data) {
+        try {
+          const state = await pingServer(instanceId, s.ip)
+          results[s.ip] = state
+        } catch {}
+      }
+      setPingStates(results)
+    }
     catch (e) {
       setServers([])
       notify(`加载服务器列表失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
@@ -1089,21 +1100,6 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanc
   }, [instanceId, notify])
 
   useEffect(() => { load() }, [load, refreshKey])
-
-  useEffect(() => {
-    if (loading || servers.length === 0) return
-    const pingAll = async () => {
-      const results: Record<string, ServerState> = {}
-      for (const s of servers) {
-        try {
-          const state = await pingServer(instanceId, s.ip)
-          results[s.ip] = state
-        } catch {}
-      }
-      setPingStates(results)
-    }
-    pingAll()
-  }, [servers, loading, instanceId])
 
   useEffect(() => {
     if (loading) return
@@ -1236,8 +1232,8 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanc
                     <Card className="group border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
                       <CardContent className="flex items-start gap-3 p-4">
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
-                          {s.iconBase64 ? (
-                            <img src={`data:image/png;base64,${s.iconBase64}`} alt={s.name} className="h-full w-full object-cover" loading="lazy" />
+                          {(ps?.iconBase64 || s.iconBase64) ? (
+                            <img src={`data:image/png;base64,${ps?.iconBase64 || s.iconBase64}`} alt={s.name} className="h-full w-full object-cover" loading="lazy" />
                           ) : (
                             <FontAwesomeIcon icon={faServer} className="h-5 w-5 opacity-50" />
                           )}

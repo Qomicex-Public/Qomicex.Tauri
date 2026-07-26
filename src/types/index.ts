@@ -551,6 +551,7 @@ export interface ServerState {
   version: string
   description: string
   errorMessage: string
+  iconBase64?: string | null
 }
 
 export interface ResourceVersion {
