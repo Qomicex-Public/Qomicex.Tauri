@@ -132,9 +132,22 @@ public static class ResourceCenterEndpoints
             {
                 var mr = core.CreateModrinthSource();
                 var info = await mr.GetProjectInfoAsync(id);
+                var author = "";
+                if (!string.IsNullOrEmpty(info.Team))
+                {
+                    try
+                    {
+                        var http = app.Services.GetRequiredService<IHttpClientFactory>().CreateClient("Modrinth");
+                        var resp = await http.GetStringAsync($"https://api.modrinth.com/v3/team/{info.Team}/members");
+                        var members = JsonNode.Parse(resp)?.AsArray();
+                        if (members?.Count > 0)
+                            author = members[0]?["user"]?["username"]?.GetValue<string>() ?? "";
+                    }
+                    catch { }
+                }
                 return Results.Json(new ResourceDetailDto(
                     Id: info.Id, Title: info.Name, Description: info.Description,
-                    Author: "", IconUrl: info.IconUrl ?? "",
+                    Author: author, IconUrl: info.IconUrl ?? "",
                     DownloadCount: info.DownloadCount, Source: "modrinth",
                     Categories: info.Categories ?? [],
                     ProjectUrl: $"https://modrinth.com/project/{info.Slug ?? info.Id}",

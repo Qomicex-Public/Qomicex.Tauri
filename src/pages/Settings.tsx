@@ -1467,16 +1467,7 @@ export default function Settings() {
                       <span>默认（8px）</span>
                       <span>大圆角</span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
-                      <span className="inline-block h-3 w-3 rounded-sm border border-muted-foreground/30" />
-                      <span>小</span>
-                      <span className="mx-0.5">·</span>
-                      <span className="inline-block h-3 w-3 rounded border border-muted-foreground/30" />
-                      <span>中</span>
-                      <span className="mx-0.5">·</span>
-                      <span className="inline-block h-3 w-3 rounded-lg border border-muted-foreground/30" />
-                      <span>大</span>
-                    </div>
+
                   </div>
                 </CardContent>
               </Card>

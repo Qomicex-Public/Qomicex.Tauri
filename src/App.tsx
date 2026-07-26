@@ -24,9 +24,9 @@ import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
-import { openUrl } from '@tauri-apps/plugin-opener'
-import { Button } from './components/ui/button.tsx'
+
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
+import { SplashScreen } from './components/SplashScreen.tsx'
 
 function RunningNotifyBridge() {
   const { notify } = useMessageBox()
@@ -125,33 +125,12 @@ function AppContent() {
                 <Route path="/running" element={<RunningInstances />} />
               </>
             ) : (
-              <Route path="*" element={
-                <div className="flex flex-1 items-center justify-center">
-                  {backendState === 'loading' ? (
-                    <div className="text-center">
-                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                      <p className="mt-4 text-sm text-muted-foreground">启动后端服务...</p>
-                    </div>
-                  ) : (
-                    <div className="text-center">
-                      <p className="text-destructive font-medium">后端启动失败</p>
-                      <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                        后端进程异常退出，请检查日志后重试。
-                      </p>
-                      <div className="mt-4 flex items-center justify-center gap-3">
-                        <Button onClick={() => window.location.reload()}>重试</Button>
-                        <Button variant="outline" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))}>
-                          反馈问题
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              } />
+              <Route path="*" element={<div />} />
             )}
           </Route>
         </Routes>
       </BrowserRouter>
+      <SplashScreen state={backendState} onRetry={() => window.location.reload()} />
       <LaunchProgressDialog />
       <CrashAnalysisDialog
         open={!!crashDialogState}
