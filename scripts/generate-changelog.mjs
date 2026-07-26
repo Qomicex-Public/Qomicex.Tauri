@@ -38,6 +38,13 @@ function findPrevTag(currentTag, rtype) {
       found = true;
     }
   }
+  // 当前 tag 尚未创建（CI 中 changelog 在 tag 推送之前生成）
+  // 返回最新的同类型 tag 作为 prev
+  if (!found) {
+    for (const tag of tags) {
+      if (tagReleaseType(tag) === rtype) return tag;
+    }
+  }
   return null;
 }
 
@@ -51,6 +58,9 @@ function getCommitsBetween(prev, current) {
     if (!prev && current.startsWith("v")) {
       console.error(`tag ${current} 不在本地，回退到 git log HEAD`);
       raw = execSync(`git log --format="%s" --no-merges HEAD`, { encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
+    } else if (prev && current.startsWith("v")) {
+      console.error(`tag ${current} 不在本地，回退到 git log ${prev}..HEAD`);
+      raw = execSync(`git log --format="%s" --no-merges ${prev}..HEAD`, { encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
     } else {
       throw e;
     }
