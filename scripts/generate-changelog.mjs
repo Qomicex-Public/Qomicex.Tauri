@@ -44,7 +44,17 @@ function findPrevTag(currentTag, rtype) {
 /** 获取两个 tag 之间的提交消息，按 convention 分组 */
 function getCommitsBetween(prev, current) {
   const range = prev ? `${prev}..${current}` : current;
-  const raw = execSync(`git log --format="%s" --no-merges ${range}`, { encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
+  let raw;
+  try {
+    raw = execSync(`git log --format="%s" --no-merges ${range}`, { encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
+  } catch (e) {
+    if (!prev && current.startsWith("v")) {
+      console.error(`tag ${current} 不在本地，回退到 git log HEAD`);
+      raw = execSync(`git log --format="%s" --no-merges HEAD`, { encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
+    } else {
+      throw e;
+    }
+  }
   return raw.trim().split("\n").filter(Boolean);
 }
 
