@@ -31,12 +31,14 @@ public sealed class UpdateService
 
         var request = new HttpRequestMessage(HttpMethod.Get, $"/api/client/version/check?current={Uri.EscapeDataString(currentVersion)}");
 
-        if (string.Equals(channel, "alpha", StringComparison.OrdinalIgnoreCase) && LicenseValidator.LicenseFileExists())
+#if LICENSE_REQUIRED
+        if (LicenseValidator.LicenseFileExists())
         {
             var rawToken = ReadAndDecryptLicenseToken();
             if (!string.IsNullOrEmpty(rawToken))
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
         }
+#endif
 
         var response = await client.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
