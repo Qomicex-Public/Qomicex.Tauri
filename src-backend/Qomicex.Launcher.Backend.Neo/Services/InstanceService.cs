@@ -89,7 +89,7 @@ public sealed class InstanceService
             _instances.RemoveAll(i => i.Id == id);
             SaveToFile();
 
-            var versionDirName = instance.VersionDirName ?? instance.Name;
+            var versionDirName = instance.Name;
             var versionDir = Path.Combine(instance.GameDir, "versions", versionDirName);
             try
             {

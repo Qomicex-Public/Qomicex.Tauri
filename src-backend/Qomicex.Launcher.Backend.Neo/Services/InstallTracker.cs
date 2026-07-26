@@ -35,7 +35,7 @@ public sealed class InstallTracker
 
     public void Start(string instanceId, string gameVersion, string gameDir,
         string? loader, string? loaderVersion, string[]? addons,
-        int downloadThreads, bool versionIsolation, int? downloadSourceId)
+        int downloadThreads, bool versionIsolation, int? downloadSourceId, string? instanceName = null)
     {
         var cts = new CancellationTokenSource();
         var state = new InstallState(cts);
@@ -47,7 +47,7 @@ public sealed class InstallTracker
             {
                 await RunInstallAsync(instanceId, gameVersion, gameDir,
                     loader, loaderVersion, addons, downloadThreads,
-                    versionIsolation, downloadSourceId ?? 0, state, cts.Token);
+                    versionIsolation, downloadSourceId ?? 0, state, cts.Token, instanceName);
             }
             catch (OperationCanceledException)
             {
@@ -65,7 +65,7 @@ public sealed class InstallTracker
     private async Task RunInstallAsync(string instanceId, string gameVersion,
         string gameDir, string? loader, string? loaderVersion, string[]? addons,
         int downloadThreads, bool versionIsolation, int downloadSourceId,
-        InstallState state, CancellationToken ct)
+        InstallState state, CancellationToken ct, string? instanceName = null)
     {
         var mirror = downloadSourceId == 1 ? DownloadMirror.BMCLAPI : DownloadMirror.Official;
         Trace.WriteLine($"[Install] [{instanceId}] 开始安装: 版本={gameVersion}, 加载器={loader ?? "无"}, 镜像={mirror}, 线程={downloadThreads}");
@@ -79,9 +79,9 @@ public sealed class InstallTracker
             })
             .UseDownloadMirror(mirror)
             .Build();
-        var versionDirName = string.IsNullOrEmpty(loader)
+        var versionDirName = instanceName ?? (string.IsNullOrEmpty(loader)
             ? gameVersion
-            : $"{gameVersion}-{loader}-{loaderVersion}";
+            : $"{gameVersion}-{loader}-{loaderVersion}");
 
         using var session = _sessionManager.CreateSession($"install-{instanceId}", "install", instanceId);
 

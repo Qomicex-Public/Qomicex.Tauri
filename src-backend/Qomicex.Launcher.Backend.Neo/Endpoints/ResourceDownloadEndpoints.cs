@@ -37,7 +37,7 @@ public static class ResourceDownloadEndpoints
                     _ => "mods",
                 };
                 targetDir = isolation
-                    ? Path.Combine(gameDir, "versions", inst.VersionDirName ?? inst.Name, cat)
+                    ? Path.Combine(gameDir, "versions", inst.Name, cat)
                     : Path.Combine(gameDir, cat);
             }
 

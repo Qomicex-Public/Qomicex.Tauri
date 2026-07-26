@@ -180,7 +180,7 @@ public class ModpackService
             state2.CurrentFile = "解压覆盖文件...";
             state2.Progress = 97;
 
-            await ExtractOverridesAsync(request.OverridesZip, request.GameDir, versionDirName, request.VersionIsolation);
+            await ExtractOverridesAsync(request.OverridesZip, request.GameDir, request.Name, request.VersionIsolation);
 
             state2.Progress = 99;
         }

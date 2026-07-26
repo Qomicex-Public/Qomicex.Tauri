@@ -1650,7 +1650,7 @@ export default function InstanceDetailPage() {
     if (instance.resolvedGameDir) return instance.resolvedGameDir
     const isolated = instance.versionIsolation ?? getSettings().versionIsolation
     if (isolated) {
-      const vn = instance.versionDirName || instance.name
+      const vn = instance.name
       return `${instance.gameDir.replace(/\\/g, '/')}/versions/${vn}`
     }
     return instance.gameDir

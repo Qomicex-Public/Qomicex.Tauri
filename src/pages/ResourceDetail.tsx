@@ -194,7 +194,7 @@ export default function ResourceDetailPage() {
       if (instance && subDir) {
         const base = instance.gameDir.replace(/\\/g, '/')
         const isolated = instance.versionIsolation ?? true
-        const vn = instance.versionDirName || instance.name
+        const vn = instance.name
         const dir = isolated ? `${base}/versions/${vn}/${subDir}` : `${base}/${subDir}`
         defaultPath = `${dir}/${fileName}`
       }

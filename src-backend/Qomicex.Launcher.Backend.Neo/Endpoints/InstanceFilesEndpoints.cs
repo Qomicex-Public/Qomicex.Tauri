@@ -40,7 +40,7 @@ public static class InstanceFilesEndpoints
         var gameDir = isolated
             ? Path.GetFullPath(inst.GameDir)
             : Path.GetFullPath(inst.ResolvedGameDir ?? inst.GameDir);
-        var version = inst.VersionDirName ?? inst.Name;
+        var version = inst.Name;
         return (gameDir, version, isolated);
     }
 
