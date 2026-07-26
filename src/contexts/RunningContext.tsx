@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { launchInstance as apiLaunchInstance, getLaunchProgress, cancelLaunch as apiCancelLaunch } from '../api/instance.ts'
+import type { LaunchInstanceOptions } from '../api/instance.ts'
 import { getJavaRequirement } from '../api/java.ts'
 import { analyzeCrash } from '../api/crashDiagnostics.ts'
 import { getRuntimes } from '../stores/javaStore.ts'
@@ -25,7 +26,7 @@ export interface RunningContextValue {
   runningInstances: RunningInstance[]
   launchProgress: LaunchProgress | null
   launchingInstanceId: string | null
-  launchInstance: (id: string, name: string, javaInfo?: JavaCheckInfo) => Promise<LaunchResult>
+  launchInstance: (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions) => Promise<LaunchResult>
   cancelLaunch: (id?: string) => Promise<void>
   killInstance: (id: string) => Promise<void>
   setNotifyImpl: (fn: (msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void) => void
@@ -73,7 +74,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     if (ref) { clearTimeout(ref); pollRefs.current.delete(id) }
   }, [])
 
-  const launchInstance = useCallback(async (id: string, name: string, javaInfo?: JavaCheckInfo): Promise<LaunchResult> => {
+  const launchInstance = useCallback(async (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions): Promise<LaunchResult> => {
     launchingIdRef.current = id
     setLaunchingInstanceId(id)
     setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
@@ -97,7 +98,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       } catch { /* 检查失败不影响启动 */ }
     }
 
-    const result = await apiLaunchInstance(id)
+    const result = await apiLaunchInstance(id, quickJoin)
     if (!result.success) {
       setLaunchProgress(null)
       setLaunchingInstanceId(null)

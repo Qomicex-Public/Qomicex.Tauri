@@ -1,11 +1,12 @@
 import { useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faSave, faCopy, faPen, faTrashCan, faCheck } from '@fortawesome/free-solid-svg-icons'
+import { faSave, faCopy, faPen, faTrashCan, faCheck, faPlay } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui/card.tsx'
 import { Tooltip } from './ui/tooltip.tsx'
 import { Input } from './ui/input.tsx'
 import { Button } from './ui/button.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
+import { ContextMenu, type ContextMenuItem } from './ContextMenu.tsx'
 import type { SaveMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 
@@ -15,9 +16,10 @@ interface Props {
   onRefresh: () => void
   selected?: boolean
   onSelect?: React.MouseEventHandler
+  onQuickJoin?: () => void
 }
 
-export default function SaveCard({ save, instanceId, onRefresh, selected, onSelect }: Props) {
+export default function SaveCard({ save, instanceId, onRefresh, selected, onSelect, onQuickJoin }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -54,7 +56,15 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
     } catch { setDeleting(false) }
   }, [instanceId, save.name, save.filePath, onRefresh])
 
+  const contextItems: ContextMenuItem[] = [
+    { label: '备份', onClick: () => handleBackup() },
+    { label: '重命名', onClick: () => { setRenameValue(save.name); setRenaming(true) } },
+    ...(onQuickJoin ? [{ label: '快速进入', onClick: onQuickJoin }] : []),
+    { label: '删除', onClick: () => setConfirmOpen(true), danger: true },
+  ]
+
   return (
+    <ContextMenu items={contextItems}>
     <Card className={cn('group cursor-pointer border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
       <CardContent className="flex items-center gap-4 p-4">
         <button
@@ -106,6 +116,13 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
               <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
+          {onQuickJoin && (
+            <Tooltip content="快速进入">
+              <button onClick={(e) => { e.stopPropagation(); onQuickJoin() }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
+                <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+          )}
           <Tooltip content="删除">
             <button onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
               <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
@@ -128,5 +145,6 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
         </DialogFooter>
       </Dialog>
     </Card>
+    </ContextMenu>
   )
 }

@@ -33,8 +33,13 @@ export async function deleteInstance(id: string): Promise<void> {
   await del(`/instance/${id}`)
 }
 
-export async function launchInstance(id: string): Promise<LaunchResult> {
-  return post<LaunchResult>(`/instance/${id}/launch`)
+export interface LaunchInstanceOptions {
+  joinServer?: string
+  joinWorld?: string
+}
+
+export async function launchInstance(id: string, options?: LaunchInstanceOptions): Promise<LaunchResult> {
+  return post<LaunchResult>(`/instance/${id}/launch`, options || {})
 }
 
 export async function getLaunchProgress(id: string): Promise<LaunchProgress> {

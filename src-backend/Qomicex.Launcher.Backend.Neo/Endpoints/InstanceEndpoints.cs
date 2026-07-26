@@ -108,7 +108,7 @@ public static class InstanceEndpoints
             return Results.NotFound();
         });
 
-        group.MapPost("/{id}/launch", async (string id, InstanceService instances, DefaultGameCore core, LaunchTracker tracker, AccountService accountService, JavaRuntimeStore store, IHttpClientFactory httpFactory) =>
+        group.MapPost("/{id}/launch", async (string id, LaunchInstanceRequest? request, InstanceService instances, DefaultGameCore core, LaunchTracker tracker, AccountService accountService, JavaRuntimeStore store, IHttpClientFactory httpFactory) =>
         {
             await LicenseValidator.ValidateAsync(httpFactory);
             var instance = instances.GetById(id);
@@ -266,6 +266,8 @@ public static class InstanceEndpoints
                         Version = versionId,
                         VersionIsolation = instance.VersionIsolation ?? SystemEndpoints.LoadSettings().VersionIsolation,
                         GameRoot = instance.GameDir,
+                        JoinServer = request?.JoinServer,
+                        JoinWorld = request?.JoinWorld,
                         JavaOptions = new JavaOptions
                         {
                             JavaPath = selectedJavaPath,

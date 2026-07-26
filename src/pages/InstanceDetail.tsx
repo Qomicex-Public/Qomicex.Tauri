@@ -63,6 +63,13 @@ const TABS = [
   { id: 'servers', label: '服务器', icon: faServer },
 ] as const
 
+function isQuickPlaySupported(gameVersion: string | undefined | null): boolean {
+  if (!gameVersion) return false
+  const parts = gameVersion.split('.').map(Number)
+  if (parts.length < 2) return false
+  return parts[0] > 1 || (parts[0] === 1 && parts[1] >= 20)
+}
+
 type TabId = typeof TABS[number]['id']
 
 function formatPlayTime(minutes: number): string {
@@ -103,7 +110,7 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   )
 }
 
-function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
+function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQuickJoinWorld, gameVersion }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void; onQuickJoinWorld: (name: string) => void; gameVersion: string | undefined }) {
   const [search, setSearch] = useState('')
   const [saves, setSaves] = useState<SaveMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -191,7 +198,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { 
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((save) => (
-              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} />
+              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} />
             ))}
           </div>
         )}
@@ -1064,7 +1071,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
   )
 }
 
-function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
+function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoinServer }: { instanceId: string; refreshKey: number; onRefresh: () => void; onQuickJoinServer: (ip: string) => void }) {
   const [search, setSearch] = useState('')
   const [servers, setServers] = useState<ServerEntry[]>([])
   const [lanGames, setLanGames] = useState<LanGameEntry[]>([])
@@ -1225,6 +1232,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanc
                   { label: '编辑', onClick: () => handleEdit(s) },
                   { label: '测速', onClick: () => handlePing(s.ip) },
                   { label: '复制 IP', onClick: () => handleCopyIp(s.ip) },
+                  { label: '快速加入', onClick: () => onQuickJoinServer(s.ip) },
                   { label: '删除', onClick: () => setConfirmIp(s.ip), danger: true },
                 ]
                 return (
@@ -1272,6 +1280,11 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanc
                               <FontAwesomeIcon icon={faClipboard} className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
+                          <Tooltip content="快速加入">
+                            <button onClick={() => onQuickJoinServer(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
+                              <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
                           <Tooltip content="删除">
                             <button onClick={() => setConfirmIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
                               <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
@@ -1309,7 +1322,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanc
                           <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1">{g.motd}</p>
                         )}
                       </div>
-                      <Button size="sm" className="shrink-0 gap-1.5 h-7 text-xs">
+                      <Button size="sm" onClick={() => onQuickJoinServer(`${g.ip}:${g.port}`)} className="shrink-0 gap-1.5 h-7 text-xs">
                         <FontAwesomeIcon icon={faPlay} className="h-3 w-3" />加入
                       </Button>
                     </CardContent>
@@ -1757,7 +1770,8 @@ export default function InstanceDetailPage() {
 
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
-  const { launchInstance: ctxLaunchInstance, showLaunchError } = useRunning()
+  const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
+  const { confirm } = useMessageBox()
 
   const handleLaunch = useCallback(async () => {
     if (!id) return
@@ -1777,6 +1791,30 @@ export default function InstanceDetailPage() {
       showLaunchError('启动失败', e instanceof Error ? e.message : String(e))
     }
   }, [id, instance?.name, needsAccount, resolveAccountCheck, ctxLaunchInstance])
+
+  const handleQuickLaunch = useCallback(async (options: { joinServer?: string; joinWorld?: string }) => {
+    if (!id) return
+    if (needsAccount) {
+      const ok = await resolveAccountCheck()
+      if (!ok) return
+    }
+    const running = runningInstances.some(r => r.instanceId === id)
+    if (running) {
+      const ok = await confirm('当前实例正在运行中，是否启动新实例？', '实例运行中')
+      if (!ok) return
+    }
+    try {
+      await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir }, options)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const code = e instanceof ApiError ? e.code : ''
+      if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
+        setShowMicrosoftReauth(true)
+        return
+      }
+      showLaunchError('启动失败', e instanceof Error ? e.message : String(e))
+    }
+  }, [id, instance?.name, instance?.javaPath, instance?.gameVersion, instance?.gameDir, needsAccount, resolveAccountCheck, ctxLaunchInstance, runningInstances, confirm, showLaunchError])
 
   const handleVerifyResources = useCallback(async () => {
     if (!id) return
@@ -2199,13 +2237,13 @@ export default function InstanceDetailPage() {
             </Card>
           )}
 
-          <TabContent activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} /></TabContent>
+          <TabContent activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} onQuickJoinWorld={(name) => handleQuickLaunch({ joinWorld: name })} /></TabContent>
           <TabContent activeTab={tab} tabId="screenshots"><ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} /></TabContent>
           <TabContent activeTab={tab} tabId="mods"><ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} /></TabContent>
           <TabContent activeTab={tab} tabId="resourcepacks"><ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} /></TabContent>
           <TabContent activeTab={tab} tabId="shaderpacks"><ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} /></TabContent>
           <TabContent activeTab={tab} tabId="datapacks"><DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="servers"><ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} /></TabContent>
+          <TabContent activeTab={tab} tabId="servers"><ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} onQuickJoinServer={(ip) => handleQuickLaunch({ joinServer: ip })} /></TabContent>
           <TabContent activeTab={tab} tabId="gamesettings"><GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} /></TabContent>
         </div>
       </div>

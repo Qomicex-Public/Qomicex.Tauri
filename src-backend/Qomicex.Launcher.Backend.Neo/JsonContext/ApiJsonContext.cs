@@ -26,6 +26,7 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(CreateInstanceRequest))]
 [JsonSerializable(typeof(UpdateInstanceRequest))]
 [JsonSerializable(typeof(LaunchRequest))]
+[JsonSerializable(typeof(LaunchInstanceRequest))]
 [JsonSerializable(typeof(ResourceCompleteRequest))]
 [JsonSerializable(typeof(ProgressResponse))]
 [JsonSerializable(typeof(CheckResourcesResponse))]
@@ -261,6 +262,9 @@ public sealed record LaunchRequest(
     int MaxMemory = 4096, string? JvmArgs = null,
     bool VersionIsolation = false, string? AuthUuid = null,
     string? AuthName = null, string? AuthToken = null,
+    string? JoinServer = null, string? JoinWorld = null);
+
+public sealed record LaunchInstanceRequest(
     string? JoinServer = null, string? JoinWorld = null);
 
 public sealed record ResourceCompleteRequest(
