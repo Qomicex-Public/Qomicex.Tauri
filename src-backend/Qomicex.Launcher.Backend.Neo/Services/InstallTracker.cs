@@ -281,7 +281,7 @@ public sealed class InstallTracker
         {
             session.SetStage("installing-loader", 88, $"安装 {loader}...");
             await InstallLoader(core.Installer, versionDirName, jsonContent, gameDir,
-                loader, loaderVersion, gameVersion, installerPath, downloadSourceId, ct);
+                loader, loaderVersion, gameVersion, installerPath, downloadSourceId, session, ct);
             session.SetStage("installing-loader", 92);
         }
 
@@ -357,6 +357,11 @@ public sealed class InstallTracker
             var inst = installerFactory.CreateQuilt(downloadSourceId, gameDir);
             return await inst.GetMissLibrariesAsync(loaderVersion, gameVersion, gameDir);
         }
+        if (lower == "babric")
+        {
+            var inst = installerFactory.CreateBabric(downloadSourceId, gameDir);
+            return await inst.GetMissLibrariesAsync(loaderVersion, gameVersion, gameDir);
+        }
         if (lower == "cleanroom" && installerPath != null)
         {
             var inst = installerFactory.CreateCleanroom(downloadSourceId, gameDir);
@@ -368,7 +373,8 @@ public sealed class InstallTracker
     private async Task InstallLoader(IInstallerFactory installerFactory,
         string versionId, string inheritsFromJson,
         string gameDir, string loader, string loaderVersion, string gameVersion,
-        string? installerPath, int downloadSourceId, CancellationToken ct)
+        string? installerPath, int downloadSourceId,
+        DownloadSession? session = null, CancellationToken ct = default)
     {
         var lower = loader.ToLowerInvariant();
 
@@ -415,6 +421,15 @@ public sealed class InstallTracker
         if (lower == "liteloader")
         {
             var inst = installerFactory.CreateLiteLoader(downloadSourceId, gameDir, gameVersion);
+            await inst.InstallAsync(versionId, inheritsFromJson,
+                loaderVersion, gameVersion, null, null);
+            return;
+        }
+
+        if (lower == "babric")
+        {
+            session?.SetStage("installing-loader", 88, "获取 Babric Meta...");
+            var inst = installerFactory.CreateBabric(downloadSourceId, gameDir);
             await inst.InstallAsync(versionId, inheritsFromJson,
                 loaderVersion, gameVersion, null, null);
             return;
