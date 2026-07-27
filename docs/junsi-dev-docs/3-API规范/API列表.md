@@ -141,7 +141,7 @@
 
 | 方法 | 路径 | 用途 |
 |:---|:---|:---|
-| GET | `/loaders/versions` | 获取加载器版本 |
+| GET | `/loaders/versions` | 获取加载器版本 (支持: All, Forge, Fabric, LegacyFabric, NeoForge, Quilt, LiteLoader, OptiFine, Cleanroom) |
 | GET | `/loaders/addons` | 获取加载器扩展 (Fabric API, QSL, OptiFine) |
 
 ---

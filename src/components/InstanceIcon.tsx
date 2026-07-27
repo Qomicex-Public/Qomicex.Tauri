@@ -13,6 +13,7 @@ const LOADER_ICONS: Record<string, InstanceIconName> = {
   forge: 'Anvil',
   neoforge: 'NeoForge',
   fabric: 'Fabric',
+  legacyfabric: 'Fabric',
   quilt: 'Quilt',
   optifabric: 'OptiFabric',
   labymod: 'LabyMod',

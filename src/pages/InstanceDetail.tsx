@@ -46,6 +46,7 @@ import { useDebug } from '../components/DebugContext.tsx'
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
   fabric: 'bg-cyan-500/10 text-cyan-400 border-cyan-400/25',
+  legacyfabric: 'bg-cyan-500/10 text-cyan-400 border-cyan-400/25',
   neoforge: 'bg-green-500/10 text-green-500 border-green-500/25',
   quilt: 'bg-purple-500/10 text-purple-400 border-purple-400/25',
   cleanroom: 'bg-yellow-500/10 text-yellow-400 border-yellow-400/25',

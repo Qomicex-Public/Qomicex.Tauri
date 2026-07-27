@@ -465,6 +465,7 @@ public static class InstanceEndpoints
     private static Qomicex.Core.AOT.Public.Models.ModLoaderType? MapLoaderType(string loader) => loader.ToLowerInvariant() switch
     {
         "fabric" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Fabric,
+        "legacyfabric" => Qomicex.Core.AOT.Public.Models.ModLoaderType.LegacyFabric,
         "quilt" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Quilt,
         "forge" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Forge,
         "neoforge" => Qomicex.Core.AOT.Public.Models.ModLoaderType.NeoForge,

@@ -347,6 +347,11 @@ public sealed class InstallTracker
             var inst = installerFactory.CreateFabric(downloadSourceId, gameDir);
             return await inst.GetMissLibrariesAsync(loaderVersion, gameVersion, gameDir);
         }
+        if (lower == "legacyfabric")
+        {
+            var inst = installerFactory.CreateLegacyFabric(downloadSourceId, gameDir);
+            return await inst.GetMissLibrariesAsync(loaderVersion, gameVersion, gameDir);
+        }
         if (lower == "quilt")
         {
             var inst = installerFactory.CreateQuilt(downloadSourceId, gameDir);
@@ -386,6 +391,14 @@ public sealed class InstallTracker
         if (lower == "fabric")
         {
             var inst = installerFactory.CreateFabric(downloadSourceId, gameDir);
+            await inst.InstallAsync(versionId, inheritsFromJson,
+                loaderVersion, gameVersion, null, null);
+            return;
+        }
+
+        if (lower == "legacyfabric")
+        {
+            var inst = installerFactory.CreateLegacyFabric(downloadSourceId, gameDir);
             await inst.InstallAsync(versionId, inheritsFromJson,
                 loaderVersion, gameVersion, null, null);
             return;

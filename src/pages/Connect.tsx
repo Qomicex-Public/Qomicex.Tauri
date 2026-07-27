@@ -300,8 +300,8 @@ export default function Connect() {
                 <button onClick={() => setHostSubMode('instance')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
                   <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
                 </button>
+                <h2 className="text-lg font-semibold">扫描本地端口</h2>
               </div>
-              <h2 className="text-lg font-semibold">扫描本地端口</h2>
               
               {scanning && detectedPort === null && (
                 <div className="space-y-2">

@@ -38,6 +38,7 @@ interface ManagedDir {
 const LOADER_COLORS: Record<string, string> = {
   Forge: 'text-orange-500 bg-orange-500/10 border-orange-500/25',
   Fabric: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/25',
+  LegacyFabric: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/25',
   NeoForge: 'text-green-500 bg-green-500/10 border-green-500/25',
   Quilt: 'text-purple-400 bg-purple-400/10 border-purple-400/25',
   OptiFine: 'text-yellow-500 bg-yellow-500/10 border-yellow-500/25',
@@ -664,6 +665,7 @@ export default function Instances() {
                   <SelectOption value="Fabric">Fabric</SelectOption>
                   <SelectOption value="NeoForge">NeoForge</SelectOption>
                   <SelectOption value="Quilt">Quilt</SelectOption>
+                  <SelectOption value="LegacyFabric">LegacyFabric</SelectOption>
                   <SelectOption value="LiteLoader">LiteLoader</SelectOption>
                   <SelectOption value="Cleanroom">Cleanroom</SelectOption>
                 </Select>

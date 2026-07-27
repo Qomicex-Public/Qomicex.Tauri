@@ -182,11 +182,18 @@ function setConsoleLevel(level: string) {
   console.trace = shouldLog(0) ? _console.trace : () => {}
 }
 
+const savedTheme = localStorage.getItem('qomicex-theme')
+if (savedTheme === 'light' || savedTheme === 'dark') {
+  document.documentElement.classList.toggle('dark', savedTheme === 'dark')
+  document.documentElement.classList.toggle('light', savedTheme === 'light')
+}
+
 function App() {
   useEffect(() => {
     function setTheme(theme: 'dark' | 'light') {
       document.documentElement.classList.toggle('dark', theme === 'dark')
       document.documentElement.classList.toggle('light', theme === 'light')
+      localStorage.setItem('qomicex-theme', theme)
     }
     loadSettings().then(s => {
       setConsoleLevel(s.logLevel ?? 'info')
