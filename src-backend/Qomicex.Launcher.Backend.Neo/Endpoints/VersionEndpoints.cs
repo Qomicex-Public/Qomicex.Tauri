@@ -19,7 +19,8 @@ public static class VersionEndpoints
     private static List<ScannedLoaderEntry> DetectLoaders(JsonElement root, string? mainClass, string id, string? inheritsFrom)
     {
         var loaders = new List<ScannedLoaderEntry>();
-        string? fabricVer = null, quiltVer = null, forgeVer = null, neoForgeVer = null, liteVer = null, optiVer = null;
+        string? fabricVer = null, quiltVer = null, forgeVer = null, neoForgeVer = null, liteVer = null, optiVer = null, cleanroomVer = null;
+        bool hasLegacyFabric = false, hasBabric = false;
 
         if (root.TryGetProperty("libraries", out var libsEl) && libsEl.ValueKind == JsonValueKind.Array)
         {
@@ -29,6 +30,17 @@ public static class VersionEndpoints
                 if (string.IsNullOrEmpty(libName)) continue;
                 var lower = libName.ToLowerInvariant();
                 var parts = libName.Split(':');
+
+                if (parts.Length >= 3)
+                {
+                    if (parts[0].Contains("legacyfabric", StringComparison.OrdinalIgnoreCase))
+                        hasLegacyFabric = true;
+                    if (parts[0].Equals("babric", StringComparison.OrdinalIgnoreCase))
+                        hasBabric = true;
+                }
+
+                if (cleanroomVer == null && parts.Length >= 3 && parts[1] == "cleanroom")
+                    cleanroomVer = parts[2];
 
                 if (fabricVer == null && parts.Length >= 3 && (parts[1] == "fabric" || parts[1] == "fabric-loader"))
                     fabricVer = parts[2];
@@ -68,7 +80,16 @@ public static class VersionEndpoints
             }
         }
 
-        if (fabricVer != null) loaders.Add(new ScannedLoaderEntry("Fabric", fabricVer));
+        if (fabricVer != null)
+        {
+            if (hasLegacyFabric)
+                loaders.Add(new ScannedLoaderEntry("LegacyFabric", fabricVer));
+            else if (hasBabric)
+                loaders.Add(new ScannedLoaderEntry("Babric", fabricVer));
+            else
+                loaders.Add(new ScannedLoaderEntry("Fabric", fabricVer));
+        }
+        if (cleanroomVer != null) loaders.Add(new ScannedLoaderEntry("Cleanroom", cleanroomVer));
         if (quiltVer != null) loaders.Add(new ScannedLoaderEntry("Quilt", quiltVer));
         if (liteVer != null) loaders.Add(new ScannedLoaderEntry("LiteLoader", liteVer));
         if (optiVer != null) loaders.Add(new ScannedLoaderEntry("OptiFine", optiVer));
@@ -78,7 +99,16 @@ public static class VersionEndpoints
         if (loaders.Count == 0 && mainClass != null)
         {
             var mc = mainClass.ToLowerInvariant();
-            if (mc.Contains("fabricmc")) loaders.Add(new ScannedLoaderEntry("Fabric", ""));
+            if (mc.Contains("fabricmc"))
+            {
+                if (id.Contains("babric", StringComparison.OrdinalIgnoreCase))
+                    loaders.Add(new ScannedLoaderEntry("Babric", ""));
+                else if (id.Contains("legacyfabric", StringComparison.OrdinalIgnoreCase))
+                    loaders.Add(new ScannedLoaderEntry("LegacyFabric", ""));
+                else
+                    loaders.Add(new ScannedLoaderEntry("Fabric", ""));
+            }
+            else if (mc.Contains("outlands")) loaders.Add(new ScannedLoaderEntry("Cleanroom", ""));
             else if (mc.Contains("quiltmc")) loaders.Add(new ScannedLoaderEntry("Quilt", ""));
             else if (mc.Contains("neoforge") || mc.Contains("cpw.mods")) loaders.Add(new ScannedLoaderEntry("NeoForge", ""));
             else if (mc.Contains("minecraftforge") || mc.Contains("forge")) loaders.Add(new ScannedLoaderEntry("Forge", ""));
@@ -90,6 +120,9 @@ public static class VersionEndpoints
                 : id.Contains("-fabric-", StringComparison.OrdinalIgnoreCase) ? "Fabric"
                 : id.Contains("-quilt-", StringComparison.OrdinalIgnoreCase) ? "Quilt"
                 : id.Contains("-neoforge-", StringComparison.OrdinalIgnoreCase) ? "NeoForge"
+                : id.Contains("-cleanroom", StringComparison.OrdinalIgnoreCase) ? "Cleanroom"
+                : id.Contains("-legacyfabric-", StringComparison.OrdinalIgnoreCase) ? "LegacyFabric"
+                : id.Contains("-babric-", StringComparison.OrdinalIgnoreCase) ? "Babric"
                 : null;
             if (guess != null)
                 loaders.Add(new ScannedLoaderEntry(guess, id));
@@ -181,6 +214,8 @@ public static class VersionEndpoints
 
                     // Auto-fix existing instances with incorrect gameVersion
                     FixInstanceGameVersions(instances, result, gameDir, logger);
+                    // Auto-fix existing instances with missing/incorrect loaders
+                    FixInstanceLoaders(instances, result, gameDir, logger);
                 }
 
                 return Results.Json(new ScanVersionsResponse(absDir, result, new List<string>()), ApiJsonContext.Default.ScanVersionsResponse);
@@ -301,6 +336,38 @@ public static class VersionEndpoints
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Scan: failed to fix instance game versions");
+        }
+    }
+
+    /// <summary>
+    /// Auto-fix existing instances with missing/incorrect loader info
+    /// </summary>
+    private static void FixInstanceLoaders(InstanceService instances, List<ScannedVersionEntry> scanned, string gameDir, ILogger logger)
+    {
+        try
+        {
+            var allInstances = instances.GetAll();
+            foreach (var inst in allInstances)
+            {
+                if (inst.GameDir != gameDir) continue;
+
+                var scannedVersion = scanned.FirstOrDefault(s => s.Name == inst.Name);
+                if (scannedVersion?.Loaders is not { Count: > 0 }) continue;
+
+                var firstLoader = scannedVersion.Loaders[0];
+                if (inst.Loader != firstLoader.Type || inst.LoaderVersion != firstLoader.Version)
+                {
+                    logger.LogInformation("Scan: fixing instance {Name} loader {Old}/{OldVer} → {New}/{NewVer}",
+                        inst.Name, inst.Loader, inst.LoaderVersion, firstLoader.Type, firstLoader.Version);
+                    inst.Loader = firstLoader.Type;
+                    inst.LoaderVersion = firstLoader.Version;
+                    instances.Update(inst.Id, inst);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Scan: failed to fix instance loaders");
         }
     }
 }

@@ -1,10 +1,11 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faDownload, faCheckCircle, faCircle, faLayerGroup, faChevronDown } from '@fortawesome/free-solid-svg-icons'
+import { faRotate, faDownload, faCheckCircle, faCircle, faLayerGroup, faChevronDown, faSearch } from '@fortawesome/free-solid-svg-icons'
 import { cn } from '../lib/utils.ts'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
 import { Button } from './ui/button.tsx'
+import { Input } from './ui/input.tsx'
 import { Select, SelectOption } from './ui/select.tsx'
 import { getInstances } from '../api/instance.ts'
 import { getResourceVersions, getResourceDependencies } from '../api/resource.ts'
@@ -58,6 +59,7 @@ export default function ResourceInstallDialog({
   const [depSelectedVersion, setDepSelectedVersion] = useState<Record<string, { downloadUrl: string; fileName: string }>>({})
   const [depPickerOpen, setDepPickerOpen] = useState<string | null>(null)
   const depPickerRef = useRef<HTMLDivElement>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const [installError, setInstallError] = useState<string | null>(null)
   const [loadStage, setLoadStage] = useState('')
   const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null)
@@ -73,12 +75,16 @@ export default function ResourceInstallDialog({
     setInstalling(false)
     setInstallError(null)
     setInstallProgress(null)
+    setSearchQuery('')
     ;(async () => {
       setLoadingInstance(true)
       setLoadStage('加载实例列表中...')
       try {
         const settings = await loadSettings()
-        const all = (await getInstances()).filter(i => i.gameDir === settings.gameDir)
+        const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+        const raw = (await getInstances()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
+        const all = [...new Map(raw.map(i => [i.id, i])).values()]
+          .filter(i => category !== 'mod' || i.loader)
         setInstances(all)
         if (all.length > 0) {
           const target = instanceId ? all.find(i => i.id === instanceId) : undefined
@@ -139,16 +145,17 @@ export default function ResourceInstallDialog({
   }, [versions])
 
   useEffect(() => {
-    if (!selectedInstance || !selectedVersion) { setDeps([]); return }
-    if (category !== 'mod') { setDeps([]); return }
+    if (!selectedInstance || !selectedVersion) { setDeps([]); setDepVersionOptions({}); return }
+    if (category !== 'mod') { setDeps([]); setDepVersionOptions({}); return }
     setLoadingDeps(true)
+    setDepVersionOptions({})
     let cancelled = false
     ;(async () => {
       try {
         const resolved = await getResourceDependencies(
           resourceId, source, selectedVersion.id,
           selectedInstance.gameVersion,
-          category === 'mod' ? (selectedInstance.loader || '').toLowerCase() : undefined
+          (selectedInstance.loader || '').toLowerCase() || undefined
         )
         if (cancelled) return
         setDeps(resolved)
@@ -157,12 +164,12 @@ export default function ResourceInstallDialog({
           cats.map(cat => getInstalledFileNames(selectedInstance.id, cat))
         )
         if (cancelled) return
-        const nameMap: Record<string, string[]> = {}
-        cats.forEach((cat, i) => {
-          nameMap[cat] = results[i].status === 'fulfilled' ? results[i].value : []
+        const allInstalledNames = new Set<string>()
+        cats.forEach((_, i) => {
+          if (results[i].status === 'fulfilled')
+            for (const n of results[i].value) allInstalledNames.add(n)
         })
-        setInstalledNames(new Set(Object.values(nameMap).flat()))
-        // build projectId→(fileName, version) map from mods metadata
+        setInstalledNames(allInstalledNames)
         const meta = await getModsMetadata(selectedInstance.id).catch(() => [] as ModMetadata[])
         if (cancelled) return
         const pidMap = new Map<string, { fileName: string; version: string }>()
@@ -172,32 +179,26 @@ export default function ResourceInstallDialog({
           if (m.curseForgeId) pidMap.set(String(m.curseForgeId), entry)
         }
         setInstalledByProjectId(pidMap)
+        const pending = resolved.filter(d => !allInstalledNames.has(d.fileName) && !pidMap.has(d.projectId))
+        if (pending.length > 0) {
+          const vResults = await Promise.allSettled(
+            pending.map(dep =>
+              getResourceVersions(dep.projectId, dep.source || 'modrinth', selectedInstance.gameVersion, (selectedInstance.loader || '').toLowerCase() || undefined)
+                .then(vers => ({ projectId: dep.projectId, vers }))
+            )
+          )
+          if (cancelled) return
+          const vMap: Record<string, ResourceVersion[]> = {}
+          for (const r of vResults) {
+            if (r.status === 'fulfilled') vMap[r.value.projectId] = r.value.vers
+          }
+          setDepVersionOptions(vMap)
+        }
       } catch { notify('加载前置模组失败', 'error') }
       if (!cancelled) setLoadingDeps(false)
     })()
     return () => { cancelled = true }
   }, [selectedInstance, selectedVersion, source, resourceId, notify])
-
-  useEffect(() => {
-    const pending = deps.filter(d => !installedNames.has(d.fileName) && !installedByProjectId.has(d.projectId))
-    if (pending.length === 0 || !selectedInstance) { setDepVersionOptions({}); return }
-    let cancelled = false
-    ;(async () => {
-      const results = await Promise.allSettled(
-        pending.map(dep =>
-          getResourceVersions(dep.projectId, dep.source || 'modrinth', selectedInstance.gameVersion, (selectedInstance.loader || '').toLowerCase() || undefined)
-            .then(vers => ({ projectId: dep.projectId, vers }))
-        )
-      )
-      if (cancelled) return
-      const map: Record<string, ResourceVersion[]> = {}
-      for (const r of results) {
-        if (r.status === 'fulfilled') map[r.value.projectId] = r.value.vers
-      }
-      setDepVersionOptions(map)
-    })()
-    return () => { cancelled = true }
-  }, [deps, installedNames, installedByProjectId, selectedInstance])
 
   useEffect(() => {
     if (!depPickerOpen) return
@@ -305,8 +306,18 @@ export default function ResourceInstallDialog({
               暂无实例，请先创建实例
             </div>
           ) : (
-            <div className="grid gap-1.5 max-h-[180px] overflow-y-auto">
-              {instances.map(inst => (
+            <div className="space-y-1.5">
+              <div className="relative">
+                <FontAwesomeIcon icon={faSearch} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="搜索实例..."
+                  className="h-8 pl-8 text-xs"
+                />
+              </div>
+              <div className="grid gap-1.5 max-h-[160px] overflow-y-auto">
+                {instances.filter(i => !searchQuery || i.name.toLowerCase().includes(searchQuery.toLowerCase())).map(inst => (
                 <button
                   key={inst.id}
                   onClick={() => setSelectedInstance(inst)}
@@ -329,6 +340,7 @@ export default function ResourceInstallDialog({
                   </div>
                 </button>
               ))}
+              </div>
             </div>
           )}
         </div>
@@ -364,7 +376,7 @@ export default function ResourceInstallDialog({
           )}
         </div>
 
-        {selectedVersion && (
+        {selectedVersion && category === 'mod' && (
           <div className="space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">
               前置模组 {loadingDeps && <FontAwesomeIcon icon={faRotate} className="ml-1 h-3 w-3 animate-spin" />}
