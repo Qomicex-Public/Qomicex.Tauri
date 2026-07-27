@@ -1689,6 +1689,7 @@ export default function InstanceDetailPage() {
   const [serversRefresh, setServersRefresh] = useState(0)
   const [gameSettingsRefresh, setGameSettingsRefresh] = useState(0)
   const [detailRefreshKey, setDetailRefreshKey] = useState(0)
+  const [selectedAccountUuid, setSelectedAccountUuid] = useState<string | null>(null)
 
   const refreshDetail = useCallback(() => {
     cacheInvalidate('api-instance-')
@@ -1778,12 +1779,12 @@ export default function InstanceDetailPage() {
 
   const handleLaunch = useCallback(async () => {
     if (!id) return
-    if (needsAccount) {
+    if (needsAccount && !selectedAccountUuid) {
       const ok = await resolveAccountCheck()
       if (!ok) return
     }
     try {
-      await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir })
+      await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir }, selectedAccountUuid ? { accountUuid: selectedAccountUuid } : undefined)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const code = e instanceof ApiError ? e.code : ''
@@ -1793,7 +1794,7 @@ export default function InstanceDetailPage() {
       }
       showLaunchError('启动失败', e instanceof Error ? e.message : String(e))
     }
-  }, [id, instance?.name, needsAccount, resolveAccountCheck, ctxLaunchInstance])
+  }, [id, instance?.name, needsAccount, resolveAccountCheck, ctxLaunchInstance, selectedAccountUuid])
 
   const handleQuickLaunch = useCallback(async (options: { joinServer?: string; joinWorld?: string }) => {
     if (!id) return
@@ -2032,7 +2033,18 @@ export default function InstanceDetailPage() {
               <Card>
                 <CardContent className="p-5 space-y-3">
                   <h3 className="text-sm font-medium">快速操作</h3>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <Select
+                      value={selectedAccountUuid ?? ''}
+                      onChange={(v) => setSelectedAccountUuid(v || null)}
+                      placeholder="默认账户"
+                      className="min-w-[120px]"
+                    >
+                      <SelectOption value="">默认账户</SelectOption>
+                      {accounts.map((a) => (
+                        <SelectOption key={a.uuid} value={a.uuid}>{a.name}</SelectOption>
+                      ))}
+                    </Select>
                     <Button size="sm" onClick={handleLaunch} className="gap-2">
                       <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />启动游戏
                     </Button>

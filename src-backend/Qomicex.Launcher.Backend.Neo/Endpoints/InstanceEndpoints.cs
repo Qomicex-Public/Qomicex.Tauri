@@ -122,7 +122,7 @@ public static class InstanceEndpoints
                 Stage = "starting", Message = "准备启动...", Progress = 0
             });
 
-            var authOptions = await ResolveAuthOptions(accountService, core.Auth);
+            var authOptions = await ResolveAuthOptions(accountService, core.Auth, request?.AccountUuid);
 
             _ = Task.Run(async () =>
             {
@@ -516,9 +516,9 @@ public static class InstanceEndpoints
         return 8;
     }
 
-    private static async Task<AuthOptions> ResolveAuthOptions(AccountService accountService, IAuthProvider authProvider)
+    private static async Task<AuthOptions> ResolveAuthOptions(AccountService accountService, IAuthProvider authProvider, string? accountUuid = null)
     {
-        var account = await accountService.GetDefaultAsync();
+        var account = accountUuid != null ? await accountService.GetAccountAsync(accountUuid) : await accountService.GetDefaultAsync();
         if (account == null)
             return new AuthOptions();
 

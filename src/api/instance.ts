@@ -36,6 +36,7 @@ export async function deleteInstance(id: string): Promise<void> {
 export interface LaunchInstanceOptions {
   joinServer?: string
   joinWorld?: string
+  accountUuid?: string
 }
 
 export async function launchInstance(id: string, options?: LaunchInstanceOptions): Promise<LaunchResult> {

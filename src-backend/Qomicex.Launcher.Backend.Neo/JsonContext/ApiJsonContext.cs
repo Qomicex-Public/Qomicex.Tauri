@@ -265,7 +265,7 @@ public sealed record LaunchRequest(
     string? JoinServer = null, string? JoinWorld = null);
 
 public sealed record LaunchInstanceRequest(
-    string? JoinServer = null, string? JoinWorld = null);
+    string? JoinServer = null, string? JoinWorld = null, string? AccountUuid = null);
 
 public sealed record ResourceCompleteRequest(
     string VersionId, bool CheckOnly = false);
