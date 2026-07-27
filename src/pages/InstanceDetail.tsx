@@ -50,6 +50,7 @@ const LOADER_COLORS: Record<string, string> = {
   neoforge: 'bg-green-500/10 text-green-500 border-green-500/25',
   quilt: 'bg-purple-500/10 text-purple-400 border-purple-400/25',
   cleanroom: 'bg-yellow-500/10 text-yellow-400 border-yellow-400/25',
+  babric: 'bg-amber-500/10 text-amber-400 border-amber-400/25',
 }
 
 const TABS = [

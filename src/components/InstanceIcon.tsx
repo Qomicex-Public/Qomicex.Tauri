@@ -18,6 +18,7 @@ const LOADER_ICONS: Record<string, InstanceIconName> = {
   optifabric: 'OptiFabric',
   labymod: 'LabyMod',
   cleanroom: 'Cleanroom',
+  babric: 'Fabric',
 }
 
 export function getDefaultIcon(loader?: string | null): InstanceIconName {

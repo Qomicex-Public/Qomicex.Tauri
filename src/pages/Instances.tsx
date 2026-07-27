@@ -18,6 +18,7 @@ import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } f
 import { createInstance, startInstall, getInstances, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui/select.tsx'
+import { Tabs } from '../components/ui/tabs.tsx'
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance } from '../types/index.ts'
 import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, autoSelectDownloadSource, openFolder } from '../api/settings.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
@@ -44,6 +45,7 @@ const LOADER_COLORS: Record<string, string> = {
   OptiFine: 'text-yellow-500 bg-yellow-500/10 border-yellow-500/25',
   LiteLoader: 'text-sky-400 bg-sky-400/10 border-sky-400/25',
   Cleanroom: 'text-yellow-400 bg-yellow-500/10 border-yellow-400/25',
+  Babric: 'text-amber-400 bg-amber-400/10 border-amber-400/25',
   Vanilla: 'text-muted-foreground bg-muted border-border',
 }
 
@@ -535,22 +537,9 @@ export default function Instances() {
           <h2 className="text-lg font-semibold">下载新版本</h2>
         </div>
         <div className="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">分类</span>
-            {REMOTE_VERSION_CATEGORIES.map((item) => (
-              <button
-                key={item.key}
-                onClick={() => setRemoteCategory(item.key)}
-                className={cn(
-                  'rounded-xl px-3.5 py-1.5 text-xs font-medium transition-all',
-                  remoteCategory === item.key
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">分类</p>
+            <Tabs tabs={REMOTE_VERSION_CATEGORIES.map(c => ({ id: c.key, label: c.label }))} activeTab={remoteCategory} onChange={setRemoteCategory} />
           </div>
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_112px]">
@@ -668,6 +657,7 @@ export default function Instances() {
                   <SelectOption value="LegacyFabric">LegacyFabric</SelectOption>
                   <SelectOption value="LiteLoader">LiteLoader</SelectOption>
                   <SelectOption value="Cleanroom">Cleanroom</SelectOption>
+                  <SelectOption value="Babric">Babric</SelectOption>
                 </Select>
                 {form.loader ? (
                   <Select

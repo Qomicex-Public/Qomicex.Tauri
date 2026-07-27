@@ -472,6 +472,7 @@ public static class InstanceEndpoints
         "liteloader" => Qomicex.Core.AOT.Public.Models.ModLoaderType.LiteLoader,
         "optifine" => Qomicex.Core.AOT.Public.Models.ModLoaderType.OptiFine,
         "cleanroom" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Cleanroom,
+        "babric" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Babric,
         _ => null
     };
 

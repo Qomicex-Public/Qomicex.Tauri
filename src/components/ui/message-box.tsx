@@ -40,6 +40,7 @@ interface ToastState {
   open: boolean
   message: string
   type: MessageBoxType
+  count: number
 }
 interface MessageBoxContextValue {
   alert: (message: string, title?: string) => Promise<void>
@@ -70,12 +71,17 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
   })
   const promptInputRef = React.useRef<HTMLInputElement>(null)
   const [promptValue, setPromptValue] = React.useState("")
-  const [toast, setToast] = React.useState<ToastState>({ open: false, message: '', type: 'info' })
+  const [toast, setToast] = React.useState<ToastState>({ open: false, message: '', type: 'info', count: 0 })
   const toastTimer = React.useRef<number | undefined>(undefined)
 
   const notify = React.useCallback((message: string, type: MessageBoxType = 'info') => {
     if (toastTimer.current !== undefined) clearTimeout(toastTimer.current)
-    setToast({ open: true, message, type })
+    setToast((prev) => {
+      if (prev.open && prev.message === message && prev.type === type) {
+        return { ...prev, count: prev.count + 1 }
+      }
+      return { open: true, message, type, count: 1 }
+    })
     toastTimer.current = window.setTimeout(() => setToast((t) => ({ ...t, open: false })), 3000)
   }, [])
 
@@ -186,7 +192,7 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
           )}
         >
           <FontAwesomeIcon icon={ICONS[toast.type].icon} className={cn('h-4 w-4 shrink-0', ICONS[toast.type].className)} />
-          <span>{toast.message}</span>
+          <span>{toast.count > 1 ? `${toast.message} x${toast.count}` : toast.message}</span>
         </div>,
         document.body
       )}
