@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar, faBug, faGhost, faWrench, faLayerGroup } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { invoke } from '@tauri-apps/api/core'
@@ -151,6 +151,7 @@ export default function Instances() {
   const [remoteSort, setRemoteSort] = useState('recommended')
   const [remoteViewMode, setRemoteViewMode] = useState<'grid' | 'list'>('grid')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [filterType, setFilterType] = useState('all')
   const [form, setForm] = useState({ name: '', gameVersion: '', loader: '', loaderVersion: '' })
   const [selectedAddons, setSelectedAddons] = useState<string[]>([])
   const [loaderVersions, setLoaderVersions] = useState<LoaderVersionInfo[]>([])
@@ -498,10 +499,35 @@ export default function Instances() {
     } catch {}
   }
 
+  const versionTypeMap = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const v of remoteVersions) m.set(v.id, v.type)
+    return m
+  }, [remoteVersions])
+
+  const getVersionType = useCallback((v: ScannedVersion): string => {
+    if (v.state !== 'Available') return 'broken'
+    if (v.loaders && v.loaders.length > 0) return 'modded'
+    const rt = versionTypeMap.get(v.gameVersion)
+    if (rt === 'snapshot') return 'snapshot'
+    if (rt === 'april_fools') return 'april_fools'
+    return 'vanilla'
+  }, [versionTypeMap])
+
+  const FILTER_OPTIONS = [
+    { key: 'all', label: '全部', icon: faLayerGroup },
+    { key: 'modded', label: '模组', icon: faWrench },
+    { key: 'vanilla', label: '原版', icon: faCube },
+    { key: 'snapshot', label: '快照', icon: faGhost },
+    { key: 'april_fools', label: '愚人节', icon: faStar },
+    { key: 'broken', label: '错误', icon: faBug },
+  ]
+
   const filtered = useMemo(() => scannedLocal
     .filter((v, i, arr) => arr.findIndex(x => x.name === v.name) === i)
-    .filter((v) => !search || v.name.toLowerCase().includes(search.toLowerCase())),
-    [scannedLocal, search])
+    .filter((v) => !search || v.name.toLowerCase().includes(search.toLowerCase()))
+    .filter((v) => filterType === 'all' || getVersionType(v) === filterType),
+    [scannedLocal, search, filterType, getVersionType])
 
   const filteredRemote = useMemo(() => remoteVersions
     .filter((v) => remoteCategory === 'all' || v.type === remoteCategory)
@@ -1002,6 +1028,13 @@ export default function Instances() {
           <FontAwesomeIcon icon={viewMode === 'grid' ? faGrip : faList} className="h-3.5 w-3.5" />
         </button>
       </div>
+
+      <Tabs
+        tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <FontAwesomeIcon icon={o.icon} className="h-3 w-3" /> }))}
+        activeTab={filterType}
+        onChange={setFilterType}
+        className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
+      />
 
       {!currentDir ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">

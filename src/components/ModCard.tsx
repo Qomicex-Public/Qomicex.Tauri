@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCube, faRotate } from '@fortawesome/free-solid-svg-icons'
@@ -35,6 +35,8 @@ export default function ModCard({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [imgError, setImgError] = useState(false)
+  const iconRef = useRef<HTMLDivElement>(null)
+  const [iconVisible, setIconVisible] = useState(false)
 
   const handleToggle = useCallback(async () => {
     const wasActive = mod.active
@@ -60,6 +62,16 @@ export default function ModCard({
     } catch (e) { console.error('Delete mod failed:', e) }
     setDeleting(false)
   }, [instanceId, mod, onRefresh])
+
+  useEffect(() => {
+    if (!iconRef.current) return
+    const el = iconRef.current
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setIconVisible(true); observer.disconnect() }
+    }, { rootMargin: '200px' })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   const contextItems: ContextMenuItem[] = []
   if (mod.mcmodId) {
@@ -93,16 +105,21 @@ export default function ModCard({
           className={cn(
             'group cursor-pointer select-none border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm',
             !mod.active && 'opacity-50',
-            selected && 'ring-2 ring-primary border-primary/30'
+            selected && 'border-primary/40 bg-primary/[0.03]'
           )}
           onClick={(e) => onSelect?.(mod.fileName, e.shiftKey, e.ctrlKey || e.metaKey)}
         >
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
-              {mod.iconBase64 ? (
-                <img src={`data:image/png;base64,${mod.iconBase64}`} alt={mod.name} className="h-full w-full object-cover" loading="lazy" />
-              ) : mod.iconUrl && !imgError ? (
-                <img src={mod.iconUrl} alt={mod.name} className="h-full w-full object-cover" loading="lazy" onError={() => setImgError(true)} />
+          <CardContent className="flex items-center gap-4 p-4 relative">
+            <div className={cn('absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200', selected ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0')} />
+            <div ref={iconRef} className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
+              {iconVisible ? (
+                mod.iconBase64 ? (
+                  <img src={`data:image/png;base64,${mod.iconBase64}`} alt={mod.name} className="h-full w-full object-cover" loading="lazy" />
+                ) : mod.iconUrl && !imgError ? (
+                  <img src={mod.iconUrl} alt={mod.name} className="h-full w-full object-cover" loading="lazy" onError={() => setImgError(true)} />
+                ) : (
+                  <FontAwesomeIcon icon={faCube} className="h-5 w-5 opacity-50" />
+                )
               ) : (
                 <FontAwesomeIcon icon={faCube} className="h-5 w-5 opacity-50" />
               )}
@@ -136,16 +153,17 @@ export default function ModCard({
                 onClick={(e) => { e.stopPropagation(); handleToggle() }}
                 disabled={toggling}
                 className={cn(
-                  'relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors',
+                  'relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors duration-200',
                   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                  'ring-1 ring-inset ring-white/[0.06]',
                   mod.active ? 'bg-primary' : 'bg-muted-foreground/25',
                   toggling && 'opacity-50 cursor-wait'
                 )}
               >
                 <span
                   className={cn(
-                    'inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
-                    mod.active ? 'translate-x-[22px]' : 'translate-x-[4px]'
+                    'inline-block h-4 w-4 rounded-full bg-white transition-all duration-200',
+                    mod.active ? 'translate-x-[22px] shadow-md' : 'translate-x-[4px] shadow-sm'
                   )}
                 />
                 {toggling && <FontAwesomeIcon icon={faRotate} className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />}

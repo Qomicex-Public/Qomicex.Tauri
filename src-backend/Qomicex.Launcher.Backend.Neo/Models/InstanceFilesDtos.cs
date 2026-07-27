@@ -32,6 +32,8 @@ public sealed class ModMetadataDto
     public int? McmodId { get; set; }
     public string? ChineseName { get; set; }
     public bool Active { get; set; }
+    public long FileSize { get; set; }
+    public DateTime LastModified { get; set; }
 }
 
 public sealed class ResourcePackMetadataDto
