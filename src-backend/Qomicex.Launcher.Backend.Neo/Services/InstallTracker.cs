@@ -35,7 +35,8 @@ public sealed class InstallTracker
 
     public void Start(string instanceId, string gameVersion, string gameDir,
         string? loader, string? loaderVersion, string[]? addons,
-        int downloadThreads, bool versionIsolation, int? downloadSourceId, string? instanceName = null)
+        int downloadThreads, bool versionIsolation, int? downloadSourceId, string? instanceName = null,
+        Func<InstallState, CancellationToken, Task>? postInstall = null)
     {
         var cts = new CancellationTokenSource();
         var state = new InstallState(cts);
@@ -48,6 +49,16 @@ public sealed class InstallTracker
                 await RunInstallAsync(instanceId, gameVersion, gameDir,
                     loader, loaderVersion, addons, downloadThreads,
                     versionIsolation, downloadSourceId ?? 0, state, cts.Token, instanceName);
+                if (postInstall is null) return;
+                state.Status = "downloading";
+                state.Stage = "modpack-files";
+                state.Progress = 92;
+                state.CurrentFile = "准备下载整合包文件...";
+                await postInstall(state, cts.Token);
+                state.Status = "completed";
+                state.Stage = "completed";
+                state.Progress = 100;
+                state.CurrentFile = "";
             }
             catch (OperationCanceledException)
             {
@@ -532,7 +543,11 @@ public sealed class InstallTracker
         {
             var session = _sessionManager.GetSession($"install-{instanceId}");
             if (session is not null)
-                SyncStateFromSession(state, session);
+            {
+                var snap = session.GetSnapshot();
+                if (snap.Status == "downloading")
+                    SyncStateFromSession(state, session);
+            }
         }
         return state;
     }
@@ -576,7 +591,7 @@ public sealed class InstallTracker
                 FailedFiles: state.FailedFiles,
                 CurrentFile: state.CurrentFile,
                 Speed: state.Speed,
-                IsPaused: false,
+                IsPaused: state.Paused,
                 Stage: state.Stage
             ));
         }
@@ -590,10 +605,26 @@ public sealed class InstallTracker
             state.Cancel();
         _sessionManager.CancelSession($"install-{instanceId}");
     }
+
+    public void Pause(string instanceId)
+    {
+        if (_states.TryGetValue(instanceId, out var state))
+            state.Pause();
+    }
+
+    public void Resume(string instanceId)
+    {
+        if (_states.TryGetValue(instanceId, out var state))
+            state.Resume();
+    }
 }
 
 public sealed class InstallState(CancellationTokenSource cts)
 {
+    private volatile bool _paused;
+
+    public CancellationToken Token => cts.Token;
+    public bool Paused => _paused;
     public string Status { get; set; } = "not-started";
     public double Progress { get; set; }
     public string? Error { get; set; }
@@ -618,6 +649,8 @@ public sealed class InstallState(CancellationTokenSource cts)
     );
 
     public void Cancel() => cts.Cancel();
+    public void Pause() => _paused = true;
+    public void Resume() => _paused = false;
 }
 
 public sealed class ModrinthVersion

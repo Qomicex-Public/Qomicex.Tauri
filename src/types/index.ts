@@ -634,6 +634,9 @@ export interface ModpackInstallRequest {
   modpackVersion?: string | null
   modpackAuthor?: string | null
   modpackSummary?: string | null
+  source?: string | null
+  projectId?: string | null
+  versionId?: string | null
 }
 
 export interface NatTypeResult {

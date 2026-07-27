@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Qomicex.Core.AOT.Models.Expansion.CurseForge;
+using Qomicex.Core.AOT.Models.Expansion.FeedTheBeast;
 using Qomicex.Core.AOT.Models.Expansion.Local;
 using Qomicex.Core.AOT.Models.Expansion.Modrinth;
 using Qomicex.Core.AOT.Models.Local;
@@ -218,6 +219,11 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(ModpackParseResult))]
 [JsonSerializable(typeof(ModpackInstallRequest))]
 [JsonSerializable(typeof(ModpackResolveRequest))]
+// FTB export types
+[JsonSerializable(typeof(VersionDetail))]
+[JsonSerializable(typeof(FtbFileInfo))]
+[JsonSerializable(typeof(SpecsInfo))]
+[JsonSerializable(typeof(TargetInfo))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
 }
@@ -499,7 +505,10 @@ public sealed record ModpackInstallRequest(
     string? ModpackName,
     string? ModpackVersion,
     string? ModpackAuthor,
-    string? ModpackSummary
+    string? ModpackSummary,
+    string? Source,
+    string? ProjectId,
+    string? VersionId
 );
 
 public sealed record ModpackResolveRequest(

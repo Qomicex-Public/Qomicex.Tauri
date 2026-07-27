@@ -25,7 +25,7 @@ import { Card, CardContent } from '../components/ui/card.tsx'
 import { Badge } from '../components/ui/badge.tsx'
 import { Tooltip } from '../components/ui/tooltip.tsx'
 import { useMessageBox } from '../components/ui/message-box.tsx'
-import { get, post } from '../api/client.ts'
+import { get, post, API_BASE } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, getResourceDependencies, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
 import { lookupChineseName } from '../api/mcmod.ts'
 import { downloadTo } from '../api/resource-download.ts'
@@ -188,6 +188,11 @@ export default function ResourceDetailPage() {
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
     setDownloadingFor(versionId)
     try {
+      let downloadUrl = url
+      if (source === 'curseforge' && resourceId) {
+        const fresh = await getResourceVersionDownloads(resourceId, versionId, source)
+        if (fresh?.[0]?.url) downloadUrl = fresh[0].url
+      }
       const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shader: 'shaderpacks', save: 'saves', datapack: 'datapacks' }
       const subDir = folderMap[category] || ''
       let defaultPath = fileName
@@ -200,11 +205,24 @@ export default function ResourceDetailPage() {
       }
       const targetPath = await save({ defaultPath })
       if (!targetPath) { setDownloadingFor(null); return }
-      await downloadTo(url, targetPath)
+      await downloadTo(downloadUrl, targetPath)
       notify(`已下载到：${targetPath}`, 'success')
     } catch { notify('下载失败', 'error') }
     setDownloadingFor(null)
-  }, [category, instance, notify])
+  }, [source, resourceId, category, instance, notify])
+
+  const handleFtbExportJson = useCallback(async (versionId: string, versionName: string) => {
+    setDownloadingFor(versionId)
+    try {
+      const exportUrl = `${API_BASE}/api/resources/ftb/${resourceId}/export?versionId=${encodeURIComponent(versionId)}`
+      const defaultPath = `${detail?.title || 'modpack'}-${versionName}.json`
+      const targetPath = await save({ defaultPath })
+      if (!targetPath) { setDownloadingFor(null); return }
+      await downloadTo(exportUrl, targetPath)
+      notify(`已导出到：${targetPath}`, 'success')
+    } catch { notify('导出失败', 'error') }
+    setDownloadingFor(null)
+  }, [resourceId, detail, notify])
 
   useEffect(() => {
     if (!resourceId) return
@@ -645,19 +663,41 @@ export default function ResourceDetailPage() {
                               </div>
 
                               {category === 'modpack' ? (
-                                <Button
-                                  size="sm"
-                                  className="shrink-0"
-                                  onClick={async () => {
-                                    const settings = await loadSettings()
-                                    setModpackGameDir(settings.gameDir)
-                                    setModpackIsolation(settings.versionIsolation ?? true)
-                                    setModpackInstallVersion(version)
-                                  }}
-                                >
-                                  <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                                  安装此整合包
-                                </Button>
+                                <div className="flex shrink-0 gap-1.5">
+                                  <Button
+                                    size="sm"
+                                    onClick={async () => {
+                                      const settings = await loadSettings()
+                                      setModpackGameDir(settings.gameDir)
+                                      setModpackIsolation(settings.versionIsolation ?? true)
+                                      setModpackInstallVersion(version)
+                                    }}
+                                  >
+                                    <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                    安装
+                                  </Button>
+                                  <Tooltip content="另存为">
+                                    {source === 'ftb' ? (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={downloadingFor === version.id}
+                                        onClick={() => handleFtbExportJson(version.id, version.name)}
+                                      >
+                                        <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faFloppyDisk} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
+                                      </Button>
+                                    ) : version.downloads?.[0]?.url ? (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={downloadingFor === version.id}
+                                        onClick={() => handleDownload(version.id, version.downloads[0].url, version.downloads[0].fileName)}
+                                      >
+                                        <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faFloppyDisk} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
+                                      </Button>
+                                    ) : null}
+                                  </Tooltip>
+                                </div>
                               ) : source === 'ftb' ? (
                                 downloadsByVersion[version.id]?.[0]?.url ? (
                                   <Button

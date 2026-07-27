@@ -379,11 +379,24 @@ public static class ResourceCenterEndpoints
                     return Results.Json(new List<ResourceFileDto>(), ApiJsonContext.Default.ListResourceFileDto);
                 var ftb = core.CreateFTBSource();
                 var detail = await ftb.GetVersionDetailAsync(ftbId, ftbVerId);
-                var files = detail?.Files?.Select(f => new ResourceFileDto(f.Url, f.Name, f.Size)).ToList() ?? [];
+                var files = detail?.Files?
+                    .Where(f => f.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    .Select(f => new ResourceFileDto(f.Url, f.Name, f.Size)).ToList() ?? [];
                 return Results.Json(files, ApiJsonContext.Default.ListResourceFileDto);
             }
 
             return Results.Json(new List<ResourceFileDto>(), ApiJsonContext.Default.ListResourceFileDto);
+        });
+
+        group.MapGet("/ftb/{projectId}/export", async (string projectId, string versionId) =>
+        {
+            if (!int.TryParse(projectId, out var ftbId) || !int.TryParse(versionId, out var ftbVerId))
+                return Results.NotFound();
+            var ftb = core.CreateFTBSource();
+            var detail = await ftb.GetVersionDetailAsync(ftbId, ftbVerId);
+            if (detail is null)
+                return Results.NotFound();
+            return Results.Json(detail, ApiJsonContext.Default.VersionDetail);
         });
 
         group.MapGet("/{id}/dependencies", async (string id, string? source, string? versionId, string? gameVersion, string? loader) =>

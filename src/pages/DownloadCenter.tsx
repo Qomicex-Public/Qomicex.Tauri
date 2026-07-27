@@ -8,7 +8,7 @@ import { Tooltip } from '../components/ui/tooltip.tsx'
 import { Tabs } from '../components/ui/tabs.tsx'
 import type { Tab } from '../components/ui/tabs.tsx'
 import { useNavigate } from 'react-router-dom'
-import { getTasks, subscribe, removeTask, clearCompleted, updateTask } from '../stores/downloadStore.ts'
+import { getTasks, subscribe, removeTask, updateTask } from '../stores/downloadStore.ts'
 import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '../api/instance.ts'
 import { cancelResourceDownload } from '../api/resource-download.ts'
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
@@ -84,6 +84,7 @@ export default function DownloadCenter() {
   const prevInstallIds = useRef<Set<string>>(new Set())
   const prevJavaIds = useRef<Set<string>>(new Set())
   const checkedStaleJavaIds = useRef<Set<string>>(new Set())
+  const checkedStaleInstallIds = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     if (!sseData) return
@@ -169,6 +170,15 @@ export default function DownloadCenter() {
             error: match.error || undefined,
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
           })
+        } else if (!checkedStaleInstallIds.current.has(task.instanceId)) {
+          checkedStaleInstallIds.current.add(task.instanceId)
+          getInstallProgress(task.instanceId).then(p => {
+            if (!p || p.status === 'not-started') {
+              updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
+            }
+          }).catch(() => {
+            updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })
+          })
         }
       }
     }
@@ -180,7 +190,7 @@ export default function DownloadCenter() {
         if (lost) {
           getInstallProgress(prevId).then(p => {
             if (p.status === 'completed') updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
-            else if (p.status === 'failed' || p.status === 'cancelled') updateTask(lost.id, { status: p.status })
+            else if (p.status === 'failed' || p.status === 'cancelled' || p.status === 'not-started') updateTask(lost.id, { status: p.status === 'not-started' ? 'cancelled' : p.status })
           }).catch(() => {})
         }
       }
@@ -210,11 +220,13 @@ export default function DownloadCenter() {
   return (
     <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
       <PageHeader title="下载中心" subtitle={`${tasks.length} 个任务`} actions={
-        tasks.some((t) => t.status === 'completed') ? (
-          <Button variant="outline" size="sm" onClick={clearCompleted} className="gap-1.5">
-            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />清除已完成
-          </Button>
-        ) : undefined
+        <Button variant="outline" size="sm" onClick={() => {
+          import('../stores/downloadStore.ts').then(m => {
+            m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued').forEach(t => m.removeTask(t.id))
+          })
+        }} className="gap-1.5">
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />清除已完成/失败
+        </Button>
       } />
 
       <div className="flex items-center gap-2">
@@ -301,7 +313,7 @@ export default function DownloadCenter() {
                             } else if (task.type === 'file' && task.taskId) {
                               cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
                             } else if (task.instanceId) {
-                              cancelInstall(task.instanceId).then(() => removeTask(task.id))
+                              cancelInstall(task.instanceId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
                             }
                           }}>
                             <FontAwesomeIcon icon={faStop} className="h-3.5 w-3.5" />
@@ -348,7 +360,7 @@ export default function DownloadCenter() {
                             } else if (task.type === 'file' && task.taskId) {
                               cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
                             } else if (task.instanceId) {
-                              cancelInstall(task.instanceId).then(() => removeTask(task.id))
+                              cancelInstall(task.instanceId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
                             }
                           }}>
                             <FontAwesomeIcon icon={faStop} className="h-3.5 w-3.5" />

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Qomicex.Core.AOT.Core;
+using Qomicex.Core.AOT.Models.Expansion.FeedTheBeast;
 using Qomicex.Core.AOT.Models.Expansion.Modrinth;
 using Qomicex.Core.AOT.Public.Expansion;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
@@ -66,6 +67,7 @@ public class ModpackService
         {
             "modrinth" => await ResolveModrinthAsync(projectId, versionId),
             "curseforge" => await ResolveCurseForgeOnlineAsync(projectId, versionId),
+            "ftb" => await ResolveFtbOnlineAsync(projectId, versionId),
             _ => throw new InvalidOperationException($"不支持的整合包来源: {source}")
         };
     }
@@ -96,101 +98,36 @@ public class ModpackService
 
         _logger.LogInformation("开始安装整合包 {Name}，实例 {Id}", request.Name, instance.Id);
 
+        var isFtb = string.Equals(request.Source, "ftb", StringComparison.OrdinalIgnoreCase);
+
         _installTracker.Start(instance.Id, request.GameVersion, request.GameDir,
             request.Loader, request.LoaderVersion, null, downloadThreads,
-            request.VersionIsolation, downloadSourceId);
-
-        while (true)
-        {
-            var state = _installTracker.GetState(instance.Id);
-            if (state == null) break;
-            if (state.Status is "completed" or "failed" or "cancelled")
+            request.VersionIsolation, downloadSourceId,
+            postInstall: async (state, ct) =>
             {
-                if (state.Status != "completed")
-                    throw new InvalidOperationException(state.Error ?? "基础安装失败");
-                break;
-            }
-            await Task.Delay(200);
-        }
-
-        _logger.LogInformation("基础安装完成，开始下载整合包文件");
-
-        var state2 = _installTracker.GetState(instance.Id)!;
-        state2.Status = "downloading";
-        state2.Stage = "modpack-files";
-        state2.Progress = 92;
-        state2.CurrentFile = "准备下载整合包文件...";
-
-        if (request.ModpackFiles is { Length: > 0 })
-        {
-            var modsDir = request.VersionIsolation
-                ? Path.Combine(request.GameDir, "versions", versionDirName, "mods")
-                : Path.Combine(request.GameDir, "mods");
-            Directory.CreateDirectory(modsDir);
-
-            state2.TotalFiles = request.ModpackFiles.Length;
-            state2.CompletedFiles = 0;
-            state2.FailedFiles = 0;
-
-            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-            for (var i = 0; i < request.ModpackFiles.Length; i++)
-            {
-                var file = request.ModpackFiles[i];
-                if (string.IsNullOrWhiteSpace(file.DownloadUrl))
+                if (isFtb && !string.IsNullOrWhiteSpace(request.ProjectId) && !string.IsNullOrWhiteSpace(request.VersionId))
                 {
-                    state2.CompletedFiles++;
-                    continue;
+                    await DownloadFtbFilesAsync(state, request, versionDirName, ct);
+                }
+                else if (request.ModpackFiles is { Length: > 0 })
+                {
+                    await DownloadGenericFilesAsync(state, request, versionDirName, ct);
+                }
+                else
+                {
+                    state.Progress = 97;
                 }
 
-                var destPath = Path.Combine(modsDir, file.Path.Replace('/', Path.DirectorySeparatorChar));
-                var destDir = Path.GetDirectoryName(destPath);
-                if (destDir != null) Directory.CreateDirectory(destDir);
-
-                state2.CurrentFile = file.Path;
-                try
+                if (!string.IsNullOrWhiteSpace(request.OverridesZip))
                 {
-                    var resp = await http.GetAsync(file.DownloadUrl);
-                    resp.EnsureSuccessStatusCode();
-                    await using var content = await resp.Content.ReadAsStreamAsync();
-                    await using var outFs = new FileStream(destPath, FileMode.Create);
-                    await content.CopyToAsync(outFs);
-                    state2.CompletedFiles++;
+                    state.Stage = "modpack-overrides";
+                    state.CurrentFile = "解压覆盖文件...";
+                    state.Progress = 97;
+                    await ExtractOverridesAsync(request.OverridesZip, request.GameDir, request.Name, request.VersionIsolation);
+                    state.Progress = 99;
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "下载整合包文件失败: {Path}", file.Path);
-                    state2.FailedFiles++;
-                }
+            });
 
-                state2.Progress = 92 + (5.0 * (i + 1) / request.ModpackFiles.Length);
-            }
-
-            if (state2.FailedFiles > 0)
-                _logger.LogWarning("整合包文件下载完成，{Completed}/{Total} 成功，{Failed} 失败",
-                    state2.CompletedFiles, request.ModpackFiles.Length, state2.FailedFiles);
-        }
-        else
-        {
-            state2.Progress = 97;
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.OverridesZip))
-        {
-            state2.Stage = "modpack-overrides";
-            state2.CurrentFile = "解压覆盖文件...";
-            state2.Progress = 97;
-
-            await ExtractOverridesAsync(request.OverridesZip, request.GameDir, request.Name, request.VersionIsolation);
-
-            state2.Progress = 99;
-        }
-
-        state2.Status = "completed";
-        state2.Stage = "completed";
-        state2.Progress = 100;
-        state2.CurrentFile = "";
-
-        _logger.LogInformation("整合包安装完成: {Name}", request.Name);
         return instance.Id;
     }
 
@@ -218,6 +155,136 @@ public class ModpackService
         finally
         {
             try { File.Delete(tempZip); } catch { }
+        }
+    }
+
+    private async Task DownloadFtbFilesAsync(InstallState state, ModpackInstallRequest request, string versionDirName, CancellationToken ct)
+    {
+        state.CurrentFile = "正在获取FTB整合包文件列表...";
+
+        var ftbInstaller = _core.Installer.CreateFtbModpack(
+            request.GameDir, request.VersionIsolation, _core.HttpClient, _curseForgeApiKey);
+        var missFiles = await ftbInstaller.GetMissLibrariesAsync(
+            versionDirName, request.ProjectId, request.VersionId);
+
+        if (missFiles.Count == 0)
+        {
+            state.Progress = 97;
+            return;
+        }
+
+        state.TotalFiles = missFiles.Count;
+        state.CompletedFiles = 0;
+        state.FailedFiles = 0;
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        for (var i = 0; i < missFiles.Count; i++)
+        {
+            await WaitPauseAsync(state, ct);
+            ct.ThrowIfCancellationRequested();
+
+            var file = missFiles[i];
+            if (string.IsNullOrWhiteSpace(file.Url))
+            {
+                state.CompletedFiles++;
+                continue;
+            }
+
+            var destDir = Path.GetDirectoryName(file.Path);
+            if (destDir != null) Directory.CreateDirectory(destDir);
+
+            state.CurrentFile = file.Path;
+            try
+            {
+                var resp = await http.GetAsync(file.Url, ct);
+                resp.EnsureSuccessStatusCode();
+                await using var content = await resp.Content.ReadAsStreamAsync(ct);
+                await using var outFs = new FileStream(file.Path, FileMode.Create);
+                await content.CopyToAsync(outFs, ct);
+                state.CompletedFiles++;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("FTB 文件下载已取消: {Path}", file.Path);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "下载 FTB 整合包文件失败: {Path}", file.Path);
+                state.FailedFiles++;
+            }
+
+            state.Progress = 92 + (5.0 * (i + 1) / missFiles.Count);
+        }
+
+        if (state.FailedFiles > 0)
+            _logger.LogWarning("FTB 整合包文件下载完成，{Completed}/{Total} 成功，{Failed} 失败",
+                state.CompletedFiles, missFiles.Count, state.FailedFiles);
+    }
+
+    private async Task DownloadGenericFilesAsync(InstallState state, ModpackInstallRequest request, string versionDirName, CancellationToken ct)
+    {
+        var modsDir = request.VersionIsolation
+            ? Path.Combine(request.GameDir, "versions", versionDirName, "mods")
+            : Path.Combine(request.GameDir, "mods");
+        Directory.CreateDirectory(modsDir);
+
+        state.TotalFiles = request.ModpackFiles!.Length;
+        state.CompletedFiles = 0;
+        state.FailedFiles = 0;
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        for (var i = 0; i < request.ModpackFiles.Length; i++)
+        {
+            await WaitPauseAsync(state, ct);
+            ct.ThrowIfCancellationRequested();
+
+            var file = request.ModpackFiles[i];
+            if (string.IsNullOrWhiteSpace(file.DownloadUrl))
+            {
+                state.CompletedFiles++;
+                continue;
+            }
+
+            var destPath = Path.Combine(modsDir, file.Path.Replace('/', Path.DirectorySeparatorChar));
+            var destDir = Path.GetDirectoryName(destPath);
+            if (destDir != null) Directory.CreateDirectory(destDir);
+
+            state.CurrentFile = file.Path;
+            try
+            {
+                var resp = await http.GetAsync(file.DownloadUrl, ct);
+                resp.EnsureSuccessStatusCode();
+                await using var content = await resp.Content.ReadAsStreamAsync(ct);
+                await using var outFs = new FileStream(destPath, FileMode.Create);
+                await content.CopyToAsync(outFs, ct);
+                state.CompletedFiles++;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("文件下载已取消: {Path}", file.Path);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "下载整合包文件失败: {Path}", file.Path);
+                state.FailedFiles++;
+            }
+
+            state.Progress = 92 + (5.0 * (i + 1) / request.ModpackFiles.Length);
+        }
+
+        if (state.FailedFiles > 0)
+            _logger.LogWarning("整合包文件下载完成，{Completed}/{Total} 成功，{Failed} 失败",
+                state.CompletedFiles, request.ModpackFiles.Length, state.FailedFiles);
+    }
+
+    private static async Task WaitPauseAsync(InstallState state, CancellationToken ct)
+    {
+        while (state.Paused)
+        {
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(200, CancellationToken.None);
         }
     }
 
@@ -425,6 +492,58 @@ public class ModpackService
         {
             try { File.Delete(tempPath); } catch { }
         }
+    }
+
+    private async Task<ModpackParseResult> ResolveFtbOnlineAsync(string projectId, string versionId)
+    {
+        if (!int.TryParse(projectId, out int packId) || !int.TryParse(versionId, out int packVersionId))
+            throw new InvalidOperationException("无效的 FTB 整合包 ID");
+
+        var ftb = _core.CreateFTBSource();
+        var versionDetail = await ftb.GetVersionDetailAsync(packId, packVersionId);
+
+        if (versionDetail is null)
+            throw new InvalidOperationException("无法获取 FTB 整合包版本信息");
+
+        var gameVersion = "";
+        var loader = "";
+        var loaderVersion = "";
+
+        if (versionDetail.Targets != null)
+        {
+            foreach (var target in versionDetail.Targets)
+            {
+                if (string.Equals(target.Type, "game", StringComparison.OrdinalIgnoreCase))
+                    gameVersion = target.Version ?? "";
+                else if (string.Equals(target.Type, "modloader", StringComparison.OrdinalIgnoreCase))
+                {
+                    loader = NormalizeLoader(target.Name ?? "");
+                    loaderVersion = target.Version ?? "";
+                }
+            }
+        }
+
+        if (string.IsNullOrEmpty(gameVersion))
+            throw new InvalidOperationException("无法解析 FTB 整合包的游戏版本");
+
+        var pack = await ftb.GetPackDetailAsync(packId);
+        var iconUrl = pack?.Art?.FirstOrDefault()?.Url;
+
+        return new ModpackParseResult(
+            Name: pack?.Name ?? "",
+            Summary: pack?.Synopsis,
+            Author: pack?.Authors?.FirstOrDefault()?.Name,
+            Version: versionDetail.Name,
+            GameVersion: gameVersion,
+            Loader: loader,
+            LoaderVersion: loaderVersion,
+            Source: "ftb",
+            Files: [],
+            HasOverrides: false,
+            FileCount: 0,
+            OverridesZip: null,
+            IconData: iconUrl
+        );
     }
 
     private static (string loader, string loaderVersion) ParseCurseForgeLoader(JsonArray? loaders)

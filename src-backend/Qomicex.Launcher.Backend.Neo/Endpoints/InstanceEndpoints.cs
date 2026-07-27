@@ -438,6 +438,18 @@ public static class InstanceEndpoints
             return Results.Json(state.ToResponse(id), ApiJsonContext.Default.InstallProgressResponse);
         });
 
+        group.MapPost("/{id}/install/pause", (string id, InstallTracker tracker) =>
+        {
+            tracker.Pause(id);
+            return Results.Json(new MessageResponse($"Install paused for {id}"), ApiJsonContext.Default.MessageResponse);
+        });
+
+        group.MapPost("/{id}/install/resume", (string id, InstallTracker tracker) =>
+        {
+            tracker.Resume(id);
+            return Results.Json(new MessageResponse($"Install resumed for {id}"), ApiJsonContext.Default.MessageResponse);
+        });
+
         group.MapPost("/{id}/install/cancel", (string id, InstallTracker tracker) =>
         {
             tracker.Cancel(id);

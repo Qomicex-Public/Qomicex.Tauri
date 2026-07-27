@@ -8,7 +8,7 @@ public static class ModpackEndpoints
 {
     public static void MapModpackEndpoints(this WebApplication app)
     {
-        var group = app.MapGroup("/modpack");
+        var group = app.MapGroup("/api/modpack");
 
         group.MapPost("/parse", async (IFormFile file, ModpackService svc) =>
         {

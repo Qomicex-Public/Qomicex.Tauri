@@ -7,7 +7,7 @@ import { Separator } from './ui/separator.tsx'
 import { startModpackInstall, resolveModpack, getInstallProgress } from '../api/instance.ts'
 import type { ResourceVersion, InstallProgressResponse } from '../types/index.ts'
 import { useNavigate } from 'react-router'
-import { addTask, updateTask } from '../stores/downloadStore.ts'
+import { addTask, updateTask, removeTask } from '../stores/downloadStore.ts'
 
 const STAGE_LABELS: Record<string, string> = {
   'queued': '排队中',
@@ -77,6 +77,18 @@ export default function ModpackInstallDialog({
     setStep('installing')
     setError('')
     setProgress(null)
+
+    const taskId = `modpack-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    addTask({
+      id: taskId,
+      name: instanceName,
+      type: 'modpack',
+      gameVersion: selectedVersion.gameVersions[0] || '',
+      status: 'queued',
+      progress: 0,
+      createdAt: new Date().toISOString(),
+    })
+
     try {
       const resolved = await resolveModpack(source, projectId, selectedVersion.id)
       const { instanceId } = await startModpackInstall({
@@ -93,6 +105,9 @@ export default function ModpackInstallDialog({
         modpackVersion: resolved.version,
         modpackAuthor: resolved.author,
         modpackSummary: resolved.summary,
+        source,
+        projectId,
+        versionId: selectedVersion.id,
       })
       addTask({
         id: instanceId,
@@ -107,17 +122,12 @@ export default function ModpackInstallDialog({
         createdAt: new Date().toISOString(),
         instanceId,
       })
+      removeTask(taskId)
       setInstallingInstanceId(instanceId)
     } catch (e: any) {
-      addTask({
-        id: `modpack-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-        name: instanceName,
-        type: 'modpack',
-        gameVersion: selectedVersion.gameVersions[0] || '',
+      updateTask(taskId, {
         status: 'failed',
-        progress: 0,
         error: e.message || '安装失败',
-        createdAt: new Date().toISOString(),
       })
       setError(e.message || '安装失败')
       setStep('config')
