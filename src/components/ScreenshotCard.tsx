@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faTrashCan, faCheck, faExpand } from '@fortawesome/free-solid-svg-icons'
+import { faTrashCan, faExpand } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui/tooltip.tsx'
 import { Button } from './ui/button.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
@@ -43,15 +43,7 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh, sele
         <div className="aspect-[4/3] overflow-hidden bg-muted" onClick={(e) => { e.stopPropagation(); setPreview(true) }}>
           {imgSrc && <img src={imgSrc} alt={screenshot.fileName} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />}
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onSelect?.(e) }}
-          className={cn(
-            'absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded border bg-background/80 transition-colors',
-            selected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/50 hover:border-foreground/70'
-          )}
-        >
-          {selected && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
-        </button>
+        <div className={cn('absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200 z-10', selected ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0')} />
         <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <Tooltip content="删除">
             <button onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">

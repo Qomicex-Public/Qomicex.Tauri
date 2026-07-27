@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faSave, faCopy, faPen, faTrashCan, faCheck, faPlay } from '@fortawesome/free-solid-svg-icons'
+import { faSave, faCopy, faPen, faTrashCan, faPlay } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui/card.tsx'
 import { Tooltip } from './ui/tooltip.tsx'
 import { Input } from './ui/input.tsx'
@@ -66,16 +66,8 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
   return (
     <ContextMenu items={contextItems}>
     <Card className={cn('group cursor-pointer border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
-      <CardContent className="flex items-center gap-4 p-4">
-        <button
-          onClick={(e) => { e.stopPropagation(); onSelect?.(e) }}
-          className={cn(
-            'flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors',
-            selected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30 hover:border-foreground/50'
-          )}
-        >
-          {selected && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
-        </button>
+      <CardContent className="flex items-center gap-4 p-4 relative">
+        <div className={cn('absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200', selected ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0')} />
         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
           {save.iconBase64 ? (
             <img src={`data:image/png;base64,${save.iconBase64}`} alt={save.name} className="h-full w-full object-cover" loading="lazy" />

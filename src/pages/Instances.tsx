@@ -1029,24 +1029,12 @@ export default function Instances() {
         </button>
       </div>
 
-      <div className="flex items-center gap-1">
-        {FILTER_OPTIONS.map((opt) => (
-          <Tooltip key={opt.key} content={opt.label === '全部' ? '显示所有实例' : opt.label === '模组' ? '已安装模组加载器的实例' : opt.label === '原版' ? '无模组加载器的纯净实例' : opt.label === '快照' ? 'Minecraft 快照版本' : opt.label === '愚人节' ? 'Minecraft 愚人节版本' : '状态异常的实例'}>
-            <button
-              onClick={() => setFilterType(opt.key)}
-              className={cn(
-                'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                filterType === opt.key
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              )}
-            >
-              <FontAwesomeIcon icon={opt.icon} className="h-3 w-3" />
-              {opt.label}
-            </button>
-          </Tooltip>
-        ))}
-      </div>
+      <Tabs
+        tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <FontAwesomeIcon icon={o.icon} className="h-3 w-3" /> }))}
+        activeTab={filterType}
+        onChange={setFilterType}
+        className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
+      />
 
       {!currentDir ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">

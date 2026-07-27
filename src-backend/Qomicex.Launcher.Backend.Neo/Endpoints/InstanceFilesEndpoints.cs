@@ -164,6 +164,8 @@ public static class InstanceFilesEndpoints
                 string? source = null;
                 if (m.CurseForgeId > 0) source = "curseforge";
                 else if (!string.IsNullOrEmpty(m.ModrinthId)) source = "modrinth";
+                var fi = new FileInfo(m.FilePath);
+                fi.Refresh();
                 return new ModMetadataDto
                 {
                     FileName = Path.GetFileName(m.FilePath),
@@ -175,7 +177,9 @@ public static class InstanceFilesEndpoints
                     CurseForgeId = m.CurseForgeId > 0 ? m.CurseForgeId : null,
                     ModrinthId = m.ModrinthId,
                     Source = source,
-                    Active = m.Active
+                    Active = m.Active,
+                    FileSize = fi.Exists ? fi.Length : 0,
+                    LastModified = fi.Exists ? fi.LastWriteTimeUtc : DateTime.MinValue
                 };
             }).ToList();
 

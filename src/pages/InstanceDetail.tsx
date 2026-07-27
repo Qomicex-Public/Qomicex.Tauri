@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen} from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList} from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui/button.tsx'
 import { Card, CardContent } from '../components/ui/card.tsx'
 import { Separator } from '../components/ui/separator.tsx'
@@ -380,6 +380,25 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [updateFileNames, setUpdateFileNames] = useState<Set<string>>(new Set())
 
+  const [filterType, setFilterType] = useState('all')
+  const [sortBy, setSortBy] = useState('name-asc')
+
+  const FILTER_OPTIONS = [
+    { key: 'all', label: '全部', icon: faList },
+    { key: 'active', label: '启用', icon: faCheck },
+    { key: 'disabled', label: '禁用', icon: faBan },
+    { key: 'updatable', label: '可更新', icon: faArrowUp },
+    { key: 'duplicate', label: '重复', icon: faClone },
+  ]
+  const SORT_OPTIONS = [
+    { key: 'name-asc', label: '名称 A-Z' },
+    { key: 'name-desc', label: '名称 Z-A' },
+    { key: 'time-desc', label: '最新优先' },
+    { key: 'time-asc', label: '最早优先' },
+    { key: 'size-desc', label: '最大优先' },
+    { key: 'size-asc', label: '最小优先' },
+  ]
+
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchConfirm, setBatchConfirm] = useState<{ type: 'enable' | 'disable' | 'delete' } | null>(null)
   const [batchProcessing, setBatchProcessing] = useState(false)
@@ -427,14 +446,32 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   }, [loadMods, refreshKey])
 
   const filtered = useMemo(() => {
-    if (!search) return mods
+    let result = [...mods]
     const q = search.toLowerCase()
-    return mods.filter(m =>
+    if (q) result = result.filter(m =>
       m.name.toLowerCase().includes(q) ||
-      (m.chineseName && m.chineseName.includes(q)) ||
+      (m.chineseName?.toLowerCase().includes(q)) ||
       m.fileName.toLowerCase().includes(q)
     )
-  }, [mods, search])
+    if (filterType === 'active') result = result.filter(m => m.active)
+    else if (filterType === 'disabled') result = result.filter(m => !m.active)
+    else if (filterType === 'updatable') result = result.filter(m => updateFileNames.has(m.fileName))
+    else if (filterType === 'duplicate') {
+      const seen = new Map<string, number>()
+      result.forEach(m => seen.set(m.name.toLowerCase(), (seen.get(m.name.toLowerCase()) ?? 0) + 1))
+      result = result.filter(m => (seen.get(m.name.toLowerCase()) ?? 0) > 1)
+    }
+    result.sort((a, b) => {
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name)
+      if (sortBy === 'name-desc') return b.name.localeCompare(a.name)
+      if (sortBy === 'time-desc') return (b.lastModified ?? '').localeCompare(a.lastModified ?? '')
+      if (sortBy === 'time-asc') return (a.lastModified ?? '').localeCompare(b.lastModified ?? '')
+      if (sortBy === 'size-desc') return (b.fileSize ?? 0) - (a.fileSize ?? 0)
+      if (sortBy === 'size-asc') return (a.fileSize ?? 0) - (b.fileSize ?? 0)
+      return 0
+    })
+    return result
+  }, [mods, search, filterType, sortBy, updateFileNames])
 
   const lastClickedRef = useRef(-1)
   const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
@@ -527,12 +564,34 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             </div>
           </div>
 
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <Tabs
+              tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <FontAwesomeIcon icon={o.icon} className="h-3 w-3" /> }))}
+              activeTab={filterType}
+              onChange={setFilterType}
+              className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
+            />
+            <Select value={sortBy} onChange={setSortBy} className="w-32">
+              {SORT_OPTIONS.map((item) => (
+                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+              ))}
+            </Select>
+          </div>
+
           {loading ? (
             <div className="space-y-3">
               {loadProgress && loadProgress.total > 0 && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-                  加载中 {loadProgress.current}/{loadProgress.total}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+                      正在读取 Mod 信息
+                    </div>
+                    <span className="tabular-nums">{Math.round(loadProgress.current / loadProgress.total * 100)}%</span>
+                  </div>
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${Math.round(loadProgress.current / loadProgress.total * 100)}%` }} />
+                  </div>
                 </div>
               )}
               <div className="flex flex-col gap-2">

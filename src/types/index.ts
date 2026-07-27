@@ -473,6 +473,8 @@ export interface ModMetadata {
   mcmodId?: number | null
   chineseName?: string | null
   active: boolean
+  fileSize?: number
+  lastModified?: string
 }
 
 export interface ResourcePackMetadata {
