@@ -171,6 +171,29 @@ public static class ResourceCenterEndpoints
                 ), ApiJsonContext.Default.ResourceDetailDto);
             }
 
+            if (src == "ftb")
+            {
+                if (!int.TryParse(id, out var ftbId))
+                    return Results.NotFound();
+                var ftb = core.CreateFTBSource();
+                var pack = await ftb.GetPackDetailAsync(ftbId);
+                if (pack is null)
+                    return Results.NotFound();
+                return Results.Json(new ResourceDetailDto(
+                    Id: pack.Id.ToString(),
+                    Title: pack.Name,
+                    Description: pack.Synopsis ?? "",
+                    Author: string.Join(", ", pack.Authors?.Select(a => a.Name).Take(2) ?? []),
+                    IconUrl: pack.Art?.FirstOrDefault(a => a.Type == "square")?.Url ?? "",
+                    DownloadCount: (int)pack.Installs,
+                    Source: "ftb",
+                    Categories: pack.Tags?.Select(t => t.Name).ToList() ?? [],
+                    ProjectUrl: $"https://www.feed-the-beast.com/modpacks/{pack.Slug ?? pack.Id.ToString()}",
+                    Slug: pack.Slug ?? pack.Id.ToString(),
+                    Body: pack.Description ?? ""
+                ), ApiJsonContext.Default.ResourceDetailDto);
+            }
+
             return Results.NotFound();
         });
 
@@ -292,6 +315,42 @@ public static class ResourceCenterEndpoints
                 }
             }
 
+            if (src == "ftb")
+            {
+                if (!int.TryParse(id, out var ftbId))
+                    return Results.Json(new List<ResourceVersionDto>(), ApiJsonContext.Default.ListResourceVersionDto);
+                var ftb = core.CreateFTBSource();
+                var pack = await ftb.GetPackDetailAsync(ftbId);
+                if (pack?.Versions is null)
+                    return Results.Json(new List<ResourceVersionDto>(), ApiJsonContext.Default.ListResourceVersionDto);
+
+                var versions = pack.Versions.AsEnumerable();
+                if (!string.IsNullOrEmpty(gameVersion))
+                    versions = versions.Where(v => v.Targets?.Any(t => t.Version == gameVersion) == true);
+                if (!string.IsNullOrEmpty(loader))
+                    versions = versions.Where(v => v.Targets?.Any(t => string.Equals(t.Version, loader, StringComparison.OrdinalIgnoreCase)) == true);
+
+                var dtos = versions.Select(v =>
+                {
+                    var mcVersion = v.Targets?.FirstOrDefault(t => t.Type == "game" || t.Name == "minecraft")?.Version;
+                    var mcVersions = mcVersion is not null ? new List<string> { mcVersion } : new List<string>();
+                    var loaders = v.Targets?.Where(t => t.Type == "modloader" || t.Name == "forge" || t.Name == "fabric" || t.Name == "neoforge")
+                        .Select(t => t.Version ?? t.Name ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList() ?? [];
+                    return new ResourceVersionDto(
+                        Id: v.Id.ToString(),
+                        Name: v.Name,
+                        VersionNumber: v.Name,
+                        GameVersions: mcVersions,
+                        Loaders: loaders,
+                        Downloads: [],
+                        Dependencies: null,
+                        DatePublished: DateTimeOffset.FromUnixTimeMilliseconds(v.Updated).ToString("o")
+                    );
+                }).ToList();
+
+                return Results.Json(dtos, ApiJsonContext.Default.ListResourceVersionDto);
+            }
+
             return Results.Json(new List<ResourceVersionDto>(), ApiJsonContext.Default.ListResourceVersionDto);
         });
 
@@ -312,6 +371,16 @@ public static class ResourceCenterEndpoints
                 var cf = core.CreateCurseForgeSource(curseForgeApiKey);
                 var url = await cf.GetDownloadUrlAsync(id, versionId);
                 return Results.Json(new List<ResourceFileDto> { new(url, "", 0) }, ApiJsonContext.Default.ListResourceFileDto);
+            }
+
+            if (src == "ftb")
+            {
+                if (!int.TryParse(id, out var ftbId) || !int.TryParse(versionId, out var ftbVerId))
+                    return Results.Json(new List<ResourceFileDto>(), ApiJsonContext.Default.ListResourceFileDto);
+                var ftb = core.CreateFTBSource();
+                var detail = await ftb.GetVersionDetailAsync(ftbId, ftbVerId);
+                var files = detail?.Files?.Select(f => new ResourceFileDto(f.Url, f.Name, f.Size)).ToList() ?? [];
+                return Results.Json(files, ApiJsonContext.Default.ListResourceFileDto);
             }
 
             return Results.Json(new List<ResourceFileDto>(), ApiJsonContext.Default.ListResourceFileDto);
