@@ -1093,20 +1093,20 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
     try {
       const data = await getServers(instanceId)
       setServers(data)
-      const results: Record<string, ServerState> = {}
-      for (const s of data) {
+      setLoading(false)
+      const pingTasks = data.map(async (s) => {
         try {
           const state = await pingServer(instanceId, s.ip)
-          results[s.ip] = state
+          setPingStates(p => ({ ...p, [s.ip]: state }))
         } catch {}
-      }
-      setPingStates(results)
+      })
+      await Promise.allSettled(pingTasks)
     }
     catch (e) {
       setServers([])
+      setLoading(false)
       notify(`加载服务器列表失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
     }
-    setLoading(false)
   }, [instanceId, notify])
 
   useEffect(() => { load() }, [load, refreshKey])
@@ -1252,10 +1252,15 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <h3 className="font-semibold text-sm">{s.name}</h3>
-                            {ps && (
+                            {ps ? (
                               <span className={`inline-flex items-center gap-1 text-xs font-medium ${ps.isOnline ? 'text-green-500' : 'text-red-500'}`}>
                                 <span className={`inline-block w-2 h-2 rounded-full ${ps.isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
                                 {ps.isOnline ? `${ps.ping}ms` : '离线'}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                                <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/40 animate-pulse" />
+                                测速中...
                               </span>
                             )}
                           </div>
