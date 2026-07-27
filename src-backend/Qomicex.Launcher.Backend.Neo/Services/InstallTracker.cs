@@ -106,14 +106,15 @@ public sealed class InstallTracker
 
         var isForge = string.Equals(loader, "forge", StringComparison.OrdinalIgnoreCase);
         var isNeoForge = string.Equals(loader, "neoforge", StringComparison.OrdinalIgnoreCase);
+        var isCleanroom = string.Equals(loader, "cleanroom", StringComparison.OrdinalIgnoreCase);
 
-        if (isForge || isNeoForge)
+        if (isForge || isNeoForge || isCleanroom)
         {
             session.SetStage("downloading-installer", 4, "下载加载器安装包...");
 
             var loaderType = isForge
                 ? ModLoaderType.Forge
-                : ModLoaderType.NeoForge;
+                : isNeoForge ? ModLoaderType.NeoForge : ModLoaderType.Cleanroom;
 
             var loaders = await core.InstallerProvider.GetAvailableModLoaders(gameVersion, loaderType);
             var match = loaders.FirstOrDefault(l =>
@@ -126,8 +127,7 @@ public sealed class InstallTracker
 
             var tempDir = Path.Combine(gameDir, "temp");
             Directory.CreateDirectory(tempDir);
-            installerPath = Path.Combine(tempDir,
-                isForge ? $"forge-{loaderVersion}-installer.jar" : $"neoforge-{loaderVersion}-installer.jar");
+            installerPath = Path.Combine(tempDir, $"{loader}-{loaderVersion}-installer.jar");
 
             loaderJarTask = DownloadLoaderJar(installerPath, loaderDownloadUrl, session, cfHeaders, ct);
         }
@@ -352,6 +352,11 @@ public sealed class InstallTracker
             var inst = installerFactory.CreateQuilt(downloadSourceId, gameDir);
             return await inst.GetMissLibrariesAsync(loaderVersion, gameVersion, gameDir);
         }
+        if (lower == "cleanroom" && installerPath != null)
+        {
+            var inst = installerFactory.CreateCleanroom(downloadSourceId, gameDir);
+            return await inst.GetMissLibrariesAsync(installerPath, versionDirName, null);
+        }
         return [];
     }
 
@@ -399,6 +404,17 @@ public sealed class InstallTracker
             var inst = installerFactory.CreateLiteLoader(downloadSourceId, gameDir, gameVersion);
             await inst.InstallAsync(versionId, inheritsFromJson,
                 loaderVersion, gameVersion, null, null);
+            return;
+        }
+
+        if (lower == "cleanroom")
+        {
+            if (installerPath == null)
+                throw new FileNotFoundException("找不到加载器安装包");
+
+            var inst = installerFactory.CreateCleanroom(downloadSourceId, gameDir);
+            await inst.InstallAsync(versionId, inheritsFromJson,
+                null, installerPath, null, null);
             return;
         }
 

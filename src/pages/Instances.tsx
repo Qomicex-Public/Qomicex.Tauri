@@ -42,6 +42,7 @@ const LOADER_COLORS: Record<string, string> = {
   Quilt: 'text-purple-400 bg-purple-400/10 border-purple-400/25',
   OptiFine: 'text-yellow-500 bg-yellow-500/10 border-yellow-500/25',
   LiteLoader: 'text-sky-400 bg-sky-400/10 border-sky-400/25',
+  Cleanroom: 'text-yellow-400 bg-yellow-500/10 border-yellow-400/25',
   Vanilla: 'text-muted-foreground bg-muted border-border',
 }
 
@@ -664,6 +665,7 @@ export default function Instances() {
                   <SelectOption value="NeoForge">NeoForge</SelectOption>
                   <SelectOption value="Quilt">Quilt</SelectOption>
                   <SelectOption value="LiteLoader">LiteLoader</SelectOption>
+                  <SelectOption value="Cleanroom">Cleanroom</SelectOption>
                 </Select>
                 {form.loader ? (
                   <Select

@@ -227,6 +227,20 @@ public static class InstanceEndpoints
                         var verDoc = JsonNode.Parse(await File.ReadAllTextAsync(verJsonPath, cts.Token));
                         requiredJava = GetRequiredJavaFromNode(verDoc, instance.GameDir);
                     }
+
+                    if (string.Equals(instance.Loader, "cleanroom", StringComparison.OrdinalIgnoreCase)
+                        && instance.LoaderVersion != null)
+                    {
+                        var cleanroomVerStr = instance.LoaderVersion.Split('-')[0];
+                        if (Version.TryParse(cleanroomVerStr, out var cleanroomVer))
+                        {
+                            if (cleanroomVer < new Version(0, 5, 0, 0))
+                                requiredJava = Math.Max(requiredJava, 21);
+                            else
+                                requiredJava = Math.Max(requiredJava, 25);
+                        }
+                    }
+
                     Console.Error.WriteLine($"[启动] 需要 Java >= {requiredJava}");
 
                     // 选择 Java 运行时
@@ -456,6 +470,7 @@ public static class InstanceEndpoints
         "neoforge" => Qomicex.Core.AOT.Public.Models.ModLoaderType.NeoForge,
         "liteloader" => Qomicex.Core.AOT.Public.Models.ModLoaderType.LiteLoader,
         "optifine" => Qomicex.Core.AOT.Public.Models.ModLoaderType.OptiFine,
+        "cleanroom" => Qomicex.Core.AOT.Public.Models.ModLoaderType.Cleanroom,
         _ => null
     };
 
