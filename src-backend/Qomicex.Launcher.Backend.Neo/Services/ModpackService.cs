@@ -74,10 +74,6 @@ public class ModpackService
 
     public async Task<string> InstallAsync(ModpackInstallRequest request, int downloadThreads = 64, int downloadSourceId = 0)
     {
-        var versionDirName = string.IsNullOrEmpty(request.Loader)
-            ? request.GameVersion
-            : $"{request.GameVersion}-{request.Loader}-{request.LoaderVersion}";
-
         var instance = new GameInstance
         {
             Name = request.Name,
@@ -86,7 +82,6 @@ public class ModpackService
             LoaderVersion = request.LoaderVersion,
             GameDir = request.GameDir,
             MaxMemory = request.MaxMemory ?? 4096,
-            VersionDirName = versionDirName,
             VersionIsolation = request.VersionIsolation,
             ModpackName = request.ModpackName,
             ModpackVersion = request.ModpackVersion,
@@ -104,7 +99,7 @@ public class ModpackService
         List<AdditionalFile>? genericFiles = null;
         if (!isFtb && request.ModpackFiles is { Length: > 0 })
         {
-            genericFiles = BuildGenericAdditionalFiles(request, versionDirName);
+            genericFiles = BuildGenericAdditionalFiles(request, request.Name);
         }
 
         // === Goal 5: FTB 走延迟解析，不阻塞 Start() 返回 ===
@@ -117,6 +112,7 @@ public class ModpackService
         _installTracker.Start(instance.Id, request.GameVersion, request.GameDir,
             request.Loader, request.LoaderVersion, null, downloadThreads,
             request.VersionIsolation, downloadSourceId,
+            instanceName: request.Name,
             additionalFiles: genericFiles is { Count: > 0 } ? genericFiles : null,
             resolveAdditionalFiles: resolveFtbFiles,
             optifineVersion: request.OptifineVersion,

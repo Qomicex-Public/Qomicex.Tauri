@@ -54,9 +54,6 @@ public static class InstanceEndpoints
 
         group.MapPost("/", (CreateInstanceRequest req, InstanceService instances) =>
         {
-            var versionDirName = req.Loader is not null && req.LoaderVersion is not null
-                ? $"{req.GameVersion}-{req.Loader}-{req.LoaderVersion}"
-                : req.GameVersion;
             var instance = new GameInstance
             {
                 Name = req.Name,
@@ -66,7 +63,6 @@ public static class InstanceEndpoints
                 JavaPath = req.JavaPath,
                 MaxMemory = req.MaxMemory,
                 GameDir = req.GameDir,
-                VersionDirName = versionDirName,
             };
             var created = instances.Create(instance);
             return Results.Created($"/api/instance/{created.Id}", created);
