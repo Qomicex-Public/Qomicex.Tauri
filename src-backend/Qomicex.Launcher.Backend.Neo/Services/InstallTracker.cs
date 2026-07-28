@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Qomicex.Core.AOT.Builder;
@@ -10,6 +11,7 @@ using Qomicex.Downloader.Refactor.Core;
 using Qomicex.Downloader.Refactor.Model;
 using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.JsonContext;
+using Qomicex.Launcher.Backend.Neo.Models;
 
 namespace Qomicex.Launcher.Backend.Neo.Services;
 
@@ -26,6 +28,13 @@ public sealed class InstallTracker
         "media.forgecdn.net", "mediafilez.forgecdn.net"
     };
 
+    /// <summary>加载器默认必装 addon，合并前端传参与后端清单后用。</summary>
+    private static readonly Dictionary<string, string[]> DefaultLoaderAddons = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["fabric"] = ["fabric-api"],
+        ["quilt"] = ["qsl"],
+    };
+
     public InstallTracker(JavaRuntimeStore javaStore, DownloadSessionManager sessionManager, string curseForgeApiKey)
     {
         _javaStore = javaStore;
@@ -36,6 +45,8 @@ public sealed class InstallTracker
     public void Start(string instanceId, string gameVersion, string gameDir,
         string? loader, string? loaderVersion, string[]? addons,
         int downloadThreads, bool versionIsolation, int? downloadSourceId, string? instanceName = null,
+        string? optifineVersion = null, IReadOnlyList<AdditionalFile>? additionalFiles = null,
+        Func<CancellationToken, Task<List<AdditionalFile>>>? resolveAdditionalFiles = null,
         Func<InstallState, CancellationToken, Task>? postInstall = null)
     {
         var cts = new CancellationTokenSource();
@@ -48,7 +59,9 @@ public sealed class InstallTracker
             {
                 await RunInstallAsync(instanceId, gameVersion, gameDir,
                     loader, loaderVersion, addons, downloadThreads,
-                    versionIsolation, downloadSourceId ?? 0, state, cts.Token, instanceName);
+                    versionIsolation, downloadSourceId ?? 0, state, cts.Token,
+                    instanceName, optifineVersion, additionalFiles,
+                    resolveAdditionalFiles);
                 if (postInstall is null) return;
                 state.Status = "downloading";
                 state.Stage = "modpack-files";
@@ -76,7 +89,9 @@ public sealed class InstallTracker
     private async Task RunInstallAsync(string instanceId, string gameVersion,
         string gameDir, string? loader, string? loaderVersion, string[]? addons,
         int downloadThreads, bool versionIsolation, int downloadSourceId,
-        InstallState state, CancellationToken ct, string? instanceName = null)
+        InstallState state, CancellationToken ct, string? instanceName = null,
+        string? optifineVersion = null, IReadOnlyList<AdditionalFile>? additionalFiles = null,
+        Func<CancellationToken, Task<List<AdditionalFile>>>? resolveAdditionalFiles = null)
     {
         var mirror = downloadSourceId == 1 ? DownloadMirror.BMCLAPI : DownloadMirror.Official;
         Trace.WriteLine($"[Install] [{instanceId}] 开始安装: 版本={gameVersion}, 加载器={loader ?? "无"}, 镜像={mirror}, 线程={downloadThreads}");
@@ -235,22 +250,9 @@ public sealed class InstallTracker
             await File.WriteAllTextAsync(jsonPath, updatedJson);
         }
 
+        // === 等待基础下载和加载器库下载完成 ===
         ct.ThrowIfCancellationRequested();
-        Task? addonTask = null;
-
-        if (addons != null && addons.Length > 0)
-        {
-            Trace.WriteLine($"[Install] [{instanceId}] Phase 6 开始下载附加 Mod ({addons.Length} 个)");
-            addonTask = DownloadAddons(addons, gameVersion, gameDir, cfHeaders, ct);
-        }
-
         Exception? downloadError = null;
-        async Task WaitSafe(Task? t)
-        {
-            if (t == null) return;
-            try { await t; } catch (Exception ex) { downloadError ??= ex; }
-        }
-        await WaitSafe(loaderJarTask);
         if (baseDownloadTask is not null)
         {
             try
@@ -467,43 +469,105 @@ public sealed class InstallTracker
         return java.Path;
     }
 
-    private async Task DownloadAddons(string[] addonIds, string gameVersion,
-        string gameDir, Dictionary<string, string> cfHeaders, CancellationToken ct)
+    /// <summary>合并前端传参 addons 与后端默认清单，去重返回。</summary>
+    private static List<string> MergeAddons(string[]? userAddons, string? loader)
     {
+        var result = new List<string>();
+        if (userAddons is { Length: > 0 })
+            result.AddRange(userAddons);
+        if (!string.IsNullOrEmpty(loader) && DefaultLoaderAddons.TryGetValue(loader, out var defaults))
+        {
+            foreach (var d in defaults)
+            {
+                if (!result.Contains(d, StringComparer.OrdinalIgnoreCase))
+                    result.Add(d);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 将 addon slug 列表解析为 AdditionalFile 列表。
+    /// 支持格式：普通 slug（如 "fabric-api"），OptiFine 特殊格式（"optifine:mcversion:type-patch"）。
+    /// </summary>
+    private async Task<List<AdditionalFile>> ResolveAddonsAsync(
+        List<string> addonIds, string gameVersion, string gameDir, int downloadSourceId, CancellationToken ct)
+    {
+        var result = new List<AdditionalFile>();
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
+
+        var slugList = new List<string>();
+        foreach (var id in addonIds)
+        {
+            if (id.StartsWith("optifine:", StringComparison.OrdinalIgnoreCase))
+            {
+                // OptiFine as mod for forge/neoforge
+                var parts = id.Split(':');
+                if (parts.Length >= 3)
+                {
+                    var mcVer = parts[1];
+                    var ofVer = parts[2];
+                    var ofParts = ofVer.Split('-');
+                    var type = ofParts.Length >= 2 ? ofParts[0] : "HD_U";
+                    var patch = ofParts.Length >= 2 ? ofParts[1] : ofVer;
+                    var baseUrl = downloadSourceId == 1
+                        ? "https://bmclapi2.bangbang93.com/optifine"
+                        : "https://optifine.net/download";
+                    var url = $"{baseUrl}/{Uri.EscapeDataString(mcVer)}/{type}/{patch}";
+                    var filename = $"OptiFine-{mcVer}_{type}_{patch}.jar";
+                    result.Add(new AdditionalFile(
+                        Source: downloadSourceId == 1 ? "url" : "modrinth",
+                        Identifier: url,
+                        RelativePath: Path.Combine("mods", filename)
+                    ));
+                }
+                continue;
+            }
+            slugList.Add(id);
+        }
+
+        if (slugList.Count == 0) return result;
+
+        // 并发解析 Modrinth slug
         using var semaphore = new SemaphoreSlim(12);
-        var tasks = addonIds.Select(async addonId =>
+        var tasks = slugList.Select(async slug =>
         {
             await semaphore.WaitAsync(ct);
             try
             {
-                using var client = new HttpClient();
-                var url = $"https://api.modrinth.com/v2/project/{addonId}/version";
-                var json = await client.GetStringAsync(url);
+                var url = $"https://api.modrinth.com/v2/project/{Uri.EscapeDataString(slug)}/version";
+                var json = await client.GetStringAsync(url, ct);
                 var versions = JsonSerializer.Deserialize(json, ApiJsonContext.Default.ListModrinthVersion);
                 var match = versions?.FirstOrDefault(v =>
                     v.GameVersions.Contains(gameVersion) && v.Files.Count > 0);
 
                 if (match?.Files.FirstOrDefault() is { } file)
                 {
-                    var modsDir = Path.Combine(gameDir, "mods");
-                    Directory.CreateDirectory(modsDir);
-                    var destPath = Path.Combine(modsDir, file.Filename);
-                    if (!File.Exists(destPath))
+                    var destPath = "mods/" + file.Filename;
+                    lock (result)
                     {
-                        var downloader = new Qomicex.Downloader.Refactor.Downloader(builder => builder
-                            .WithMaxConcurrency(1)
-                            .WithRetry(3, TimeSpan.FromSeconds(1))
-                            .WithProgress(null, null, Common.DownloaderTrace.CreateLogProgress()));
-                        var task = new DownloadTask { Url = file.Url, SavePath = destPath };
-                        await downloader.DownloadAsync(task, ct);
+                        result.Add(new AdditionalFile(
+                            Source: "modrinth",
+                            Identifier: file.Url,
+                            RelativePath: destPath
+                        ));
                     }
                 }
+                else
+                {
+                    Trace.WriteLine($"[Install] 未找到 addon {slug} 的兼容版本 (MC {gameVersion})");
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[Install] 解析 addon {slug} 失败: {ex.Message}");
+            }
             finally { semaphore.Release(); }
         });
 
         await Task.WhenAll(tasks);
+        return result;
     }
 
     private static bool IsCfDomain(string url)

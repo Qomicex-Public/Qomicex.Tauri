@@ -424,7 +424,8 @@ public static class InstanceEndpoints
 
             tracker.Start(id, instance.GameVersion, instance.GameDir,
                 req.Loader, req.LoaderVersion, req.Addons, threads,
-                req.VersionIsolation ?? SystemEndpoints.GetGlobalVersionIsolation(), sourceId, instance.Name);
+                req.VersionIsolation ?? SystemEndpoints.GetGlobalVersionIsolation(), sourceId, instance.Name,
+                optifineVersion: req.OptifineVersion);
 
             return Results.Json(new MessageResponse($"Install started for {id}"), ApiJsonContext.Default.MessageResponse);
         });

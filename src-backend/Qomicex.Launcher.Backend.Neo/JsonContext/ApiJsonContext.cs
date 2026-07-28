@@ -347,6 +347,7 @@ public sealed record InstallerRequest(
     string? Loader = null,
     string? LoaderVersion = null,
     string[]? Addons = null,
+    string? OptifineVersion = null,
     int? DownloadThreads = null,
     bool? VersionIsolation = null,
     int? DownloadSourceId = null,
@@ -508,7 +509,8 @@ public sealed record ModpackInstallRequest(
     string? ModpackSummary,
     string? Source,
     string? ProjectId,
-    string? VersionId
+    string? VersionId,
+    string? OptifineVersion = null
 );
 
 public sealed record ModpackResolveRequest(
