@@ -180,10 +180,17 @@ export default function DownloadCenter() {
           checkedStaleInstallIds.current.add(task.instanceId)
           getInstallProgress(task.instanceId).then(p => {
             if (!p || p.status === 'not-started') {
-              // not-started = backend has no state. If task was queued/pending, remove it (zombie).
-              // If task was downloading/paused, we can't know if it's a new task or zombie — mark as failed.
               if (task.status === 'queued') {
-                removeTask(task.id)
+                // Not-started may be a race with SSE push — wait 5s then re-check before removal
+                const taskId = task.id
+                const instId = task.instanceId!
+                setTimeout(() => {
+                  const t = getTasks().find(t => t.id === taskId)
+                  if (!t || t.status !== 'queued') return
+                  getInstallProgress(instId).then(p2 => {
+                    if (!p2 || p2.status === 'not-started') removeTask(taskId)
+                  }).catch(() => {})
+                }, 5000)
               } else {
                 updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
               }

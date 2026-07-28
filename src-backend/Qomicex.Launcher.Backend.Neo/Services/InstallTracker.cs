@@ -82,6 +82,7 @@ public sealed class InstallTracker
             {
                 state.Status = "failed";
                 state.Error = ex.Message;
+                _sessionManager.GetSession($"install-{instanceId}")?.ReportFailed(ex.Message);
             }
         });
     }
@@ -683,9 +684,7 @@ public sealed class InstallTracker
             var session = _sessionManager.GetSession($"install-{instanceId}");
             if (session is not null)
             {
-                var snap = session.GetSnapshot();
-                if (snap.Status == "downloading")
-                    SyncStateFromSession(state, session);
+                SyncStateFromSession(state, session);
             }
         }
         return state;
