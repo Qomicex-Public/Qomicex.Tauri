@@ -281,11 +281,88 @@ public sealed class InstallTracker
             }
             catch (Exception ex) { downloadError ??= ex; }
         }
-
-        await WaitSafe(addonTask);
         if (downloadError != null) throw downloadError;
 
-        session.SetStage("post-download", 85);
+        // === Goal 2: 合并前端传参与后端默认清单 ===
+        var resolvedAddons = MergeAddons(addons, loader);
+
+        // === Goal 3: OptiFine 智能路由 ===
+        if (!string.IsNullOrWhiteSpace(optifineVersion))
+        {
+            var isForgeLike = string.Equals(loader, "forge", StringComparison.OrdinalIgnoreCase)
+                           || string.Equals(loader, "neoforge", StringComparison.OrdinalIgnoreCase);
+            if (isForgeLike)
+            {
+                Trace.WriteLine($"[Install] [{instanceId}] OptiFine {optifineVersion} 将以 mod 形式注入 forge/neoforge");
+                var optiFinePath = Path.Combine("mods", $"OptiFine-{gameVersion}-{optifineVersion}.jar");
+                resolvedAddons.Add($"optifine:{gameVersion}:{optifineVersion}");
+            }
+            else if (string.IsNullOrEmpty(loader))
+            {
+                Trace.WriteLine($"[Install] [{instanceId}] OptiFine {optifineVersion} 将走独立安装器路径");
+                session.SetStage("installing-optifine", 70, $"安装 OptiFine {optifineVersion}...");
+                await InstallLoader(core.Installer, versionDirName, jsonContent, gameDir,
+                    "optifine", optifineVersion, gameVersion, null, downloadSourceId, session, ct);
+                session.SetStage("installing-optifine", 75);
+            }
+        }
+
+        // === 延迟解析 FTB 等附加文件（在 pipeline 内部执行，不阻塞 Start() 返回） ===
+        if (resolveAdditionalFiles is not null)
+        {
+            ct.ThrowIfCancellationRequested();
+            session.SetStage("downloading-addons", 60, "解析 FTB 整合包文件清单...");
+            var resolved = await resolveAdditionalFiles(ct);
+            if (resolved is { Count: > 0 })
+            {
+                additionalFiles = (additionalFiles is { Count: > 0 })
+                    ? [..additionalFiles, ..resolved]
+                    : resolved;
+            }
+        }
+
+        // === Goal 6: 解析 addons → AdditionalFile 列表 ===
+        var allAdditionalFiles = new List<AdditionalFile>();
+        if (resolvedAddons.Count > 0)
+        {
+            session.SetStage("downloading-addons", 65, $"解析 {resolvedAddons.Count} 个附加 Mod...");
+            var resolved = await ResolveAddonsAsync(resolvedAddons, gameVersion, gameDir, downloadSourceId, ct);
+            allAdditionalFiles.AddRange(resolved);
+        }
+
+        if (additionalFiles is { Count: > 0 })
+            allAdditionalFiles.AddRange(additionalFiles);
+
+        // === Goal 6: 批量下载附加文件 ===
+        if (allAdditionalFiles.Count > 0)
+        {
+            session.SetStage("downloading-additional-files", 70, $"下载 {allAdditionalFiles.Count} 个附加文件...");
+            var afTasks = allAdditionalFiles.Select(af =>
+            {
+                var destPath = Path.Combine(gameDir, af.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+                var headers = new Dictionary<string, string>();
+                if (string.Equals(af.Source, "modrinth", StringComparison.OrdinalIgnoreCase))
+                    headers["User-Agent"] = "QomicexLauncher/1.0";
+                if (string.Equals(af.Source, "curseforge", StringComparison.OrdinalIgnoreCase) || IsCfDomain(af.Identifier))
+                {
+                    headers["x-api-key"] = _curseForgeApiKey;
+                    headers["User-Agent"] = "QomicexLauncher/1.0";
+                }
+                return new DownloadTask { Url = af.Identifier, SavePath = destPath, Headers = headers.Count > 0 ? headers : null };
+            }).ToList();
+
+            var afResult = await session.RunBatchAsync(afTasks, ct, 70, 85, maxConcurrency: downloadThreads);
+            if (afResult.FailedTasks > 0)
+            {
+                var retried = await RetryFailedFiles(afResult.FailedTaskList, downloadThreads, session, ct, 70, 85);
+                if (retried.FailedTasks > 0)
+                    throw new Exception($"附加文件下载失败 ({retried.FailedTasks} 个)");
+            }
+        }
+        else
+        {
+            session.SetStage("downloading-additional-files", 85);
+        }
 
         ct.ThrowIfCancellationRequested();
         if (!string.IsNullOrEmpty(loader) && !string.IsNullOrEmpty(loaderVersion))

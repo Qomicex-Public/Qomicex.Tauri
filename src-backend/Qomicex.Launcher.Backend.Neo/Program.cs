@@ -56,6 +56,7 @@ builder.Services.AddHttpClient("Modrinth", client =>
 builder.Services.AddHttpClient("CurseForge", client =>
 {
     client.BaseAddress = new Uri("https://api.curseforge.com");
+    client.Timeout = TimeSpan.FromSeconds(30);
     client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
     client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
 }).AddHttpMessageHandler<HttpClientLoggingHandler>();
