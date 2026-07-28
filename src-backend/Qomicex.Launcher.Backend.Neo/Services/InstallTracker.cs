@@ -265,8 +265,6 @@ public sealed class InstallTracker
             }
             catch (Exception ex) { downloadError ??= ex; }
         }
-        await WaitSafe(loaderLibTask);
-
         if (loaderLibTask is not null)
         {
             try
@@ -579,7 +577,7 @@ public sealed class InstallTracker
         foreach (var (id, state) in _states)
         {
             if (seenSessionIds.Contains(id)) continue;
-            if (state.Status is "completed" or "failed" or "cancelled" or "not-started") continue;
+            if (state.Status is "completed" or "failed" or "cancelled") continue;
             var snap = _sessionManager.GetSession($"install-{id}")?.GetSnapshot();
             list.Add(new InstallProgressResponse(
                 InstanceId: id,
@@ -601,8 +599,11 @@ public sealed class InstallTracker
 
     public void Cancel(string instanceId)
     {
-        if (_states.TryRemove(instanceId, out var state))
+        if (_states.TryGetValue(instanceId, out var state))
+        {
             state.Cancel();
+            _ = Task.Delay(100).ContinueWith(t => { _states.TryRemove(instanceId, out _); });
+        }
         _sessionManager.CancelSession($"install-{instanceId}");
     }
 
@@ -616,6 +617,19 @@ public sealed class InstallTracker
     {
         if (_states.TryGetValue(instanceId, out var state))
             state.Resume();
+    }
+
+    public async Task ShutdownAsync()
+    {
+        var instanceIds = _states.Keys.ToList();
+        foreach (var id in instanceIds)
+        {
+            if (_states.TryGetValue(id, out var state))
+                state.Cancel();
+            _sessionManager.CancelSession($"install-{id}");
+        }
+        await Task.Delay(200);
+        _states.Clear();
     }
 }
 

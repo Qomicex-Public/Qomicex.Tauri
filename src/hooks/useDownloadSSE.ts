@@ -58,9 +58,11 @@ export interface ProgressPayload {
 
 export function useDownloadSSE() {
   const [data, setData] = useState<ProgressPayload | null>(null)
+  const [reconnectKey, setReconnectKey] = useState(0)
 
   useEffect(() => {
     const es = new EventSource(`${API_BASE}/progress/stream`)
+    es.onopen = () => setReconnectKey(c => c + 1)
     es.onmessage = (e) => {
       try {
         const parsed = JSON.parse(e.data) as ProgressPayload
@@ -73,5 +75,5 @@ export function useDownloadSSE() {
     return () => es.close()
   }, [])
 
-  return data
+  return { data, reconnectKey }
 }

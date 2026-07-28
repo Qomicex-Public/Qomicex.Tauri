@@ -80,11 +80,17 @@ export default function DownloadCenter() {
     return unsub
   }, [])
 
-  const sseData = useDownloadSSE()
+  const { data: sseData, reconnectKey } = useDownloadSSE()
   const prevInstallIds = useRef<Set<string>>(new Set())
   const prevJavaIds = useRef<Set<string>>(new Set())
   const checkedStaleJavaIds = useRef<Set<string>>(new Set())
   const checkedStaleInstallIds = useRef<Set<string>>(new Set())
+
+  // Reset stale-check caches on SSE reconnect so zombie tasks get re-verified
+  useEffect(() => {
+    checkedStaleInstallIds.current = new Set()
+    checkedStaleJavaIds.current = new Set()
+  }, [reconnectKey])
 
   useEffect(() => {
     if (!sseData) return
@@ -174,7 +180,13 @@ export default function DownloadCenter() {
           checkedStaleInstallIds.current.add(task.instanceId)
           getInstallProgress(task.instanceId).then(p => {
             if (!p || p.status === 'not-started') {
-              updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
+              // not-started = backend has no state. If task was queued/pending, remove it (zombie).
+              // If task was downloading/paused, we can't know if it's a new task or zombie — mark as failed.
+              if (task.status === 'queued') {
+                removeTask(task.id)
+              } else {
+                updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
+              }
             }
           }).catch(() => {
             updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })

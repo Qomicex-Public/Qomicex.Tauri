@@ -210,4 +210,8 @@ app.Lifetime.ApplicationStopping.Register(() => lanListener.Stop());
 var connector = app.Services.GetRequiredService<ConnectorService>();
 app.Lifetime.ApplicationStopping.Register(() => { try { connector.LeaveAsync().GetAwaiter().GetResult(); } catch { } });
 
+// Cancel all active installs and download sessions on shutdown
+var installTracker = app.Services.GetRequiredService<InstallTracker>();
+app.Lifetime.ApplicationStopping.Register(() => { try { installTracker.ShutdownAsync().GetAwaiter().GetResult(); } catch { } });
+
 app.Run();

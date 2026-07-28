@@ -284,7 +284,7 @@ public class ModpackService
         while (state.Paused)
         {
             ct.ThrowIfCancellationRequested();
-            await Task.Delay(200, CancellationToken.None);
+            await Task.Delay(200, ct);
         }
     }
 

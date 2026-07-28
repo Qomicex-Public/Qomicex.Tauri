@@ -51,8 +51,8 @@ export async function cancelLaunch(id: string): Promise<void> {
   await post(`/instance/${id}/launch/cancel`)
 }
 
-export async function startInstall(id: string, loader?: string, loaderVersion?: string, addons?: string[], downloadThreads?: number, versionIsolation?: boolean, downloadSource?: number, downloadTimeout?: number): Promise<void> {
-  await post(`/instance/${id}/install`, { loader, loaderVersion, addons, downloadThreads, versionIsolation, downloadSourceId: downloadSource, downloadTimeout })
+export async function startInstall(id: string, loader?: string, loaderVersion?: string, addons?: string[], downloadThreads?: number, versionIsolation?: boolean, downloadSource?: number, downloadTimeout?: number, optifineVersion?: string): Promise<void> {
+  await post(`/instance/${id}/install`, { loader, loaderVersion, addons, downloadThreads, versionIsolation, downloadSourceId: downloadSource, downloadTimeout, optifineVersion })
 }
 
 export async function getInstallProgress(id: string): Promise<InstallProgressResponse> {
@@ -122,5 +122,6 @@ export async function resolveModpack(source: string, projectId: string, versionI
 }
 
 export async function startModpackInstall(data: ModpackInstallRequest): Promise<{ message: string; instanceId: string }> {
-  return post('/modpack/install', data)
+  const res = await post<{ message: string; versionId: string }>('/modpack/install', data)
+  return { message: res.message, instanceId: res.versionId }
 }
