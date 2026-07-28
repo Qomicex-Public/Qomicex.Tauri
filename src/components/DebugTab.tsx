@@ -10,6 +10,7 @@ import { getSystemInfo } from '../api/system.ts'
 import { get, post, API_BASE } from '../api/client.ts'
 import type { SystemInfo } from '../types/index.ts'
 import { useMessageBox } from './ui/message-box.tsx'
+import { clearAllTasks } from '../stores/downloadStore.ts'
 
 function LogCard() {
   const [logs, setLogs] = useState<string[]>([])
@@ -220,12 +221,44 @@ function TogglesCard() {
   )
 }
 
+function ClearDataCard() {
+  const { confirm, notify } = useMessageBox()
+
+  async function handleClearDownloadTasks() {
+    const ok = await confirm('确定要清除所有下载任务列表吗？此操作不可撤销。', '清除下载任务')
+    if (!ok) return
+    clearAllTasks()
+    notify('下载任务列表已清除', 'success')
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-destructive" />数据管理</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">下载任务列表</p>
+            <p className="text-xs text-muted-foreground">清除 localStorage 中的下载任务记录</p>
+          </div>
+          <Button size="sm" variant="destructive" onClick={handleClearDownloadTasks} className="gap-1.5 shrink-0">
+            <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />
+            清除下载任务列表
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function DebugTab() {
   return (
     <div className="space-y-4">
       <LogCard />
       <DiagnosticsCard />
       <TogglesCard />
+      <ClearDataCard />
     </div>
   )
 }

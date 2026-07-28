@@ -46,6 +46,12 @@ export function removeTask(id: string) {
   emitChange()
 }
 
+export function clearAllTasks() {
+  tasks = []
+  saveTasks()
+  emitChange()
+}
+
 export function clearCompleted() {
   tasks = tasks.filter((t) => t.status !== 'completed')
   saveTasks()
