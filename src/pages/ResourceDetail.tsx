@@ -28,6 +28,7 @@ import { useMessageBox } from '../components/ui/message-box.tsx'
 import { get, post, API_BASE } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, getResourceDependencies, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
 import { lookupChineseName } from '../api/mcmod.ts'
+import { translateCategory } from '../lib/categoryTranslations.ts'
 import { downloadTo } from '../api/resource-download.ts'
 import { getInstance, getDefaultInstance } from '../api/instance.ts'
 import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance, ResolvedDependency } from '../types/index.ts'
@@ -494,7 +495,7 @@ export default function ResourceDetailPage() {
                         {detail.categories.map((item) => (
                           <Badge key={item} variant="outline" className="gap-1 rounded-full px-3 py-1">
                             <FontAwesomeIcon icon={faTag} className="h-2.5 w-2.5" />
-                            {item}
+                            {translateCategory(item, detail.source)}
                           </Badge>
                         ))}
                       </div>
