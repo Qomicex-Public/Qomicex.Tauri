@@ -199,7 +199,7 @@ public class ModpackService
                 var resp = await http.GetAsync(file.Url, ct);
                 resp.EnsureSuccessStatusCode();
                 await using var content = await resp.Content.ReadAsStreamAsync(ct);
-                await using var outFs = new FileStream(file.Path, FileMode.Create);
+                await using var outFs = new FileStream(file.Path, FileMode.Create, FileAccess.Write);
                 await content.CopyToAsync(outFs, ct);
                 state.CompletedFiles++;
             }
