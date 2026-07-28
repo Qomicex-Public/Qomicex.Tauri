@@ -111,7 +111,7 @@ public class ModpackService
         Func<CancellationToken, Task<List<AdditionalFile>>>? resolveFtbFiles = null;
         if (isFtb && !string.IsNullOrWhiteSpace(request.ProjectId) && !string.IsNullOrWhiteSpace(request.VersionId))
         {
-            resolveFtbFiles = ct => BuildFtbAdditionalFilesAsync(request, versionDirName);
+            resolveFtbFiles = ct => BuildFtbAdditionalFilesAsync(request, request.Name);
         }
 
         _installTracker.Start(instance.Id, request.GameVersion, request.GameDir,
