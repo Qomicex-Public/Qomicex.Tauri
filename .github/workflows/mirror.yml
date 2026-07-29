@@ -1,6 +1,6 @@
 name: Mirror to CNB
 
-# 将当前仓库镜像同步至 CNB（云原生构建）平台。
+# 将当前仓库（含子模块）镜像同步至 CNB（云原生构建）平台。
 # 触发条件：代码推送到主分支（main）或手动触发（workflow_dispatch）。
 on:
   push:
@@ -12,14 +12,18 @@ on:
 permissions:
   contents: read
 
-# 可通过仓库 Variables 配置，或通过 Secrets 保证敏感信息安全引用。
+# 可通过仓库 Variables 配置，敏感信息通过 Secrets 安全引用。
 env:
-  # CNB 目标仓库地址，形如 "owner/repo"（不含协议前缀），请在仓库 Settings → Secrets and variables → Actions → Variables 中设置。
+  # CNB 目标仓库地址，形如 "owner/repo"（不含协议前缀），请在仓库 Settings → Variables 中设置。
   CNB_REPO: ${{ vars.CNB_REPO }}
   # CNB 平台域名，默认 cnb.cool，一般无需修改。
   CNB_HOST: cnb.cool
   # 用于认证的访问令牌用户名，CNB 访问令牌通常使用 cnb 作为用户名。
   CNB_USERNAME: cnb
+  # 是否镜像子模块到 CNB。true=自包含镜像（推荐）；false=子模块仍指向原 GitHub 地址。
+  MIRROR_SUBMODULES: ${{ vars.MIRROR_SUBMODULES || 'true' }}
+  # 子模块在 CNB 上的归属（owner）。留空则复用超级仓库的 owner（即 CNB_REPO 的 "/" 前部分）。
+  CNB_SUBMODULE_OWNER: ${{ vars.CNB_SUBMODULE_OWNER }}
   # 提交作者信息（仅用于本地提交信息展示，不影响推送认证）。
   GIT_AUTHOR_NAME: github-actions[bot]
   GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
@@ -37,7 +41,7 @@ jobs:
           # fetch-depth: 0 获取完整历史，确保分支与标签的镜像数据完整。
           fetch-depth: 0
           fetch-tags: true
-          # 递归检出子模块，保证仓库内容完整。
+          # 递归检出子模块，保证仓库内容完整，并便于后续镜像子模块。
           submodules: recursive
           # 子模块需要 PAT 才能递归拉取（与 release.yml 保持一致）。
           token: ${{ secrets.QOMICEX_PAT }}
@@ -61,22 +65,78 @@ jobs:
           fi
           echo "Target CNB repo: ${CNB_REPO}"
 
-      - name: Add CNB remote
+      - name: Add CNB remote (superproject)
         env:
           CNB_ACCESS_TOKEN: ${{ secrets.CNB_ACCESS_TOKEN }}
         run: |
-          # 将访问令牌嵌入远程地址，避免令牌出现在日志中（使用 --push 不回显 URL）。
+          # 将访问令牌嵌入远程地址，避免令牌出现在日志中。
           REMOTE_URL="https://${CNB_USERNAME}:${CNB_ACCESS_TOKEN}@${CNB_HOST}/${CNB_REPO}.git"
           git remote remove cnb 2>/dev/null || true
           git remote add cnb "$REMOTE_URL"
           echo "CNB remote added."
 
-      - name: Push mirror (branches + tags)
+      - name: Mirror submodules to CNB
+        if: env.MIRROR_SUBMODULES == 'true'
+        env:
+          CNB_ACCESS_TOKEN: ${{ secrets.CNB_ACCESS_TOKEN }}
+        run: |
+          set -e
+          SUPER_OWNER="${CNB_SUBMODULE_OWNER:-${CNB_REPO%/*}}"
+          echo "Submodule owner on CNB: ${SUPER_OWNER}"
+          # 遍历 .gitmodules 中每个子模块，逐个镜像到 CNB。
+          git config -f .gitmodules --get-regexp '^submodule\..*\.path' | while read -r key path; do
+            name="${key#submodule.}"
+            name="${name%.path}"
+            orig_url="$(git config -f .gitmodules --get "submodule.${name}.url")"
+            repo_name="$(basename "${orig_url}" .git)"
+            cnb_url="https://${CNB_USERNAME}:${CNB_ACCESS_TOKEN}@${CNB_HOST}/${SUPER_OWNER}/${repo_name}.git"
+            echo "==> Mirroring submodule: ${name} (${path})"
+            echo "    origin: ${orig_url}"
+            echo "    cnb:    ${CNB_HOST}/${SUPER_OWNER}/${repo_name}"
+            if [ ! -d "${path}/.git" ] && [ ! -f "${path}/.git" ]; then
+              echo "    !! 子模块工作树未检出，跳过（请确认 recursive 检出成功）。"
+              continue
+            fi
+            git -C "$path" remote remove cnb 2>/dev/null || true
+            git -C "$path" remote add cnb "$cnb_url"
+            # 确保子模块拥有完整历史（非浅克隆）。
+            git -C "$path" fetch --unshallow 2>/dev/null || git -C "$path" fetch --all 2>/dev/null || true
+            git -C "$path" push --mirror cnb
+            echo "    ✅ submodule mirror done."
+          done
+
+      - name: Rewrite .gitmodules to CNB URLs
+        if: env.MIRROR_SUBMODULES == 'true'
+        run: |
+          set -e
+          SUPER_OWNER="${CNB_SUBMODULE_OWNER:-${CNB_REPO%/*}}"
+          changed=0
+          git config -f .gitmodules --get-regexp '^submodule\..*\.url' | while read -r key url; do
+            name="${key#submodule.}"
+            name="${name%.url}"
+            repo_name="$(basename "${url}" .git)"
+            new_url="https://${CNB_HOST}/${SUPER_OWNER}/${repo_name}.git"
+            git config -f .gitmodules "submodule.${name}.url" "$new_url"
+            echo "Rewrote ${name}: ${url} -> ${new_url}"
+          done
+          # 将改写后的 .gitmodules 提交（amend 当前 HEAD，CNB 侧强制更新）。
+          git add .gitmodules
+          if ! git diff --cached --quiet; then
+            git commit --amend --no-edit
+            echo "==> .gitmodules rewritten and committed."
+          else
+            echo "==> .gitmodules 无需改动。"
+          fi
+
+      - name: Push mirror (superproject + branches + tags)
         env:
           CNB_ACCESS_TOKEN: ${{ secrets.CNB_ACCESS_TOKEN }}
         run: |
           set -e
           echo "==> Pushing all refs (branches + tags) to CNB with --mirror ..."
+          # 重新设置远程（amend 后 remote 仍在，但令牌来自 secret，重新写入以防过期）。
+          REMOTE_URL="https://${CNB_USERNAME}:${CNB_ACCESS_TOKEN}@${CNB_HOST}/${CNB_REPO}.git"
+          git remote set-url cnb "$REMOTE_URL"
           # --mirror 会完整推送所有引用（分支、标签等），并保证目标与源一致。
           git push --mirror cnb
           echo "==> Mirror push completed."
@@ -89,6 +149,7 @@ jobs:
             echo "✅ 镜像同步成功 (Mirror sync succeeded)"
             echo "   源仓库: ${{ github.repository }} @ ${{ github.ref_name }}"
             echo "   目标仓库: ${CNB_HOST}/${CNB_REPO}"
+            echo "   子模块镜像: ${{ env.MIRROR_SUBMODULES }}"
             echo "   触发事件: ${{ github.event_name }}"
             echo "   提交 SHA: ${{ github.sha }}"
             echo "   同步时间: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -98,7 +159,7 @@ jobs:
             echo "❌ 镜像同步失败 (Mirror sync failed)"
             echo "   源仓库: ${{ github.repository }} @ ${{ github.ref_name }}"
             echo "   目标仓库: ${CNB_HOST}/${CNB_REPO}"
-            echo "   请检查 CNB_ACCESS_TOKEN / CNB_REPO 配置及网络连通性。"
+            echo "   请检查 CNB_ACCESS_TOKEN / CNB_REPO / CNB_SUBMODULE_OWNER 配置及网络连通性。"
             echo "============================================"
             exit 1
           fi
