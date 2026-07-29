@@ -371,6 +371,7 @@ jobs:
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
           PLATFORM="linux-x86_64"
+          # Prefer update archive (.tar.gz) with signature
           ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
           if [ -n "$ARCHIVE" ]; then
             ASSET_NAME=$(basename "$ARCHIVE")
@@ -487,89 +488,43 @@ jobs:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.buildPlatform == 'loongarch64' || github.event.inputs.buildPlatform == 'all'))
+        (github.event.inputs.buildPlatform == 'loongarch64'))
     needs: [setup]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, loongarch64]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: loongarch64
-
-      - name: Build inside loongarch64 container
-        id: build
-        uses: uraimo/run-on-arch-action@v3
-        with:
-          arch: loongarch64
-          distro: ubuntu24.04
-          github-token: ${{ github.token }}
-          docker-run-args: |
-            --env CARGO_TERM_COLORS=always
-            --env GITHUB_SHA=${{ env.GITHUB_SHA }}
-            --env TAURI_SIGNING_PRIVATE_KEY
-            --env TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-            --env QOMICEX_PAT=${{ secrets.QOMICEX_PAT }}
-            --env VERSION=${{ needs.setup.outputs.version }}
-            --env DISPLAY_VERSION=${{ needs.setup.outputs.displayVersion }}
-            --env LICENSE_REQUIRED=${{ needs.setup.outputs.licenseRequired }}
-          env: |
-            CARGO_TERM_COLORS=always
-            GITHUB_SHA=${{ env.GITHUB_SHA }}
-            TAURI_SIGNING_PRIVATE_KEY=${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-            TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-            QOMICEX_PAT=${{ secrets.QOMICEX_PAT }}
-            VERSION=${{ needs.setup.outputs.version }}
-            DISPLAY_VERSION=${{ needs.setup.outputs.displayVersion }}
-            LICENSE_REQUIRED=${{ needs.setup.outputs.licenseRequired }}
-          install: |
-            set -eux
-            apt-get update
-            apt-get install -y --no-install-recommends \
-              curl wget ca-certificates gnupg lsb-release \
-              build-essential clang llvm libclang-dev \
-              libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-              patchelf rpm xdg-utils file pkg-config \
-              libssl-dev libgtk-3-dev libsoup-3.0-dev \
-              nodejs npm git
-            # 安装 Rust
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-            . "$HOME/.cargo/env"
-            rustup target add loongarch64-unknown-linux-gnu
-            # 安装 .NET 10 (LoongArch64 社区 SDK)
-            mkdir -p /usr/local/dotnet
-            curl -sL "https://github.com/loongson/dotnet/releases/download/v10.0.109-loongarch64/dotnet-sdk-10.0.109-linux-loongarch64.tar.gz" \
-              | tar xz -C /usr/local/dotnet
-            ln -sf /usr/local/dotnet/dotnet /usr/local/bin/dotnet
-            dotnet nuget add source -n lnuget.loongnix.cn --protocol-version 3 https://lnuget.loongnix.cn/v3/index.json
-          run: |
-            set -eux
-            . "$HOME/.cargo/env"
-            cd "$GITHUB_WORKSPACE"
-
-            # Bump 版本号
-            node scripts/bump-version.mjs "$VERSION"
-
-            # 拉取 LicenseCore.cs
-            bash scripts/fetch-license-core.sh "$LICENSE_REQUIRED" "$QOMICEX_PAT"
-
-            # 发布 .NET 后端 (loongarch64 自包含)
-            dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj \
-              -c Release -r linux-loongarch64 --self-contained true \
-              -p:DebugType=embedded -p:GitHash=$GITHUB_SHA -p:LicenseRequired=$LICENSE_REQUIRED \
-              -o src-tauri/binaries/tmp
-            mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
-            rm -rf src-tauri/binaries/tmp
-
-            # 安装前端依赖并构建 Tauri
-            npm ci
-            BUNDLES="${{ github.event.inputs.linuxBundles }}"
-            npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
-
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: loongarch64-unknown-linux-gnu }
+      - uses: swatinem/rust-cache@v2
+      - name: Setup .NET (LoongArch SDK)
+        run: |
+          curl -sL "https://github.com/loongson/dotnet/releases/download/v10.0.109-loongarch64/dotnet-sdk-10.0.109-linux-loongarch64.tar.gz" | tar xz -C /usr/local/dotnet
+          echo "/usr/local/dotnet" >> $GITHUB_PATH
+          dotnet nuget add source -n lnuget.loongnix.cn --protocol-version 3 https://lnuget.loongnix.cn/v3/index.json
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Fetch LicenseCore.cs
+        env:
+          PAT: ${{ secrets.QOMICEX_PAT }}
+        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
+      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-loongarch64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+      - run: |
+          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
+          rm -rf src-tauri/binaries/tmp
+      - run: npm ci
+      - run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -598,12 +553,10 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
-
       - uses: actions/upload-artifact@v4
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-
       - uses: actions/upload-artifact@v4
         with:
           name: qomicex-launcher-linux-loongarch64
@@ -800,7 +753,6 @@ jobs:
       - windows-arm64
       - linux-x64
       - linux-arm64
-      - loongarch64
       - macos-arm64
       - macos-x64
     runs-on: ubuntu-latest
@@ -892,16 +844,22 @@ jobs:
 
   release-cnb:
     name: Publish release to CNB
+    # 在 GitHub Release 创建成功后，将代码、发布标签与构建产物同步到 CNB。
     if: success()
     needs: [release, setup]
     runs-on: ubuntu-latest
     permissions:
       contents: read
     env:
+      # CNB 目标仓库（形如 owner/repo），通过仓库 Variables 配置。
       CNB_REPO: ${{ vars.CNB_REPO }}
+      # CNB Git 域名。
       CNB_HOST: cnb.cool
+      # Git 推送时的用户名（CNB 令牌鉴权固定用 cnb）。
       CNB_USERNAME: cnb
+      # CNB CLI 鉴权令牌（与 Git 推送使用同一令牌）。
       CNB_TOKEN: ${{ secrets.CNB_ACCESS_TOKEN }}
+      # 是否将构建产物作为附件上传到 CNB Release。
       CNB_UPLOAD_ASSETS: ${{ vars.CNB_UPLOAD_ASSETS || 'true' }}
     steps:
       - name: Install CNB CLI
