@@ -237,6 +237,11 @@ public static class InstanceEndpoints
                         }
                     }
 
+                    if (string.Equals(instance.Loader, "babric", StringComparison.OrdinalIgnoreCase))
+                    {
+                        requiredJava = Math.Max(requiredJava, 17);
+                    }
+
                     Console.Error.WriteLine($"[启动] 需要 Java >= {requiredJava}");
 
                     // 选择 Java 运行时
