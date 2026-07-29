@@ -62,7 +62,13 @@ public sealed class InstallTracker
                     versionIsolation, downloadSourceId ?? 0, state, cts.Token,
                     instanceName, optifineVersion, additionalFiles,
                     resolveAdditionalFiles);
-                if (postInstall is null) return;
+                if (postInstall is null)
+                {
+                    state.Status = "completed";
+                    state.Stage = "completed";
+                    state.Progress = 100;
+                    return;
+                }
                 state.Status = "downloading";
                 state.Stage = "modpack-files";
                 state.Progress = 92;
@@ -77,11 +83,13 @@ public sealed class InstallTracker
             {
                 state.Status = "failed";
                 state.Error = "安装已取消";
+                System.Diagnostics.Trace.WriteLine($"[Install] [{instanceId}] 安装被取消");
             }
             catch (Exception ex)
             {
                 state.Status = "failed";
                 state.Error = ex.Message;
+                System.Diagnostics.Trace.WriteLine($"[Install] [{instanceId}] 安装异常: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
                 _sessionManager.GetSession($"install-{instanceId}")?.ReportFailed(ex.Message);
             }
         });
@@ -188,6 +196,11 @@ public sealed class InstallTracker
             await downloadSession.RunSingleAsync(task, cancellationToken, 4, 5, taskHeaders);
         }
 
+        // 修改 version id 以匹配实际版本目录名，确保扫描路径一致
+        var versionJsonNode = JsonNode.Parse(jsonContent)!;
+        versionJsonNode["id"] = versionDirName;
+        jsonContent = versionJsonNode.ToJsonString();
+
         session.SetStage("scanning-base", 5, "扫描基础文件...");
 
         var missFiles = await core.Locator.GetMissFilesAsync(jsonContent);
@@ -244,11 +257,10 @@ public sealed class InstallTracker
         }
         else if (string.IsNullOrEmpty(loader))
         {
-            var jsonPath = Path.Combine(gameDir, "versions", versionDirName, $"{versionDirName}.json");
-            JsonNode root = JsonNode.Parse(jsonContent)!;
-            root["id"] = versionDirName;
-            string updatedJson = root.ToJsonString();
-            await File.WriteAllTextAsync(jsonPath, updatedJson);
+            var versionDir = Path.Combine(gameDir, "versions", versionDirName);
+            Directory.CreateDirectory(versionDir);
+            var jsonPath = Path.Combine(versionDir, $"{versionDirName}.json");
+            await File.WriteAllTextAsync(jsonPath, jsonContent);
         }
 
         // === 等待基础下载和加载器库下载完成 ===
@@ -259,28 +271,40 @@ public sealed class InstallTracker
             try
             {
                 var baseResult = await baseDownloadTask;
+                System.Diagnostics.Trace.WriteLine($"[Install] [{instanceId}] 基础文件下载结果: {baseResult.CompletedTasks} OK, {baseResult.FailedTasks} 失败");
                 if (baseResult.FailedTasks > 0)
                 {
                     var retried = await RetryFailedFiles(baseResult.FailedTaskList, downloadThreads, session, ct, 5, 35);
+                    System.Diagnostics.Trace.WriteLine($"[Install] [{instanceId}] 重试结果: {retried.CompletedTasks} OK, {retried.FailedTasks} 失败");
                     if (retried.FailedTasks > 0)
                         throw new Exception($"基础文件下载失败 ({retried.FailedTasks} 个)");
                 }
             }
-            catch (Exception ex) { downloadError ??= ex; }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine($"[Install] [{instanceId}] 基础文件下载异常: {ex.GetType().Name}: {ex.Message}");
+                downloadError ??= ex;
+            }
         }
         if (loaderLibTask is not null)
         {
             try
             {
                 var libResult = await loaderLibTask;
+                System.Diagnostics.Trace.WriteLine($"[Install] [{instanceId}] 加载器库下载结果: {libResult.CompletedTasks} OK, {libResult.FailedTasks} 失败");
                 if (libResult.FailedTasks > 0)
                 {
                     var retried = await RetryFailedFiles(libResult.FailedTaskList, 32, session, ct, 35, 55);
+                    System.Diagnostics.Trace.WriteLine($"[Install] [{instanceId}] 重试结果: {retried.CompletedTasks} OK, {retried.FailedTasks} 失败");
                     if (retried.FailedTasks > 0)
                         throw new Exception($"加载器库文件下载失败 ({retried.FailedTasks} 个)");
                 }
             }
-            catch (Exception ex) { downloadError ??= ex; }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine($"[Install] [{instanceId}] 加载器库下载异常: {ex.GetType().Name}: {ex.Message}");
+                downloadError ??= ex;
+            }
         }
         if (downloadError != null) throw downloadError;
 
@@ -344,11 +368,13 @@ public sealed class InstallTracker
                 var headers = new Dictionary<string, string>();
                 if (string.Equals(af.Source, "modrinth", StringComparison.OrdinalIgnoreCase))
                     headers["User-Agent"] = "QomicexLauncher/1.0";
-                if (string.Equals(af.Source, "curseforge", StringComparison.OrdinalIgnoreCase) || IsCfDomain(af.Identifier))
+                var isCf = string.Equals(af.Source, "curseforge", StringComparison.OrdinalIgnoreCase) || IsCfDomain(af.Identifier);
+                if (isCf)
                 {
                     headers["x-api-key"] = _curseForgeApiKey;
                     headers["User-Agent"] = "QomicexLauncher/1.0";
                 }
+                System.Diagnostics.Trace.WriteLine($"[Install] [附加文件] url={af.Identifier[..Math.Min(60, af.Identifier.Length)]}, source={af.Source}, isCfDomain={IsCfDomain(af.Identifier)}, hasApiKey={headers.ContainsKey("x-api-key")}, apiKeyLen={_curseForgeApiKey?.Length ?? 0}");
                 return new DownloadTask { Url = af.Identifier, SavePath = destPath, Headers = headers.Count > 0 ? headers : null };
             }).ToList();
 
@@ -802,7 +828,11 @@ public sealed class InstallState(CancellationTokenSource cts)
         Speed: Speed
     );
 
-    public void Cancel() => cts.Cancel();
+    public void Cancel()
+    {
+        System.Diagnostics.Trace.WriteLine($"[InstallState] Cancel() called\n{Environment.StackTrace}");
+        cts.Cancel();
+    }
     public void Pause() => _paused = true;
     public void Resume() => _paused = false;
 }

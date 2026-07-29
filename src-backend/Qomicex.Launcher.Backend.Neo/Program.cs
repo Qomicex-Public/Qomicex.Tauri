@@ -72,6 +72,10 @@ var downloadSessionManager = new DownloadSessionManagerBuilder()
     .WithMaxConcurrency(64)
     .WithRetry(3, TimeSpan.FromSeconds(1))
     .WithLogProgress(Qomicex.Launcher.Backend.Neo.Common.DownloaderTrace.CreateLogProgress())
+    .WithPerUrlDownloadConfig(new Dictionary<string, DownloadUrlConfig>
+    {
+        ["forgecdn.net"] = new() { DisableDnsOptimization = true, SingleThreadDownload = true }
+    })
     .Build();
 builder.Services.AddSingleton(downloadSessionManager);
 
