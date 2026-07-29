@@ -383,6 +383,8 @@ public class ModpackService
             }
         }
 
+        var iconData = await DownloadIconAsDataUriAsync(project.IconUrl);
+
         return new ModpackParseResult(
             Name: project.Name,
             Summary: project.Description,
@@ -396,7 +398,7 @@ public class ModpackService
             HasOverrides: false,
             FileCount: files.Count,
             OverridesZip: null,
-            IconData: project.IconUrl
+            IconData: iconData
         );
     }
 
@@ -466,6 +468,7 @@ public class ModpackService
 
         var pack = await ftb.GetPackDetailAsync(packId);
         var iconUrl = pack?.Art?.FirstOrDefault()?.Url;
+        var iconData = await DownloadIconAsDataUriAsync(iconUrl);
 
         return new ModpackParseResult(
             Name: pack?.Name ?? "",
@@ -480,7 +483,7 @@ public class ModpackService
             HasOverrides: false,
             FileCount: 0,
             OverridesZip: null,
-            IconData: iconUrl
+            IconData: iconData
         );
     }
 
@@ -531,6 +534,25 @@ public class ModpackService
         "quilt-loader" => "quilt",
         _ => loader.ToLowerInvariant()
     };
+
+    private async Task<string?> DownloadIconAsDataUriAsync(string? iconUrl)
+    {
+        if (string.IsNullOrWhiteSpace(iconUrl)) return null;
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var resp = await http.GetAsync(iconUrl);
+            resp.EnsureSuccessStatusCode();
+            var contentType = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
+            var bytes = await resp.Content.ReadAsByteArrayAsync();
+            return $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "下载整合包图标失败: {Url}", iconUrl);
+            return null;
+        }
+    }
 
     private static string? ExtractOverridesToBase64(ZipArchive archive, string overridesFolder)
     {
