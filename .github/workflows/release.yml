@@ -841,3 +841,132 @@ jobs:
 
       - name: Trigger website rebuild
         run: curl -X POST ${{ secrets.VERCEL_DEPLOY_HOOK }}
+
+  release-cnb:
+    name: Publish release to CNB
+    # 在 GitHub Release 创建成功后，将代码、发布标签与构建产物同步到 CNB。
+    if: success()
+    needs: [release, setup]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # CNB 目标仓库（形如 owner/repo），通过仓库 Variables 配置。
+      CNB_REPO: ${{ vars.CNB_REPO }}
+      # CNB Git 域名。
+      CNB_HOST: cnb.cool
+      # Git 推送时的用户名（CNB 令牌鉴权固定用 cnb）。
+      CNB_USERNAME: cnb
+      # CNB CLI 鉴权令牌（与 Git 推送使用同一令牌）。
+      CNB_TOKEN: ${{ secrets.CNB_ACCESS_TOKEN }}
+      # 是否将构建产物作为附件上传到 CNB Release。
+      CNB_UPLOAD_ASSETS: ${{ vars.CNB_UPLOAD_ASSETS || 'true' }}
+    steps:
+      - name: Install CNB CLI
+        run: |
+          npm install -g @cnbcool/cnb-cli
+          export PATH="$PATH:$(npm prefix -g)/bin"
+          cnb --version
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: qomicex-launcher-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: Checkout (for tag resolution)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            PRERELEASE="${{ github.event.release.prerelease }}"
+          else
+            TAG="${{ needs.setup.outputs.displayVersion }}"
+            PRERELEASE="${{ needs.setup.outputs.prerelease }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG (prerelease=$PRERELEASE)"
+
+      - name: Generate release note
+        run: |
+          node scripts/generate-changelog.mjs \
+            "${{ needs.setup.outputs.displayVersion }}" \
+            "${{ needs.setup.outputs.releaseType }}" \
+            RELEASE_NOTES.md
+
+      - name: Push code + tag to CNB
+        run: |
+          set -e
+          if [ -z "${{ env.CNB_REPO }}" ]; then
+            echo "::error::CNB_REPO 未配置。请在仓库 Variables 中设置 CNB_REPO（形如 owner/repo）。"
+            exit 1
+          fi
+          if [ -z "${{ secrets.CNB_ACCESS_TOKEN }}" ]; then
+            echo "::error::CNB_ACCESS_TOKEN 未配置。请在仓库 Secrets 中添加 CNB_ACCESS_TOKEN。"
+            exit 1
+          fi
+          git config --global safe.directory "$GITHUB_WORKSPACE"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          REMOTE_URL="https://${CNB_USERNAME}:${CNB_TOKEN}@${CNB_HOST}/${CNB_REPO}.git"
+          git remote remove cnb 2>/dev/null || true
+          git remote add cnb "$REMOTE_URL"
+          echo "==> Pushing main + tag ${{ steps.meta.outputs.tag }} to CNB ..."
+          git push cnb main
+          git push cnb "refs/tags/${{ steps.meta.outputs.tag }}"
+          echo "==> Code + tag pushed to CNB."
+
+      - name: Create CNB release
+        run: |
+          set -e
+          ARGS=(--repo "${{ env.CNB_REPO }}" \
+                --tag "${{ steps.meta.outputs.tag }}" \
+                --name "Qomicex Launcher ${{ steps.meta.outputs.tag }}" \
+                --body "$(cat RELEASE_NOTES.md)")
+          if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
+            ARGS+=(--prerelease)
+          fi
+          echo "==> Creating CNB release ..."
+          cnb release create "${ARGS[@]}"
+
+      - name: Upload release assets to CNB
+        if: env.CNB_UPLOAD_ASSETS == 'true'
+        run: |
+          set -e
+          cd artifacts
+          for f in *; do
+            [ -f "$f" ] || continue
+            echo "==> Uploading asset: $f"
+            cnb release asset-upload \
+              --repo="${{ env.CNB_REPO }}" \
+              --tag-name="${{ steps.meta.outputs.tag }}" \
+              --file-name="$f"
+          done
+
+      - name: Report CNB publish status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "============================================"
+            echo "✅ 已发布到 CNB (Published to CNB)"
+            echo "   目标仓库: ${CNB_HOST}/${CNB_REPO}"
+            echo "   发布标签: ${{ steps.meta.outputs.tag }}"
+            echo "   触发事件: ${{ github.event_name }}"
+            echo "   同步时间: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            echo "============================================"
+          else
+            echo "============================================"
+            echo "❌ 发布到 CNB 失败 (CNB publish failed)"
+            echo "   目标仓库: ${CNB_HOST}/${CNB_REPO}"
+            echo "   请检查 CNB_REPO / CNB_ACCESS_TOKEN 配置及 CNB CLI 兼容性。"
+            echo "============================================"
+            exit 1
+          fi
