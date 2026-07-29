@@ -1634,8 +1634,8 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
         ) : (
           <div className="space-y-1 overflow-hidden">
             {filtered.map((s) => {
-              const range = parseRange(s.validValues)
-              const enumOpts = parseEnum(s.validValues)
+              const range = parseRange(s.validValuesRaw)
+              const enumOpts = parseEnum(s.validValuesRaw)
               const keybind = isKeybinding(s.name)
               return (
                 <div key={s.name} className="flex items-center justify-between gap-3 rounded-lg px-3 py-1.5 transition-colors hover:bg-accent/50 min-w-0">

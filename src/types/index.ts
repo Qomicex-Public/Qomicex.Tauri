@@ -590,7 +590,7 @@ export interface GameSettingDto {
   defaultValue: string
   currentValue: string
   description: string
-  validValues: string
+  validValuesRaw: string
   introducedVersion: string
   isAvailableInCurrentVersion: boolean
   valueKind: string

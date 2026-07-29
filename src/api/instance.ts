@@ -84,11 +84,11 @@ export async function repairResources(id: string): Promise<RepairResourcesResult
 }
 
 export async function getGameSettings(id: string): Promise<GameSettingDto[]> {
-  return get<GameSettingDto[]>(`/instance/${id}/game-settings`)
+  return get<GameSettingDto[]>(`/instance/${id}/files/options`)
 }
 
 export async function setGameSetting(id: string, name: string, value: string): Promise<void> {
-  await put(`/instance/${id}/game-settings/` + encodeURIComponent(name), value)
+  await put(`/instance/${id}/files/options/` + encodeURIComponent(name), { value })
 }
 
 export async function exportDiagnostics(id: string): Promise<void> {
