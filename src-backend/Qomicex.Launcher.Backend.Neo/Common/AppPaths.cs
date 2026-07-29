@@ -30,4 +30,7 @@ public static class AppPaths
         Directory.CreateDirectory(DefaultDir);
         File.WriteAllText(BootstrapFile, path);
     }
+
+    public static string PluginsDir =>
+        Path.Combine(BaseDir, "plugins");
 }

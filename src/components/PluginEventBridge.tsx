@@ -1,0 +1,55 @@
+import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useMessageBox } from './ui/message-box.tsx'
+import { usePluginStore } from '../stores/pluginStore.ts'
+
+const COMMAND_KEY_MAP: Record<string, (e: KeyboardEvent) => boolean> = {
+  'devtools:toggle': (e) => e.ctrlKey && e.shiftKey && e.key === 'I',
+}
+
+export function PluginEventBridge() {
+  const navigate = useNavigate()
+  const { notify } = useMessageBox()
+  const plugins = usePluginStore(s => s.plugins)
+
+  useEffect(() => {
+    function handleNavigate(e: Event) {
+      const detail = (e as CustomEvent).detail
+      if (!detail?.path) return
+      const plugin = plugins.find(p => p.manifest.id === detail.pluginId)
+      if (plugin) {
+        navigate(`/plugins/p/${detail.pluginId}`)
+      } else {
+        navigate(detail.path)
+      }
+    }
+    function handleToast(e: Event) {
+      const detail = (e as CustomEvent).detail
+      if (detail?.message) notify(detail.message, detail.type ?? 'info')
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      const activePlugins = plugins.filter(p => p.state === 'active')
+      for (const plugin of activePlugins) {
+        const commands = plugin.manifest.contributes?.commands ?? []
+        for (const cmd of commands) {
+          const match = COMMAND_KEY_MAP[cmd]
+          if (match && match(e)) {
+            e.preventDefault()
+            window.dispatchEvent(new CustomEvent('plugin:command', { detail: { pluginId: plugin.manifest.id, command: cmd } }))
+            return
+          }
+        }
+      }
+    }
+    window.addEventListener('plugin:navigate', handleNavigate)
+    window.addEventListener('plugin:show-toast', handleToast)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('plugin:navigate', handleNavigate)
+      window.removeEventListener('plugin:show-toast', handleToast)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [navigate, notify, plugins])
+
+  return null
+}

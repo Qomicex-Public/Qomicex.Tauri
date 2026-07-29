@@ -4,6 +4,7 @@ use tauri::Manager;
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 
 mod dialog_cmd;
+mod plugin_gateway;
 
 #[cfg(all(windows, not(debug_assertions)))]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend.exe");
@@ -139,6 +140,9 @@ pub fn run() {
                 let _ = w.set_decorations(false);
             }
             spawn_backend(app);
+            let mut runtime = plugin_gateway::loader::PluginRuntime::new().unwrap();
+            let _ = runtime.scan_and_load();
+            let _ = plugin_gateway::server::start_gateway(runtime);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

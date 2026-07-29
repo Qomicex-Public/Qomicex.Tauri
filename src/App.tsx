@@ -12,6 +12,8 @@ import ResourceDetailPage from './pages/ResourceDetail.tsx'
 import Connect from './pages/Connect.tsx'
 import Settings from './pages/Settings.tsx'
 import RunningInstances from './pages/RunningInstances.tsx'
+import PluginManager from './pages/PluginManager.tsx'
+import PluginPage from './pages/PluginPage.tsx'
 import { MessageBoxProvider, useMessageBox } from './components/ui/message-box.tsx'
 import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
 import useCloseGuard from './hooks/useCloseGuard.ts'
@@ -27,6 +29,8 @@ import type { Update } from '@tauri-apps/plugin-updater'
 
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
 import { SplashScreen } from './components/SplashScreen.tsx'
+import { usePluginStore } from './stores/pluginStore.ts'
+import { activatePlugin } from './plugins/plugin-loader.tsx'
 
 function RunningNotifyBridge() {
   const { notify } = useMessageBox()
@@ -43,6 +47,8 @@ function AppContent() {
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
   const autoCheckDone = useRef(false)
+  const pluginsActivated = useRef(false)
+  const { loadPlugins, plugins } = usePluginStore()
 
   useEffect(() => {
     let cancelled = false
@@ -103,6 +109,27 @@ function AppContent() {
     return () => clearTimeout(timer)
   }, [backendState])
 
+  useEffect(() => {
+    if (backendState !== 'ready') return
+    loadPlugins().then(() => {
+      const { plugins: loaded } = usePluginStore.getState()
+      for (const p of loaded) {
+        if (p.state === 'active') activatePlugin(p)
+      }
+    })
+  }, [backendState, loadPlugins])
+
+  useEffect(() => {
+    if (pluginsActivated.current) return
+    for (const plugin of plugins) {
+      if (plugin.state === 'installed') {
+        if (plugin.manifest.layers.every(l => l === 'l3')) continue
+        activatePlugin(plugin)
+      }
+    }
+    pluginsActivated.current = true
+  }, [plugins])
+
   return (
     <Provider value={closeWithGuard}>
       <BrowserRouter>
@@ -123,6 +150,8 @@ function AppContent() {
                 <Route path="/connect" element={<Connect />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/running" element={<RunningInstances />} />
+                <Route path="/plugins" element={<PluginManager />} />
+                <Route path="/plugins/p/:pluginId" element={<PluginPage />} />
               </>
             ) : (
               <Route path="*" element={<div />} />

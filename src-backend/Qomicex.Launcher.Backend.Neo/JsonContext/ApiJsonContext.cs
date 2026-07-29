@@ -220,6 +220,17 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(ModpackParseResult))]
 [JsonSerializable(typeof(ModpackInstallRequest))]
 [JsonSerializable(typeof(ModpackResolveRequest))]
+// Plugin DTOs
+[JsonSerializable(typeof(PluginManifest))]
+[JsonSerializable(typeof(PluginEntry))]
+[JsonSerializable(typeof(PluginContributes))]
+[JsonSerializable(typeof(PluginMenuItem))]
+[JsonSerializable(typeof(PluginInfo))]
+[JsonSerializable(typeof(List<PluginInfo>))]
+[JsonSerializable(typeof(SetPluginStateRequest))]
+[JsonSerializable(typeof(RescanResponse))]
+[JsonSerializable(typeof(GatewayPluginListResponse))]
+[JsonSerializable(typeof(InstallRequest))]
 // FTB export types
 [JsonSerializable(typeof(VersionDetail))]
 [JsonSerializable(typeof(FtbFileInfo))]
