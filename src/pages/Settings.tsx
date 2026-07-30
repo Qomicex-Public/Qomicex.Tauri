@@ -21,6 +21,8 @@ import ToolboxTab from '../components/ToolboxTab.tsx'
 import { PluginCard } from '../components/PluginCard.tsx'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { activatePlugin, deactivatePlugin } from '../plugins/plugin-loader.tsx'
+import { PERMISSION_CATALOG } from '../plugins/types.ts'
+import type { PluginInfo } from '../plugins/types.ts'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { check } from '@tauri-apps/plugin-updater'
@@ -501,6 +503,7 @@ export default function Settings() {
   const [modPingLoading, setModPingLoading] = useState(false)
   const { plugins, loading, loadPlugins, setPluginState } = usePluginStore()
   const [pluginsMsg, setPluginsMsg] = useState<string | null>(null)
+  const [pluginDetail, setPluginDetail] = useState<PluginInfo | null>(null)
 
   useEffect(() => {
     apiLoadSettings().then((s) => {
@@ -1694,7 +1697,7 @@ export default function Settings() {
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {plugins.map(p => (
-                        <PluginCard key={p.manifest.id} plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} />
+                        <PluginCard key={p.manifest.id} plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} onClick={() => setPluginDetail(p)} />
                       ))}
                     </div>
                   )}
@@ -1787,6 +1790,63 @@ export default function Settings() {
             }}
             onClose={() => setLicenseDialogOpen(false)}
           />
+
+          <Dialog open={pluginDetail !== null} onClose={() => setPluginDetail(null)}>
+            <DialogHeader onClose={() => setPluginDetail(null)}>
+              <DialogTitle>{pluginDetail?.manifest.name ?? ''}</DialogTitle>
+            </DialogHeader>
+            <DialogBody className="space-y-4">
+              {pluginDetail && (
+                <>
+                  <div className="text-sm text-muted-foreground">
+                    {pluginDetail.manifest.id}@{pluginDetail.manifest.version}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {pluginDetail.manifest.layers.map(layer => (
+                      <span key={layer} className="text-xs px-1.5 py-0.5 rounded border border-border text-muted-foreground">{layer.toUpperCase()}</span>
+                    ))}
+                  </div>
+                  <Separator />
+                  {pluginDetail.manifest.permissions.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">权限 ({pluginDetail.manifest.permissions.length})</p>
+                      {pluginDetail.manifest.permissions.map(p => {
+                        const info = PERMISSION_CATALOG[p]
+                        const colors: Record<string, string> = {
+                          normal: 'border-blue-500/30 text-blue-400',
+                          warning: 'border-yellow-500/30 text-yellow-400',
+                          danger: 'border-red-500/30 text-red-400',
+                        }
+                        return (
+                          <div key={p} className="flex items-center gap-2 text-sm">
+                            <span className={`text-xs px-1.5 py-0.5 rounded border ${colors[info?.risk ?? 'normal'] ?? ''}`}>
+                              {info?.risk ?? 'normal'}
+                            </span>
+                            <span>{info?.label ?? p}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {pluginDetail.manifest.contributes?.menuItems && pluginDetail.manifest.contributes.menuItems.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">扩展点</p>
+                      {pluginDetail.manifest.contributes.menuItems.map(item => (
+                        <div key={item.path} className="flex items-center gap-2 text-sm">
+                          <span>{item.icon ?? ''}</span>
+                          <span>{item.label}</span>
+                          <span className="text-xs text-muted-foreground">{item.path}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </DialogBody>
+            <DialogFooter>
+              <Button variant="secondary" onClick={() => setPluginDetail(null)}>关闭</Button>
+            </DialogFooter>
+          </Dialog>
         </div>
       </div>
     </PageShell>
