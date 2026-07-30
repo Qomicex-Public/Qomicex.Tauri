@@ -90,7 +90,7 @@ public static class PluginEndpoints
         {
             var settingsFile = Path.Combine(AppPaths.PluginsDir, id, "settings.json");
             if (!File.Exists(settingsFile))
-                return Results.Ok(new Dictionary<string, object>());
+                return Results.Content("{}", "application/json");
             var json = File.ReadAllText(settingsFile);
             return Results.Content(json, "application/json");
         });
