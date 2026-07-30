@@ -1,0 +1,13 @@
+{
+  "id": "com.qomicex.ai-assistant",
+  "name": "AI 助手",
+  "version": "1.0.0",
+  "minLauncherVersion": "0.1.0",
+  "layers": ["l3"],
+  "permissions": ["ui:toast", "ui:sub_window", "ui:inject_sidebar"],
+  "entry": { "frontend": "dist/index.html" },
+  "contributes": {
+    "menuItems": [{ "path": "/plugins/p/com.qomicex.ai-assistant", "label": "AI 助手", "icon": "A", "action": "overlay" }],
+    "overlay": { "file": "dist/overlay.html", "title": "AI 助手", "width": 380, "height": 500 }
+  }
+}

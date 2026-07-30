@@ -1,4 +1,5 @@
-import type { PluginInfo } from './types.ts'
+import { Tooltip } from '../components/ui/index.ts'
+import type { PluginInfo, PluginMenuItem, PluginContributes } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { createSandbox, renderInline, getInstance } from './sandbox.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
@@ -18,14 +19,22 @@ export async function activatePlugin(plugin: PluginInfo) {
       createSandbox(plugin)
     }
 
-    const { menuItems } = plugin.manifest.contributes ?? {}
+    const { menuItems, overlay } = plugin.manifest.contributes ?? {}
     if (menuItems) {
       for (const item of menuItems) {
-        registerSlot(
-          plugin.manifest.id,
-          'sidebar:bottom',
-          () => <NavItem to={`/plugins/p/${plugin.manifest.id}`} label={item.label} icon={<span className="text-sm">{item.icon ?? item.label[0]}</span>} />
-        )
+        if (item.action === 'overlay' && overlay) {
+          registerSlot(
+            plugin.manifest.id,
+            'sidebar:bottom',
+            () => <OverlaySidebarButton pluginId={plugin.manifest.id} item={item} overlay={overlay} />
+          )
+        } else {
+          registerSlot(
+            plugin.manifest.id,
+            'sidebar:bottom',
+            () => <NavItem to={`/plugins/p/${plugin.manifest.id}`} label={item.label} icon={<span className="text-sm">{item.icon ?? item.label[0]}</span>} />
+          )
+        }
       }
     }
 
@@ -62,4 +71,35 @@ export function deactivatePlugin(pluginId: string) {
 
 export function isPluginActive(pluginId: string): boolean {
   return !!getInstance(pluginId)
+}
+
+function OverlaySidebarButton({ pluginId, item, overlay }: { pluginId: string; item: PluginMenuItem; overlay: NonNullable<PluginContributes['overlay']> }) {
+  const store = usePluginStore()
+
+  const handleClick = async () => {
+    const res = await fetch(`/api/plugins/${pluginId}/files/${overlay.file}`)
+    if (!res.ok) return
+    const html = await res.text()
+    store.createOverlay(pluginId, {
+      title: overlay.title ?? item.label,
+      html,
+      width: overlay.width ?? 380,
+      height: overlay.height ?? 500,
+      x: 120,
+      y: 80,
+    })
+  }
+
+  return (
+    <li className="w-full flex justify-center relative">
+      <Tooltip content={item.label} side="right">
+        <button
+          onClick={handleClick}
+          className="flex h-11 w-11 items-center justify-center rounded-lg text-lg transition-all duration-200 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <span className="text-sm">{item.icon ?? item.label[0]}</span>
+        </button>
+      </Tooltip>
+    </li>
+  )
 }

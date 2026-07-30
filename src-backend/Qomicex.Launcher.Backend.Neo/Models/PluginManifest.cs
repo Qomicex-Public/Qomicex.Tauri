@@ -54,6 +54,9 @@ public class PluginContributes
 
     [JsonPropertyName("menuItems")]
     public List<PluginMenuItem>? MenuItems { get; set; }
+
+    [JsonPropertyName("overlay")]
+    public PluginOverlayConfig? Overlay { get; set; }
 }
 
 public class PluginMenuItem
@@ -66,6 +69,24 @@ public class PluginMenuItem
 
     [JsonPropertyName("icon")]
     public string? Icon { get; set; }
+
+    [JsonPropertyName("action")]
+    public string? Action { get; set; }
+}
+
+public class PluginOverlayConfig
+{
+    [JsonPropertyName("file")]
+    public string File { get; set; } = "";
+
+    [JsonPropertyName("title")]
+    public string? Title { get; set; }
+
+    [JsonPropertyName("width")]
+    public int? Width { get; set; }
+
+    [JsonPropertyName("height")]
+    public int? Height { get; set; }
 }
 
 public class PluginInfo

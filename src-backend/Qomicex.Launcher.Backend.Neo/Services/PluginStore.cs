@@ -8,12 +8,15 @@ namespace Qomicex.Launcher.Backend.Neo.Services;
 public class PluginStore
 {
     private readonly string _pluginsDir;
+    private readonly string _statesFile;
     private List<PluginInfo>? _cache;
+    private Dictionary<string, string>? _statesCache;
     private readonly object _lock = new();
 
     public PluginStore()
     {
         _pluginsDir = AppPaths.PluginsDir;
+        _statesFile = Path.Combine(AppPaths.BaseDir, "plugin-states.json");
         Directory.CreateDirectory(_pluginsDir);
     }
 
@@ -56,12 +59,40 @@ public class PluginStore
         };
     }
 
+    public void SetPluginState(string id, string state)
+    {
+        lock (_lock)
+        {
+            _statesCache ??= LoadStates();
+            _statesCache[id] = state;
+            File.WriteAllText(_statesFile, JsonSerializer.Serialize(_statesCache, ApiJsonContext.Default.DictionaryStringString));
+            _cache = null;
+        }
+    }
+
     public void UninstallPlugin(string id)
     {
         var dir = Path.Combine(_pluginsDir, id);
         if (Directory.Exists(dir))
             Directory.Delete(dir, recursive: true);
+        lock (_lock)
+        {
+            _statesCache ??= LoadStates();
+            _statesCache.Remove(id);
+            File.WriteAllText(_statesFile, JsonSerializer.Serialize(_statesCache, ApiJsonContext.Default.DictionaryStringString));
+        }
         InvalidateCache();
+    }
+
+    private Dictionary<string, string> LoadStates()
+    {
+        if (!File.Exists(_statesFile)) return [];
+        try
+        {
+            var json = File.ReadAllText(_statesFile);
+            return JsonSerializer.Deserialize(json, ApiJsonContext.Default.DictionaryStringString) ?? [];
+        }
+        catch { return []; }
     }
 
     public void InvalidateCache()
@@ -74,6 +105,8 @@ public class PluginStore
         var result = new List<PluginInfo>();
         if (!Directory.Exists(_pluginsDir)) return result;
 
+        var states = LoadStates();
+
         foreach (var dir in Directory.GetDirectories(_pluginsDir))
         {
             var manifestPath = Path.Combine(dir, "manifest.json");
@@ -85,17 +118,20 @@ public class PluginStore
                 var manifest = JsonSerializer.Deserialize(json, ApiJsonContext.Default.PluginManifest);
                 if (manifest == null) continue;
 
+                var id = manifest.Id;
+                states.TryGetValue(id, out var saved);
                 result.Add(new PluginInfo
                 {
                     Manifest = manifest,
                     Dir = dir,
-                    State = "installed",
+                    State = saved ?? "installed",
                     InstalledAt = File.GetCreationTimeUtc(dir).ToString("O")
                 });
             }
             catch { }
         }
 
+        _statesCache = states;
         _cache = result;
         return result;
     }

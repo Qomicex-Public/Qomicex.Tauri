@@ -46,10 +46,7 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     set({ loading: true, error: null })
     try {
       const plugins = await fetchPlugins()
-      set(s => {
-        const active = new Set(s.plugins.filter(p => p.state === 'active').map(p => p.manifest.id))
-        return { plugins: plugins.map(p => active.has(p.manifest.id) ? { ...p, state: 'active' as const } : p), loading: false }
-      })
+      set({ plugins, loading: false })
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Unknown error', loading: false })
     }

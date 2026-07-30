@@ -22,12 +22,14 @@ export interface PluginContributes {
   commands?: string[]
   settingsPages?: string[]
   menuItems?: PluginMenuItem[]
+  overlay?: { file: string; title?: string; width?: number; height?: number }
 }
 
 export interface PluginMenuItem {
   path: string
   label: string
   icon?: string
+  action?: 'page' | 'overlay'
 }
 
 export interface PluginInfo {

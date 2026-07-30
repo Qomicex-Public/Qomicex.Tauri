@@ -47,6 +47,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache, setDataDir } from '../api/settings.ts'
+import { setPluginState as apiSetPluginState } from '../api/plugins.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS } from '../constants/credits.ts'
 
@@ -536,13 +537,15 @@ export default function Settings() {
     }
   }, [category])
 
-  const handlePluginToggle = useCallback((id: string, active: boolean) => {
-    const prefs = JSON.parse(localStorage.getItem('qomicex-plugin-prefs') || '{}')
-    prefs[id] = active ? 'active' : 'disabled'
-    localStorage.setItem('qomicex-plugin-prefs', JSON.stringify(prefs))
-    setPluginState(id, active ? 'active' : 'disabled')
-    setPluginsMsg('更改将在重启 launcher 后生效')
-    setTimeout(() => setPluginsMsg(null), 3000)
+  const handlePluginToggle = useCallback(async (id: string, active: boolean) => {
+    try {
+      await apiSetPluginState(id, active ? 'active' : 'disabled')
+      setPluginState(id, active ? 'active' : 'disabled')
+      setPluginsMsg('更改将在重启 launcher 后生效')
+      setTimeout(() => setPluginsMsg(null), 3000)
+    } catch {
+      setPluginsMsg('保存失败')
+    }
   }, [setPluginState])
 
   const handlePluginUninstall = useCallback(async (id: string) => {
@@ -578,8 +581,6 @@ export default function Settings() {
     }
     input.click()
   }
-
-  useEffect(() => { loadPlugins() }, [loadPlugins])
 
   useEffect(() => {
     if (!pluginsMsg) return

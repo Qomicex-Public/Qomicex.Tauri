@@ -48,18 +48,22 @@ export default function PluginPage() {
       if ('iframe' in inst) {
         clearInterval(timer)
         if (inst.iframe.parentElement !== el) {
+          el.innerHTML = ''
           el.appendChild(inst.iframe)
         }
       } else if ('container' in inst) {
         const c = inst.container
         if (c.parentElement !== el) {
-          el.id = ''
+          el.innerHTML = ''
           c.className = 'flex-1'
           el.appendChild(c)
         }
         if (!c.innerHTML) return
         clearInterval(timer)
-        activateInlineScripts(c)
+        if (!c.dataset.scriptsActivated) {
+          c.dataset.scriptsActivated = 'true'
+          activateInlineScripts(c)
+        }
       }
     }, 50)
 

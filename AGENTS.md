@@ -144,6 +144,18 @@ Version-isolated dirs (`mods`, `saves`, `resourcepacks`, `shaderpacks`, `screens
 
 **Always resolve `inst.GameDir` (not VersionDir) as the base** for path construction. Core library constructors (`Mods`, `Saves`, etc.) take `(gameDirectory, version, versionSegmented, apiKey)` — `gameDirectory` must be the GameDir root, `version` must be `inst.Name`.
 
+## Plugin system
+
+- **Manifest**: `src/plugins/types.ts` / `src-backend/.../Models/PluginManifest.cs` — `PluginManifest`, `PluginContributes`, `PluginMenuItem`.
+- **Activation**: `activatePlugin()` in `src/plugins/plugin-loader.tsx:9` — calls `renderInline()`, registers sidebar slots, loads theme CSS.
+- **Inline rendering**: `sandbox.ts:113` `renderInline()` — fetches `dist/index.html`, strips `<html>/<head>/<body>`, sets `container.innerHTML` with bridge script appended.
+- **Plugin page**: `src/pages/PluginPage.tsx` — mounts at `/plugins/p/:pluginId`. Switches plugins by clearing `containerRef.innerHTML` before appending new container. Scripts activate once (`data-scripts-activated` flag).
+- **Overlay system**: `PluginOverlayManager.tsx` — overlays are iframes with `sandbox="allow-scripts"`. Created via `createPluginBridge().createOverlay()`. Global `window.__pluginOverlayStore` exposes store methods.
+- **Sidebar action**: `menuItems[].action: "overlay"` + `contributes.overlay.file` → sidebar button calls `createOverlay` directly, no page navigation (`plugin-loader.tsx:76` `OverlaySidebarButton`).
+- **Plugin packages**: `.qplugin` = `.zip` with `manifest.json` at root. Upload via `POST /api/plugins/upload`. States persisted to `{BaseDir}/plugin-states.json`.
+- **Dev plugins**: placed in `plugins-dev/` directory during development.
+- **Plugin API bridge**: `window.__PLUGIN_API__` (inline) / `parent.postMessage` (iframe) — methods: `getSettings`, `setSettings`, `callBackend`, `navigate`, `showToast`, `overlay.*`.
+
 ## Tauri details
 
 - Backend binary is embedded via `include_bytes!` in release builds (`lib.rs:7-9`), extracted to temp dir on startup. In dev, backend runs separately.

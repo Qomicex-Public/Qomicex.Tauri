@@ -225,6 +225,7 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(PluginEntry))]
 [JsonSerializable(typeof(PluginContributes))]
 [JsonSerializable(typeof(PluginMenuItem))]
+[JsonSerializable(typeof(PluginOverlayConfig))]
 [JsonSerializable(typeof(PluginInfo))]
 [JsonSerializable(typeof(List<PluginInfo>))]
 [JsonSerializable(typeof(SetPluginStateRequest))]

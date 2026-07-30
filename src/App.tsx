@@ -55,7 +55,6 @@ function AppContent() {
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
   const autoCheckDone = useRef(false)
-  const pluginsActivated = useRef(false)
   const { loadPlugins, plugins } = usePluginStore()
 
   useEffect(() => {
@@ -120,16 +119,9 @@ function AppContent() {
   useEffect(() => {
     if (backendState !== 'ready') return
     loadPlugins().then(() => {
-      const { plugins: loaded, setPluginState } = usePluginStore.getState()
-      const prefs: Record<string, string> = JSON.parse(localStorage.getItem('qomicex-plugin-prefs') || '{}')
+      const { plugins: loaded } = usePluginStore.getState()
       for (const p of loaded) {
-        const pref = prefs[p.manifest.id]
-        if (pref === 'active') {
-          setPluginState(p.manifest.id, 'active')
-          activatePlugin(p)
-        } else if (pref === 'disabled') {
-          setPluginState(p.manifest.id, 'disabled')
-        } else if (p.state === 'active') {
+        if (p.state === 'active') {
           activatePlugin(p)
         }
       }
@@ -137,14 +129,12 @@ function AppContent() {
   }, [backendState, loadPlugins])
 
   useEffect(() => {
-    if (pluginsActivated.current) return
     for (const plugin of plugins) {
       if (plugin.state === 'installed') {
         if (plugin.manifest.layers.every(l => l === 'l3')) continue
         activatePlugin(plugin)
       }
     }
-    if (plugins.length > 0) pluginsActivated.current = true
   }, [plugins])
 
   return (

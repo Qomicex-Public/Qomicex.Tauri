@@ -30,6 +30,11 @@ export default function LaunchProgressDialog() {
   const isFinal = ['completed', 'crashed', 'failed'].includes(launchProgress.stage)
   const isError = ['crashed', 'failed'].includes(launchProgress.stage)
 
+  const overrideDetail = { message: launchProgress.message, stage: launchProgress.stage }
+  const oe = new CustomEvent('plugin:launch-progress-override', { detail: overrideDetail, cancelable: true })
+  window.dispatchEvent(oe)
+  const displayMessage = overrideDetail.message
+
   return (
     <Dialog open onClose={() => cancelLaunch()} closeOnBackdrop={isFinal} closeOnEsc={isFinal}>
       <DialogHeader onClose={() => cancelLaunch()}>
@@ -48,7 +53,7 @@ export default function LaunchProgressDialog() {
             style={{ width: `${launchProgress.progress}%` }}
           />
         </div>
-        <p className="text-sm text-muted-foreground">{launchProgress.message}</p>
+        <p className="text-sm text-muted-foreground">{displayMessage}</p>
         {launchProgress.error && (
           <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{launchProgress.error}</p>
         )}

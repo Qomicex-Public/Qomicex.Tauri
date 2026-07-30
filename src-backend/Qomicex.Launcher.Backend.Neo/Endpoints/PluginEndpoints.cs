@@ -62,8 +62,8 @@ public static class PluginEndpoints
             var plugin = store.GetPlugin(id);
             if (plugin == null) return Results.NotFound();
 
+            store.SetPluginState(id, req.State);
             plugin.State = req.State;
-            store.InvalidateCache();
             return Results.Ok(plugin);
         });
 
