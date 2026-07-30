@@ -42,12 +42,16 @@ export default function PluginPage() {
   useLayoutEffect(() => {
     if (!pluginId) return
 
-    const p = usePluginStore.getState().getPlugin(pluginId)
-    if (p && p.state !== 'active') {
-      activatePlugin(p)
+    const tryActivate = () => {
+      const p = usePluginStore.getState().getPlugin(pluginId)
+      if (p && p.state !== 'active') {
+        activatePlugin(p)
+      }
     }
+    tryActivate()
 
     const timer = setInterval(() => {
+      tryActivate()
       const inst = getInstance(pluginId)
       const el = containerRef.current
       if (!inst || !el) return
@@ -72,12 +76,26 @@ export default function PluginPage() {
     }, 50)
 
     return () => { clearInterval(timer) }
-  }, [pluginId])
+  }, [pluginId, plugin?.state])
 
   if (!plugin) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <p className="text-muted-foreground">插件未找到</p>
+      </div>
+    )
+  }
+
+  if (plugin.state !== 'active') {
+    return (
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex items-center gap-3 border-b border-border/50 px-6 py-3">
+          <h2 className="text-sm font-medium">{plugin.manifest.name}</h2>
+          <span className="text-xs text-muted-foreground">v{plugin.manifest.version}</span>
+        </div>
+        <div className="flex flex-1 items-center justify-center">
+          <p className="text-muted-foreground">插件未激活</p>
+        </div>
       </div>
     )
   }

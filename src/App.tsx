@@ -135,7 +135,7 @@ function AppContent() {
         activatePlugin(plugin)
       }
     }
-    pluginsActivated.current = true
+    if (plugins.length > 0) pluginsActivated.current = true
   }, [plugins])
 
   return (
