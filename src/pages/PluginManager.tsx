@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PluginCard } from '../components/PluginCard.tsx'
 import { Button } from '../components/ui/button.tsx'
@@ -11,7 +11,7 @@ export default function PluginManager() {
 
   useEffect(() => { loadPlugins() }, [loadPlugins])
 
-  const handleToggle = async (id: string, active: boolean) => {
+  const handleToggle = useCallback(async (id: string, active: boolean) => {
     const plugin = plugins.find(p => p.manifest.id === id)
     if (!plugin) return
     if (active) {
@@ -20,10 +20,11 @@ export default function PluginManager() {
       deactivatePlugin(id)
     }
     setPluginState(id, active ? 'active' : 'disabled')
-  }
+  }, [plugins, setPluginState])
 
-  const handleUninstall = async (id: string) => {
+  const handleUninstall = useCallback(async (id: string) => {
     if (!confirm('确定卸载此插件？')) return
+    deactivatePlugin(id)
     try {
       const res = await fetch(`/api/plugins/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Uninstall failed')
@@ -32,7 +33,7 @@ export default function PluginManager() {
     } catch {
       setMessage('卸载失败')
     }
-  }
+  }, [loadPlugins])
 
   const handleInstall = () => {
     const input = document.createElement('input')

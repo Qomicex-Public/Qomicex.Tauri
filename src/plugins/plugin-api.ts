@@ -5,6 +5,12 @@ export interface PluginBridge {
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
+  createOverlay: (opts: { title: string; html: string; x?: number; y?: number; width?: number; height?: number }) => string
+  showOverlay: (id: string) => void
+  hideOverlay: (id: string) => void
+  destroyOverlay: (id: string) => void
+  setOverlayHtml: (id: string, html: string) => void
+  setOverlayPosition: (id: string, x: number, y: number) => void
 }
 
 export function createPluginBridge(pluginId: string): PluginBridge {
@@ -39,6 +45,31 @@ export function createPluginBridge(pluginId: string): PluginBridge {
     },
     showToast: (message, type) => {
       window.dispatchEvent(new CustomEvent('plugin:show-toast', { detail: { pluginId, message, type } }))
-    }
+    },
+    createOverlay: (opts) => {
+      const { createOverlay } = (window as any).__pluginOverlayStore || {}
+      if (!createOverlay) throw new Error('Overlay system not initialized')
+      return createOverlay(pluginId, opts)
+    },
+    showOverlay: (id) => {
+      const { showOverlay } = (window as any).__pluginOverlayStore
+      if (showOverlay) showOverlay(id)
+    },
+    hideOverlay: (id) => {
+      const { hideOverlay } = (window as any).__pluginOverlayStore
+      if (hideOverlay) hideOverlay(id)
+    },
+    destroyOverlay: (id) => {
+      const { destroyOverlay } = (window as any).__pluginOverlayStore
+      if (destroyOverlay) destroyOverlay(id)
+    },
+    setOverlayHtml: (id, html) => {
+      const { setOverlayHtml } = (window as any).__pluginOverlayStore
+      if (setOverlayHtml) setOverlayHtml(id, html)
+    },
+    setOverlayPosition: (id, x, y) => {
+      const { setOverlayPosition } = (window as any).__pluginOverlayStore
+      if (setOverlayPosition) setOverlayPosition(id, x, y)
+    },
   }
 }

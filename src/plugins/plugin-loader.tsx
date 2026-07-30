@@ -1,18 +1,22 @@
 import type { PluginInfo } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { createSandbox, type SandboxInstance } from './sandbox.ts'
+import { createSandbox, renderInline, getInstance } from './sandbox.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
 import { NavItem } from '../components/Sidebar.tsx'
 
-const activeSandboxes = new Map<string, SandboxInstance>()
 const activeThemes = new Map<string, HTMLStyleElement>()
 
 export async function activatePlugin(plugin: PluginInfo) {
-  if (activeSandboxes.has(plugin.manifest.id)) return
+  if (getInstance(plugin.manifest.id)) return
 
-  if (plugin.manifest.layers.includes('l2') && plugin.manifest.entry.frontend) {
-    const sandbox = createSandbox(plugin)
-    activeSandboxes.set(plugin.manifest.id, sandbox)
+  const useInline = true
+
+  if (plugin.manifest.entry.frontend) {
+    if (useInline) {
+      renderInline(plugin)
+    } else {
+      createSandbox(plugin)
+    }
 
     const { menuItems } = plugin.manifest.contributes ?? {}
     if (menuItems) {
@@ -44,24 +48,18 @@ export async function activatePlugin(plugin: PluginInfo) {
 }
 
 export function deactivatePlugin(pluginId: string) {
-  const sandbox = activeSandboxes.get(pluginId)
-  if (sandbox) {
-    sandbox.destroy()
-    activeSandboxes.delete(pluginId)
-    unregisterPluginSlots(pluginId)
-  }
+  const inst = getInstance(pluginId)
+  if (inst) inst.destroy()
+  unregisterPluginSlots(pluginId)
   const themeStyle = activeThemes.get(pluginId)
   if (themeStyle) {
     themeStyle.remove()
     activeThemes.delete(pluginId)
   }
+  usePluginStore.getState().destroyPluginOverlays(pluginId)
   usePluginStore.getState().setPluginState(pluginId, 'disabled')
 }
 
 export function isPluginActive(pluginId: string): boolean {
-  return activeSandboxes.has(pluginId)
-}
-
-export function getSandbox(pluginId: string): SandboxInstance | undefined {
-  return activeSandboxes.get(pluginId)
+  return !!getInstance(pluginId)
 }

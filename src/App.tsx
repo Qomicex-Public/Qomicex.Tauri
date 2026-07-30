@@ -14,6 +14,7 @@ import Settings from './pages/Settings.tsx'
 import RunningInstances from './pages/RunningInstances.tsx'
 import PluginManager from './pages/PluginManager.tsx'
 import PluginPage from './pages/PluginPage.tsx'
+import PluginOverlayManager from './components/PluginOverlayManager.tsx'
 import { MessageBoxProvider, useMessageBox } from './components/ui/message-box.tsx'
 import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
 import useCloseGuard from './hooks/useCloseGuard.ts'
@@ -31,6 +32,14 @@ import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from '.
 import { SplashScreen } from './components/SplashScreen.tsx'
 import { usePluginStore } from './stores/pluginStore.ts'
 import { activatePlugin } from './plugins/plugin-loader.tsx'
+
+function OverlayStoreBridge() {
+  const { createOverlay, showOverlay, hideOverlay, destroyOverlay, setOverlayHtml, setOverlayPosition } = usePluginStore()
+  useEffect(() => {
+    (window as any).__pluginOverlayStore = { createOverlay, showOverlay, hideOverlay, destroyOverlay, setOverlayHtml, setOverlayPosition }
+  }, [createOverlay, showOverlay, hideOverlay, destroyOverlay, setOverlayHtml, setOverlayPosition])
+  return null
+}
 
 function RunningNotifyBridge() {
   const { notify } = useMessageBox()
@@ -161,6 +170,8 @@ function AppContent() {
       </BrowserRouter>
       <SplashScreen state={backendState} onRetry={() => window.location.reload()} />
       <LaunchProgressDialog />
+      <OverlayStoreBridge />
+      <PluginOverlayManager />
       <CrashAnalysisDialog
         open={!!crashDialogState}
         title={crashDialogState?.title || ''}

@@ -1,41 +1,83 @@
 import { useParams } from 'react-router-dom'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { activatePlugin, getSandbox } from '../plugins/plugin-loader.tsx'
-import { useEffect, useRef } from 'react'
+import { activatePlugin } from '../plugins/plugin-loader.tsx'
+import { getInstance } from '../plugins/sandbox.ts'
+import { useLayoutEffect, useRef } from 'react'
+
+function activateInlineScripts(container: HTMLElement) {
+  const origGetElementById = document.getElementById.bind(document)
+  const containerId = container.id || `plugin-root-${Math.random().toString(36).slice(2)}`
+  if (!container.id) container.id = containerId
+
+  document.getElementById = (id: string) => {
+    if (id === 'root') return container
+    return origGetElementById(id)
+  }
+
+  const scripts = [...container.querySelectorAll('script')]
+  console.log('[PluginPage] activating', scripts.length, 'scripts for', containerId)
+  for (const oldScript of scripts) {
+    const newScript = document.createElement('script')
+    if (oldScript.src) {
+      newScript.src = oldScript.src
+    }
+    if (oldScript.type) newScript.type = oldScript.type
+    if (oldScript.crossOrigin) newScript.crossOrigin = oldScript.crossOrigin
+    if (oldScript.noModule) newScript.noModule = oldScript.noModule
+    if (oldScript.referrerPolicy) newScript.referrerPolicy = oldScript.referrerPolicy
+    if (oldScript.integrity) newScript.integrity = oldScript.integrity
+    if (!oldScript.src) {
+      newScript.textContent = oldScript.textContent
+    }
+    oldScript.replaceWith(newScript)
+  }
+  console.log('[PluginPage] scripts activated for', containerId)
+}
 
 export default function PluginPage() {
   const { pluginId } = useParams<{ pluginId: string }>()
   const plugin = usePluginStore(s => s.plugins.find(p => p.manifest.id === pluginId))
-  const activated = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!plugin || activated.current) return
-    activated.current = true
-    activatePlugin(plugin)
-  }, [plugin])
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!pluginId) return
-    const sb = getSandbox(pluginId)
-    if (sb && containerRef.current && !sb.iframe.parentElement) {
-      containerRef.current.appendChild(sb.iframe)
+
+    const p = usePluginStore.getState().getPlugin(pluginId)
+    if (p && p.state !== 'active') {
+      activatePlugin(p)
     }
-  }, [pluginId, plugin])
+
+    const timer = setInterval(() => {
+      const inst = getInstance(pluginId)
+      const el = containerRef.current
+      if (!inst || !el) return
+
+      if ('iframe' in inst) {
+        clearInterval(timer)
+        if (inst.iframe.parentElement !== el) {
+          el.appendChild(inst.iframe)
+        }
+      } else if ('container' in inst) {
+        const c = inst.container
+        if (c.parentElement !== el) {
+          el.id = ''
+          c.className = 'flex-1'
+          c.style.outline = '2px solid red'
+          el.appendChild(c)
+        }
+        if (!c.innerHTML) return
+        clearInterval(timer)
+        activateInlineScripts(c)
+      }
+    }, 50)
+
+    return () => { clearInterval(timer) }
+  }, [pluginId])
 
   if (!plugin) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <p className="text-muted-foreground">插件未找到</p>
-      </div>
-    )
-  }
-
-  if (!plugin.manifest.entry.frontend) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6">
-        <p className="text-lg font-medium">{plugin.manifest.name}</p>
-        <p className="text-sm text-muted-foreground">该插件没有前端界面</p>
       </div>
     )
   }
