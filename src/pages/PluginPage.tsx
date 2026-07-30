@@ -42,16 +42,14 @@ export default function PluginPage() {
   useLayoutEffect(() => {
     if (!pluginId) return
 
-    const tryActivate = () => {
-      const p = usePluginStore.getState().getPlugin(pluginId)
-      if (p && p.state !== 'active') {
-        activatePlugin(p)
-      }
+    const p = usePluginStore.getState().getPlugin(pluginId)
+    if (!p) return
+
+    if (plugin?.state !== 'active' || !getInstance(pluginId)) {
+      activatePlugin(p)
     }
-    tryActivate()
 
     const timer = setInterval(() => {
-      tryActivate()
       const inst = getInstance(pluginId)
       const el = containerRef.current
       if (!inst || !el) return
