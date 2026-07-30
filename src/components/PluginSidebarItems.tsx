@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { getSlotContent } from '../plugins/slots.tsx'
 
@@ -10,9 +11,9 @@ export function PluginSidebarItems() {
   return (
     <>
       {items.map((reg, i) => (
-        <li key={`plugin-${reg.pluginId}-${i}`} className="w-full flex justify-center">
+        <Fragment key={`plugin-${reg.pluginId}-${i}`}>
           {reg.render()}
-        </li>
+        </Fragment>
       ))}
     </>
   )

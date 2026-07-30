@@ -143,28 +143,30 @@ function AppContent() {
       <BrowserRouter>
         <RunningNotifyBridge />
         <TaskCompletionNotifier />
-        <Routes>
-          <Route element={<Layout />}>
-            {backendState === 'ready' ? (
-              <>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/instances" element={<Instances />} />
-                <Route path="/instances/:id" element={<InstanceDetailPage />} />
-                <Route path="/downloads" element={<DownloadCenter />} />
-                <Route path="/accounts" element={<Accounts />} />
-                <Route path="/accounts/:uuid" element={<AccountDetail />} />
-                <Route path="/resource-center" element={<ResourceCenter />} />
-                <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
-                <Route path="/connect" element={<Connect />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/running" element={<RunningInstances />} />
-                <Route path="/plugins/p/:pluginId" element={<PluginPage />} />
-              </>
-            ) : (
-              <Route path="*" element={<div />} />
-            )}
-          </Route>
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route element={<Layout />}>
+              {backendState === 'ready' ? (
+                <>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/instances" element={<Instances />} />
+                  <Route path="/instances/:id" element={<InstanceDetailPage />} />
+                  <Route path="/downloads" element={<DownloadCenter />} />
+                  <Route path="/accounts" element={<Accounts />} />
+                  <Route path="/accounts/:uuid" element={<AccountDetail />} />
+                  <Route path="/resource-center" element={<ResourceCenter />} />
+                  <Route path="/resource-center/:resourceId" element={<ResourceDetailPage />} />
+                  <Route path="/connect" element={<Connect />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/running" element={<RunningInstances />} />
+                  <Route path="/plugins/p/:pluginId" element={<PluginPage />} />
+                </>
+              ) : (
+                <Route path="*" element={<div />} />
+              )}
+            </Route>
+          </Routes>
+        </ErrorBoundary>
       </BrowserRouter>
       <SplashScreen state={backendState} onRetry={() => window.location.reload()} />
       <LaunchProgressDialog />
@@ -215,7 +217,7 @@ function setConsoleLevel(level: string) {
   const shouldLog = (minIdx: number) => idx >= minIdx
   console.log = shouldLog(2) ? _console.log : () => {}
   console.warn = shouldLog(3) ? _console.warn : () => {}
-  console.error = shouldLog(4) ? _console.error : () => {}
+  // console.error is never suppressed
   console.debug = shouldLog(1) ? _console.debug : () => {}
   console.trace = shouldLog(0) ? _console.trace : () => {}
 }

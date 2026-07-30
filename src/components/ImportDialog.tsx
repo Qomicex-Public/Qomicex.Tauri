@@ -6,7 +6,7 @@ import { Label } from '../components/ui'
 import { Separator } from '../components/ui'
 import { parseModpackFile, startModpackInstall, getInstallProgress } from '../api/instance.ts'
 import type { ModpackParseResult, InstallProgressResponse } from '../types/index.ts'
-import { useNavigate } from 'react-router'
+import { useNavigate } from 'react-router-dom'
 import { addTask } from '../stores/downloadStore.ts'
 
 const STAGE_LABELS: Record<string, string> = {
