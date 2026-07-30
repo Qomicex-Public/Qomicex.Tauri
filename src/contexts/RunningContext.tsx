@@ -5,7 +5,7 @@ import type { LaunchInstanceOptions } from '../api/instance.ts'
 import { getJavaRequirement } from '../api/java.ts'
 import { analyzeCrash } from '../api/crashDiagnostics.ts'
 import { getRuntimes } from '../stores/javaStore.ts'
-import { useMessageBox } from '../components/ui/message-box.tsx'
+import { useMessageBox } from '../components/ui'
 import type { LaunchResult, LaunchProgress, CrashDialogState } from '../types/index.ts'
 
 export interface RunningInstance {

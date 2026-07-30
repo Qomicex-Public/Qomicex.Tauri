@@ -1,7 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChevronDown, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
-import { cn } from '../../lib/utils.ts'
+import { cn } from '../lib/cn.js'
 
 interface SelectOptionProps {
   value: string
@@ -118,7 +116,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
         )}
       >
         <span className="truncate">{value ? selectedLabel : placeholder || '选择...'}</span>
-        <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
+        <svg className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
       </button>
 
       {open && (
@@ -130,7 +128,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
           <div className="max-h-72 overflow-y-auto">
             {options.length > 6 && (
               <div className="relative mb-1">
-                <FontAwesomeIcon icon={faMagnifyingGlass} className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+                <svg className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
                 <input
                   ref={searchRef}
                   value={search}

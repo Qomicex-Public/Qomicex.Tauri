@@ -1,11 +1,10 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
-import { cn } from "../../lib/utils.ts"
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
-import { faCircleInfo, faTriangleExclamation, faCheckCircle, faCircleXmark } from "@fortawesome/free-solid-svg-icons"
-import { Button } from "./button.tsx"
-import { Input } from "./input.tsx"
-import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "./dialog.tsx"
+import { cn } from "../lib/cn.js"
+
+import { Button } from "./Button.js"
+import { Input } from "./Input.js"
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "./Dialog.js"
 
 type MessageBoxType = "info" | "error" | "warning" | "success"
 
@@ -29,11 +28,11 @@ interface PromptState {
   resolve: ((value: string | null) => void) | null
 }
 
-const ICONS: Record<MessageBoxType, { icon: typeof faCircleInfo; className: string }> = {
-  info: { icon: faCircleInfo, className: "text-blue-400" },
-  error: { icon: faCircleXmark, className: "text-red-400" },
-  warning: { icon: faTriangleExclamation, className: "text-amber-400" },
-  success: { icon: faCheckCircle, className: "text-emerald-400" },
+const ICON_CLASS: Record<MessageBoxType, string> = {
+  info: "text-blue-400",
+  error: "text-red-400",
+  warning: "text-amber-400",
+  success: "text-emerald-400",
 }
 
 interface ToastState {
@@ -61,6 +60,20 @@ const MessageBoxContext = React.createContext<MessageBoxContextValue>({
   prompt: async () => null,
   notify: () => {},
 })
+
+function MessageIcon({ type, className }: { type: MessageBoxType; className?: string }) {
+  const cls = cn('h-4 w-4 shrink-0', ICON_CLASS[type], className)
+  switch (type) {
+    case 'info':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+    case 'error':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+    case 'warning':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+    case 'success':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+  }
+}
 
 function MessageBoxProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = React.useState<MessageBoxState>({
@@ -135,7 +148,7 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
       <Dialog open={state.open} onClose={() => handleMessageBoxClose(false)}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <FontAwesomeIcon icon={ICONS[state.type].icon} className={cn("h-4 w-4", ICONS[state.type].className)} />
+            <MessageIcon type={state.type} />
             {state.title}
           </DialogTitle>
         </DialogHeader>
@@ -191,7 +204,7 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
             toast.open ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'
           )}
         >
-          <FontAwesomeIcon icon={ICONS[toast.type].icon} className={cn('h-4 w-4 shrink-0', ICONS[toast.type].className)} />
+          <MessageIcon type={toast.type} />
           <span>{toast.count > 1 ? `${toast.message} x${toast.count}` : toast.message}</span>
         </div>,
         document.body

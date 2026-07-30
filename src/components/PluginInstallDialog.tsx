@@ -1,7 +1,7 @@
 import type { PluginManifest } from '../plugins/types.ts'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
-import { Dialog, DialogHeader, DialogBody, DialogFooter, DialogTitle, DialogDescription } from './ui/dialog.tsx'
-import { Button } from './ui/button.tsx'
+import { Dialog, DialogHeader, DialogBody, DialogFooter, DialogTitle, DialogDescription } from './ui'
+import { Button } from './ui'
 
 interface PluginInstallDialogProps {
   open: boolean

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PluginCard } from '../components/PluginCard.tsx'
-import { Button } from '../components/ui/button.tsx'
+import { Button } from '../components/ui'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { activatePlugin, deactivatePlugin } from '../plugins/plugin-loader.tsx'
 

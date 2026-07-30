@@ -1,6 +1,6 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faRotate } from '@fortawesome/free-solid-svg-icons'
-import { Dialog, DialogHeader, DialogTitle, DialogBody } from './ui/dialog.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody } from './ui'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { cn } from '../lib/utils.ts'
 

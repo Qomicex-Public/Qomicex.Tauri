@@ -1,8 +1,6 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
-import { cn } from "../../lib/utils.ts"
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
-import { faXmark } from "@fortawesome/free-solid-svg-icons"
+import { cn } from "../lib/cn.js"
 
 interface DialogProps {
   open: boolean
@@ -56,7 +54,7 @@ function DialogHeader({ children, className, onClose }: DialogHeaderProps) {
       <div className="flex-1">{children}</div>
       {onClose && (
         <button onClick={onClose} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-          <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
       )}
     </div>

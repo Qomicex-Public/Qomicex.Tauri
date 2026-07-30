@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from 'react'
-import { cn } from '../../lib/utils.ts'
+import { cn } from '../lib/cn.js'
 
 export function BatchToolbar({ selectedCount, onClear, onSelectAll, children, className }: {
   selectedCount: number

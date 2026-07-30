@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faRotate } from '@fortawesome/free-solid-svg-icons'
-import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
-import { Button } from './ui/button.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
+import { Button } from './ui'
 import { checkModUpdates, batchUpdateMods } from '../api/instance-files.ts'
-import { useMessageBox } from './ui/message-box.tsx'
+import { useMessageBox } from './ui'
 import type { ModUpdateEntry } from '../types/index.ts'
 
 interface ModUpdateDialogProps {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { cn } from '../lib/utils.ts'
-import { Button } from './ui/button.tsx'
+import { Button } from './ui'
 
 interface SplashScreenProps {
   state: 'loading' | 'ready' | 'error'

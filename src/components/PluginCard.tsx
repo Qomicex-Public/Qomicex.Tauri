@@ -1,7 +1,7 @@
 import type { PluginInfo } from '../plugins/types.ts'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
-import { Button } from './ui/button.tsx'
-import { Badge } from './ui/badge.tsx'
+import { Button } from './ui'
+import { Badge } from './ui'
 
 interface PluginCardProps {
   plugin: PluginInfo

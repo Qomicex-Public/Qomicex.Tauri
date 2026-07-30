@@ -1,6 +1,6 @@
-import { Card, CardHeader, CardTitle, CardContent } from './ui/card.tsx'
-import { Badge } from './ui/badge.tsx'
-import { Separator } from './ui/separator.tsx'
+import { Card, CardHeader, CardTitle, CardContent } from './ui'
+import { Badge } from './ui'
+import { Separator } from './ui'
 import type { LogAnalysisResult } from '../types/index.ts'
 
 const severityColor: Record<string, string> = {

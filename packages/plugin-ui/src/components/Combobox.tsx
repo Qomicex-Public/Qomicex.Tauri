@@ -1,7 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChevronDown } from '@fortawesome/free-solid-svg-icons'
-import { cn } from '../../lib/utils.ts'
+import { cn } from '../lib/cn.js'
 
 interface ComboboxProps {
   value: string
@@ -70,7 +68,7 @@ export function Combobox({ value, onChange, options, placeholder, className }: C
           onClick={() => { if (open) { commit(input) } else { setOpen(true); inputRef.current?.focus() } }}
           className="absolute right-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent"
         >
-          <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
+          <svg className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
         </button>
       </div>
       {open && (

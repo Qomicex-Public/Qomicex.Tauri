@@ -4,12 +4,12 @@ import {
   faFileLines, faDownload, faTrashCan, faRotate,
   faEye, faFolderOpen, faInfoCircle,
 } from '@fortawesome/free-solid-svg-icons'
-import { Card, CardHeader, CardTitle, CardContent } from './ui/card.tsx'
-import { Button } from './ui/button.tsx'
-import { Badge } from './ui/badge.tsx'
-import { Tooltip } from './ui/tooltip.tsx'
+import { Card, CardHeader, CardTitle, CardContent } from './ui'
+import { Button } from './ui'
+import { Badge } from './ui'
+import { Tooltip } from './ui'
 import { cn } from '../lib/utils.ts'
-import { useMessageBox } from './ui/message-box.tsx'
+import { useMessageBox } from './ui'
 import {
   listLogs, getExportUrl, getExportAllUrl, exportLogTo, exportAllLogsTo, deleteLog, openLog, openLogDir,
 } from '../api/logs.ts'

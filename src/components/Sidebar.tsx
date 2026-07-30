@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad, faNetworkWired, faPuzzlePiece } from '@fortawesome/free-solid-svg-icons'
-import { Tooltip } from './ui/tooltip.tsx'
+import { Tooltip } from './ui'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { cn } from '../lib/utils.ts'
 import { PluginSidebarItems } from './PluginSidebarItems.tsx'

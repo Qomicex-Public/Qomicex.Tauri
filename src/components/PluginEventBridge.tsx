@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useMessageBox } from './ui/message-box.tsx'
+import { useMessageBox } from './ui'
 import { usePluginStore } from '../stores/pluginStore.ts'
 
 const COMMAND_KEY_MAP: Record<string, (e: KeyboardEvent) => boolean> = {
