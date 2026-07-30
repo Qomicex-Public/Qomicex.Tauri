@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad, faNetworkWired, faPuzzlePiece } from '@fortawesome/free-solid-svg-icons'
+import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad, faNetworkWired } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { cn } from '../lib/utils.ts'
@@ -13,7 +13,6 @@ const links: { to: string; label: string; icon: React.ReactNode; end?: boolean }
   { to: '/accounts', label: '账户', icon: <FontAwesomeIcon icon={faUser} className="h-5 w-5" /> },
   { to: '/resource-center', label: '资源中心', icon: <FontAwesomeIcon icon={faCompass} className="h-5 w-5" /> },
   { to: '/connect', label: '联机', icon: <FontAwesomeIcon icon={faNetworkWired} className="h-5 w-5" />, end: true },
-  { to: '/plugins', label: '插件', icon: <FontAwesomeIcon icon={faPuzzlePiece} className="h-5 w-5" />, end: true },
 ]
 
 export function NavItem({ to, label, icon, end }: { to: string; label: string; icon: React.ReactNode; end?: boolean }) {

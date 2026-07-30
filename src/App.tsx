@@ -12,7 +12,6 @@ import ResourceDetailPage from './pages/ResourceDetail.tsx'
 import Connect from './pages/Connect.tsx'
 import Settings from './pages/Settings.tsx'
 import RunningInstances from './pages/RunningInstances.tsx'
-import PluginManager from './pages/PluginManager.tsx'
 import PluginPage from './pages/PluginPage.tsx'
 import PluginOverlayManager from './components/PluginOverlayManager.tsx'
 import { MessageBoxProvider, useMessageBox } from './components/ui'
@@ -159,7 +158,6 @@ function AppContent() {
                 <Route path="/connect" element={<Connect />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/running" element={<RunningInstances />} />
-                <Route path="/plugins" element={<PluginManager />} />
                 <Route path="/plugins/p/:pluginId" element={<PluginPage />} />
               </>
             ) : (

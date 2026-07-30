@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
@@ -18,6 +18,9 @@ import { PageShell } from '../components/PageShell.tsx'
 import DebugTab from '../components/DebugTab.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
+import { PluginCard } from '../components/PluginCard.tsx'
+import { usePluginStore } from '../stores/pluginStore.ts'
+import { activatePlugin, deactivatePlugin } from '../plugins/plugin-loader.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { check } from '@tauri-apps/plugin-updater'
@@ -48,6 +51,7 @@ import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, L
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
   { id: 'java', label: 'Java 运行时', icon: faCoffee },
+  { id: 'plugins', label: '插件', icon: faPuzzlePiece },
   { id: 'appearance', label: '外观', icon: faPalette },
   { id: 'toolbox', label: '工具箱', icon: faDownload },
   { id: 'logs', label: '日志', icon: faFileLines },
@@ -495,6 +499,8 @@ export default function Settings() {
   const [pingLoading, setPingLoading] = useState(false)
   const [modPings, setModPings] = useState<ModSourcePing[]>([])
   const [modPingLoading, setModPingLoading] = useState(false)
+  const { plugins, loading, loadPlugins, setPluginState } = usePluginStore()
+  const [pluginsMsg, setPluginsMsg] = useState<string | null>(null)
 
   useEffect(() => {
     apiLoadSettings().then((s) => {
@@ -526,6 +532,59 @@ export default function Settings() {
       fetchLicenseStatus().then(setLicenseStatus).catch(() => {})
     }
   }, [category])
+
+  const handlePluginToggle = useCallback(async (id: string, active: boolean) => {
+    const plugin = plugins.find(p => p.manifest.id === id)
+    if (!plugin) return
+    if (active) {
+      await activatePlugin(plugin)
+    } else {
+      deactivatePlugin(id)
+    }
+    setPluginState(id, active ? 'active' : 'disabled')
+  }, [plugins, setPluginState])
+
+  const handlePluginUninstall = useCallback(async (id: string) => {
+    if (!(await msgConfirm('确定卸载此插件？'))) return
+    deactivatePlugin(id)
+    try {
+      const res = await fetch(`/api/plugins/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Uninstall failed')
+      setPluginsMsg('插件已卸载')
+      await loadPlugins()
+    } catch {
+      setPluginsMsg('卸载失败')
+    }
+  }, [loadPlugins, msgConfirm])
+
+  const handlePluginInstall = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.qplugin,.zip'
+    input.onchange = async () => {
+      const file = input.files?.[0]
+      if (!file) return
+      const form = new FormData()
+      form.append('plugin', file)
+      try {
+        const res = await fetch('/api/plugins/upload', { method: 'POST', body: form })
+        if (!res.ok) throw new Error('Upload failed')
+        setPluginsMsg('插件安装成功')
+        await loadPlugins()
+      } catch (e) {
+        notify('安装失败: ' + (e instanceof Error ? e.message : 'Unknown'), 'error')
+      }
+    }
+    input.click()
+  }
+
+  useEffect(() => { loadPlugins() }, [loadPlugins])
+
+  useEffect(() => {
+    if (!pluginsMsg) return
+    const t = setTimeout(() => setPluginsMsg(null), 3000)
+    return () => clearTimeout(t)
+  }, [pluginsMsg])
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     const next = { ...settings, [key]: value }
@@ -1609,6 +1668,33 @@ export default function Settings() {
           </TabContent>
 
           <TabContent activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
+          <TabContent activeTab={category} tabId="plugins">
+            <PageHeader
+              title="插件"
+              subtitle={`已安装 ${plugins.length} 个插件`}
+              actions={
+                <Button onClick={handlePluginInstall}>安装插件</Button>
+              }
+            />
+            {pluginsMsg && (
+              <div className="rounded bg-primary/10 text-primary px-4 py-2 text-sm">
+                {pluginsMsg}
+              </div>
+            )}
+            {loading ? (
+              <p className="text-muted-foreground">加载中...</p>
+            ) : plugins.length === 0 ? (
+              <div className="flex flex-1 items-center justify-center min-h-[200px]">
+                <p className="text-muted-foreground">尚未安装任何插件</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {plugins.map(p => (
+                  <PluginCard key={p.manifest.id} plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} />
+                ))}
+              </div>
+            )}
+          </TabContent>
           <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} /></TabContent>
           <TabContent activeTab={category} tabId="logs"><LogTab /></TabContent>
           <TabContent activeTab={category} tabId="debug"><DebugTab /></TabContent>
