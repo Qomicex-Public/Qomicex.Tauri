@@ -1669,31 +1669,38 @@ export default function Settings() {
 
           <TabContent activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
           <TabContent activeTab={category} tabId="plugins">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <h2 className="text-lg font-semibold">插件</h2>
-                <span className="text-sm text-muted-foreground">{plugins.length} 个已安装</span>
-              </div>
-              <Button onClick={handlePluginInstall} size="sm">安装插件</Button>
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    <FontAwesomeIcon icon={faPuzzlePiece} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    插件管理
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-sm text-muted-foreground">{plugins.length} 个已安装</span>
+                    <Button onClick={handlePluginInstall} size="sm">安装插件</Button>
+                  </div>
+                  {pluginsMsg && (
+                    <div className="rounded bg-primary/10 text-primary px-4 py-2 text-sm mb-4">{pluginsMsg}</div>
+                  )}
+                  {loading ? (
+                    <p className="text-muted-foreground">加载中...</p>
+                  ) : plugins.length === 0 ? (
+                    <div className="flex items-center justify-center min-h-[200px]">
+                      <p className="text-muted-foreground">尚未安装任何插件</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {plugins.map(p => (
+                        <PluginCard key={p.manifest.id} plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} />
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
-            {pluginsMsg && (
-              <div className="rounded bg-primary/10 text-primary px-4 py-2 text-sm mb-4">
-                {pluginsMsg}
-              </div>
-            )}
-            {loading ? (
-              <p className="text-muted-foreground">加载中...</p>
-            ) : plugins.length === 0 ? (
-              <div className="flex items-center justify-center min-h-[200px]">
-                <p className="text-muted-foreground">尚未安装任何插件</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {plugins.map(p => (
-                  <PluginCard key={p.manifest.id} plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} />
-                ))}
-              </div>
-            )}
           </TabContent>
           <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} /></TabContent>
           <TabContent activeTab={category} tabId="logs"><LogTab /></TabContent>
