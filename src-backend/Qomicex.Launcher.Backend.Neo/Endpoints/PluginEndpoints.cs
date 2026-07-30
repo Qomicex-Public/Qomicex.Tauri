@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Qomicex.Launcher.Backend.Neo.Common;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
@@ -100,9 +102,30 @@ public static class PluginEndpoints
             var settingsDir = Path.Combine(AppPaths.PluginsDir, id);
             Directory.CreateDirectory(settingsDir);
             var settingsFile = Path.Combine(settingsDir, "settings.json");
+
             using var reader = new StreamReader(request.Body);
-            var json = await reader.ReadToEndAsync();
-            File.WriteAllText(settingsFile, json);
+            var body = await reader.ReadToEndAsync();
+
+            var incoming = JsonNode.Parse(body) as JsonObject;
+            if (incoming == null || !incoming.ContainsKey("key"))
+                return Results.BadRequest("Expected { key, value }");
+
+            var key = incoming["key"]?.GetValue<string>() ?? "";
+            var value = incoming["value"];
+
+            JsonObject settings;
+            if (File.Exists(settingsFile))
+            {
+                var existing = File.ReadAllText(settingsFile);
+                settings = JsonNode.Parse(existing) as JsonObject ?? new JsonObject();
+            }
+            else
+            {
+                settings = new JsonObject();
+            }
+
+            settings[key] = value?.DeepClone();
+            File.WriteAllText(settingsFile, settings.ToJsonString(new JsonSerializerOptions { WriteIndented = false }));
             return Results.Ok();
         });
     }
