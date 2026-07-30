@@ -1,6 +1,5 @@
 import { useParams } from 'react-router-dom'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { activatePlugin } from '../plugins/plugin-loader.tsx'
 import { getInstance } from '../plugins/sandbox.ts'
 import { useLayoutEffect, useRef } from 'react'
 
@@ -15,7 +14,6 @@ function activateInlineScripts(container: HTMLElement) {
   }
 
   const scripts = [...container.querySelectorAll('script')]
-  console.log('[PluginPage] activating', scripts.length, 'scripts for', containerId)
   for (const oldScript of scripts) {
     const newScript = document.createElement('script')
     if (oldScript.src) {
@@ -31,7 +29,6 @@ function activateInlineScripts(container: HTMLElement) {
     }
     oldScript.replaceWith(newScript)
   }
-  console.log('[PluginPage] scripts activated for', containerId)
 }
 
 export default function PluginPage() {
@@ -41,13 +38,7 @@ export default function PluginPage() {
 
   useLayoutEffect(() => {
     if (!pluginId) return
-
-    const p = usePluginStore.getState().getPlugin(pluginId)
-    if (!p) return
-
-    if (plugin?.state !== 'active' || !getInstance(pluginId)) {
-      activatePlugin(p)
-    }
+    if (plugin?.state !== 'active') return
 
     const timer = setInterval(() => {
       const inst = getInstance(pluginId)
@@ -64,7 +55,6 @@ export default function PluginPage() {
         if (c.parentElement !== el) {
           el.id = ''
           c.className = 'flex-1'
-          c.style.outline = '2px solid red'
           el.appendChild(c)
         }
         if (!c.innerHTML) return

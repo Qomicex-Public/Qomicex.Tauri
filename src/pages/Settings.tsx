@@ -20,7 +20,7 @@ import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
 import { PluginCard } from '../components/PluginCard.tsx'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { activatePlugin, deactivatePlugin } from '../plugins/plugin-loader.tsx'
+import { deactivatePlugin } from '../plugins/plugin-loader.tsx'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
 import type { PluginInfo } from '../plugins/types.ts'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
@@ -536,16 +536,14 @@ export default function Settings() {
     }
   }, [category])
 
-  const handlePluginToggle = useCallback(async (id: string, active: boolean) => {
-    const plugin = plugins.find(p => p.manifest.id === id)
-    if (!plugin) return
-    if (active) {
-      await activatePlugin(plugin)
-    } else {
-      deactivatePlugin(id)
-    }
+  const handlePluginToggle = useCallback((id: string, active: boolean) => {
+    const prefs = JSON.parse(localStorage.getItem('qomicex-plugin-prefs') || '{}')
+    prefs[id] = active ? 'active' : 'disabled'
+    localStorage.setItem('qomicex-plugin-prefs', JSON.stringify(prefs))
     setPluginState(id, active ? 'active' : 'disabled')
-  }, [plugins, setPluginState])
+    setPluginsMsg('更改将在重启 launcher 后生效')
+    setTimeout(() => setPluginsMsg(null), 3000)
+  }, [setPluginState])
 
   const handlePluginUninstall = useCallback(async (id: string) => {
     if (!(await msgConfirm('确定卸载此插件？'))) return

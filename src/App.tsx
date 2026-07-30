@@ -120,9 +120,18 @@ function AppContent() {
   useEffect(() => {
     if (backendState !== 'ready') return
     loadPlugins().then(() => {
-      const { plugins: loaded } = usePluginStore.getState()
+      const { plugins: loaded, setPluginState } = usePluginStore.getState()
+      const prefs: Record<string, string> = JSON.parse(localStorage.getItem('qomicex-plugin-prefs') || '{}')
       for (const p of loaded) {
-        if (p.state === 'active') activatePlugin(p)
+        const pref = prefs[p.manifest.id]
+        if (pref === 'active') {
+          setPluginState(p.manifest.id, 'active')
+          activatePlugin(p)
+        } else if (pref === 'disabled') {
+          setPluginState(p.manifest.id, 'disabled')
+        } else if (p.state === 'active') {
+          activatePlugin(p)
+        }
       }
     })
   }, [backendState, loadPlugins])
