@@ -66,6 +66,8 @@ Response 200:
 interface PluginBridge {
   getSettings(): Promise<Record<string, unknown>>
   setSettings(key: string, value: unknown): Promise<void>
+  setCache(key: string, value: unknown, ttlSeconds?: number): Promise<void>
+  getCache(key: string): Promise<unknown>
   callBackend(endpoint: string, data?: unknown): Promise<unknown>
   proxyFetch(req: { url: string; method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }): Promise<{ status: number; headers: Record<string, string>; body?: string | null; bodyBase64?: string | null }>
   navigate(path: string): void
@@ -88,11 +90,29 @@ interface PluginBridge {
 |-----------|---------|
 | getSettings | config:read |
 | setSettings | config:write |
+| setCache / getCache | cache:access |
 | callBackend | network:fetch |
 | proxyFetch | network:cors_proxy |
 | navigate | config:read |
 | showToast | ui:toast |
 | overlay.* | ui:sub_window |
+
+### 插件缓存（setCache / getCache）
+
+插件可在自己的目录下读写缓存文件（`{插件目录}/cache.json`），用于缓存外部 API 响应等，避免重复请求。
+
+- `setCache(key, value, ttlSeconds?)`：写入缓存。`value` 可为任意 JSON 值（对象/数组/字符串/数字/布尔/null）；`ttlSeconds` 传正整数时到期自动清除，不传则为永久缓存
+- `getCache(key)`：读取缓存，返回原值；key 不存在或已过期时返回 `null`
+
+```js
+// 缓存模型列表 1 小时，避免每次都请求
+await __PLUGIN_API__.call('setCache', 'models', { list: [...] }, 3600)
+const cached = await __PLUGIN_API__.call('getCache', 'models')
+if (cached) { /* 使用缓存 */ } else { /* 重新请求并 setCache */ }
+```
+
+- 缓存按插件隔离，只能读写自己插件目录下的缓存文件
+- 内部存储结构 `{ key: { v: 值, e: 过期时间戳|null } }`，无需插件关心
 
 ### CORS 代理（proxyFetch）
 

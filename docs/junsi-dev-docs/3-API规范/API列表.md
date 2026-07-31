@@ -946,6 +946,28 @@ state 可选：`installed` / `active` / `disabled`
 { "key": "value", ... }
 ```
 
+### POST `/api/plugins/cache/{id}`
+
+写入插件缓存。需要插件声明 `cache:access` 权限。
+
+```json
+{ "key": "models", "value": { "list": [] }, "ttlSeconds": 3600 }
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| key | string | 必填，缓存键（≤512 字符） |
+| value | json | 必填，任意 JSON 值 |
+| ttlSeconds | int | 可选，过期秒数；不传为永久缓存 |
+
+**响应：** `200`
+
+### GET `/api/plugins/cache/{id}?key={key}`
+
+读取插件缓存。key 不存在或已过期返回 `{ "value": null }`。
+
+**响应：** `{ "value": <json> | null }`
+
 ### POST `/api/plugins/proxy`
 
 CORS 代理：插件网页 fetch 外部 API 被 CORS 拒绝时，由后端转发请求绕开限制。需要插件声明 `network:cors_proxy` 权限。
