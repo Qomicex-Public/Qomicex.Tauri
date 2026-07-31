@@ -67,6 +67,7 @@ interface PluginBridge {
   getSettings(): Promise<Record<string, unknown>>
   setSettings(key: string, value: unknown): Promise<void>
   callBackend(endpoint: string, data?: unknown): Promise<unknown>
+  proxyFetch(req: { url: string; method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }): Promise<{ status: number; headers: Record<string, string>; body?: string | null; bodyBase64?: string | null }>
   navigate(path: string): void
   showToast(message: string, type?: 'info' | 'error' | 'success'): void
 
@@ -88,9 +89,22 @@ interface PluginBridge {
 | getSettings | config:read |
 | setSettings | config:write |
 | callBackend | network:fetch |
+| proxyFetch | network:cors_proxy |
 | navigate | config:read |
 | showToast | ui:toast |
 | overlay.* | ui:sub_window |
+
+### CORS 代理（proxyFetch）
+
+插件网页直接 `fetch` 外部 API 可能被 CORS 拒绝，可通过 `proxyFetch` 走后端转发（`POST /api/plugins/proxy`），绕开浏览器 CORS 限制。
+
+- 请求：`{ url, method?, headers?, body?, timeoutMs? }`，`method` 默认 `GET`，`timeoutMs` 默认 15000（范围 1000–60000）
+- 响应：`{ status, headers, body, bodyBase64 }` —— 文本/JSON 响应走 `body`，二进制走 `bodyBase64`
+- 安全限制（SSRF 防护）：
+  - 仅允许 `http/https` 协议
+  - 禁止内网/保留地址（localhost、127.x、10.x、172.16-31.x、192.168.x、169.254.x、0.0.0.0 等）
+  - 不自动跟随重定向（3xx 原样返回）
+- 错误：无效 URL → `PROXY_INVALID_URL`(400)；协议不符 → `PROXY_SCHEME_NOT_ALLOWED`(400)；内网地址 → `PROXY_PRIVATE_ADDRESS`(400)；上游失败 → `PROXY_UPSTREAM_FAILED`(502)
 
 ---
 

@@ -946,6 +946,32 @@ state 可选：`installed` / `active` / `disabled`
 { "key": "value", ... }
 ```
 
+### POST `/api/plugins/proxy`
+
+CORS 代理：插件网页 fetch 外部 API 被 CORS 拒绝时，由后端转发请求绕开限制。需要插件声明 `network:cors_proxy` 权限。
+
+```json
+{
+  "url": "https://api.example.com/data",
+  "method": "GET",
+  "headers": { "X-Test": "hello" },
+  "body": null,
+  "timeoutMs": 15000
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| url | string | 必填，目标 URL（仅 http/https） |
+| method | string | 默认 GET |
+| headers | object | 自定义请求头 |
+| body | string | 请求体（POST/PUT/PATCH） |
+| timeoutMs | int | 默认 15000，范围 1000–60000 |
+
+**响应：** `{ "status": 200, "headers": {...}, "body": "文本内容", "bodyBase64": null }`
+
+文本/JSON 响应走 `body`，二进制走 `bodyBase64`。**SSRF 防护**：禁内网/保留地址、不自动跟随重定向。错误码：`PROXY_INVALID_URL`(400)、`PROXY_SCHEME_NOT_ALLOWED`(400)、`PROXY_PRIVATE_ADDRESS`(400)、`PROXY_UPSTREAM_FAILED`(502)。
+
 ---
 
 ## 15. 进度 SSE Stream
