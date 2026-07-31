@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { usePluginStore, type PluginOverlay } from '../stores/pluginStore.ts'
 import { registerOverlayIframe } from '../plugins/sandbox.ts'
-import { pluginCss } from '../plugins/plugin-css.ts'
+import { pluginCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from '../plugins/plugin-css.ts'
 
 const apiScript = `<script>
 window.__PLUGIN_API__ = {
@@ -58,6 +58,8 @@ function overlayHtml(inner: string) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${pluginCss}</style>
+<style data-theme-vars>${getThemeVarsCss()}</style>
+${themeBridgeScript}
 ${styles.join('\n')}
 </head>
 <body>
@@ -88,6 +90,7 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
     const onLoad = () => {
       URL.revokeObjectURL(url)
       if (iframe.contentWindow) registerOverlayIframe(iframe.contentWindow, overlay.pluginId)
+      registerThemeSync(iframe)
       try {
         iframe.contentDocument?.addEventListener('mousedown', () => {
           usePluginStore.getState().showOverlay(overlay.id)

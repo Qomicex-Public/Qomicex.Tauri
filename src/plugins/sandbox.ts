@@ -1,7 +1,7 @@
 import type { PluginInfo } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { createPluginBridge } from './plugin-api.ts'
-import { injectCss } from './plugin-css.ts'
+import { injectCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
 
 export interface SandboxInstance {
   iframe: HTMLIFrameElement
@@ -103,13 +103,12 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
     html = convertScriptSrcs(html, fileUrl)
     html = convertCssLinks(html, fileUrl)
 
-    const bgHsl = getComputedStyle(document.documentElement).getPropertyValue('--background').trim()
-    const pageBg = bgHsl ? `hsl(${bgHsl})` : '#0d0f12'
-    const themedCss = injectCss.replace(/background:transparent/g, `background:${pageBg}`)
-    html = html.replace('</head>', themedCss + '\n' + apiBridgeScript + '\n</head>')
+    const themeInit = `<style data-theme-vars>${getThemeVarsCss()}</style>`
+    html = html.replace('</head>', themeInit + '\n' + injectCss + '\n' + apiBridgeScript + '\n' + themeBridgeScript + '\n</head>')
 
     iframe.onload = () => {
       if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
+      registerThemeSync(iframe)
     }
     iframe.srcdoc = html
   } catch (e) {
