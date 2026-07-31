@@ -13,6 +13,7 @@ namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 public static class PluginEndpoints
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> SettingsLocks = new();
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> CacheLocks = new();
 
     private static async Task<JsonObject> ReadSettingsAsync(string settingsFile)
     {
@@ -38,6 +39,39 @@ public static class PluginEndpoints
             try
             {
                 await File.WriteAllTextAsync(settingsFile, json);
+                return;
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                await Task.Delay(50 * (attempt + 1));
+            }
+        }
+    }
+
+    private static async Task<JsonObject> ReadCacheAsync(string cacheFile)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                if (!File.Exists(cacheFile)) return new JsonObject();
+                var existing = await File.ReadAllTextAsync(cacheFile);
+                return JsonNode.Parse(existing) as JsonObject ?? new JsonObject();
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                await Task.Delay(50 * (attempt + 1));
+            }
+        }
+    }
+
+    private static async Task WriteCacheAsync(string cacheFile, JsonObject cache)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await File.WriteAllTextAsync(cacheFile, cache.ToJsonString());
                 return;
             }
             catch (IOException) when (attempt < 2)
@@ -230,6 +264,75 @@ public static class PluginEndpoints
                     Body = isText ? (bodyBytes.Length == 0 ? "" : Encoding.UTF8.GetString(bodyBytes)) : null,
                     BodyBase64 = isText ? null : Convert.ToBase64String(bodyBytes),
                 });
+            }
+        });
+
+        plugins.MapPost("/cache/{id}", async (string id, HttpRequest request) =>
+        {
+            using var reader = new StreamReader(request.Body);
+            var body = await reader.ReadToEndAsync();
+
+            var incoming = JsonNode.Parse(body) as JsonObject;
+            if (incoming == null || !incoming.ContainsKey("key") || !incoming.ContainsKey("value"))
+                return Results.BadRequest("Expected { key, value, ttlSeconds? }");
+
+            var key = incoming["key"]?.GetValue<string>() ?? "";
+            if (string.IsNullOrWhiteSpace(key))
+                return Results.BadRequest("key 不能为空");
+            if (key.Length > 512)
+                return Results.BadRequest("key 过长");
+
+            int? ttlSeconds = null;
+            if (incoming["ttlSeconds"] is JsonValue ttlValue && ttlValue.TryGetValue<int>(out var ttl) && ttl > 0)
+                ttlSeconds = ttl;
+
+            var cacheFile = Path.Combine(AppPaths.PluginsDir, id, "cache.json");
+            var gate = CacheLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync();
+            try
+            {
+                var cache = await ReadCacheAsync(cacheFile);
+                cache[key] = new JsonObject
+                {
+                    ["v"] = incoming["value"]?.DeepClone(),
+                    ["e"] = ttlSeconds.HasValue ? JsonValue.Create(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + ttlSeconds.Value) : null,
+                };
+                await WriteCacheAsync(cacheFile, cache);
+            }
+            finally
+            {
+                gate.Release();
+            }
+            return Results.Ok();
+        });
+
+        plugins.MapGet("/cache/{id}", async (string id, string key) =>
+        {
+            if (string.IsNullOrWhiteSpace(key))
+                throw ApiException.BadRequest("key 不能为空", "CACHE_KEY_REQUIRED");
+
+            var cacheFile = Path.Combine(AppPaths.PluginsDir, id, "cache.json");
+            var gate = CacheLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync();
+            try
+            {
+                var cache = await ReadCacheAsync(cacheFile);
+                if (cache[key] is not JsonObject entry || entry["v"] == null)
+                    return Results.Content("{\"value\":null}", "application/json");
+
+                var expiresAt = entry["e"]?.GetValue<long>();
+                if (expiresAt is long expTs && DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expTs)
+                {
+                    cache.Remove(key);
+                    await WriteCacheAsync(cacheFile, cache);
+                    return Results.Content("{\"value\":null}", "application/json");
+                }
+
+                return Results.Content("{\"value\":" + entry["v"]!.ToJsonString() + "}", "application/json");
+            }
+            finally
+            {
+                gate.Release();
             }
         });
     }
