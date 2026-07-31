@@ -5,7 +5,7 @@ export interface PluginBridge {
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
-  createOverlay: (opts: { title: string; html: string; x?: number; y?: number; width?: number; height?: number }) => string
+  createOverlay: (opts: { title: string; html: string; x?: number; y?: number; width?: number; height?: number; minimizable?: boolean; resizable?: boolean }) => string
   showOverlay: (id: string) => void
   hideOverlay: (id: string) => void
   destroyOverlay: (id: string) => void

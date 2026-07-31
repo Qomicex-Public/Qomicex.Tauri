@@ -71,8 +71,11 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
+  const [resizing, setResizing] = useState(false)
   const dragRef = useRef({ sx: 0, sy: 0, ox: 0, oy: 0 })
+  const resizeRef = useRef({ sx: 0, sy: 0, ow: 0, oh: 0 })
   const setOverlayPosition = usePluginStore(s => s.setOverlayPosition)
+  const setOverlaySize = usePluginStore(s => s.setOverlaySize)
   const destroyOverlay = usePluginStore(s => s.destroyOverlay)
   const hideOverlay = usePluginStore(s => s.hideOverlay)
 
@@ -119,6 +122,31 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
     }
   }, [dragging, overlay.id, setOverlayPosition])
 
+  useEffect(() => {
+    if (!resizing) return
+    const onMove = (e: PointerEvent) => {
+      setOverlaySize(
+        overlay.id,
+        Math.max(200, resizeRef.current.ow + e.clientX - resizeRef.current.sx),
+        Math.max(120, resizeRef.current.oh + e.clientY - resizeRef.current.sy)
+      )
+    }
+    const onUp = () => setResizing(false)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [resizing, overlay.id, setOverlaySize])
+
+  const onResizeStart = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    resizeRef.current = { sx: e.clientX, sy: e.clientY, ow: overlay.width, oh: overlay.height }
+    setResizing(true)
+  }, [overlay.width, overlay.height])
+
   if (!overlay.visible) return null
 
   return createPortal(
@@ -133,10 +161,22 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
         onMouseDown={onMouseDown}
       >
         <span className="text-xs font-medium text-popover-foreground truncate flex-1">{overlay.title}</span>
-        <button className="text-muted-foreground hover:text-foreground transition-colors text-xs w-5 h-5 flex items-center justify-center rounded" onClick={() => hideOverlay(overlay.id)}>—</button>
+        {overlay.minimizable && (
+          <button className="text-muted-foreground hover:text-foreground transition-colors text-xs w-5 h-5 flex items-center justify-center rounded" onClick={() => hideOverlay(overlay.id)}>—</button>
+        )}
         <button className="text-muted-foreground hover:text-destructive transition-colors text-xs w-5 h-5 flex items-center justify-center rounded" onClick={() => destroyOverlay(overlay.id)}>x</button>
       </div>
       <iframe ref={iframeRef} sandbox="allow-scripts" className="flex-1 w-full" />
+      {overlay.resizable && (
+        <div
+          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
+          onPointerDown={onResizeStart}
+        >
+          <svg viewBox="0 0 16 16" className="w-full h-full text-muted-foreground/60">
+            <path d="M12 12 L16 8 M12 16 L16 12 M8 16 L12 12" stroke="currentColor" strokeWidth="1.5" fill="none" />
+          </svg>
+        </div>
+      )}
     </div>,
     document.body
   )

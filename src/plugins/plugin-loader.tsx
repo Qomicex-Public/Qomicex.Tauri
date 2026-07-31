@@ -85,6 +85,8 @@ function OverlaySidebarButton({ pluginId, item, overlay }: { pluginId: string; i
       html,
       width: overlay.width ?? 380,
       height: overlay.height ?? 500,
+      minimizable: overlay.minimizable ?? true,
+      resizable: overlay.resizable ?? false,
       x: 120,
       y: 80,
     })

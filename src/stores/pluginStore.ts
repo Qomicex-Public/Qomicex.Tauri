@@ -11,6 +11,8 @@ export interface PluginOverlay {
   y: number
   width: number
   height: number
+  minimizable: boolean
+  resizable: boolean
   visible: boolean
   ordering: number
 }
@@ -28,12 +30,13 @@ interface PluginStore {
   rescan: () => Promise<void>
 
   overlays: PluginOverlay[]
-  createOverlay: (pluginId: string, opts: { title: string; html: string; x?: number; y?: number; width?: number; height?: number }) => string
+  createOverlay: (pluginId: string, opts: { title: string; html: string; x?: number; y?: number; width?: number; height?: number; minimizable?: boolean; resizable?: boolean }) => string
   showOverlay: (id: string) => void
   hideOverlay: (id: string) => void
   destroyOverlay: (id: string) => void
   destroyPluginOverlays: (pluginId: string) => void
   setOverlayPosition: (id: string, x: number, y: number) => void
+  setOverlaySize: (id: string, width: number, height: number) => void
   setOverlayHtml: (id: string, html: string) => void
 }
 
@@ -82,6 +85,8 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
       y: opts.y ?? 80,
       width: opts.width ?? 320,
       height: opts.height ?? 240,
+      minimizable: opts.minimizable ?? true,
+      resizable: opts.resizable ?? false,
       visible: true,
       ordering: nextOrder++,
     }
@@ -116,6 +121,12 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
   setOverlayPosition: (id, x, y) => {
     set(s => ({
       overlays: s.overlays.map(o => o.id === id ? { ...o, x, y } : o)
+    }))
+  },
+
+  setOverlaySize: (id, width, height) => {
+    set(s => ({
+      overlays: s.overlays.map(o => o.id === id ? { ...o, width, height } : o)
     }))
   },
 

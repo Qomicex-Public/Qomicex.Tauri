@@ -22,7 +22,7 @@ export interface PluginContributes {
   commands?: string[]
   settingsPages?: string[]
   menuItems?: PluginMenuItem[]
-  overlay?: { file: string; title?: string; width?: number; height?: number }
+  overlay?: { file: string; title?: string; width?: number; height?: number; minimizable?: boolean; resizable?: boolean }
 }
 
 export interface PluginMenuItem {

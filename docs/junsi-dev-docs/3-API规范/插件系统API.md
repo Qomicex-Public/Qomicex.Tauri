@@ -71,12 +71,13 @@ interface PluginBridge {
   showToast(message: string, type?: 'info' | 'error' | 'success'): void
 
   // 悬浮窗操作
-  createOverlay(opts: { title: string; html: string; x?: number; y?: number; width?: number; height?: number }): string
+  createOverlay(opts: { title: string; html: string; x?: number; y?: number; width?: number; height?: number; minimizable?: boolean; resizable?: boolean }): string
   showOverlay(id: string): void
   hideOverlay(id: string): void
   destroyOverlay(id: string): void
   setOverlayHtml(id: string, html: string): void
   setOverlayPosition(id: string, x: number, y: number): void
+  setOverlaySize(id: string, width: number, height: number): void
 }
 ```
 
