@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
-import { Button } from './ui/button.tsx'
-import { Input } from './ui/input.tsx'
-import { Label } from './ui/label.tsx'
-import { Separator } from './ui/separator.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
+import { Button } from './ui'
+import { Input } from './ui'
+import { Label } from './ui'
+import { Separator } from './ui'
 import { startModpackInstall, resolveModpack, getInstallProgress } from '../api/instance.ts'
 import type { ResourceVersion, InstallProgressResponse } from '../types/index.ts'
-import { useNavigate } from 'react-router'
+import { useNavigate } from 'react-router-dom'
 import { addTask, updateTask, removeTask } from '../stores/downloadStore.ts'
 
 const STAGE_LABELS: Record<string, string> = {

@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faTrashCan, faExpand } from '@fortawesome/free-solid-svg-icons'
-import { Tooltip } from './ui/tooltip.tsx'
-import { Button } from './ui/button.tsx'
-import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
+import { Tooltip } from './ui'
+import { Button } from './ui'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import type { ScreenshotMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 

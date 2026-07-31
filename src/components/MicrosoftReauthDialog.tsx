@@ -1,5 +1,5 @@
-import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
-import { Button } from '../components/ui/button.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
+import { Button } from '../components/ui'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft } from '@fortawesome/free-brands-svg-icons'
 

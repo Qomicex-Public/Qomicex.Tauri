@@ -5,11 +5,12 @@ import { TitleBar } from './TitleBar.tsx'
 import ScrollToTop from './ScrollToTop.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { get, API_BASE } from '../api/client.ts'
-import { useMessageBox } from './ui/message-box.tsx'
+import { useMessageBox } from './ui'
 import { DebugProvider, useDebug } from './DebugContext.tsx'
 import LogOverlay from './LogOverlay.tsx'
 import FpsOverlay from './FpsOverlay.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { PluginEventBridge } from './PluginEventBridge.tsx'
 
 function DebugEffects() {
   const { state, unlock } = useDebug()
@@ -136,6 +137,7 @@ export default function Layout() {
     <DebugProvider>
     <div className="flex h-screen">
       <DebugEffects />
+      <PluginEventBridge />
       {bg && (
         <>
           <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: `blur(${blur}px)` }} />

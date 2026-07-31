@@ -6,7 +6,7 @@ import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
-import { Button } from '../components/ui/button.tsx'
+import { Button } from '../components/ui'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import {
   faArrowLeft,
@@ -20,11 +20,11 @@ import {
   faUser,
   faChevronDown,
 } from '@fortawesome/free-solid-svg-icons'
-import { Select, SelectOption } from '../components/ui/select.tsx'
-import { Card, CardContent } from '../components/ui/card.tsx'
-import { Badge } from '../components/ui/badge.tsx'
-import { Tooltip } from '../components/ui/tooltip.tsx'
-import { useMessageBox } from '../components/ui/message-box.tsx'
+import { Select, SelectOption } from '../components/ui'
+import { Card, CardContent } from '../components/ui'
+import { Badge } from '../components/ui'
+import { Tooltip } from '../components/ui'
+import { useMessageBox } from '../components/ui'
 import { get, post, API_BASE } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, getResourceDependencies, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
 import { lookupChineseName } from '../api/mcmod.ts'

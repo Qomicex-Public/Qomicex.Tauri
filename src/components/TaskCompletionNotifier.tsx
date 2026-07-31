@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { getTasks, subscribe } from '../stores/downloadStore.ts'
-import { useMessageBox } from './ui/message-box.tsx'
+import { useMessageBox } from './ui'
 
 export default function TaskCompletionNotifier() {
   const { notify } = useMessageBox()

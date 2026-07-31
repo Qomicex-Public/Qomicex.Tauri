@@ -1,20 +1,21 @@
 import { NavLink } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad, faNetworkWired } from '@fortawesome/free-solid-svg-icons'
-import { Tooltip } from './ui/tooltip.tsx'
+import { Tooltip } from './ui'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { cn } from '../lib/utils.ts'
+import { PluginSidebarItems } from './PluginSidebarItems.tsx'
 
-const links = [
-  { to: '/', label: '首页', icon: faHouse },
-  { to: '/instances', label: '实例', icon: faCube },
-  { to: '/downloads', label: '下载', icon: faDownload },
-  { to: '/accounts', label: '账户', icon: faUser },
-  { to: '/resource-center', label: '资源中心', icon: faCompass },
-  { to: '/connect', label: '联机', icon: faNetworkWired },
+const links: { to: string; label: string; icon: React.ReactNode; end?: boolean }[] = [
+  { to: '/', label: '首页', icon: <FontAwesomeIcon icon={faHouse} className="h-5 w-5" />, end: true },
+  { to: '/instances', label: '实例', icon: <FontAwesomeIcon icon={faCube} className="h-5 w-5" /> },
+  { to: '/downloads', label: '下载', icon: <FontAwesomeIcon icon={faDownload} className="h-5 w-5" /> },
+  { to: '/accounts', label: '账户', icon: <FontAwesomeIcon icon={faUser} className="h-5 w-5" /> },
+  { to: '/resource-center', label: '资源中心', icon: <FontAwesomeIcon icon={faCompass} className="h-5 w-5" /> },
+  { to: '/connect', label: '联机', icon: <FontAwesomeIcon icon={faNetworkWired} className="h-5 w-5" />, end: true },
 ]
 
-function NavItem({ to, label, icon, end }: { to: string; label: string; icon: typeof faHouse; end: boolean }) {
+export function NavItem({ to, label, icon, end }: { to: string; label: string; icon: React.ReactNode; end?: boolean }) {
   return (
     <li className="w-full flex justify-center relative">
       <NavLink to={to} end={end} className="w-full flex justify-center">
@@ -35,7 +36,7 @@ function NavItem({ to, label, icon, end }: { to: string; label: string; icon: ty
                     : 'text-muted-foreground hover:bg-accent hover:text-foreground'
                 )}
               >
-                <FontAwesomeIcon icon={icon} className="h-5 w-5" />
+                {icon}
               </div>
             </Tooltip>
           </>
@@ -95,10 +96,10 @@ export default function Sidebar() {
 
       <ul className="flex w-full flex-1 flex-col items-center gap-0.5 px-2 py-2">
         {links.map((link) => (
-          <NavItem key={link.to} to={link.to} label={link.label} icon={link.icon} end={link.to === '/'} />
+          <NavItem key={link.to} to={link.to} label={link.label} icon={link.icon} end={link.end} />
         ))}
+        <PluginSidebarItems />
       </ul>
-
       <div className="flex w-full flex-col items-center border-t border-border px-2 py-2 pb-4 gap-1">
         <BottomNavItem to="/running" label="运行中" icon={faGamepad} showPingDot={hasRunning} />
         <BottomNavItem to="/settings" label="设置" icon={faGear} />

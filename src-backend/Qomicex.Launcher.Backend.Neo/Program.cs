@@ -61,6 +61,12 @@ builder.Services.AddHttpClient("CurseForge", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
 }).AddHttpMessageHandler<HttpClientLoggingHandler>();
 builder.Services.AddHttpClient("default").AddHttpMessageHandler<HttpClientLoggingHandler>();
+builder.Services.AddHttpClient("PluginProxy", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(60);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+  .AddHttpMessageHandler<HttpClientLoggingHandler>();
 builder.Services.AddSingleton(core);
 
 // Services
@@ -114,6 +120,14 @@ Trace.AutoFlush = true;
 // Account & Skin
 builder.Services.AddSingleton<AccountService>();
 builder.Services.AddSingleton<SkinService>();
+
+// Plugin system
+builder.Services.AddSingleton<PluginStore>();
+builder.Services.AddSingleton<PluginPackageService>();
+builder.Services.AddHttpClient<PluginGatewayClient>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
 
 // Connector
 builder.Services.AddSingleton<LanGameListenerService>();
@@ -205,6 +219,7 @@ app.MapLicenseEndpoints();
 app.MapAnnouncementEndpoints();
 app.MapUpdateEndpoints();
 app.MapModpackEndpoints();
+app.MapPluginEndpoints();
 
 // LAN listener lifecycle
 var lanListener = app.Services.GetRequiredService<LanGameListenerService>();
@@ -218,5 +233,13 @@ app.Lifetime.ApplicationStopping.Register(() => { try { connector.LeaveAsync().G
 // Cancel all active installs and download sessions on shutdown
 var installTracker = app.Services.GetRequiredService<InstallTracker>();
 app.Lifetime.ApplicationStopping.Register(() => { try { installTracker.ShutdownAsync().GetAwaiter().GetResult(); } catch { } });
+
+// Plugin gateway health check
+var gatewayClient = app.Services.GetRequiredService<PluginGatewayClient>();
+_ = Task.Run(async () =>
+{
+    try { await Task.Delay(3000); var ok = await gatewayClient.IsGatewayAliveAsync(); }
+    catch { }
+});
 
 app.Run();

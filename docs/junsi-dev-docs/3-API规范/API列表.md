@@ -1,327 +1,1485 @@
-# API 端点列表
+# API 端点参考
 
-> 基础 URL: `/api` (Vite 开发代理 → `http://localhost:5000`)
+> 更新日期：2026-07-31
 
----
+后端基础地址：`http://localhost:5000`。前端 Vite 代理将 `/api/*` 转发到此地址。
 
-## 系统与诊断
-
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/health` | 基础健康检查 |
-| GET | `/api/diagnostics/health` | 诊断健康 (后端 + Modrinth + CurseForge 连通性) |
-| GET | `/api/system/info` | 系统信息 (OS、架构、内存、git commit) |
-| GET | `/api/diagnostics/trace` | 获取追踪缓冲区快照 |
-| POST | `/api/diagnostics/dump` | 转储追踪到文件 |
+所有未捕获异常按统一错误格式返回（详见底部"错误格式"章节）。
 
 ---
 
-## 设置
+## 目录
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/settings` | 获取应用设置 |
-| PUT | `/api/settings` | 保存应用设置 |
-| GET | `/api/settings/data-dir` | 获取数据目录路径 |
-| PUT | `/api/settings/data-dir` | 设置数据目录路径 |
-| POST | `/api/settings/open-folder` | 在文件管理器中打开文件夹 |
-| POST | `/api/settings/open-backgrounds` | 打开背景文件夹 |
-| GET | `/api/settings/backgrounds` | 列出背景图片 |
-| GET | `/api/settings/backgrounds/{name}` | 提供背景图片文件 |
-| GET | `/api/settings/download-sources/ping` | Ping 下载镜像 |
-| GET | `/api/settings/mod-sources/ping` | Ping Mod 镜像 |
-| GET | `/api/settings/download-source/auto-select` | 自动选择最快下载源 |
-| GET | `/api/settings/mod-source/auto-select` | 自动选择最快 Mod 源 |
-
----
-
-## 认证
-
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| POST | `/api/auth/offline` | 离线模式认证 |
-| POST | `/api/auth/microsoft/device-code` | 开始 Microsoft 设备代码流程 |
-| POST | `/api/auth/microsoft/poll` | 轮询 Microsoft 登录 |
-| POST | `/api/auth/microsoft/info` | 保存 Minecraft 档案 |
-| POST | `/api/auth/microsoft/refresh` | 刷新 Microsoft 令牌 |
-| POST | `/api/auth/yggdrasil` | Yggdrasil 认证 (外置登录) |
-| POST | `/api/auth/yggdrasil/select` | 保存选定 Yggdrasil 档案 |
-| POST | `/api/auth/tongyi` | 统一通行证认证 |
-| POST | `/api/auth/validate` | 验证访问令牌 |
-| POST | `/api/auth/invalidate` | 作废访问令牌 |
+- [账号 Account](#1-账号-account)
+- [认证 Auth](#2-认证-auth)
+- [公告 Announcement](#3-公告-announcement)
+- [联机 Connector](#4-联机-connector)
+- [实例 Instance](#5-实例-instance)
+- [实例文件 Instance Files](#6-实例文件-instance-files)
+- [Java 运行时](#7-java-运行时)
+- [启动 Launch](#8-启动-launch)
+- [许可证 License](#9-许可证-license)
+- [加载器 Loader](#10-加载器-loader)
+- [日志 Log](#11-日志-log)
+- [中文名 Mcmod](#12-中文名-mcmod)
+- [整合包 Modpack](#13-整合包-modpack)
+- [插件 Plugin](#14-插件-plugin)
+- [进度 SSE](#15-进度-sse-stream)
+- [资源中心 Resource Center](#16-资源中心-resource-center)
+- [资源下载 Resource Download](#17-资源下载-resource-download)
+- [资源补全 Resource Complete](#18-资源补全-resource-complete)
+- [皮肤 Skin](#19-皮肤-skin)
+- [系统 System](#20-系统-system)
+- [更新 Update](#21-更新-update)
+- [版本 Version](#22-版本-version)
 
 ---
 
-## 账户
+## 1. 账号 Account
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/account` | 列出所有账户 |
-| GET | `/api/account/{uuid}` | 获取特定账户 |
-| POST | `/api/account` | 创建/保存账户 |
-| DELETE | `/api/account/{uuid}` | 删除账户 |
-| GET | `/api/account/default` | 获取默认账户 |
-| PUT | `/api/account/{uuid}/default` | 设置默认账户 |
-| DELETE | `/api/account/default` | 清除默认账户 |
-| GET | `/api/account/lost` | 检查丢失令牌 |
-| GET | `/api/account/offline-uuid?name={name}` | MD5 生成离线 UUID |
-| GET | `/api/account/yggdrasil-meta?serverUrl={url}` | 获取 Yggdrasil 服务器元数据 |
+**分组前缀：** `/api/account`
 
----
+### GET `/api/account`
 
-## 版本
+列出所有已保存的账号。
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/versions` | 列出远程 Minecraft 版本 |
-| GET | `/api/versions/latest` | 获取最新版本信息 |
-| GET | `/api/versions/installed` | 列出已安装版本 |
-| GET | `/api/versions/remote` | 获取远程版本列表 |
-| GET | `/api/versions/scan?gameDir={d}` | 扫描 gameDir 中的版本目录 |
-| GET | `/api/versions/{name}` | 获取版本元数据 |
-| POST | `/api/versions/{name}/install` | 安装版本 |
-| POST | `/api/versions/{name}/uninstall` | 卸载版本 |
+**响应：** `List<StoredAccount>`
 
----
+### GET `/api/account/{uuid}`
 
-## 实例
+获取指定账号详情。
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/instance` | 列出所有实例 |
-| GET | `/api/instance/default` | 获取默认实例 |
-| PUT | `/api/instance/{id}/default` | 设置默认实例 |
-| DELETE | `/api/instance/{id}/default` | 清除默认实例 |
-| POST | `/api/instance` | 创建实例 |
-| GET | `/api/instance/{id}` | 获取实例详情 |
-| PUT | `/api/instance/{id}` | 更新实例 |
-| DELETE | `/api/instance/{id}` | 删除实例 |
-| POST | `/api/instance/{id}/launch` | 启动实例 |
-| GET | `/api/instance/{id}/launch/progress` | 轮询启动进度 |
-| POST | `/api/instance/{id}/launch/cancel` | 取消启动 |
-| POST | `/api/instance/{id}/install` | 开始安装 (loader + libraries) |
-| GET | `/api/instance/{id}/install/progress` | 轮询安装进度 |
-| POST | `/api/instance/{id}/install/pause` | 暂停安装 |
-| POST | `/api/instance/{id}/install/resume` | 恢复安装 |
-| POST | `/api/instance/{id}/install/cancel` | 取消安装 |
-| GET | `/api/instance/loaders?gameVersion={v}&type={t}` | 获取可用 Mod Loader 版本 |
+| 参数 | 类型 | 位置 | 说明 |
+|------|------|------|------|
+| uuid | string | path | 账号 UUID |
 
----
+**响应：** `StoredAccount`
 
-## 启动
+### POST `/api/account`
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| POST | `/api/launch` | 直接启动 (高级模式) |
-| POST | `/api/launch/{pid}/kill` | 终止游戏进程 |
+保存/更新账号。
 
----
+**请求体：** `StoredAccount`
 
-## Java
+**响应：** `StoredAccount`
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/java/search?mode={m}` | 搜索已安装的 Java 运行时 |
-| GET | `/api/java/custom` | 列出自定义 Java 路径 |
-| POST | `/api/java/custom` | 添加自定义 Java 路径 |
-| DELETE | `/api/java/custom` | 移除自定义 Java 路径 |
-| GET | `/api/java/list?mode={m}` | 获取合并后的 Java 运行时列表 |
-| POST | `/api/java/validate` | 验证 Java 路径 |
-| GET | `/api/java/requirement?gameDir={d}&version={v}` | 获取 Java 版本要求 |
-| POST | `/api/java/recommended` | 推荐 Java 版本 |
-| GET | `/api/java/download/catalog` | 列出可下载的 Java 版本 |
-| POST | `/api/java/download/start` | 开始 Java 下载 |
-| GET | `/api/java/download/progress/{taskId}` | Java 下载进度 |
-| DELETE | `/api/java/download/{taskId}` | 取消 Java 下载 |
-| POST | `/api/java/download/{taskId}/pause` | 暂停下载 |
-| POST | `/api/java/download/{taskId}/resume` | 恢复下载 |
-| GET | `/api/java/download/active` | 获取活跃的 Java 下载 |
+### DELETE `/api/account/{uuid}`
 
----
+删除指定账号。
 
-## Loader
+| 参数 | 类型 | 位置 | 说明 |
+|------|------|------|------|
+| uuid | string | path | 账号 UUID |
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/loaders/versions?gameVersion={v}&loader={l}` | 获取加载器版本 (支持: All, Forge, Fabric, LegacyFabric, NeoForge, Quilt, LiteLoader, OptiFine, Cleanroom, Babric) |
-| GET | `/api/loaders/addons?loader={l}&gameVersion={v}` | 获取加载器扩展 (Fabric API, QSL, OptiFine) |
+**响应：** `204 No Content`
+
+### GET `/api/account/default`
+
+获取默认账号。
+
+**响应：** `StoredAccount` 或 `404`
+
+### PUT `/api/account/{uuid}/default`
+
+设为默认账号。
+
+| 参数 | 类型 | 位置 | 说明 |
+|------|------|------|------|
+| uuid | string | path | 账号 UUID |
+
+**响应：** `StoredAccount`
+
+### DELETE `/api/account/default`
+
+清除默认账号。
+
+**响应：** `204 No Content`
+
+### GET `/api/account/lost`
+
+检查是否所有账号都已丢失。
+
+**响应：** `{ "lost": bool }`
+
+### GET `/api/account/offline-uuid?name={name}`
+
+根据离线玩家名生成 UUID。
+
+| 参数 | 类型 | 位置 | 说明 |
+|------|------|------|------|
+| name | string | query | 玩家名，必填 |
+
+**响应：** `{ "uuid": "..." }`
+
+### GET `/api/account/yggdrasil-meta?serverUrl={serverUrl}`
+
+查询 Yggdrasil 认证服务器元信息。
+
+| 参数 | 类型 | 位置 | 说明 |
+|------|------|------|------|
+| serverUrl | string | query | 认证服务器 URL |
+
+**响应：** `{ "serverName": "..." }`
 
 ---
 
-## 资源中心
+## 2. 认证 Auth
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/resources/search?source={s}&keyword={k}&...` | 跨平台搜索 Modrinth/CurseForge/FTB |
-| GET | `/api/resources/{id}?source={s}` | 资源详情 |
-| GET | `/api/resources/{id}/versions?source={s}&...` | 资源版本列表 |
-| GET | `/api/resources/{id}/versions/{versionId}/downloads?source={s}` | 版本下载 URL |
-| GET | `/api/resources/{id}/dependencies?source={s}&...` | 解析资源依赖树 |
-| POST | `/api/resources/{id}/versions/start-fetch` | 开始异步 CF 版本获取 |
-| GET | `/api/resources/versions/fetch-progress/{taskId}` | CF 获取进度 |
-| GET | `/api/resources/versions/fetch-result/{taskId}` | CF 获取结果 |
-| GET | `/api/resources/{id}/translate?source={s}` | 获取资源中文翻译 |
-| POST | `/api/resources/translate-text` | 翻译一般文本 |
-| POST | `/api/resources/complete` | 补全资源 (检查/安装) |
-| GET | `/api/resources/complete/progress` | 补全进度 |
+**分组前缀：** `/api/auth`
 
----
+### POST `/api/auth/offline`
 
-## 实例文件
+离线模式登录。
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/instance/{id}/files/mods` | 列出 Mods |
-| GET | `/api/instance/{id}/files/mods/count` | Mod 计数 |
-| GET | `/api/instance/{id}/files/mods/progress` | Mod 加载进度 |
-| GET | `/api/instance/{id}/files/installed-names?category={c}` | 已安装文件名列表 |
-| GET | `/api/instance/{id}/files/mods/metadata` | Mod 元数据 (含中文名称) |
-| POST | `/api/instance/{id}/files/mods/enable?name={n}` | 启用 Mod |
-| POST | `/api/instance/{id}/files/mods/disable?name={n}` | 禁用 Mod |
-| DELETE | `/api/instance/{id}/files/mods?name={n}` | 删除 Mod |
-| POST | `/api/instance/{id}/files/mods/batch-enable` | 批量启用 |
-| POST | `/api/instance/{id}/files/mods/batch-disable` | 批量禁用 |
-| POST | `/api/instance/{id}/files/mods/batch-delete` | 批量删除 |
-| GET | `/api/instance/{id}/files/resourcepacks` | 列出资源包 |
-| GET | `/api/instance/{id}/files/resourcepacks/metadata` | 资源包元数据 |
-| DELETE | `/api/instance/{id}/files/resourcepacks?name={n}` | 删除资源包 |
-| GET | `/api/instance/{id}/files/shaderpacks` | 列出光影包 |
-| GET | `/api/instance/{id}/files/shaderpacks/metadata` | 光影包元数据 |
-| DELETE | `/api/instance/{id}/files/shaderpacks?name={n}` | 删除光影包 |
-| GET | `/api/instance/{id}/files/datapacks` | 列出数据包 |
-| GET | `/api/instance/{id}/files/datapacks/metadata` | 数据包元数据 |
-| DELETE | `/api/instance/{id}/files/datapacks?name={n}` | 删除数据包 |
-| GET | `/api/instance/{id}/files/screenshots` | 列出截图 |
-| GET | `/api/instance/{id}/files/screenshots/metadata` | 截图元数据 |
-| GET | `/api/instance/{id}/files/screenshots/{fileName}` | 提供截图图片 |
-| DELETE | `/api/instance/{id}/files/screenshots?name={n}` | 删除截图 |
-| GET | `/api/instance/{id}/files/saves` | 列出存档 |
-| GET | `/api/instance/{id}/files/saves/metadata` | 存档元数据 |
-| POST | `/api/instance/{id}/files/saves/copy` | 复制存档 |
-| POST | `/api/instance/{id}/files/saves/rename` | 重命名存档 |
-| POST | `/api/instance/{id}/files/saves/backup` | 备份存档 |
-| DELETE | `/api/instance/{id}/files/saves?name={n}` | 删除存档 |
-| GET | `/api/instance/{id}/files/servers` | 列出服务器列表 |
-| POST | `/api/instance/{id}/files/servers` | 添加服务器 |
-| DELETE | `/api/instance/{id}/files/servers?ip={i}` | 删除服务器 |
-| GET | `/api/instance/{id}/files/server-ping?address={a}` | Ping 服务器 |
-| GET | `/api/instance/{id}/files/lan-games` | 发现局域网游戏 |
-| GET | `/api/instance/{id}/files/options` | 获取游戏设置项列表 |
-| GET | `/api/instance/{id}/files/options/{name}` | 获取指定设置项定义 |
-| PUT | `/api/instance/{id}/files/options/{name}` | 修改设置项值 |
+**请求体：**
+```json
+{ "username": "Player", "mode": "offline" }
+```
 
----
+**响应：** `AuthResponse`
 
-## 资源下载
+### POST `/api/auth/microsoft/device-code`
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| POST | `/api/resource-download/start` | 开始 Mod/Resourcepack 下载 |
-| POST | `/api/resource-download/download-to` | 下载到特定路径 |
-| GET | `/api/resource-download/{taskId}/progress` | 下载进度 |
-| POST | `/api/resource-download/{taskId}/cancel` | 取消下载 |
-| POST | `/api/resource-download/cancel-batch` | 批量取消 |
+开始 Microsoft 设备码登录流程。
 
----
+**响应：** `AuthResponse`（包含 `deviceCode`, `userCode`, `verificationUri`）
 
-## 皮肤
+### POST `/api/auth/microsoft/poll`
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/skin/profile/{uuid}?type={t}&server={s}` | 获取角色信息 |
-| GET | `/api/skin/texture/{uuid}?type={t}&server={s}` | 提供皮肤图片 |
-| POST | `/api/skin/upload/{uuid}` | 上传自定义皮肤 |
-| DELETE | `/api/skin/upload/{uuid}` | 重置皮肤为默认 |
+轮询 Microsoft 登录状态。
 
----
+```json
+{ "accessToken": "deviceCode" }
+```
 
-## MCMOD
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| accessToken | string | 上一步返回的 deviceCode |
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/mcmod/lookup?name={n}` | 在 mcmod_data 中查找中文名称 |
-| POST | `/api/mcmod/batch` | 批量查找中文名称 |
+**响应：** `AuthResponse`
 
----
+### POST `/api/auth/microsoft/info`
 
-## 日志
+通过 Microsoft token 获取 Minecraft 档案并保存账号。
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/logs` | 列出日志文件 |
-| GET | `/api/logs/export?path={p}` | 下载日志文件 |
-| POST | `/api/logs/export-to` | 导出日志到路径 |
-| POST | `/api/logs/export-all-to` | 导出所有日志为 zip |
-| GET | `/api/logs/export-all` | 下载所有日志 zip |
-| DELETE | `/api/logs?path={p}` | 删除日志文件 |
-| POST | `/api/logs/open` | 在编辑器中打开日志 |
-| POST | `/api/logs/open-dir` | 打开日志目录 |
+```json
+{ "accessToken": "...", "refreshToken": "..." }
+```
 
----
+**响应：** `StoredAccount`
 
-## 日志分析
+### POST `/api/auth/microsoft/refresh`
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| POST | `/api/loganalysis/analyze` | AI 分析日志内容 |
-| POST | `/api/loganalysis/analyze-crash/{instanceId}` | 分析崩溃报告 |
+刷新 Microsoft 账号 Token。
+
+```json
+{ "accountUuid": "..." }
+```
+
+**响应：** `MicrosoftRefreshResponse`
+
+### POST `/api/auth/yggdrasil`
+
+Yggdrasil 认证登录。
+
+```json
+{
+  "username": "...",
+  "password": "...",
+  "serverUrl": "https://littleskin.cn/api/yggdrasil"
+}
+```
+
+**响应：** `YggdrasilProfilesResponse`
+
+### POST `/api/auth/yggdrasil/select`
+
+选择 Yggdrasil 档案并保存账号。
+
+```json
+{
+  "accessToken": "...",
+  "clientToken": "...",
+  "serverUrl": "...",
+  "selectedProfiles": [{ "id": "...", "name": "..." }]
+}
+```
+
+**响应：** `List<StoredAccount>`
+
+### POST `/api/auth/tongyi`
+
+统一通行证登录（通义/网易等）。
+
+```json
+{ "serverId": "...", "email": "...", "password": "..." }
+```
+
+**响应：** `StoredAccount`
+
+### POST `/api/auth/validate`
+
+验证 Token 有效性。
+
+```json
+{ "accessToken": "..." }
+```
+
+**响应：** `{ "valid": bool }`
+
+### POST `/api/auth/invalidate`
+
+作废 Token。
+
+```json
+{ "accessToken": "..." }
+```
+
+**响应：** `{ "message": "Token invalidated" }`
 
 ---
 
-## 连接器
+## 3. 公告 Announcement
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| POST | `/api/connector/host/port` | 通过端口开房 |
-| POST | `/api/connector/host/instance` | 通过实例开房 |
-| POST | `/api/connector/join` | 加入房间 |
-| GET | `/api/connector/status` | 连接器状态 |
-| GET | `/api/connector/easytier/status` | EasyTier VPN 状态 |
-| POST | `/api/connector/easytier/download` | 下载 EasyTier |
-| POST | `/api/connector/leave` | 离开房间 |
-| GET | `/api/connector/scan-ports` | 扫描 Java 进程端口 |
-| GET | `/api/connector/nat-type` | 检测 NAT 类型 |
+### GET `/api/client/announcements?channel={channel}`
+
+获取启动器公告。
+
+| 参数 | 类型 | 位置 | 说明 |
+|------|------|------|------|
+| channel | string | query | 可选，公告频道 |
+
+**响应：** `List<AnnouncementDto>`
 
 ---
 
-## Modpack
+## 4. 联机 Connector
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| POST | `/api/modpack/parse` | 解析上传的 Modpack 文件 |
-| POST | `/api/modpack/resolve` | 解析在线 Modpack (CF/MR) |
-| POST | `/api/modpack/install` | 安装 Modpack |
+**分组前缀：** `/api/connector`
+
+### POST `/api/connector/host/port`
+
+指定端口开房。
+
+```json
+{ "port": 25565 }
+```
+
+**响应：** `{ "roomCode": "...", "status": null, "error": null }`
+
+### POST `/api/connector/host/instance`
+
+基于实例开房。
+
+```json
+{ "instanceId": "..." }
+```
+
+**响应：** `{ "roomCode": null, "status": "hosting", "error": null }`
+
+### POST `/api/connector/join`
+
+加入房间。
+
+```json
+{ "code": "ABCD" }
+```
+
+**响应：** `{ "mcHost": "...", "mcPort": 25565 }`
+
+### GET `/api/connector/status`
+
+获取联机状态。
+
+**响应：** `ConnectorStatusDto`
+
+### GET `/api/connector/easytier/status`
+
+获取 EasyTier 下载状态。
+
+**响应：** `EasyTierDownloadStatus`
+
+### POST `/api/connector/easytier/download`
+
+触发 EasyTier 下载。
+
+**响应：** `EasyTierDownloadStatus`
+
+### POST `/api/connector/leave`
+
+离开房间/停止联机。
+
+**响应：** `{ "status": "idle" }`
+
+### GET `/api/connector/scan-ports`
+
+扫描 Java 端口。
+
+**响应：** `{ "port": int | null }`
+
+### GET `/api/connector/nat-type`
+
+检测 NAT 类型。
+
+**响应：** `NatTypeResult`
 
 ---
 
-## 许可证
+## 5. 实例 Instance
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/license/status` | 许可证状态 |
-| POST | `/api/license/activate` | 激活许可证 |
+**分组前缀：** `/api/instance`
+
+### GET `/api/instance`
+
+获取所有实例。
+
+**响应：** `List<GameInstance>`
+
+### GET `/api/instance/default`
+
+获取默认实例（ID）。
+
+**响应：** `GameInstance` 或 `204 No Content`
+
+### PUT `/api/instance/{id}/default`
+
+设为默认实例。
+
+**响应：** `GameInstance`
+
+### DELETE `/api/instance/{id}/default`
+
+清除默认实例。
+
+**响应：** `204 No Content`
+
+### POST `/api/instance`
+
+创建实例。
+
+**请求体：**
+```json
+{
+  "name": "My Instance",
+  "gameVersion": "1.20.1",
+  "loader": "forge",
+  "loaderVersion": "47.1.0",
+  "javaPath": null,
+  "maxMemory": 4096,
+  "gameDir": ".minecraft"
+}
+```
+
+**响应：** `GameInstance` (201 Created)
+
+### GET `/api/instance/{id}`
+
+获取实例详情。
+
+**响应：** `GameInstance`
+
+### PUT `/api/instance/{id}`
+
+更新实例。所有字段可选。
+
+```json
+{
+  "name": "...",
+  "gameVersion": "...",
+  "loader": "...",
+  "loaderVersion": "...",
+  "javaPath": "...",
+  "maxMemory": 4096,
+  "jvmArgs": "...",
+  "isHidden": false,
+  "versionIsolation": true
+}
+```
+
+**响应：** `GameInstance`
+
+### DELETE `/api/instance/{id}`
+
+删除实例。
+
+**响应：** `{ "message": "Instance xxx deleted" }` 或 `404`
+
+### POST `/api/instance/{id}/launch`
+
+启动实例（异步）。
+
+**请求体（可选）：**
+```json
+{
+  "joinServer": "...",
+  "joinWorld": "...",
+  "accountUuid": "..."
+}
+```
+
+**响应：** `LaunchResultDto` (`stage: "starting"`)
+
+启动进度通过 `GET /api/instance/{id}/launch/progress` 轮询。
+
+### GET `/api/instance/{id}/launch/progress`
+
+轮询启动进度。
+
+**响应：** `LaunchProgressDto`
+
+### POST `/api/instance/{id}/launch/cancel`
+
+取消启动。
+
+**响应：** `{ "message": "..." }`
+
+### POST `/api/instance/{id}/install`
+
+触发实例安装（下载 Minecraft 版本/加载器/附加组件）。
+
+```json
+{
+  "loader": "forge",
+  "loaderVersion": "47.1.0",
+  "addons": ["fabric-api"],
+  "optifineVersion": null,
+  "downloadThreads": 64,
+  "versionIsolation": true,
+  "downloadSourceId": 0
+}
+```
+
+**响应：** `{ "message": "Install started for xxx" }`
+
+### GET `/api/instance/{id}/install/progress`
+
+轮询安装进度。
+
+**响应：** `InstallProgressResponse`
+
+### POST `/api/instance/{id}/install/pause`
+
+暂停安装。
+
+**响应：** `{ "message": "..." }`
+
+### POST `/api/instance/{id}/install/resume`
+
+恢复安装。
+
+**响应：** `{ "message": "..." }`
+
+### POST `/api/instance/{id}/install/cancel`
+
+取消安装。
+
+**响应：** `{ "message": "..." }`
+
+### GET `/api/instance/loaders?gameVersion={version}&type={type}`
+
+获取可用加载器列表。
+
+| 参数 | 类型 | 位置 | 说明 |
+|------|------|------|------|
+| gameVersion | string | query | MC 版本，必填 |
+| type | string | query | 可填 fabric / forge / neoforge / quilt / cleanroom / babric 等 |
+
+**响应：** `List<LoaderVersionInfo>`
 
 ---
 
-## 公告
+## 6. 实例文件 Instance Files
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/client/announcements?channel={c}` | 获取公告 (代理到远程) |
+**分组前缀：** `/api/instance/{id}/files`
+
+以下所有端点需要实例 ID。
+
+### Mods
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/mods` | 列出模组文件 |
+| GET | `/mods/count` | 模组数量（含 .disabled） |
+| GET | `/mods/progress` | 模组元数据加载进度 |
+| GET | `/mods/metadata` | 模组元数据（名称、版本、描述、图标、CF/MR ID） |
+| GET | `/installed-names?category=mods` | 已安装文件名列表 |
+| POST | `/mods/enable?name=...` | 启用模组 |
+| POST | `/mods/disable?name=...` | 禁用模组 |
+| DELETE | `/mods?name=...` | 删除模组 |
+| POST | `/mods/batch-enable` | 批量启用 `["a.jar","b.jar"]` |
+| POST | `/mods/batch-disable` | 批量禁用 |
+| POST | `/mods/batch-delete` | 批量删除 |
+
+### Resourcepacks
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/resourcepacks` | 列出资源包 |
+| GET | `/resourcepacks/metadata` | 资源包元数据 |
+| DELETE | `/resourcepacks?name=...` | 删除资源包 |
+
+### Shaderpacks
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/shaderpacks` | 列出光影包 |
+| GET | `/shaderpacks/metadata` | 光影包元数据 |
+| DELETE | `/shaderpacks?name=...` | 删除光影包 |
+
+### DataPacks
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/datapacks` | 列出数据包 |
+| GET | `/datapacks/metadata` | 数据包元数据 |
+| DELETE | `/datapacks?name=...` | 删除数据包 |
+
+### Screenshots
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/screenshots` | 列出截图 |
+| GET | `/screenshots/metadata` | 截图元数据 |
+| GET | `/screenshots/{fileName}` | 获取截图文件（image/png） |
+| DELETE | `/screenshots?name=...` | 删除截图 |
+
+### Saves
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/saves` | 列出存档 |
+| GET | `/saves/metadata` | 存档元数据（含图标 base64） |
+| POST | `/saves/copy` | 复制存档 `{ "name": "...", "newName": "..." }` |
+| POST | `/saves/rename` | 重命名存档 `{ "oldName": "...", "newName": "..." }` |
+| POST | `/saves/backup?name=...` | 备份存档 |
+| DELETE | `/saves?name=...` | 删除存档 |
+
+### Servers
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/servers` | 服务器列表 |
+| POST | `/servers` | 添加服务器 `{ "name": "...", "ip": "..." }` |
+| DELETE | `/servers?ip=...` | 删除服务器 |
+| GET | `/server-ping?address=...` | Ping 服务器 |
+| GET | `/lan-games` | 发现局域网游戏 |
+
+### Options
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/options` | 获取游戏设置列表（中文） |
+| GET | `/options/{name}` | 获取单项设置定义 |
+| PUT | `/options/{name}` | 修改设置 `{ "value": "..." }` |
+
+**响应模型 `FileEntryDto`：**
+```json
+{
+  "name": "filename.jar",
+  "size": 12345,
+  "lastModified": "2026-01-01T00:00:00",
+  "created": "2026-01-01T00:00:00",
+  "isDirectory": false,
+  "extension": ".jar"
+}
+```
 
 ---
 
-## 更新
+## 7. Java 运行时
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/update/check?current={v}&channel={c}` | 检查启动器更新 |
-| GET | `/api/update/manifest?current={v}&target={t}&arch={a}` | 获取 Tauri 更新 manifest |
+**分组前缀：** `/api/java`
+
+### GET `/api/java/search?mode={mode}`
+
+搜索系统 Java 运行时。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| mode | string | `quick`（默认）或 `deep` |
+
+**响应：** `List<JavaRuntimeInfo>`
+
+### GET `/api/java/custom`
+
+获取用户自定义 Java 列表。
+
+### POST `/api/java/custom`
+
+添加自定义 Java 路径。
+
+```json
+{ "path": "C:\\Program Files\\Java\\jdk-17\\bin\\javaw.exe" }
+```
+
+### DELETE `/api/java/custom`
+
+删除自定义 Java。
+
+```json
+{ "path": "..." }
+```
+
+### GET `/api/java/list?mode={mode}`
+
+获取合并后的 Java 列表（系统扫描 + 自定义）。
+
+### POST `/api/java/validate`
+
+验证 Java 路径是否有效。
+
+```json
+{ "path": "..." }
+```
+
+**响应：** `JavaRuntimeInfo`
+
+### GET `/api/java/requirement?gameDir={dir}&version={version}`
+
+获取版本所需的 Java 主版本号。
+
+**响应：** `{ "requiredMajorVersion": 17 }`
+
+### POST `/api/java/recommended`
+
+获取推荐 Java。
+
+```json
+{ "minecraftVersion": "1.20.1", "gameDir": ".minecraft" }
+```
+
+**响应：** `JavaRuntimeInfo`
+
+### `/api/java/download` 子分组
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/download/catalog` | 获取可下载 Java 版本目录 |
+| POST | `/download/start` | 开始下载 Java `{ "version": "...", "arch": "x64" }` |
+| GET | `/download/progress/{taskId}` | 查询下载进度 |
+| DELETE | `/download/{taskId}` | 取消下载 |
+| POST | `/download/{taskId}/pause` | 暂停下载 |
+| POST | `/download/{taskId}/resume` | 恢复下载 |
+| GET | `/download/active` | 获取所有活跃下载状态 |
 
 ---
 
-## 进度 SSE
+## 8. 启动 Launch
 
-| 方法 | 路径 | 用途 |
-|:---|:---|:---|
-| GET | `/api/progress/stream` | SSE 流 (安装/下载进度) |
+**分组前缀：** `/api/launch`
+
+### POST `/api/launch`
+
+直接启动（不通过实例管理）。
+
+```json
+{
+  "instanceId": "...",
+  "versionId": "1.20.1-Forge-47.1.0",
+  "javaPath": "C:\\java\\bin\\javaw.exe",
+  "maxMemory": 4096,
+  "jvmArgs": "-XX:+UseG1GC",
+  "versionIsolation": false,
+  "authUuid": "...",
+  "authName": "Player",
+  "authToken": "...",
+  "joinServer": "localhost",
+  "joinWorld": "world"
+}
+```
+
+**响应：** `LaunchResultDto`
+
+### POST `/api/launch/{pid}/kill`
+
+通过进程 ID 强制结束游戏进程。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| pid | int | path，进程 ID |
+
+**响应：** `{ "message": "..." }`
+
+---
+
+## 9. 许可证 License
+
+**分组前缀：** `/api/license`
+
+### GET `/api/license/status`
+
+查询许可证状态。
+
+**响应：** `LicenseStatusResponse`
+```json
+{
+  "valid": true,
+  "machineCode": "...",
+  "licenseId": "...",
+  "channel": "stable",
+  "expireAt": "...",
+  "isPermanent": false,
+  "error": null
+}
+```
+
+### POST `/api/license/activate`
+
+激活许可证。
+
+```json
+{ "licenseToken": "..." }
+```
+
+**响应：** `LicenseActivateResponse`
+
+---
+
+## 10. 加载器 Loader
+
+**分组前缀：** `/api/loaders`
+
+### GET `/api/loaders/versions?gameVersion={v}&loader={type}`
+
+获取某加载器可用版本列表。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| gameVersion | string | 必填 |
+| loader | string | 默认 `All`，可选 Fabric/Forge/NeoForge/Quilt 等 |
+
+**响应：** `List<LoaderVersionInfo>`
+
+### GET `/api/loaders/addons?loader={type}&gameVersion={v}`
+
+获取加载器推荐附加组件（如 Fabric API、OptiFine、QSL）。
+
+**响应：** `List<LoaderAddonInfo>`
+
+---
+
+## 11. 日志 Log
+
+**分组前缀：** `/api/logs`
+
+### GET `/api/logs`
+
+列出日志文件。
+
+**响应：** `List<LogEntry>`
+
+### GET `/api/logs/export?path={base64EncodedPath}`
+
+下载单个日志文件。
+
+### POST `/api/logs/export-to`
+
+导出日志到指定路径。
+
+```json
+{ "path": "...", "dest": "..." }
+```
+
+### POST `/api/logs/export-all-to`
+
+打包所有日志到指定路径。
+
+```json
+{ "dest": "C:\\logs.zip" }
+```
+
+### GET `/api/logs/export-all`
+
+直接下载所有日志的 zip 包。
+
+### DELETE `/api/logs?path={path}`
+
+删除日志文件。
+
+### POST `/api/logs/open`
+
+用系统默认程序打开日志文件。
+
+```json
+{ "path": "..." }
+```
+
+### POST `/api/logs/open-dir`
+
+用文件管理器打开日志所在目录。
+
+```json
+{ "path": "..." }
+```
+
+---
+
+## 12. 中文名 Mcmod
+
+**分组前缀：** `/api/mcmod`
+
+### GET `/api/mcmod/lookup?name={name}`
+
+查询模组中文名。
+
+**响应：** `{ "cnName": "..." }` （null 表示未找到）
+
+### POST `/api/mcmod/batch`
+
+批量查询中文名。
+
+```json
+["JEI", "OptiFine", "Sodium"]
+```
+
+**响应：** `{ "JEI": "JEI物品管理器", "OptiFine": "光影优化", "Sodium": "钠" }`
+
+---
+
+## 13. 整合包 Modpack
+
+**分组前缀：** `/api/modpack`
+
+### POST `/api/modpack/parse`
+
+上传并解析整合包文件（.zip / .mrpack）。
+
+`multipart/form-data`，字段名 `file`。
+
+**响应：** `ModpackParseResult`
+
+### POST `/api/modpack/resolve`
+
+从在线源获取整合包信息。
+
+```json
+{
+  "source": "modrinth",
+  "projectId": "...",
+  "versionId": "..."
+}
+```
+
+### POST `/api/modpack/install`
+
+开始安装整合包。
+
+```json
+{
+  "source": "curseforge",
+  "projectId": 12345,
+  "versionId": 67890,
+  "name": "My Pack",
+  "gameDir": ".minecraft"
+}
+```
+
+**响应：** `{ "message": "安装已启动", "versionId": "..." }`
+
+---
+
+## 14. 插件 Plugin
+
+**分组前缀：** `/api/plugins`
+
+### GET `/api/plugins`
+
+列出所有插件。
+
+**响应：** `List<PluginInfo>`
+
+### GET `/api/plugins/{id}`
+
+获取插件详情。
+
+### POST `/api/plugins/rescan`
+
+重新扫描插件目录。
+
+**响应：** `{ "scanned": 5 }`
+
+### POST `/api/plugins/install`
+
+从目录安装插件。
+
+```json
+{ "sourceDir": "/path/to/plugin" }
+```
+
+### DELETE `/api/plugins/{id}`
+
+卸载插件。
+
+**响应：** `204 No Content`
+
+### POST `/api/plugins/upload`
+
+上传 .qplugin 包安装。
+
+`multipart/form-data`，字段名 `plugin`。
+
+### PUT `/api/plugins/{id}/state`
+
+设置插件状态。
+
+```json
+{ "state": "active" }
+```
+
+state 可选：`installed` / `active` / `disabled`
+
+### GET `/api/plugins/{id}/files/{*path}`
+
+获取插件静态文件（HTML/JS/CSS/图片等）。
+
+按 MIME 类型返回：`.css` → `text/css`, `.js` → `application/javascript`, `.html` → `text/html`, 图片 → 对应类型
+
+### GET `/api/plugins/settings/{id}`
+
+获取插件设置。
+
+### POST `/api/plugins/settings/{id}`
+
+保存插件设置。
+
+```json
+{ "key": "value", ... }
+```
+
+### POST `/api/plugins/cache/{id}`
+
+写入插件缓存。需要插件声明 `cache:access` 权限。
+
+```json
+{ "key": "models", "value": { "list": [] }, "ttlSeconds": 3600 }
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| key | string | 必填，缓存键（≤512 字符） |
+| value | json | 必填，任意 JSON 值 |
+| ttlSeconds | int | 可选，过期秒数；不传为永久缓存 |
+
+**响应：** `200`
+
+### GET `/api/plugins/cache/{id}?key={key}`
+
+读取插件缓存。key 不存在或已过期返回 `{ "value": null }`。
+
+**响应：** `{ "value": <json> | null }`
+
+### POST `/api/plugins/proxy`
+
+CORS 代理：插件网页 fetch 外部 API 被 CORS 拒绝时，由后端转发请求绕开限制。需要插件声明 `network:cors_proxy` 权限。
+
+```json
+{
+  "url": "https://api.example.com/data",
+  "method": "GET",
+  "headers": { "X-Test": "hello" },
+  "body": null,
+  "timeoutMs": 15000
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| url | string | 必填，目标 URL（仅 http/https） |
+| method | string | 默认 GET |
+| headers | object | 自定义请求头 |
+| body | string | 请求体（POST/PUT/PATCH） |
+| timeoutMs | int | 默认 15000，范围 1000–60000 |
+
+**响应：** `{ "status": 200, "headers": {...}, "body": "文本内容", "bodyBase64": null }`
+
+文本/JSON 响应走 `body`，二进制走 `bodyBase64`。**SSRF 防护**：禁内网/保留地址、不自动跟随重定向。错误码：`PROXY_INVALID_URL`(400)、`PROXY_SCHEME_NOT_ALLOWED`(400)、`PROXY_PRIVATE_ADDRESS`(400)、`PROXY_UPSTREAM_FAILED`(502)。
+
+---
+
+## 15. 进度 SSE Stream
+
+### GET `/api/progress/stream`
+
+SSE (Server-Sent Events) 实时进度流。每 300ms 推送一次。
+
+**Content-Type:** `text/event-stream`
+
+**事件格式：**
+```
+data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...],"summary":{"activeCount":3,"totalSpeed":12345.6}}
+```
+
+包含所有活跃的安装任务、Java 下载和资源下载的汇总状态。
+
+---
+
+## 16. 资源中心 Resource Center
+
+**分组前缀：** `/api/resources`
+
+### GET `/api/resources/search?source={src}&keyword={k}&page={p}&pageSize={s}&gameVersion={v}&loader={l}&category={c}&sort={sort}`
+
+跨平台搜索资源（Modrinth / CurseForge / FTB）。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| source | string | `modrinth`（默认）、`curseforge`、`ftb` |
+| keyword | string | 搜索关键词 |
+| page | int | 页码，从 1 开始 |
+| pageSize | int | 每页条数 |
+| gameVersion | string | 筛选 MC 版本 |
+| loader | string | 筛选加载器 |
+| category | string | 类别：`mod`、`modpack`、`resourcepack`、`shader`、`datapack` |
+| sort | string | `relevance`、`downloads`、`updated`、`newest` |
+
+**响应：** `ResourceSearchResponse`
+
+### GET `/api/resources/{id}?source={src}`
+
+获取资源详情。
+
+**响应：** `ResourceDetailDto`
+
+### GET `/api/resources/{id}/versions?source={src}&gameVersion={v}&loader={l}`
+
+获取资源版本列表。
+
+**响应：** `List<ResourceVersionDto>`
+
+### GET `/api/resources/{id}/versions/{versionId}/downloads?source={src}`
+
+获取某版本的下载链接。
+
+**响应：** `List<ResourceFileDto>`
+
+### GET `/api/resources/{id}/dependencies?source={src}&versionId={v}&gameVersion={gv}&loader={l}`
+
+递归解析依赖树。
+
+**响应：** `List<ResolvedDependencyDto>`
+
+### GET `/api/resources/ftb/{projectId}/export`
+
+获取 FTB 整合包完整版本详情。
+
+### POST `/api/resources/{id}/versions/start-fetch`
+
+启动 CurseForge 版本列表异步拉取。
+
+```json
+{ "gameVersion": "1.20.1", "loader": "forge" }
+```
+
+**响应：** `{ "taskId": "...", "totalVersionCount": 0, "loadedVersionCount": 0 }`
+
+### GET `/api/resources/versions/fetch-progress/{taskId}`
+
+查询拉取进度。
+
+### GET `/api/resources/versions/fetch-result/{taskId}`
+
+获取拉取结果。
+
+### GET `/api/resources/{id}/translate?source={src}`
+
+获取资源的中文翻译（来自 mcimirror）。
+
+### POST `/api/resources/translate-text`
+
+翻译文本。
+
+```json
+{ "text": "Hello" }
+```
+
+**响应：** `{ "original": "Hello", "translated": "你好", "translatedAt": null }`
+
+---
+
+## 17. 资源下载 Resource Download
+
+**分组前缀：** `/api/resource-download`
+
+### POST `/api/resource-download/start`
+
+开始下载资源到实例目录。
+
+```json
+{
+  "instanceId": "...",
+  "url": "https://...",
+  "fileName": "mod.jar",
+  "category": "mods",
+  "targetPath": null
+}
+```
+
+`category` 可选：`mods`、`resourcepacks`、`shaderpacks`、`datapacks`、`saves`、`screenshots`
+
+**响应：** `{ "taskId": "...", "fileName": "..." }`
+
+### POST `/api/resource-download/download-to`
+
+下载到指定路径。
+
+```json
+{ "url": "...", "targetPath": "C:\\dest\\file.jar" }
+```
+
+### GET `/api/resource-download/{taskId}/progress`
+
+查询下载进度。
+
+**响应：** `DownloadProgressResponse`
+
+### POST `/api/resource-download/{taskId}/cancel`
+
+取消下载。
+
+### POST `/api/resource-download/cancel-batch`
+
+批量取消。
+
+```json
+{ "taskIds": ["id1", "id2"] }
+```
+
+---
+
+## 18. 资源补全 Resource Complete
+
+### POST `/api/resources/complete`
+
+补全/安装指定的 Minecraft 版本资源。
+
+```json
+{ "versionId": "1.20.1", "checkOnly": false }
+```
+
+`checkOnly: true` 时仅检查是否已安装。
+
+### GET `/api/resources/complete/progress`
+
+查询补全进度。
+
+---
+
+## 19. 皮肤 Skin
+
+**分组前缀：** `/api/skin`
+
+### GET `/api/skin/profile/{uuid}?type={type}&server={server}`
+
+获取玩家皮肤档案。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| uuid | string | path |
+| type | string | `Microsoft`（默认）或 `Offline` |
+| server | string | Yggdrasil 服务器地址 |
+
+**响应：** `SkinProfile`
+
+### GET `/api/skin/texture/{uuid}?type={type}&server={server}`
+
+获取皮肤图片（返回 `image/png`）。
+
+### POST `/api/skin/upload/{uuid}`
+
+上传自定义皮肤。
+
+`multipart/form-data`，字段名 `file`。
+
+### DELETE `/api/skin/upload/{uuid}`
+
+重置为默认皮肤。
+
+---
+
+## 20. 系统 System
+
+**分组前缀：** `/api`
+
+### GET `/api/health`
+
+健康检查。
+
+**响应：** `{ "status": "OK", "timestamp": "..." }`
+
+### GET `/api/diagnostics/health`
+
+详细健康检查（后端 + Modrinth + CurseForge）。
+
+### GET `/api/system/info`
+
+系统信息。
+
+**响应：** `SystemInfoResponse`
+```json
+{
+  "os": "windows",
+  "architecture": "X64",
+  "osName": "Microsoft Windows 11 24H2+",
+  "osVersion": "Microsoft Windows NT 10.0.26100.0",
+  "osVersionId": "10",
+  "osDisplayName": "Windows 11 24H2+",
+  "gitCommit": "abc123",
+  "memory": 17179869184,
+  "availableMemory": 8589934592
+}
+```
+
+### GET `/api/systeminfo`
+
+同上（别名）。
+
+### GET `/api/diagnostics/trace`
+
+获取追踪缓冲区快照。
+
+### POST `/api/diagnostics/dump`
+
+导出诊断转储。
+
+**响应：** `{ "path": "..." }`
+
+### GET `/api/settings`
+
+获取启动器设置。
+
+**响应：** `SettingsResponse`（30+ 字段，详见模型定义）
+
+### PUT `/api/settings`
+
+保存启动器设置。
+
+**请求体：** `SettingsResponse`（接受全部或部分字段）
+
+**响应：** `204 No Content`
+
+### GET `/api/settings/data-dir`
+
+获取数据目录路径。
+
+### PUT `/api/settings/data-dir`
+
+修改数据目录。
+
+```json
+{ "path": "D:\\Qomicex" }
+```
+
+### POST `/api/settings/open-folder`
+
+用文件管理器打开目录。
+
+```json
+{ "path": "C:\\..." }
+```
+
+### POST `/api/settings/open-backgrounds`
+
+打开背景图片目录。
+
+### GET `/api/settings/backgrounds`
+
+列出背景图片文件名。
+
+### GET `/api/settings/backgrounds/{name}`
+
+获取背景图片（image/png）。
+
+### GET `/api/settings/download-sources/ping`
+
+测试各下载源延迟。
+
+**响应：** `List<DownloadSourcePing>`
+
+### GET `/api/settings/mod-sources/ping`
+
+测试各 Mod 源延迟。
+
+### GET `/api/settings/download-source/auto-select`
+
+自动选择最优下载源。
+
+### GET `/api/settings/mod-source/auto-select`
+
+自动选择最优 Mod 源。
+
+---
+
+## 21. 更新 Update
+
+### GET `/api/update/check?current={v}&channel={c}`
+
+检查启动器更新。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| current | string | 当前版本号 |
+| channel | string | 可选，更新频道 |
+
+**响应：** `UpdateCheckResponse`
+
+### GET `/api/update/manifest?current={v}&target={t}&arch={a}`
+
+获取 Tauri 更新清单。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| current | string | 当前版本号 |
+| target | string | 目标平台，如 `windows-x86_64` |
+| arch | string | 架构 |
+
+通过 header `X-Updater-Channel` 指定频道。
+
+**响应：** `TauriManifestResponse`
+
+---
+
+## 22. 版本 Version
+
+**分组前缀：** `/api/versions`
+
+### GET `/api/versions?forceRefresh={bool}`
+
+获取可用 Minecraft 版本列表。
+
+### GET `/api/versions/latest?forceRefresh={bool}`
+
+获取最新版本信息。
+
+### GET `/api/versions/installed`
+
+获取已安装的版本。
+
+### GET `/api/versions/remote?source={int}`
+
+获取远程版本列表。
+
+### GET `/api/versions/scan?gameDir={dir}`
+
+扫描指定目录下的已安装版本，自动修复实例的 `gameVersion` 和 `loader`。
+
+**响应：** `ScanVersionsResponse`
+
+### GET `/api/versions/{name}`
+
+获取版本元数据（完整 version JSON）。
+
+### POST `/api/versions/{name}/install`
+
+安装版本。
+
+**响应：** `{ "message": "...", "versionId": "..." }`
+
+### POST `/api/versions/{name}/uninstall`
+
+卸载版本。
+
+---
+
+## 核心数据模型
+
+### GameInstance
+
+```json
+{
+  "id": "abc123def456",
+  "name": "My Instance",
+  "gameVersion": "1.20.1",
+  "loader": "forge",
+  "loaderVersion": "47.1.0",
+  "javaPath": null,
+  "maxMemory": 4096,
+  "gameDir": ".minecraft",
+  "accountName": null,
+  "accountUuid": null,
+  "accessToken": null,
+  "jvmArgs": null,
+  "lastPlayed": "2026-07-30T12:00:00",
+  "playTime": 3600,
+  "isHidden": false,
+  "versionIsolation": true,
+  "isDefault": false,
+  "icon": null,
+  "iconData": null,
+  "modpackName": null,
+  "modpackVersion": null,
+  "modpackAuthor": null,
+  "modpackSummary": null,
+  "skipIntegrityCheck": false,
+  "resolvedGameDir": null
+}
+```
+
+### AuthResponse
+
+```json
+{
+  "success": true,
+  "username": "Player",
+  "accessToken": "...",
+  "uuid": "...",
+  "userType": "offline",
+  "errorMessage": null,
+  "refreshToken": null,
+  "deviceCode": null,
+  "userCode": null,
+  "verificationUri": null,
+  "interval": null,
+  "expiresIn": null,
+  "isPending": null
+}
+```
+
+### LaunchProgressDto
+
+```json
+{
+  "stage": "checking",
+  "message": "正在检查文件完整性...",
+  "progress": 5.0,
+  "isRunning": false,
+  "processId": null,
+  "exitCode": null,
+  "error": null,
+  "crashReport": null,
+  "missingFiles": ["libraries/.../foo.jar"],
+  "arguments": null,
+  "currentFile": "libraries/.../bar.jar",
+  "totalFiles": 42,
+  "completedFiles": 10
+}
+```
+
+---
+
+## 错误格式
+
+所有未捕获异常统一返回：
+
+```json
+{
+  "code": "ERROR_CODE",
+  "message": "人类可读错误描述",
+  "detail": "详细技术信息（可选）",
+  "traceId": "abc-123",
+  "timestamp": "2026-07-31T12:00:00Z",
+  "status": 500
+}
+```
+
+常见 HTTP 状态码映射：
+
+| 异常类型 | HTTP 状态码 |
+|---------|-----------|
+| `ApiException.BadRequest` | 400 |
+| `ApiException.NotFound` | 404 |
+| `FileNotFoundException` | 404 |
+| `ArgumentNullException` | 400 |
+| `HttpRequestException` | 502 |
+| `TaskCanceledException` | 499 |
+| `JsonException` | 400 |
+| 其他未处理异常 | 500 |

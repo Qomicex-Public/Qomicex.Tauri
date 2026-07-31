@@ -24,6 +24,11 @@ data/
 # Test / scratch
 build-test/
 
+# Plugin build artifacts (loose copies outside plugin dirs)
+plugins-dev/*.qplugin
+plugins-dev/*.zip
+**/D:\\Test\\.minecraft/
+
 
 # Editor
 #.vscode/
@@ -76,3 +81,4 @@ src-backend/**/logs/
 
 # Website submodule (separate repo)
 /website/
+qomicex-plugin-ui-0.1.0.tgz

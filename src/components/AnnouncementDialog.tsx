@@ -2,8 +2,8 @@
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
-import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui/dialog.tsx'
-import { Button } from './ui/button.tsx'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
+import { Button } from './ui'
 import type { Announcement } from '../api/announcements.ts'
 
 interface AnnouncementDialogProps {

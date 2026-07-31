@@ -3,6 +3,8 @@ export default {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
+    "./packages/plugin-ui/src/**/*.{ts,tsx}",
+    "./node_modules/@qomicex/plugin-ui/dist/**/*.js",
   ],
   darkMode: "class",
   theme: {

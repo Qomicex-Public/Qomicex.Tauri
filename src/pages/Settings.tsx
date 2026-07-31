@@ -1,23 +1,28 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
-import { Button } from '../components/ui/button.tsx'
-import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card.tsx'
-import { Input } from '../components/ui/input.tsx'
-import { Label } from '../components/ui/label.tsx'
-import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui/dialog.tsx'
-import { Badge } from '../components/ui/badge.tsx'
-import { Separator } from '../components/ui/separator.tsx'
-import { Select, SelectOption } from '../components/ui/select.tsx'
-import { Tooltip } from '../components/ui/tooltip.tsx'
-import { Tabs, TabContent } from '../components/ui/tabs.tsx'
-import { Checkbox } from '../components/ui/checkbox.tsx'
+import { Button } from '../components/ui'
+import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
+import { Input } from '../components/ui'
+import { Label } from '../components/ui'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
+import { Badge } from '../components/ui'
+import { Separator } from '../components/ui'
+import { Select, SelectOption } from '../components/ui'
+import { Tooltip } from '../components/ui'
+import { Tabs, TabContent } from '../components/ui'
+import { Checkbox } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import DebugTab from '../components/DebugTab.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
+import { PluginCard } from '../components/PluginCard.tsx'
+import { usePluginStore } from '../stores/pluginStore.ts'
+import { deactivatePlugin } from '../plugins/plugin-loader.tsx'
+import { PERMISSION_CATALOG } from '../plugins/types.ts'
+import type { PluginInfo } from '../plugins/types.ts'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { check } from '@tauri-apps/plugin-updater'
@@ -25,7 +30,7 @@ import type { Update } from '@tauri-apps/plugin-updater'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
-import { useMessageBox } from '../components/ui/message-box.tsx'
+import { useMessageBox } from '../components/ui'
 import { cn } from '../lib/utils.ts'
 import type { SystemInfo, JavaDownloadVendorInfo, DownloadTask } from '../types/index.ts'
 import {
@@ -42,12 +47,14 @@ import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache, setDataDir } from '../api/settings.ts'
+import { setPluginState as apiSetPluginState } from '../api/plugins.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS } from '../constants/credits.ts'
 
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
   { id: 'java', label: 'Java 运行时', icon: faCoffee },
+  { id: 'plugins', label: '插件', icon: faPuzzlePiece },
   { id: 'appearance', label: '外观', icon: faPalette },
   { id: 'toolbox', label: '工具箱', icon: faDownload },
   { id: 'logs', label: '日志', icon: faFileLines },
@@ -495,6 +502,9 @@ export default function Settings() {
   const [pingLoading, setPingLoading] = useState(false)
   const [modPings, setModPings] = useState<ModSourcePing[]>([])
   const [modPingLoading, setModPingLoading] = useState(false)
+  const { plugins, loading, loadPlugins, setPluginState } = usePluginStore()
+  const [pluginsMsg, setPluginsMsg] = useState<string | null>(null)
+  const [pluginDetail, setPluginDetail] = useState<PluginInfo | null>(null)
 
   useEffect(() => {
     apiLoadSettings().then((s) => {
@@ -526,6 +536,57 @@ export default function Settings() {
       fetchLicenseStatus().then(setLicenseStatus).catch(() => {})
     }
   }, [category])
+
+  const handlePluginToggle = useCallback(async (id: string, active: boolean) => {
+    try {
+      await apiSetPluginState(id, active ? 'active' : 'disabled')
+      setPluginState(id, active ? 'active' : 'disabled')
+      setPluginsMsg('更改将在重启 launcher 后生效')
+      setTimeout(() => setPluginsMsg(null), 3000)
+    } catch {
+      setPluginsMsg('保存失败')
+    }
+  }, [setPluginState])
+
+  const handlePluginUninstall = useCallback(async (id: string) => {
+    if (!(await msgConfirm('确定卸载此插件？'))) return
+    deactivatePlugin(id)
+    try {
+      const res = await fetch(`/api/plugins/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Uninstall failed')
+      setPluginsMsg('插件已卸载')
+      await loadPlugins()
+    } catch {
+      setPluginsMsg('卸载失败')
+    }
+  }, [loadPlugins, msgConfirm])
+
+  const handlePluginInstall = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.qplugin,.zip'
+    input.onchange = async () => {
+      const file = input.files?.[0]
+      if (!file) return
+      const form = new FormData()
+      form.append('plugin', file)
+      try {
+        const res = await fetch('/api/plugins/upload', { method: 'POST', body: form })
+        if (!res.ok) throw new Error('Upload failed')
+        setPluginsMsg('插件安装成功')
+        await loadPlugins()
+      } catch (e) {
+        notify('安装失败: ' + (e instanceof Error ? e.message : 'Unknown'), 'error')
+      }
+    }
+    input.click()
+  }
+
+  useEffect(() => {
+    if (!pluginsMsg) return
+    const t = setTimeout(() => setPluginsMsg(null), 3000)
+    return () => clearTimeout(t)
+  }, [pluginsMsg])
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     const next = { ...settings, [key]: value }
@@ -1609,6 +1670,40 @@ export default function Settings() {
           </TabContent>
 
           <TabContent activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
+          <TabContent activeTab={category} tabId="plugins">
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    <FontAwesomeIcon icon={faPuzzlePiece} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    插件管理
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-sm text-muted-foreground">{plugins.length} 个已安装</span>
+                    <Button onClick={handlePluginInstall} size="sm">安装插件</Button>
+                  </div>
+                  {pluginsMsg && (
+                    <div className="rounded bg-primary/10 text-primary px-4 py-2 text-sm mb-4">{pluginsMsg}</div>
+                  )}
+                  {loading ? (
+                    <p className="text-muted-foreground">加载中...</p>
+                  ) : plugins.length === 0 ? (
+                    <div className="flex items-center justify-center min-h-[200px]">
+                      <p className="text-muted-foreground">尚未安装任何插件</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {plugins.map(p => (
+                        <PluginCard key={p.manifest.id} plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} onClick={() => setPluginDetail(p)} />
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabContent>
           <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} /></TabContent>
           <TabContent activeTab={category} tabId="logs"><LogTab /></TabContent>
           <TabContent activeTab={category} tabId="debug"><DebugTab /></TabContent>
@@ -1694,6 +1789,63 @@ export default function Settings() {
             }}
             onClose={() => setLicenseDialogOpen(false)}
           />
+
+          <Dialog open={pluginDetail !== null} onClose={() => setPluginDetail(null)}>
+            <DialogHeader onClose={() => setPluginDetail(null)}>
+              <DialogTitle>{pluginDetail?.manifest.name ?? ''}</DialogTitle>
+            </DialogHeader>
+            <DialogBody className="space-y-4">
+              {pluginDetail && (
+                <>
+                  <div className="text-sm text-muted-foreground">
+                    {pluginDetail.manifest.id}@{pluginDetail.manifest.version}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {pluginDetail.manifest.layers.map(layer => (
+                      <span key={layer} className="text-xs px-1.5 py-0.5 rounded border border-border text-muted-foreground">{layer.toUpperCase()}</span>
+                    ))}
+                  </div>
+                  <Separator />
+                  {pluginDetail.manifest.permissions.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">权限 ({pluginDetail.manifest.permissions.length})</p>
+                      {pluginDetail.manifest.permissions.map(p => {
+                        const info = PERMISSION_CATALOG[p]
+                        const colors: Record<string, string> = {
+                          normal: 'border-blue-500/30 text-blue-400',
+                          warning: 'border-yellow-500/30 text-yellow-400',
+                          danger: 'border-red-500/30 text-red-400',
+                        }
+                        return (
+                          <div key={p} className="flex items-center gap-2 text-sm">
+                            <span className={`text-xs px-1.5 py-0.5 rounded border ${colors[info?.risk ?? 'normal'] ?? ''}`}>
+                              {info?.risk ?? 'normal'}
+                            </span>
+                            <span>{info?.label ?? p}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {pluginDetail.manifest.contributes?.menuItems && pluginDetail.manifest.contributes.menuItems.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">扩展点</p>
+                      {pluginDetail.manifest.contributes.menuItems.map(item => (
+                        <div key={item.path} className="flex items-center gap-2 text-sm">
+                          <span>{item.icon ?? ''}</span>
+                          <span>{item.label}</span>
+                          <span className="text-xs text-muted-foreground">{item.path}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </DialogBody>
+            <DialogFooter>
+              <Button variant="secondary" onClick={() => setPluginDetail(null)}>关闭</Button>
+            </DialogFooter>
+          </Dialog>
         </div>
       </div>
     </PageShell>

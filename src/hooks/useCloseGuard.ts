@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react'
 import { getTasks, removeTask } from '../stores/downloadStore.ts'
-import { useMessageBox } from '../components/ui/message-box.tsx'
+import { useMessageBox } from '../components/ui'
 import { CloseGuardContext } from './closeGuardContext.ts'
 
 function hasActiveTasks() {
