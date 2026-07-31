@@ -228,17 +228,9 @@ public static class PluginEndpoints
 
             var client = factory.CreateClient("PluginProxy");
             using var cts = new CancellationTokenSource(Math.Clamp(req.TimeoutMs ?? 15000, 1000, 60000));
-            HttpResponseMessage resp;
-            try
-            {
-                resp = await client.SendAsync(reqMsg, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
-            {
-                throw ApiException.BadGateway("上游请求失败", "PROXY_UPSTREAM_FAILED", ex);
-            }
+            using var resp = await client.SendAsync(reqMsg, HttpCompletionOption.ResponseHeadersRead, cts.Token);
 
-            using (resp)
+            try
             {
                 var bodyBytes = await resp.Content.ReadAsByteArrayAsync(cts.Token);
                 var outHeaders = new Dictionary<string, string>();
@@ -264,6 +256,10 @@ public static class PluginEndpoints
                     Body = isText ? (bodyBytes.Length == 0 ? "" : Encoding.UTF8.GetString(bodyBytes)) : null,
                     BodyBase64 = isText ? null : Convert.ToBase64String(bodyBytes),
                 });
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
+            {
+                throw ApiException.BadGateway("上游响应中断", "PROXY_UPSTREAM_FAILED", ex);
             }
         });
 
