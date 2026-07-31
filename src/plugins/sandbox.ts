@@ -25,11 +25,17 @@ function getFileUrl(pluginId: string, frontend: string, path: string) {
   return `/api/plugins/${pluginId}/files/${base ? base + '/' + path : path}`
 }
 
+function toAssetUrl(src: string, fileUrl: (p: string) => string): string {
+  if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('/') || src.startsWith('data:')) return src
+  return fileUrl(src.replace(/^\.\//, ''))
+}
+
 function convertScriptSrcs(html: string, fileUrl: (p: string) => string): string {
-  return html.replace(/(<script[^>]+src=")([^"]+)("[^>]*><\/script>)/g, (_, pre, src, post) => {
-    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('/')) return _
-    return pre + fileUrl(src.replace(/^\.\//, '')) + post
-  })
+  return html.replace(/(<script[^>]+src=")([^"]+)("[^>]*><\/script>)/g, (_, pre, src, post) => pre + toAssetUrl(src, fileUrl) + post)
+}
+
+function convertCssLinks(html: string, fileUrl: (p: string) => string): string {
+  return html.replace(/(<link[^>]+href=")([^"]+)("[^>]*>)/g, (_, pre, href, post) => pre + toAssetUrl(href, fileUrl) + post)
 }
 
 const apiBridgeScript = `<script>
@@ -95,6 +101,7 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
     let html = await res.text()
 
     html = convertScriptSrcs(html, fileUrl)
+    html = convertCssLinks(html, fileUrl)
 
     const bgHsl = getComputedStyle(document.documentElement).getPropertyValue('--background').trim()
     const pageBg = bgHsl ? `hsl(${bgHsl})` : '#0d0f12'
@@ -147,6 +154,7 @@ async function loadInlineContent(plugin: PluginInfo, container: HTMLDivElement) 
     let html = await res.text()
 
     html = convertScriptSrcs(html, fileUrl)
+    html = convertCssLinks(html, fileUrl)
 
     const inner = html
       .replace(/<!DOCTYPE[^>]*>/i, '')

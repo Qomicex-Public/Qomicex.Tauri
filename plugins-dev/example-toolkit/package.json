@@ -1,0 +1,25 @@
+{
+  "name": "example-toolkit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "package": "bash scripts/build.sh"
+  },
+  "dependencies": {
+    "@qomicex/plugin-ui": "file:/run/media/lenmei233/ECA48B49A48B14EC/qomicex-plugin-ui-0.1.0.tgz",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "autoprefixer": "^10",
+    "postcss": "^8",
+    "tailwindcss": "^3",
+    "typescript": "~5.8",
+    "vite": "^7"
+  }
+}

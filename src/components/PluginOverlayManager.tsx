@@ -44,15 +44,24 @@ document.addEventListener('DOMContentLoaded',()=>{
 })<\/script>`
 
 function overlayHtml(inner: string) {
+  const styles: string[] = []
+  let body = inner
+  body = body.replace(/<style[\s\S]*?<\/style>/gi, m => { styles.push(m); return '' })
+  body = body.replace(/<link[^>]+rel=["']stylesheet["'][^>]*>/gi, m => { styles.push(m); return '' })
+  body = body
+    .replace(/<!DOCTYPE[^>]*>/i, '')
+    .replace(/<\/?(?:html|head|body)[^>]*>/gi, '')
+    .replace(/id="root"/g, '')
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${pluginCss}</style>
+${styles.join('\n')}
 </head>
 <body>
-<div id="root">${inner}</div>
+<div id="root">${body}</div>
 ${apiScript}
 </body>
 </html>`
@@ -76,11 +85,11 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
     const onLoad = () => {
       URL.revokeObjectURL(url)
       if (iframe.contentWindow) registerOverlayIframe(iframe.contentWindow, overlay.pluginId)
-      if (iframe.contentDocument) {
-        iframe.contentDocument.addEventListener('mousedown', () => {
+      try {
+        iframe.contentDocument?.addEventListener('mousedown', () => {
           usePluginStore.getState().showOverlay(overlay.id)
         })
-      }
+      } catch { /* sandboxed iframe without allow-same-origin: contentDocument not accessible */ }
     }
     iframe.addEventListener('load', onLoad)
     return () => iframe.removeEventListener('load', onLoad)

@@ -154,6 +154,7 @@ Version-isolated dirs (`mods`, `saves`, `resourcepacks`, `shaderpacks`, `screens
 - **Sidebar action**: `menuItems[].action: "overlay"` + `contributes.overlay.file` → sidebar button calls `createOverlay` directly, no page navigation (`plugin-loader.tsx:76` `OverlaySidebarButton`).
 - **Plugin packages**: `.qplugin` = `.zip` with `manifest.json` at root. Upload via `POST /api/plugins/upload`. States persisted to `{BaseDir}/plugin-states.json`.
 - **Dev plugins**: placed in `plugins-dev/` directory during development.
+- **Plugin build (Vite + React)**: Plugins using Vite/React/Tailwind scaffold follow example-toolkit pattern: `package.json` with `@qomicex/plugin-ui` + `@qomicex/plugin-ui/tailwind-preset`, `tsc && vite build` for build, `bash scripts/build.sh` for `.qplugin` packaging. Multi-page builds supported via `rollupOptions.input`.
 - **Plugin API bridge**: `window.__PLUGIN_API__` (inline) / `parent.postMessage` (iframe) — methods: `getSettings`, `setSettings`, `callBackend`, `navigate`, `showToast`, `overlay.*`.
 
 ## Tauri details

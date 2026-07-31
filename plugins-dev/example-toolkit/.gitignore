@@ -1,0 +1,4 @@
+.qplugin
+*.zip
+node_modules/
+dist/
