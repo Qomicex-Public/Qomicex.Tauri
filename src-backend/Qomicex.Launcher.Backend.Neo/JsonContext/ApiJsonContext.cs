@@ -229,6 +229,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(PluginInfo))]
 [JsonSerializable(typeof(List<PluginInfo>))]
 [JsonSerializable(typeof(SetPluginStateRequest))]
+[JsonSerializable(typeof(CorsProxyRequest))]
+[JsonSerializable(typeof(CorsProxyResponse))]
 [JsonSerializable(typeof(RescanResponse))]
 [JsonSerializable(typeof(GatewayPluginListResponse))]
 [JsonSerializable(typeof(InstallRequest))]

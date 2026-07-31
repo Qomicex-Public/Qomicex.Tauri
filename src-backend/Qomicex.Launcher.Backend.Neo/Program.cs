@@ -61,6 +61,12 @@ builder.Services.AddHttpClient("CurseForge", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
 }).AddHttpMessageHandler<HttpClientLoggingHandler>();
 builder.Services.AddHttpClient("default").AddHttpMessageHandler<HttpClientLoggingHandler>();
+builder.Services.AddHttpClient("PluginProxy", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(60);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+  .AddHttpMessageHandler<HttpClientLoggingHandler>();
 builder.Services.AddSingleton(core);
 
 // Services
