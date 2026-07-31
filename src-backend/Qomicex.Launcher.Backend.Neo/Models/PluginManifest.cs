@@ -87,6 +87,12 @@ public class PluginOverlayConfig
 
     [JsonPropertyName("height")]
     public int? Height { get; set; }
+
+    [JsonPropertyName("minimizable")]
+    public bool? Minimizable { get; set; }
+
+    [JsonPropertyName("resizable")]
+    public bool? Resizable { get; set; }
 }
 
 public class PluginInfo
