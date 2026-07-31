@@ -217,7 +217,7 @@ async function handleApiCall(callId: string, method: string, args: unknown[], pl
 }
 
 const METHOD_PERMISSIONS: Record<string, string> = {
-  getSettings: 'config:read', setSettings: 'config:write', callBackend: 'network:fetch', proxyFetch: 'network:cors_proxy',
+  getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', proxyFetch: 'network:cors_proxy',
   navigate: 'config:read', showToast: 'ui:toast',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
@@ -234,6 +234,8 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
   switch (method) {
     case 'getSettings': return bridge.getSettings()
     case 'setSettings': return bridge.setSettings(args[0] as string, args[1])
+    case 'setCache': return bridge.setCache(args[0] as string, args[1], args[2] as number | undefined)
+    case 'getCache': return bridge.getCache(args[0] as string)
     case 'callBackend': return bridge.callBackend(args[0] as string, args[1])
     case 'proxyFetch': return bridge.proxyFetch(args[0] as any)
     case 'navigate': bridge.navigate(args[0] as string); return

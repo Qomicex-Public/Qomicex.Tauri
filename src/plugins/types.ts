@@ -54,6 +54,7 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   'license:read':        { id: 'license:read',        label: '读取许可证信息',         risk: 'normal' },
   'config:read':         { id: 'config:read',         label: '读取启动器配置',         risk: 'normal' },
   'config:write':        { id: 'config:write',        label: '修改启动器配置',         risk: 'warning' },
+  'cache:access':        { id: 'cache:access',        label: '读写插件缓存',           risk: 'normal' },
   'endpoint:discover':   { id: 'endpoint:discover',   label: '获取后端 API 端点',     risk: 'normal' },
   'page:list':           { id: 'page:list',            label: '获取页面列表',           risk: 'normal' },
   'network:fetch':       { id: 'network:fetch',       label: '发送 HTTP 请求',         risk: 'warning' },

@@ -16,6 +16,8 @@ export interface ProxyResponse {
 export interface PluginBridge {
   getSettings: () => Promise<Record<string, unknown>>
   setSettings: (key: string, value: unknown) => Promise<void>
+  setCache: (key: string, value: unknown, ttlSeconds?: number) => Promise<void>
+  getCache: (key: string) => Promise<unknown>
   callBackend: (endpoint: string, data?: unknown) => Promise<unknown>
   proxyFetch: (req: ProxyRequest) => Promise<ProxyResponse>
   navigate: (path: string) => void
@@ -43,6 +45,20 @@ export function createPluginBridge(pluginId: string): PluginBridge {
         body: JSON.stringify({ key, value })
       })
       if (!res.ok) throw new Error(`Failed to set settings: ${res.status}`)
+    },
+    setCache: async (key, value, ttlSeconds) => {
+      const res = await fetch(`/api/plugins/cache/${pluginId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value, ttlSeconds })
+      })
+      if (!res.ok) throw new Error(`Failed to set cache: ${res.status}`)
+    },
+    getCache: async (key) => {
+      const res = await fetch(`/api/plugins/cache/${pluginId}?key=${encodeURIComponent(key)}`)
+      if (!res.ok) throw new Error(`Failed to get cache: ${res.status}`)
+      const data = await res.json()
+      return data.value ?? null
     },
     callBackend: async (endpoint, data) => {
       const res = await fetch(`/api${endpoint}`, {
