@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Qomicex.Launcher.Backend.Neo.Common;
@@ -8,6 +9,41 @@ namespace Qomicex.Launcher.Backend.Neo.Endpoints;
 
 public static class PluginEndpoints
 {
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> SettingsLocks = new();
+
+    private static async Task<JsonObject> ReadSettingsAsync(string settingsFile)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                if (!File.Exists(settingsFile)) return new JsonObject();
+                var existing = await File.ReadAllTextAsync(settingsFile);
+                return JsonNode.Parse(existing) as JsonObject ?? new JsonObject();
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                await Task.Delay(50 * (attempt + 1));
+            }
+        }
+    }
+
+    private static async Task WriteSettingsAsync(string settingsFile, string json)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await File.WriteAllTextAsync(settingsFile, json);
+                return;
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                await Task.Delay(50 * (attempt + 1));
+            }
+        }
+    }
+
     public static void MapPluginEndpoints(this WebApplication app)
     {
         var plugins = app.MapGroup("/api/plugins");
@@ -113,19 +149,18 @@ public static class PluginEndpoints
             var key = incoming["key"]?.GetValue<string>() ?? "";
             var value = incoming["value"];
 
-            JsonObject settings;
-            if (File.Exists(settingsFile))
+            var gate = SettingsLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync();
+            try
             {
-                var existing = File.ReadAllText(settingsFile);
-                settings = JsonNode.Parse(existing) as JsonObject ?? new JsonObject();
+                var settings = await ReadSettingsAsync(settingsFile);
+                settings[key] = value?.DeepClone();
+                await WriteSettingsAsync(settingsFile, settings.ToJsonString(new JsonSerializerOptions { WriteIndented = false }));
             }
-            else
+            finally
             {
-                settings = new JsonObject();
+                gate.Release();
             }
-
-            settings[key] = value?.DeepClone();
-            File.WriteAllText(settingsFile, settings.ToJsonString(new JsonSerializerOptions { WriteIndented = false }));
             return Results.Ok();
         });
     }
