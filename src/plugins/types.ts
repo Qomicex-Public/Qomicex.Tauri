@@ -57,6 +57,7 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   'endpoint:discover':   { id: 'endpoint:discover',   label: '获取后端 API 端点',     risk: 'normal' },
   'page:list':           { id: 'page:list',            label: '获取页面列表',           risk: 'normal' },
   'network:fetch':       { id: 'network:fetch',       label: '发送 HTTP 请求',         risk: 'warning' },
+  'network:cors_proxy':  { id: 'network:cors_proxy',  label: 'CORS 代理请求',         risk: 'warning' },
   'network:websocket':   { id: 'network:websocket',   label: 'WebSocket 连接',         risk: 'warning' },
   'network:proxy':       { id: 'network:proxy',       label: '修改代理设置',           risk: 'warning' },
   'ui:inject_sidebar':   { id: 'ui:inject_sidebar',   label: '注入侧边栏菜单',        risk: 'normal' },

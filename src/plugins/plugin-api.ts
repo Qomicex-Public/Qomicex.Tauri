@@ -1,7 +1,23 @@
+export interface ProxyRequest {
+  url: string
+  method?: string
+  headers?: Record<string, string>
+  body?: string
+  timeoutMs?: number
+}
+
+export interface ProxyResponse {
+  status: number
+  headers: Record<string, string>
+  body?: string | null
+  bodyBase64?: string | null
+}
+
 export interface PluginBridge {
   getSettings: () => Promise<Record<string, unknown>>
   setSettings: (key: string, value: unknown) => Promise<void>
   callBackend: (endpoint: string, data?: unknown) => Promise<unknown>
+  proxyFetch: (req: ProxyRequest) => Promise<ProxyResponse>
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
@@ -35,6 +51,15 @@ export function createPluginBridge(pluginId: string): PluginBridge {
         body: data ? JSON.stringify(data) : undefined
       })
       if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+      return res.json()
+    },
+    proxyFetch: async (req) => {
+      const res = await fetch('/api/plugins/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req)
+      })
+      if (!res.ok) throw new Error(`Proxy failed: ${res.status}`)
       return res.json()
     },
     navigate: (path) => {
