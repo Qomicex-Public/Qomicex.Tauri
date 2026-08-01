@@ -1,13 +1,13 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use crate::plugin_gateway::loader::PluginRuntime;
 use crate::plugin_gateway::config;
 
 pub struct GatewayState {
-    pub runtime: Mutex<PluginRuntime>,
+    pub runtime: tokio::sync::Mutex<PluginRuntime>,
 }
 
 pub async fn start_gateway(runtime: PluginRuntime) -> anyhow::Result<u16> {
-    let state = Arc::new(GatewayState { runtime: Mutex::new(runtime) });
+    let state = Arc::new(GatewayState { runtime: tokio::sync::Mutex::new(runtime) });
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
@@ -73,22 +73,36 @@ async fn handle_connection(
 
     let response = match (method, path) {
         ("GET", "/plugins") => {
-            let runtime = state.runtime.lock().unwrap();
+            let runtime = state.runtime.lock().await;
             let ids: Vec<&str> = runtime.plugin_ids().collect();
             json_response(&serde_json::json!({ "plugins": ids }))
         }
 
-        ("POST", p) if p.starts_with("/plugins/") && p.ends_with("/exec") => {
-            let id = p.trim_start_matches("/plugins/").trim_end_matches("/exec");
-            let runtime = state.runtime.lock().unwrap();
-            if let Some(plugin) = runtime.get_plugin(id) {
-                json_response(&serde_json::json!({
+        ("GET", p) if p.starts_with("/plugins/") && p.ends_with("/info") => {
+            let id = p.trim_start_matches("/plugins/").trim_end_matches("/info");
+            let runtime = state.runtime.lock().await;
+            match runtime.get_plugin(id) {
+                Some(plugin) => json_response(&serde_json::json!({
                     "id": plugin.id,
+                    "name": plugin.name,
+                    "version": plugin.version,
                     "permissions": plugin.permissions,
                     "status": "loaded"
-                }))
-            } else {
-                json_response(&serde_json::json!({ "error": "plugin not found" }))
+                })),
+                None => json_response(&serde_json::json!({ "error": "plugin not found" })),
+            }
+        }
+
+        ("POST", p) if p.starts_with("/plugins/") && p.ends_with("/invoke") => {
+            let id = p.trim_start_matches("/plugins/").trim_end_matches("/invoke");
+            let export_name = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["export"].as_str().map(String::from))
+                .unwrap_or_else(|| "on_load".to_string());
+            let mut runtime = state.runtime.lock().await;
+            match runtime.call_export(id, &export_name) {
+                Ok(result) => json_response(&serde_json::json!({ "ok": true, "result": result })),
+                Err(e) => json_response(&serde_json::json!({ "error": e.to_string() })),
             }
         }
 

@@ -355,6 +355,23 @@ public static class PluginEndpoints
                 gate.Release();
             }
         });
+
+        // ---- WASM 插件网关代理（L3）----
+        plugins.MapGet("/wasm/{id}", async (string id, PluginGatewayClient gateway) =>
+        {
+            var info = await gateway.GetPluginInfoAsync(id);
+            return info != null ? Results.Ok(info) : Results.NotFound();
+        });
+
+        plugins.MapPost("/wasm/{id}/invoke", async (string id, WasmInvokeRequest req, PluginGatewayClient gateway) =>
+        {
+            var result = await gateway.InvokePluginAsync(id, string.IsNullOrWhiteSpace(req.Export) ? "on_load" : req.Export);
+            if (result == null)
+                throw ApiException.BadGateway("WASM 插件调用失败", "WASM_INVOKE_FAILED");
+            return Results.Ok(result);
+        });
+
+        plugins.MapGet("/wasm", (PluginGatewayClient gateway) => gateway.GetLoadedPluginsAsync());
     }
 
     private static async Task ValidateTargetAsync(string url)

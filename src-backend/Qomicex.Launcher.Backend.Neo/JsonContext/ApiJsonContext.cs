@@ -230,6 +230,7 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(List<PluginInfo>))]
 [JsonSerializable(typeof(PluginDependency))]
 [JsonSerializable(typeof(List<PluginDependency>))]
+[JsonSerializable(typeof(WasmInvokeRequest))]
 [JsonSerializable(typeof(SetPluginStateRequest))]
 [JsonSerializable(typeof(CorsProxyRequest))]
 [JsonSerializable(typeof(CorsProxyResponse))]

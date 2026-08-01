@@ -49,10 +49,50 @@ public class PluginGatewayClient
         }
         catch { return []; }
     }
+
+    /// <summary>查询 WASM 插件信息。</summary>
+    public async Task<JsonElement?> GetPluginInfoAsync(string id)
+    {
+        var baseUrl = GetGatewayUrl();
+        if (baseUrl == null) return null;
+        try
+        {
+            var res = await _http.GetAsync($"{baseUrl}/plugins/{Uri.EscapeDataString(id)}/info");
+            if (!res.IsSuccessStatusCode) return null;
+            var json = await res.Content.ReadAsStringAsync();
+            return JsonDocument.Parse(json).RootElement.Clone();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>调用 WASM 插件导出的函数。</summary>
+    public async Task<JsonElement?> InvokePluginAsync(string id, string export)
+    {
+        var baseUrl = GetGatewayUrl();
+        if (baseUrl == null) return null;
+        try
+        {
+            var content = new StringContent(
+                System.Text.Json.JsonSerializer.Serialize(new { export },
+                    ApiJsonContext.Default.WasmInvokeRequest),
+                System.Text.Encoding.UTF8, "application/json");
+            var res = await _http.PostAsync($"{baseUrl}/plugins/{Uri.EscapeDataString(id)}/invoke", content);
+            if (!res.IsSuccessStatusCode) return null;
+            var json = await res.Content.ReadAsStringAsync();
+            return JsonDocument.Parse(json).RootElement.Clone();
+        }
+        catch { return null; }
+    }
 }
 
 public class GatewayPluginListResponse
 {
     [System.Text.Json.Serialization.JsonPropertyName("plugins")]
     public List<string> Plugins { get; set; } = [];
+}
+
+public class WasmInvokeRequest
+{
+    [System.Text.Json.Serialization.JsonPropertyName("export")]
+    public string Export { get; set; } = "on_load";
 }
