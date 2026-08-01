@@ -1,5 +1,6 @@
 import type { PluginInfo } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
+import { API_BASE } from '../api/client.ts'
 
 export interface InstallOptions {
   sourceDir: string
@@ -12,7 +13,7 @@ export async function installPlugin(options: InstallOptions): Promise<PluginInfo
   const { sourceDir, onProgress } = options
   onProgress?.('安装中...')
 
-  const res = await fetch('/api/plugins/install', {
+  const res = await fetch(`${API_BASE}/plugins/install`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sourceDir })
@@ -25,7 +26,7 @@ export async function installPlugin(options: InstallOptions): Promise<PluginInfo
 }
 
 export async function uninstallPlugin(id: string): Promise<void> {
-  const res = await fetch(`/api/plugins/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_BASE}/plugins/${encodeURIComponent(id)}`, {
     method: 'DELETE'
   })
   if (!res.ok) throw new Error(`Uninstall failed: ${res.statusText}`)

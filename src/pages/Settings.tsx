@@ -552,7 +552,7 @@ export default function Settings() {
     if (!(await msgConfirm('确定卸载此插件？'))) return
     deactivatePlugin(id)
     try {
-      const res = await fetch(`/api/plugins/${id}`, { method: 'DELETE' })
+      const res = await fetch(`${API_BASE}/plugins/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Uninstall failed')
       setPluginsMsg('插件已卸载')
       await loadPlugins()
@@ -571,7 +571,7 @@ export default function Settings() {
       const form = new FormData()
       form.append('plugin', file)
       try {
-        const res = await fetch('/api/plugins/upload', { method: 'POST', body: form })
+        const res = await fetch(`${API_BASE}/plugins/upload`, { method: 'POST', body: form })
         if (!res.ok) throw new Error('Upload failed')
         setPluginsMsg('插件安装成功')
         await loadPlugins()

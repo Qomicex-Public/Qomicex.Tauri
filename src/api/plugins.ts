@@ -1,6 +1,7 @@
 import type { PluginInfo } from '../plugins/types.ts'
+import { API_BASE } from './client.ts'
 
-const BASE = '/api/plugins'
+const BASE = `${API_BASE}/plugins`
 
 export async function fetchPlugins(): Promise<PluginInfo[]> {
   const res = await fetch(BASE)

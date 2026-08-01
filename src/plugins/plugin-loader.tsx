@@ -4,6 +4,7 @@ import { usePluginStore } from '../stores/pluginStore.ts'
 import { createSandbox, renderInline, getInstance } from './sandbox.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
 import { NavItem } from '../components/Sidebar.tsx'
+import { API_BASE } from '../api/client.ts'
 
 const activeThemes = new Map<string, HTMLStyleElement>()
 
@@ -43,7 +44,7 @@ export async function activatePlugin(plugin: PluginInfo) {
 
   if (plugin.manifest.entry.theme) {
     try {
-      const res = await fetch(`/api/plugins/${plugin.manifest.id}/files/${plugin.manifest.entry.theme}`)
+      const res = await fetch(`${API_BASE}/plugins/${plugin.manifest.id}/files/${plugin.manifest.entry.theme}`)
       if (res.ok) {
         const css = await res.text()
         const style = document.createElement('style')
@@ -77,7 +78,7 @@ function OverlaySidebarButton({ pluginId, item, overlay }: { pluginId: string; i
   const store = usePluginStore()
 
   const handleClick = async () => {
-    const res = await fetch(`/api/plugins/${pluginId}/files/${overlay.file}`)
+    const res = await fetch(`${API_BASE}/plugins/${pluginId}/files/${overlay.file}`)
     if (!res.ok) return
     const html = await res.text()
     store.createOverlay(pluginId, {

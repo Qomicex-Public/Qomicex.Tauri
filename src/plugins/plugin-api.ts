@@ -1,3 +1,5 @@
+import { API_BASE } from '../api/client.ts'
+
 export interface ProxyRequest {
   url: string
   method?: string
@@ -34,12 +36,12 @@ export interface PluginBridge {
 export function createPluginBridge(pluginId: string): PluginBridge {
   return {
     getSettings: async () => {
-      const res = await fetch(`/api/plugins/settings/${pluginId}`)
+      const res = await fetch(`${API_BASE}/plugins/settings/${pluginId}`)
       if (!res.ok) throw new Error(`Failed to get settings: ${res.status}`)
       return res.json()
     },
     setSettings: async (key, value) => {
-      const res = await fetch(`/api/plugins/settings/${pluginId}`, {
+      const res = await fetch(`${API_BASE}/plugins/settings/${pluginId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key, value })
@@ -47,7 +49,7 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       if (!res.ok) throw new Error(`Failed to set settings: ${res.status}`)
     },
     setCache: async (key, value, ttlSeconds) => {
-      const res = await fetch(`/api/plugins/cache/${pluginId}`, {
+      const res = await fetch(`${API_BASE}/plugins/cache/${pluginId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key, value, ttlSeconds })
@@ -55,13 +57,13 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       if (!res.ok) throw new Error(`Failed to set cache: ${res.status}`)
     },
     getCache: async (key) => {
-      const res = await fetch(`/api/plugins/cache/${pluginId}?key=${encodeURIComponent(key)}`)
+      const res = await fetch(`${API_BASE}/plugins/cache/${pluginId}?key=${encodeURIComponent(key)}`)
       if (!res.ok) throw new Error(`Failed to get cache: ${res.status}`)
       const data = await res.json()
       return data.value ?? null
     },
     callBackend: async (endpoint, data) => {
-      const res = await fetch(`/api${endpoint}`, {
+      const res = await fetch(`${API_BASE}${endpoint}`,  {
         method: data ? 'POST' : 'GET',
         headers: data ? { 'Content-Type': 'application/json' } : undefined,
         body: data ? JSON.stringify(data) : undefined
@@ -70,7 +72,7 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       return res.json()
     },
     proxyFetch: async (req) => {
-      const res = await fetch('/api/plugins/proxy', {
+      const res = await fetch(`${API_BASE}/plugins/proxy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req)
