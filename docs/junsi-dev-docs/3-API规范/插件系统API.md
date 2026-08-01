@@ -96,6 +96,7 @@ interface PluginBridge {
 | proxyFetchStream | network:cors_proxy |
 | registerMethod | config:write |
 | callPlugin | network:fetch |
+| callWasm / listWasmPlugins | wasm:execute |
 | navigate | config:read |
 | showToast | ui:toast |
 | overlay.* | ui:sub_window |
@@ -327,6 +328,21 @@ if (await __PLUGIN_API__.callPlugin('top.qomicex.themes', 'hasTheme', 'dark')) {
 3. 启动器启动 → `sortByDependencies` 先激活 MarkdownLib（注册 `renderMarkdown`）→ 再激活 AI 助手
 4. AI 助手 `callPlugin('top.qomicex.markdown', 'renderMarkdown', md)` → 主窗口 `__pluginRegistry` 中转 → 返回渲染结果
 
+### WASM 插件调用（callWasm / listWasmPlugins）
+
+L3 WASM 插件由启动器 Rust 网关（wasmtime）加载执行，前端经后端代理调用：
+
+```js
+const res = await __PLUGIN_API__.callWasm('dev.example.wasmplugin', 'on_load')
+const ids = await __PLUGIN_API__.listWasmPlugins()
+```
+
+- 后端代理端点：`GET /api/plugins/wasm`、`GET /api/plugins/wasm/{id}`、`POST /api/plugins/wasm/{id}/invoke`
+- 权限：`wasm:execute`
+- WASM 插件要求：manifest `layers` 含 `l3` + 包内含 `plugin.wasm`（wasmtime 核心模块）
+- Host API（`qomicex` 模块导入）：`log` / `http_fetch` / `instance_list` / `db_set` / `db_get` / `get_plugin_id`
+- 详细见对外文档 `qml-docs/plugins/wasm-plugin.md`
+
 ---
 
 ## Plugin States API（前端 client）
@@ -358,3 +374,4 @@ registerSlot(pluginId, 'sidebar:bottom', () => <ReactNode>)
 | 日期 | 版本 | 修改内容 | 修改人 |
 | 2026-07-31 | v1.0 | 初版创建 | AI Agent |
 | 2026-08-01 | v1.1 | 新增插件依赖（dependencies）、插件间方法调用（registerMethod/callPlugin）及详细写法 | AI Agent |
+| 2026-08-01 | v1.2 | 新增 WASM 插件调用（callWasm/listWasmPlugins）、layers 示例修正 | AI Agent |
