@@ -195,8 +195,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
       - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+        with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
       - name: Fetch LicenseCore.cs
@@ -210,7 +213,8 @@ jobs:
           Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
           Remove-Item -Recurse -Force src-tauri/binaries/tmp
         shell: pwsh
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -269,8 +273,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
       - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+        with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
       - name: Fetch LicenseCore.cs
@@ -284,7 +291,8 @@ jobs:
           Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
           Remove-Item -Recurse -Force src-tauri/binaries/tmp
         shell: pwsh
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -343,8 +351,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
       - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+        with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
@@ -357,7 +368,8 @@ jobs:
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
           npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
@@ -423,8 +435,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
       - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+        with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
@@ -437,7 +452,8 @@ jobs:
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
           npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
@@ -504,8 +520,11 @@ jobs:
           curl -sL "https://github.com/loongson/dotnet/releases/download/v10.0.109-loongarch64/dotnet-sdk-10.0.109-linux-loongarch64.tar.gz" | tar xz -C /usr/local/dotnet
           echo "/usr/local/dotnet" >> $GITHUB_PATH
           dotnet nuget add source -n lnuget.loongnix.cn --protocol-version 3 https://lnuget.loongnix.cn/v3/index.json
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
       - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+        with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
@@ -518,7 +537,8 @@ jobs:
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
           npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
@@ -583,8 +603,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
       - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+        with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Fetch LicenseCore.cs
         env:
@@ -594,7 +617,8 @@ jobs:
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -672,8 +696,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
       - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+        with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Fetch LicenseCore.cs
         env:
@@ -683,7 +710,8 @@ jobs:
       - run: |
           mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
           rm -rf src-tauri/binaries/tmp
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles app --target x86_64-apple-darwin
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
