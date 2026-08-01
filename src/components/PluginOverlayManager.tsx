@@ -19,6 +19,38 @@ window.__PLUGIN_API__ = {
       window.addEventListener('message', handler)
       parent.postMessage({ type: '__plugin_api_call', id, method, args }, '*')
     })
+  },
+  proxyFetchStream: (req, handlers) => {
+    return new Promise((resolve, reject) => {
+      const id = Math.random().toString(36).slice(2)
+      const onChunk = handlers && handlers.onChunk
+      const onError = handlers && handlers.onError
+      const signal = req && req.signal
+      const payload = req ? { ...req } : req
+      if (payload) delete payload.signal
+      const handler = (e) => {
+        if (e.data && e.data.id !== id) return
+        if (e.data.type === '__plugin_api_stream_chunk') {
+          if (onChunk) try { onChunk(e.data.chunk) } catch (err) { reject(err) }
+        } else if (e.data.type === '__plugin_api_stream_error') {
+          window.removeEventListener('message', handler)
+          if (onError) onError(new Error(e.data.error))
+          reject(new Error(e.data.error))
+        } else if (e.data.type === '__plugin_api_stream_end') {
+          window.removeEventListener('message', handler)
+          resolve()
+        }
+      }
+      window.addEventListener('message', handler)
+      const onAbort = () => {
+        parent.postMessage({ type: '__plugin_api_abort', id }, '*')
+      }
+      if (signal) {
+        if (signal.aborted) onAbort()
+        else signal.addEventListener('abort', onAbort)
+      }
+      parent.postMessage({ type: '__plugin_api_call', id, method: 'proxyFetchStream', args: [payload] }, '*')
+    })
   }
 }
 document.addEventListener('DOMContentLoaded',()=>{

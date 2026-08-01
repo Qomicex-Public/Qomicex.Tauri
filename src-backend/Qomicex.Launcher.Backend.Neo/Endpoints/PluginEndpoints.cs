@@ -213,6 +213,7 @@ public static class PluginEndpoints
                 : new HttpMethod(req.Method.ToUpperInvariant());
 
             using var reqMsg = new HttpRequestMessage(method, req.Url);
+            var reqContentType = "application/json";
             if (req.Headers != null)
             {
                 foreach (var (key, value) in req.Headers)
@@ -220,15 +221,33 @@ public static class PluginEndpoints
                     if (string.IsNullOrWhiteSpace(key)) continue;
                     if (key.Equals("Host", StringComparison.OrdinalIgnoreCase)) continue;
                     if (key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) { reqContentType = value; continue; }
                     reqMsg.Headers.TryAddWithoutValidation(key, value);
                 }
             }
             if (!string.IsNullOrEmpty(req.Body) && method != HttpMethod.Get && method != HttpMethod.Head)
-                reqMsg.Content = new StringContent(req.Body, Encoding.UTF8);
+                reqMsg.Content = new StringContent(req.Body, Encoding.UTF8, reqContentType);
 
             var client = factory.CreateClient("PluginProxy");
-            using var cts = new CancellationTokenSource(Math.Clamp(req.TimeoutMs ?? 15000, 1000, 60000));
-            using var resp = await client.SendAsync(reqMsg, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            var cts = new CancellationTokenSource(Math.Clamp(req.TimeoutMs ?? 15000, 1000, 60000));
+            var resp = await client.SendAsync(reqMsg, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+
+            if (req.Stream)
+            {
+                return Results.Stream(async outputStream =>
+                {
+                    try
+                    {
+                        await using var upstream = await resp.Content.ReadAsStreamAsync(cts.Token);
+                        await upstream.CopyToAsync(outputStream, cts.Token);
+                    }
+                    finally
+                    {
+                        resp.Dispose();
+                        cts.Dispose();
+                    }
+                }, "application/octet-stream");
+            }
 
             try
             {
@@ -260,6 +279,11 @@ public static class PluginEndpoints
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
             {
                 throw ApiException.BadGateway("上游响应中断", "PROXY_UPSTREAM_FAILED", ex);
+            }
+            finally
+            {
+                resp.Dispose();
+                cts.Dispose();
             }
         });
 
@@ -397,6 +421,7 @@ public class CorsProxyRequest
     public Dictionary<string, string>? Headers { get; set; }
     public string? Body { get; set; }
     public int? TimeoutMs { get; set; }
+    public bool Stream { get; set; }
 }
 
 public class CorsProxyResponse

@@ -22,6 +22,7 @@ export interface PluginBridge {
   getCache: (key: string) => Promise<unknown>
   callBackend: (endpoint: string, data?: unknown) => Promise<unknown>
   proxyFetch: (req: ProxyRequest) => Promise<ProxyResponse>
+  proxyFetchStream: (req: ProxyRequest, onChunk: (chunk: string) => void, signal?: AbortSignal) => Promise<void>
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
@@ -79,6 +80,36 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       })
       if (!res.ok) throw new Error(`Proxy failed: ${res.status}`)
       return res.json()
+    },
+    proxyFetchStream: async (req, onChunk, signal) => {
+      const res = await fetch(`${API_BASE}/plugins/proxy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...req, stream: true }),
+        signal
+      })
+      if (!res.ok || !res.body) throw new Error(`Proxy stream failed: ${res.status}`)
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx: number
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 1)
+          const trimmed = line.trim()
+          if (trimmed.startsWith('data:')) {
+            onChunk(trimmed.slice(5).trim())
+          }
+        }
+      }
+      if (buffer.trim()) {
+        const trimmed = buffer.trim()
+        if (trimmed.startsWith('data:')) onChunk(trimmed.slice(5).trim())
+      }
     },
     navigate: (path) => {
       window.dispatchEvent(new CustomEvent('plugin:navigate', { detail: { pluginId, path } }))

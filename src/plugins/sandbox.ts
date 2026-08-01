@@ -2,6 +2,7 @@ import type { PluginInfo } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { createPluginBridge } from './plugin-api.ts'
 import { injectCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
+import { API_BASE } from '../api/client.ts'
 
 export interface SandboxInstance {
   iframe: HTMLIFrameElement
@@ -22,7 +23,7 @@ const sourceMap = new WeakMap<Window, string>()
 
 function getFileUrl(pluginId: string, frontend: string, path: string) {
   const base = frontend.split('/').slice(0, -1).join('/')
-  return `/api/plugins/${pluginId}/files/${base ? base + '/' + path : path}`
+  return `${API_BASE}/plugins/${pluginId}/files/${base ? base + '/' + path : path}`
 }
 
 function toAssetUrl(src: string, fileUrl: (p: string) => string): string {
@@ -52,6 +53,38 @@ window.__PLUGIN_API__ = {
       }
       window.addEventListener('message', handler)
       parent.postMessage({ type: '__plugin_api_call', id, method, args }, '*')
+    })
+  },
+  proxyFetchStream: (req, handlers) => {
+    return new Promise((resolve, reject) => {
+      const id = Math.random().toString(36).slice(2)
+      const onChunk = handlers && handlers.onChunk
+      const onError = handlers && handlers.onError
+      const signal = req && req.signal
+      const payload = req ? { ...req } : req
+      if (payload) delete payload.signal
+      const handler = (e) => {
+        if (e.data && e.data.id !== id) return
+        if (e.data.type === '__plugin_api_stream_chunk') {
+          if (onChunk) try { onChunk(e.data.chunk) } catch (err) { reject(err) }
+        } else if (e.data.type === '__plugin_api_stream_error') {
+          window.removeEventListener('message', handler)
+          if (onError) onError(new Error(e.data.error))
+          reject(new Error(e.data.error))
+        } else if (e.data.type === '__plugin_api_stream_end') {
+          window.removeEventListener('message', handler)
+          resolve()
+        }
+      }
+      window.addEventListener('message', handler)
+      const onAbort = () => {
+        parent.postMessage({ type: '__plugin_api_abort', id }, '*')
+      }
+      if (signal) {
+        if (signal.aborted) onAbort()
+        else signal.addEventListener('abort', onAbort)
+      }
+      parent.postMessage({ type: '__plugin_api_call', id, method: 'proxyFetchStream', args: [payload] }, '*')
     })
   }
 }
@@ -180,6 +213,38 @@ window.__PLUGIN_API__ = {
       window.addEventListener('message', handler)
       window.postMessage({ type: '__plugin_api_call', id: id, method: method, args: args }, '*')
     })
+  },
+  proxyFetchStream: (req, handlers) => {
+    var id = Math.random().toString(36).slice(2)
+    return new Promise(function (resolve, reject) {
+      var onChunk = handlers && handlers.onChunk
+      var onError = handlers && handlers.onError
+      var signal = req && req.signal
+      var payload = req ? Object.assign({}, req) : req
+      if (payload) delete payload.signal
+      var handler = function (e) {
+        if (e.data && e.data.id !== id) return
+        if (e.data.type === '__plugin_api_stream_chunk') {
+          if (onChunk) try { onChunk(e.data.chunk) } catch (err) { reject(err) }
+        } else if (e.data.type === '__plugin_api_stream_error') {
+          window.removeEventListener('message', handler)
+          if (onError) onError(new Error(e.data.error))
+          reject(new Error(e.data.error))
+        } else if (e.data.type === '__plugin_api_stream_end') {
+          window.removeEventListener('message', handler)
+          resolve()
+        }
+      }
+      window.addEventListener('message', handler)
+      var onAbort = function () {
+        window.postMessage({ type: '__plugin_api_abort', id: id }, '*')
+      }
+      if (signal) {
+        if (signal.aborted) onAbort()
+        else signal.addEventListener('abort', onAbort)
+      }
+      window.postMessage({ type: '__plugin_api_call', id: id, method: 'proxyFetchStream', args: [payload] }, '*')
+    })
   }
 }
 <\/script>`
@@ -202,9 +267,37 @@ window.addEventListener('message', (e) => {
     const pluginId = sourceMap.get(e.source as Window)
     if (pluginId) handleApiCall(id, method, args, pluginId, e.source as Window)
   }
+  if (e.data?.type === '__plugin_api_abort') {
+    const controller = streamAborters.get(e.data.id)
+    if (controller) controller.abort()
+  }
 })
 
+const streamAborters = new Map<string, AbortController>()
+
 async function handleApiCall(callId: string, method: string, args: unknown[], pluginId: string, source: Window) {
+  if (method === 'proxyFetchStream') {
+    const req = args[0] as any
+    const controller = new AbortController()
+    streamAborters.set(callId, controller)
+    try {
+      await executePluginMethod(pluginId, method, [
+        req,
+        (chunk: string) => source.postMessage({ type: '__plugin_api_stream_chunk', id: callId, chunk }, '*'),
+        controller.signal,
+      ])
+      source.postMessage({ type: '__plugin_api_stream_end', id: callId }, '*')
+    } catch (e) {
+      source.postMessage({
+        type: '__plugin_api_stream_error',
+        id: callId,
+        error: e instanceof Error ? e.message : String(e),
+      }, '*')
+    } finally {
+      streamAborters.delete(callId)
+    }
+    return
+  }
   let result: unknown
   let error: string | undefined
   try {
@@ -216,7 +309,7 @@ async function handleApiCall(callId: string, method: string, args: unknown[], pl
 }
 
 const METHOD_PERMISSIONS: Record<string, string> = {
-  getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', proxyFetch: 'network:cors_proxy',
+  getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
   navigate: 'config:read', showToast: 'ui:toast',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
@@ -237,6 +330,7 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'getCache': return bridge.getCache(args[0] as string)
     case 'callBackend': return bridge.callBackend(args[0] as string, args[1])
     case 'proxyFetch': return bridge.proxyFetch(args[0] as any)
+    case 'proxyFetchStream': return bridge.proxyFetchStream(args[0] as any, args[1] as (chunk: string) => void, args[2] as AbortSignal | undefined)
     case 'navigate': bridge.navigate(args[0] as string); return
     case 'showToast': bridge.showToast(args[0] as string, args[1] as 'info' | 'error' | 'success' | undefined); return
     case 'overlay.create': return bridge.createOverlay(args[0] as any)

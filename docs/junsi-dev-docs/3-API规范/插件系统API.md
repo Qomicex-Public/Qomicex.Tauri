@@ -93,6 +93,7 @@ interface PluginBridge {
 | setCache / getCache | cache:access |
 | callBackend | network:fetch |
 | proxyFetch | network:cors_proxy |
+| proxyFetchStream | network:cors_proxy |
 | navigate | config:read |
 | showToast | ui:toast |
 | overlay.* | ui:sub_window |
@@ -125,6 +126,29 @@ if (cached) { /* 使用缓存 */ } else { /* 重新请求并 setCache */ }
   - 禁止内网/保留地址（localhost、127.x、10.x、172.16-31.x、192.168.x、169.254.x、0.0.0.0 等）
   - 不自动跟随重定向（3xx 原样返回）
 - 错误：无效 URL → `PROXY_INVALID_URL`(400)；协议不符 → `PROXY_SCHEME_NOT_ALLOWED`(400)；内网地址 → `PROXY_PRIVATE_ADDRESS`(400)；上游失败 → `PROXY_UPSTREAM_FAILED`(502)
+
+### CORS 代理流式（proxyFetchStream）
+
+`proxyFetch` 一次性返回完整响应；若上游返回 SSE 流（如 AI 对话逐字输出），用 `proxyFetchStream` 逐块消费。
+
+- 请求同 `proxyFetch`，额外自动带 `stream: true`（后端走 `POST /api/plugins/proxy` 的流式分支，原样转发 SSE）
+- 插件侧调用形态：
+
+```js
+await __PLUGIN_API__.proxyFetchStream({
+  url: 'https://api.deepseek.com/v1/chat/completions',
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+  body: JSON.stringify({ model, messages, stream: true }),
+  timeoutMs: 120000
+}, {
+  onChunk(chunk) { /* chunk 为 SSE data: 行内容，按需解析 delta */ },
+  onError(err) { /* 流中断时回调 */ }
+})
+```
+
+- 返回的 `Promise<void>` 在流结束后 resolve，出错时 reject
+- 权限 `network:cors_proxy`（同 `proxyFetch`）
 
 ---
 
