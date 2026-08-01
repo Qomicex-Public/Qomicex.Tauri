@@ -94,6 +94,8 @@ interface PluginBridge {
 | callBackend | network:fetch |
 | proxyFetch | network:cors_proxy |
 | proxyFetchStream | network:cors_proxy |
+| registerMethod | config:write |
+| callPlugin | network:fetch |
 | navigate | config:read |
 | showToast | ui:toast |
 | overlay.* | ui:sub_window |
@@ -152,6 +154,181 @@ await __PLUGIN_API__.proxyFetchStream({
 
 ---
 
+## 插件依赖（dependencies）
+
+插件可在 manifest 声明对其他插件的依赖，支持**必装前置**与**可选前置**。
+
+```json
+{
+  "id": "top.qomicex.assistant",
+  "dependencies": [
+    { "id": "top.qomicex.markdown", "version": ">=1.0.0", "optional": false },
+    { "id": "top.qomicex.themes", "optional": true }
+  ]
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 被依赖插件的 manifest id |
+| `version` | 版本范围（默认空 = 任意）。支持 `>=x`、`<=x`、`>x`、`<x`、`=x`、精确 `x.y.z`、空格分隔多条件（如 `">=1.0 <2.0"`） |
+| `optional` | `true` = 可选前置；默认 `false` = 必装前置 |
+
+**必装前置（optional: false，默认）：**
+- 安装时检查：缺失或版本不满足 → 拒绝安装，返回 `PLUGIN_MISSING_DEPENDENCY`(400)
+- 启动激活时检查：依赖插件未安装或未启用 → 跳过激活并置为 `disabled`
+
+**可选前置（optional: true）：**
+- 安装/激活不强制；仅在依赖插件存在且已启用时，调用方才能调用其提供的方法
+- 缺失时调用 `callPlugin` 返回错误，插件本身可正常启用
+
+**激活顺序：** 启动时对被依赖插件先排序激活（`sortByDependencies` 拓扑排序），保证依赖方激活时前置已就绪。
+
+---
+
+## 插件间方法调用（registerMethod / callPlugin）
+
+一个插件可暴露方法供其他插件调用（如 MarkdownLib 提供 `renderMarkdown`）。
+
+**提供方（被依赖插件）：**
+
+```js
+// 插件激活后注册方法
+__PLUGIN_API__.registerMethod('renderMarkdown', function (md) {
+  return marked.parse(md)
+})
+```
+
+**调用方（依赖插件）：**
+
+```js
+const html = await __PLUGIN_API__.callPlugin('top.qomicex.markdown', 'renderMarkdown', '**bold**')
+```
+
+- `registerMethod(method, fn)`：注册当前插件提供的方法；插件停用时自动注销
+- `callPlugin(pluginId, method, ...args)`：调用目标插件已注册的方法；目标未安装/未激活/未注册 → reject 并提示错误
+- 支持跨沙箱 iframe：主窗口 `window.__pluginRegistry` 统一中转，按插件 id 路由到目标 window 本地执行
+- 权限：`registerMethod` → `config:write`，`callPlugin` → `network:fetch`
+
+### 依赖插件详细写法
+
+**① 提供方插件 manifest（如 MarkdownLib）：**
+
+```json
+{
+  "id": "top.qomicex.markdown",
+  "name": "MarkdownLib",
+  "version": "1.2.0",
+  "minLauncherVersion": "0.1.0",
+  "layers": ["l2", "l3"],
+  "permissions": ["config:write"],
+  "entry": { "frontend": "dist/index.html" }
+}
+```
+
+**② 调用方插件 manifest（如 AI 助手）：**
+
+```json
+{
+  "id": "top.qomicex.assistant",
+  "name": "AI 助手",
+  "version": "1.0.0",
+  "minLauncherVersion": "0.1.0",
+  "layers": ["l2", "l3"],
+  "permissions": ["network:fetch", "config:write"],
+  "dependencies": [
+    { "id": "top.qomicex.markdown", "version": ">=1.0.0" },
+    { "id": "top.qomicex.themes", "version": ">=1.0 <2.0", "optional": true }
+  ],
+  "entry": { "frontend": "dist/index.html" }
+}
+```
+
+**③ 提供方脚本（dist/index.html）—— 注册方法：**
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div id="root">MarkdownLib 已加载</div>
+  <script>
+    __PLUGIN_API__.registerMethod('renderMarkdown', function (md) {
+      return marked.parse(md || '')
+    })
+
+    __PLUGIN_API__.registerMethod('stripHtml', function (html) {
+      const div = document.createElement('div')
+      div.innerHTML = html
+      return div.textContent || ''
+    })
+  </script>
+</body>
+</html>
+```
+
+**④ 调用方脚本（dist/index.html）—— 调用方法：**
+
+```html
+<!DOCTYPE html>
+<html>
+<body>
+  <div id="out"></div>
+  <script>
+    async function render() {
+      try {
+        const html = await __PLUGIN_API__.callPlugin('top.qomicex.markdown', 'renderMarkdown', '**加粗** 和 `代码`')
+        document.getElementById('out').innerHTML = html
+      } catch (e) {
+        document.getElementById('out').textContent = '渲染失败: ' + e.message
+      }
+    }
+    render()
+  </script>
+</body>
+</html>
+```
+
+**⑤ 异步方法（提供方返回 Promise）：**
+
+```js
+// 提供方
+__PLUGIN_API__.registerMethod('fetchTranslation', async (text) => {
+  const res = await fetch(...)
+  return res.json()
+})
+
+// 调用方 —— 直接 await
+const result = await __PLUGIN_API__.callPlugin('top.qomicex.translator', 'fetchTranslation', 'hello')
+```
+
+**⑥ 错误处理：**
+
+| 场景 | 错误信息 |
+|------|---------|
+| 目标插件未安装 / 未激活 / 方法未注册 | `插件 xxx 未提供方法 yyy（可能未安装或未激活）` |
+| 可选前置缺失 | 同上，但插件本身正常启用 |
+| 方法内部抛错 | `插件 xxx 方法 yyy 执行失败: <具体错误>` |
+
+调用方应始终 `try/catch`，尤其是可选前置：
+
+```js
+if (await __PLUGIN_API__.callPlugin('top.qomicex.themes', 'hasTheme', 'dark')) {
+  // 可选依赖存在且方法可用
+}
+```
+
+**⑦ 完整流程：**
+
+1. 安装 MarkdownLib → 成功（无依赖）
+2. 安装 AI 助手 → 后端检查依赖：markdown 已装且 `1.2.0 >= 1.0.0` → 安装成功
+3. 启动器启动 → `sortByDependencies` 先激活 MarkdownLib（注册 `renderMarkdown`）→ 再激活 AI 助手
+4. AI 助手 `callPlugin('top.qomicex.markdown', 'renderMarkdown', md)` → 主窗口 `__pluginRegistry` 中转 → 返回渲染结果
+
+---
+
 ## Plugin States API（前端 client）
 
 `src/api/plugins.ts` 导出以下函数：
@@ -180,3 +357,4 @@ registerSlot(pluginId, 'sidebar:bottom', () => <ReactNode>)
 ## 修订记录
 | 日期 | 版本 | 修改内容 | 修改人 |
 | 2026-07-31 | v1.0 | 初版创建 | AI Agent |
+| 2026-08-01 | v1.1 | 新增插件依赖（dependencies）、插件间方法调用（registerMethod/callPlugin）及详细写法 | AI Agent |

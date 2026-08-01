@@ -5,8 +5,15 @@ export interface PluginManifest {
   minLauncherVersion: string
   layers: PluginLayer[]
   permissions: string[]
+  dependencies?: PluginDependency[]
   entry: PluginEntry
   contributes?: PluginContributes
+}
+
+export interface PluginDependency {
+  id: string
+  version?: string
+  optional?: boolean
 }
 
 export type PluginLayer = 'l0' | 'l1' | 'l2' | 'l3'

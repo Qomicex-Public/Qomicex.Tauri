@@ -5,6 +5,7 @@ import { registerOverlayIframe } from '../plugins/sandbox.ts'
 import { pluginCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from '../plugins/plugin-css.ts'
 
 const apiScript = `<script>
+window.__PLUGIN_ID__ = null
 window.__PLUGIN_API__ = {
   call: (method, ...args) => {
     return new Promise((resolve, reject) => {
@@ -19,6 +20,16 @@ window.__PLUGIN_API__ = {
       window.addEventListener('message', handler)
       parent.postMessage({ type: '__plugin_api_call', id, method, args }, '*')
     })
+  },
+  registerMethod: (method, fn) => {
+    const registry = window.__pluginRegistry
+    if (!registry) throw new Error('Plugin registry not initialized')
+    registry.register(window.__PLUGIN_ID__ || 'unknown', method, fn)
+  },
+  callPlugin: (pluginId, method, ...args) => {
+    const registry = window.__pluginRegistry
+    if (!registry) return Promise.reject(new Error('Plugin registry not initialized'))
+    return registry.call(pluginId, method, args)
   },
   proxyFetchStream: (req, handlers) => {
     return new Promise((resolve, reject) => {
@@ -75,7 +86,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   })
 })<\/script>`
 
-function overlayHtml(inner: string) {
+function overlayHtml(inner: string, pluginId: string) {
   const styles: string[] = []
   let body = inner
   body = body.replace(/<style[\s\S]*?<\/style>/gi, m => { styles.push(m); return '' })
@@ -96,6 +107,7 @@ ${styles.join('\n')}
 </head>
 <body>
 <div id="root">${body}</div>
+<script>window.__PLUGIN_ID__ = ${JSON.stringify(pluginId)}<\/script>
 ${apiScript}
 </body>
 </html>`
@@ -116,7 +128,7 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
   useEffect(() => {
     const iframe = iframeRef.current
     if (!iframe) return
-    const blob = overlayHtml(overlay.html)
+    const blob = overlayHtml(overlay.html, overlay.pluginId)
     const url = URL.createObjectURL(new Blob([blob], { type: 'text/html' }))
     iframe.src = url
     const onLoad = () => {

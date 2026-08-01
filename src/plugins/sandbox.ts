@@ -40,6 +40,7 @@ function convertCssLinks(html: string, fileUrl: (p: string) => string): string {
 }
 
 const apiBridgeScript = `<script>
+window.__PLUGIN_ID__ = '__PLUGIN_ID_TOKEN__'
 window.__PLUGIN_API__ = {
   call: (method, ...args) => {
     return new Promise((resolve, reject) => {
@@ -54,6 +55,16 @@ window.__PLUGIN_API__ = {
       window.addEventListener('message', handler)
       parent.postMessage({ type: '__plugin_api_call', id, method, args }, '*')
     })
+  },
+  registerMethod: (method, fn) => {
+    const registry = window.__pluginRegistry
+    if (!registry) throw new Error('Plugin registry not initialized')
+    registry.register(window.__PLUGIN_ID__, method, fn)
+  },
+  callPlugin: (pluginId, method, ...args) => {
+    const registry = window.__pluginRegistry
+    if (!registry) return Promise.reject(new Error('Plugin registry not initialized'))
+    return registry.call(pluginId, method, args)
   },
   proxyFetchStream: (req, handlers) => {
     return new Promise((resolve, reject) => {
@@ -137,7 +148,7 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
     html = convertCssLinks(html, fileUrl)
 
     const themeInit = `<style data-theme-vars>${getThemeVarsCss()}</style>`
-    html = html.replace('</head>', themeInit + '\n' + injectCss + '\n' + apiBridgeScript + '\n' + themeBridgeScript + '\n</head>')
+    html = html.replace('</head>', themeInit + '\n' + injectCss + '\n' + apiBridgeScript.replace('__PLUGIN_ID_TOKEN__', plugin.manifest.id) + '\n' + themeBridgeScript + '\n</head>')
 
     iframe.onload = () => {
       if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
@@ -213,6 +224,17 @@ window.__PLUGIN_API__ = {
       window.addEventListener('message', handler)
       window.postMessage({ type: '__plugin_api_call', id: id, method: method, args: args }, '*')
     })
+  },
+  registerMethod: function (method, fn) {
+    var registry = window.__pluginRegistry
+    if (!registry) throw new Error('Plugin registry not initialized')
+    registry.register('${plugin.manifest.id}', method, fn)
+  },
+  callPlugin: function (pluginId, method) {
+    var registry = window.__pluginRegistry
+    if (!registry) return Promise.reject(new Error('Plugin registry not initialized'))
+    var args = Array.prototype.slice.call(arguments, 2)
+    return registry.call(pluginId, method, args)
   },
   proxyFetchStream: (req, handlers) => {
     var id = Math.random().toString(36).slice(2)
@@ -310,6 +332,7 @@ async function handleApiCall(callId: string, method: string, args: unknown[], pl
 
 const METHOD_PERMISSIONS: Record<string, string> = {
   getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
+  registerMethod: 'config:write', callPlugin: 'network:fetch',
   navigate: 'config:read', showToast: 'ui:toast',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
@@ -331,6 +354,8 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'callBackend': return bridge.callBackend(args[0] as string, args[1])
     case 'proxyFetch': return bridge.proxyFetch(args[0] as any)
     case 'proxyFetchStream': return bridge.proxyFetchStream(args[0] as any, args[1] as (chunk: string) => void, args[2] as AbortSignal | undefined)
+    case 'registerMethod': bridge.registerMethod(args[0] as string, args[1] as (...a: unknown[]) => unknown); return
+    case 'callPlugin': return bridge.callPlugin(args[0] as string, args[1] as string, ...(args.slice(2) as unknown[]))
     case 'navigate': bridge.navigate(args[0] as string); return
     case 'showToast': bridge.showToast(args[0] as string, args[1] as 'info' | 'error' | 'success' | undefined); return
     case 'overlay.create': return bridge.createOverlay(args[0] as any)

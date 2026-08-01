@@ -22,11 +22,26 @@ public class PluginManifest
     [JsonPropertyName("permissions")]
     public List<string> Permissions { get; set; } = [];
 
+    [JsonPropertyName("dependencies")]
+    public List<PluginDependency> Dependencies { get; set; } = [];
+
     [JsonPropertyName("entry")]
     public PluginEntry Entry { get; set; } = new();
 
     [JsonPropertyName("contributes")]
     public PluginContributes? Contributes { get; set; }
+}
+
+public class PluginDependency
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    [JsonPropertyName("version")]
+    public string? Version { get; set; }
+
+    [JsonPropertyName("optional")]
+    public bool Optional { get; set; }
 }
 
 public class PluginEntry

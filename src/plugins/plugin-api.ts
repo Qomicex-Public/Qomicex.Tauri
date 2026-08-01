@@ -23,6 +23,8 @@ export interface PluginBridge {
   callBackend: (endpoint: string, data?: unknown) => Promise<unknown>
   proxyFetch: (req: ProxyRequest) => Promise<ProxyResponse>
   proxyFetchStream: (req: ProxyRequest, onChunk: (chunk: string) => void, signal?: AbortSignal) => Promise<void>
+  registerMethod: (method: string, fn: (...args: unknown[]) => unknown) => void
+  callPlugin: (pluginId: string, method: string, ...args: unknown[]) => Promise<unknown>
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
@@ -110,6 +112,16 @@ export function createPluginBridge(pluginId: string): PluginBridge {
         const trimmed = buffer.trim()
         if (trimmed.startsWith('data:')) onChunk(trimmed.slice(5).trim())
       }
+    },
+    registerMethod: (method, fn) => {
+      const registry = (window as any).__pluginRegistry
+      if (!registry) throw new Error('Plugin registry not initialized')
+      registry.register(pluginId, method, fn)
+    },
+    callPlugin: async (targetId, method, ...args) => {
+      const registry = (window as any).__pluginRegistry
+      if (!registry) throw new Error('Plugin registry not initialized')
+      return registry.call(targetId, method, args)
     },
     navigate: (path) => {
       window.dispatchEvent(new CustomEvent('plugin:navigate', { detail: { pluginId, path } }))

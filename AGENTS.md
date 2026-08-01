@@ -157,7 +157,8 @@ Version-isolated dirs (`mods`, `saves`, `resourcepacks`, `shaderpacks`, `screens
 - **Plugin packages**: `.qplugin` = `.zip` with `manifest.json` at root. Upload via `POST /api/plugins/upload`. States persisted to `{BaseDir}/plugin-states.json`.
 - **Dev plugins**: placed in `plugins-dev/` directory during development.
 - **Plugin build (Vite + React)**: Plugins using Vite/React/Tailwind scaffold follow example-toolkit pattern: `package.json` with `@qomicex/plugin-ui` + `@qomicex/plugin-ui/tailwind-preset`, `tsc && vite build` for build, `bash scripts/build.sh` for `.qplugin` packaging. Multi-page builds supported via `rollupOptions.input`.
-- **Plugin API bridge**: `window.__PLUGIN_API__` (inline) / `parent.postMessage` (iframe) — methods: `getSettings`, `setSettings`, `callBackend`, `navigate`, `showToast`, `proxyFetchStream`, `overlay.*`. `proxyFetch` 走 `POST /api/plugins/proxy`（`stream: true` 时后端转发 SSE 流式响应，前端经 `proxyFetchStream(req, { onChunk, onError })` 消费）。
+- **Plugin API bridge**: `window.__PLUGIN_API__` (inline) / `parent.postMessage` (iframe) — methods: `getSettings`, `setSettings`, `callBackend`, `navigate`, `showToast`, `proxyFetchStream`, `registerMethod`, `callPlugin`, `overlay.*`. `proxyFetch` 走 `POST /api/plugins/proxy`（`stream: true` 时后端转发 SSE 流式响应，前端经 `proxyFetchStream(req, { onChunk, onError })` 消费）。
+- **Plugin dependencies**: manifest `dependencies: [{id, version?, optional?}]`，安装时检查必装前置（缺失拒装 `PLUGIN_MISSING_DEPENDENCY`），激活时检查前置已启用（缺失则禁用）。`registerMethod`/`callPlugin` 提供插件间方法调用，主窗口 `__pluginRegistry` 统一中转（`src/plugins/plugin-registry.ts`），激活顺序由 `sortByDependencies` 拓扑排序保证。
 
 ## Tauri details
 

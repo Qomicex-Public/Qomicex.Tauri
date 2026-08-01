@@ -43,6 +43,12 @@ public class PluginStore
         var manifest = JsonSerializer.Deserialize(json, ApiJsonContext.Default.PluginManifest);
         if (manifest == null) return null;
 
+        var missing = ResolveMissingDependencies(manifest);
+        if (missing.Count > 0)
+            throw ApiException.BadRequest(
+                $"缺少必装前置插件: {string.Join(", ", missing.Select(m => $"{m.Id}({m.Version ?? "任意"})"))}",
+                "PLUGIN_MISSING_DEPENDENCY");
+
         var targetDir = Path.Combine(_pluginsDir, manifest.Id);
         if (Directory.Exists(targetDir))
             Directory.Delete(targetDir, recursive: true);
@@ -57,6 +63,21 @@ public class PluginStore
             State = "installed",
             InstalledAt = DateTime.UtcNow.ToString("O")
         };
+    }
+
+    /// <summary>返回 manifest 中缺失或版本不满足的必装依赖（optional 不计）。</summary>
+    public List<PluginDependency> ResolveMissingDependencies(PluginManifest manifest)
+    {
+        var installed = ListPlugins();
+        var result = new List<PluginDependency>();
+        foreach (var dep in manifest.Dependencies)
+        {
+            if (dep.Optional) continue;
+            var existing = installed.FirstOrDefault(p => p.Manifest.Id == dep.Id);
+            if (existing == null || !PluginVersion.Satisfies(existing.Manifest.Version, dep.Version))
+                result.Add(dep);
+        }
+        return result;
     }
 
     public void SetPluginState(string id, string state)

@@ -30,7 +30,8 @@ import type { Update } from '@tauri-apps/plugin-updater'
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
 import { SplashScreen } from './components/SplashScreen.tsx'
 import { usePluginStore } from './stores/pluginStore.ts'
-import { activatePlugin } from './plugins/plugin-loader.tsx'
+import { activatePlugin, sortByDependencies } from './plugins/plugin-loader.tsx'
+import './plugins/plugin-registry.ts'
 
 function OverlayStoreBridge() {
   const { createOverlay, showOverlay, hideOverlay, destroyOverlay, setOverlayHtml, setOverlayPosition, setOverlaySize } = usePluginStore()
@@ -55,7 +56,7 @@ function AppContent() {
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
   const autoCheckDone = useRef(false)
-  const { loadPlugins, plugins } = usePluginStore()
+  const { loadPlugins } = usePluginStore()
 
   useEffect(() => {
     let cancelled = false
@@ -120,22 +121,17 @@ function AppContent() {
     if (backendState !== 'ready') return
     loadPlugins().then(() => {
       const { plugins: loaded } = usePluginStore.getState()
-      for (const p of loaded) {
+      const ordered = sortByDependencies(loaded)
+      for (const p of ordered) {
         if (p.state === 'active') {
+          activatePlugin(p)
+        } else if (p.state === 'installed') {
+          if (p.manifest.layers.every(l => l === 'l3')) continue
           activatePlugin(p)
         }
       }
     })
   }, [backendState, loadPlugins])
-
-  useEffect(() => {
-    for (const plugin of plugins) {
-      if (plugin.state === 'installed') {
-        if (plugin.manifest.layers.every(l => l === 'l3')) continue
-        activatePlugin(plugin)
-      }
-    }
-  }, [plugins])
 
   return (
     <Provider value={closeWithGuard}>
