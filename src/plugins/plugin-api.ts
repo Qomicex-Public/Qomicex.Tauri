@@ -25,6 +25,8 @@ export interface PluginBridge {
   proxyFetchStream: (req: ProxyRequest, onChunk: (chunk: string) => void, signal?: AbortSignal) => Promise<void>
   registerMethod: (method: string, fn: (...args: unknown[]) => unknown) => void
   callPlugin: (pluginId: string, method: string, ...args: unknown[]) => Promise<unknown>
+  callWasm: (pluginId: string, exportName?: string) => Promise<unknown>
+  listWasmPlugins: () => Promise<string[]>
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
@@ -122,6 +124,21 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       const registry = (window as any).__pluginRegistry
       if (!registry) throw new Error('Plugin registry not initialized')
       return registry.call(targetId, method, args)
+    },
+    callWasm: async (pluginId, exportName) => {
+      const res = await fetch(`${API_BASE}/plugins/wasm/${encodeURIComponent(pluginId)}/invoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ export: exportName ?? 'on_load' })
+      })
+      if (!res.ok) throw new Error(`WASM invoke failed: ${res.status}`)
+      return res.json()
+    },
+    listWasmPlugins: async () => {
+      const res = await fetch(`${API_BASE}/plugins/wasm`)
+      if (!res.ok) throw new Error(`WASM list failed: ${res.status}`)
+      const data = await res.json()
+      return data.plugins ?? []
     },
     navigate: (path) => {
       window.dispatchEvent(new CustomEvent('plugin:navigate', { detail: { pluginId, path } }))

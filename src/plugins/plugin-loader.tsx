@@ -57,13 +57,13 @@ export async function activatePlugin(plugin: PluginInfo) {
     return
   }
 
-  const useInline = true
+  const useSandbox = plugin.manifest.layers.includes('l2')
 
   if (plugin.manifest.entry.frontend) {
-    if (useInline) {
-      renderInline(plugin)
-    } else {
+    if (useSandbox) {
       createSandbox(plugin)
+    } else {
+      renderInline(plugin)
     }
 
     const { menuItems, overlay } = plugin.manifest.contributes ?? {}

@@ -41,6 +41,54 @@ function convertCssLinks(html: string, fileUrl: (p: string) => string): string {
 
 const apiBridgeScript = `<script>
 window.__PLUGIN_ID__ = '__PLUGIN_ID_TOKEN__'
+;(function () {
+  // iframe 侧插件注册表：本地保存 fn，经主窗口中转跨插件调用
+  var __localExports = {}
+  window.__pluginRegistry = {
+    register: function (pluginId, method, fn) {
+      if (!__localExports[pluginId]) __localExports[pluginId] = {}
+      __localExports[pluginId][method] = fn
+      parent.postMessage({ type: '__plugin_registry_register', pluginId: pluginId, method: method }, '*')
+    },
+    unregister: function (pluginId) {
+      delete __localExports[pluginId]
+      parent.postMessage({ type: '__plugin_registry_unregister', pluginId: pluginId }, '*')
+    },
+    has: function (pluginId, method) {
+      var e = __localExports[pluginId]
+      if (!e) return false
+      return method ? typeof e[method] === 'function' : Object.keys(e).length > 0
+    },
+    call: function (pluginId, method, args) {
+      return new Promise(function (resolve, reject) {
+        var callId = Math.random().toString(36).slice(2)
+        var handler = function (e) {
+          if (e.data && e.data.type === '__plugin_registry_result' && e.data.callId === callId) {
+            window.removeEventListener('message', handler)
+            if (e.data.error) reject(new Error(e.data.error))
+            else resolve(e.data.result)
+          }
+        }
+        window.addEventListener('message', handler)
+        parent.postMessage({ type: '__plugin_registry_call', callId: callId, pluginId: pluginId, method: method, args: args }, '*')
+      })
+    },
+    _callLocal: function (method, args) {
+      var fn = (__localExports[window.__PLUGIN_ID__] || {})[method]
+      if (typeof fn !== 'function') return Promise.reject(new Error('插件 ' + window.__PLUGIN_ID__ + ' 未提供方法 ' + method))
+      return Promise.resolve(fn.apply(null, args))
+    }
+  }
+  window.addEventListener('message', function (e) {
+    var msg = e.data
+    if (msg && msg.type === '__plugin_registry_call') {
+      window.__pluginRegistry._callLocal(msg.method, msg.args).then(
+        function (result) { parent.postMessage({ type: '__plugin_registry_result', callId: msg.callId, result: result }, '*') },
+        function (err) { parent.postMessage({ type: '__plugin_registry_result', callId: msg.callId, error: err instanceof Error ? err.message : String(err) }, '*') }
+      )
+    }
+  })
+})()
 window.__PLUGIN_API__ = {
   call: (method, ...args) => {
     return new Promise((resolve, reject) => {
@@ -332,7 +380,7 @@ async function handleApiCall(callId: string, method: string, args: unknown[], pl
 
 const METHOD_PERMISSIONS: Record<string, string> = {
   getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
-  registerMethod: 'config:write', callPlugin: 'network:fetch',
+  registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
   navigate: 'config:read', showToast: 'ui:toast',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
@@ -356,6 +404,8 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'proxyFetchStream': return bridge.proxyFetchStream(args[0] as any, args[1] as (chunk: string) => void, args[2] as AbortSignal | undefined)
     case 'registerMethod': bridge.registerMethod(args[0] as string, args[1] as (...a: unknown[]) => unknown); return
     case 'callPlugin': return bridge.callPlugin(args[0] as string, args[1] as string, ...(args.slice(2) as unknown[]))
+    case 'callWasm': return bridge.callWasm(args[0] as string, args[1] as string | undefined)
+    case 'listWasmPlugins': return bridge.listWasmPlugins()
     case 'navigate': bridge.navigate(args[0] as string); return
     case 'showToast': bridge.showToast(args[0] as string, args[1] as 'info' | 'error' | 'success' | undefined); return
     case 'overlay.create': return bridge.createOverlay(args[0] as any)
