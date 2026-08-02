@@ -65,7 +65,7 @@ builder.Services.AddHttpClient("PluginProxy", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(60);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("QomicexLauncher/1.0");
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = true })
   .AddHttpMessageHandler<HttpClientLoggingHandler>();
 builder.Services.AddSingleton(core);
 
@@ -124,6 +124,7 @@ builder.Services.AddSingleton<SkinService>();
 // Plugin system
 builder.Services.AddSingleton<PluginStore>();
 builder.Services.AddSingleton<PluginPackageService>();
+builder.Services.AddSingleton<FileAuthService>();
 builder.Services.AddHttpClient<PluginGatewayClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(5);

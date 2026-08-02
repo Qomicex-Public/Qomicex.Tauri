@@ -36,6 +36,9 @@ export interface PluginBridge {
   callPlugin: (pluginId: string, method: string, ...args: unknown[]) => Promise<unknown>
   callWasm: (pluginId: string, exportName?: string) => Promise<unknown>
   listWasmPlugins: () => Promise<string[]>
+  readFile: (path: string) => Promise<{ path: string; content?: string | null; contentBase64?: string | null; isBinary: boolean }>
+  writeFile: (path: string, content: string | Uint8Array) => Promise<{ path: string }>
+  execCommand: (command: string, timeoutMs?: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
@@ -164,6 +167,39 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       const data = await res.json()
       return data.plugins ?? []
     },
+    readFile: async (path) => {
+      const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      }))
+      return res as { path: string; content?: string | null; contentBase64?: string | null; isBinary: boolean }
+    },
+    writeFile: async (path, content) => {
+      const isBinary = content instanceof Uint8Array
+      const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/write`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path,
+          content: isBinary ? undefined : typeof content === 'string' ? content : '',
+          contentBase64: isBinary ? bytesToBase64(content) : undefined,
+        })
+      }))
+      return res as { path: string }
+    },
+    execCommand: async (command, timeoutMs) => {
+      const res = await fetch(`${API_BASE}/plugins/shell/${encodeURIComponent(pluginId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command, timeoutMs })
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => null)
+        throw new Error(err?.message ?? `Shell exec failed: ${res.status}`)
+      }
+      return res.json()
+    },
     getSystemInfo: async () => {
       const res = await fetch(`${API_BASE}/systeminfo`)
       if (!res.ok) throw new Error(`Get system info failed: ${res.status}`)
@@ -223,4 +259,33 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       if (setOverlayPosition) setOverlayPosition(id, x, y)
     },
   }
+}
+
+async function fileOpWithAuth(pluginId: string, path: string, op: () => Promise<Response>): Promise<unknown> {
+  let res = await op()
+  if (res.status === 403) {
+    const err = await res.json().catch(() => null)
+    if (err?.code === 'FS_AUTHORIZATION_REQUIRED') {
+      const ok = window.confirm(`插件「${pluginId}」请求访问路径：\n${path}\n\n是否允许？`)
+      if (!ok) throw new Error('用户拒绝了文件访问授权')
+      const authRes = await fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/authorize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, allow: true })
+      })
+      if (!authRes.ok) throw new Error('授权失败')
+      res = await op()
+    }
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.message ?? `File operation failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const b of bytes) binary += String.fromCharCode(b)
+  return btoa(binary)
 }

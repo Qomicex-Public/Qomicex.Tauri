@@ -374,6 +374,127 @@ public static class PluginEndpoints
         });
 
         plugins.MapGet("/wasm", (PluginGatewayClient gateway) => gateway.GetLoadedPluginsAsync());
+
+        // ---- 插件文件读写（授权制）----
+        plugins.MapPost("/files/{id}/read", async (string id, PluginFileRequest req, FileAuthService auth) =>
+        {
+            var normalized = FileAuthService.NormalizePath(req.Path);
+            if (normalized == null || !File.Exists(normalized))
+                throw ApiException.NotFound("文件不存在", "FS_FILE_NOT_FOUND");
+
+            var grant = auth.FindGrant(id, normalized);
+            if (grant == null)
+                throw new ApiException(403, "FS_AUTHORIZATION_REQUIRED", "未授权访问该路径");
+
+            var bytes = await File.ReadAllBytesAsync(normalized);
+            bool isText = IsTextFile(bytes);
+            return Results.Ok(new PluginFileResponse
+            {
+                Path = normalized,
+                Content = isText ? System.Text.Encoding.UTF8.GetString(bytes) : null,
+                ContentBase64 = isText ? null : Convert.ToBase64String(bytes),
+                IsBinary = !isText,
+            });
+        });
+
+        plugins.MapPost("/files/{id}/write", async (string id, PluginFileWriteRequest req, FileAuthService auth) =>
+        {
+            var normalized = FileAuthService.NormalizePath(req.Path);
+            if (normalized == null)
+                throw ApiException.BadRequest("无效路径", "FS_INVALID_PATH");
+
+            var grant = auth.FindGrant(id, normalized);
+            if (grant == null)
+                throw new ApiException(403, "FS_AUTHORIZATION_REQUIRED", "未授权访问该路径");
+
+            var dir = Path.GetDirectoryName(normalized);
+            if (dir != null) Directory.CreateDirectory(dir);
+
+            byte[] bytes;
+            if (!string.IsNullOrEmpty(req.ContentBase64))
+            {
+                try { bytes = Convert.FromBase64String(req.ContentBase64); }
+                catch { throw ApiException.BadRequest("无效的 base64 内容", "FS_INVALID_BASE64"); }
+            }
+            else
+            {
+                bytes = System.Text.Encoding.UTF8.GetBytes(req.Content ?? "");
+            }
+            await File.WriteAllBytesAsync(normalized, bytes);
+            return Results.Ok(new PluginFileResponse { Path = normalized, Content = null, IsBinary = false });
+        });
+
+        plugins.MapPost("/files/{id}/authorize", (string id, PluginFileAuthorizeRequest req, FileAuthService auth) =>
+        {
+            var normalized = FileAuthService.NormalizePath(req.Path);
+            if (normalized == null)
+                throw ApiException.BadRequest("无效路径", "FS_INVALID_PATH");
+            if (req.Allow) auth.Grant(id, normalized);
+            else auth.Revoke(id, normalized);
+            return Results.Ok(new PluginAuthorizeResponse { Path = normalized, Allowed = req.Allow });
+        });
+
+        // ---- 插件 shell 执行（win: powershell, linux/mac: /bin/sh）----
+        plugins.MapPost("/shell/{id}", async (string id, PluginShellRequest req) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Command))
+                throw ApiException.BadRequest("command 不能为空", "SHELL_COMMAND_REQUIRED");
+
+            var timeoutMs = Math.Clamp(req.TimeoutMs ?? 15000, 1000, 120000);
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            if (OperatingSystem.IsWindows())
+            {
+                psi.FileName = "powershell";
+                psi.ArgumentList.Add("-NoProfile");
+                psi.ArgumentList.Add("-Command");
+                psi.ArgumentList.Add(req.Command);
+            }
+            else
+            {
+                psi.FileName = "/bin/sh";
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add(req.Command);
+            }
+
+            using var proc = System.Diagnostics.Process.Start(psi)
+                ?? throw ApiException.Internal("无法启动 shell", "SHELL_START_FAILED");
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+
+            if (!proc.WaitForExit(timeoutMs))
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                throw ApiException.BadRequest($"命令执行超时（>{timeoutMs}ms）", "SHELL_TIMEOUT");
+            }
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            return Results.Ok(new PluginShellResponse
+            {
+                ExitCode = proc.ExitCode,
+                Stdout = stdout,
+                Stderr = stderr,
+            });
+        });
+    }
+
+    private static bool IsTextFile(byte[] bytes)
+    {
+        if (bytes.Length == 0) return true;
+        var sampleLen = Math.Min(bytes.Length, 8192);
+        for (var i = 0; i < sampleLen; i++)
+        {
+            if (bytes[i] == 0) return false;
+        }
+        return true;
     }
 
     private static async Task ValidateTargetAsync(string url)
@@ -449,4 +570,49 @@ public class CorsProxyResponse
     public Dictionary<string, string> Headers { get; set; } = new();
     public string? Body { get; set; }
     public string? BodyBase64 { get; set; }
+}
+
+public class PluginFileRequest
+{
+    public string Path { get; set; } = "";
+}
+
+public class PluginFileWriteRequest
+{
+    public string Path { get; set; } = "";
+    public string? Content { get; set; }
+    public string? ContentBase64 { get; set; }
+}
+
+public class PluginFileResponse
+{
+    public string Path { get; set; } = "";
+    public string? Content { get; set; }
+    public string? ContentBase64 { get; set; }
+    public bool IsBinary { get; set; }
+}
+
+public class PluginFileAuthorizeRequest
+{
+    public string Path { get; set; } = "";
+    public bool Allow { get; set; }
+}
+
+public class PluginAuthorizeResponse
+{
+    public string Path { get; set; } = "";
+    public bool Allowed { get; set; }
+}
+
+public class PluginShellRequest
+{
+    public string Command { get; set; } = "";
+    public int? TimeoutMs { get; set; }
+}
+
+public class PluginShellResponse
+{
+    public int ExitCode { get; set; }
+    public string Stdout { get; set; } = "";
+    public string Stderr { get; set; } = "";
 }
