@@ -11,6 +11,7 @@ const activeThemes = new Map<string, HTMLStyleElement>()
 
 function resolvePluginAssetUrl(pluginId: string, icon: string): string {
   if (/^(https?:\/\/|data:)/i.test(icon)) return icon
+  if (!/[/.]/.test(icon)) return icon
   return `${API_BASE}/plugins/${encodeURIComponent(pluginId)}/files/${icon.replace(/^\.\//, '')}`
 }
 
