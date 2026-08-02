@@ -929,28 +929,44 @@ jobs:
             "${{ needs.setup.outputs.displayVersion }}" \
             "${{ needs.setup.outputs.releaseType }}" \
             RELEASE_NOTES.md
-
+            
       - name: Push code + tag to CNB
         run: |
-          set -e
+          set -euo pipefail
+
           if [ -z "${{ env.CNB_REPO }}" ]; then
             echo "::error::CNB_REPO 未配置。请在仓库 Variables 中设置 CNB_REPO（形如 owner/repo）。"
             exit 1
           fi
+
           if [ -z "${{ secrets.CNB_ACCESS_TOKEN }}" ]; then
             echo "::error::CNB_ACCESS_TOKEN 未配置。请在仓库 Secrets 中添加 CNB_ACCESS_TOKEN。"
             exit 1
           fi
+
+          # Git 安全 & 身份配置
           git config --global safe.directory "$GITHUB_WORKSPACE"
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 构造 CNB remote
           REMOTE_URL="https://${CNB_USERNAME}:${CNB_TOKEN}@${CNB_HOST}/${CNB_REPO}.git"
           git remote remove cnb 2>/dev/null || true
           git remote add cnb "$REMOTE_URL"
-          echo "==> Pushing main + tag ${{ steps.meta.outputs.tag }} to CNB ..."
-          git push cnb main
-          git push cnb "refs/tags/${{ steps.meta.outputs.tag }}"
-          echo "==> Code + tag pushed to CNB."
+
+          TAG="${{ steps.meta.outputs.tag }}"
+
+          echo "==> Pushing tag ${TAG} to CNB (${CNB_REPO}) ..."
+
+          # ✅ 只推送 tag，不碰 main，避免 non-fast-forward 冲突
+          git push cnb "refs/tags/${TAG}"
+
+          echo "✅ Tag ${TAG} pushed to CNB successfully."
+        env:
+          CNB_HOST: ${{ env.CNB_HOST }}
+          CNB_REPO: ${{ env.CNB_REPO }}
+          CNB_USERNAME: ${{ env.CNB_USERNAME }}
+          CNB_TOKEN: ${{ secrets.CNB_ACCESS_TOKEN }}
 
       - name: Create CNB release
         run: |
