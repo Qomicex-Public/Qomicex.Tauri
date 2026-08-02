@@ -255,8 +255,9 @@ async function loadInlineContent(plugin: PluginInfo, container: HTMLDivElement) 
     sourceMap.set(window, plugin.manifest.id)
 
     console.log('[sandbox] inline content loaded for', plugin.manifest.id, 'length:', inner.length)
-    container.innerHTML = inner + `
-<script>
+    container.innerHTML = inner
+    const bridgeScript = document.createElement('script')
+    bridgeScript.textContent = `
 console.log('[plugin:inline] inline bridge executing for', '${plugin.manifest.id}')
 window.__PLUGIN_API__ = {
   call: (method, ...args) => {
@@ -317,7 +318,23 @@ window.__PLUGIN_API__ = {
     })
   }
 }
-<\/script>`
+`
+    // script 元素必须在已连接 document 中才会执行：临时挂到隐藏节点，执行后移除宿主（容器不留在 body，避免撑出滚动条）
+    const hiddenHost = document.createElement('div')
+    hiddenHost.style.cssText = 'display:none'
+    document.body.appendChild(hiddenHost)
+    hiddenHost.appendChild(container)
+    hiddenHost.appendChild(bridgeScript)
+    ;[...container.querySelectorAll('script')].forEach(oldScript => {
+      if (oldScript === bridgeScript) return
+      const newScript = document.createElement('script')
+      if (oldScript.src) newScript.src = oldScript.src
+      if (oldScript.type) newScript.type = oldScript.type
+      if (!oldScript.src) newScript.textContent = oldScript.textContent
+      oldScript.replaceWith(newScript)
+    })
+    // 脚本已同步执行，移除隐藏宿主（容器随之脱离 document，等待 PluginPage 挂载）
+    hiddenHost.remove()
   } catch (e) {
     console.error('[sandbox] loadInlineContent failed for', plugin.manifest.id, e)
   }

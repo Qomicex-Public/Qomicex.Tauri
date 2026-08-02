@@ -87,6 +87,22 @@ public static class SystemEndpoints
         group.MapGet("/system/info", () => SysInfo());
         group.MapGet("/systeminfo", () => SysInfo());
 
+        group.MapPost("/system/open-url", (OpenUrlRequest body) =>
+        {
+            var url = body.Url;
+            if (string.IsNullOrWhiteSpace(url) || !(url.StartsWith("http://") || url.StartsWith("https://")))
+                return Results.BadRequest();
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                return Results.Ok();
+            }
+            catch
+            {
+                return Results.BadRequest();
+            }
+        });
+
         static IResult SysInfo()
         {
             var osName = GetOsName();

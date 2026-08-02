@@ -100,6 +100,7 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(ExportAllRequest))]
 // Open folder/logs
 [JsonSerializable(typeof(OpenPathRequest))]
+[JsonSerializable(typeof(OpenUrlRequest))]
 // SSE progress
 [JsonSerializable(typeof(ProgressSsePayload))]
 [JsonSerializable(typeof(ProgressSseSummary))]
@@ -452,6 +453,7 @@ public sealed record LogEntry(string Path, string Name, long Size, string LastMo
 public sealed record ExportRequest(string Path, string Dest);
 public sealed record ExportAllRequest(string Dest);
 public sealed record OpenPathRequest(string Path);
+public sealed record OpenUrlRequest(string Url);
 
 public sealed record LoaderAddonInfo(
     string Id,
