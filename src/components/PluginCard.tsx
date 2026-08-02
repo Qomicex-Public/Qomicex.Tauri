@@ -1,5 +1,6 @@
 import type { PluginInfo } from '../plugins/types.ts'
 import { cn } from '../lib/utils.ts'
+import { PluginIcon } from './PluginIcon.tsx'
 
 interface PluginCardProps {
   plugin: PluginInfo
@@ -18,7 +19,11 @@ export function PluginCard({ plugin, onToggle, onUninstall, onClick }: PluginCar
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary cursor-pointer select-none"
         onClick={onClick}
       >
-        {(manifest.contributes?.menuItems?.[0]?.icon) || manifest.name[0]}
+        <PluginIcon
+          icon={manifest.contributes?.menuItems?.[0]?.icon}
+          fallback={manifest.name[0]}
+          className="h-5 w-5 text-sm font-semibold text-primary"
+        />
       </div>
       <div className="flex-1 min-w-0 cursor-pointer" onClick={onClick}>
         <div className="font-medium text-sm truncate">{manifest.name}</div>

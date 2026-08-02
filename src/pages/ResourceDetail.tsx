@@ -246,7 +246,7 @@ export default function ResourceDetailPage() {
         const cacheKey = `api-resource-detail-${id}-${source}`
         const cached = cacheGet<ResourceDetail>(cacheKey)
         if (cached) { setDetail(cached); setLoading(false) }
-        const resourceDetail = await getResourceDetail(id, source)
+        const resourceDetail = await getResourceDetail(id, source, category)
         if (cancelled) return
         setDetail(resourceDetail)
         cacheSet(cacheKey, resourceDetail)

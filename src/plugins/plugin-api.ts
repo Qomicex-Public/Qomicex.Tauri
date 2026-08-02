@@ -15,12 +15,21 @@ export interface ProxyResponse {
   bodyBase64?: string | null
 }
 
+export interface PluginListEntry {
+  id: string
+  name: string
+  version: string
+  status: string
+  [k: string]: unknown
+}
+
 export interface PluginBridge {
   getSettings: () => Promise<Record<string, unknown>>
   setSettings: (key: string, value: unknown) => Promise<void>
   setCache: (key: string, value: unknown, ttlSeconds?: number) => Promise<void>
   getCache: (key: string) => Promise<unknown>
   callBackend: (endpoint: string, data?: unknown) => Promise<unknown>
+  uploadPlugin: (fileData: number[], fileName: string) => Promise<unknown>
   proxyFetch: (req: ProxyRequest) => Promise<ProxyResponse>
   proxyFetchStream: (req: ProxyRequest, onChunk: (chunk: string) => void, signal?: AbortSignal) => Promise<void>
   registerMethod: (method: string, fn: (...args: unknown[]) => unknown) => void
@@ -30,6 +39,9 @@ export interface PluginBridge {
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
+  getSystemInfo: () => Promise<unknown>
+  openUrl: (url: string) => Promise<void>
+  listPlugins: () => Promise<PluginListEntry[]>
   createOverlay: (opts: { title: string; html: string; x?: number; y?: number; width?: number; height?: number; minimizable?: boolean; resizable?: boolean }) => string
   showOverlay: (id: string) => void
   hideOverlay: (id: string) => void
@@ -68,12 +80,24 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       return data.value ?? null
     },
     callBackend: async (endpoint, data) => {
-      const res = await fetch(`${API_BASE}${endpoint}`,  {
-        method: data ? 'POST' : 'GET',
-        headers: data ? { 'Content-Type': 'application/json' } : undefined,
-        body: data ? JSON.stringify(data) : undefined
+      const d = data && typeof data === 'object' ? data as Record<string, unknown> : undefined
+      const method = (d?._method as string) ?? (data ? 'POST' : 'GET')
+      const body = d ? { ...d } : undefined
+      if (body) delete body._method
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined
       })
       if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+      return res.status === 204 ? null : res.json()
+    },
+    uploadPlugin: async (fileData, fileName) => {
+      const blob = new Blob([new Uint8Array(fileData)])
+      const fd = new FormData()
+      fd.append('plugin', blob, fileName)
+      const res = await fetch(`${API_BASE}/plugins/upload`, { method: 'POST', body: fd })
+      if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
       return res.json()
     },
     proxyFetch: async (req) => {
@@ -139,6 +163,30 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       if (!res.ok) throw new Error(`WASM list failed: ${res.status}`)
       const data = await res.json()
       return data.plugins ?? []
+    },
+    getSystemInfo: async () => {
+      const res = await fetch(`${API_BASE}/systeminfo`)
+      if (!res.ok) throw new Error(`Get system info failed: ${res.status}`)
+      return res.json()
+    },
+    openUrl: async (url) => {
+      const res = await fetch(`${API_BASE}/system/open-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      })
+      if (!res.ok) throw new Error(`Open url failed: ${res.status}`)
+    },
+    listPlugins: async () => {
+      const res = await fetch(`${API_BASE}/plugins/`)
+      if (!res.ok) throw new Error(`List plugins failed: ${res.status}`)
+      const data = await res.json()
+      return (Array.isArray(data) ? data : []).map((p: any) => ({
+        id: p.manifest?.id,
+        name: p.manifest?.name,
+        version: p.manifest?.version,
+        status: p.status,
+      }))
     },
     navigate: (path) => {
       window.dispatchEvent(new CustomEvent('plugin:navigate', { detail: { pluginId, path } }))

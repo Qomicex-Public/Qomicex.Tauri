@@ -4,6 +4,7 @@ import { usePluginStore } from '../stores/pluginStore.ts'
 import { createSandbox, renderInline, getInstance } from './sandbox.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
 import { NavItem } from '../components/Sidebar.tsx'
+import { PluginIcon } from '../components/PluginIcon.tsx'
 import { API_BASE } from '../api/client.ts'
 
 const activeThemes = new Map<string, HTMLStyleElement>()
@@ -79,7 +80,7 @@ export async function activatePlugin(plugin: PluginInfo) {
           registerSlot(
             plugin.manifest.id,
             'sidebar:bottom',
-            () => <NavItem to={`/plugins/p/${plugin.manifest.id}`} label={item.label} icon={<span className="text-sm">{item.icon ?? item.label[0]}</span>} />
+            () => <NavItem to={`/plugins/p/${plugin.manifest.id}`} label={item.label} icon={<PluginIcon icon={item.icon} fallback={item.label[0]} />} />
           )
         }
       }
@@ -167,7 +168,7 @@ function OverlaySidebarButton({ pluginId, item, overlay }: { pluginId: string; i
           onClick={handleClick}
           className="flex h-11 w-11 items-center justify-center rounded-lg text-lg transition-all duration-200 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
-          <span className="text-sm">{item.icon ?? item.label[0]}</span>
+          <PluginIcon icon={item.icon} fallback={item.label[0]} />
         </button>
       </Tooltip>
     </li>

@@ -22,6 +22,7 @@ export async function setPluginState(id: string, state: string): Promise<void> {
     body: JSON.stringify({ state }),
   })
   if (!res.ok) throw new Error(`Failed to set plugin state: ${res.status}`)
+  window.dispatchEvent(new CustomEvent('plugin:state-change', { detail: { id, state } }))
 }
 
 export async function rescanPlugins(): Promise<{ scanned: number }> {

@@ -124,7 +124,7 @@ public static class ResourceCenterEndpoints
             return Results.Json(new ResourceSearchResponse([], 0, 1, 20), ApiJsonContext.Default.ResourceSearchResponse);
         });
 
-        group.MapGet("/{id}", async (string id, string? source) =>
+        group.MapGet("/{id}", async (string id, string? source, string? category) =>
         {
             var src = source?.ToLowerInvariant() ?? "modrinth";
 
@@ -160,12 +160,13 @@ public static class ResourceCenterEndpoints
             {
                 var cf = core.CreateCurseForgeSource(curseForgeApiKey);
                 var info = await cf.GetModInfoAsync(id);
+                var cfUrlSlug = MapCfUrlSlug(category);
                 return Results.Json(new ResourceDetailDto(
                     Id: info.Id.ToString(), Title: info.Name, Description: info.Summary ?? "",
                     Author: info.Authors?.FirstOrDefault()?.Name ?? "", IconUrl: info.Screenshots?.FirstOrDefault()?.ThumbnailUrl ?? "",
                     DownloadCount: info.DownloadCount, Source: "curseforge",
                     Categories: info.Categories?.Select(c => c.Slug ?? c.Name).ToList() ?? [],
-                    ProjectUrl: $"https://www.curseforge.com/minecraft/mc-mods/{info.Slug ?? info.Id.ToString()}",
+                    ProjectUrl: $"https://www.curseforge.com/minecraft/{cfUrlSlug}/{info.Slug ?? info.Id.ToString()}",
                     Slug: info.Slug ?? info.Id.ToString(),
                     Body: ""
                 ), ApiJsonContext.Default.ResourceDetailDto);
@@ -536,6 +537,7 @@ public static class ResourceCenterEndpoints
         "shader" => 6552,
         "resourcepack" => 12,
         "datapack" => 6945,
+        "save" => 17,
         _ => null
     };
 
@@ -545,6 +547,7 @@ public static class ResourceCenterEndpoints
         "shader" => "shaders",
         "resourcepack" => "texture-packs",
         "datapack" => "data-packs",
+        "save" => "worlds",
         _ => "mc-mods"
     };
 

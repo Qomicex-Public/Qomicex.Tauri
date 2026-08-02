@@ -396,9 +396,9 @@ async function handleApiCall(callId: string, method: string, args: unknown[], pl
 }
 
 const METHOD_PERMISSIONS: Record<string, string> = {
-  getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
+  getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', uploadPlugin: 'plugin:install', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
-  navigate: 'config:read', showToast: 'ui:toast',
+  navigate: 'config:read', showToast: 'ui:toast', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
 }
@@ -417,12 +417,16 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'setCache': return bridge.setCache(args[0] as string, args[1], args[2] as number | undefined)
     case 'getCache': return bridge.getCache(args[0] as string)
     case 'callBackend': return bridge.callBackend(args[0] as string, args[1])
+    case 'uploadPlugin': return bridge.uploadPlugin(args[0] as number[], args[1] as string)
     case 'proxyFetch': return bridge.proxyFetch(args[0] as any)
     case 'proxyFetchStream': return bridge.proxyFetchStream(args[0] as any, args[1] as (chunk: string) => void, args[2] as AbortSignal | undefined)
     case 'registerMethod': bridge.registerMethod(args[0] as string, args[1] as (...a: unknown[]) => unknown); return
     case 'callPlugin': return bridge.callPlugin(args[0] as string, args[1] as string, ...(args.slice(2) as unknown[]))
     case 'callWasm': return bridge.callWasm(args[0] as string, args[1] as string | undefined)
     case 'listWasmPlugins': return bridge.listWasmPlugins()
+    case 'getSystemInfo': return bridge.getSystemInfo()
+    case 'openUrl': return bridge.openUrl(args[0] as string)
+    case 'listPlugins': return bridge.listPlugins()
     case 'navigate': bridge.navigate(args[0] as string); return
     case 'showToast': bridge.showToast(args[0] as string, args[1] as 'info' | 'error' | 'success' | undefined); return
     case 'overlay.create': return bridge.createOverlay(args[0] as any)

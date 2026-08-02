@@ -23,9 +23,12 @@ export function searchResources(params: {
   return get<ResourceSearchResponse>(`/resources/search?${q}`)
 }
 
-export function getResourceDetail(id: string, source?: string): Promise<ResourceDetail> {
-  const q = source ? `?source=${source}` : ''
-  return get<ResourceDetail>(`/resources/${encodeURIComponent(id)}${q}`)
+export function getResourceDetail(id: string, source?: string, category?: string): Promise<ResourceDetail> {
+  const q = new URLSearchParams()
+  if (source) q.set('source', source)
+  if (category) q.set('category', category)
+  const qs = q.toString()
+  return get<ResourceDetail>(`/resources/${encodeURIComponent(id)}${qs ? `?${qs}` : ''}`)
 }
 
 export function getResourceVersions(id: string, source?: string, gameVersion?: string, loader?: string): Promise<ResourceVersion[]> {

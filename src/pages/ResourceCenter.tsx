@@ -51,6 +51,7 @@ const CATEGORIES = [
   { key: 'shader', label: '光影' },
   { key: 'resourcepack', label: '材质包' },
   { key: 'datapack', label: '数据包' },
+  { key: 'save', label: '存档' },
 ]
 
 const SOURCES = [
@@ -192,7 +193,11 @@ export default function ResourceCenter() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [category, setCategory] = useState(() => savedSnapshot?.category ?? searchParams.get('category') ?? 'mod')
-  const [source, setSource] = useState(() => savedSnapshot?.source ?? searchParams.get('source') ?? 'modrinth')
+  const [source, setSource] = useState(() => {
+    const cat = savedSnapshot?.category ?? searchParams.get('category') ?? 'mod'
+    const src = savedSnapshot?.source ?? searchParams.get('source') ?? 'modrinth'
+    return cat === 'save' ? 'curseforge' : src
+  })
   const [keyword, setKeyword] = useState(() => savedSnapshot?.keyword ?? searchParams.get('keyword') ?? '')
   const [searchInput, setSearchInput] = useState(() => savedSnapshot?.searchInput ?? searchParams.get('keyword') ?? '')
   const [sort, setSort] = useState(() => savedSnapshot?.sort ?? searchParams.get('sort') ?? 'relevance')
@@ -299,6 +304,12 @@ export default function ResourceCenter() {
 
   const handleCategoryChange = (nextCategory: string) => {
     if (source === 'ftb' && nextCategory !== 'modpack') return
+    if (nextCategory === 'save') {
+      if (source !== 'curseforge') setSource('curseforge')
+      setSort('downloads')
+      setCategory(nextCategory)
+      return
+    }
     setCategory(nextCategory)
   }
 
@@ -309,6 +320,7 @@ export default function ResourceCenter() {
       setSort('relevance')
       return
     }
+    if (category === 'save' && nextSource !== 'curseforge') setCategory('mod')
     setSort(nextSource === 'curseforge' ? 'downloads' : 'relevance')
   }
 
@@ -343,7 +355,7 @@ export default function ResourceCenter() {
             </div>
             <div className="space-y-2 xl:ml-auto">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源分类</p>
-              <Tabs tabs={CATEGORIES.map(c => ({ id: c.key, label: c.label, disabled: source === 'ftb' && c.key !== 'modpack' }))} activeTab={category} onChange={handleCategoryChange} />
+              <Tabs tabs={CATEGORIES.map(c => ({ id: c.key, label: c.label, disabled: (source === 'ftb' && c.key !== 'modpack') || (source !== 'curseforge' && c.key === 'save') }))} activeTab={category} onChange={handleCategoryChange} />
             </div>
           </div>
 

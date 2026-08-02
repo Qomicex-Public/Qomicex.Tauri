@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using Qomicex.Downloader.Refactor.Core;
 using Qomicex.Downloader.Refactor.Model;
 using Qomicex.Launcher.Backend.Neo.Common;
@@ -17,6 +18,15 @@ public static class ResourceDownloadEndpoints
         {
             await LicenseValidator.ValidateAsync(httpFactory);
             var orchestrator = app.Services.GetRequiredService<DownloadSessionManager>();
+            var cat = req.Category?.ToLowerInvariant() switch
+            {
+                "resourcepacks" or "resourcepack" => "resourcepacks",
+                "shaderpacks" or "shader" => "shaderpacks",
+                "datapacks" or "datapack" => "datapacks",
+                "saves" or "save" => "saves",
+                "screenshots" => "screenshots",
+                _ => "mods",
+            };
             var targetDir = req.TargetPath;
             if (string.IsNullOrEmpty(targetDir))
             {
@@ -27,15 +37,6 @@ public static class ResourceDownloadEndpoints
                 var gameDir = isolation
                     ? Path.GetFullPath(inst.GameDir)
                     : Path.GetFullPath(inst.ResolvedGameDir ?? inst.GameDir);
-                var cat = req.Category?.ToLowerInvariant() switch
-                {
-                    "resourcepacks" or "resourcepack" => "resourcepacks",
-                    "shaderpacks" or "shader" => "shaderpacks",
-                    "datapacks" or "datapack" => "datapacks",
-                    "saves" or "save" => "saves",
-                    "screenshots" => "screenshots",
-                    _ => "mods",
-                };
                 targetDir = isolation
                     ? Path.Combine(gameDir, "versions", inst.Name, cat)
                     : Path.Combine(gameDir, cat);
@@ -44,7 +45,7 @@ public static class ResourceDownloadEndpoints
             Directory.CreateDirectory(targetDir);
             var taskId = Guid.NewGuid().ToString();
             var session = orchestrator.CreateSession(taskId, "resource");
-            StartDownloadTask(taskId, session, req.Url!, req.FileName!, targetDir, cfHeaders);
+            StartDownloadTask(taskId, session, req.Url!, req.FileName!, targetDir, cfHeaders, cat == "saves");
             return Results.Json(new DownloadStartResponse(taskId, req.FileName!), ApiJsonContext.Default.DownloadStartResponse);
         });
 
@@ -86,7 +87,7 @@ public static class ResourceDownloadEndpoints
         });
     }
 
-    private static void StartDownloadTask(string taskId, DownloadSession session, string url, string fileName, string targetDir, Dictionary<string, string> cfHeaders)
+    private static void StartDownloadTask(string taskId, DownloadSession session, string url, string fileName, string targetDir, Dictionary<string, string> cfHeaders, bool extractAfterDownload = false)
     {
         _ = Task.Run(async () =>
         {
@@ -96,6 +97,11 @@ public static class ResourceDownloadEndpoints
                 var fullPath = Path.Combine(targetDir, fileName);
                 var task = new DownloadTask { Url = url, SavePath = fullPath };
                 await session.RunSingleAsync(task, headers: headers);
+                if (extractAfterDownload && fullPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    ZipFile.ExtractToDirectory(fullPath, targetDir, overwriteFiles: true);
+                    File.Delete(fullPath);
+                }
                 session.ReportCompleted();
             }
             catch (OperationCanceledException)

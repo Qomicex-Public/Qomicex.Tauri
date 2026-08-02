@@ -30,8 +30,9 @@ import type { Update } from '@tauri-apps/plugin-updater'
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
 import { SplashScreen } from './components/SplashScreen.tsx'
 import { usePluginStore } from './stores/pluginStore.ts'
-import { activatePlugin, sortByDependencies } from './plugins/plugin-loader.tsx'
+import { activatePlugin, deactivatePlugin, sortByDependencies } from './plugins/plugin-loader.tsx'
 import './plugins/plugin-registry.ts'
+import type { PluginState } from './plugins/types.ts'
 
 function OverlayStoreBridge() {
   const { createOverlay, showOverlay, hideOverlay, destroyOverlay, setOverlayHtml, setOverlayPosition, setOverlaySize } = usePluginStore()
@@ -132,6 +133,22 @@ function AppContent() {
       }
     })
   }, [backendState, loadPlugins])
+
+  useEffect(() => {
+    const onPluginStateChange = async (event: Event) => {
+      const { id, state } = (event as CustomEvent<{ id: string; state: PluginState }>).detail
+      let plugin = usePluginStore.getState().getPlugin(id)
+      if (!plugin) {
+        await loadPlugins()
+        plugin = usePluginStore.getState().getPlugin(id)
+      }
+      if (!plugin) return
+      if (state === 'active') void activatePlugin({ ...plugin, state: 'active' })
+      if (state === 'disabled') deactivatePlugin(id)
+    }
+    window.addEventListener('plugin:state-change', onPluginStateChange)
+    return () => window.removeEventListener('plugin:state-change', onPluginStateChange)
+  }, [loadPlugins])
 
   return (
     <Provider value={closeWithGuard}>
