@@ -398,7 +398,7 @@ async function handleApiCall(callId: string, method: string, args: unknown[], pl
 const METHOD_PERMISSIONS: Record<string, string> = {
   getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', uploadPlugin: 'plugin:install', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
-  readFile: 'filesystem:read', writeFile: 'filesystem:write', execCommand: 'shell:execute',
+  readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', execCommand: 'shell:execute',
   navigate: 'config:read', showToast: 'ui:toast', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
@@ -425,8 +425,10 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'callPlugin': return bridge.callPlugin(args[0] as string, args[1] as string, ...(args.slice(2) as unknown[]))
     case 'callWasm': return bridge.callWasm(args[0] as string, args[1] as string | undefined)
     case 'listWasmPlugins': return bridge.listWasmPlugins()
-    case 'readFile': return bridge.readFile(args[0] as string)
-    case 'writeFile': return bridge.writeFile(args[0] as string, args[1] as string | Uint8Array)
+    case 'readText': return bridge.readText(args[0] as string, args[1] as { start?: number; length?: number } | undefined)
+    case 'readBytes': return bridge.readBytes(args[0] as string, args[1] as { start?: number; length?: number } | undefined)
+    case 'writeText': return bridge.writeText(args[0] as string, args[1] as string)
+    case 'writeBytes': return bridge.writeBytes(args[0] as string, args[1] as Uint8Array)
     case 'execCommand': return bridge.execCommand(args[0] as string, args[1] as number | undefined)
     case 'getSystemInfo': return bridge.getSystemInfo()
     case 'openUrl': return bridge.openUrl(args[0] as string)

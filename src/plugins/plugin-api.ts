@@ -36,8 +36,10 @@ export interface PluginBridge {
   callPlugin: (pluginId: string, method: string, ...args: unknown[]) => Promise<unknown>
   callWasm: (pluginId: string, exportName?: string) => Promise<unknown>
   listWasmPlugins: () => Promise<string[]>
-  readFile: (path: string) => Promise<{ path: string; content?: string | null; contentBase64?: string | null; isBinary: boolean }>
-  writeFile: (path: string, content: string | Uint8Array) => Promise<{ path: string }>
+  readText: (path: string, options?: { start?: number; length?: number }) => Promise<{ path: string; content: string }>
+  readBytes: (path: string, options?: { start?: number; length?: number }) => Promise<{ path: string; contentBase64: string }>
+  writeText: (path: string, content: string) => Promise<{ path: string }>
+  writeBytes: (path: string, bytes: Uint8Array) => Promise<{ path: string }>
   execCommand: (command: string, timeoutMs?: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
@@ -167,24 +169,35 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       const data = await res.json()
       return data.plugins ?? []
     },
-    readFile: async (path) => {
+    readText: async (path, options) => {
       const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/read`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path })
+        body: JSON.stringify({ path, mode: 'text', start: options?.start, length: options?.length })
       }))
-      return res as { path: string; content?: string | null; contentBase64?: string | null; isBinary: boolean }
+      return res as { path: string; content: string }
     },
-    writeFile: async (path, content) => {
-      const isBinary = content instanceof Uint8Array
+    readBytes: async (path, options) => {
+      const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, mode: 'byte', start: options?.start, length: options?.length })
+      }))
+      return res as { path: string; contentBase64: string }
+    },
+    writeText: async (path, content) => {
       const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/write`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          path,
-          content: isBinary ? undefined : typeof content === 'string' ? content : '',
-          contentBase64: isBinary ? bytesToBase64(content) : undefined,
-        })
+        body: JSON.stringify({ path, content })
+      }))
+      return res as { path: string }
+    },
+    writeBytes: async (path, bytes) => {
+      const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/write`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, contentBase64: bytesToBase64(bytes) })
       }))
       return res as { path: string }
     },

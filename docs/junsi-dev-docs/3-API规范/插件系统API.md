@@ -104,8 +104,8 @@ interface PluginBridge {
 | registerMethod | config:write |
 | callPlugin | network:fetch |
 | callWasm / listWasmPlugins | wasm:execute |
-| readFile | filesystem:read |
-| writeFile | filesystem:write |
+| readText / readBytes | filesystem:read |
+| writeText / writeBytes | filesystem:write |
 | execCommand | shell:execute |
 | navigate | config:read |
 | showToast | ui:toast |

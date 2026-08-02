@@ -375,7 +375,7 @@ public static class PluginEndpoints
 
         plugins.MapGet("/wasm", (PluginGatewayClient gateway) => gateway.GetLoadedPluginsAsync());
 
-        // ---- 插件文件读写（授权制）----
+        // ---- 插件文件读写（授权制；mode: text | byte；start/length 分段）----
         plugins.MapPost("/files/{id}/read", async (string id, PluginFileRequest req, FileAuthService auth) =>
         {
             var normalized = FileAuthService.NormalizePath(req.Path);
@@ -386,14 +386,46 @@ public static class PluginEndpoints
             if (grant == null)
                 throw new ApiException(403, "FS_AUTHORIZATION_REQUIRED", "未授权访问该路径");
 
-            var bytes = await File.ReadAllBytesAsync(normalized);
-            bool isText = IsTextFile(bytes);
+            var isByteMode = string.Equals(req.Mode, "byte", StringComparison.OrdinalIgnoreCase);
+            var start = Math.Max(0, req.Start ?? 0);
+
+            await using var stream = new FileStream(normalized, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            if (start > 0)
+                stream.Seek(Math.Min(start, stream.Length), SeekOrigin.Begin);
+
+            var remaining = stream.Length - stream.Position;
+            var length = req.Length.HasValue && req.Length >= 0
+                ? (int)Math.Min(req.Length.Value, remaining)
+                : (int)remaining;
+
+            var buffer = new byte[length];
+            var read = 0;
+            while (read < length)
+            {
+                var n = await stream.ReadAsync(buffer, read, length - read);
+                if (n == 0) break;
+                read += n;
+            }
+            Array.Resize(ref buffer, read);
+
+            if (isByteMode)
+            {
+                return Results.Ok(new PluginFileResponse
+                {
+                    Path = normalized,
+                    Mode = "byte",
+                    Content = null,
+                    ContentBase64 = Convert.ToBase64String(buffer),
+                    IsBinary = true,
+                });
+            }
             return Results.Ok(new PluginFileResponse
             {
                 Path = normalized,
-                Content = isText ? System.Text.Encoding.UTF8.GetString(bytes) : null,
-                ContentBase64 = isText ? null : Convert.ToBase64String(bytes),
-                IsBinary = !isText,
+                Mode = "text",
+                Content = System.Text.Encoding.UTF8.GetString(buffer),
+                ContentBase64 = null,
+                IsBinary = false,
             });
         });
 
@@ -486,17 +518,6 @@ public static class PluginEndpoints
         });
     }
 
-    private static bool IsTextFile(byte[] bytes)
-    {
-        if (bytes.Length == 0) return true;
-        var sampleLen = Math.Min(bytes.Length, 8192);
-        for (var i = 0; i < sampleLen; i++)
-        {
-            if (bytes[i] == 0) return false;
-        }
-        return true;
-    }
-
     private static async Task ValidateTargetAsync(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
@@ -575,6 +596,9 @@ public class CorsProxyResponse
 public class PluginFileRequest
 {
     public string Path { get; set; } = "";
+    public string? Mode { get; set; }
+    public long? Start { get; set; }
+    public long? Length { get; set; }
 }
 
 public class PluginFileWriteRequest
@@ -587,6 +611,7 @@ public class PluginFileWriteRequest
 public class PluginFileResponse
 {
     public string Path { get; set; } = "";
+    public string? Mode { get; set; }
     public string? Content { get; set; }
     public string? ContentBase64 { get; set; }
     public bool IsBinary { get; set; }
