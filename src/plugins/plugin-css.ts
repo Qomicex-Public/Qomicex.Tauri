@@ -185,6 +185,8 @@ window.addEventListener('message', function (e) {
     var vars = e.data.vars || {}
     for (var k in vars) { root.style.setProperty('--' + k, vars[k]) }
     root.style.colorScheme = e.data.scheme
+    root.classList.toggle('dark', e.data.scheme === 'dark')
+    root.classList.toggle('light', e.data.scheme === 'light')
   }
 })
 <\/script>`

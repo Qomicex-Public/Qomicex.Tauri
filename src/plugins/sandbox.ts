@@ -195,7 +195,7 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
     html = convertScriptSrcs(html, fileUrl)
     html = convertCssLinks(html, fileUrl)
 
-    const themeInit = `<style data-theme-vars>${getThemeVarsCss()}</style>`
+    const themeInit = `<style data-theme-vars>${getThemeVarsCss()}</style><script>document.documentElement.classList.toggle('dark',getComputedStyle(document.documentElement).colorScheme==='dark');document.documentElement.classList.toggle('light',getComputedStyle(document.documentElement).colorScheme==='light')</script>`
     html = html.replace('</head>', themeInit + '\n' + injectCss + '\n' + apiBridgeScript.replace('__PLUGIN_ID_TOKEN__', plugin.manifest.id) + '\n' + themeBridgeScript + '\n</head>')
 
     iframe.onload = () => {

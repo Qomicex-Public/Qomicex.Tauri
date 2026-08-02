@@ -101,7 +101,7 @@ function overlayHtml(inner: string, pluginId: string) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${pluginCss}</style>
-<style data-theme-vars>${getThemeVarsCss()}</style>
+<style data-theme-vars>${getThemeVarsCss()}</style><script>document.documentElement.classList.toggle('dark',getComputedStyle(document.documentElement).colorScheme==='dark');document.documentElement.classList.toggle('light',getComputedStyle(document.documentElement).colorScheme==='light')</script>
 ${themeBridgeScript}
 ${styles.join('\n')}
 </head>
