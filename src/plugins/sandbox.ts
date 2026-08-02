@@ -41,6 +41,7 @@ function convertCssLinks(html: string, fileUrl: (p: string) => string): string {
 
 const apiBridgeScript = `<script>
 window.__PLUGIN_ID__ = '__PLUGIN_ID_TOKEN__'
+window.__PLUGIN_API_BASE__ = '__API_BASE_TOKEN__'
 ;(function () {
   // iframe 侧插件注册表：本地保存 fn，经主窗口中转跨插件调用
   var __localExports = {}
@@ -196,7 +197,7 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
     html = convertCssLinks(html, fileUrl)
 
     const themeInit = `<style data-theme-vars>${getThemeVarsCss()}</style><script>document.documentElement.classList.toggle('dark',getComputedStyle(document.documentElement).colorScheme==='dark');document.documentElement.classList.toggle('light',getComputedStyle(document.documentElement).colorScheme==='light')</script>`
-    html = html.replace('</head>', themeInit + '\n' + injectCss + '\n' + apiBridgeScript.replace('__PLUGIN_ID_TOKEN__', plugin.manifest.id) + '\n' + themeBridgeScript + '\n</head>')
+    html = html.replace('</head>', themeInit + '\n' + injectCss + '\n' + apiBridgeScript.replace('__PLUGIN_ID_TOKEN__', plugin.manifest.id).replace('__API_BASE_TOKEN__', `${API_BASE}/plugins/${plugin.manifest.id}/files`) + '\n' + themeBridgeScript + '\n</head>')
 
     iframe.onload = () => {
       if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
