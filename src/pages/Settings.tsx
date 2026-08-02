@@ -20,6 +20,7 @@ import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
 import { PluginCard } from '../components/PluginCard.tsx'
 import { PluginIcon } from '../components/PluginIcon.tsx'
+import { resolvePluginAssetUrl } from '../plugins/plugin-loader.tsx'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { deactivatePlugin } from '../plugins/plugin-loader.tsx'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
@@ -1861,7 +1862,7 @@ export default function Settings() {
                       <p className="text-sm text-muted-foreground">扩展点</p>
                       {pluginDetail.manifest.contributes.menuItems.map(item => (
                         <div key={item.path} className="flex items-center gap-2 text-sm">
-                          <PluginIcon icon={item.icon} fallback="" />
+                          <PluginIcon icon={resolvePluginAssetUrl(pluginDetail.manifest.id, item.icon ?? '')} fallback="" />
                           <span>{item.label}</span>
                           <span className="text-xs text-muted-foreground">{item.path}</span>
                         </div>

@@ -23,5 +23,5 @@ export function PluginIcon({ icon, fallback, className }: { icon?: string; fallb
     return <FaIcon cls={src} className={className} />
   }
 
-  return <span className={cn('text-sm', className)}>{src}</span>
+  return null
 }

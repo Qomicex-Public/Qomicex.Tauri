@@ -1,6 +1,7 @@
 import type { PluginInfo } from '../plugins/types.ts'
 import { cn } from '../lib/utils.ts'
 import { PluginIcon } from './PluginIcon.tsx'
+import { resolvePluginAssetUrl } from '../plugins/plugin-loader.tsx'
 
 interface PluginCardProps {
   plugin: PluginInfo
@@ -20,8 +21,8 @@ export function PluginCard({ plugin, onToggle, onUninstall, onClick }: PluginCar
         onClick={onClick}
       >
         <PluginIcon
-          icon={manifest.contributes?.menuItems?.[0]?.icon}
-          fallback={manifest.name[0]}
+          icon={resolvePluginAssetUrl(plugin.manifest.id, manifest.contributes?.menuItems?.[0]?.icon ?? '')}
+          fallback=""
           className="h-5 w-5 text-sm font-semibold text-primary"
         />
       </div>
