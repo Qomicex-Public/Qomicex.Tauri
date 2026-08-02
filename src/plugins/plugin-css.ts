@@ -175,7 +175,7 @@ export function getThemeScheme(): string {
 export function getThemeVarsCss(): string {
   const vars = getThemeVars()
   const pairs = THEME_KEYS.map(k => `--${k}:${vars[k]}`).join(';')
-  return `:root{color-scheme:${getThemeScheme()};${pairs}}body{background:hsl(var(--background))}`
+  return `:root{color-scheme:${getThemeScheme()};${pairs}}body{background:transparent}`
 }
 
 export const themeBridgeScript = `<script>
@@ -196,16 +196,18 @@ let themeObserver: MutationObserver | null = null
 
 export function registerThemeSync(iframe: HTMLIFrameElement) {
   themeSyncTargets.add(iframe)
-  if (!themeObserver) {
-    themeObserver = new MutationObserver(() => {
-      const vars = getThemeVars()
-      const scheme = getThemeScheme()
-      themeSyncTargets.forEach(f => {
-        try { f.contentWindow?.postMessage({ type: '__qomicex_theme', vars, scheme }, '*') } catch { }
-      })
+  const push = () => {
+    const vars = getThemeVars()
+    const scheme = getThemeScheme()
+    themeSyncTargets.forEach(f => {
+      try { f.contentWindow?.postMessage({ type: '__qomicex_theme', vars, scheme }, '*') } catch { }
     })
+  }
+  if (!themeObserver) {
+    themeObserver = new MutationObserver(push)
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   }
+  push()
   return () => {
     themeSyncTargets.delete(iframe)
     if (themeSyncTargets.size === 0 && themeObserver) {

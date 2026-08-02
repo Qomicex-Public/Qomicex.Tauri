@@ -242,10 +242,14 @@ if (savedTheme === 'light' || savedTheme === 'dark') {
 
 function App() {
   useEffect(() => {
-    function setTheme(theme: 'dark' | 'light') {
+    async function setTheme(theme: 'dark' | 'light') {
       document.documentElement.classList.toggle('dark', theme === 'dark')
       document.documentElement.classList.toggle('light', theme === 'light')
       localStorage.setItem('qomicex-theme', theme)
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window')
+        void getCurrentWindow().setTheme(theme)
+      } catch { /* 非 Tauri 环境忽略 */ }
     }
     loadSettings().then(s => {
       setConsoleLevel(s.logLevel ?? 'info')

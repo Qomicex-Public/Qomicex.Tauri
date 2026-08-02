@@ -9,6 +9,11 @@ import { API_BASE } from '../api/client.ts'
 
 const activeThemes = new Map<string, HTMLStyleElement>()
 
+function resolvePluginAssetUrl(pluginId: string, icon: string): string {
+  if (/^(https?:\/\/|data:)/i.test(icon)) return icon
+  return `${API_BASE}/plugins/${encodeURIComponent(pluginId)}/files/${icon.replace(/^\.\//, '')}`
+}
+
 function resolveDependencyProblem(plugin: PluginInfo): string | null {
   const deps = plugin.manifest.dependencies ?? []
   if (deps.length === 0) return null
@@ -80,7 +85,7 @@ export async function activatePlugin(plugin: PluginInfo) {
           registerSlot(
             plugin.manifest.id,
             'sidebar:bottom',
-            () => <NavItem to={`/plugins/p/${plugin.manifest.id}`} label={item.label} icon={<PluginIcon icon={item.icon} fallback={item.label[0]} />} />
+            () => <NavItem to={`/plugins/p/${plugin.manifest.id}`} label={item.label} icon={<PluginIcon icon={resolvePluginAssetUrl(plugin.manifest.id, item.icon ?? '')} fallback={item.label[0]} />} />
           )
         }
       }
@@ -168,7 +173,7 @@ function OverlaySidebarButton({ pluginId, item, overlay }: { pluginId: string; i
           onClick={handleClick}
           className="flex h-11 w-11 items-center justify-center rounded-lg text-lg transition-all duration-200 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
-          <PluginIcon icon={item.icon} fallback={item.label[0]} />
+          <PluginIcon icon={resolvePluginAssetUrl(pluginId, item.icon ?? '')} fallback={item.label[0]} />
         </button>
       </Tooltip>
     </li>
