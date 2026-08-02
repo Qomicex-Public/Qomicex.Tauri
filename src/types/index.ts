@@ -639,6 +639,21 @@ export interface ModpackInstallRequest {
   optifineVersion?: string | null
 }
 
+export interface ModpackInstallDirectRequest {
+  id: string
+  type?: string
+  projectId?: string
+  fileId?: string
+  path?: string
+  gameDir: string
+  versionIsolation?: boolean
+  maxMemory?: number
+}
+
+export interface ModpackInstallDirectResult {
+  instanceId: string
+}
+
 export interface NatTypeResult {
   type: 'cone' | 'symmetric' | 'blocked' | 'unknown'
   publicIp: string | null

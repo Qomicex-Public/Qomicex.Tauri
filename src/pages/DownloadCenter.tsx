@@ -10,7 +10,7 @@ import type { Tab } from '../components/ui'
 import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, updateTask } from '../stores/downloadStore.ts'
 import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '../api/instance.ts'
-import { cancelResourceDownload } from '../api/resource-download.ts'
+import { cancelResourceDownload, getResourceDownloadProgress } from '../api/resource-download.ts'
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
 
@@ -85,11 +85,13 @@ export default function DownloadCenter() {
   const prevJavaIds = useRef<Set<string>>(new Set())
   const checkedStaleJavaIds = useRef<Set<string>>(new Set())
   const checkedStaleInstallIds = useRef<Set<string>>(new Set())
+  const checkedStaleFileIds = useRef<Set<string>>(new Set())
 
   // Reset stale-check caches on SSE reconnect so zombie tasks get re-verified
   useEffect(() => {
     checkedStaleInstallIds.current = new Set()
     checkedStaleJavaIds.current = new Set()
+    checkedStaleFileIds.current = new Set()
   }, [reconnectKey])
 
   useEffect(() => {
@@ -152,6 +154,19 @@ export default function DownloadCenter() {
             error: match.error || undefined,
             currentFile: match.currentFile || undefined,
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
+          })
+        } else if (!checkedStaleFileIds.current.has(task.taskId)) {
+          checkedStaleFileIds.current.add(task.taskId)
+          getResourceDownloadProgress(task.taskId).then(p => {
+            if (!p || p.status === 'not_found') {
+              updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
+            } else if (p.status === 'completed') {
+              updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+            } else if (p.status === 'failed' || p.status === 'cancelled') {
+              updateTask(task.id, { status: p.status, error: p.error || undefined })
+            }
+          }).catch(() => {
+            updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })
           })
         }
         continue

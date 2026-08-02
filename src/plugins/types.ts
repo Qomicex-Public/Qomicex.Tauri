@@ -85,6 +85,7 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   'resource:read':       { id: 'resource:read',        label: '读取游戏资源文件',       risk: 'normal' },
   'resource:write':      { id: 'resource:write',       label: '写入游戏资源文件',       risk: 'warning' },
   'java:manage':         { id: 'java:manage',          label: '管理 Java 运行时',       risk: 'warning' },
+  'download:manage':     { id: 'download:manage',      label: '管理下载任务',           risk: 'warning' },
   'game:process':        { id: 'game:process',         label: '启停游戏进程',           risk: 'warning' },
   'game:log':            { id: 'game:log',             label: '检测游戏日志',           risk: 'normal' },
   'connector:host':      { id: 'connector:host',       label: '启停联机',               risk: 'warning' },

@@ -106,6 +106,7 @@ interface PluginBridge {
 | callWasm / listWasmPlugins | wasm:execute |
 | readText / readBytes | filesystem:read |
 | writeText / writeBytes | filesystem:write |
+| deleteFile | filesystem:write |
 | execCommand | shell:execute |
 | navigate | config:read |
 | showToast | ui:toast |
@@ -113,6 +114,9 @@ interface PluginBridge {
 | openUrl | system:notification |
 | listPlugins | plugin:list |
 | overlay.* | ui:sub_window |
+| download.* | download:manage |
+| download.registerInstall | instance:write |
+| modpack.install | instance:write |
 
 ### 插件缓存（setCache / getCache）
 
@@ -409,3 +413,102 @@ registerSlot(pluginId, 'sidebar:bottom', () => <ReactNode>)
 | 2026-07-31 | v1.0 | 初版创建 | AI Agent |
 | 2026-08-01 | v1.1 | 新增插件依赖（dependencies）、插件间方法调用（registerMethod/callPlugin）及详细写法 | AI Agent |
 | 2026-08-01 | v1.2 | 新增 WASM 插件调用（callWasm/listWasmPlugins）、layers 示例修正 | AI Agent |
+
+### 2026-08-02 更新
+| POST | `/api/plugins/download/start` | 创建下载任务（进入下载中心） |
+| GET | `/api/plugins/download/{taskId}/progress` | 查询下载任务进度 |
+| GET | `/api/plugins/download/list` | 列出全部下载会话快照 |
+| POST | `/api/plugins/download/{taskId}/cancel` | 取消下载任务 |
+
+### 下载管理（download.*）
+
+插件可创建下载任务，任务会自动出现在启动器「下载中心」，进度由 SSE 推送驱动，用户可取消。
+
+```js
+// 方式一：指定绝对目标路径
+const { taskId } = await __PLUGIN_API__.call('download.addTask', {
+  url: 'https://example.com/asset.zip',
+  targetPath: 'C:/games/instances/foo/mods/asset.zip',
+  extract: true,             // 可选：zip 下载后自动解压并删除原包
+  headers: { 'X-Token': 'abc' },  // 可选：自定义请求头
+  name: '我的资源'            // 可选：下载中心显示名（默认 fileName）
+})
+
+// 方式二：实例 + 类别（自动解析隔离目录，与资源下载一致）
+await __PLUGIN_API__.call('download.addTask', {
+  url: 'https://.../mod.jar',
+  instanceId: 'inst-uuid',
+  category: 'mods',          // mods / resourcepacks / shaderpacks / datapacks / saves / screenshots
+  fileName: 'mod.jar'
+})
+
+// 查询进度（taskId 不存在返回 null）
+const snap = await __PLUGIN_API__.call('download.progress', taskId)
+// snap: { sessionId, status, progress, speed, currentFile, totalFiles, error, ... }
+
+// 列出全部下载会话
+const list = await __PLUGIN_API__.call('download.list')
+
+// 取消
+await __PLUGIN_API__.call('download.cancel', taskId)
+```
+
+- 权限：`download:manage`
+- `addTask` 内部同时写入前端 `downloadStore`（type `'file'`），任务自动出现在下载中心并可取消；完成后状态自动修正
+- 后端复用 `DownloadSessionManager`（type `"resource"`），与 mod 下载同一条线
+
+### 注册安装任务（download.registerInstall）
+
+仅在前端下载中心登记一个「游戏安装」任务（type `'game'`），不创建真实下载。
+
+```js
+await __PLUGIN_API__.call('download.registerInstall', {
+  instanceId: 'inst-uuid',
+  name: '我的整合包',
+  gameVersion: '1.20.1',
+  loader: 'forge',
+  loaderVersion: '47.1.0'
+})
+```
+- 权限：`instance:write`
+- 场景：插件发起安装后，需要任务出现在下载中心时配合使用
+
+### 整合包一键安装（modpack.install）
+
+直接安装整合包，走**正常整合包安装流程**（复用 `ModpackService` 与 `InstallTracker`，与前端「整合包」页同一管线）：解析来源 → 创建实例 → 下载安装 → 任务进入下载中心。
+
+```js
+// 方式一：本地整合包文件（.zip / .mrpack）
+const { instanceId } = await __PLUGIN_API__.call('modpack.install', {
+  id: 'MyPack',              // 实例名（会同步为版本目录名）
+  path: 'C:/packs/pack.zip', // 本地整合包路径
+  gameDir: 'C:/games/instances',  // 必传：实例所在根目录
+  maxMemory: 8192,           // 可选：默认 4096
+  versionIsolation: true     // 可选：版本隔离，默认 false
+})
+
+// 方式二：在线整合包（Modrinth / CurseForge / FTB）
+const { instanceId } = await __PLUGIN_API__.call('modpack.install', {
+  id: 'MyPack',
+  type: 'mr',                // mr | cf | ftb（也接受 modrinth/curseforge）
+  projectId: 'abc',          // 项目 id
+  fileId: '123',             // 版本 id
+  gameDir: 'C:/games/instances'
+})
+```
+
+- 权限：`instance:write`（**警告权限**）
+- 参数：`id` 必填（实例名），`gameDir` 必填；`path` 与 `type+projectId+fileId` 二选一
+- 走 `POST /api/modpack/install-direct`：后端解析（本地 `ParseFileAsync` / 在线 `ResolveOnlineAsync`）→ 组装 `ModpackInstallRequest` → `InstallAsync`（内部 `InstallTracker.Start`），与前端整合包安装完全同流程
+- 返回：`{ instanceId }`（安装异步进行，进度在下载中心 / SSE 查看）
+- 错误码：`MODPACK_NAME_REQUIRED`(400)、`MODPACK_GAME_DIR_REQUIRED`(400)、`MODPACK_FILE_NOT_FOUND`(404)、`MODPACK_SOURCE_REQUIRED`(400)、`MODPACK_SOURCE_INVALID`(400)
+- 安装任务不会自动出现在下载中心，需要下载进度可配合 `download.registerInstall` 登记
+
+
+
+
+### 2026-08-02 更新
+| 2026-08-02 | v1.3 | 新增插件下载管理（download.addTask/progress/cancel/list），权限 download:manage | AI Agent |
+| 2026-08-02 | v1.4 | 新增整合包一键安装（modpack.install，权限 instance:write）与下载中心登记（download.registerInstall） | AI Agent |
+| 2026-08-02 | v1.5 | 新增文件删除（deleteFile，权限 filesystem:write，授权制） | AI Agent |
+

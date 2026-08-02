@@ -221,6 +221,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(ModpackParseResult))]
 [JsonSerializable(typeof(ModpackInstallRequest))]
 [JsonSerializable(typeof(ModpackResolveRequest))]
+[JsonSerializable(typeof(ModpackInstallDirectRequest))]
+[JsonSerializable(typeof(ModpackInstallDirectResponse))]
 // Plugin DTOs
 [JsonSerializable(typeof(PluginManifest))]
 [JsonSerializable(typeof(PluginEntry))]
@@ -240,6 +242,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(PluginAuthorizeResponse))]
 [JsonSerializable(typeof(PluginShellRequest))]
 [JsonSerializable(typeof(PluginShellResponse))]
+[JsonSerializable(typeof(PluginDownloadStartRequest))]
+[JsonSerializable(typeof(PluginDownloadStartResponse))]
 [JsonSerializable(typeof(SetPluginStateRequest))]
 [JsonSerializable(typeof(CorsProxyRequest))]
 [JsonSerializable(typeof(CorsProxyResponse))]
@@ -546,3 +550,16 @@ public sealed record ModpackResolveRequest(
     string ProjectId,
     string VersionId
 );
+
+public sealed record ModpackInstallDirectRequest(
+    string Id,
+    string? Type,
+    string? ProjectId,
+    string? FileId,
+    string? Path,
+    string GameDir,
+    bool? VersionIsolation,
+    int? MaxMemory
+);
+
+public sealed record ModpackInstallDirectResponse(string InstanceId);

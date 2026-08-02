@@ -1,5 +1,5 @@
 import { get, post, put, del, API_BASE } from './client.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
@@ -124,4 +124,8 @@ export async function resolveModpack(source: string, projectId: string, versionI
 export async function startModpackInstall(data: ModpackInstallRequest): Promise<{ message: string; instanceId: string }> {
   const res = await post<{ message: string; versionId: string }>('/modpack/install', data)
   return { message: res.message, instanceId: res.versionId }
+}
+
+export async function installModpackDirect(data: ModpackInstallDirectRequest): Promise<ModpackInstallDirectResult> {
+  return post<ModpackInstallDirectResult>('/modpack/install-direct', data)
 }

@@ -399,10 +399,12 @@ async function handleApiCall(callId: string, method: string, args: unknown[], pl
 const METHOD_PERMISSIONS: Record<string, string> = {
   getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', uploadPlugin: 'plugin:install', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
-  readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', execCommand: 'shell:execute',
+  readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', execCommand: 'shell:execute',
   navigate: 'config:read', showToast: 'ui:toast', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
+  'download.addTask': 'download:manage', 'download.progress': 'download:manage', 'download.cancel': 'download:manage', 'download.list': 'download:manage', 'download.registerInstall': 'instance:write',
+  'modpack.install': 'instance:write',
 }
 
 async function executePluginMethod(pluginId: string, method: string, args: unknown[]): Promise<unknown> {
@@ -430,6 +432,7 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'readBytes': return bridge.readBytes(args[0] as string, args[1] as { start?: number; length?: number } | undefined)
     case 'writeText': return bridge.writeText(args[0] as string, args[1] as string)
     case 'writeBytes': return bridge.writeBytes(args[0] as string, args[1] as Uint8Array)
+    case 'deleteFile': return bridge.deleteFile(args[0] as string)
     case 'execCommand': return bridge.execCommand(args[0] as string, args[1] as number | undefined)
     case 'getSystemInfo': return bridge.getSystemInfo()
     case 'openUrl': return bridge.openUrl(args[0] as string)
@@ -442,6 +445,12 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'overlay.destroy': bridge.destroyOverlay(args[0] as string); return
     case 'overlay.setHtml': bridge.setOverlayHtml(args[0] as string, args[1] as string); return
     case 'overlay.setPosition': bridge.setOverlayPosition(args[0] as string, args[1] as number, args[2] as number); return
+    case 'download.addTask': return bridge.download.addTask(args[0] as any)
+    case 'download.progress': return bridge.download.progress(args[0] as string)
+    case 'download.cancel': bridge.download.cancel(args[0] as string); return
+    case 'download.list': return bridge.download.list()
+    case 'download.registerInstall': bridge.download.registerInstall(args[0] as any); return
+    case 'modpack.install': return bridge.modpack.install(args[0] as any)
     default: throw new Error(`Unknown method: ${method}`)
   }
 }

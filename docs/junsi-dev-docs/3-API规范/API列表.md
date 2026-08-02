@@ -876,6 +876,35 @@ Yggdrasil 认证登录。
 
 **响应：** `{ "message": "安装已启动", "versionId": "..." }`
 
+### POST `/api/modpack/install-direct`
+
+一键安装整合包（插件/内部调用用）。与 `/install` 共享完整安装管线：后端自行解析来源并组装安装请求，调用方只需传定位信息。
+
+```json
+{
+  "id": "MyPack",
+  "type": "mr",
+  "projectId": "abc",
+  "fileId": "123",
+  "gameDir": "C:/games/instances"
+}
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `id` | ✅ | 实例名（同步为版本目录名） |
+| `gameDir` | ✅ | 实例所在根目录 |
+| `type` | 条件 | 在线来源：`mr`/`modrinth`、`cf`/`curseforge`、`ftb` |
+| `projectId` | 条件 | 在线来源的项目 id（与 `fileId` 成对） |
+| `fileId` | 条件 | 在线来源的版本 id |
+| `path` | 条件 | 本地整合包路径（.zip / .mrpack），与 `type+projectId+fileId` 二选一 |
+| `versionIsolation` | ❌ | 版本隔离，默认 `false` |
+| `maxMemory` | ❌ | 默认 `4096` |
+
+**响应：** `{ "instanceId": "..." }`（安装异步进行，进度走下载中心 / SSE）
+
+**错误码：** `MODPACK_NAME_REQUIRED`(400)、`MODPACK_GAME_DIR_REQUIRED`(400)、`MODPACK_FILE_NOT_FOUND`(404)、`MODPACK_SOURCE_REQUIRED`(400)、`MODPACK_SOURCE_INVALID`(400)
+
 ---
 
 ## 14. 插件 Plugin

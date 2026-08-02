@@ -1,4 +1,5 @@
 import { API_BASE } from '../api/client.ts'
+import { addTask } from '../stores/downloadStore.ts'
 
 export interface ProxyRequest {
   url: string
@@ -23,6 +24,50 @@ export interface PluginListEntry {
   [k: string]: unknown
 }
 
+export interface PluginDownloadOptions {
+  url: string
+  targetPath?: string
+  instanceId?: string
+  category?: string
+  fileName?: string
+  headers?: Record<string, string>
+  extract?: boolean
+  name?: string
+}
+
+export interface PluginDownloadStartResult {
+  taskId: string
+  status: string
+  targetPath: string
+}
+
+export interface PluginDownloadSnapshot {
+  sessionId: string
+  type: string
+  status: string
+  stage: string
+  progress: number
+  currentFile: string | null
+  totalFiles: number
+  completedFiles: number
+  failedFiles: number
+  speed: number
+  error: string | null
+  isPaused: boolean
+  instanceId: string | null
+}
+
+export interface PluginModpackInstallOptions {
+  id: string
+  type?: 'mr' | 'cf' | 'ftb' | 'modrinth' | 'curseforge' | 'ftb'
+  projectId?: string
+  fileId?: string
+  path?: string
+  gameDir: string
+  versionIsolation?: boolean
+  maxMemory?: number
+}
+
 export interface PluginBridge {
   getSettings: () => Promise<Record<string, unknown>>
   setSettings: (key: string, value: unknown) => Promise<void>
@@ -40,6 +85,7 @@ export interface PluginBridge {
   readBytes: (path: string, options?: { start?: number; length?: number }) => Promise<{ path: string; contentBase64: string }>
   writeText: (path: string, content: string) => Promise<{ path: string }>
   writeBytes: (path: string, bytes: Uint8Array) => Promise<{ path: string }>
+  deleteFile: (path: string) => Promise<{ path: string }>
   execCommand: (command: string, timeoutMs?: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
@@ -53,6 +99,16 @@ export interface PluginBridge {
   destroyOverlay: (id: string) => void
   setOverlayHtml: (id: string, html: string) => void
   setOverlayPosition: (id: string, x: number, y: number) => void
+  download: {
+    addTask: (opts: PluginDownloadOptions) => Promise<PluginDownloadStartResult>
+    progress: (taskId: string) => Promise<PluginDownloadSnapshot | null>
+    cancel: (taskId: string) => Promise<void>
+    list: () => Promise<PluginDownloadSnapshot[]>
+    registerInstall: (opts: { instanceId: string; name: string; gameVersion: string; loader?: string; loaderVersion?: string }) => void
+  }
+  modpack: {
+    install: (opts: PluginModpackInstallOptions) => Promise<{ instanceId: string }>
+  }
 }
 
 export function createPluginBridge(pluginId: string): PluginBridge {
@@ -201,6 +257,14 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       }))
       return res as { path: string }
     },
+    deleteFile: async (path) => {
+      const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      }))
+      return res as { path: string }
+    },
     execCommand: async (command, timeoutMs) => {
       const res = await fetch(`${API_BASE}/plugins/shell/${encodeURIComponent(pluginId)}`, {
         method: 'POST',
@@ -270,6 +334,74 @@ export function createPluginBridge(pluginId: string): PluginBridge {
     setOverlayPosition: (id, x, y) => {
       const { setOverlayPosition } = (window as any).__pluginOverlayStore
       if (setOverlayPosition) setOverlayPosition(id, x, y)
+    },
+    download: {
+      addTask: async (opts) => {
+        const res = await fetch(`${API_BASE}/plugins/download/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(opts)
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Download start failed: ${res.status}`)
+        }
+        const result = await res.json() as PluginDownloadStartResult
+        addTask({
+          id: result.taskId,
+          name: opts.name ?? opts.fileName ?? result.taskId.slice(0, 8),
+          type: 'file',
+          gameVersion: '',
+          taskId: result.taskId,
+          status: 'queued',
+          progress: 0,
+          createdAt: new Date().toISOString(),
+        })
+        return result
+      },
+      progress: async (taskId) => {
+        const res = await fetch(`${API_BASE}/plugins/download/${encodeURIComponent(taskId)}/progress`)
+        if (!res.ok) throw new Error(`Download progress failed: ${res.status}`)
+        const data = await res.json()
+        return data.status === 'not_found' ? null : data as PluginDownloadSnapshot
+      },
+      cancel: async (taskId) => {
+        const res = await fetch(`${API_BASE}/plugins/download/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' })
+        if (!res.ok) throw new Error(`Download cancel failed: ${res.status}`)
+      },
+      list: async () => {
+        const res = await fetch(`${API_BASE}/plugins/download/list`)
+        if (!res.ok) throw new Error(`Download list failed: ${res.status}`)
+        return res.json()
+      },
+      registerInstall: (opts) => {
+        addTask({
+          id: opts.instanceId,
+          name: opts.name,
+          type: 'game',
+          gameVersion: opts.gameVersion,
+          loader: opts.loader,
+          loaderVersion: opts.loaderVersion,
+          status: 'queued',
+          progress: 0,
+          createdAt: new Date().toISOString(),
+          instanceId: opts.instanceId,
+        })
+      },
+    },
+    modpack: {
+      install: async (opts) => {
+        const res = await fetch(`${API_BASE}/modpack/install-direct`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(opts)
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Modpack install failed: ${res.status}`)
+        }
+        return res.json()
+      },
     },
   }
 }

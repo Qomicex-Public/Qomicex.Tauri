@@ -1,10 +1,14 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Qomicex.Downloader.Refactor.Core;
+using Qomicex.Downloader.Refactor.Model;
 using Qomicex.Launcher.Backend.Neo.Common;
+using Qomicex.Launcher.Backend.Neo.JsonContext;
 using Qomicex.Launcher.Backend.Neo.Models;
 using Qomicex.Launcher.Backend.Neo.Services;
 
@@ -466,6 +470,87 @@ public static class PluginEndpoints
             return Results.Ok(new PluginAuthorizeResponse { Path = normalized, Allowed = req.Allow });
         });
 
+        plugins.MapPost("/files/{id}/delete", async (string id, PluginFileRequest req, FileAuthService auth) =>
+        {
+            var normalized = FileAuthService.NormalizePath(req.Path);
+            if (normalized == null)
+                throw ApiException.BadRequest("无效路径", "FS_INVALID_PATH");
+            if (!File.Exists(normalized))
+                throw ApiException.NotFound("文件不存在", "FS_FILE_NOT_FOUND");
+
+            var grant = auth.FindGrant(id, normalized);
+            if (grant == null)
+                throw new ApiException(403, "FS_AUTHORIZATION_REQUIRED", "未授权访问该路径");
+
+            File.Delete(normalized);
+            return Results.Ok(new PluginFileResponse { Path = normalized, IsBinary = false });
+        });
+
+        // ---- 插件下载管理（任务进入下载中心）----
+        plugins.MapPost("/download/start", async (PluginDownloadStartRequest req) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Url))
+                throw ApiException.BadRequest("url 不能为空", "DOWNLOAD_URL_REQUIRED");
+
+            var orchestrator = app.Services.GetRequiredService<DownloadSessionManager>();
+            string targetDir;
+            string fileName;
+
+            if (!string.IsNullOrEmpty(req.TargetPath))
+            {
+                targetDir = Path.GetDirectoryName(Path.GetFullPath(req.TargetPath))!;
+                fileName = req.FileName ?? Path.GetFileName(req.TargetPath);
+                if (string.IsNullOrEmpty(fileName))
+                    throw ApiException.BadRequest("无法确定文件名，请提供 fileName", "DOWNLOAD_FILE_NAME_REQUIRED");
+            }
+            else if (!string.IsNullOrEmpty(req.InstanceId))
+            {
+                var instances = app.Services.GetRequiredService<InstanceService>();
+                var inst = instances.GetById(req.InstanceId);
+                if (inst is null) throw ApiException.NotFound("实例不存在", "INSTANCE_NOT_FOUND");
+                var isolation = inst.VersionIsolation ?? SystemEndpoints.GetGlobalVersionIsolation();
+                var gameDir = isolation
+                    ? Path.GetFullPath(inst.GameDir)
+                    : Path.GetFullPath(inst.ResolvedGameDir ?? inst.GameDir);
+                var cat = string.IsNullOrWhiteSpace(req.Category) ? "mods" : req.Category.ToLowerInvariant();
+                targetDir = isolation
+                    ? Path.Combine(gameDir, "versions", inst.Name, cat)
+                    : Path.Combine(gameDir, cat);
+                fileName = req.FileName ?? Path.GetFileName(new Uri(req.Url).AbsolutePath);
+                if (string.IsNullOrEmpty(fileName))
+                    throw ApiException.BadRequest("无法确定文件名，请提供 fileName", "DOWNLOAD_FILE_NAME_REQUIRED");
+            }
+            else
+            {
+                throw ApiException.BadRequest("必须提供 targetPath 或 instanceId", "DOWNLOAD_TARGET_REQUIRED");
+            }
+
+            Directory.CreateDirectory(targetDir);
+            var taskId = Guid.NewGuid().ToString();
+            var session = orchestrator.CreateSession(taskId, "resource");
+            StartPluginDownloadTask(taskId, session, req.Url, fileName, targetDir, req.Headers, req.Extract);
+            return Results.Ok(new PluginDownloadStartResponse(taskId, session.GetSnapshot().Status, Path.Combine(targetDir, fileName)));
+        });
+
+        plugins.MapGet("/download/{taskId}/progress", (string taskId) =>
+        {
+            var orchestrator = app.Services.GetRequiredService<DownloadSessionManager>();
+            var session = orchestrator.GetSession(taskId);
+            if (session is null)
+                return Results.Json(new StatusResponse("not_found"), ApiJsonContext.Default.StatusResponse);
+            return Results.Json(session.GetSnapshot(), ApiJsonContext.Default.SessionSnapshot);
+        });
+
+        plugins.MapGet("/download/list", (DownloadSessionManager orchestrator) =>
+            Results.Json(orchestrator.GetAllSnapshots(), ApiJsonContext.Default.ListSessionSnapshot));
+
+        plugins.MapPost("/download/{taskId}/cancel", (string taskId) =>
+        {
+            var orchestrator = app.Services.GetRequiredService<DownloadSessionManager>();
+            orchestrator.CancelSession(taskId);
+            return Results.Json(new StatusResponse("cancelled"), ApiJsonContext.Default.StatusResponse);
+        });
+
         // ---- 插件 shell 执行（win: powershell, linux/mac: /bin/sh）----
         plugins.MapPost("/shell/{id}", async (string id, PluginShellRequest req) =>
         {
@@ -515,6 +600,38 @@ public static class PluginEndpoints
                 Stdout = stdout,
                 Stderr = stderr,
             });
+        });
+    }
+
+    private static void StartPluginDownloadTask(string taskId, DownloadSession session, string url, string fileName, string targetDir, Dictionary<string, string>? headers, bool extract)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var fullPath = Path.Combine(targetDir, fileName);
+                var task = new DownloadTask { Url = url, SavePath = fullPath };
+                await session.RunSingleAsync(task, headers: headers);
+                if (extract && fullPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    ZipFile.ExtractToDirectory(fullPath, targetDir, overwriteFiles: true);
+                    File.Delete(fullPath);
+                }
+                session.ReportCompleted();
+            }
+            catch (OperationCanceledException)
+            {
+                session.ReportCancelled();
+            }
+            catch (Exception ex)
+            {
+                session.ReportFailed(ex.Message);
+            }
+            finally
+            {
+                var tmpPath = Path.Combine(targetDir, fileName) + ".qdtmp";
+                try { if (File.Exists(tmpPath)) File.Delete(tmpPath); } catch { }
+            }
         });
     }
 
@@ -641,3 +758,16 @@ public class PluginShellResponse
     public string Stdout { get; set; } = "";
     public string Stderr { get; set; } = "";
 }
+
+public class PluginDownloadStartRequest
+{
+    public string Url { get; set; } = "";
+    public string? TargetPath { get; set; }
+    public string? InstanceId { get; set; }
+    public string? Category { get; set; }
+    public string? FileName { get; set; }
+    public Dictionary<string, string>? Headers { get; set; }
+    public bool Extract { get; set; }
+}
+
+public record PluginDownloadStartResponse(string TaskId, string Status, string TargetPath);
