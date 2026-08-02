@@ -502,9 +502,11 @@ export default function Settings() {
   const [pingLoading, setPingLoading] = useState(false)
   const [modPings, setModPings] = useState<ModSourcePing[]>([])
   const [modPingLoading, setModPingLoading] = useState(false)
-  const { plugins, loading, loadPlugins, setPluginState } = usePluginStore()
+  const { plugins, loading, loadPlugins } = usePluginStore()
   const [pluginsMsg, setPluginsMsg] = useState<string | null>(null)
   const [pluginDetail, setPluginDetail] = useState<PluginInfo | null>(null)
+  const [pluginInstalling, setPluginInstalling] = useState(false)
+  const [pluginQuery, setPluginQuery] = useState('')
 
   useEffect(() => {
     apiLoadSettings().then((s) => {
@@ -540,13 +542,13 @@ export default function Settings() {
   const handlePluginToggle = useCallback(async (id: string, active: boolean) => {
     try {
       await apiSetPluginState(id, active ? 'active' : 'disabled')
-      setPluginState(id, active ? 'active' : 'disabled')
-      setPluginsMsg('更改将在重启 launcher 后生效')
+      await loadPlugins()
+      setPluginsMsg('更改已生效')
       setTimeout(() => setPluginsMsg(null), 3000)
     } catch {
       setPluginsMsg('保存失败')
     }
-  }, [setPluginState])
+  }, [loadPlugins])
 
   const handlePluginUninstall = useCallback(async (id: string) => {
     if (!(await msgConfirm('确定卸载此插件？'))) return
@@ -570,16 +572,26 @@ export default function Settings() {
       if (!file) return
       const form = new FormData()
       form.append('plugin', file)
+      setPluginInstalling(true)
       try {
         const res = await fetch(`${API_BASE}/plugins/upload`, { method: 'POST', body: form })
-        if (!res.ok) throw new Error('Upload failed')
+        if (!res.ok) throw new Error(`Upload failed (${res.status})`)
         setPluginsMsg('插件安装成功')
+        setPluginDetail(null)
         await loadPlugins()
+        notify('插件安装成功', 'success')
       } catch (e) {
         notify('安装失败: ' + (e instanceof Error ? e.message : 'Unknown'), 'error')
+      } finally {
+        setPluginInstalling(false)
       }
     }
     input.click()
+  }
+
+  const handlePluginRefresh = async () => {
+    setPluginsMsg(null)
+    await usePluginStore.getState().rescan()
   }
 
   useEffect(() => {
@@ -1680,9 +1692,20 @@ export default function Settings() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="mb-4 flex flex-wrap items-center gap-2">
                     <span className="text-sm text-muted-foreground">{plugins.length} 个已安装</span>
-                    <Button onClick={handlePluginInstall} size="sm">安装插件</Button>
+                    <div className="ml-auto flex items-center gap-2">
+                      <Input
+                        value={pluginQuery}
+                        onChange={(e) => setPluginQuery(e.target.value)}
+                        placeholder="搜索插件..."
+                        className="h-8 w-52"
+                      />
+                      <Button onClick={handlePluginRefresh} size="sm" variant="outline" disabled={loading}>刷新</Button>
+                      <Button onClick={handlePluginInstall} size="sm" disabled={pluginInstalling}>
+                        {pluginInstalling ? '安装中...' : '安装插件'}
+                      </Button>
+                    </div>
                   </div>
                   {pluginsMsg && (
                     <div className="rounded bg-primary/10 text-primary px-4 py-2 text-sm mb-4">{pluginsMsg}</div>
@@ -1695,10 +1718,15 @@ export default function Settings() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {plugins.map(p => (
-                        <PluginCard key={p.manifest.id} plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} onClick={() => setPluginDetail(p)} />
-                      ))}
+                      {plugins
+                        .filter(p => p.manifest.name.toLowerCase().includes(pluginQuery.trim().toLowerCase()))
+                        .map(p => (
+                          <PluginCard key={p.manifest.id} plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} onClick={() => setPluginDetail(p)} />
+                        ))}
                     </div>
+                  )}
+                  {plugins.length > 0 && plugins.filter(p => p.manifest.name.toLowerCase().includes(pluginQuery.trim().toLowerCase())).length === 0 && (
+                    <p className="text-muted-foreground text-sm text-center py-6">无匹配的插件</p>
                   )}
                 </CardContent>
               </Card>

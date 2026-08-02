@@ -124,7 +124,7 @@ public static class PluginEndpoints
                 return Results.BadRequest("No plugin file uploaded");
 
             using var stream = file.OpenReadStream();
-            var plugin = packageService.InstallFromPackage(stream);
+            var plugin = await packageService.InstallFromPackage(stream);
             if (plugin == null)
                 return Results.BadRequest("Invalid plugin package");
 
@@ -142,11 +142,13 @@ public static class PluginEndpoints
             return Results.Ok(plugin);
         });
 
-        plugins.MapGet("/{id}/files/{*path}", (string id, string path) =>
+        plugins.MapGet("/{id}/files/{*path}", (string id, string path, HttpContext ctx) =>
         {
             var filePath = Path.Combine(AppPaths.PluginsDir, id, path);
             if (!File.Exists(filePath)) return Results.NotFound();
             var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            // 插件资产哈希随版本变化，禁用缓存避免旧 HTML 引用已删资源导致 404
+            ctx.Response.Headers.CacheControl = "no-cache";
             var contentType = ext switch
             {
                 ".css" => "text/css",

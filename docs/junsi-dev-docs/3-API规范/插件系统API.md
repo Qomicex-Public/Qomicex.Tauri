@@ -38,6 +38,8 @@ Response 200:
 }
 ```
 
+**原子安装说明**：后端先解压到同分区临时目录 `.{id}.tmp-*`，再原子替换正式目录（`Directory.Move`）；替换旧目录前对瞬时 `IOException`（如目录刚被占用）自动重试，避免重装同名插件失败。
+
 ### 设置状态
 
 ```
@@ -73,6 +75,11 @@ interface PluginBridge {
   navigate(path: string): void
   showToast(message: string, type?: 'info' | 'error' | 'success'): void
 
+  // 通用系统能力
+  getSystemInfo(): Promise<{ Os: string; Architecture: string; OsName: string; OsVersion: string; OsVersionId: string; OsDisplayName: string; GitCommit: string; Memory: number; AvailableMemory: number }>
+  openUrl(url: string): Promise<void>
+  listPlugins(): Promise<{ id: string; name: string; version: string; status: string }[]>
+
   // 悬浮窗操作
   createOverlay(opts: { title: string; html: string; x?: number; y?: number; width?: number; height?: number; minimizable?: boolean; resizable?: boolean }): string
   showOverlay(id: string): void
@@ -99,6 +106,9 @@ interface PluginBridge {
 | callWasm / listWasmPlugins | wasm:execute |
 | navigate | config:read |
 | showToast | ui:toast |
+| getSystemInfo | system:info |
+| openUrl | system:notification |
+| listPlugins | plugin:list |
 | overlay.* | ui:sub_window |
 
 ### 插件缓存（setCache / getCache）
@@ -117,6 +127,27 @@ if (cached) { /* 使用缓存 */ } else { /* 重新请求并 setCache */ }
 
 - 缓存按插件隔离，只能读写自己插件目录下的缓存文件
 - 内部存储结构 `{ key: { v: 值, e: 过期时间戳|null } }`，无需插件关心
+
+### 通用系统能力（getSystemInfo / openUrl / listPlugins）
+
+供大多数插件使用的通用能力，可直接经插件 API 调用（权限见上方表格）：
+
+- `getSystemInfo()`：读取系统与启动器信息（OS/架构/系统版本/启动器 Git 提交/物理内存等），可做 `minLauncherVersion` 兼容检查
+- `openUrl(url)`：调用系统默认浏览器打开外部链接（`POST /api/system/open-url`）。L2 沙箱内 `window.open` 会被拦截，请使用此方法
+- `listPlugins()`：返回已安装插件列表（id/name/version/status），可用于依赖检测或商店联动
+
+```js
+// 判断启动器是否满足要求
+const info = await __PLUGIN_API__.call('getSystemInfo')
+console.log(info.Os, info.Architecture)
+
+// 打开外链
+await __PLUGIN_API__.call('openUrl', 'https://example.com')
+
+// 检查依赖插件是否已安装
+const plugins = await __PLUGIN_API__.call('listPlugins')
+const hasDep = plugins.some(p => p.id === 'top.qomicex.markdown')
+```
 
 ### CORS 代理（proxyFetch）
 
