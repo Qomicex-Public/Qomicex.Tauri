@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 
 mod dialog_cmd;
@@ -135,9 +135,16 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(BackendChild(Mutex::new(None)))
         .setup(|app| {
-            #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
+                #[cfg(target_os = "windows")]
                 let _ = w.set_decorations(false);
+                let win = w.clone();
+                let emitter = w.clone();
+                win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                        let _ = emitter.emit("file-drop", paths);
+                    }
+                });
             }
             spawn_backend(app);
             let mut runtime = plugin_gateway::loader::PluginRuntime::new().unwrap();

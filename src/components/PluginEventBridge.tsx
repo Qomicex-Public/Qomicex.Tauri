@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { listen } from '@tauri-apps/api/event'
 import { useMessageBox } from './ui'
 import { usePluginStore } from '../stores/pluginStore.ts'
 
@@ -11,6 +12,19 @@ export function PluginEventBridge() {
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const plugins = usePluginStore(s => s.plugins)
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    listen<string[]>('file-drop', (event) => {
+      const paths = event.payload
+      if (!paths?.length) return
+      const registry = (window as any).__pluginRegistry
+      if (registry?.call) {
+        registry.call('top.qomicex.assistant', 'handleFileDrop', [paths]).catch(() => {})
+      }
+    }).then((fn) => { unlisten = fn }).catch(() => {})
+    return () => { unlisten?.() }
+  }, [])
 
   useEffect(() => {
     function handleNavigate(e: Event) {
