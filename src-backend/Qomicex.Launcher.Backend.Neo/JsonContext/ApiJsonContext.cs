@@ -44,6 +44,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(DiagnosticsHealthResponse))]
 [JsonSerializable(typeof(PingResult))]
 [JsonSerializable(typeof(SystemInfoResponse))]
+[JsonSerializable(typeof(CreditInfo))]
+[JsonSerializable(typeof(CoreDependencyInfo))]
 [JsonSerializable(typeof(SettingsResponse))]
 [JsonSerializable(typeof(List<SettingsResponse>))]
 [JsonSerializable(typeof(ScannedVersionEntry))]
@@ -263,10 +265,16 @@ public sealed record HealthResponse(string Status, DateTime Timestamp);
 public sealed record PingResult(bool Ok, long Latency);
 public sealed record DiagnosticsHealthResponse(bool Backend, PingResult Modrinth, PingResult Curseforge);
 
+public sealed record CreditInfo(string Name, string Role);
+
+public sealed record CoreDependencyInfo(string Name, string Version, string License);
+
 public sealed record SystemInfoResponse(
     string Os, string Architecture, string OsName, string OsVersion,
     string OsVersionId, string OsDisplayName, string GitCommit,
-    long Memory, long AvailableMemory);
+    long Memory, long AvailableMemory,
+    string LauncherName, string LauncherVersion, string VersionType,
+    CreditInfo[] Developers, CoreDependencyInfo[] CoreDependencies);
 
 public sealed record AuthRequest(
     string Mode,

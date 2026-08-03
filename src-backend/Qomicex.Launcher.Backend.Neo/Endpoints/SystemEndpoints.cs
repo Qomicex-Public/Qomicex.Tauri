@@ -19,6 +19,40 @@ public static class SystemEndpoints
         .GetCustomAttributes<AssemblyMetadataAttribute>()
         .FirstOrDefault(a => a.Key == "GitHash")?.Value ?? "unknown";
 
+    private static readonly string LauncherVersion =
+        (typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+         ?? typeof(Program).Assembly.GetName().Version?.ToString()
+         ?? "0.0.0").Split('+')[0];
+
+    private static readonly CreditInfo[] Developers =
+    [
+        new("lenmei233", "项目发起人 / 主要开发者"),
+        new("TheMyceliumOfAntan", "项目发起人 / 主要开发者"),
+    ];
+
+    private static readonly CoreDependencyInfo[] CoreDependencies =
+    [
+        new(".NET 10", "10.x", "MIT"),
+        new("ASP.NET Core", "10.x", "MIT"),
+        new("Tauri", "2.x", "MIT"),
+        new("Rust", "—", "MIT / Apache-2.0"),
+        new("Qomicex.Core", "内置", "自研"),
+        new("Qomicex.Connector", "内置", "自研"),
+        new("Qomicex.Downloader", "内置", "自研"),
+    ];
+
+    private static string VersionType()
+    {
+        var iv = typeof(Program).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
+        var lower = iv.ToLower();
+        if (lower.Contains("-alpha")) return "alpha";
+        if (lower.Contains("-beta")) return "beta";
+        if (lower.Contains("-rc")) return "rc";
+        if (lower.Contains("-dev") || lower.Contains("-preview")) return "dev";
+        return "stable";
+    }
+
     private static readonly (int Id, string Name, string Url)[] DownloadSources =
     [
         (0, "官方源", "https://libraries.minecraft.net"),
@@ -116,7 +150,12 @@ public static class SystemEndpoints
                 OsDisplayName: GetOsDisplayName(osName, osDescription),
                 GitCommit: GitHash,
                 Memory: SystemMemoryHelper.GetTotalPhysicalMemory(),
-                AvailableMemory: SystemMemoryHelper.GetAvailablePhysicalMemory()
+                AvailableMemory: SystemMemoryHelper.GetAvailablePhysicalMemory(),
+                LauncherName: "Qomicex Launcher",
+                LauncherVersion: LauncherVersion,
+                VersionType: VersionType(),
+                Developers: Developers,
+                CoreDependencies: CoreDependencies
             ), ApiJsonContext.Default.SystemInfoResponse);
         }
 
