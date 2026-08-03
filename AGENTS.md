@@ -66,6 +66,8 @@ requires `QOMICEX_PAT` secret for submodule checkout. Builds publish backend per
 
 CI 使用 **pnpm**（非 npm）：`pnpm install --frozen-lockfile` 后必须 `pnpm --filter @qomicex/plugin-ui build`（workspace 包需先构建 `dist/`）。`actions/setup-node` 配 `cache: pnpm`，之前需 `pnpm/action-setup@v4`。
 
+Mac 的 Create DMG 步骤必须给 `hdiutil create` 传显式 `-size`（按 `du -sm "$STAGING"` ×1.3 + 64MiB 计算）：`-srcfolder` 自动估算会偏小，嵌入 NativeAOT 后端后镜像内复制到一半报 `No space left on device`（宿主盘其实有空间）。UDZO 压缩会回收多余空间，不影响最终 DMG 大小。
+
 ## Import rules (critical)
 
 All local TS/TSX imports **must include file extensions** — Vite path bug:

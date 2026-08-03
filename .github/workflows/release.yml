@@ -640,7 +640,9 @@ jobs:
           codesign --force --deep --sign - "$APP"
           cp -R "$APP" "$STAGING/"
           ln -s /Applications "$STAGING/Applications"
+          SIZE_MB=$(du -sm "$STAGING" | awk '{printf "%.0f", $1 * 1.3 + 64}')
           hdiutil create -volname "Qomicex Launcher" \
+            -size "${SIZE_MB}m" \
             -srcfolder "$STAGING" \
             -ov -format UDZO \
             "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_$(uname -m).dmg"
@@ -741,7 +743,9 @@ jobs:
           codesign --force --deep --sign - "$APP"
           cp -R "$APP" "$STAGING/"
           ln -s /Applications "$STAGING/Applications"
+          SIZE_MB=$(du -sm "$STAGING" | awk '{printf "%.0f", $1 * 1.3 + 64}')
           hdiutil create -volname "Qomicex Launcher" \
+            -size "${SIZE_MB}m" \
             -srcfolder "$STAGING" \
             -ov -format UDZO \
             "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_x86_64.dmg"
