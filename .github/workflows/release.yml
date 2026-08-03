@@ -904,19 +904,13 @@ jobs:
       CNB_TOKEN: ${{ secrets.CNB_ACCESS_TOKEN }}
       CNB_UPLOAD_ASSETS: ${{ vars.CNB_UPLOAD_ASSETS || 'true' }}
     steps:
-      - name: Install git-cnb (official CNB CLI, latest)
+      - name: Install CNB CLI
         run: |
           set -euo pipefail
-          echo "==> Installing git-cnb (latest)..."
-          CNB_CLI_URL=$(curl -s https://api.github.com/repos/cnb-cool/git-cnb/releases/latest \
-            | jq -r '.assets[] | select(.name=="git-cnb-linux-amd64") | .browser_download_url')
-          if [ -z "$CNB_CLI_URL" ]; then
-            echo "::error::Failed to resolve git-cnb download URL"
-            exit 1
-          fi
-          curl -fL "$CNB_CLI_URL" -o /usr/local/bin/git-cnb
-          chmod +x /usr/local/bin/git-cnb
-          git-cnb version
+          echo "==> Installing CNB CLI (official @cnbcool/cnb-cli)..."
+          npm install -g --prefix "$HOME/.npm-global" @cnbcool/cnb-cli
+          export PATH="$HOME/.npm-global/bin:$PATH"
+          cnb --version
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -980,16 +974,26 @@ jobs:
           echo "✅ Tag pushed to CNB"
 
       - name: Create CNB release
+        id: cnb-release
         run: |
           set -euo pipefail
 
+          if [ -z "$CNB_REPO" ]; then
+            echo "::error::CNB_REPO not configured"
+            exit 1
+          fi
+          case "$CNB_REPO" in
+            */*/*) REPO_SLUG="${CNB_REPO#*/}" ;;
+            *) REPO_SLUG="$CNB_REPO" ;;
+          esac
+
+          TAG="${{ steps.meta.outputs.tag }}"
+
           ARGS=(
-            "--domain" "$CNB_HOST"
-            "--repo" "$CNB_REPO"
-            "release" "create"
-            "-t" "${{ steps.meta.outputs.tag }}"
-            "-n" "Qomicex Launcher ${{ steps.meta.outputs.tag }}"
-            "-b" "$(cat RELEASE_NOTES.md)"
+            "--repo" "$REPO_SLUG"
+            "--tag-name" "$TAG"
+            "--name" "Qomicex Launcher $TAG"
+            "--body-file" "RELEASE_NOTES.md"
           )
 
           if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
@@ -997,7 +1001,17 @@ jobs:
           fi
 
           echo "==> Creating CNB release..."
-          git-cnb "${ARGS[@]}"
+          CREATE_RESP=$(cnb releases post-release --verbose "${ARGS[@]}")
+          RELEASE_ID=$(echo "$CREATE_RESP" | jq -r '.data.id')
+
+          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+            echo "::error::Failed to create CNB release"
+            echo "$CREATE_RESP"
+            exit 1
+          fi
+
+          echo "✅ CNB release created: id=$RELEASE_ID tag=$TAG"
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Upload release assets to CNB
         if: env.CNB_UPLOAD_ASSETS == 'true'
@@ -1005,22 +1019,58 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
+          case "$CNB_REPO" in
+            */*/*) REPO_SLUG="${CNB_REPO#*/}" ;;
+            *) REPO_SLUG="$CNB_REPO" ;;
+          esac
+
+          RELEASE_ID="${{ steps.cnb-release.outputs.release_id }}"
+
           pushd artifacts > /dev/null
           UPLOAD_COUNT=0
           FAILED_COUNT=0
 
           for f in *; do
             [ -f "$f" ] || continue
-            echo "Uploading: $f"
-            if git-cnb \
-              --domain "$CNB_HOST" \
-              --repo "$CNB_REPO" \
-              release asset-upload \
-              -t "${{ steps.meta.outputs.tag }}" \
-              -f "$f"; then
+            NAME=$(basename "$f")
+            SIZE=$(stat -c%s "$f")
+            echo "Uploading: $NAME ($SIZE bytes)"
+
+            if UPLOAD_RESP=$(cnb releases post-release-asset-upload-url --verbose \
+                --repo "$REPO_SLUG" \
+                --release-id "$RELEASE_ID" \
+                --asset-name "$NAME" \
+                --size "$SIZE"); then
+              UPLOAD_URL=$(echo "$UPLOAD_RESP" | jq -r '.data.upload_url')
+              VERIFY_URL=$(echo "$UPLOAD_RESP" | jq -r '.data.verify_url')
+              if [ -z "$UPLOAD_URL" ] || [ "$UPLOAD_URL" = "null" ]; then
+                echo "::error::No upload_url for $NAME: $UPLOAD_RESP"
+                ((FAILED_COUNT++))
+                continue
+              fi
+              if ! curl -f -sS -X PUT \
+                  -H "Content-Type: application/octet-stream" \
+                  --upload-file "$f" "$UPLOAD_URL"; then
+                echo "::error::PUT upload failed for $NAME"
+                ((FAILED_COUNT++))
+                continue
+              fi
+              CONF_PATH=$(echo "$VERIFY_URL" | sed 's|.*/asset-upload-confirmation/||')
+              UPLOAD_TOKEN=$(echo "$CONF_PATH" | cut -d/ -f1)
+              ASSET_PATH=$(echo "$CONF_PATH" | cut -d/ -f2-)
+              if ! cnb releases post-release-asset-upload-confirmation \
+                  --repo "$REPO_SLUG" \
+                  --release-id "$RELEASE_ID" \
+                  --upload-token "$UPLOAD_TOKEN" \
+                  --asset-path "$ASSET_PATH"; then
+                echo "::error::Upload confirmation failed for $NAME"
+                ((FAILED_COUNT++))
+                continue
+              fi
               ((UPLOAD_COUNT++))
+              echo "✅ Uploaded: $NAME"
             else
-              echo "::warning::Failed to upload $f"
+              echo "::warning::Failed to get upload URL for $NAME: $UPLOAD_RESP"
               ((FAILED_COUNT++))
             fi
           done

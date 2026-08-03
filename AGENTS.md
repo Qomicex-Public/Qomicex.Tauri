@@ -68,6 +68,8 @@ CI 使用 **pnpm**（非 npm）：`pnpm install --frozen-lockfile` 后必须 `pn
 
 Mac 的 Create DMG 步骤必须给 `hdiutil create` 传显式 `-size`（按 `du -sm "$STAGING"` ×1.3 + 64MiB 计算）：`-srcfolder` 自动估算会偏小，嵌入 NativeAOT 后端后镜像内复制到一半报 `No space left on device`（宿主盘其实有空间）。UDZO 压缩会回收多余空间，不影响最终 DMG 大小。
 
+`release-cnb` job 用官方 **CNB CLI**：`npm install -g @cnbcool/cnb-cli`（命令 `cnb`）。**不存在 `git-cnb`**（GitHub 无此仓库）。创建 release：`cnb releases post-release --repo <org>/<repo> --tag-name ... --name ... [--prerelease] --body-file ...`（`--verbose` 输出完整 JSON，用 jq 取 `.data.id`）；资产上传是两段式：`cnb releases post-release-asset-upload-url`（取 `.data.upload_url`/`.data.verify_url`）→ `curl -X PUT --upload-file` → `cnb releases post-release-asset-upload-confirmation`（token/path 从 verify_url 最后两段提取）。CNB 需要 `repo-release:rw` 权限。
+
 ## Import rules (critical)
 
 All local TS/TSX imports **must include file extensions** — Vite path bug:
