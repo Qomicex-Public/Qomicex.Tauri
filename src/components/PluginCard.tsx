@@ -21,7 +21,7 @@ export function PluginCard({ plugin, onToggle, onUninstall, onClick }: PluginCar
         onClick={onClick}
       >
         <PluginIcon
-          icon={resolvePluginAssetUrl(plugin.manifest.id, manifest.contributes?.menuItems?.[0]?.icon ?? '')}
+          icon={resolvePluginAssetUrl(plugin.manifest.id, manifest.contributes?.menuItems?.[0]?.icon ?? manifest.icon ?? '')}
           fallback=""
           className="h-5 w-5 text-sm font-semibold text-primary"
         />

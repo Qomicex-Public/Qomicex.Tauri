@@ -60,7 +60,7 @@ import {
   faCcVisa, faCcMastercard, faCcPaypal, faCcStripe, faCcAmex, 
   faBitcoin, faEthereum,
   faTiktok, faInstagram, faFacebook, faWeixin, faZhihu, faQq,
-  faUbuntu, faDebian, faArchLinux, faJava, faPhp, faRust, faSwift,
+  faUbuntu, faDebian, faArchLinux, faJava, faPhp, faRust, faSwift, faMarkdown,
 } from '@fortawesome/free-brands-svg-icons'
 
 const entries: { cls: string; icon: IconDefinition }[] = [
@@ -339,6 +339,7 @@ const entries: { cls: string; icon: IconDefinition }[] = [
   { cls: 'fa-brands fa-cc-stripe', icon: faCcStripe },
   { cls: 'fa-brands fa-cc-amex', icon: faCcAmex },
   { cls: 'fa-brands fa-bitcoin', icon: faBitcoin },
+  { cls: 'fa-brands fa-markdown', icon: faMarkdown },
   { cls: 'fa-brands fa-ethereum', icon: faEthereum },
   { cls: 'fa-brands fa-tiktok', icon: faTiktok },
   { cls: 'fa-brands fa-instagram', icon: faInstagram },

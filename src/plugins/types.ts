@@ -8,6 +8,7 @@ export interface PluginManifest {
   dependencies?: PluginDependency[]
   entry: PluginEntry
   contributes?: PluginContributes
+  icon?: string
 }
 
 export interface PluginDependency {
