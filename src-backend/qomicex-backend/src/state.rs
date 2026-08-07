@@ -62,7 +62,10 @@ impl AppState {
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(embedded_cf_api_key);
-        let microsoft_client_id = std::env::var("MICROSOFT_CLIENT_ID").unwrap_or_default();
+        let microsoft_client_id = std::env::var("MICROSOFT_CLIENT_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(embedded_ms_client_id);
         let global_mirror = if settings_now.download_source == 1 {
             DownloadMirror::Bmclapi
         } else {
@@ -138,6 +141,23 @@ fn embedded_cf_api_key() -> String {
         .and_then(|v| {
             v.get("CurseForge")
                 .and_then(|c| c.get("ApiKey"))
+                .and_then(|k| k.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_default()
+}
+
+/// Fallback Microsoft OAuth client id from the embedded C# `appsettings.json`
+/// `Microsoft:ClientId` (matches the C# `Microsoft:ClientId`, required for the
+/// device-code login flow). Overridable via `MICROSOFT_CLIENT_ID`.
+fn embedded_ms_client_id() -> String {
+    const APP_SETTINGS: &str =
+        include_str!("../../Qomicex.Launcher.Backend.Neo/appsettings.json");
+    serde_json::from_str::<serde_json::Value>(APP_SETTINGS)
+        .ok()
+        .and_then(|v| {
+            v.get("Microsoft")
+                .and_then(|c| c.get("ClientId"))
                 .and_then(|k| k.as_str())
                 .map(String::from)
         })

@@ -76,6 +76,39 @@ struct LoadersQuery {
     r#type: Option<String>,
 }
 
+/// POST /api/instance/{id}/install body (source: InstallerRequest).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallerRequest {
+    #[serde(default)]
+    download_threads: Option<i32>,
+    #[serde(default)]
+    download_source_id: Option<i32>,
+    #[serde(default)]
+    loader: Option<String>,
+    #[serde(default)]
+    loader_version: Option<String>,
+    #[serde(default)]
+    addons: Option<Vec<String>>,
+    #[serde(default)]
+    version_isolation: Option<bool>,
+    #[serde(default)]
+    optifine_version: Option<String>,
+}
+
+/// GET /api/instance/{id}/install/progress response (source: InstallProgressResponse).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallProgressResponse {
+    instance_id: String,
+    status: String,
+    progress: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    total_files: i32,
+    completed_files: i32,
+}
+
 // =====================================================================
 // Router
 // =====================================================================
@@ -96,11 +129,11 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/launch", post(launch_501))
         .route("/instance/{id}/launch/progress", get(launch_progress_501))
         .route("/instance/{id}/launch/cancel", post(launch_cancel_501))
-        .route("/instance/{id}/install", post(install_501))
-        .route("/instance/{id}/install/progress", get(install_progress_501))
-        .route("/instance/{id}/install/pause", post(install_pause_501))
-        .route("/instance/{id}/install/resume", post(install_resume_501))
-        .route("/instance/{id}/install/cancel", post(install_cancel_501))
+        .route("/instance/{id}/install", post(install_instance))
+        .route("/instance/{id}/install/progress", get(install_progress))
+        .route("/instance/{id}/install/pause", post(install_pause))
+        .route("/instance/{id}/install/resume", post(install_resume))
+        .route("/instance/{id}/install/cancel", post(install_cancel))
 }
 
 // =====================================================================
@@ -290,24 +323,103 @@ async fn launch_cancel_501() -> ApiResult<StatusCode> {
     Err(not_implemented("Launch cancel"))
 }
 
-async fn install_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Install"))
+/// POST /api/instance/{id}/install — start an install in the background.
+///
+/// Minimal-but-real (vanilla) path: register an InstallTracker task, then run
+/// `core.version().install_version(instance.name)` (resolves metadata and
+/// downloads the game jar / libraries / assets). Loader install (forge/fabric
+/// etc.) still needs core's installer_factory (pub(crate)); that is recorded
+/// as TODO. Progress is exposed via GET /install/progress and the SSE stream.
+async fn install_instance(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+    Json(_req): Json<InstallerRequest>,
+) -> ApiResult<Json<MessageResponse>> {
+    let instance = state
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| instance_not_found(&instance_id))?;
+    let version_name = instance.name.clone();
+    let core = state.core.clone();
+    let tracker = state.install_tracker.clone();
+
+    tracker.start(instance_id.clone(), "install", move |handle| async move {
+        use crate::services::install_tracker::InstallStatus;
+        handle.set_status(InstallStatus::Installing);
+        handle.set_stage("downloading");
+        match core.version().install_version(&version_name, None).await {
+            Ok(()) => {
+                handle.set_stage("completed");
+                handle.set_status(InstallStatus::Completed);
+                Ok(())
+            }
+            Err(e) => {
+                handle.set_error(e.to_string());
+                handle.set_status(InstallStatus::Failed);
+                Err(e.to_string())
+            }
+        }
+    });
+
+    Ok(Json(MessageResponse {
+        message: format!("Install started for {instance_id}"),
+    }))
 }
 
-async fn install_progress_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Install progress"))
+/// GET /api/instance/{id}/install/progress
+async fn install_progress(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<InstallProgressResponse>> {
+    let p = state.install_tracker.get_state(&instance_id);
+    Ok(Json(match p {
+        Some(p) => InstallProgressResponse {
+            instance_id: p.instance_id,
+            status: p.status,
+            progress: p.progress,
+            error: p.error,
+            total_files: p.total_files,
+            completed_files: p.completed_files,
+        },
+        None => InstallProgressResponse {
+            instance_id: instance_id.clone(),
+            status: "not-started".to_string(),
+            progress: 0.0,
+            error: None,
+            total_files: 0,
+            completed_files: 0,
+        },
+    }))
 }
 
-async fn install_pause_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Install pause"))
+async fn install_pause(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<MessageResponse>> {
+    state.install_tracker.pause(&instance_id);
+    Ok(Json(MessageResponse {
+        message: format!("Install paused for {instance_id}"),
+    }))
 }
 
-async fn install_resume_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Install resume"))
+async fn install_resume(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<MessageResponse>> {
+    state.install_tracker.resume(&instance_id);
+    Ok(Json(MessageResponse {
+        message: format!("Install resumed for {instance_id}"),
+    }))
 }
 
-async fn install_cancel_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Install cancel"))
+async fn install_cancel(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<MessageResponse>> {
+    state.install_tracker.cancel(&instance_id);
+    Ok(Json(MessageResponse {
+        message: format!("Install cancelled for {instance_id}"),
+    }))
 }
 
 // =====================================================================

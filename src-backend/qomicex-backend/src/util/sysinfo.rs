@@ -65,9 +65,10 @@ fn linux_pretty_name() -> Option<String> {
     None
 }
 
-/// 返回 (总物理内存字节, 可用物理内存字节)。
+/// 返回 (总物理内存, 可用物理内存)，单位 **MB**（与 C# SystemMemoryHelper 一致：
+/// 源为字节 / (1024*1024)）。
 pub fn memory() -> (u64, u64) {
     let mut sys = System::new();
     sys.refresh_memory();
-    (sys.total_memory(), sys.available_memory())
+    (sys.total_memory() / (1024 * 1024), sys.available_memory() / (1024 * 1024))
 }
