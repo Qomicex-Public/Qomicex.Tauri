@@ -14,6 +14,7 @@ use qomicex_core::models::download::DownloadMirror;
 use qomicex_downloader::{DownloadManager, DownloadOptions};
 
 use crate::services::account::AccountService;
+use crate::services::install_tracker::InstallTracker;
 use crate::services::instance::InstanceService;
 use crate::services::trace::{LogLevelManager, TraceBufferStore, TraceDumpService};
 use crate::settings;
@@ -45,6 +46,8 @@ pub struct AppState {
     pub trace_dump: Arc<TraceDumpService>,
     /// 日志级别管理（对应 LogLevelManager）。
     pub log_level: Arc<LogLevelManager>,
+    /// 安装任务跟踪（对应 InstallTracker）。
+    pub install_tracker: Arc<InstallTracker>,
 }
 
 impl AppState {
@@ -100,6 +103,8 @@ impl AppState {
             .unwrap_or_else(|| "info".to_string());
         log_level.set_level(saved_log);
 
+        let install_tracker = Arc::new(InstallTracker::new(core.clone()));
+
         Self {
             core,
             download_manager,
@@ -113,6 +118,7 @@ impl AppState {
             trace_buffer,
             trace_dump,
             log_level,
+            install_tracker,
         }
     }
 }
