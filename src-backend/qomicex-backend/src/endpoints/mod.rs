@@ -1,3 +1,5 @@
+pub mod account;
+pub mod auth;
 pub mod instance;
 pub mod instance_files;
 pub mod java;
@@ -5,5 +7,6 @@ pub mod loader;
 pub mod resource;
 pub mod resource_center;
 pub mod resource_download;
+pub mod skin;
 pub mod system;
 pub mod version;

@@ -23,6 +23,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(endpoints::resource_center::router())
         .merge(endpoints::resource_download::router())
         .merge(endpoints::instance_files::router())
+        .merge(endpoints::auth::router())
+        .merge(endpoints::account::router())
+        .merge(endpoints::skin::router())
         .route("/ping", get(|| async { "pong" })); // 通用存活探针
 
     let app = Router::new()
