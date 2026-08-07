@@ -1292,6 +1292,7 @@ dependencies = [
  "futures",
  "hkdf",
  "hmac",
+ "md-5",
  "open",
  "pbkdf2",
  "qomicex-core-rust",

@@ -167,24 +167,79 @@ pub struct MessageResponse {
 // ---------------------------------------------------------------------------
 
 /// POST /api/auth/offline
+///
+/// Offline login does not depend on the (Microsoft-bound) singleton
+/// `core.auth()`. It computes the offline UUID directly (MD5 of
+/// "OfflinePlayer:{name}", v3, 32-hex no-dash — matching the core
+/// OfflineAuthProvider.generate_uuid), then persists the account.
 async fn offline(
     State(state): State<SharedState>,
     Json(req): Json<AuthRequest>,
 ) -> ApiResult<Json<AuthResponse>> {
-    let auth_req = CoreAuthRequest {
-        username: Some(req.username.clone().unwrap_or_else(|| "Player".to_string())),
-        password: None,
-        access_token: None,
-        server_url: None,
-        is_offline: true,
+    let name = req
+        .username
+        .clone()
+        .unwrap_or_else(|| "Player".to_string());
+    let uuid = offline_uuid(&name);
+    let access_token = uuid::Uuid::new_v4().to_string();
+
+    let response = AuthResponse {
+        success: true,
+        username: Some(name.clone()),
+        access_token: Some(access_token.clone()),
+        uuid: Some(uuid.clone()),
+        user_type: Some("legacy".to_string()),
+        error_message: None,
+        refresh_token: None,
+        device_code: None,
+        user_code: None,
+        verification_uri: None,
+        interval: None,
+        expires_in: None,
+        is_pending: None,
     };
-    let result = state
-        .core
-        .auth()
-        .authenticate(auth_req)
-        .await
-        .map_err(map_core_err)?;
-    Ok(Json(to_response(result)))
+
+    // Persist the offline account and make it default when none exists yet.
+    let mut account = StoredAccount {
+        name,
+        uuid: uuid.clone(),
+        token: access_token.clone(),
+        access_token,
+        refresh_token: String::new(),
+        login_method: "Offline".to_string(),
+        last_used: now_unix(),
+        is_default: false,
+        server_url: None,
+    };
+    let _ = state.account.auto_set_default_on_save(&mut account).await;
+
+    Ok(Json(response))
+}
+
+/// Offline UUID: MD5("OfflinePlayer:{name}"), version-nibble 3, 32-hex no dash.
+/// Matches the core OfflineAuthProvider.generate_uuid output.
+fn offline_uuid(name: &str) -> String {
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
+    hasher.update(format!("OfflinePlayer:{name}"));
+    let digest = hasher.finalize();
+    let mut hash = [0u8; 16];
+    hash.copy_from_slice(digest.as_slice());
+    hash[6] = (hash[6] & 0x0f) | 0x30;
+    hash[8] = (hash[8] & 0x3f) | 0x80;
+    let mut s = String::with_capacity(32);
+    use std::fmt::Write as _;
+    for b in hash {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// POST /api/auth/microsoft/device-code

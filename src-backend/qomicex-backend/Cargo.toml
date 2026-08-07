@@ -52,6 +52,7 @@ hkdf = { version = "0.12", optional = true }
 aes-gcm = { version = "0.10", optional = true }
 base64 = { version = "0.22", optional = true }
 winreg = "0.52"
+md-5 = "0.10"
 
 [profile.release]
 lto = true
