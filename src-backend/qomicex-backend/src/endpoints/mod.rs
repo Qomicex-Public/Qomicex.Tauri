@@ -1,12 +1,15 @@
 pub mod account;
+pub mod announcement;
 pub mod auth;
 pub mod instance;
 pub mod instance_files;
 pub mod java;
 pub mod loader;
+pub mod modpack;
 pub mod resource;
 pub mod resource_center;
 pub mod resource_download;
 pub mod skin;
 pub mod system;
+pub mod update;
 pub mod version;
