@@ -58,7 +58,10 @@ impl AppState {
             .unwrap_or_else(|_| PathBuf::from(&settings_now.game_dir));
         let app_version = "1.0.0".to_string();
         let user_agent = format!("Qomicex.Launcher/{}", app_version);
-        let curse_forge_api_key = std::env::var("CURSEFORGE_API_KEY").unwrap_or_default();
+        let curse_forge_api_key = std::env::var("CURSEFORGE_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(embedded_cf_api_key);
         let microsoft_client_id = std::env::var("MICROSOFT_CLIENT_ID").unwrap_or_default();
         let global_mirror = if settings_now.download_source == 1 {
             DownloadMirror::Bmclapi
@@ -121,6 +124,24 @@ impl AppState {
             install_tracker,
         }
     }
+}
+
+/// Fallback CurseForge API key read from the (embedded) C# `appsettings.json`
+/// `CurseForge:ApiKey`, matching the C# backend's configuration source. The
+/// repo-default value is a placeholder that CurseForge rejects; a real key is
+/// injected via `CURSEFORGE_API_KEY` (or by deploying a real appsettings).
+fn embedded_cf_api_key() -> String {
+    const APP_SETTINGS: &str =
+        include_str!("../../Qomicex.Launcher.Backend.Neo/appsettings.json");
+    serde_json::from_str::<serde_json::Value>(APP_SETTINGS)
+        .ok()
+        .and_then(|v| {
+            v.get("CurseForge")
+                .and_then(|c| c.get("ApiKey"))
+                .and_then(|k| k.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_default()
 }
 
 pub type SharedState = Arc<AppState>;
