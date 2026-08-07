@@ -12,6 +12,8 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use qomicex_core::event::ProgressReporter;
+use qomicex_core::models::download::DownloadProgress;
 use qomicex_core::models::installer::ModLoaderType;
 
 use crate::endpoints::loader::LoaderVersionInfo;
@@ -364,7 +366,12 @@ async fn install_instance(
         }
         handle.set_status(InstallStatus::Installing);
         handle.set_stage("downloading");
-        match core.version().install_version(&version_name, None).await {
+        let reporter = InstallProgressReporter(handle.clone());
+        match core
+            .version()
+            .install_version(&version_name, Some(&reporter))
+            .await
+        {
             Ok(()) => {
                 handle.set_stage("completed");
                 handle.set_status(InstallStatus::Completed);
@@ -445,6 +452,38 @@ async fn install_cancel(
 
 fn instance_not_found(id: &str) -> ApiError {
     ApiError::not_found("INSTANCE_NOT_FOUND", format!("Instance {id} not found"))
+}
+
+/// Bridges core's `ProgressReporter` callbacks into the InstallTracker handle so
+/// `install_version` reports live download progress (percentage / current file /
+/// stage) instead of sitting at 0% until the whole install finishes.
+struct InstallProgressReporter(crate::services::install_tracker::InstallHandle);
+
+impl ProgressReporter for InstallProgressReporter {
+    fn report_download(&self, p: DownloadProgress) {
+        if p.file_name.is_empty() {
+            self.0.set_stage("downloading");
+        } else {
+            self.0.set_current_file(&p.file_name);
+        }
+        if p.percentage.is_finite() {
+            self.0.set_progress(p.percentage);
+        }
+    }
+    fn report_install(&self, p: DownloadProgress) {
+        if !p.file_name.is_empty() {
+            self.0.set_current_file(&p.file_name);
+        }
+        if p.percentage.is_finite() {
+            self.0.set_progress(p.percentage);
+        }
+        self.0.set_stage("installing");
+    }
+    fn report_state(&self, phase: &str) {
+        if !phase.is_empty() {
+            self.0.set_stage(phase);
+        }
+    }
 }
 
 /// Detect a loader from a VersionDir-style name when `instance.loader` is unset.
