@@ -106,16 +106,49 @@ fn mpsc_stream(
     })
 }
 
-/// Build the full progress excerpt from the install tracker snapshot.
+/// Build the full progress excerpt from the install tracker + the shared
+/// resource-download registry, mirroring the C# three-channel snapshot.
 fn build_payload(tracker: &InstallTracker) -> ProgressSsePayload {
     let installs = tracker.get_all_active();
-    let total_speed = installs.iter().map(|i| i.speed).sum::<f64>();
-    let active_count = installs.len();
+    let mut total_speed = installs.iter().map(|i| i.speed).sum::<f64>();
+    let mut active_count = installs.len();
+
+    // Resource downloads (qomicex-downloader) mirrored in resource_download's
+    // registry. Without this the download center shows those tasks as stuck
+    // queued (the SSE `resources` array was empty).
+    let resources: Vec<serde_json::Value> = crate::endpoints::resource_download::download_snapshots()
+        .into_iter()
+        .map(|(id, s)| {
+            let progress = if s.total > 0 {
+                (s.downloaded as f64 / s.total as f64) * 100.0
+            } else if s.status == "completed" {
+                100.0
+            } else {
+                0.0
+            };
+            if matches!(s.status.as_str(), "queued" | "downloading" | "paused") {
+                active_count += 1;
+            }
+            serde_json::json!({
+                "sessionId": id.to_string(),
+                "type": "resource",
+                "status": s.status,
+                "stage": s.status,
+                "progress": progress,
+                "speed": 0.0,
+                "currentFile": s.file_name,
+                "error": s.error,
+                "downloadedBytes": s.downloaded,
+                "totalBytes": s.total,
+            })
+        })
+        .collect();
+
     ProgressSsePayload {
         kind: "progress".to_string(),
         installs,
         java_downloads: Vec::new(),
-        resources: Vec::new(),
+        resources,
         summary: ProgressSseSummary {
             active_count,
             total_speed,

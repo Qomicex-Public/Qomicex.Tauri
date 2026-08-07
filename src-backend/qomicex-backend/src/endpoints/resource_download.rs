@@ -96,12 +96,23 @@ struct DownloadToResponse {
 /// background watcher subscribes once and keeps this map up to date so the
 /// progress endpoint can answer without holding per-task subscribers.
 #[derive(Clone)]
-struct TaskSnapshot {
-    status: String,
-    downloaded: u64,
-    total: u64,
-    error: Option<String>,
-    file_name: Option<String>,
+pub(crate) struct TaskSnapshot {
+    pub(crate) status: String,
+    pub(crate) downloaded: u64,
+    pub(crate) total: u64,
+    pub(crate) error: Option<String>,
+    pub(crate) file_name: Option<String>,
+}
+
+/// Snapshot of all tracked download tasks (id -> snapshot), for the progress
+/// SSE stream so the download center reflects live resource-download states.
+pub(crate) fn download_snapshots() -> Vec<(u64, TaskSnapshot)> {
+    task_registry()
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, s)| (*id, s.clone()))
+        .collect()
 }
 
 fn task_registry() -> &'static Mutex<HashMap<TaskId, TaskSnapshot>> {
