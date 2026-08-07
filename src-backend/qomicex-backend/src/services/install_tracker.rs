@@ -343,12 +343,15 @@ impl InstallTracker {
         self.get_handle(instance_id).map(|h| h.snapshot())
     }
 
-    /// 列出全部活动（非终态）任务进度（对应源 `GetAllActiveStates`）。
+    /// 列出全部活动任务进度（对应源 `GetAllActiveStates`）。
+    ///
+    /// ⚠️ 仅剔除 `completed`：failed/cancelled（含 error 消息）仍保留，否则失败任务
+    /// 会从 SSE 消失、前端看不到失败原因。
     pub fn get_all_active(&self) -> Vec<InstallProgress> {
         self.clone_handles()
             .into_iter()
-            .filter(|h| !h.snapshot_terminal())
             .map(|h| h.snapshot())
+            .filter(|p| p.status != "completed")
             .collect()
     }
 

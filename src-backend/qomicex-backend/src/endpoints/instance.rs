@@ -340,11 +340,28 @@ async fn install_instance(
         .get_by_id(&instance_id)
         .ok_or_else(|| instance_not_found(&instance_id))?;
     let version_name = instance.name.clone();
+    // Loader install (forge/fabric/neoforge/...) needs qomicex-core's
+    // installer_factory(), which is `pub(crate)` in the core crate and so
+    // cannot be called from this backend. Vanilla only is supported here.
+    // Existing instances may leave `loader` unset while the name carries a
+    // loader marker (e.g. "1.12.2-Forge_14.23.5.2864"), so also sniff the name.
+    let loader_marker: Option<String> = instance
+        .loader
+        .clone()
+        .or_else(|| detect_loader(&version_name).map(String::from));
     let core = state.core.clone();
     let tracker = state.install_tracker.clone();
 
     tracker.start(instance_id.clone(), "install", move |handle| async move {
         use crate::services::install_tracker::InstallStatus;
+        if let Some(l) = loader_marker {
+            let msg = format!(
+                "加载器安装({l})暂未移植到 Rust 后端：qomicex-core 的 installer_factory 为 pub(crate)，后端无法调用。仅支持纯原版下载。"
+            );
+            handle.set_error(msg.clone());
+            handle.set_status(InstallStatus::Failed);
+            return Err(msg);
+        }
         handle.set_status(InstallStatus::Installing);
         handle.set_stage("downloading");
         match core.version().install_version(&version_name, None).await {
@@ -428,6 +445,34 @@ async fn install_cancel(
 
 fn instance_not_found(id: &str) -> ApiError {
     ApiError::not_found("INSTANCE_NOT_FOUND", format!("Instance {id} not found"))
+}
+
+/// Detect a loader from a VersionDir-style name when `instance.loader` is unset.
+fn detect_loader(name: &str) -> Option<&'static str> {
+    // VersionDir names are `{gameVersion}-{Loader}_{LoaderVersion}` (e.g.
+    // "1.12.2-Forge_14.23.5.2864"), so loaders are followed by '_' not '-'.
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("-forge_") {
+        Some("forge")
+    } else if lower.contains("-neoforge_") {
+        Some("neoforge")
+    } else if lower.contains("-fabric_") {
+        Some("fabric")
+    } else if lower.contains("-quilt_") {
+        Some("quilt")
+    } else if lower.contains("-liteloader_") {
+        Some("liteloader")
+    } else if lower.contains("-optifine_") {
+        Some("optifine")
+    } else if lower.contains("-cleanroom") {
+        Some("cleanroom")
+    } else if lower.contains("-legacyfabric_") {
+        Some("legacyfabric")
+    } else if lower.contains("-babric_") {
+        Some("babric")
+    } else {
+        None
+    }
 }
 
 fn not_implemented(scope: &str) -> ApiError {
