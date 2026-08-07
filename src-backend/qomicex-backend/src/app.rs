@@ -38,9 +38,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     let app = Router::new()
         .nest("/api", api)
+        // fallback must be registered BEFORE .layer() so the CORS middleware
+        // also wraps 404 responses (otherwise cross-origin errors from
+        // unregistered /api/* routes are blocked without CORS headers).
+        .fallback(crate::middleware::not_found::handler)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
-        .fallback(crate::middleware::not_found::handler)
         .with_state(state);
 
     app
