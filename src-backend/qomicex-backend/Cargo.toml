@@ -1,0 +1,33 @@
+[package]
+name = "qomicex-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Qomicex standalone HTTP backend (Rust rewrite of Qomicex.Launcher.Backend.Neo)"
+license = "GPL-3.0"
+
+[[bin]]
+name = "qomicex-backend"
+path = "src/main.rs"
+
+[dependencies]
+qomicex-core = { package = "qomicex-core-rust", path = "../../qomicex-core-rust" }
+qomicex-downloader = { path = "../../qomicex-downloader-rust" }
+
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util", "fs"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sysinfo = "0.30"
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+dirs = "5"
+open = "5"
+
+[profile.release]
+lto = true
