@@ -1,16 +1,18 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo, faGlobe } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo, faGlobe, faShirt } from '@fortawesome/free-solid-svg-icons'
 import { getAccount, deleteAccount } from '../api/account.ts'
-import { getSkinProfile, uploadSkin, resetSkin } from '../api/skin.ts'
+import { getSkinProfile, uploadSkin, resetSkin, getCapeBlobUrl, getMcCapes, getMcCapeImageUrl, equipMcCape, unequipMcCape, invalidateAvatarCache } from '../api/skin.ts'
 import { API_BASE } from '../api/client.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { SkinViewer3D } from '../components/SkinViewer3D.tsx'
+import { CapeManageDialog } from '../components/CapeManageDialog.tsx'
 import { useMessageBox } from '../components/ui'
 import { Button } from '../components/ui'
 import { PageShell } from '../components/PageShell.tsx'
-import type { Account, SkinProfile } from '../types/index.ts'
+import { capeDisplayName } from '../lib/cape-names.ts'
+import type { Account, SkinProfile, McCape } from '../types/index.ts'
 
 export default function AccountDetail() {
   const { uuid } = useParams<{ uuid: string }>()
@@ -20,6 +22,14 @@ export default function AccountDetail() {
   const [profile, setProfile] = useState<SkinProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [showNameTag, setShowNameTag] = useState(true)
+  const [showCape, setShowCape] = useState(true)
+  const [capeUrl, setCapeUrl] = useState<string | null>(null)
+  const [mcCapes, setMcCapes] = useState<McCape[]>([])
+  const [capeImages, setCapeImages] = useState<Map<string, string>>(new Map())
+  const [capeBusy, setCapeBusy] = useState(false)
+  const [capeDialogOpen, setCapeDialogOpen] = useState(false)
+  const [skinVersion, setSkinVersion] = useState(0)
+  const capeImagesRef = useRef<Map<string, string>>(new Map())
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -32,17 +42,92 @@ export default function AccountDetail() {
     }).catch(() => setLoading(false))
   }, [uuid])
 
+  const textureUrl = `${API_BASE}/skin/texture/${uuid}?type=${account?.loginMethod ?? 'Microsoft'}${account?.serverUrl ? `&server=${encodeURIComponent(account.serverUrl)}` : ''}&t=${skinVersion}`
+
+  // 披风图源：非微软 → /skin/cape（profile capeUrl）；微软 → mcCapes 的 ACTIVE 披风裁剪图（见下方）。
+  useEffect(() => {
+    if (!uuid || !account || account.loginMethod === 'Microsoft') return
+    let cancelled = false
+    getCapeBlobUrl(uuid, account.loginMethod, account.serverUrl).then((url) => {
+      if (!cancelled) setCapeUrl(url)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [uuid, account?.loginMethod, account?.serverUrl])
+
+  // 微软披风列表 + 缩略图加载
+  async function loadMcCapes() {
+    if (!uuid || account?.loginMethod !== 'Microsoft') return
+    setCapeBusy(true)
+    try {
+      const capes = await getMcCapes(uuid)
+      setMcCapes(capes)
+      const entries = await Promise.all(
+        capes.map(async (c) => [c.id, await getMcCapeImageUrl(uuid, c.id)] as const),
+      )
+      const next = new Map(entries.filter(([, url]) => url) as [string, string][])
+      for (const url of capeImagesRef.current.values()) URL.revokeObjectURL(url)
+      capeImagesRef.current = next
+      setCapeImages(next)
+    } catch {
+      setMcCapes([])
+    } finally {
+      setCapeBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    loadMcCapes()
+  }, [uuid, account?.loginMethod])
+
+  // 打开披风管理弹窗时刷新披风列表
+  useEffect(() => {
+    if (capeDialogOpen) loadMcCapes()
+  }, [capeDialogOpen])
+
+  // 卸载时释放披风 blob URL
+  useEffect(() => () => {
+    for (const url of capeImagesRef.current.values()) URL.revokeObjectURL(url)
+  }, [])
+
+  // 微软：3D viewer 披风源 = 当前 ACTIVE 披风的裁剪图
+  const activeCape = mcCapes.find((c) => c.state === 'ACTIVE') ?? null
+  useEffect(() => {
+    if (!uuid || !account || account.loginMethod !== 'Microsoft') return
+    setCapeUrl(activeCape ? (capeImages.get(activeCape.id) ?? null) : null)
+  }, [mcCapes, capeImages])
+
+  async function handleCapeToggle(cape: McCape) {
+    if (!uuid || capeBusy) return
+    setCapeBusy(true)
+    try {
+      if (cape.state === 'ACTIVE') {
+        await unequipMcCape(uuid, cape.id)
+        notify('披风已卸下', 'success')
+      } else {
+        await equipMcCape(uuid, cape.id)
+        notify('披风已装备', 'success')
+      }
+      await loadMcCapes()
+    } catch {
+      notify('披风切换失败，请重新登录后重试', 'error')
+    } finally {
+      setCapeBusy(false)
+    }
+  }
+
   async function handleSkinRefresh() {
     if (!uuid) return
+    invalidateAvatarCache()
     const prof = await getSkinProfile(uuid, account?.loginMethod ?? 'Microsoft', account?.serverUrl).catch(() => null)
     setProfile(prof)
+    setSkinVersion((v) => v + 1)
   }
 
   async function handleSkinUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !uuid) return
     try {
-      await uploadSkin(uuid, file)
+      await uploadSkin(uuid, file, account?.loginMethod ?? 'Microsoft', account?.serverUrl, profile?.model ?? null)
       notify('皮肤上传成功', 'success')
       handleSkinRefresh()
     } catch { notify('皮肤上传失败', 'error') }
@@ -54,7 +139,7 @@ export default function AccountDetail() {
     const ok = await msgConfirm('确定要重置为默认皮肤吗？')
     if (!ok) return
     try {
-      await resetSkin(uuid)
+      await resetSkin(uuid, account?.loginMethod ?? 'Microsoft', account?.serverUrl)
       notify('皮肤已重置', 'success')
       handleSkinRefresh()
     } catch { notify('皮肤重置失败', 'error') }
@@ -72,8 +157,6 @@ export default function AccountDetail() {
     return <div className="flex flex-1 h-full items-center justify-center overflow-y-auto text-muted-foreground">加载中...</div>
   }
 
-  const textureUrl = `${API_BASE}/skin/texture/${uuid}?type=${account.loginMethod}${account.serverUrl ? `&server=${encodeURIComponent(account.serverUrl)}` : ''}`
-
   return (
     <PageShell className="space-y-6 p-8 overflow-y-auto scroll-fade-mask">
       <div className="flex items-center gap-3">
@@ -86,13 +169,21 @@ export default function AccountDetail() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1">
             <div className="flex flex-col items-center gap-3 rounded-xl border bg-card p-6">
-              <SkinViewer3D textureUrl={textureUrl} model={profile?.model === 'slim' ? 'slim' : 'classic'} width={280} height={380} className="rounded-lg" name={account.name} showNameTag={showNameTag} panoramaUrl="/panorama.png" />
-              <button onClick={() => setShowNameTag(v => !v)} className={`flex items-center gap-2 text-xs ${showNameTag ? 'text-primary' : 'text-muted-foreground'}`}>
-                <div className={`h-3.5 w-7 rounded-full p-0.5 transition-colors ${showNameTag ? 'bg-primary' : 'bg-input'}`}>
-                  <div className={`h-2.5 w-2.5 rounded-full bg-background transition-transform ${showNameTag ? 'translate-x-3' : ''}`} />
-                </div>
-                显示名称标签
-              </button>
+              <SkinViewer3D textureUrl={textureUrl} model={profile?.model === 'slim' ? 'slim' : 'classic'} width={280} height={380} className="rounded-lg" name={account.name} showNameTag={showNameTag} panoramaUrl="/panorama.png" capeUrl={capeUrl} showCape={showCape} />
+              <div className="flex flex-wrap items-center justify-center gap-4">
+                <button onClick={() => setShowNameTag(v => !v)} className={`flex items-center gap-2 text-xs ${showNameTag ? 'text-primary' : 'text-muted-foreground'}`}>
+                  <div className={`h-3.5 w-7 rounded-full p-0.5 transition-colors ${showNameTag ? 'bg-primary' : 'bg-input'}`}>
+                    <div className={`h-2.5 w-2.5 rounded-full bg-background transition-transform ${showNameTag ? 'translate-x-3' : ''}`} />
+                  </div>
+                  显示名称标签
+                </button>
+                <button onClick={() => setShowCape(v => !v)} disabled={!capeUrl} className={`flex items-center gap-2 text-xs ${showCape && capeUrl ? 'text-primary' : 'text-muted-foreground'} ${!capeUrl ? 'opacity-40' : ''}`}>
+                  <div className={`h-3.5 w-7 rounded-full p-0.5 transition-colors ${showCape && capeUrl ? 'bg-primary' : 'bg-input'}`}>
+                    <div className={`h-2.5 w-2.5 rounded-full bg-background transition-transform ${showCape && capeUrl ? 'translate-x-3' : ''}`} />
+                  </div>
+                  显示披风
+                </button>
+              </div>
             </div>
         </div>
 
@@ -124,12 +215,17 @@ export default function AccountDetail() {
                     <dt className="text-muted-foreground">皮肤模型</dt>
                     <dd>{profile.model === 'slim' ? '纤细 (Slim)' : '经典 (Classic)'}</dd>
                   </div>
-                  {profile.capeUrl && (
+                  {account.loginMethod === 'Microsoft' ? (
+                    <div className="flex justify-between">
+                      <dt className="text-muted-foreground">披风</dt>
+                      <dd>{activeCape ? capeDisplayName(activeCape.id, activeCape.alias) : '无'}</dd>
+                    </div>
+                  ) : profile.capeUrl ? (
                     <div className="flex justify-between">
                       <dt className="text-muted-foreground">披风</dt>
                       <dd>有</dd>
                     </div>
-                  )}
+                  ) : null}
                 </>
               )}
             </dl>
@@ -141,6 +237,9 @@ export default function AccountDetail() {
             </Button>
             {account.loginMethod === 'Microsoft' ? (
               <>
+                <Button variant="outline" size="sm" onClick={() => setCapeDialogOpen(true)}>
+                  <FontAwesomeIcon icon={faShirt} className="mr-1 h-3 w-3" /> 切换披风
+                </Button>
                 <input ref={fileRef} type="file" accept="image/png" className="hidden" onChange={handleSkinUpload} />
                 <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
                   <FontAwesomeIcon icon={faUpload} className="mr-1 h-3 w-3" /> 上传皮肤
@@ -162,6 +261,14 @@ export default function AccountDetail() {
           </div>
         </div>
       </div>
+      <CapeManageDialog
+        open={capeDialogOpen}
+        onClose={() => setCapeDialogOpen(false)}
+        mcCapes={mcCapes}
+        capeImages={capeImages}
+        capeBusy={capeBusy}
+        onToggle={handleCapeToggle}
+      />
     </PageShell>
   )
 }

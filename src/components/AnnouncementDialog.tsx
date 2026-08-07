@@ -10,9 +10,13 @@ interface AnnouncementDialogProps {
   open: boolean
   onClose: () => void
   announcement: Announcement | null
+  onNext?: () => void
+  hasNext?: boolean
+  onPrev?: () => void
+  hasPrev?: boolean
 }
 
-export function AnnouncementDialog({ open, onClose, announcement }: AnnouncementDialogProps) {
+export function AnnouncementDialog({ open, onClose, announcement, onNext, hasNext, onPrev, hasPrev }: AnnouncementDialogProps) {
   if (!announcement) return null
 
   const date = new Date(announcement.createdAt).toLocaleDateString('zh-CN', {
@@ -29,7 +33,7 @@ export function AnnouncementDialog({ open, onClose, announcement }: Announcement
           <p className="mt-1 text-xs text-muted-foreground">{date}</p>
         </div>
       </DialogHeader>
-      <DialogBody>
+      <DialogBody className="max-h-[60vh] overflow-y-auto">
         <article className="prose prose-invert prose-sm max-w-none prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-p:leading-7 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-2 prose-ol:pl-5 prose-li:my-1 prose-strong:text-foreground prose-code:rounded prose-code:bg-background prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-pre:rounded-xl prose-pre:border prose-pre:border-border/60 prose-pre:bg-background prose-a:text-primary hover:prose-a:text-primary/80 prose-blockquote:border-l-primary prose-blockquote:text-muted-foreground break-words">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
             {announcement.content}
@@ -37,6 +41,12 @@ export function AnnouncementDialog({ open, onClose, announcement }: Announcement
         </article>
       </DialogBody>
       <DialogFooter>
+        {hasPrev && onPrev && (
+          <Button variant="secondary" onClick={onPrev}>上一个</Button>
+        )}
+        {hasNext && onNext && (
+          <Button variant="secondary" onClick={onNext}>下一个</Button>
+        )}
         <Button onClick={onClose}>知道了</Button>
       </DialogFooter>
     </Dialog>

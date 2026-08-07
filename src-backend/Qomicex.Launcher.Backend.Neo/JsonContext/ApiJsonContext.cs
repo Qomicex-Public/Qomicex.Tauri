@@ -114,6 +114,8 @@ namespace Qomicex.Launcher.Backend.Neo.JsonContext;
 [JsonSerializable(typeof(List<AccountInfo>))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(SkinProfile))]
+[JsonSerializable(typeof(McCape))]
+[JsonSerializable(typeof(McCapeListResponse))]
 [JsonSerializable(typeof(MicrosoftInfoRequest))]
 [JsonSerializable(typeof(TongyiLoginRequest))]
 [JsonSerializable(typeof(MicrosoftRefreshRequest))]

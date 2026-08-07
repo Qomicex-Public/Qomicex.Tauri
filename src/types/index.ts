@@ -668,3 +668,10 @@ export interface SkinProfile {
   model: string
   skinSource?: string
 }
+
+/** 微软披风（GET /minecraft/profile 的 capes 数组项）。 */
+export interface McCape {
+  id: string
+  state: string
+  alias?: string | null
+}
