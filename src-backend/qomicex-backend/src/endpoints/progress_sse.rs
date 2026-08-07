@@ -1,0 +1,124 @@
+//! Progress SSE endpoint (maps to Endpoints/ProgressSseEndpoints.cs).
+//!
+//! Route: `/progress/stream` (mounted under `/api` => `/api/progress/stream`).
+//! Streams a JSON payload excerpt: current active install tasks plus a summary.
+//!
+//! Scope notes (this batch):
+//! - Install items come from `state.install_tracker` (`InstallTracker::get_all_active`).
+//! - Java download tasks (`JavaDownloadService`) and resource download sessions
+//!   (`DownloadSessionManager`) are not yet exposed on `SharedState`, so
+//!   `javaDownloads` / `resources` are emitted as empty lists (TODO: push those
+//!   services onto state and fill them in to match the source contract).
+//!
+//! Dependencies used:
+//! - `axum::response::sse` (requires axum `sse` feature -- NOT enabled in Cargo.toml).
+//! - `futures::stream::unfold` (requires `futures` as a *direct* dependency --
+//!   present only transitively today, not directly usable).
+
+use std::convert::Infallible;
+use std::time::Duration;
+
+use axum::extract::State;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::Router;
+use serde::Serialize;
+use tokio::sync::{broadcast, mpsc};
+
+use crate::error::ApiResult;
+use crate::services::install_tracker::{InstallProgress, InstallTracker};
+use crate::state::SharedState;
+
+/// SSE JSON payload (matches source `ProgressSsePayload`).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressSsePayload {
+    #[serde(rename = "type")]
+    kind: String,
+    installs: Vec<InstallProgress>,
+    java_downloads: Vec<serde_json::Value>,
+    resources: Vec<serde_json::Value>,
+    summary: ProgressSseSummary,
+}
+
+/// Summary of the stream excerpt (matches source `ProgressSseSummary`).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressSseSummary {
+    active_count: usize,
+    total_speed: f64,
+}
+
+const POLL_INTERVAL: Duration = Duration::from_millis(300);
+
+pub fn router() -> Router<SharedState> {
+    Router::new().route("/progress/stream", get(progress_sse))
+}
+
+/// Streaming SSE handler: emits `data: <json>` on install progress events or on
+/// a periodic poll, mirroring the source's 300ms loop while also reacting
+/// promptly to broadcast updates. On disconnect or broadcast channel close the
+/// stream ends and the response is dropped.
+async fn progress_sse(State(state): State<SharedState>) -> ApiResult<impl IntoResponse> {
+    let tracker = state.install_tracker.clone();
+    let mut rx = tracker.subscribe();
+    let (tx, channel_rx) = mpsc::channel::<Option<Result<Event, Infallible>>>(64);
+
+    tokio::spawn(async move {
+        loop {
+            let tick = tokio::select! {
+                r = rx.recv() => Some(r),
+                _ = tokio::time::sleep(POLL_INTERVAL) => None,
+            };
+            // Closed channel means no more broadcasts; end the stream.
+            if matches!(tick, Some(Err(broadcast::error::RecvError::Closed))) {
+                break;
+            }
+            let payload = build_payload(&tracker);
+            let json = match serde_json::to_string(&payload) {
+                Ok(j) => j,
+                Err(_) => continue,
+            };
+            let event = Event::default().data(json);
+            if tx.send(Some(Ok(event))).await.is_err() {
+                break;
+            }
+        }
+        let _ = tx.send(None).await;
+    });
+
+    let stream = mpsc_stream(channel_rx);
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// Turn the mpsc channel of optional events into an SSE `Stream`.
+///
+/// `None` (sent from the worker after broadcast close or channel drop) ends the stream.
+fn mpsc_stream(
+    mut rx: mpsc::Receiver<Option<Result<Event, Infallible>>>,
+) -> impl futures::stream::Stream<Item = Result<Event, Infallible>> + Send + 'static {
+    futures::stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Some(Some(item)) => Some((item, rx)),
+            Some(None) | None => None,
+        }
+    })
+}
+
+/// Build the full progress excerpt from the install tracker snapshot.
+fn build_payload(tracker: &InstallTracker) -> ProgressSsePayload {
+    let installs = tracker.get_all_active();
+    let total_speed = installs.iter().map(|i| i.speed).sum::<f64>();
+    let active_count = installs.len();
+    ProgressSsePayload {
+        kind: "progress".to_string(),
+        installs,
+        java_downloads: Vec::new(),
+        resources: Vec::new(),
+        summary: ProgressSseSummary {
+            active_count,
+            total_speed,
+        },
+    }
+}

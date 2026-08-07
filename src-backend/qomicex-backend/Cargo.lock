@@ -1076,6 +1076,7 @@ dependencies = [
  "axum",
  "chrono",
  "dirs",
+ "futures",
  "open",
  "qomicex-core-rust",
  "qomicex-downloader",
