@@ -14,6 +14,7 @@ pub mod system;
 pub mod update;
 pub mod version;
 pub mod launch;
+pub mod license;
 pub mod log;
 pub mod mcmod;
 pub mod progress_sse;

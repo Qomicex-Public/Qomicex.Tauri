@@ -1,3 +1,16 @@
+[features]
+default = []
+# Mirrors the C# LICENSE_REQUIRED build flag: only when enabled is the closed
+# license core (Ed25519 verify + remote check) compiled in.
+license-required = [
+  "dep:ed25519-dalek",
+  "dep:hmac",
+  "dep:pbkdf2",
+  "dep:hkdf",
+  "dep:aes-gcm",
+  "dep:base64",
+]
+
 [package]
 name = "qomicex-backend"
 version = "0.1.0"
@@ -29,6 +42,16 @@ thiserror = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "5"
 open = "5"
+
+# --- License core (only when feature `license-required` is enabled) ---
+ed25519-dalek = { version = "2", optional = true }
+sha2 = "0.10"
+hmac = { version = "0.12", optional = true }
+pbkdf2 = { version = "0.12", optional = true }
+hkdf = { version = "0.12", optional = true }
+aes-gcm = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+winreg = "0.52"
 
 [profile.release]
 lto = true

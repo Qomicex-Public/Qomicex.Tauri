@@ -32,6 +32,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(endpoints::log::router())
         .merge(endpoints::mcmod::router())
         .merge(endpoints::launch::router())
+        .merge(endpoints::license::router())
         .merge(endpoints::progress_sse::router())
         .route("/ping", get(|| async { "pong" })); // 通用存活探针
 
