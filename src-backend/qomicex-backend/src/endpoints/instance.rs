@@ -12,9 +12,11 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use qomicex_core::api::version::VersionLocator;
 use qomicex_core::event::ProgressReporter;
 use qomicex_core::models::download::DownloadProgress;
 use qomicex_core::models::installer::ModLoaderType;
+use qomicex_downloader::{DownloadEvent, DownloadManager, DownloadTask, TaskId, TaskState};
 
 use crate::endpoints::loader::LoaderVersionInfo;
 use crate::error::{ApiError, ApiResult};
@@ -351,8 +353,10 @@ async fn install_instance(
         .loader
         .clone()
         .or_else(|| detect_loader(&version_name).map(String::from));
+    let game_dir = instance.game_dir.clone();
     let core = state.core.clone();
     let tracker = state.install_tracker.clone();
+    let mgr = state.download_manager.clone();
 
     tracker.start(instance_id.clone(), "install", move |handle| async move {
         use crate::services::install_tracker::InstallStatus;
@@ -365,24 +369,136 @@ async fn install_instance(
             return Err(msg);
         }
         handle.set_status(InstallStatus::Installing);
-        handle.set_stage("downloading");
-        let reporter = InstallProgressReporter(handle.clone());
-        match core
-            .version()
-            .install_version(&version_name, Some(&reporter))
-            .await
-        {
-            Ok(()) => {
-                handle.set_stage("completed");
-                handle.set_status(InstallStatus::Completed);
-                Ok(())
-            }
+        handle.set_stage("resolving");
+
+        // Resolve metadata (also writes version.json locally), then enumerate
+        // the missing files and hand them to qomicex-downloader's DownloadManager
+        // so pause / resume / cancel / retry actually apply.
+        let meta = match core.version().get_version_metadata(&version_name).await {
+            Ok(m) => m,
             Err(e) => {
                 handle.set_error(e.to_string());
                 handle.set_status(InstallStatus::Failed);
-                Err(e.to_string())
+                return Err(e.to_string());
+            }
+        };
+        let missing = match core.locator().get_miss_files(&meta).await {
+            Ok(list) => list,
+            Err(e) => {
+                handle.set_error(e.to_string());
+                handle.set_status(InstallStatus::Failed);
+                return Err(e.to_string());
+            }
+        };
+
+        handle.set_stage("downloading");
+        if missing.is_empty() {
+            handle.set_stage("completed");
+            handle.set_status(InstallStatus::Completed);
+            return Ok(());
+        }
+
+        let game_root = std::path::PathBuf::from(&game_dir);
+        let ids: Vec<TaskId> = missing
+            .iter()
+            .map(|f| {
+                let dest = game_root.join(&f.path);
+                if let Some(parent) = dest.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                // Retry + resume are baked into the DownloadManager engine.
+                mgr.add(DownloadTask::new(f.url.clone(), dest))
+            })
+            .collect();
+        let total = ids.len() as u64;
+        let id_set: std::collections::HashSet<u64> = ids.iter().copied().collect();
+
+        // Drive progress from DownloadManager events; honor pause/cancel by
+        // translating them into DownloadManager.pause/cancel on every task.
+        let mut done_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut failed: Option<String> = None;
+        let mut byte_dl: u64 = 0;
+        let mut byte_tot: u64 = 0;
+        let mut paused_now = false;
+        let mut rx = mgr.subscribe();
+
+        loop {
+            // Apply pause/cancel signal changes to the downloader.
+            if handle.is_cancelled() {
+                for id in &ids {
+                    let _ = mgr.cancel(*id).await;
+                }
+                handle.set_status(InstallStatus::Cancelled);
+                handle.set_stage("cancelled");
+                return Ok(());
+            }
+            if handle.is_paused() && !paused_now {
+                paused_now = true;
+                for id in &ids {
+                    let _ = mgr.pause(*id).await;
+                }
+            } else if !handle.is_paused() && paused_now {
+                paused_now = false;
+                for id in &ids {
+                    let _ = mgr.resume(*id).await;
+                }
+            }
+
+            tokio::select! {
+                ev = rx.recv() => match ev {
+                    Ok(DownloadEvent::Progress { id, downloaded, total, .. }) => {
+                        if id_set.contains(&id) {
+                            byte_dl += downloaded as u64;
+                            byte_tot = byte_tot.max(total as u64);
+                        }
+                    }
+                    Ok(DownloadEvent::StateChanged { id, state, .. }) => {
+                        if id_set.contains(&id) {
+                            match state {
+                                TaskState::Completed => { done_ids.insert(id); }
+                                TaskState::Failed => {
+                                    if failed.is_none() {
+                                        let done = done_ids.len();
+                                        failed = Some(format!("部分文件下载失败 (已完成 {done}/{total} 项)"));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Err(_) | Ok(_) => {}
+                },
+                _ = tokio::time::sleep(std::time::Duration::from_millis(300)) => {}
+            }
+
+            let done = done_ids.len() as u64;
+            let pct = if byte_tot > 0 && done < total {
+                (byte_dl as f64 / byte_tot.max(byte_dl) as f64) * 100.0
+            } else if done >= total {
+                100.0
+            } else {
+                0.0
+            };
+            handle.update(|f| {
+                f.progress = pct.min(100.0).max(0.0);
+                f.total_files = total as i32;
+                f.completed_files = done as i32;
+                f.stage = if paused_now { "paused".to_string() } else { "downloading".to_string() };
+            });
+
+            if done >= total {
+                break;
             }
         }
+
+        if let Some(err) = failed {
+            handle.set_error(err.clone());
+            handle.set_status(InstallStatus::Failed);
+            return Err(err);
+        }
+        handle.set_stage("completed");
+        handle.set_status(InstallStatus::Completed);
+        Ok(())
     });
 
     Ok(Json(MessageResponse {
@@ -455,33 +571,79 @@ fn instance_not_found(id: &str) -> ApiError {
 }
 
 /// Bridges core's `ProgressReporter` callbacks into the InstallTracker handle so
-/// `install_version` reports live download progress (percentage / current file /
-/// stage) instead of sitting at 0% until the whole install finishes.
-struct InstallProgressReporter(crate::services::install_tracker::InstallHandle);
+/// `install_version` reports live download progress.
+///
+/// Core's `DownloadProgress.percentage` is PER-CURRENT-FILE (0..100), which
+/// would make the overall bar bounce per file. Instead we aggregate across all
+/// seen files by byte totals so the overall percentage is monotonic, and we
+/// surface speed + completed-file count.
+struct InstallProgressReporter {
+    handle: crate::services::install_tracker::InstallHandle,
+    /// file_name -> (downloaded_bytes, total_bytes) latest snapshot per file.
+    files: std::sync::Mutex<std::collections::HashMap<String, (i64, i64)>>,
+}
+
+impl InstallProgressReporter {
+    fn new(handle: crate::services::install_tracker::InstallHandle) -> Self {
+        Self {
+            handle,
+            files: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Aggregate byte progress across all reported files and write to handle.
+    fn aggregate(&self, p: &DownloadProgress, stage: &str) {
+        {
+            let mut files = self.files.lock().unwrap();
+            let cur = files
+                .entry(p.file_name.clone())
+                .or_insert((0, p.total_bytes));
+            cur.0 = cur.0.max(p.downloaded_bytes);
+            if p.total_bytes > 0 {
+                cur.1 = p.total_bytes;
+            }
+        }
+        let (sum_dl, sum_tot, completed) = {
+            let files = self.files.lock().unwrap();
+            let mut dl = 0i64;
+            let mut tot = 0i64;
+            let mut done = 0usize;
+            for (_, (d, t)) in files.iter() {
+                dl += *d;
+                tot += t.max(d);
+                if *t > 0 && *d >= *t {
+                    done += 1;
+                }
+            }
+            (dl, tot, done)
+        };
+        let pct = if sum_tot > 0 {
+            (sum_dl as f64 / sum_tot as f64) * 100.0
+        } else {
+            0.0
+        };
+        self.handle.update(|f| {
+            f.progress = pct.min(100.0).max(0.0);
+            if !p.file_name.is_empty() {
+                f.current_file = p.file_name.clone();
+            }
+            f.speed = p.speed_bytes_per_second.max(0) as f64;
+            f.completed_files = completed as i32;
+            f.stage = stage.to_string();
+        });
+    }
+}
 
 impl ProgressReporter for InstallProgressReporter {
     fn report_download(&self, p: DownloadProgress) {
-        if p.file_name.is_empty() {
-            self.0.set_stage("downloading");
-        } else {
-            self.0.set_current_file(&p.file_name);
-        }
-        if p.percentage.is_finite() {
-            self.0.set_progress(p.percentage);
-        }
+        self.aggregate(&p, "downloading");
     }
     fn report_install(&self, p: DownloadProgress) {
-        if !p.file_name.is_empty() {
-            self.0.set_current_file(&p.file_name);
-        }
-        if p.percentage.is_finite() {
-            self.0.set_progress(p.percentage);
-        }
-        self.0.set_stage("installing");
+        self.aggregate(&p, "installing");
     }
     fn report_state(&self, phase: &str) {
         if !phase.is_empty() {
-            self.0.set_stage(phase);
+            self.handle.set_stage(phase);
         }
     }
 }
