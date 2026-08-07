@@ -1,6 +1,9 @@
 pub mod instance;
+pub mod instance_files;
 pub mod java;
 pub mod loader;
 pub mod resource;
+pub mod resource_center;
+pub mod resource_download;
 pub mod system;
 pub mod version;
