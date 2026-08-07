@@ -417,8 +417,10 @@ async fn install_instance(
         // translating them into DownloadManager.pause/cancel on every task.
         let mut done_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
         let mut failed: Option<String> = None;
-        let mut byte_dl: u64 = 0;
-        let mut byte_tot: u64 = 0;
+        // Per-task current (downloaded,total) bytes — summed, NOT accumulated
+        // across events (each Progress event carries the task's cumulative
+        // bytes, so adding them would double-count and blow past 100%).
+        let mut prog: std::collections::HashMap<u64, (u64, u64)> = std::collections::HashMap::new();
         let mut paused_now = false;
         let mut rx = mgr.subscribe();
 
@@ -448,14 +450,26 @@ async fn install_instance(
                 ev = rx.recv() => match ev {
                     Ok(DownloadEvent::Progress { id, downloaded, total, .. }) => {
                         if id_set.contains(&id) {
-                            byte_dl += downloaded as u64;
-                            byte_tot = byte_tot.max(total as u64);
+                            let e = prog.entry(id).or_insert((0, 0));
+                            e.0 = downloaded as u64;
+                            if total > 0 {
+                                e.1 = total as u64;
+                            }
+                            e.1 = e.1.max(e.0);
                         }
                     }
                     Ok(DownloadEvent::StateChanged { id, state, .. }) => {
                         if id_set.contains(&id) {
                             match state {
-                                TaskState::Completed => { done_ids.insert(id); }
+                                TaskState::Completed => {
+                                    done_ids.insert(id);
+                                    // Mark fully downloaded so the byte sum counts it.
+                                    if let Some(e) = prog.get_mut(&id) {
+                                        if e.1 > 0 {
+                                            e.0 = e.1;
+                                        }
+                                    }
+                                }
                                 TaskState::Failed => {
                                     if failed.is_none() {
                                         let done = done_ids.len();
@@ -472,10 +486,19 @@ async fn install_instance(
             }
 
             let done = done_ids.len() as u64;
-            let pct = if byte_tot > 0 && done < total {
-                (byte_dl as f64 / byte_tot.max(byte_dl) as f64) * 100.0
-            } else if done >= total {
+            let (sum_dl, sum_tot) = {
+                let mut dl = 0u64;
+                let mut tot = 0u64;
+                for (d, t) in prog.values() {
+                    dl += *d;
+                    tot += t.max(d);
+                }
+                (dl, tot)
+            };
+            let pct = if done >= total {
                 100.0
+            } else if sum_tot > 0 {
+                (sum_dl as f64 / sum_tot as f64) * 100.0
             } else {
                 0.0
             };
