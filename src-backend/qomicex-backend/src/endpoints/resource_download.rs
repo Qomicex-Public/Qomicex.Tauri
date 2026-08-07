@@ -68,6 +68,8 @@ struct DownloadProgressResponse {
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +101,7 @@ struct TaskSnapshot {
     downloaded: u64,
     total: u64,
     error: Option<String>,
+    file_name: Option<String>,
 }
 
 fn task_registry() -> &'static Mutex<HashMap<TaskId, TaskSnapshot>> {
@@ -176,6 +179,7 @@ fn build_progress(task_id: TaskId) -> Json<DownloadProgressResponse> {
                 total_bytes: s.total,
                 status: s.status,
                 error: s.error,
+                file_name: s.file_name,
             })
         }
         // Unknown id: report not_found. The background watcher mirrors
@@ -189,6 +193,7 @@ fn build_progress(task_id: TaskId) -> Json<DownloadProgressResponse> {
             total_bytes: 0,
             status: "not_found".to_string(),
             error: None,
+            file_name: None,
         }),
     }
 }
@@ -272,6 +277,7 @@ async fn start(
                 downloaded: 0,
                 total: 0,
                 error: None,
+                file_name: Some(file_name.clone()),
             },
         );
     }
@@ -319,6 +325,7 @@ async fn download_to(
                 downloaded: 0,
                 total: 0,
                 error: None,
+                file_name: Some(file_name.clone()),
             },
         );
     }
