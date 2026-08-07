@@ -21,6 +21,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest("/api", api)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+        .fallback(crate::middleware::not_found::handler)
         .with_state(state);
 
     app

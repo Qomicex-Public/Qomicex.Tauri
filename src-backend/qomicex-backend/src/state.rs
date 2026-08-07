@@ -13,6 +13,9 @@ use qomicex_core::core::GameCore;
 use qomicex_core::models::download::DownloadMirror;
 use qomicex_downloader::{DownloadManager, DownloadOptions};
 
+use crate::services::account::AccountService;
+use crate::services::instance::InstanceService;
+use crate::services::trace::{LogLevelManager, TraceBufferStore, TraceDumpService};
 use crate::settings;
 
 pub const DEFAULT_PORT: u16 = 5000;
@@ -32,6 +35,16 @@ pub struct AppState {
     pub user_agent: String,
     /// 启动器版本号（major.minor.build）。
     pub app_version: String,
+    /// 游戏实例服务（对应 Program.cs 的 InstanceService）。
+    pub instance: Arc<InstanceService>,
+    /// 账号持久化服务（对应 AccountService）。
+    pub account: Arc<AccountService>,
+    /// 内存 trace 缓冲（对应 TraceBufferStore，容量 2000）。
+    pub trace_buffer: Arc<TraceBufferStore>,
+    /// trace 落盘服务（对应 TraceDumpService）。
+    pub trace_dump: Arc<TraceDumpService>,
+    /// 日志级别管理（对应 LogLevelManager）。
+    pub log_level: Arc<LogLevelManager>,
 }
 
 impl AppState {
@@ -73,6 +86,20 @@ impl AppState {
         // 下载管理器（对应 DownloadSessionManagerBuilder 的核心参数）。
         let download_manager = Arc::new(DownloadManager::new(DownloadOptions::default(), 64));
 
+        // 共享后端服务（对应 Program.cs 中 Singleton 注册）。
+        let instance = Arc::new(InstanceService::new());
+        let account = Arc::new(AccountService::new().unwrap_or_default());
+        let trace_buffer = Arc::new(TraceBufferStore::default());
+        let trace_dump = Arc::new(TraceDumpService::new(trace_buffer.clone()));
+
+        // 启动时套用已保存的日志级别（对应 Program.cs 中 levelManager.SetLevel）。
+        let log_level = Arc::new(LogLevelManager::default());
+        let saved_log = settings_now
+            .log_level
+            .clone()
+            .unwrap_or_else(|| "info".to_string());
+        log_level.set_level(saved_log);
+
         Self {
             core,
             download_manager,
@@ -81,6 +108,11 @@ impl AppState {
             http_client,
             user_agent,
             app_version,
+            instance,
+            account,
+            trace_buffer,
+            trace_dump,
+            log_level,
         }
     }
 }

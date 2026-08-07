@@ -1,7 +1,9 @@
 mod app;
 mod endpoints;
 mod error;
+mod middleware;
 mod models;
+mod services;
 mod settings;
 mod state;
 mod util;
