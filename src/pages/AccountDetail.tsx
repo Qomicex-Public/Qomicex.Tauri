@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo, faGlobe, faShirt } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo, faGlobe, faDownload, faShirt } from '@fortawesome/free-solid-svg-icons'
 import { getAccount, deleteAccount } from '../api/account.ts'
 import { getSkinProfile, uploadSkin, resetSkin, getCapeBlobUrl, getMcCapes, getMcCapeImageUrl, equipMcCape, unequipMcCape, invalidateAvatarCache } from '../api/skin.ts'
 import { API_BASE } from '../api/client.ts'
@@ -145,6 +145,23 @@ export default function AccountDetail() {
     } catch { notify('皮肤重置失败', 'error') }
   }
 
+  async function handleSkinDownload() {
+    if (!uuid) return
+    try {
+      const resp = await fetch(`${textureUrl}&download=1`)
+      if (!resp.ok) throw new Error('下载失败')
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${account?.name ?? uuid}.png`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch { notify('皮肤下载失败', 'error') }
+  }
+
   async function handleDelete() {
     if (!uuid) return
     const ok = await msgConfirm('确定要删除此账户吗？')
@@ -181,8 +198,13 @@ export default function AccountDetail() {
                   <div className={`h-3.5 w-7 rounded-full p-0.5 transition-colors ${showCape && capeUrl ? 'bg-primary' : 'bg-input'}`}>
                     <div className={`h-2.5 w-2.5 rounded-full bg-background transition-transform ${showCape && capeUrl ? 'translate-x-3' : ''}`} />
                   </div>
-                  显示披风
+                   显示披风
                 </button>
+                <Button variant="ghost" size="sm" onClick={handleSkinDownload} className="text-xs">
+                  <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />
+                  下载皮肤
+                </Button>
+
               </div>
             </div>
         </div>

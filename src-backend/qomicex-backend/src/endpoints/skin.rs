@@ -187,6 +187,85 @@ impl SkinService {
         resp.bytes().await.ok().map(|b| b.to_vec())
     }
 
+    // ---- Real skin upload / reset (source: UploadSkinAsync / ResetSkinAsync) ----
+
+    /// Upload the skin to the official Minecraft services API (Microsoft).
+    async fn upload_skin_to_ms(&self, token: &str, data: &[u8], is_slim: bool) -> ApiResult<()> {
+        let form = reqwest::multipart::Form::new()
+            .text("variant", if is_slim { "slim" } else { "classic" })
+            .part("file", part_from_bytes(data));
+        let resp = self
+            .http
+            .post("https://api.minecraftservices.com/minecraft/profile/skins")
+            .bearer_auth(token)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        check_upload_response(code, &body, "SKIN_UPLOAD_FAILED")
+    }
+
+    /// Reset the skin via the official API (Microsoft).
+    async fn reset_skin_ms(&self, token: &str) -> ApiResult<()> {
+        let resp = self
+            .http
+            .delete("https://api.minecraftservices.com/minecraft/profile/skins/active")
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        check_upload_response(code, &body, "SKIN_RESET_FAILED")
+    }
+
+    /// Upload the skin to a Yggdrasil-compatible server.
+    async fn upload_skin_to_ygg(
+        &self,
+        token: &str,
+        server_url: &str,
+        uuid: &str,
+        data: &[u8],
+        is_slim: bool,
+    ) -> ApiResult<()> {
+        let form = reqwest::multipart::Form::new()
+            .text("model", if is_slim { "slim" } else { "" })
+            .part("file", part_from_bytes(data));
+        let url = format!(
+            "{}/api/user/profile/{}/skin",
+            server_url.trim_end_matches('/'),
+            uuid.replace('-', "")
+        );
+        let resp = self
+            .http
+            .put(&url)
+            .bearer_auth(token)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        check_upload_response(code, &body, "SKIN_UPLOAD_FAILED")
+    }
+
+    /// Reset the skin on a Yggdrasil-compatible server.
+    async fn reset_skin_ygg(&self, token: &str, server_url: &str, uuid: &str) -> ApiResult<()> {
+        let url = format!(
+            "{}/api/user/profile/{}/skin",
+            server_url.trim_end_matches('/'),
+            uuid.replace('-', "")
+        );
+        let resp = self
+            .http
+            .delete(&url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        check_upload_response(code, &body, "SKIN_RESET_FAILED")
+    }
+
     // ---- Microsoft cape management (api.minecraftservices.com) ----
 
     /// Authenticated GET to the Minecraft services API.
@@ -387,55 +466,108 @@ async fn profile(
     Ok(Json(profile))
 }
 
-/// GET /api/skin/texture/{uuid}?type=&server= (source: MapGet /texture).
+/// GET /api/skin/texture/{uuid}?type=&server=&download= (source: MapGet /texture).
+///
+/// When `download=1`, the response carries `Content-Disposition: attachment`
+/// so the browser saves the skin PNG ("另存为") instead of rendering it inline.
 async fn texture(
     State(state): State<SharedState>,
     AxumPath(uuid): AxumPath<String>,
     Query(query): Query<SkinQuery>,
 ) -> ApiResult<Response> {
     let svc = SkinService::new(state.http_client.clone());
+    let download = query.download.as_deref() == Some("1");
 
-    if let Some(bytes) = svc.get_local_skin(&uuid) {
-        return Ok(png_response(bytes));
-    }
-
-    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
-    if login == "Offline" {
-        return Ok(png_response(SkinService::default_skin_bytes().to_vec()));
-    }
-
-    if let Some(profile) = svc.fetch_profile(&uuid, &login, query.server.as_deref()).await {
-        if !profile.skin_url.is_empty() {
-            if let Some(data) = svc.download_skin(&profile.skin_url).await {
-                return Ok(png_response(data));
+    let bytes = if let Some(bytes) = svc.get_local_skin(&uuid) {
+        bytes
+    } else {
+        let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+        if login == "Offline" {
+            SkinService::default_skin_bytes().to_vec()
+        } else if let Some(profile) = svc.fetch_profile(&uuid, &login, query.server.as_deref()).await {
+            if !profile.skin_url.is_empty() {
+                if let Some(data) = svc.download_skin(&profile.skin_url).await {
+                    data
+                } else {
+                    SkinService::default_skin_bytes().to_vec()
+                }
+            } else {
+                SkinService::default_skin_bytes().to_vec()
             }
+        } else {
+            SkinService::default_skin_bytes().to_vec()
         }
-    }
-    Ok(png_response(SkinService::default_skin_bytes().to_vec()))
+    };
+
+    Ok(skin_response(bytes, download))
 }
 
-/// POST /api/skin/upload/{uuid} (source: MapPost /upload).
+/// POST /api/skin/upload/{uuid}?type=&server=&model= (source: MapPost /upload).
+///
+/// Microsoft / Yggdrasil accounts upload to the official API (real, aligned
+/// with C# UploadSkinAsync); Offline accounts save locally.
 async fn upload(
     State(state): State<SharedState>,
     AxumPath(uuid): AxumPath<String>,
+    Query(query): Query<SkinUploadQuery>,
     body: Bytes,
 ) -> ApiResult<Json<MessageResponse>> {
     let data = extract_file_field(&body, "file")
         .filter(|d| !d.is_empty())
         .ok_or_else(|| ApiError::bad_request("NO_FILE_UPLOADED", "No file uploaded"))?;
+    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+    let is_slim = query.model.as_deref() == Some("slim");
     let svc = SkinService::new(state.http_client.clone());
-    svc.save_skin(&uuid, &data);
+
+    match login.as_str() {
+        "Microsoft" => {
+            let token = mc_token(&state, &uuid).await?;
+            svc.upload_skin_to_ms(&token, &data, is_slim).await?;
+            svc.delete_skin(&uuid);
+        }
+        "Yggdrasil" | "统一通行证" => {
+            let server = query.server.clone().unwrap_or_default();
+            if server.trim().is_empty() {
+                return Err(ApiError::bad_request("MISSING_SERVER", "missing server for Yggdrasil upload"));
+            }
+            let token = account_token(&state, &uuid).await?;
+            svc.upload_skin_to_ygg(&token, &server, &uuid, &data, is_slim)
+                .await?;
+            svc.delete_skin(&uuid);
+        }
+        _ => {
+            svc.save_skin(&uuid, &data);
+        }
+    }
     Ok(Json(MessageResponse {
         message: "Skin uploaded".to_string(),
     }))
 }
 
-/// DELETE /api/skin/upload/{uuid} (source: MapDelete /upload).
+/// DELETE /api/skin/upload/{uuid}?type=&server= (source: MapDelete /upload).
 async fn reset_upload(
     State(state): State<SharedState>,
     AxumPath(uuid): AxumPath<String>,
+    Query(query): Query<SkinUploadQuery>,
 ) -> ApiResult<Json<MessageResponse>> {
+    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
     let svc = SkinService::new(state.http_client.clone());
+
+    match login.as_str() {
+        "Microsoft" => {
+            let token = mc_token(&state, &uuid).await?;
+            svc.reset_skin_ms(&token).await?;
+        }
+        "Yggdrasil" | "统一通行证" => {
+            let server = query.server.clone().unwrap_or_default();
+            if server.trim().is_empty() {
+                return Err(ApiError::bad_request("MISSING_SERVER", "missing server for Yggdrasil reset"));
+            }
+            let token = account_token(&state, &uuid).await?;
+            svc.reset_skin_ygg(&token, &server, &uuid).await?;
+        }
+        _ => {}
+    }
     svc.delete_skin(&uuid);
     Ok(Json(MessageResponse {
         message: "Skin reset to default".to_string(),
@@ -536,6 +668,24 @@ async fn mc_token(state: &SharedState, uuid: &str) -> ApiResult<String> {
     Ok(account.access_token)
 }
 
+/// Resolve a generic stored account's access token (source: GetAccountTokenAsync).
+async fn account_token(state: &SharedState, uuid: &str) -> ApiResult<String> {
+    let account: StoredAccount = state
+        .account
+        .get_account(uuid)
+        .await?
+        .ok_or_else(|| ApiError::not_found("ACCOUNT_NOT_FOUND", "account not found"))?;
+    if account.access_token.is_empty() {
+        return Err(ApiError {
+            code: "TOKEN_EXPIRED".to_string(),
+            message: "access token missing, please re-login".to_string(),
+            detail: None,
+            status: StatusCode::UNAUTHORIZED,
+        });
+    }
+    Ok(account.access_token)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -545,6 +695,15 @@ struct SkinQuery {
     #[serde(rename = "type")]
     r#type: Option<String>,
     server: Option<String>,
+    download: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SkinUploadQuery {
+    #[serde(rename = "type")]
+    r#type: Option<String>,
+    server: Option<String>,
+    model: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -598,6 +757,17 @@ impl Default for SkinProfile {
 /// Build a `image/png` response from raw bytes.
 fn png_response(bytes: Vec<u8>) -> Response {
     (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], bytes).into_response()
+}
+
+/// Build a `image/png` response, optionally forcing a file download ("另存为").
+fn skin_response(bytes: Vec<u8>, download: bool) -> Response {
+    let mut resp = png_response(bytes);
+    if download {
+        if let Ok(val) = header::HeaderValue::from_str("attachment; filename=\"skin.png\"") {
+            resp.headers_mut().insert(header::CONTENT_DISPOSITION, val);
+        }
+    }
+    resp
 }
 
 /// `{BaseDir}/QML/skins` (source: SkinService.SkinDir).
@@ -658,6 +828,36 @@ fn find_slice(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
         .windows(needle.len())
         .position(|w| w == needle)
         .map(|i| i + from)
+}
+
+/// Build a `Part` carrying skin PNG bytes.
+fn part_from_bytes(data: &[u8]) -> reqwest::multipart::Part {
+    reqwest::multipart::Part::bytes(data.to_vec())
+        .file_name("skin.png")
+        .mime_str("image/png")
+        .unwrap_or_else(|_| reqwest::multipart::Part::bytes(data.to_vec()).file_name("skin.png"))
+}
+
+/// Validate a skin upload/reset HTTP response (source: inline C# handling).
+fn check_upload_response(code: u16, body: &str, fail_code: &str) -> ApiResult<()> {
+    if code == 401 {
+        return Err(ApiError {
+            code: "TOKEN_EXPIRED".to_string(),
+            message: "token expired or invalid, please re-login".to_string(),
+            detail: None,
+            status: StatusCode::UNAUTHORIZED,
+        });
+    }
+    if code < 200 || code >= 300 {
+        let truncated = if body.len() > 200 { &body[..200] } else { body }.to_string();
+        return Err(ApiError {
+            code: fail_code.to_string(),
+            message: format!("skin operation failed ({code}): {truncated}"),
+            detail: None,
+            status: StatusCode::BAD_GATEWAY,
+        });
+    }
+    Ok(())
 }
 
 /// Decode a standard (RFC 4648) base64 string to bytes.
