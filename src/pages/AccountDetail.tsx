@@ -10,7 +10,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { SkinViewer3D } from '../components/SkinViewer3D.tsx'
 import { CapeManageDialog } from '../components/CapeManageDialog.tsx'
 import { useMessageBox } from '../components/ui'
-import { Button } from '../components/ui'
+import { Button, Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui'
 import { PageShell } from '../components/PageShell.tsx'
 import { capeDisplayName } from '../lib/cape-names.ts'
 import type { Account, SkinProfile, McCape } from '../types/index.ts'
@@ -30,7 +30,8 @@ export default function AccountDetail() {
   const [capeBusy, setCapeBusy] = useState(false)
   const [capeDialogOpen, setCapeDialogOpen] = useState(false)
   const [skinVersion, setSkinVersion] = useState(0)
-  const [skinModel, setSkinModel] = useState<'slim' | 'classic'>('classic')
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [modelDialogOpen, setModelDialogOpen] = useState(false)
   const capeImagesRef = useRef<Map<string, string>>(new Map())
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -128,12 +129,20 @@ export default function AccountDetail() {
   async function handleSkinUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !uuid) return
+    setPendingFile(file)
+    setModelDialogOpen(true)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  async function confirmUploadSkin(model: 'slim' | 'classic') {
+    if (!pendingFile || !uuid) return
+    setModelDialogOpen(false)
     try {
-      await uploadSkin(uuid, file, account?.loginMethod ?? 'Microsoft', account?.serverUrl, skinModel)
+      await uploadSkin(uuid, pendingFile, account?.loginMethod ?? 'Microsoft', account?.serverUrl, model)
       notify('皮肤上传成功', 'success')
       handleSkinRefresh()
     } catch { notify('皮肤上传失败', 'error') }
-    if (fileRef.current) fileRef.current.value = ''
+    setPendingFile(null)
   }
 
   async function handleSkinReset() {
@@ -273,21 +282,24 @@ export default function AccountDetail() {
                 <Button variant="outline" size="sm" onClick={() => setCapeDialogOpen(true)}>
                   <FontAwesomeIcon icon={faShirt} className="mr-1 h-3 w-3" /> 切换披风
                 </Button>
-                <div className="flex items-center gap-1 rounded-md border bg-input/50 px-2 py-1 text-xs">
-                  <span className="text-muted-foreground">手臂模型</span>
-                  <button
-                    onClick={() => setSkinModel('classic')}
-                    className={`rounded px-1.5 py-0.5 ${skinModel === 'classic' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
-                  >经典</button>
-                  <button
-                    onClick={() => setSkinModel('slim')}
-                    className={`rounded px-1.5 py-0.5 ${skinModel === 'slim' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
-                  >纤细</button>
-                </div>
                 <input ref={fileRef} type="file" accept="image/png" className="hidden" onChange={handleSkinUpload} />
                 <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
                   <FontAwesomeIcon icon={faUpload} className="mr-1 h-3 w-3" /> 上传皮肤
                 </Button>
+                <Dialog open={modelDialogOpen} onClose={() => setModelDialogOpen(false)} className="max-w-sm">
+                  <DialogHeader onClose={() => setModelDialogOpen(false)}>
+                    <DialogTitle>选择手臂模型</DialogTitle>
+                  </DialogHeader>
+                  <DialogBody>
+                    {pendingFile && (
+                      <img src={URL.createObjectURL(pendingFile)} alt="皮肤预览" className="mx-auto h-28 w-28 object-contain rounded-md border" />
+                    )}
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <Button variant="outline" onClick={() => confirmUploadSkin('classic')}>经典手臂</Button>
+                      <Button variant="outline" onClick={() => confirmUploadSkin('slim')}>纤细手臂</Button>
+                    </div>
+                  </DialogBody>
+                </Dialog>
                 {profile?.skinSource === 'local' && (
                   <Button variant="outline" size="sm" onClick={handleSkinReset}>
                     <FontAwesomeIcon icon={faUndo} className="mr-1 h-3 w-3" /> 重置皮肤
