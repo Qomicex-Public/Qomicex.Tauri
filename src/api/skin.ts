@@ -51,6 +51,15 @@ export async function uploadSkin(uuid: string, file: File, type: string, server?
   if (!resp.ok) throw new Error('上传失败')
 }
 
+export async function saveSkinTo(uuid: string, path: string, type: string, server?: string | null): Promise<void> {
+  const resp = await fetch(`${API_BASE}/skin/save-to`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, uuid, type, server }),
+  })
+  if (!resp.ok) throw new Error('保存失败')
+}
+
 export async function resetSkin(uuid: string, type: string, server?: string | null): Promise<void> {
   const params = new URLSearchParams({ type })
   if (server) params.set('server', server)

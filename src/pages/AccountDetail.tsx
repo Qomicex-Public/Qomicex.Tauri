@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo, faGlobe, faDownload, faShirt } from '@fortawesome/free-solid-svg-icons'
 import { getAccount, deleteAccount } from '../api/account.ts'
-import { getSkinProfile, uploadSkin, resetSkin, getCapeBlobUrl, getMcCapes, getMcCapeImageUrl, equipMcCape, unequipMcCape, invalidateAvatarCache } from '../api/skin.ts'
+import { getSkinProfile, uploadSkin, resetSkin, saveSkinTo, getCapeBlobUrl, getMcCapes, getMcCapeImageUrl, equipMcCape, unequipMcCape, invalidateAvatarCache } from '../api/skin.ts'
+import { save } from '@tauri-apps/plugin-dialog'
 import { API_BASE } from '../api/client.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { SkinViewer3D } from '../components/SkinViewer3D.tsx'
@@ -147,6 +148,14 @@ export default function AccountDetail() {
 
   async function handleSkinDownload() {
     if (!uuid) return
+    try {
+      // Desktop (Tauri): native "另存为" dialog, backend writes the file.
+      const dest = await save({ defaultPath: `${account?.name ?? uuid}.png`, filters: [{ name: 'PNG', extensions: ['png'] }] })
+      if (!dest) return
+      await saveSkinTo(uuid, dest, account?.loginMethod ?? 'Microsoft', account?.serverUrl)
+      notify(`皮肤已保存到 ${dest}`, 'success')
+      return
+    } catch { /* not in Tauri — fall back to browser download */ }
     try {
       const resp = await fetch(`${textureUrl}&download=1`)
       if (!resp.ok) throw new Error('下载失败')

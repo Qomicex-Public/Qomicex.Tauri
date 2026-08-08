@@ -187,6 +187,24 @@ impl SkinService {
         resp.bytes().await.ok().map(|b| b.to_vec())
     }
 
+    /// Resolve the effective skin bytes: local override -> remote -> default.
+    async fn resolve_skin_bytes(&self, uuid: &str, login: &str, server: Option<&str>) -> Vec<u8> {
+        if let Some(bytes) = self.get_local_skin(uuid) {
+            return bytes;
+        }
+        if login == "Offline" {
+            return Self::default_skin_bytes().to_vec();
+        }
+        if let Some(profile) = self.fetch_profile(uuid, login, server).await {
+            if !profile.skin_url.is_empty() {
+                if let Some(data) = self.download_skin(&profile.skin_url).await {
+                    return data;
+                }
+            }
+        }
+        Self::default_skin_bytes().to_vec()
+    }
+
     // ---- Real skin upload / reset (source: UploadSkinAsync / ResetSkinAsync) ----
 
     /// Upload the skin to the official Minecraft services API (Microsoft).
@@ -442,6 +460,7 @@ pub fn router() -> Router<SharedState> {
         .route("/skin/mc-capes/{uuid}", get(mc_capes))
         .route("/skin/mc-cape/{uuid}/{capeId}", get(mc_cape))
         .route("/skin/mc-capes/{uuid}/{capeId}", put(equip_cape).delete(unequip_cape))
+        .route("/skin/save-to", post(save_to))
 }
 
 // ---------------------------------------------------------------------------
@@ -477,29 +496,36 @@ async fn texture(
 ) -> ApiResult<Response> {
     let svc = SkinService::new(state.http_client.clone());
     let download = query.download.as_deref() == Some("1");
-
-    let bytes = if let Some(bytes) = svc.get_local_skin(&uuid) {
-        bytes
-    } else {
-        let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
-        if login == "Offline" {
-            SkinService::default_skin_bytes().to_vec()
-        } else if let Some(profile) = svc.fetch_profile(&uuid, &login, query.server.as_deref()).await {
-            if !profile.skin_url.is_empty() {
-                if let Some(data) = svc.download_skin(&profile.skin_url).await {
-                    data
-                } else {
-                    SkinService::default_skin_bytes().to_vec()
-                }
-            } else {
-                SkinService::default_skin_bytes().to_vec()
-            }
-        } else {
-            SkinService::default_skin_bytes().to_vec()
-        }
-    };
-
+    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+    let bytes = svc
+        .resolve_skin_bytes(&uuid, &login, query.server.as_deref())
+        .await;
     Ok(skin_response(bytes, download))
+}
+
+/// POST /api/skin/save-to (desktop "另存为" flow).
+///
+/// Resolves the skin bytes then writes them to a user-chosen path (from the
+/// Tauri save dialog). Mirrors the existing `/logs/export-to` pattern so the
+/// skin can be saved anywhere without the browser-blocked save-as dialog.
+async fn save_to(
+    State(state): State<SharedState>,
+    Json(req): Json<SaveToRequest>,
+) -> ApiResult<Json<MessageResponse>> {
+    if req.path.trim().is_empty() {
+        return Err(ApiError::bad_request("INVALID_PATH", "path is required"));
+    }
+    let svc = SkinService::new(state.http_client.clone());
+    let login = req.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+    let bytes = svc.resolve_skin_bytes(&req.uuid, &login, req.server.as_deref()).await;
+    let path = std::path::Path::new(&req.path);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(path, &bytes).map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(Json(MessageResponse {
+        message: format!("Skin saved to {}", req.path),
+    }))
 }
 
 /// POST /api/skin/upload/{uuid}?type=&server=&model= (source: MapPost /upload).
@@ -704,6 +730,16 @@ struct SkinUploadQuery {
     r#type: Option<String>,
     server: Option<String>,
     model: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveToRequest {
+    path: String,
+    uuid: String,
+    #[serde(rename = "type")]
+    r#type: Option<String>,
+    server: Option<String>,
 }
 
 #[derive(Serialize)]
