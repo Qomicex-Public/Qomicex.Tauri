@@ -68,6 +68,9 @@ stderr.txt
 .superpowers/
 .superpods/
 
+# Memory (agent session/decision store, local only)
+.memory/
+
 # Agent/skill config (local, not project files)
 .firecrawl/
 .agents/
