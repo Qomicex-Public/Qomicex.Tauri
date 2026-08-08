@@ -801,9 +801,10 @@ fn is_private_address(ip: IpAddr) -> bool {
             if b[0] == 192 && b[1] == 0 {
                 return true; // 192.0.0.0/24 + 192.0.2.0/24
             }
-            if b[0] == 198 && (b[1] == 18 || b[1] == 19) {
-                return true; // 198.18.0.0/15
-            }
+            // NOTE: 198.18.0.0/15 (RFC 2544 CEN benchmark) is intentionally NOT
+            // blocked — Clash/Surge fake-ip pools resolve every public hostname
+            // into 198.18.x.x, so blocking it breaks proxyFetch for all users
+            // behind a proxy tool.
             if b[0] == 198 && b[1] == 51 {
                 return true; // 198.51.100.0/24
             }
@@ -1427,3 +1428,44 @@ fn b64_decode(s: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.decode(s).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    fn is_private(s: &str) -> bool {
+        let ip: IpAddr = s.parse().unwrap();
+        is_private_address(ip)
+    }
+
+    #[test]
+    fn private_ranges_are_blocked() {
+        assert!(is_private("127.0.0.1"));
+        assert!(is_private("10.0.0.1"));
+        assert!(is_private("172.16.0.1"));
+        assert!(is_private("172.31.255.255"));
+        assert!(is_private("192.168.1.1"));
+        assert!(is_private("169.254.169.254"));
+        assert!(is_private("0.0.0.1"));
+        assert!(is_private("100.64.0.1"));
+        assert!(is_private("::1"));
+        assert!(is_private("fc00::1"));
+    }
+
+    #[test]
+    fn proxy_fake_ip_is_allowed() {
+        // Clash/Surge fake-ip pools resolve public hostnames into 198.18.0.0/15.
+        assert!(!is_private("198.18.0.87"));
+        assert!(!is_private("198.19.255.255"));
+    }
+
+    #[test]
+    fn public_addresses_are_allowed() {
+        assert!(!is_private("1.1.1.1"));
+        assert!(!is_private("8.8.8.8"));
+        assert!(!is_private("114.114.114.114"));
+        assert!(!is_private("2606:4700:4700::1111"));
+    }
+}
+
