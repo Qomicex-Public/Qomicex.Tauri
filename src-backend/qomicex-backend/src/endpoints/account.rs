@@ -16,7 +16,7 @@
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 

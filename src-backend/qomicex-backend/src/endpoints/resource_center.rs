@@ -137,6 +137,7 @@ struct TranslateResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TranslateTextRequest {
+    #[allow(dead_code)]
     text: String,
 }
 
@@ -213,8 +214,10 @@ struct TranslateQuery {
 #[serde(rename_all = "camelCase")]
 struct StartFetchQuery {
     #[serde(default)]
+    #[allow(dead_code)]
     game_version: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     loader: Option<String>,
 }
 
@@ -936,7 +939,7 @@ async fn dependencies(
 
 async fn versions_start_fetch(
     State(_state): State<SharedState>,
-    AxumPath(id): AxumPath<String>,
+    AxumPath(_id): AxumPath<String>,
     Query(_q): Query<StartFetchQuery>,
 ) -> ApiResult<Response> {
     // TODO: back CurseForgeVersionFetchService once ported. Stub as not implemented.
@@ -1515,7 +1518,7 @@ fn resolve_cf_deps<'a>(
         .and_then(|v| v.as_str())
         .unwrap_or(mod_id)
         .to_string();
-    let slug = mod_data
+    let _slug = mod_data
         .and_then(|d| d.get("slug"))
         .and_then(|v| v.as_str())
         .unwrap_or(mod_id)

@@ -37,6 +37,7 @@ pub fn license_file_path() -> PathBuf {
 }
 
 /// `machineCode + "-qomicex-license"`
+#[cfg(feature = "license-required")]
 pub fn license_password(machine_code: &str) -> String {
     format!("{machine_code}-qomicex-license")
 }

@@ -299,6 +299,7 @@ async fn uninstall_version(
 
 #[derive(Deserialize)]
 struct RemoteQuery {
+    #[allow(dead_code)]
     source: Option<i32>,
 }
 

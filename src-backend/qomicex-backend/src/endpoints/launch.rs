@@ -7,7 +7,6 @@
 //! prefix is `/api/launch`.
 
 use axum::extract::{Path as AxumPath, State};
-use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::Deserialize;

@@ -89,12 +89,6 @@ impl Default for GameInstance {
     }
 }
 
-impl GameInstance {
-    pub fn default_instance() -> Self {
-        Self::default()
-    }
-}
-
 /// 生成 12 位十六进制短 id（对应 C# `Guid.NewGuid().ToString("N")[..12]`）。
 fn new_short_id() -> String {
     let full = format!("{:x}", uuid::Uuid::new_v4());

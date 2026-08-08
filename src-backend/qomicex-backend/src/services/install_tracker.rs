@@ -15,6 +15,7 @@
 //! `"not-started"/"queued"/"installing"/"need_download"/"downloading"/"extracting"/"finishing"`
 //! `"completed"/"failed"/"cancelled"`。为便于类型化书写，提供 `InstallStatus` 枚举与其字符串互转，
 //! 但对外 DTO `InstallProgress.status` 仍是字符串以保持契约一致。
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
