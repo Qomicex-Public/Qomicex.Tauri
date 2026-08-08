@@ -14,20 +14,31 @@
 //! which is kept as a string literal below, not in a comment). Skin caching
 //! across processes is not kept in memory; only the result DTO is returned.
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{ApiError, ApiResult};
+use crate::services::account::StoredAccount;
 use crate::state::SharedState;
+
+/// Microsoft profile response cache TTL (C#: 30s), keyed by access token.
+const MC_PROFILE_TTL: Duration = Duration::from_secs(30);
+
+static MC_PROFILE_CACHE: OnceLock<Mutex<HashMap<String, (Instant, Value)>>> = OnceLock::new();
+fn mc_profile_cache() -> &'static Mutex<HashMap<String, (Instant, Value)>> {
+    MC_PROFILE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Default skin bytes: the real Mojang Alex.png (64x32), embedded from the C#
 /// backend's Resources/Alex.png (same blob the C# backend ships).
@@ -175,6 +186,168 @@ impl SkinService {
         }
         resp.bytes().await.ok().map(|b| b.to_vec())
     }
+
+    // ---- Microsoft cape management (api.minecraftservices.com) ----
+
+    /// Authenticated GET to the Minecraft services API.
+    async fn mc_api_get(&self, url: &str, token: &str) -> ApiResult<Value> {
+        let resp = self
+            .http
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        Self::mc_response_or_throw(code, &body)
+    }
+
+    /// Authenticated POST/PUT/DELETE to the Minecraft services API.
+    async fn mc_api_send(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        token: &str,
+        json_body: Option<&str>,
+    ) -> ApiResult<Option<Value>> {
+        let mut req = self.http.request(method, url).bearer_auth(token);
+        if let Some(body) = json_body {
+            req = req
+                .header("Content-Type", "application/json")
+                .body(body.to_string());
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        if body.trim().is_empty() {
+            Self::mc_response_or_throw(code, "{}")?;
+            return Ok(None);
+        }
+        Ok(Some(Self::mc_response_or_throw(code, &body)?))
+    }
+
+    /// Map a Minecraft services HTTP response, mirroring the C# helper.
+    fn mc_response_or_throw(code: u16, body: &str) -> ApiResult<Value> {
+        if code == 401 {
+            return Err(ApiError {
+                code: "TOKEN_EXPIRED".to_string(),
+                message: "microsoft token expired or invalid, please re-login".to_string(),
+                detail: None,
+                status: StatusCode::UNAUTHORIZED,
+            });
+        }
+        if code < 200 || code >= 300 {
+            let truncated = if body.len() > 200 { &body[..200] } else { body }.to_string();
+            return Err(ApiError {
+                code: "MC_API_ERROR".to_string(),
+                message: format!("minecraftservices API {code}: {truncated}"),
+                detail: None,
+                status: StatusCode::BAD_GATEWAY,
+            });
+        }
+        serde_json::from_str(body).map_err(|_| ApiError {
+            code: "MC_API_ERROR".to_string(),
+            message: "unparseable minecraftservices response".to_string(),
+            detail: None,
+            status: StatusCode::BAD_GATEWAY,
+        })
+    }
+
+    /// Fetch + cache (30s) the Microsoft profile (source: McProfileAsync).
+    async fn mc_profile(&self, token: &str) -> ApiResult<Value> {
+        {
+            let guard = mc_profile_cache().lock().unwrap();
+            if let Some((ts, doc)) = guard.get(token) {
+                if ts.elapsed() < MC_PROFILE_TTL {
+                    return Ok(doc.clone());
+                }
+            }
+        }
+        let doc = self
+            .mc_api_get("https://api.minecraftservices.com/minecraft/profile", token)
+            .await?;
+        if let Ok(mut guard) = mc_profile_cache().lock() {
+            guard.insert(token.to_string(), (Instant::now(), doc.clone()));
+        }
+        Ok(doc)
+    }
+
+    fn clear_mc_profile_cache(token: &str) {
+        if let Ok(mut guard) = mc_profile_cache().lock() {
+            guard.remove(token);
+        }
+    }
+
+    /// List the account's Microsoft capes (source: GetMcCapesAsync).
+    async fn get_mc_capes(&self, token: &str) -> ApiResult<Vec<McCape>> {
+        let doc = self.mc_profile(token).await?;
+        let mut capes = Vec::new();
+        if let Some(list) = doc.get("capes").and_then(Value::as_array) {
+            for c in list {
+                let id = c.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                if id.is_empty() {
+                    continue;
+                }
+                capes.push(McCape {
+                    id,
+                    state: c
+                        .get("state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("INACTIVE")
+                        .to_string(),
+                    alias: c.get("alias").and_then(Value::as_str).map(String::from),
+                });
+            }
+        }
+        Ok(capes)
+    }
+
+    /// Download a specific Microsoft cape PNG (None if not available).
+    async fn download_mc_cape(&self, token: &str, cape_id: &str) -> ApiResult<Option<Vec<u8>>> {
+        let doc = self.mc_profile(token).await?;
+        let mut url: Option<String> = None;
+        if let Some(list) = doc.get("capes").and_then(Value::as_array) {
+            for c in list {
+                if c.get("id").and_then(Value::as_str) == Some(cape_id) {
+                    url = c.get("url").and_then(Value::as_str).map(String::from);
+                    break;
+                }
+            }
+        }
+        match url {
+            Some(u) if !u.is_empty() => Ok(self.download_skin(&u).await),
+            _ => Ok(None),
+        }
+    }
+
+    /// Equip a Microsoft cape.
+    async fn equip_mc_cape(&self, token: &str, cape_id: &str) -> ApiResult<()> {
+        let body = format!("{{\"capeId\":\"{cape_id}\"}}");
+        self.mc_api_send(
+            reqwest::Method::PUT,
+            "https://api.minecraftservices.com/minecraft/profile/capes/active",
+            token,
+            Some(&body),
+        )
+        .await?;
+        Self::clear_mc_profile_cache(token);
+        Ok(())
+    }
+
+    /// Unequip the active Microsoft cape.
+    async fn unequip_mc_cape(&self, token: &str) -> ApiResult<()> {
+        self.mc_api_send(
+            reqwest::Method::DELETE,
+            "https://api.minecraftservices.com/minecraft/profile/capes/active",
+            token,
+            None,
+        )
+        .await?;
+        Self::clear_mc_profile_cache(token);
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +359,10 @@ pub fn router() -> Router<SharedState> {
         .route("/skin/profile/{uuid}", get(profile))
         .route("/skin/texture/{uuid}", get(texture))
         .route("/skin/upload/{uuid}", post(upload).delete(reset_upload))
+        .route("/skin/cape/{uuid}", get(cape))
+        .route("/skin/mc-capes/{uuid}", get(mc_capes))
+        .route("/skin/mc-cape/{uuid}/{capeId}", get(mc_cape))
+        .route("/skin/mc-capes/{uuid}/{capeId}", put(equip_cape).delete(unequip_cape))
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +442,100 @@ async fn reset_upload(
     }))
 }
 
+/// GET /api/skin/cape/{uuid}?type=&server= (source: MapGet /cape/{uuid}).
+async fn cape(
+    State(state): State<SharedState>,
+    AxumPath(uuid): AxumPath<String>,
+    Query(query): Query<SkinQuery>,
+) -> ApiResult<Response> {
+    let svc = SkinService::new(state.http_client.clone());
+    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+    let profile = svc
+        .fetch_profile(&uuid, &login, query.server.as_deref())
+        .await
+        .ok_or_else(|| ApiError::not_found("CAPE_NOT_FOUND", "no cape for this account"))?;
+    let cape_url = profile
+        .cape_url
+        .ok_or_else(|| ApiError::not_found("CAPE_NOT_FOUND", "no cape for this account"))?;
+    let data = svc
+        .download_skin(&cape_url)
+        .await
+        .ok_or_else(|| ApiError::not_found("CAPE_NOT_FOUND", "no cape for this account"))?;
+    Ok(png_response(data))
+}
+
+/// GET /api/skin/mc-capes/{uuid} (source: MapGet /mc-capes/{uuid}).
+async fn mc_capes(
+    State(state): State<SharedState>,
+    AxumPath(uuid): AxumPath<String>,
+) -> ApiResult<Json<McCapeListResponse>> {
+    let token = mc_token(&state, &uuid).await?;
+    let svc = SkinService::new(state.http_client.clone());
+    let capes = svc.get_mc_capes(&token).await?;
+    Ok(Json(McCapeListResponse { capes }))
+}
+
+/// GET /api/skin/mc-cape/{uuid}/{capeId} (source: MapGet /mc-cape/{uuid}/{capeId}).
+async fn mc_cape(
+    State(state): State<SharedState>,
+    AxumPath((uuid, cape_id)): AxumPath<(String, String)>,
+) -> ApiResult<Response> {
+    let token = mc_token(&state, &uuid).await?;
+    let svc = SkinService::new(state.http_client.clone());
+    let data = svc
+        .download_mc_cape(&token, &cape_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("CAPE_NOT_FOUND", "cape not found"))?;
+    Ok(png_response(data))
+}
+
+/// PUT /api/skin/mc-capes/{uuid}/{capeId} (source: MapPut /mc-capes/{uuid}/{capeId}).
+async fn equip_cape(
+    State(state): State<SharedState>,
+    AxumPath((uuid, cape_id)): AxumPath<(String, String)>,
+) -> ApiResult<Json<MessageResponse>> {
+    let token = mc_token(&state, &uuid).await?;
+    let svc = SkinService::new(state.http_client.clone());
+    svc.equip_mc_cape(&token, &cape_id).await?;
+    Ok(Json(MessageResponse {
+        message: "Cape equipped".to_string(),
+    }))
+}
+
+/// DELETE /api/skin/mc-capes/{uuid}/{capeId} (source: MapDelete /mc-capes/{uuid}/{capeId}).
+async fn unequip_cape(
+    State(state): State<SharedState>,
+    AxumPath((uuid, _cape_id)): AxumPath<(String, String)>,
+) -> ApiResult<Json<MessageResponse>> {
+    let token = mc_token(&state, &uuid).await?;
+    let svc = SkinService::new(state.http_client.clone());
+    svc.unequip_mc_cape(&token).await?;
+    Ok(Json(MessageResponse {
+        message: "Cape unequipped".to_string(),
+    }))
+}
+
+/// Resolve the stored Microsoft account's access token (source: GetMicrosoftTokenAsync).
+async fn mc_token(state: &SharedState, uuid: &str) -> ApiResult<String> {
+    let account: StoredAccount = state
+        .account
+        .get_account(uuid)
+        .await?
+        .ok_or_else(|| ApiError::not_found("ACCOUNT_NOT_FOUND", "account not found"))?;
+    if account.login_method != "Microsoft" {
+        return Err(ApiError::bad_request("NOT_MICROSOFT", "not a Microsoft account"));
+    }
+    if account.access_token.is_empty() {
+        return Err(ApiError {
+            code: "TOKEN_EXPIRED".to_string(),
+            message: "access token missing, please re-login".to_string(),
+            detail: None,
+            status: StatusCode::UNAUTHORIZED,
+        });
+    }
+    Ok(account.access_token)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -280,6 +551,21 @@ struct SkinQuery {
 #[serde(rename_all = "camelCase")]
 struct MessageResponse {
     message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McCape {
+    id: String,
+    state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alias: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McCapeListResponse {
+    capes: Vec<McCape>,
 }
 
 #[derive(Serialize)]
