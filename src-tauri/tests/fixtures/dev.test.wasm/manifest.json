@@ -1,0 +1,12 @@
+{
+  "id": "dev.test.wasm",
+  "name": "Dev Test WASM",
+  "version": "1.0.0",
+  "minLauncherVersion": "0.0.0",
+  "layers": ["l3"],
+  "permissions": ["wasm:execute"],
+  "dependencies": [],
+  "entry": {
+    "frontend": "dist/index.html"
+  }
+}

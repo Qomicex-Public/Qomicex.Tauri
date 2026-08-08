@@ -142,7 +142,12 @@ pub fn run() {
             spawn_backend(app);
             let mut runtime = plugin_gateway::loader::PluginRuntime::new().unwrap();
             let _ = runtime.scan_and_load();
-            let _ = plugin_gateway::server::start_gateway(runtime);
+            tauri::async_runtime::spawn(async move {
+                match plugin_gateway::server::start_gateway(runtime).await {
+                    Ok(port) => eprintln!("[gateway] ready on 127.0.0.1:{port}"),
+                    Err(e) => eprintln!("[gateway] start failed: {e}"),
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

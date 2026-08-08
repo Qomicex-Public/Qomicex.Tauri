@@ -59,7 +59,7 @@ struct StatusResponse {
     status: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DownloadProgressResponse {
     progress: f64,
@@ -170,7 +170,7 @@ fn status_of(state: TaskState) -> &'static str {
 }
 
 /// Resolve the per-task (or not-found) progress response.
-fn build_progress(task_id: TaskId) -> Json<DownloadProgressResponse> {
+fn build_progress(task_id: TaskId) -> DownloadProgressResponse {
     let reg = task_registry().lock().unwrap();
     let snapshot = reg.get(&task_id).cloned();
     drop(reg);
@@ -184,28 +184,28 @@ fn build_progress(task_id: TaskId) -> Json<DownloadProgressResponse> {
             } else {
                 0.0
             };
-            Json(DownloadProgressResponse {
+            DownloadProgressResponse {
                 progress,
                 downloaded_bytes: s.downloaded,
                 total_bytes: s.total,
                 status: s.status,
                 error: s.error,
                 file_name: s.file_name,
-            })
+            }
         }
         // Unknown id: report not_found. The background watcher mirrors
         // DownloadEvent progress into the registry, so an id that never hit
         // the registry is outside this backend's task set. (Avoid awaiting
         // DownloadManager::state here: its future is not Send, which would
         // make this handler ineligible as an axum handler.)
-        None => Json(DownloadProgressResponse {
+        None => DownloadProgressResponse {
             progress: 0.0,
             downloaded_bytes: 0,
             total_bytes: 0,
             status: "not_found".to_string(),
             error: None,
             file_name: None,
-        }),
+        },
     }
 }
 
@@ -349,13 +349,31 @@ async fn download_to(
 
 /// GET /api/resource-download/{taskId}/progress
 async fn progress(
-    State(state): State<SharedState>,
+    State(_state): State<SharedState>,
     AxumPath(task_id): AxumPath<String>,
 ) -> ApiResult<Json<DownloadProgressResponse>> {
-    let id: TaskId = task_id.parse().map_err(|_| {
-        ApiError::bad_request("INVALID_TASK_ID", "Task id must be a numeric string")
-    })?;
-    Ok(build_progress(id))
+    if let Ok(id) = task_id.parse::<TaskId>() {
+        let resp = build_progress(id);
+        if resp.status != "not_found" {
+            return Ok(Json(resp));
+        }
+    }
+    // Fallback: plugin-started downloads use a Guid string task id; the
+    // download center also polls them through this endpoint when the SSE
+    // channel has not yet delivered an entry.
+    if let Some(json) = crate::endpoints::plugin::session_progress_json(&task_id) {
+        let resp = serde_json::from_value::<DownloadProgressResponse>(json)
+            .map_err(|_| ApiError::internal("invalid plugin session snapshot"))?;
+        return Ok(Json(resp));
+    }
+    Ok(Json(DownloadProgressResponse {
+        progress: 0.0,
+        downloaded_bytes: 0,
+        total_bytes: 0,
+        status: "not_found".to_string(),
+        error: None,
+        file_name: None,
+    }))
 }
 
 /// POST /api/resource-download/{taskId}/cancel

@@ -96,7 +96,7 @@ async fn progress_sse(State(state): State<SharedState>) -> ApiResult<impl IntoRe
 ///
 /// `None` (sent from the worker after broadcast close or channel drop) ends the stream.
 fn mpsc_stream(
-    mut rx: mpsc::Receiver<Option<Result<Event, Infallible>>>,
+    rx: mpsc::Receiver<Option<Result<Event, Infallible>>>,
 ) -> impl futures::stream::Stream<Item = Result<Event, Infallible>> + Send + 'static {
     futures::stream::unfold(rx, |mut rx| async move {
         match rx.recv().await {
@@ -110,13 +110,13 @@ fn mpsc_stream(
 /// resource-download registry, mirroring the C# three-channel snapshot.
 fn build_payload(tracker: &InstallTracker) -> ProgressSsePayload {
     let installs = tracker.get_all_active();
-    let mut total_speed = installs.iter().map(|i| i.speed).sum::<f64>();
+    let total_speed = installs.iter().map(|i| i.speed).sum::<f64>();
     let mut active_count = installs.len();
 
     // Resource downloads (qomicex-downloader) mirrored in resource_download's
     // registry. Without this the download center shows those tasks as stuck
     // queued (the SSE `resources` array was empty).
-    let resources: Vec<serde_json::Value> = crate::endpoints::resource_download::download_snapshots()
+    let mut resources: Vec<serde_json::Value> = crate::endpoints::resource_download::download_snapshots()
         .into_iter()
         .map(|(id, s)| {
             let progress = if s.total > 0 {
@@ -143,6 +143,21 @@ fn build_payload(tracker: &InstallTracker) -> ProgressSsePayload {
             })
         })
         .collect();
+
+    // Plugin-started downloads (plugin session registry) share the same
+    // `resources` channel so they appear live in the download center.
+    let plugin_sessions = crate::endpoints::plugin::download_sessions_json();
+    let plugin_active = plugin_sessions
+        .iter()
+        .filter(|r| {
+            r.get("status")
+                .and_then(|v| v.as_str())
+                .map(|s| matches!(s, "queued" | "downloading" | "paused"))
+                .unwrap_or(false)
+        })
+        .count();
+    resources.extend(plugin_sessions);
+    active_count += plugin_active;
 
     ProgressSsePayload {
         kind: "progress".to_string(),
