@@ -158,7 +158,8 @@ export default function AccountDetail() {
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      notify('皮肤已下载', 'success')
     } catch { notify('皮肤下载失败', 'error') }
   }
 

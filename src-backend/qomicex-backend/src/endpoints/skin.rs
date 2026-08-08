@@ -790,15 +790,18 @@ fn extract_file_field(body: &[u8], field: &str) -> Option<Vec<u8>> {
     let marker = format!("name=\"{field}\"").into_bytes();
     let idx = find_slice(body, &marker, 0)?;
 
-    // The current part's header block ends at the first CRLFCRLF / LFLF before idx.
-    let pre = &body[..idx];
-    let data_start = if let Some(p) = pre.windows(4).rposition(|w| w == b"\r\n\r\n") {
+    // The `name` marker sits inside the part header (e.g.
+    // `Content-Disposition: form-data; name="file"; filename="x.png"`), and the
+    // header/body separator `\r\n\r\n` comes AFTER the marker. Locate it there.
+    let after = &body[idx..];
+    let sep_len = if let Some(p) = after.windows(4).position(|w| w == b"\r\n\r\n") {
         p + 4
-    } else if let Some(p) = pre.windows(2).rposition(|w| w == b"\n\n") {
+    } else if let Some(p) = after.windows(2).position(|w| w == b"\n\n") {
         p + 2
     } else {
         return None;
     };
+    let data_start = idx + sep_len;
 
     // Boundary = first line of the body (e.g. "----WebKitFormBoundary...").
     let first_crlf = body.windows(2).position(|w| w == b"\r\n").unwrap_or(body.len());
