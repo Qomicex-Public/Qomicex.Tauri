@@ -34,6 +34,20 @@ struct JavaStateData {
     download: Arc<JavaDownloadService>,
 }
 
+/// Quick 模式扫描本机 Java（对应 C# launch 流程里 `store.GetMergedAsync(Quick)`
+/// 的扫描部分；调用方拿结果走 `recommand`）。
+pub(crate) async fn scan_quick(core: Arc<GameCore>) -> Vec<JavaResult> {
+    let provider = core.java_provider();
+    let options = JavaSearchOptions {
+        mode: JavaSearchMode::Quick,
+        ..Default::default()
+    };
+    match provider.search(&options).await {
+        Ok(r) => r,
+        Err(_) => Vec::new(),
+    }
+}
+
 /// 进程级单例（OnceLock）：Java 状态在首次 handler 触发时按 `SharedState.core` 惰性组装。
 static JAVA_STATE: OnceLock<Arc<JavaStateData>> = OnceLock::new();
 
@@ -254,6 +268,7 @@ impl JavaRuntimeStore {
 /// `queued` 任务，不执行后台下载 / 解压 / 注册（真实管线留待后续批次）。
 struct JavaDownloadService {
     core: Arc<GameCore>,
+    #[allow(dead_code)]
     store: Arc<JavaRuntimeStore>,
     tasks: Mutex<HashMap<String, JavaDownloadTaskState>>,
 }
@@ -397,6 +412,7 @@ struct JavaDownloadTaskState {
     file_name: String,
     target_dir: String,
     error: Option<String>,
+    #[allow(dead_code)]
     download_url: String,
     paused: bool,
 }
@@ -892,6 +908,7 @@ struct JavaPathRequest {
 #[serde(rename_all = "camelCase")]
 struct JavaRecommendRequest {
     minecraft_version: String,
+    #[allow(dead_code)]
     game_dir: String,
 }
 

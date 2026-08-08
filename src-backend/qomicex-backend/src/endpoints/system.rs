@@ -31,6 +31,8 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/health", get(health))
         .route("/diagnostics/health", get(diagnostics_health))
+        .route("/diagnostics/trace", get(diagnostics_trace))
+        .route("/diagnostics/dump", post(diagnostics_dump))
         .route("/system/info", get(sysinfo))
         .route("/systeminfo", get(sysinfo))
         .route("/system/open-url", post(open_url))
@@ -66,6 +68,22 @@ async fn diagnostics_health(State(state): State<SharedState>) -> ApiResult<Json<
         backend: true,
         modrinth: PingResult { ok: modrinth_ok, latency: modrinth_lat },
         curseforge: PingResult { ok: cf_ok, latency: cf_lat },
+    }))
+}
+
+/// GET /api/diagnostics/trace — 返回内存 trace 缓冲快照（对应 C# TraceBufferStore.Snapshot）。
+async fn diagnostics_trace(State(state): State<SharedState>) -> ApiResult<Json<Vec<String>>> {
+    Ok(Json(state.trace_buffer.snapshot()))
+}
+
+/// POST /api/diagnostics/dump — 将缓冲 dump 到 `{BaseDir}/logs/backend-trace-*.log`，返回路径。
+async fn diagnostics_dump(State(state): State<SharedState>) -> ApiResult<Json<OpenPathResponse>> {
+    let path = state
+        .trace_dump
+        .dump("manual")
+        .map_err(ApiError::from)?;
+    Ok(Json(OpenPathResponse {
+        path: path.to_string_lossy().into_owned(),
     }))
 }
 

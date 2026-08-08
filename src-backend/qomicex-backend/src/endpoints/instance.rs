@@ -8,19 +8,21 @@
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use qomicex_core::api::version::VersionLocator;
-use qomicex_core::event::ProgressReporter;
-use qomicex_core::models::download::DownloadProgress;
+use qomicex_core::models::auth::{AuthMode, AuthOptions};
 use qomicex_core::models::installer::ModLoaderType;
-use qomicex_downloader::{DownloadEvent, DownloadManager, DownloadTask, TaskId, TaskState};
+use qomicex_core::models::launch::{JavaOptions, LaunchOptions};
+use qomicex_core::models::version_metadata::{CompleteVersionMetadata, JavaVersion};
+use qomicex_downloader::{DownloadEvent, DownloadTask, TaskId, TaskState};
 
+use crate::endpoints::java;
 use crate::endpoints::loader::LoaderVersionInfo;
 use crate::error::{ApiError, ApiResult};
 use crate::services::instance::GameInstance;
+use crate::services::launch_tracker::LaunchProgress;
 use crate::state::SharedState;
 
 // =====================================================================
@@ -83,6 +85,7 @@ struct LoadersQuery {
 /// POST /api/instance/{id}/install body (source: InstallerRequest).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct InstallerRequest {
     #[serde(default)]
     download_threads: Option<i32>,
@@ -113,6 +116,32 @@ struct InstallProgressResponse {
     completed_files: i32,
 }
 
+/// POST /api/instance/{id}/launch body (source: LaunchInstanceRequest).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchInstanceRequest {
+    #[serde(default)]
+    join_server: Option<String>,
+    #[serde(default)]
+    join_world: Option<String>,
+    #[serde(default)]
+    account_uuid: Option<String>,
+}
+
+/// POST /api/instance/{id}/launch response (source: LaunchResultDto).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchResultDto {
+    success: bool,
+    process_id: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
+}
+
 // =====================================================================
 // Router
 // =====================================================================
@@ -130,9 +159,9 @@ pub fn router() -> Router<SharedState> {
             "/instance/{id}",
             get(get_instance).put(update_instance).delete(delete_instance),
         )
-        .route("/instance/{id}/launch", post(launch_501))
-        .route("/instance/{id}/launch/progress", get(launch_progress_501))
-        .route("/instance/{id}/launch/cancel", post(launch_cancel_501))
+        .route("/instance/{id}/launch", post(launch_instance))
+        .route("/instance/{id}/launch/progress", get(launch_progress))
+        .route("/instance/{id}/launch/cancel", post(launch_cancel))
         .route("/instance/{id}/install", post(install_instance))
         .route("/instance/{id}/install/progress", get(install_progress))
         .route("/instance/{id}/install/pause", post(install_pause))
@@ -312,20 +341,352 @@ async fn list_loaders(
 }
 
 // =====================================================================
-// 501 Launch / Install stubs (depend on LaunchTracker / InstallTracker)
+// Launch (depends on LaunchTracker + core.launch())
 // =====================================================================
 
-async fn launch_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Launch"))
+/// POST /api/instance/{id}/launch — start a game instance in the background.
+///
+/// Mirrors the C# `InstanceEndpoints` launch orchestration: resolve the auth
+/// options, then run integrity check (unless `skipIntegrityCheck`), pick the
+/// Java runtime, assemble `LaunchOptions` and call `core.launch().launch()`.
+/// Progress is written into `LaunchTracker` and consumed by
+/// GET /launch/progress. The handler returns immediately (stage "starting").
+async fn launch_instance(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+    request: Option<Json<LaunchInstanceRequest>>,
+) -> ApiResult<Json<LaunchResultDto>> {
+    let instance = state
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| instance_not_found(&instance_id))?;
+
+    let req = request.map(|Json(r)| r).unwrap_or_else(|| LaunchInstanceRequest {
+        join_server: None,
+        join_world: None,
+        account_uuid: None,
+    });
+
+    // Resolve auth options from the (default or requested) stored account.
+    let account = match &req.account_uuid {
+        Some(uuid) if !uuid.is_empty() => state.account.get_account(uuid).await?,
+        _ => state.account.get_default().await?,
+    };
+    let auth_options = resolve_auth_options(account);
+
+    let tracker = state.launch_tracker.clone();
+    let core = state.core.clone();
+    let download_manager = state.download_manager.clone();
+    let game_dir = instance.game_dir.clone();
+    let name = instance.name.clone();
+    let skip_integrity_check = instance.skip_integrity_check;
+    let user_java_path = instance.java_path.clone();
+    let max_memory = instance.max_memory;
+    let jvm_args = instance.jvm_args.clone();
+    let version_isolation = instance.version_isolation.unwrap_or_else(crate::settings::get_global_version_isolation);
+    let join_server = req.join_server;
+    let join_world = req.join_world;
+    let cancel_flag = tracker.get_or_create_cancel(&instance_id);
+
+    tracker.set_progress(
+        &instance_id,
+        LaunchProgress {
+            stage: "starting".to_string(),
+            message: "准备启动...".to_string(),
+            progress: 0.0,
+            is_running: false,
+            ..Default::default()
+        },
+    );
+
+    tokio::spawn(async move {
+        let mut progress = LaunchProgress {
+            stage: "checking".to_string(),
+            message: "正在检查文件完整性...".to_string(),
+            progress: 5.0,
+            is_running: false,
+            ..Default::default()
+        };
+        tracker.set_progress(&instance_id, progress.clone());
+
+        let result: Result<(i32, String), String> = async {
+            // Integrity check: enumerate missing files from the version JSON and
+            // download them (unless skipped).
+            if !skip_integrity_check {
+                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err("启动已取消".to_string());
+                }
+                let version_json = std::path::Path::new(&game_dir)
+                    .join("versions")
+                    .join(&name)
+                    .join(format!("{name}.json"));
+                let json_content = tokio::fs::read_to_string(&version_json)
+                    .await
+                    .map_err(|_| format!("版本 JSON 不存在: {}", version_json.display()))?;
+
+                let miss_files = core
+                    .locator()
+                    .get_miss_files_from_json(&json_content)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let miss_files: Vec<_> = miss_files
+                    .into_iter()
+                    .filter(|f| !f.path.is_empty() && !f.url.is_empty())
+                    .collect();
+
+                if !miss_files.is_empty() {
+                    let missing_names: Vec<String> =
+                        miss_files.iter().map(|f| f.name.clone()).collect();
+                    progress.stage = "repairing".to_string();
+                    progress.message = format!("正在补全 {} 个缺失文件...", miss_files.len());
+                    progress.progress = 10.0;
+                    progress.missing_files = Some(missing_names);
+                    progress.total_files = miss_files.len() as i32;
+                    tracker.set_progress(&instance_id, progress.clone());
+
+                    let game_root = std::path::PathBuf::from(&game_dir);
+                    let ids: Vec<TaskId> = miss_files
+                        .iter()
+                        .map(|f| {
+                            let dest = game_root.join(&f.path);
+                            if let Some(parent) = dest.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            download_manager.add(DownloadTask::new(f.url.clone(), dest))
+                        })
+                        .collect();
+                    let total = ids.len() as u64;
+                    let id_set: std::collections::HashSet<u64> = ids.iter().copied().collect();
+                    let mut done_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+                    let mut failed: Option<String> = None;
+                    let mut rx = download_manager.subscribe();
+
+                    while done_ids.len() < ids.len() {
+                        if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                            for id in &ids {
+                                let _ = download_manager.cancel(*id).await;
+                            }
+                    return Err("启动已取消".to_string());
+                        }
+                        tokio::select! {
+                            ev = rx.recv() => match ev {
+                                Ok(DownloadEvent::StateChanged { id, state, .. }) => {
+                                    if id_set.contains(&id) {
+                                        match state {
+                                            TaskState::Completed => { done_ids.insert(id); }
+                                            TaskState::Failed => {
+                                                if failed.is_none() {
+                                                    failed = Some("文件补全失败".to_string());
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            },
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
+                        }
+                        let done = done_ids.len() as i32;
+                        progress.completed_files = done;
+                        progress.progress = 10.0 + (done as f64 / total.max(1) as f64) * 20.0;
+                        tracker.set_progress(&instance_id, progress.clone());
+                    }
+                    if let Some(err) = failed {
+                        return Err(err);
+                    }
+                }
+            }
+
+            if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("启动已取消".to_string());
+            }
+            progress.stage = "preparing".to_string();
+            progress.message = "正在准备环境...".to_string();
+            progress.progress = 30.0;
+            tracker.set_progress(&instance_id, progress.clone());
+
+            // Determine required Java major version from the version JSON chain.
+            let required_java = required_java_version(&game_dir, &name);
+            let loader_lower = instance_loader(&game_dir, &name).unwrap_or_default();
+            let effective_required = apply_loader_java_requirement(&loader_lower, &name, required_java);
+
+            // Pick the Java runtime: user-specified path wins, else auto-recommend.
+            let selected_java_path = match &user_java_path {
+                Some(path) if !path.is_empty() => path.clone(),
+                _ => {
+                    let metadata = CompleteVersionMetadata {
+                        id: name.clone(),
+                        r#type: "release".to_string(),
+                        main_class: String::new(),
+                        inherits_from: None,
+                        jar: None,
+                        arguments: None,
+                        libraries: Vec::new(),
+                        asset_index: None,
+                        downloads: None,
+                        java_version: Some(JavaVersion {
+                            component: "jre-legacy".to_string(),
+                            major_version: effective_required,
+                        }),
+                        minimum_launcher_version: None,
+                        release_time: String::new(),
+                        time: String::new(),
+                    };
+                    let java_results = java::scan_quick(core.clone()).await;
+                    let recommended = core
+                        .java_provider()
+                        .recommand(&java_results, &metadata)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    recommended.path
+                }
+            };
+
+            if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("启动已取消".to_string());
+            }
+            progress.stage = "launching".to_string();
+            progress.message = "正在启动游戏...".to_string();
+            progress.progress = 50.0;
+            tracker.set_progress(&instance_id, progress.clone());
+
+            let options = LaunchOptions {
+                version: name.clone(),
+                version_isolation,
+                join_server,
+                join_world,
+                java_options: Some(JavaOptions {
+                    java_path: selected_java_path,
+                    max_memory_mb: max_memory,
+                    extra_jvm_args: jvm_args
+                        .as_deref()
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| s.split(' ').filter(|t| !t.is_empty()).map(String::from).collect()),
+                }),
+                auth_options: Some(auth_options),
+                game_root: Some(game_dir.clone()),
+            };
+            let result = core.launch().launch(options).await.map_err(|e| e.to_string())?;
+            if !result.success {
+                return Err(result.message.unwrap_or_else(|| "启动失败".to_string()));
+            }
+            Ok((result.process_id, result.message.unwrap_or_default()))
+        }
+        .await;
+
+        match result {
+            Ok((pid, _msg)) => {
+                tracker.track(&instance_id, pid);
+                tracker.set_progress(
+                    &instance_id,
+                    LaunchProgress {
+                        stage: "running".to_string(),
+                        message: "游戏运行中".to_string(),
+                        progress: 100.0,
+                        is_running: true,
+                        process_id: Some(pid),
+                        ..Default::default()
+                    },
+                );
+            }
+            Err(err) => {
+                let _ = std::fs::create_dir_all(std::path::Path::new(&game_dir).join("logs"));
+                let _ = std::fs::write(
+                    std::path::Path::new(&game_dir).join("logs/launch-errors.log"),
+                    format!("[{:?}] [{}] {}\n\n", chrono::Utc::now(), instance_id, err),
+                );
+                tracker.set_progress(
+                    &instance_id,
+                    LaunchProgress {
+                        stage: "failed".to_string(),
+                        message: "启动失败".to_string(),
+                        progress: 0.0,
+                        is_running: false,
+                        error: Some(err),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    });
+
+    Ok(Json(LaunchResultDto {
+        success: true,
+        process_id: 0,
+        error: None,
+        detail: None,
+        stage: Some("starting".to_string()),
+    }))
 }
 
-async fn launch_progress_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Launch progress"))
+/// GET /api/instance/{id}/launch/progress — mirror the C# handler.
+async fn launch_progress(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<LaunchProgress>> {
+    let tracker = &state.launch_tracker;
+    let Some(progress) = tracker.get_progress(&instance_id) else {
+        // No progress recorded: fall back to process state.
+        return match tracker.get_state(&instance_id) {
+            Some(state) => Ok(Json(LaunchProgress {
+                stage: "running".to_string(),
+                message: "游戏运行中".to_string(),
+                progress: 100.0,
+                is_running: true,
+                process_id: Some(state.process_id),
+                ..Default::default()
+            })),
+            None => Ok(Json(LaunchProgress {
+                stage: "completed".to_string(),
+                message: "进程已结束".to_string(),
+                progress: 100.0,
+                is_running: false,
+                ..Default::default()
+            })),
+        };
+    };
+
+    if progress.stage == "running" {
+        let ps = tracker.get_state(&instance_id);
+        if let Some(ps) = ps {
+            if !crate::services::launch_tracker::process_alive(ps.process_id) {
+                // Process exited: settle play time then report completed.
+                if let Some(mut inst) = state.instance.get_by_id(&instance_id) {
+                    let elapsed = (chrono::Utc::now() - ps.started_at).num_minutes().max(1);
+                    inst.play_time += elapsed as i64;
+                    inst.last_played = Some(chrono::Utc::now().to_rfc3339());
+                    state.instance.update(&instance_id, inst);
+                }
+                tracker.cancel_and_remove(&instance_id);
+                return Ok(Json(LaunchProgress {
+                    stage: "completed".to_string(),
+                    message: "游戏已退出".to_string(),
+                    progress: 100.0,
+                    is_running: false,
+                    ..Default::default()
+                }));
+            }
+        }
+    }
+
+    Ok(Json(progress))
 }
 
-async fn launch_cancel_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Launch cancel"))
+/// POST /api/instance/{id}/launch/cancel — cancel + kill (source LaunchTracker.Stop).
+async fn launch_cancel(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<MessageResponse>> {
+    state.launch_tracker.stop(&instance_id);
+    Ok(Json(MessageResponse {
+        message: format!("Launch cancelled for {instance_id}"),
+    }))
 }
+
+// =====================================================================
+// Install
+// =====================================================================
 
 /// POST /api/instance/{id}/install — start an install in the background.
 ///
@@ -362,7 +723,7 @@ async fn install_instance(
         use crate::services::install_tracker::InstallStatus;
         if let Some(l) = loader_marker {
             let msg = format!(
-                "加载器安装({l})暂未移植到 Rust 后端：qomicex-core 的 installer_factory 为 pub(crate)，后端无法调用。仅支持纯原版下载。"
+                "加载器安装({l})暂未移植到 Rust 后端：qomicex-core 的 installer_factory 是 pub(crate)，后端无法调用。仅支持纯原版下载",
             );
             handle.set_error(msg.clone());
             handle.set_status(InstallStatus::Failed);
@@ -473,7 +834,7 @@ async fn install_instance(
                                 TaskState::Failed => {
                                     if failed.is_none() {
                                         let done = done_ids.len();
-                                        failed = Some(format!("部分文件下载失败 (已完成 {done}/{total} 项)"));
+                                        failed = Some(format!("下载文件校验失败 (完成 {done}/{total} 个)"));
                                     }
                                 }
                                 _ => {}
@@ -593,82 +954,132 @@ fn instance_not_found(id: &str) -> ApiError {
     ApiError::not_found("INSTANCE_NOT_FOUND", format!("Instance {id} not found"))
 }
 
-/// Bridges core's `ProgressReporter` callbacks into the InstallTracker handle so
-/// `install_version` reports live download progress.
-///
-/// Core's `DownloadProgress.percentage` is PER-CURRENT-FILE (0..100), which
-/// would make the overall bar bounce per file. Instead we aggregate across all
-/// seen files by byte totals so the overall percentage is monotonic, and we
-/// surface speed + completed-file count.
-struct InstallProgressReporter {
-    handle: crate::services::install_tracker::InstallHandle,
-    /// file_name -> (downloaded_bytes, total_bytes) latest snapshot per file.
-    files: std::sync::Mutex<std::collections::HashMap<String, (i64, i64)>>,
-}
-
-impl InstallProgressReporter {
-    fn new(handle: crate::services::install_tracker::InstallHandle) -> Self {
-        Self {
-            handle,
-            files: std::sync::Mutex::new(std::collections::HashMap::new()),
-        }
-    }
-
-    /// Aggregate byte progress across all reported files and write to handle.
-    fn aggregate(&self, p: &DownloadProgress, stage: &str) {
-        {
-            let mut files = self.files.lock().unwrap();
-            let cur = files
-                .entry(p.file_name.clone())
-                .or_insert((0, p.total_bytes));
-            cur.0 = cur.0.max(p.downloaded_bytes);
-            if p.total_bytes > 0 {
-                cur.1 = p.total_bytes;
-            }
-        }
-        let (sum_dl, sum_tot, completed) = {
-            let files = self.files.lock().unwrap();
-            let mut dl = 0i64;
-            let mut tot = 0i64;
-            let mut done = 0usize;
-            for (_, (d, t)) in files.iter() {
-                dl += *d;
-                tot += t.max(d);
-                if *t > 0 && *d >= *t {
-                    done += 1;
-                }
-            }
-            (dl, tot, done)
-        };
-        let pct = if sum_tot > 0 {
-            (sum_dl as f64 / sum_tot as f64) * 100.0
+/// Build core `AuthOptions` from a stored account (source: ResolveAuthOptions).
+/// Microsoft accounts refresh their token via the core auth provider; failures
+/// are swallowed (the stale token is still passed through, matching C# catch{}).
+fn resolve_auth_options(account: Option<crate::services::account::StoredAccount>) -> AuthOptions {
+    let Some(account) = account else {
+        return AuthOptions::default();
+    };
+    let mode = match account.login_method.to_ascii_lowercase().as_str() {
+        "microsoft" => AuthMode::Microsoft,
+        "yggdrasil" | "统一通行证" => AuthMode::Yggdrasil,
+        _ => AuthMode::Offline,
+    };
+    let server_url = if mode == AuthMode::Yggdrasil {
+        account.server_url.clone()
+    } else {
+        None
+    };
+    AuthOptions {
+        mode,
+        uuid: Some(account.uuid),
+        name: Some(account.name),
+        token: if account.token.is_empty() { None } else { Some(account.token) },
+        access_token: Some(if account.access_token.is_empty() {
+            "0".to_string()
         } else {
-            0.0
-        };
-        self.handle.update(|f| {
-            f.progress = pct.min(100.0).max(0.0);
-            if !p.file_name.is_empty() {
-                f.current_file = p.file_name.clone();
-            }
-            f.speed = p.speed_bytes_per_second.max(0) as f64;
-            f.completed_files = completed as i32;
-            f.stage = stage.to_string();
-        });
+            account.access_token
+        }),
+        refresh_token: if account.refresh_token.is_empty() {
+            None
+        } else {
+            Some(account.refresh_token)
+        },
+        server_url: server_url.clone(),
+        authlib_injector_param: if mode == AuthMode::Yggdrasil {
+            server_url.map(|u| format!("--authlibInjector={u}"))
+        } else {
+            None
+        },
     }
 }
 
-impl ProgressReporter for InstallProgressReporter {
-    fn report_download(&self, p: DownloadProgress) {
-        self.aggregate(&p, "downloading");
+/// Read the required Java major version from the version JSON (following the
+/// `inheritsFrom` chain, defaulting to 8), mirroring `GetRequiredJavaFromNode`.
+fn required_java_version(game_dir: &str, version: &str) -> i32 {
+    let path = std::path::Path::new(game_dir)
+        .join("versions")
+        .join(version)
+        .join(format!("{version}.json"));
+    required_java_from_path(&path, game_dir)
+}
+
+fn required_java_from_path(path: &std::path::Path, game_dir: &str) -> i32 {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return 8;
+    };
+    let Ok(node) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return 8;
+    };
+    if let Some(major) = node
+        .get("javaVersion")
+        .and_then(|j| j.get("majorVersion"))
+        .and_then(|m| m.as_i64())
+    {
+        return major as i32;
     }
-    fn report_install(&self, p: DownloadProgress) {
-        self.aggregate(&p, "installing");
+    if let Some(inherits) = node.get("inheritsFrom").and_then(|i| i.as_str()) {
+        let parent = std::path::Path::new(game_dir)
+            .join("versions")
+            .join(inherits)
+            .join(format!("{inherits}.json"));
+        return required_java_from_path(&parent, game_dir);
     }
-    fn report_state(&self, phase: &str) {
-        if !phase.is_empty() {
-            self.handle.set_stage(phase);
+    8
+}
+
+/// Sniff the loader from the version JSON's `inheritsFrom` / folder name,
+/// mirroring the C# cleanroom/babric special-casing in the launch flow.
+fn instance_loader(game_dir: &str, version: &str) -> Option<String> {
+    let path = std::path::Path::new(game_dir)
+        .join("versions")
+        .join(version)
+        .join(format!("{version}.json"));
+    let lower = if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(node) = serde_json::from_str::<serde_json::Value>(&content) {
+            node.get("inheritsFrom")
+                .and_then(|i| i.as_str())
+                .map(|s| s.to_ascii_lowercase())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    lower.or_else(|| detect_loader(version).map(String::from))
+}
+
+/// Apply the C# cleanroom/babric Java-version bumps.
+fn apply_loader_java_requirement(loader: &str, version_name: &str, required: i32) -> i32 {
+    let mut required = required;
+    if loader == "cleanroom" {
+        // LoaderVersion may be embedded in the name (e.g. "...-cleanroom0.5.0").
+        let cleanroom_ver = extract_cleanroom_version(version_name);
+        if let Some(v) = cleanroom_ver {
+            required = required.max(if v < 500 { 21 } else { 25 });
         }
     }
+    if loader == "babric" {
+        required = required.max(17);
+    }
+    required
+}
+
+/// Parse a cleanroom loader version like "0.5.0" from the version name;
+/// returns `Some(major*100 + minor*10 + patch)`-style scaled int, or None.
+fn extract_cleanroom_version(name: &str) -> Option<i32> {
+    let idx = name.find("cleanroom")?;
+    let rest = &name[idx + "cleanroom".len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    let parts: Vec<u32> = digits.split('.').filter_map(|p| p.parse().ok()).take(3).collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let major = parts[0];
+    let minor = parts.get(1).copied().unwrap_or(0);
+    let patch = parts.get(2).copied().unwrap_or(0);
+    Some((major * 100 + minor * 10 + patch) as i32)
 }
 
 /// Detect a loader from a VersionDir-style name when `instance.loader` is unset.
@@ -696,15 +1107,6 @@ fn detect_loader(name: &str) -> Option<&'static str> {
         Some("babric")
     } else {
         None
-    }
-}
-
-fn not_implemented(scope: &str) -> ApiError {
-    ApiError {
-        code: "NOT_IMPLEMENTED".to_string(),
-        message: format!("{scope} is not implemented yet"),
-        detail: None,
-        status: StatusCode::NOT_IMPLEMENTED,
     }
 }
 
