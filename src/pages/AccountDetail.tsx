@@ -30,6 +30,7 @@ export default function AccountDetail() {
   const [capeBusy, setCapeBusy] = useState(false)
   const [capeDialogOpen, setCapeDialogOpen] = useState(false)
   const [skinVersion, setSkinVersion] = useState(0)
+  const [skinModel, setSkinModel] = useState<'slim' | 'classic'>('classic')
   const capeImagesRef = useRef<Map<string, string>>(new Map())
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -128,7 +129,7 @@ export default function AccountDetail() {
     const file = e.target.files?.[0]
     if (!file || !uuid) return
     try {
-      await uploadSkin(uuid, file, account?.loginMethod ?? 'Microsoft', account?.serverUrl, profile?.model ?? null)
+      await uploadSkin(uuid, file, account?.loginMethod ?? 'Microsoft', account?.serverUrl, skinModel)
       notify('皮肤上传成功', 'success')
       handleSkinRefresh()
     } catch { notify('皮肤上传失败', 'error') }
@@ -272,6 +273,17 @@ export default function AccountDetail() {
                 <Button variant="outline" size="sm" onClick={() => setCapeDialogOpen(true)}>
                   <FontAwesomeIcon icon={faShirt} className="mr-1 h-3 w-3" /> 切换披风
                 </Button>
+                <div className="flex items-center gap-1 rounded-md border bg-input/50 px-2 py-1 text-xs">
+                  <span className="text-muted-foreground">手臂模型</span>
+                  <button
+                    onClick={() => setSkinModel('classic')}
+                    className={`rounded px-1.5 py-0.5 ${skinModel === 'classic' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+                  >经典</button>
+                  <button
+                    onClick={() => setSkinModel('slim')}
+                    className={`rounded px-1.5 py-0.5 ${skinModel === 'slim' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+                  >纤细</button>
+                </div>
                 <input ref={fileRef} type="file" accept="image/png" className="hidden" onChange={handleSkinUpload} />
                 <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
                   <FontAwesomeIcon icon={faUpload} className="mr-1 h-3 w-3" /> 上传皮肤
