@@ -783,17 +783,36 @@ fn is_cf_domain(url: &str) -> bool {
         .any(|d| host == *d || host.ends_with(&format!(".{d}")))
 }
 
+/// Windows：verbatim 路径（`\\?\` 前缀）中 `/` 是非法分隔符，统一替换为 `\`。
+/// Unix 下无操作。
+fn normalize_sep(dest: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let s = dest.to_string_lossy();
+        if s.contains('/') {
+            PathBuf::from(s.replace('/', "\\"))
+        } else {
+            dest
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        dest
+    }
+}
+
 /// 批量下载（源 `RunBatchAsync(startPct, endPct)`）。进度按已下载字节映射到
 /// `[start_pct, end_pct]`；pause/cancel 由事件循环协作转发给 `DownloadManager`。
 /// 运行期 stall 超时：事件已开始流动后，若此期间无任何事件则判定卡死。
 /// 不用于冷启动：第一批任务在 semaphore 排队 + probe（HEAD + Range GET） +
 /// CurseForge CDN 重定向解析期间可能需要数十秒，用短超时会误杀。
+/// pub(crate)：modpack 在线安装管道（endpoints/modpack.rs）复用同一批逻辑。
 const DOWNLOAD_BATCH_TIMEOUT: Duration = Duration::from_secs(120);
 /// 冷启动宽容超时：从调用到第一个事件到达的最长容忍时间。
 /// 覆盖 semaphore 等待（全局并发上限）+ probe 重试 + 首文件 TCP 建连。
 const COLD_START_TIMEOUT: Duration = Duration::from_secs(180);
 
-async fn download_batch(
+pub(crate) async fn download_batch(
     handle: &InstallHandle,
     mgr: &DownloadManager,
     files: Vec<(String, PathBuf, Vec<(String, String)>)>,
@@ -804,6 +823,15 @@ async fn download_batch(
         handle.set_progress(end_pct);
         return Ok(());
     }
+
+    // Windows：`canonicalize` 产生的 `\\?\` verbatim 路径不允许 `/` 分隔符。
+    // core 安装器（NeoForge 等）经 `path_combine` 字符串拼接会保留 maven 路径的 `/`
+    // （如 `libraries\org/ow2/asm/asm/9.10.1/asm-9.10.1.jar`），此处统一钳位为平台
+    // 分隔符，否则 create_dir_all/rename 报 ERROR_INVALID_NAME (os error 123)。
+    let files: Vec<(String, PathBuf, Vec<(String, String)>)> = files
+        .into_iter()
+        .map(|(url, dest, headers)| (url, normalize_sep(dest), headers))
+        .collect();
 
     // Pre-compute display names before consuming `files` in the loop below.
     let file_names: Vec<String> = files
@@ -872,6 +900,10 @@ async fn download_batch(
                 let _ = mgr.resume(*id).await;
             }
         }
+        // 暂停期间挂起 stall 看门狗：暂停的任务不发事件，继续按“卡死”计时会误杀
+        if paused_now {
+            last_event = Instant::now();
+        }
 
         let stall_limit = if started {
             DOWNLOAD_BATCH_TIMEOUT
@@ -882,16 +914,24 @@ async fn download_batch(
             for id in &ids {
                 let _ = mgr.cancel(*id).await;
             }
-            return Err("下载超时：文件下载未在预期时间内完成".to_string());
+            // 已记录到具体失败原因时优先返回真因（Failed 事件可能已被广播竞态吞掉，
+            // 因此这里从 `failed` 读取而不是直接丢弃）；看门狗只在无失败但卡死时兜底
+            return Err(failed
+                .clone()
+                .unwrap_or_else(|| "下载超时：文件下载未在预期时间内完成".to_string()));
         }
 
         tokio::select! {
             ev = rx.recv() => match ev {
                 Ok(DownloadEvent::Progress { id, downloaded, total: t, speed_bps, .. }) => {
-                    last_event = Instant::now();
-                    started = true;
                     if id_set.contains(&id) {
+                        started = true;
                         let e = prog.entry(id).or_insert((0, 0));
+                        // 只有真实进展（字节数变化）才算活跃：任务卡在重试/无数据时的
+                        // 0 字节节流上报不得给 stall 看门狗续命
+                        if downloaded > e.0 {
+                            last_event = Instant::now();
+                        }
                         e.0 = downloaded;
                         if t > 0 {
                             e.1 = t;
@@ -903,9 +943,9 @@ async fn download_batch(
                     }
                 }
                 Ok(DownloadEvent::StateChanged { id, state, detail, .. }) => {
-                    last_event = Instant::now();
-                    started = true;
                     if id_set.contains(&id) {
+                        last_event = Instant::now();
+                        started = true;
                         apply_terminal_state(id, state, detail, &mut done_ids, &mut prog, &mut task_speed, &mut failed);
                     }
                 }
@@ -1009,6 +1049,10 @@ fn apply_terminal_state(
             task_speed.remove(&id);
         }
         TaskState::Failed => {
+            // 计入完成数：否则部分失败时 done < total 永不满足，批次死等到
+            // stall 看门狗触发（且超时错误会掩盖真实失败原因）
+            done_ids.insert(id);
+            task_speed.remove(&id);
             if failed.is_none() {
                 *failed = detail.or_else(|| Some("下载文件校验失败".to_string()));
             }
@@ -1059,3 +1103,4 @@ async fn poll_task_states(
         }
     }
 }
+
