@@ -1,6 +1,7 @@
 pub mod account;
 pub mod announcement;
 pub mod auth;
+pub mod connector;
 pub mod instance;
 pub mod instance_files;
 pub mod java;

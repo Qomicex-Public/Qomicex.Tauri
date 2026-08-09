@@ -56,6 +56,32 @@
             ],
             "env": {
             }
+        },
+        {
+            "name": "调试 Rust 后端",
+            "type": "lldb",
+            "request": "launch",
+            "preLaunchTask": "build-backend-rust",
+            "program": "${workspaceFolder}/src-backend/qomicex-backend/target/debug/qomicex-backend.exe",
+            "cwd": "${workspaceFolder}/src-backend/qomicex-backend",
+            "console": "integratedTerminal",
+            "sourceLanguages": [
+                "rust"
+            ],
+            "env": {}
+        },
+        {
+            "name": "调试 Rust 后端 (许可证验证)",
+            "type": "lldb",
+            "request": "launch",
+            "preLaunchTask": "build-backend-rust-license",
+            "program": "${workspaceFolder}/src-backend/qomicex-backend/target/debug/qomicex-backend.exe",
+            "cwd": "${workspaceFolder}/src-backend/qomicex-backend",
+            "console": "integratedTerminal",
+            "sourceLanguages": [
+                "rust"
+            ],
+            "env": {}
         }
     ],
     "compounds": [
@@ -71,6 +97,22 @@
             "name": "启动 Qomicex.Tauri (许可证验证)",
             "configurations": [
                 "启动 Rust 后端 (许可证验证)",
+                "启动 Tauri"
+            ],
+            "stopAll": true
+        },
+        {
+            "name": "启动 Qomicex.Tauri (Rust 后端调试)",
+            "configurations": [
+                "调试 Rust 后端",
+                "启动 Tauri"
+            ],
+            "stopAll": true
+        },
+        {
+            "name": "启动 Qomicex.Tauri (Rust 后端调试, 许可证验证)",
+            "configurations": [
+                "调试 Rust 后端 (许可证验证)",
                 "启动 Tauri"
             ],
             "stopAll": true

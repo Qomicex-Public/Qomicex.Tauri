@@ -31,10 +31,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(endpoints::update::router())
         .merge(endpoints::log::router())
         .merge(endpoints::mcmod::router())
-        .merge(endpoints::launch::router())
-        .merge(endpoints::license::router())
-        .merge(endpoints::progress_sse::router())
-        .merge(endpoints::plugin::router())
+.merge(endpoints::launch::router())
+.merge(endpoints::license::router())
+.merge(endpoints::progress_sse::router())
+.merge(endpoints::plugin::router())
+.merge(endpoints::connector::router())
         .route("/ping", get(|| async { "pong" })); // 通用存活探针
 
     let app = Router::new()

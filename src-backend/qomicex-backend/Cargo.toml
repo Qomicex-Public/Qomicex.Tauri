@@ -24,6 +24,7 @@ path = "src/main.rs"
 [dependencies]
 qomicex-core = { package = "qomicex-core-rust", path = "../../qomicex-core-rust" }
 qomicex-downloader = { path = "../../qomicex-downloader-rust" }
+qomicex-connector = { path = "../../qomicex-connector-rust/crates/qomicex-connector" }
 
 axum = { version = "0.8", features = ["multipart"] }
 futures = "0.3"
@@ -58,6 +59,13 @@ url = "2"
 
 winreg = "0.52"
 md-5 = "0.10"
+
+# --- 日志捕获（实时日志：stderr 重定向到 trace 缓冲）---
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 lto = true

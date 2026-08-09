@@ -26,6 +26,32 @@
 			],
 			"group": "build",
 			"problemMatcher": "$rustc"
+		},
+		{
+			"label": "build-backend-rust",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"build",
+				"--manifest-path",
+				"${workspaceFolder}/src-backend/qomicex-backend/Cargo.toml"
+			],
+			"group": "build",
+			"problemMatcher": "$rustc"
+		},
+		{
+			"label": "build-backend-rust-license",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"build",
+				"--manifest-path",
+				"${workspaceFolder}/src-backend/qomicex-backend/Cargo.toml",
+				"--features",
+				"license-required"
+			],
+			"group": "build",
+			"problemMatcher": "$rustc"
 		}
 	]
 }

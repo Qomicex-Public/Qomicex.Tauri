@@ -4,3 +4,6 @@
 [submodule "qomicex-downloader-rust"]
 	path = qomicex-downloader-rust
 	url = git@github.com:Qomicex-Public/qomicex-downloader-rust.git
+[submodule "qomicex-connector-rust"]
+	path = qomicex-connector-rust
+	url = git@github.com:Qomicex-Public/qomicex-connector-rust.git
