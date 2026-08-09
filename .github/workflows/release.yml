@@ -200,8 +200,17 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
       - name: Build Rust backend
         shell: pwsh
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
         run: |
           $features = @()
           if ("${{ needs.setup.outputs.licenseRequired }}" -eq "true") { $features = @("--features", "license-required") }
@@ -210,6 +219,8 @@ jobs:
         shell: pwsh
         run: |
           Move-Item -Force src-backend/qomicex-backend/target/x86_64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
+          # Packet.dll: 后端 exe 导入表依赖(npcap), 随构建产物进入 binaries/
+          Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.dll src-tauri/binaries/Packet.dll
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis
@@ -250,7 +261,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: qomicex-launcher-windows-x64
-          path: src-tauri/target/release/bundle/**/*.exe
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/binaries/Packet.dll
 
   windows-arm64:
     if: |
@@ -275,8 +288,17 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
       - name: Build Rust backend
         shell: pwsh
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
         run: |
           $features = @()
           if ("${{ needs.setup.outputs.licenseRequired }}" -eq "true") { $features = @("--features", "license-required") }
@@ -285,6 +307,8 @@ jobs:
         shell: pwsh
         run: |
           Move-Item -Force src-backend/qomicex-backend/target/aarch64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
+          # Packet.dll: 后端 exe 导入表依赖(npcap), 随构建产物进入 binaries/
+          Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.dll src-tauri/binaries/Packet.dll
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
@@ -325,7 +349,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: qomicex-launcher-windows-arm64
-          path: src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
+          path: |
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
+            src-tauri/binaries/Packet.dll
 
   linux-x64:
     if: |
@@ -352,7 +378,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
       - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
         run: |
           FEATURES=""
           if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
@@ -434,7 +469,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
       - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
         run: |
           FEATURES=""
           if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
@@ -514,7 +558,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
       - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
         run: |
           FEATURES=""
           if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
@@ -592,7 +645,16 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
       - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
         run: |
           FEATURES=""
           if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
@@ -693,7 +755,16 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
       - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
         run: |
           FEATURES=""
           if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi

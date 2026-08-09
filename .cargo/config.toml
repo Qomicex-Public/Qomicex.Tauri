@@ -1,0 +1,7 @@
+[net]
+git-fetch-with-cli = true
+
+[env]
+PROTOC = "C:/Users/tmoam/AppData/Local/Microsoft/WinGet/Packages/Google.Protobuf_Microsoft.Winget.Source_8wekyb3d8bbwe/bin/protoc.exe"
+VC_LTL = "C:/Users/tmoam/AppData/Local/Temp/opencode/vcltl/vc-ltl5"
+YY_THUNKS = "C:/Users/tmoam/AppData/Local/Temp/opencode/vcltl/yy-thunks"

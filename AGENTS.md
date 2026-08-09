@@ -12,11 +12,18 @@ Vite proxies `/api/*` → `http://localhost:5000` (`vite.config.ts`).
 
 `src-backend/` has 1 project: `qomicex-backend` (Rust backend, rewrite of the removed C# `Qomicex.Launcher.Backend.Neo`).
 
-External Rust crates are git submodules at the repo root: `qomicex-core-rust/` (core lib) and `qomicex-downloader-rust/` (downloader).
+External Rust crates are git submodules at the repo root: `qomicex-core-rust/` (core lib), `qomicex-downloader-rust/` (downloader) and `qomicex-connector-rust/` (联机/SCF 协议, 依赖 EasyTier4QML fork).
 
-Submodules (recursive checkout): `qomicex-core-rust/`, `qomicex-downloader-rust/`.
+Submodules (recursive checkout): `qomicex-core-rust/`, `qomicex-downloader-rust/`, `qomicex-connector-rust/`.
 
 Legacy code (pre-Neo / pre-Rust) is preserved on the `legacy` branch.
+
+## 联机（connector）构建注意事项
+
+- 仓库根 `.cargo/config.toml` 提供 `PROTOC` / `VC_LTL` / `YY_THUNKS` 环境变量与 `net.git-fetch-with-cli = true`（easytier 构建必需；路径为本机特定，换机器需调整）。
+- easytier build.rs 以相对路径 `easytier/third_party/x86_64/` 搜索 `Packet.lib`（按 rustc CWD 解析）→ 已复制到 `src-backend/qomicex-backend/easytier/third_party/x86_64/`，删除会导致 `LNK1181: Packet.lib`。
+- 运行 `qomicex-backend.exe` 需要 `Packet.dll`（npcap，来自 connector-rust `easytier/third_party/x86_64/`）在 exe 同目录；缺失时进程退出 `0xC0000135 (STATUS_DLL_NOT_FOUND)`。release 打包（release.yml / Tauri bundle）必须一并带上。
+- 联机端点：`src-backend/qomicex-backend/src/endpoints/connector.rs`（9 个 `/connector/*` 端点）。EasyTier 为库内嵌（非子进程），`/connector/easytier/*` 恒返回 installed。EasyTier 使用 smoltcp 用户态协议栈，**不支持 127.0.0.1 回环**——本机无法验证 host→join 全链路，需两台真实机器。
 
 ## Commands
 
