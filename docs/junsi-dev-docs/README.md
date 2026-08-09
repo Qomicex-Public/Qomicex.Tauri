@@ -62,3 +62,19 @@
 - [构建与部署](8-部署运维/构建部署.md)
 - [环境配置说明](8-部署运维/环境配置说明.md)
 
+
+
+### 2026-08-09 更新
+# 项目文档索引
+
+最后更新：2026-08-09
+
+> 当前后端：**Rust Axum**（`src-backend/qomicex-backend/`，ADR-004 迁移中，插件/联机模块未移植）。C# 版 `Qomicex.Launcher.Backend.Neo` 保留在 `legacy` 分支。
+
+
+
+### 2026-08-09 更新
+- [Rust 编码规范](4-编码规范/Rust-规范.md)
+- [C# 编码规范（legacy）](4-编码规范/CSharp-规范.md)
+- [TypeScript 编码规范](4-编码规范/TypeScript-规范.md)
+

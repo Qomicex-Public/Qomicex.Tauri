@@ -29,3 +29,12 @@
 
 - 访问 `obj["natives"]` 前先检查 `ContainsKey(osName)`
 - 检测 `aarch64`/`ARM64` 后再回退到 `x86`
+
+
+### 2026-08-09 更新
+# C# 编码规范
+
+> ⚠️ 仅适用于 `legacy` 分支的 C# 后端（`Qomicex.Launcher.Backend.Neo` / `Qomicex.Core.AOT`）。自 ADR-004 起后端以 Rust 为主，新代码请遵循《Rust 编码规范》。
+
+从项目 `AGENTS.md` 和代码库提取的约定。
+
