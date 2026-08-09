@@ -21,6 +21,7 @@ use qomicex_downloader::{DownloadEvent, DownloadTask, TaskId, TaskState};
 use crate::endpoints::java;
 use crate::endpoints::loader::LoaderVersionInfo;
 use crate::error::{ApiError, ApiResult};
+use crate::services::install_service::InstallRequestData;
 use crate::services::instance::GameInstance;
 use crate::services::launch_tracker::LaunchProgress;
 use crate::state::SharedState;
@@ -388,6 +389,18 @@ async fn launch_instance(
     let join_world = req.join_world;
     let cancel_flag = tracker.get_or_create_cancel(&instance_id);
 
+    // Build a per-instance repair core rooted at this instance's game_dir (not
+    // the global settings root), mirroring the C# repair stage. This fixes the
+    // integrity-check path mismatch that made downloads land in the global dir.
+    let repair_core = {
+        let download_source = state.settings.read().await.download_source;
+        crate::services::install_service::build_repair_core(
+            &game_dir,
+            download_source,
+            state.http_client.clone(),
+        )
+    };
+
     tracker.set_progress(
         &instance_id,
         LaunchProgress {
@@ -424,7 +437,7 @@ async fn launch_instance(
                     .await
                     .map_err(|_| format!("版本 JSON 不存在: {}", version_json.display()))?;
 
-                let miss_files = core
+                let miss_files = repair_core
                     .locator()
                     .get_miss_files_from_json(&json_content)
                     .await
@@ -698,191 +711,42 @@ async fn launch_cancel(
 async fn install_instance(
     State(state): State<SharedState>,
     AxumPath(instance_id): AxumPath<String>,
-    Json(_req): Json<InstallerRequest>,
+    Json(req): Json<InstallerRequest>,
 ) -> ApiResult<Json<MessageResponse>> {
     let instance = state
         .instance
         .get_by_id(&instance_id)
         .ok_or_else(|| instance_not_found(&instance_id))?;
-    let version_name = instance.name.clone();
-    // Loader install (forge/fabric/neoforge/...) needs qomicex-core's
-    // installer_factory(), which is `pub(crate)` in the core crate and so
-    // cannot be called from this backend. Vanilla only is supported here.
-    // Existing instances may leave `loader` unset while the name carries a
-    // loader marker (e.g. "1.12.2-Forge_14.23.5.2864"), so also sniff the name.
-    let loader_marker: Option<String> = instance
-        .loader
-        .clone()
-        .or_else(|| detect_loader(&version_name).map(String::from));
-    let game_dir = instance.game_dir.clone();
-    let core = state.core.clone();
+
+    let data = InstallRequestData {
+        game_version: instance.game_version.clone(),
+        game_dir: instance.game_dir.clone(),
+        version_dir_name: instance.name.clone(),
+        loader: req.loader.clone(),
+        loader_version: req.loader_version.clone(),
+        addons: req.addons.clone().unwrap_or_default(),
+        download_threads: req.download_threads.unwrap_or(8).max(1),
+        version_isolation: req
+            .version_isolation
+            .unwrap_or_else(crate::settings::get_global_version_isolation),
+        download_source_id: req.download_source_id.unwrap_or(0),
+        optifine_version: req.optifine_version.clone(),
+    };
+
     let tracker = state.install_tracker.clone();
     let mgr = state.download_manager.clone();
+    let http_client = state.http_client.clone();
+    let cf_api_key = state.curse_forge_api_key.clone();
 
     tracker.start(instance_id.clone(), "install", move |handle| async move {
-        use crate::services::install_tracker::InstallStatus;
-        if let Some(l) = loader_marker {
-            let msg = format!(
-                "加载器安装({l})暂未移植到 Rust 后端：qomicex-core 的 installer_factory 是 pub(crate)，后端无法调用。仅支持纯原版下载",
-            );
-            handle.set_error(msg.clone());
-            handle.set_status(InstallStatus::Failed);
-            return Err(msg);
-        }
-        handle.set_status(InstallStatus::Installing);
-        handle.set_stage("resolving");
-
-        // Resolve metadata (also writes version.json locally), then enumerate
-        // the missing files and hand them to qomicex-downloader's DownloadManager
-        // so pause / resume / cancel / retry actually apply.
-        let meta = match core.version().get_version_metadata(&version_name).await {
-            Ok(m) => m,
-            Err(e) => {
-                handle.set_error(e.to_string());
-                handle.set_status(InstallStatus::Failed);
-                return Err(e.to_string());
-            }
-        };
-        let missing = match core.locator().get_miss_files(&meta).await {
-            Ok(list) => list,
-            Err(e) => {
-                handle.set_error(e.to_string());
-                handle.set_status(InstallStatus::Failed);
-                return Err(e.to_string());
-            }
-        };
-
-        handle.set_stage("downloading");
-        if missing.is_empty() {
-            handle.set_stage("completed");
-            handle.set_status(InstallStatus::Completed);
-            return Ok(());
-        }
-
-        let game_root = std::path::PathBuf::from(&game_dir);
-        let ids: Vec<TaskId> = missing
-            .iter()
-            .map(|f| {
-                let dest = game_root.join(&f.path);
-                if let Some(parent) = dest.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                // Retry + resume are baked into the DownloadManager engine.
-                mgr.add(DownloadTask::new(f.url.clone(), dest))
-            })
-            .collect();
-        let total = ids.len() as u64;
-        let id_set: std::collections::HashSet<u64> = ids.iter().copied().collect();
-
-        // Drive progress from DownloadManager events; honor pause/cancel by
-        // translating them into DownloadManager.pause/cancel on every task.
-        let mut done_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        let mut failed: Option<String> = None;
-        // Per-task current (downloaded,total) bytes — summed, NOT accumulated
-        // across events (each Progress event carries the task's cumulative
-        // bytes, so adding them would double-count and blow past 100%).
-        let mut prog: std::collections::HashMap<u64, (u64, u64)> = std::collections::HashMap::new();
-        let mut paused_now = false;
-        let mut rx = mgr.subscribe();
-
-        loop {
-            // Apply pause/cancel signal changes to the downloader.
-            if handle.is_cancelled() {
-                for id in &ids {
-                    let _ = mgr.cancel(*id).await;
-                }
-                handle.set_status(InstallStatus::Cancelled);
-                handle.set_stage("cancelled");
-                return Ok(());
-            }
-            if handle.is_paused() && !paused_now {
-                paused_now = true;
-                for id in &ids {
-                    let _ = mgr.pause(*id).await;
-                }
-            } else if !handle.is_paused() && paused_now {
-                paused_now = false;
-                for id in &ids {
-                    let _ = mgr.resume(*id).await;
-                }
-            }
-
-            tokio::select! {
-                ev = rx.recv() => match ev {
-                    Ok(DownloadEvent::Progress { id, downloaded, total, .. }) => {
-                        if id_set.contains(&id) {
-                            let e = prog.entry(id).or_insert((0, 0));
-                            e.0 = downloaded as u64;
-                            if total > 0 {
-                                e.1 = total as u64;
-                            }
-                            e.1 = e.1.max(e.0);
-                        }
-                    }
-                    Ok(DownloadEvent::StateChanged { id, state, .. }) => {
-                        if id_set.contains(&id) {
-                            match state {
-                                TaskState::Completed => {
-                                    done_ids.insert(id);
-                                    // Mark fully downloaded so the byte sum counts it.
-                                    if let Some(e) = prog.get_mut(&id) {
-                                        if e.1 > 0 {
-                                            e.0 = e.1;
-                                        }
-                                    }
-                                }
-                                TaskState::Failed => {
-                                    if failed.is_none() {
-                                        let done = done_ids.len();
-                                        failed = Some(format!("下载文件校验失败 (完成 {done}/{total} 个)"));
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    Err(_) | Ok(_) => {}
-                },
-                _ = tokio::time::sleep(std::time::Duration::from_millis(300)) => {}
-            }
-
-            let done = done_ids.len() as u64;
-            let (sum_dl, sum_tot) = {
-                let mut dl = 0u64;
-                let mut tot = 0u64;
-                for (d, t) in prog.values() {
-                    dl += *d;
-                    tot += t.max(d);
-                }
-                (dl, tot)
-            };
-            let pct = if done >= total {
-                100.0
-            } else if sum_tot > 0 {
-                (sum_dl as f64 / sum_tot as f64) * 100.0
-            } else {
-                0.0
-            };
-            handle.update(|f| {
-                f.progress = pct.min(100.0).max(0.0);
-                f.total_files = total as i32;
-                f.completed_files = done as i32;
-                f.stage = if paused_now { "paused".to_string() } else { "downloading".to_string() };
-            });
-
-            if done >= total {
-                break;
-            }
-        }
-
-        if let Some(err) = failed {
-            handle.set_error(err.clone());
-            handle.set_status(InstallStatus::Failed);
-            return Err(err);
-        }
-        handle.set_stage("completed");
-        handle.set_status(InstallStatus::Completed);
-        Ok(())
+        crate::services::install_service::run_install_pipeline(
+            &handle,
+            mgr,
+            http_client,
+            &cf_api_key,
+            data,
+        )
+        .await
     });
 
     Ok(Json(MessageResponse {
