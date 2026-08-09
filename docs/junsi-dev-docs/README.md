@@ -78,3 +78,8 @@
 - [C# 编码规范（legacy）](4-编码规范/CSharp-规范.md)
 - [TypeScript 编码规范](4-编码规范/TypeScript-规范.md)
 
+
+
+### 2026-08-09 更新
+> 当前后端：**Rust Axum**（`src-backend/qomicex-backend/`，ADR-004 迁移中，仅 Connector 联机模块未移植）。C# 版 `Qomicex.Launcher.Backend.Neo` 保留在 `legacy` 分支。
+
