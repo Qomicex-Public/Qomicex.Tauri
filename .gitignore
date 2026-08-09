@@ -10,16 +10,11 @@ src-tauri/target/
 # Rust standalone backend build
 src-backend/qomicex-backend/target/
 
-# External Rust library sources (separate repos, not tracked here)
-/qomicex-core-rust/
-/qomicex-downloader-rust/
-
-# .NET build output
-src-backend/**/bin/
-src-backend/**/obj/
+# Legacy C# backend runtime leftovers (deleted source; dir contains a test
+# artifact with an NTFS-reserved name that cannot be removed via Win32 APIs)
+src-backend/Qomicex.Launcher.Backend.Neo/
 
 # VS junk
-src-backend/**/.vs/
 .vs/
 
 # Runtime data

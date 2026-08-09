@@ -40,10 +40,10 @@ fn mc_profile_cache() -> &'static Mutex<HashMap<String, (Instant, Value)>> {
     MC_PROFILE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Default skin bytes: the real Mojang Alex.png (64x32), embedded from the C#
-/// backend's Resources/Alex.png (same blob the C# backend ships).
+/// Default skin bytes: the real Mojang Alex.png (64x32), embedded from
+/// `Resources/Alex.png` (same blob the previous C# backend shipped).
 const DEFAULT_SKIN_LITERAL: &[u8] =
-    include_bytes!("../../../Qomicex.Launcher.Backend.Neo/Resources/Alex.png");
+    include_bytes!("../../Resources/Alex.png");
 
 /// File-private skin service (source: Services/SkinService.cs).
 struct SkinService {

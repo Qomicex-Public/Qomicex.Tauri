@@ -13,7 +13,7 @@
 [![Pull requests](https://img.shields.io/github/issues-pr/Qomicex-Public/Qomicex.Tauri?style=for-the-badge&label=pull%20requests&labelColor=444444&color=1F883D&logo=github)](https://github.com/Qomicex-Public/Qomicex.Tauri/pulls)
 ![GitHub Downloads (all assets, all releases)](https://ghapi.qomicex.top/?style=for-the-badge&color=green)
 
-[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
+[![Rust](https://img.shields.io/badge/Rust-stable-000000?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)](https://react.dev)
 [![Tauri v2](https://img.shields.io/badge/Tauri-2-FFC131?style=flat-square&logo=tauri)](https://tauri.app)
 [![License: GPLv3](https://img.shields.io/badge/License-GPL%20V3-yellow?style=flat-square)](LICENSE)
@@ -31,7 +31,7 @@
 
 **Qomicex Launcher 测试 ①群** [623362446](https://qm.qq.com/q/rKiwzrkg8w)
 
-> 鉴于启动器的AOT支持原因，我们正在重构支持AOT构建的启动器核心，启动器本体的更新将会放缓，新版核心将逐步接入启动器，直至替换原核心
+> 启动器后端已用 Rust (axum) 完整重写，核心库与下载器也已迁移为 Rust 子模块（`qomicex-core-rust` / `qomicex-downloader-rust`），不再依赖 .NET SDK。
 
 ## 小Tips - 读音
 Qomicex

@@ -23,11 +23,11 @@ use serde_json::Value;
 use crate::error::ApiResult;
 use crate::state::SharedState;
 
-/// Embedded mcmod.cn data dump (same file the C# backend embeds).
+/// Embedded mcmod.cn data dump (same file the previous C# backend embedded).
 /// Path resolved relative to this source file:
-/// `src-backend/qomicex-backend/src/endpoints/` -> `src-backend/Qomicex.Launcher.Backend.Neo/Resources/`.
+/// `src-backend/qomicex-backend/src/endpoints/` -> `src-backend/qomicex-backend/Resources/`.
 const EMBEDDED_MCMOD_JSON: &str =
-    include_str!("../../../Qomicex.Launcher.Backend.Neo/Resources/mcmod_data.json");
+    include_str!("../../Resources/mcmod_data.json");
 
 /// Runtime override path: `{BaseDir}/QML/mcmod_data.json` (checked first).
 const RUNTIME_OVERRIDE_REL: &str = "QML/mcmod_data.json";

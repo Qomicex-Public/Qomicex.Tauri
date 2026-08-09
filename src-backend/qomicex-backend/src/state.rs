@@ -177,13 +177,13 @@ impl AppState {
     }
 }
 
-/// Fallback CurseForge API key read from the (embedded) C# `appsettings.json`
-/// `CurseForge:ApiKey`, matching the C# backend's configuration source. The
-/// repo-default value is a placeholder that CurseForge rejects; a real key is
-/// injected via `CURSEFORGE_API_KEY` (or by deploying a real appsettings).
+/// Fallback CurseForge API key read from the (embedded) `appsettings.json`
+/// `CurseForge:ApiKey`, matching the previous C# backend's configuration
+/// source. The repo-default value is a placeholder that CurseForge rejects; a
+/// real key is injected via `CURSEFORGE_API_KEY` (or by deploying a real
+/// appsettings).
 fn embedded_cf_api_key() -> String {
-    const APP_SETTINGS: &str =
-        include_str!("../../Qomicex.Launcher.Backend.Neo/appsettings.json");
+    const APP_SETTINGS: &str = include_str!("../appsettings.json");
     serde_json::from_str::<serde_json::Value>(APP_SETTINGS)
         .ok()
         .and_then(|v| {
@@ -195,12 +195,11 @@ fn embedded_cf_api_key() -> String {
         .unwrap_or_default()
 }
 
-/// Fallback Microsoft OAuth client id from the embedded C# `appsettings.json`
-/// `Microsoft:ClientId` (matches the C# `Microsoft:ClientId`, required for the
-/// device-code login flow). Overridable via `MICROSOFT_CLIENT_ID`.
+/// Fallback Microsoft OAuth client id from the embedded `appsettings.json`
+/// `Microsoft:ClientId` (matches the previous C# `Microsoft:ClientId`, required
+/// for the device-code login flow). Overridable via `MICROSOFT_CLIENT_ID`.
 fn embedded_ms_client_id() -> String {
-    const APP_SETTINGS: &str =
-        include_str!("../../Qomicex.Launcher.Backend.Neo/appsettings.json");
+    const APP_SETTINGS: &str = include_str!("../appsettings.json");
     serde_json::from_str::<serde_json::Value>(APP_SETTINGS)
         .ok()
         .and_then(|v| {

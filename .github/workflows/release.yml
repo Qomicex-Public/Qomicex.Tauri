@@ -193,8 +193,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
       - uses: swatinem/rust-cache@v2
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '10.0.x' }
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -202,17 +200,16 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
-      - name: Fetch LicenseCore.cs
-        env:
-          PAT: ${{ secrets.QOMICEX_PAT }}
-        run: scripts/fetch-license-core.ps1 -licenseRequired "${{ needs.setup.outputs.licenseRequired }}" -pat "$env:PAT"
+      - name: Build Rust backend
         shell: pwsh
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+        run: |
+          $features = @()
+          if ("${{ needs.setup.outputs.licenseRequired }}" -eq "true") { $features = @("--features", "license-required") }
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target x86_64-pc-windows-msvc @features
+      - name: Stage backend binary
         shell: pwsh
-      - run: |
-          Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
-          Remove-Item -Recurse -Force src-tauri/binaries/tmp
-        shell: pwsh
+        run: |
+          Move-Item -Force src-backend/qomicex-backend/target/x86_64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis
@@ -271,8 +268,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-pc-windows-msvc }
       - uses: swatinem/rust-cache@v2
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '10.0.x' }
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -280,17 +275,16 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
-      - name: Fetch LicenseCore.cs
-        env:
-          PAT: ${{ secrets.QOMICEX_PAT }}
-        run: scripts/fetch-license-core.ps1 -licenseRequired "${{ needs.setup.outputs.licenseRequired }}" -pat "$env:PAT"
+      - name: Build Rust backend
         shell: pwsh
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r win-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
+        run: |
+          $features = @()
+          if ("${{ needs.setup.outputs.licenseRequired }}" -eq "true") { $features = @("--features", "license-required") }
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target aarch64-pc-windows-msvc @features
+      - name: Stage backend binary
         shell: pwsh
-      - run: |
-          Move-Item -Force src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo.exe src-tauri/binaries/backend.exe
-          Remove-Item -Recurse -Force src-tauri/binaries/tmp
-        shell: pwsh
+        run: |
+          Move-Item -Force src-backend/qomicex-backend/target/aarch64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
@@ -349,8 +343,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-unknown-linux-gnu }
       - uses: swatinem/rust-cache@v2
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '10.0.x' }
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -360,14 +352,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
-      - name: Fetch LicenseCore.cs
-        env:
-          PAT: ${{ secrets.QOMICEX_PAT }}
-        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
-      - run: |
-          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
-          rm -rf src-tauri/binaries/tmp
+      - name: Build Rust backend
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target x86_64-unknown-linux-gnu $FEATURES
+      - name: Stage backend binary
+        run: |
+          mv src-backend/qomicex-backend/target/x86_64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
@@ -433,8 +425,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-unknown-linux-gnu }
       - uses: swatinem/rust-cache@v2
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '10.0.x' }
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -444,14 +434,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
-      - name: Fetch LicenseCore.cs
-        env:
-          PAT: ${{ secrets.QOMICEX_PAT }}
-        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
-      - run: |
-          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
-          rm -rf src-tauri/binaries/tmp
+      - name: Build Rust backend
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target aarch64-unknown-linux-gnu $FEATURES
+      - name: Stage backend binary
+        run: |
+          mv src-backend/qomicex-backend/target/aarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
@@ -515,11 +505,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: loongarch64-unknown-linux-gnu }
       - uses: swatinem/rust-cache@v2
-      - name: Setup .NET (LoongArch SDK)
-        run: |
-          curl -sL "https://github.com/loongson/dotnet/releases/download/v10.0.109-loongarch64/dotnet-sdk-10.0.109-linux-loongarch64.tar.gz" | tar xz -C /usr/local/dotnet
-          echo "/usr/local/dotnet" >> $GITHUB_PATH
-          dotnet nuget add source -n lnuget.loongnix.cn --protocol-version 3 https://lnuget.loongnix.cn/v3/index.json
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -529,14 +514,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
-      - name: Fetch LicenseCore.cs
-        env:
-          PAT: ${{ secrets.QOMICEX_PAT }}
-        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r linux-loongarch64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
-      - run: |
-          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
-          rm -rf src-tauri/binaries/tmp
+      - name: Build Rust backend
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target loongarch64-unknown-linux-gnu $FEATURES
+      - name: Stage backend binary
+        run: |
+          mv src-backend/qomicex-backend/target/loongarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
@@ -601,22 +586,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-apple-darwin }
       - uses: swatinem/rust-cache@v2
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '10.0.x' }
       - uses: pnpm/action-setup@v4
         with:
           version: 11
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
-      - name: Fetch LicenseCore.cs
-        env:
-          PAT: ${{ secrets.QOMICEX_PAT }}
-        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-arm64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
-      - run: |
-          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
-          rm -rf src-tauri/binaries/tmp
+      - name: Build Rust backend
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target aarch64-apple-darwin $FEATURES
+      - name: Stage backend binary
+        run: |
+          mv src-backend/qomicex-backend/target/aarch64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles app
@@ -704,22 +687,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-apple-darwin }
       - uses: swatinem/rust-cache@v2
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '10.0.x' }
       - uses: pnpm/action-setup@v4
         with:
           version: 11
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
-      - name: Fetch LicenseCore.cs
-        env:
-          PAT: ${{ secrets.QOMICEX_PAT }}
-        run: bash scripts/fetch-license-core.sh "${{ needs.setup.outputs.licenseRequired }}" "$PAT"
-      - run: dotnet publish src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj -c Release -r osx-x64 --self-contained true -p:DebugType=embedded -p:GitHash=${{ env.GITHUB_SHA }} -p:LicenseRequired=${{ needs.setup.outputs.licenseRequired }} -o src-tauri/binaries/tmp
-      - run: |
-          mv src-tauri/binaries/tmp/Qomicex.Launcher.Backend.Neo src-tauri/binaries/backend
-          rm -rf src-tauri/binaries/tmp
+      - name: Build Rust backend
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target x86_64-apple-darwin $FEATURES
+      - name: Stage backend binary
+        run: |
+          mv src-backend/qomicex-backend/target/x86_64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles app --target x86_64-apple-darwin

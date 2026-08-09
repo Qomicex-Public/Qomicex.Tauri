@@ -1436,8 +1436,10 @@ name = "qomicex-downloader"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "jni",
  "rand 0.9.5",
  "reqwest",
+ "serde_json",
  "sha2",
  "thiserror 2.0.19",
  "tokio",
