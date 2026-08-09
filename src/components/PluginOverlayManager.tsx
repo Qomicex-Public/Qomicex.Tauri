@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useCallback, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { usePluginStore, type PluginOverlay } from '../stores/pluginStore.ts'
 import { registerOverlayIframe } from '../plugins/sandbox.ts'
@@ -113,13 +113,43 @@ ${apiScript}
 </html>`
 }
 
+/** Shared bookkeeping for a pointer-driven drag/resize gesture. */
+type GestureRef = {
+  sx: number
+  sy: number
+  active: boolean
+  /** Pointer that owns the capture, or -1 when idle. */
+  pointerId: number
+  /** Element the capture was taken on, so it can be released on the same one. */
+  target: HTMLElement | null
+}
+
+/** End a gesture: drop the active flag and hand pointer capture back. */
+function endGesture(ref: { current: GestureRef }): boolean {
+  const g = ref.current
+  if (!g.active) return false
+  g.active = false
+  if (g.target && g.pointerId >= 0 && g.target.hasPointerCapture?.(g.pointerId)) {
+    g.target.releasePointerCapture(g.pointerId)
+  }
+  g.target = null
+  g.pointerId = -1
+  return true
+}
+
 function Floater({ overlay }: { overlay: PluginOverlay }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
-  const [dragging, setDragging] = useState(false)
-  const [resizing, setResizing] = useState(false)
-  const dragRef = useRef({ sx: 0, sy: 0, ox: 0, oy: 0 })
-  const resizeRef = useRef({ sx: 0, sy: 0, ow: 0, oh: 0 })
+  // No `dragging`/`resizing` state: a gesture writes styles straight to the DOM and
+  // only commits to the store on release, so the refs below are the source of truth
+  // and an extra render per gesture edge would buy nothing.
+  const dragRef = useRef<GestureRef & { ox: number; oy: number }>({
+    sx: 0, sy: 0, ox: 0, oy: 0, active: false, pointerId: -1, target: null,
+  })
+  const resizeRef = useRef<GestureRef & { ow: number; oh: number }>({
+    sx: 0, sy: 0, ow: 0, oh: 0, active: false, pointerId: -1, target: null,
+  })
+  const livePosRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null)
   const setOverlayPosition = usePluginStore(s => s.setOverlayPosition)
   const setOverlaySize = usePluginStore(s => s.setOverlaySize)
   const destroyOverlay = usePluginStore(s => s.destroyOverlay)
@@ -145,54 +175,94 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
     return () => iframe.removeEventListener('load', onLoad)
   }, [overlay.html, overlay.pluginId, overlay.id])
 
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('button')) return
-    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: overlay.x, oy: overlay.y }
-    setDragging(true)
-  }, [overlay.x, overlay.y])
+  // Re-apply live gesture coordinates if a re-render resets inline styles mid-gesture
+  useLayoutEffect(() => {
+    const el = rootRef.current
+    const live = livePosRef.current
+    if (!el || !live) return
+    el.style.left = `${live.x}px`
+    el.style.top = `${live.y}px`
+    el.style.width = `${live.w}px`
+    el.style.height = `${live.h}px`
+  })
 
-  useEffect(() => {
-    if (!dragging) return
-    const onMove = (e: PointerEvent) => {
-      setOverlayPosition(
-        overlay.id,
-        Math.max(0, dragRef.current.ox + e.clientX - dragRef.current.sx),
-        Math.max(0, dragRef.current.oy + e.clientY - dragRef.current.sy)
-      )
+  const onDragStart = useCallback((e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button')) {
+      e.stopPropagation()
+      return
     }
-    const onUp = () => setDragging(false)
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
+    e.stopPropagation()
+    e.preventDefault()
+    const target = e.currentTarget as HTMLElement
+    target.setPointerCapture(e.pointerId)
+    dragRef.current = {
+      sx: e.clientX, sy: e.clientY, ox: overlay.x, oy: overlay.y,
+      active: true, pointerId: e.pointerId, target,
     }
-  }, [dragging, overlay.id, setOverlayPosition])
+    livePosRef.current = { x: overlay.x, y: overlay.y, w: overlay.width, h: overlay.height }
+  }, [overlay.x, overlay.y, overlay.width, overlay.height])
 
-  useEffect(() => {
-    if (!resizing) return
-    const onMove = (e: PointerEvent) => {
-      setOverlaySize(
-        overlay.id,
-        Math.max(200, resizeRef.current.ow + e.clientX - resizeRef.current.sx),
-        Math.max(120, resizeRef.current.oh + e.clientY - resizeRef.current.sy)
-      )
-    }
-    const onUp = () => setResizing(false)
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-  }, [resizing, overlay.id, setOverlaySize])
+  const onDragMove = useCallback((e: React.PointerEvent) => {
+    if (!dragRef.current.active) return
+    const el = rootRef.current
+    if (!el) return
+    const x = Math.max(0, dragRef.current.ox + e.clientX - dragRef.current.sx)
+    const y = Math.max(0, dragRef.current.oy + e.clientY - dragRef.current.sy)
+    livePosRef.current = { x, y, w: overlay.width, h: overlay.height }
+    el.style.left = `${x}px`
+    el.style.top = `${y}px`
+  }, [overlay.width, overlay.height])
+
+  const onDragEnd = useCallback(() => {
+    if (!endGesture(dragRef)) return
+    const live = livePosRef.current
+    livePosRef.current = null
+    if (live) setOverlayPosition(overlay.id, live.x, live.y)
+  }, [overlay.id, setOverlayPosition])
 
   const onResizeStart = useCallback((e: React.PointerEvent) => {
     e.stopPropagation()
     e.preventDefault()
-    resizeRef.current = { sx: e.clientX, sy: e.clientY, ow: overlay.width, oh: overlay.height }
-    setResizing(true)
-  }, [overlay.width, overlay.height])
+    const target = e.currentTarget as HTMLElement
+    target.setPointerCapture(e.pointerId)
+    resizeRef.current = {
+      sx: e.clientX, sy: e.clientY, ow: overlay.width, oh: overlay.height,
+      active: true, pointerId: e.pointerId, target,
+    }
+    livePosRef.current = { x: overlay.x, y: overlay.y, w: overlay.width, h: overlay.height }
+  }, [overlay.x, overlay.y, overlay.width, overlay.height])
+
+  const onResizeMove = useCallback((e: React.PointerEvent) => {
+    if (!resizeRef.current.active) return
+    const el = rootRef.current
+    if (!el) return
+    const w = Math.max(200, resizeRef.current.ow + e.clientX - resizeRef.current.sx)
+    const h = Math.max(120, resizeRef.current.oh + e.clientY - resizeRef.current.sy)
+    livePosRef.current = { x: overlay.x, y: overlay.y, w, h }
+    el.style.width = `${w}px`
+    el.style.height = `${h}px`
+  }, [overlay.x, overlay.y])
+
+  const onResizeEnd = useCallback(() => {
+    if (!endGesture(resizeRef)) return
+    const live = livePosRef.current
+    livePosRef.current = null
+    if (live) setOverlaySize(overlay.id, live.w, live.h)
+  }, [overlay.id, setOverlaySize])
+
+  // Commit any in-flight gesture if the window loses focus (Alt-Tab, etc.).
+  // Delegates to the normal end handlers so this path can't drift from them.
+  // Clearing `active` is the critical part: pointermove is bound on the header
+  // and fires on plain hover, so a stale `active` would make the overlay follow
+  // the cursor with no button held once focus came back.
+  useEffect(() => {
+    const onBlur = () => {
+      onDragEnd()
+      onResizeEnd()
+    }
+    window.addEventListener('blur', onBlur)
+    return () => window.removeEventListener('blur', onBlur)
+  }, [onDragEnd, onResizeEnd])
 
   if (!overlay.visible) return null
 
@@ -204,8 +274,11 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
       onMouseDown={() => { const { showOverlay } = usePluginStore.getState(); showOverlay(overlay.id) }}
     >
       <div
-        className="flex items-center gap-2 px-3 py-2 border-b border-border/50 bg-muted/50 cursor-grab active:cursor-grabbing select-none"
-        onMouseDown={onMouseDown}
+        className="flex items-center gap-2 px-3 py-2 border-b border-border/50 bg-muted/50 cursor-grab active:cursor-grabbing select-none touch-none"
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onPointerCancel={onDragEnd}
       >
         <span className="text-xs font-medium text-popover-foreground truncate flex-1">{overlay.title}</span>
         {overlay.minimizable && (
@@ -216,8 +289,11 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
       <iframe ref={iframeRef} sandbox="allow-scripts" className="flex-1 w-full" />
       {overlay.resizable && (
         <div
-          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
+          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize touch-none"
           onPointerDown={onResizeStart}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeEnd}
+          onPointerCancel={onResizeEnd}
         >
           <svg viewBox="0 0 16 16" className="w-full h-full text-muted-foreground/60">
             <path d="M12 12 L16 8 M12 16 L16 12 M8 16 L12 12" stroke="currentColor" strokeWidth="1.5" fill="none" />

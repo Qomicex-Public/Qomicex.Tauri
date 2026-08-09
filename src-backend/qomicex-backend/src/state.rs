@@ -12,14 +12,17 @@ use qomicex_core::builder::GameCoreBuilder;
 use qomicex_core::core::GameCore;
 use qomicex_core::models::download::DownloadMirror;
 use qomicex_downloader::{DownloadManager, DownloadOptions};
+use tokio::sync::RwLock;
 
 use crate::services::account::AccountService;
+use crate::services::curseforge_fetch::CurseForgeVersionFetchService;
 use crate::services::install_tracker::InstallTracker;
 use crate::services::instance::InstanceService;
 use crate::services::launch_tracker::LaunchTracker;
 use crate::services::plugin::{FileAuthService, PluginGatewayClient, PluginStore};
 use crate::services::trace::{LogLevelManager, TraceBufferStore, TraceDumpService};
 use crate::settings;
+use crate::settings::SettingsResponse;
 
 pub const DEFAULT_PORT: u16 = 5000;
 
@@ -63,6 +66,10 @@ pub struct AppState {
     pub plugin_gateway: Arc<PluginGatewayClient>,
     /// 插件 proxy 专用 HTTP 客户端（对应命名 HttpClient "PluginProxy"）。
     pub proxy_client: reqwest::Client,
+    /// 当前设置（内存缓存，PUT /settings 时同步更新）。
+    pub settings: Arc<RwLock<SettingsResponse>>,
+    /// CurseForge 版本异步拉取服务（对应 CurseForgeVersionFetchService）。
+    pub curseforge_fetch: Arc<CurseForgeVersionFetchService>,
 }
 
 impl AppState {
@@ -138,6 +145,12 @@ impl AppState {
         let plugin_store = Arc::new(PluginStore::new());
         let plugin_auth = Arc::new(FileAuthService::new());
         let plugin_gateway = Arc::new(PluginGatewayClient::new(http_client.clone()));
+        let settings = Arc::new(RwLock::new(settings_now.clone()));
+        let curseforge_fetch = CurseForgeVersionFetchService::new_with_config(
+            http_client.clone(),
+            curse_forge_api_key.clone(),
+            settings_now.curseforge_fetch_config(),
+        );
 
         Self {
             core,
@@ -158,6 +171,8 @@ impl AppState {
             plugin_auth,
             plugin_gateway,
             proxy_client,
+            settings,
+            curseforge_fetch,
         }
     }
 }

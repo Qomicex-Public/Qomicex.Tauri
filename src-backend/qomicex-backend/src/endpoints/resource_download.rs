@@ -100,6 +100,7 @@ pub(crate) struct TaskSnapshot {
     pub(crate) status: String,
     pub(crate) downloaded: u64,
     pub(crate) total: u64,
+    pub(crate) speed: u64,
     pub(crate) error: Option<String>,
     pub(crate) file_name: Option<String>,
 }
@@ -132,11 +133,12 @@ fn ensure_watcher(manager: Arc<DownloadManager>) {
         let mut rx = manager.subscribe();
         loop {
             match rx.recv().await {
-                Ok(DownloadEvent::Progress { id, downloaded, total, .. }) => {
+                Ok(DownloadEvent::Progress { id, downloaded, total, speed_bps, .. }) => {
                     let mut reg = task_registry().lock().unwrap();
                     if let Some(s) = reg.get_mut(&id) {
                         s.downloaded = downloaded;
                         s.total = total;
+                        s.speed = speed_bps;
                         if total > 0 {
                             s.status = status_of(TaskState::Downloading).to_string();
                         }
@@ -148,6 +150,19 @@ fn ensure_watcher(manager: Arc<DownloadManager>) {
                     if let Some(s) = task_registry().lock().unwrap().get_mut(&id) {
                         s.status = status;
                         s.error = error;
+                        // 完成时把已下载字节同步为总大小（最后一个进度 tick 可能与
+                        // 完成存在节流竞态，导致快照停在未满值）。
+                        if state == TaskState::Completed && s.total > 0 {
+                            s.downloaded = s.total;
+                        }
+                        // 终态下速度必须归零，否则快照会永久残留最后一次的瞬时速度，
+                        // 每个 SSE 消费者都得各自在客户端补这一下。
+                        if matches!(
+                            state,
+                            TaskState::Completed | TaskState::Failed | TaskState::Cancelled
+                        ) {
+                            s.speed = 0;
+                        }
                     }
                 }
                 Ok(DownloadEvent::GlobalProgress { .. } | DownloadEvent::Log { .. }) => {}
@@ -287,6 +302,7 @@ async fn start(
                 status: "queued".to_string(),
                 downloaded: 0,
                 total: 0,
+                speed: 0,
                 error: None,
                 file_name: Some(file_name.clone()),
             },
@@ -335,6 +351,7 @@ async fn download_to(
                 status: "queued".to_string(),
                 downloaded: 0,
                 total: 0,
+                speed: 0,
                 error: None,
                 file_name: Some(file_name.clone()),
             },

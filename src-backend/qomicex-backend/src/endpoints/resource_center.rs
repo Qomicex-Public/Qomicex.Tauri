@@ -75,6 +75,7 @@ struct ResourceDetailDto {
 #[serde(rename_all = "camelCase")]
 struct ResourceFileDto {
     url: String,
+    #[serde(rename = "fileName")]
     filename: String,
     size: i64,
 }
@@ -242,11 +243,11 @@ pub fn router() -> Router<SharedState> {
         )
         .route(
             "/resources/versions/fetch-progress/{task_id}",
-            get(versions_fetch_progress_501),
+            get(versions_fetch_progress),
         )
         .route(
             "/resources/versions/fetch-result/{task_id}",
-            get(versions_fetch_result_501),
+            get(versions_fetch_result),
         )
         .route("/resources/{id}/translate", get(translate))
         .route("/resources/translate-text", post(translate_text))
@@ -673,6 +674,7 @@ async fn versions(
         }
         let dtos = cf_versions_raw(
             &state.http_client,
+            &state.curseforge_fetch,
             &id,
             &state.curse_forge_api_key,
             game_version.as_deref(),
@@ -809,14 +811,27 @@ async fn version_downloads(
 
     if src.eq_ignore_ascii_case("curseforge") {
         let cf = state.core.create_curseforge_source(&state.curse_forge_api_key);
-        let url = cf
-            .get_download_url(&id, &version_id)
-            .await
-            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let (file_info, url_result) = futures::join!(
+            cf.get_file_info(&id, &version_id),
+            cf.get_download_url(&id, &version_id)
+        );
+        let url = url_result.map_err(|e| ApiError::upstream(e.to_string()))?;
+        let (file_name, size) = match file_info {
+            Ok(info) => (info.file_name.unwrap_or_default(), info.file_length),
+            Err(e) => {
+                tracing::warn!(
+                    mod_id = %id,
+                    file_id = %version_id,
+                    error = %e,
+                    "CurseForge get_file_info 失败，文件名回退为下载链接末段"
+                );
+                (file_name_from_url(&url), 0)
+            }
+        };
         return Ok(Json(vec![ResourceFileDto {
             url,
-            filename: String::new(),
-            size: 0,
+            filename: file_name,
+            size,
         }]));
     }
 
@@ -934,30 +949,39 @@ async fn dependencies(
 }
 
 // =====================================================================
-// Handlers: CurseForge version fetch service (placeholders, service not ported)
+// Handlers: CurseForge async version fetch service
 // =====================================================================
 
 async fn versions_start_fetch(
-    State(_state): State<SharedState>,
-    AxumPath(_id): AxumPath<String>,
-    Query(_q): Query<StartFetchQuery>,
-) -> ApiResult<Response> {
-    // TODO: back CurseForgeVersionFetchService once ported. Stub as not implemented.
-    Ok((StatusCode::NOT_IMPLEMENTED, "501").into_response())
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+    Query(q): Query<StartFetchQuery>,
+) -> ApiResult<Json<crate::services::curseforge_fetch::FetchStartResponse>> {
+    let resp = state
+        .curseforge_fetch
+        .start(&id, q.game_version.as_deref(), q.loader.as_deref())
+        .await;
+    Ok(Json(resp))
 }
 
-async fn versions_fetch_progress_501(
-    _state: State<SharedState>,
-    _path: AxumPath<String>,
-) -> ApiResult<Response> {
-    Ok((StatusCode::NOT_IMPLEMENTED, "501").into_response())
+async fn versions_fetch_progress(
+    State(state): State<SharedState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> ApiResult<Json<crate::services::curseforge_fetch::FetchProgressResponse>> {
+    match state.curseforge_fetch.get_progress(&task_id).await {
+        Some(p) => Ok(Json(p)),
+        None => Err(ApiError::not_found("NOT_FOUND", "任务不存在或已过期")),
+    }
 }
 
-async fn versions_fetch_result_501(
-    _state: State<SharedState>,
-    _path: AxumPath<String>,
-) -> ApiResult<Response> {
-    Ok((StatusCode::NOT_IMPLEMENTED, "501").into_response())
+async fn versions_fetch_result(
+    State(state): State<SharedState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> ApiResult<Json<Vec<serde_json::Value>>> {
+    match state.curseforge_fetch.get_result(&task_id).await {
+        Some(r) => Ok(Json(r)),
+        None => Err(ApiError::not_found("NOT_FOUND", "任务不存在或尚未完成")),
+    }
 }
 
 // =====================================================================
@@ -1122,13 +1146,33 @@ async fn fetch_mr_author(client: &reqwest::Client, team_id: &str) -> String {
 // CurseForge expansion: legacy raw versions fetch
 // =====================================================================
 
+/// 拉取 CurseForge 版本列表（同步路径）。
+///
+/// 与 [`crate::services::curseforge_fetch`] 共用 `version_cache`，缓存里存的是**上游
+/// 原始 file 对象**；映射与 loader 过滤都在这里做。两边的编码必须一致，否则交叉命中
+/// 会把 DTO 再喂一遍映射器，产出 id / 下载地址全空的废数据。
 async fn cf_versions_raw(
     client: &reqwest::Client,
+    fetch_service: &crate::services::curseforge_fetch::CurseForgeVersionFetchService,
     id: &str,
     api_key: &str,
     game_version: Option<&str>,
     loader: Option<&str>,
 ) -> Vec<ResourceVersionDto> {
+    let key = crate::services::curseforge_fetch::CurseForgeVersionFetchService::cache_key(
+        id,
+        game_version,
+    );
+
+    if let Some(cached) = fetch_service.get_cached(&key) {
+        if !cached.is_empty() {
+            let mut dtos: Vec<ResourceVersionDto> =
+                cached.iter().map(cf_file_to_version_dto).collect();
+            apply_cf_filters(&mut dtos, game_version, loader);
+            return dtos;
+        }
+    }
+
     let body = match cf_get_raw(client, &cf_files_url(id, None, game_version), api_key).await {
         Some(b) => b,
         None => return vec![],
@@ -1145,35 +1189,66 @@ async fn cf_versions_raw(
         .get("pagination")
         .and_then(|p| p.get("totalCount"))
         .and_then(|t| t.as_i64())
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .max(0) as usize;
     if total_count == 0 {
         return vec![];
     }
 
-    let page_size = 50;
-    let total_pages = (total_count + page_size - 1) / page_size;
+    let page_size = 50usize;
+    let total_pages = total_count.div_ceil(page_size);
     let mut all_items: Vec<Value> = first_data;
     if total_pages > 1 {
-        // NOTE: source fetches pages concurrently with a 5-slot semaphore;
-        // here they are fetched sequentially (TODO: parallelize).
+        // 并发数统一由 fetch service 持有并钳位，不要在此处从 settings 里 `as usize`：
+        // 负的 i32 转 usize 会变成天文数字并让 Semaphore::new panic。
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(fetch_service.concurrency()));
+        let mut handles = Vec::new();
         for p in 1..total_pages {
-            if let Some(b) =
-                cf_get_raw(client, &cf_files_url(id, Some(p * page_size), game_version), api_key)
-                    .await
-            {
-                let items = b
-                    .get("data")
-                    .and_then(|d| d.as_array())
-                    .cloned()
-                    .unwrap_or_default();
+            let Ok(permit) = sem.clone().acquire_owned().await else {
+                break;
+            };
+            let client = client.clone();
+            let api_key = api_key.to_string();
+            let id = id.to_string();
+            let gv = game_version.map(String::from);
+            handles.push(tokio::spawn(async move {
+                let _permit = permit;
+                let url = cf_files_url(&id, Some((p * page_size) as i64), gv.as_deref());
+                let result = cf_get_raw(&client, &url, &api_key).await;
+                if let Some(b) = result {
+                    b.get("data")
+                        .and_then(|d| d.as_array())
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    vec![]
+                }
+            }));
+        }
+        for h in handles {
+            if let Ok(items) = h.await {
                 all_items.extend(items);
             }
         }
     }
 
-    let mut dtos: Vec<ResourceVersionDto> =
-        all_items.iter().map(|f| cf_file_to_version_dto(f)).collect();
+    // 缓存原始对象（未经 loader 过滤），键里也不含 loader
+    if !all_items.is_empty() {
+        fetch_service.set_cached(key, all_items.clone());
+    }
 
+    let mut dtos: Vec<ResourceVersionDto> =
+        all_items.iter().map(cf_file_to_version_dto).collect();
+
+    apply_cf_filters(&mut dtos, game_version, loader);
+    dtos
+}
+
+fn apply_cf_filters(
+    dtos: &mut Vec<ResourceVersionDto>,
+    game_version: Option<&str>,
+    loader: Option<&str>,
+) {
     if let Some(gv) = game_version {
         dtos.retain(|v| v.game_versions.iter().any(|x| x == gv));
     }
@@ -1183,7 +1258,17 @@ async fn cf_versions_raw(
             v.loaders.is_empty() || v.loaders.iter().any(|x| x.to_lowercase() == norm)
         });
     }
-    dtos
+}
+
+/// 从下载链接推导文件名：先去掉 query/fragment，取末段路径，再做百分号解码。
+///
+/// CDN 链接常把空格编码成 `%20`，直接取末段会把编码原样写到磁盘上。
+fn file_name_from_url(url: &str) -> String {
+    let path = url.split(|c| c == '?' || c == '#').next().unwrap_or(url);
+    let last = path.rsplit('/').next().unwrap_or("");
+    urlencoding::decode(last)
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| last.to_string())
 }
 
 fn cf_files_url(id: &str, index: Option<i64>, game_version: Option<&str>) -> String {

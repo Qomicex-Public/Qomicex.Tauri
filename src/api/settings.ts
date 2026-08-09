@@ -46,6 +46,8 @@ export interface AppSettings {
   bingApiKey?: string
   cornerRadius: number
   windowCorners: boolean
+  curseforgeVersionFetchConcurrency: number
+  curseforgeVersionCacheTtlSeconds: number
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -82,6 +84,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bingApiKey: '',
   cornerRadius: 8,
   windowCorners: true,
+  curseforgeVersionFetchConcurrency: 10,
+  curseforgeVersionCacheTtlSeconds: 300,
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }
@@ -183,6 +187,10 @@ export function openFolder(path: string): Promise<void> {
 
 export async function clearCache(): Promise<{ deleted: number }> {
   return post<{ deleted: number }>('/settings/clear-cache', {})
+}
+
+export async function clearCurseForgeCache(): Promise<{ deleted: number }> {
+  return post<{ deleted: number }>('/settings/clear-curseforge-cache', {})
 }
 
 

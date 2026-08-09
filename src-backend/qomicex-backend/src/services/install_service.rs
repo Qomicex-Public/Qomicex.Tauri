@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use qomicex_core::api::installer::InstallerFactory;
 use qomicex_core::builder::GameCoreBuilder;
@@ -181,7 +181,10 @@ pub async fn run_install_pipeline(
         let matched = loaders
             .iter()
             .find(|l| l.version.eq_ignore_ascii_case(loader_version))
-            .ok_or_else(|| format!("找不到 {loader:?} {loader_version} 的安装器"))?;
+            .ok_or_else(|| format!("找不到 {} {} 的安装器", loader.as_deref().unwrap_or(""), loader_version))?;
+        if matched.url.trim().is_empty() {
+            return Err(format!("{} {} 安装器的下载链接为空，可能是版本列表解析异常", loader.as_deref().unwrap_or(""), loader_version));
+        }
 
         let temp_dir = game_root.join("temp");
         std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建 temp 目录失败: {e}"))?;
@@ -782,6 +785,14 @@ fn is_cf_domain(url: &str) -> bool {
 
 /// 批量下载（源 `RunBatchAsync(startPct, endPct)`）。进度按已下载字节映射到
 /// `[start_pct, end_pct]`；pause/cancel 由事件循环协作转发给 `DownloadManager`。
+/// 运行期 stall 超时：事件已开始流动后，若此期间无任何事件则判定卡死。
+/// 不用于冷启动：第一批任务在 semaphore 排队 + probe（HEAD + Range GET） +
+/// CurseForge CDN 重定向解析期间可能需要数十秒，用短超时会误杀。
+const DOWNLOAD_BATCH_TIMEOUT: Duration = Duration::from_secs(120);
+/// 冷启动宽容超时：从调用到第一个事件到达的最长容忍时间。
+/// 覆盖 semaphore 等待（全局并发上限）+ probe 重试 + 首文件 TCP 建连。
+const COLD_START_TIMEOUT: Duration = Duration::from_secs(180);
+
 async fn download_batch(
     handle: &InstallHandle,
     mgr: &DownloadManager,
@@ -793,6 +804,22 @@ async fn download_batch(
         handle.set_progress(end_pct);
         return Ok(());
     }
+
+    // Pre-compute display names before consuming `files` in the loop below.
+    let file_names: Vec<String> = files
+        .iter()
+        .map(|(url, dest, _)| {
+            dest.file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| url.split('/').next_back().unwrap_or(url).to_string())
+                .to_string()
+        })
+        .collect();
+
+    // Subscribe BEFORE adding tasks so no events are lost. `mgr.add()` sends
+    // `StateChanged::Queued` synchronously and the dispatcher may immediately
+    // transition to `Downloading`; a late subscriber would miss those ticks.
+    let mut rx = mgr.subscribe();
 
     let mut ids = Vec::new();
     for (url, dest, headers) in files {
@@ -809,8 +836,23 @@ async fn download_batch(
     let mut done_ids: HashSet<u64> = HashSet::new();
     let mut failed: Option<String> = None;
     let mut prog: HashMap<u64, (u64, u64)> = HashMap::new();
+    let mut file_name: HashMap<u64, String> = HashMap::new();
+    let mut task_speed: HashMap<u64, u64> = HashMap::new();
+    for (&id, name) in ids.iter().zip(file_names.iter()) {
+        file_name.insert(id, name.clone());
+    }
     let mut paused_now = false;
-    let mut rx = mgr.subscribe();
+    // Cold-start: no events from the downloader yet. The downloader needs
+    // time for semaphore scheduling, URL probing (HEAD + Range GET), and
+    // CurseForge CDN redirect resolution before the first Progress event
+    // arrives. Use a generous timeout here so a batch of small loader lib
+    // files doesn't time out while the first few are still being probed.
+    //
+    // Once any event arrives we flip `started` to true and switch to the
+    // shorter stall timeout, catching genuinely stuck downloads without
+    // penalizing cold start.
+    let mut last_event = Instant::now() - DOWNLOAD_BATCH_TIMEOUT;
+    let mut started = false;
 
     loop {
         if handle.is_cancelled() {
@@ -831,9 +873,23 @@ async fn download_batch(
             }
         }
 
+        let stall_limit = if started {
+            DOWNLOAD_BATCH_TIMEOUT
+        } else {
+            COLD_START_TIMEOUT
+        };
+        if last_event.elapsed() > stall_limit {
+            for id in &ids {
+                let _ = mgr.cancel(*id).await;
+            }
+            return Err("下载超时：文件下载未在预期时间内完成".to_string());
+        }
+
         tokio::select! {
             ev = rx.recv() => match ev {
-                Ok(DownloadEvent::Progress { id, downloaded, total: t, .. }) => {
+                Ok(DownloadEvent::Progress { id, downloaded, total: t, speed_bps, .. }) => {
+                    last_event = Instant::now();
+                    started = true;
                     if id_set.contains(&id) {
                         let e = prog.entry(id).or_insert((0, 0));
                         e.0 = downloaded;
@@ -841,31 +897,35 @@ async fn download_batch(
                             e.1 = t;
                         }
                         e.1 = e.1.max(e.0);
+                        if speed_bps > 0 {
+                            task_speed.insert(id, speed_bps);
+                        }
                     }
                 }
-                Ok(DownloadEvent::StateChanged { id, state, .. }) => {
+                Ok(DownloadEvent::StateChanged { id, state, detail, .. }) => {
+                    last_event = Instant::now();
+                    started = true;
                     if id_set.contains(&id) {
-                        match state {
-                            TaskState::Completed => {
-                                done_ids.insert(id);
-                                if let Some(e) = prog.get_mut(&id) {
-                                    if e.1 > 0 {
-                                        e.0 = e.1;
-                                    }
-                                }
-                            }
-                            TaskState::Failed => {
-                                if failed.is_none() {
-                                    failed = Some("下载文件校验失败".to_string());
-                                }
-                            }
-                            _ => {}
-                        }
+                        apply_terminal_state(id, state, detail, &mut done_ids, &mut prog, &mut task_speed, &mut failed);
                     }
                 }
                 _ => {}
             },
-            _ = tokio::time::sleep(Duration::from_millis(300)) => {}
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                // Broadcast events can be lost (single-consumer channel, SSE
+                // watcher may grab them first). Poll the downloader's internal
+                // state as a fallback so Completed/Failed/Cancelled tasks are
+                // always reconciled.
+                if started {
+                    // DEBUG-PROBE
+                    let states = mgr.list().await;
+                    let stuck: Vec<_> = states.iter()
+                        .filter(|(id, st)| id_set.contains(id) && matches!(st, TaskState::Queued | TaskState::Downloading))
+                        .take(8).map(|(id, st)| format!("{id}:{st:?}")).collect();
+                    eprintln!("[download_batch probe] done={} total={} stuck_visible={:?}", done_ids.len(), total, stuck);
+                    poll_task_states(mgr, &id_set, &mut done_ids, &mut prog, &mut task_speed, &mut failed).await;
+                }
+            }
         }
 
         let done = done_ids.len() as u64;
@@ -885,10 +945,31 @@ async fn download_batch(
         } else {
             0.0
         };
+        // Current file: the active (not-yet-completed) task whose last speed
+        // was highest. If everything is done, clear so the UI shows the final
+        // "completed" state without a stale file name.
+        let current_file = if done >= total {
+            String::new()
+        } else {
+            task_speed
+                .iter()
+                .filter(|(id, _)| !done_ids.contains(id))
+                .max_by_key(|(_, &spd)| spd)
+                .and_then(|(id, _)| file_name.get(id).cloned())
+                .unwrap_or_default()
+        };
+        let current_speed = task_speed
+            .values()
+            .max()
+            .copied()
+            .unwrap_or(0) as f64;
+
         handle.update(|f| {
             f.progress = (start_pct + pct_in * (end_pct - start_pct)).clamp(start_pct, end_pct);
             f.total_files = total as i32;
             f.completed_files = done as i32;
+            f.current_file = current_file;
+            f.speed = current_speed;
             if paused_now {
                 f.stage = "paused".to_string();
             }
@@ -902,5 +983,79 @@ async fn download_batch(
     match failed {
         Some(e) => Err(e),
         None => Ok(()),
+    }
+}
+
+/// Apply a terminal-state event to the batch tracking maps. Extracted so the
+/// polling fallback can reuse the exact same logic without duplicating state
+/// machines.
+fn apply_terminal_state(
+    id: u64,
+    state: TaskState,
+    detail: Option<String>,
+    done_ids: &mut HashSet<u64>,
+    prog: &mut HashMap<u64, (u64, u64)>,
+    task_speed: &mut HashMap<u64, u64>,
+    failed: &mut Option<String>,
+) {
+    match state {
+        TaskState::Completed => {
+            done_ids.insert(id);
+            if let Some(e) = prog.get_mut(&id) {
+                if e.1 > 0 {
+                    e.0 = e.1;
+                }
+            }
+            task_speed.remove(&id);
+        }
+        TaskState::Failed => {
+            if failed.is_none() {
+                *failed = detail.or_else(|| Some("下载文件校验失败".to_string()));
+            }
+        }
+        TaskState::Cancelled => {
+            done_ids.insert(id);
+            task_speed.remove(&id);
+        }
+        _ => {}
+    }
+}
+
+/// Poll the downloader's public `state()` API for each tracked task. This
+/// catches terminal states whose broadcast `StateChanged` events were consumed
+/// by the SSE watcher (single-consumer channel — events reach only one
+/// subscriber). The SSE watcher runs independently and frequently wins the
+/// race, leaving `download_batch`'s `done_ids` permanently empty and progress
+/// stuck at 0/N.
+///
+/// Note: `state()` only returns the `TaskState`, not the error detail string.
+/// Failed-task detection still works (loop exits via `done_ids`), but the
+/// detailed error message is best-effort — the broadcast path carries it when
+/// it wins the race.
+async fn poll_task_states(
+    mgr: &DownloadManager,
+    id_set: &HashSet<u64>,
+    done_ids: &mut HashSet<u64>,
+    prog: &mut HashMap<u64, (u64, u64)>,
+    task_speed: &mut HashMap<u64, u64>,
+    _failed: &mut Option<String>,
+) {
+    for &id in id_set {
+        if done_ids.contains(&id) {
+            continue;
+        }
+        if let Ok(state) = mgr.state(id).await {
+            if matches!(state, TaskState::Completed | TaskState::Failed | TaskState::Cancelled) {
+                apply_terminal_state(
+                    id,
+                    state,
+                    None,
+                    done_ids,
+                    prog,
+                    task_speed,
+                    _failed,
+                );
+            }
+        }
     }
 }

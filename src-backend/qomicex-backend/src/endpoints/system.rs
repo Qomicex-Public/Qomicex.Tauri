@@ -8,6 +8,7 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Serialize;
 
 use crate::error::{ApiError, ApiResult};
 use crate::models::*;
@@ -51,6 +52,10 @@ pub fn router() -> Router<SharedState> {
         .route(
             "/settings/mod-source/auto-select",
             get(auto_select_mod_source),
+        )
+        .route(
+            "/settings/clear-curseforge-cache",
+            post(clear_curseforge_cache),
         )
 }
 
@@ -116,8 +121,19 @@ async fn get_settings() -> ApiResult<Json<SettingsResponse>> {
     Ok(Json(settings::load_settings()))
 }
 
-async fn put_settings(Json(body): Json<SettingsResponse>) -> ApiResult<StatusCode> {
+async fn put_settings(
+    State(state): State<SharedState>,
+    Json(mut body): Json<SettingsResponse>,
+) -> ApiResult<StatusCode> {
+    // 在边界处规范化：这些值会被拿去构造 Semaphore / Duration，越界值必须在落盘前
+    // 就钳住，否则一个手改的 settings.json 或一次直连 API 调用就能让后续请求 panic。
+    body.clamp_numeric_ranges();
+
     settings::save_settings(&body)?;
+    state
+        .curseforge_fetch
+        .set_config(body.curseforge_fetch_config());
+    *state.settings.write().await = body;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -288,4 +304,17 @@ async fn ping_get_fast(url: &str) -> (bool, i64) {
         Ok(resp) => (resp.status().is_success(), sw.elapsed().as_millis() as i64),
         Err(_) => (false, -1),
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClearCurseForgeCacheResponse {
+    deleted: usize,
+}
+
+async fn clear_curseforge_cache(
+    State(state): State<SharedState>,
+) -> ApiResult<Json<ClearCurseForgeCacheResponse>> {
+    let deleted = state.curseforge_fetch.clear_cache();
+    Ok(Json(ClearCurseForgeCacheResponse { deleted }))
 }

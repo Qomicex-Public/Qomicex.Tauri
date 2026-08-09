@@ -135,7 +135,7 @@ fn build_payload(tracker: &InstallTracker) -> ProgressSsePayload {
                 "status": s.status,
                 "stage": s.status,
                 "progress": progress,
-                "speed": 0.0,
+                "speed": s.speed,
                 "currentFile": s.file_name,
                 "error": s.error,
                 "downloadedBytes": s.downloaded,
