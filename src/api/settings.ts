@@ -134,8 +134,10 @@ export interface DownloadSourcePing {
   id: number
   name: string
   url: string
-  latencyMs: number
-  available: boolean
+  /** 后端字段名：latency（serde camelCase 对单词不变形） */
+  latency: number
+  /** 后端字段名：ok */
+  ok: boolean
 }
 
 export async function pingDownloadSources(): Promise<DownloadSourcePing[]> {
@@ -145,10 +147,10 @@ export async function pingDownloadSources(): Promise<DownloadSourcePing[]> {
 export interface ModSourcePing {
   id: number
   name: string
-  modrinthUrl: string
-  modrinthOk: boolean
-  modrinthLatency: number
-  available: boolean
+  url: string
+  ok: boolean
+  latency: number
+  canConnect: boolean
 }
 
 export async function pingModSources(): Promise<ModSourcePing[]> {

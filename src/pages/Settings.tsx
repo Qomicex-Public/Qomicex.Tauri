@@ -690,7 +690,7 @@ export default function Settings() {
       const pings = await pingDownloadSources()
       setSourcePings(pings)
       if (settings.autoSelectDownloadSource) {
-        const best = pings.filter(p => p.available).sort((a, b) => a.latencyMs - b.latencyMs)[0]
+        const best = pings.filter(p => p.ok).sort((a, b) => a.latency - b.latency)[0]
         if (best && best.id !== settings.downloadSource) {
           update('downloadSource', best.id)
         }
@@ -708,7 +708,7 @@ export default function Settings() {
       const pings = await pingModSources()
       setModPings(pings)
       if (settings.autoSelectModMirror) {
-        const best = pings.filter(p => p.available).sort((a, b) => a.modrinthLatency - b.modrinthLatency)[0]
+        const best = pings.filter(p => p.ok).sort((a, b) => a.latency - b.latency)[0]
         if (best && best.id !== settings.modMirror) {
           update('modMirror', best.id)
         }
@@ -1006,10 +1006,10 @@ export default function Settings() {
                   <div className="flex flex-wrap items-center gap-2">
                     {DOWNLOAD_SOURCES.map((s) => {
                       const ping = sourcePings.find(p => p.id === s.value)
-                      const showLatency = ping && ping.latencyMs >= 0
-                      const latencyColor = !ping?.available ? 'text-destructive'
-                        : ping.latencyMs < 200 ? 'text-emerald-400'
-                        : ping.latencyMs < 400 ? 'text-amber-400'
+                      const showLatency = ping && ping.latency >= 0
+                      const latencyColor = !ping?.ok ? 'text-destructive'
+                        : ping.latency < 200 ? 'text-emerald-400'
+                        : ping.latency < 400 ? 'text-amber-400'
                         : 'text-destructive'
                       return (
                         <button
@@ -1028,7 +1028,7 @@ export default function Settings() {
                           {pingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!pingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
-                              {ping.latencyMs}ms
+                              {ping.latency}ms
                             </span>
                           )}
                           {!pingLoading && !showLatency && (
@@ -1064,10 +1064,10 @@ export default function Settings() {
                       { value: 1, label: 'MCIM 镜像' },
                     ].map((s) => {
                       const ping = modPings.find(p => p.id === s.value)
-                      const showLatency = ping && ping.modrinthLatency >= 0
-                      const latencyColor = !ping?.available ? 'text-destructive'
-                        : ping.modrinthLatency < 200 ? 'text-emerald-400'
-                        : ping.modrinthLatency < 400 ? 'text-amber-400'
+                      const showLatency = ping && ping.latency >= 0
+                      const latencyColor = !ping?.ok ? 'text-destructive'
+                        : ping.latency < 200 ? 'text-emerald-400'
+                        : ping.latency < 400 ? 'text-amber-400'
                         : 'text-destructive'
                       return (
                         <button
@@ -1086,7 +1086,7 @@ export default function Settings() {
                           {modPingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!modPingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
-                              {ping.modrinthLatency}ms
+                              {ping.latency}ms
                             </span>
                           )}
                           {!modPingLoading && !showLatency && (

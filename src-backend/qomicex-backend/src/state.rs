@@ -26,6 +26,9 @@ use crate::settings::SettingsResponse;
 
 pub const DEFAULT_PORT: u16 = 5000;
 
+/// 启动器版本（联机节点服务 UA 等共用，如 `QML/1.0.0`）。
+pub const APP_VERSION: &str = "1.0.0";
+
 pub struct AppState {
     /// 游戏核心（复用 qomicex-core-rust）。
     pub core: Arc<GameCore>,
@@ -78,7 +81,7 @@ impl AppState {
         let game_root = std::path::Path::new(&settings_now.game_dir)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(&settings_now.game_dir));
-        let app_version = "1.0.0".to_string();
+        let app_version = APP_VERSION.to_string();
         let user_agent = format!("Qomicex.Launcher/{}", app_version);
         let curse_forge_api_key = std::env::var("CURSEFORGE_API_KEY")
             .ok()
@@ -129,6 +132,8 @@ impl AppState {
         let instance = Arc::new(InstanceService::new());
         let account = Arc::new(AccountService::new().unwrap_or_default());
         let trace_buffer = Arc::new(TraceBufferStore::default());
+        // 注册为全局 trace 缓冲：实时日志（TraceWriter / stderr 捕获）写入此处
+        crate::services::trace::init_global_trace(trace_buffer.clone());
         let trace_dump = Arc::new(TraceDumpService::new(trace_buffer.clone()));
 
         // 启动时套用已保存的日志级别（对应 Program.cs 中 levelManager.SetLevel）。

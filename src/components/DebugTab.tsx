@@ -109,15 +109,17 @@ function DiagnosticsCard() {
     let cancelled = false
     const load = async () => {
       setLoading(true)
+      // 系统信息秒显：不依赖 /diagnostics/health（该端点含外部网络 ping，可能数秒）
       try {
-        const [sys, h] = await Promise.all([
-          getSystemInfo(),
-          get<any>('/diagnostics/health'),
-        ])
-        if (cancelled) return
-        setSysInfo(sys)
-        setHealth(h)
-      } catch { setBackendOk(false); console.warn('Failed to fetch system info / health') }
+        const sys = await getSystemInfo()
+        if (!cancelled) setSysInfo(sys)
+      } catch { if (!cancelled) setBackendOk(false); console.warn('Failed to fetch system info') }
+      if (!cancelled) setLoading(false)
+      // 连通状态（Modrinth/CurseForge）异步更新，慢 ping 不阻塞其余诊断信息
+      try {
+        const h = await get<any>('/diagnostics/health')
+        if (!cancelled) setHealth(h)
+      } catch { if (!cancelled) setBackendOk(false); console.warn('Failed to fetch health') }
       const endpoints = ['/instance', '/settings', '/resources/search?category=mod&pageSize=1']
       const results: typeof apiTests = {}
       for (const ep of endpoints) {
@@ -131,7 +133,6 @@ function DiagnosticsCard() {
         }
       }
       if (!cancelled) setApiTests(results)
-      if (!cancelled) setLoading(false)
     }
     load()
     return () => { cancelled = true }
@@ -161,10 +162,15 @@ function DiagnosticsCard() {
               <p className="font-medium text-xs text-muted-foreground mb-1">连通状态</p>
               <p className="text-xs space-x-3">
                 <span><FontAwesomeIcon icon={backendOk ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', backendOk ? 'text-green-500' : 'text-red-500')} />Backend</span>
-                {health && (
+                {health ? (
                   <>
                     <span><FontAwesomeIcon icon={health.modrinth?.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', health.modrinth?.ok ? 'text-green-500' : 'text-red-500')} />Modrinth ({health.modrinth?.latency ?? '?'}ms)</span>
                     <span><FontAwesomeIcon icon={health.curseforge?.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', health.curseforge?.ok ? 'text-green-500' : 'text-red-500')} />CurseForge ({health.curseforge?.latency ?? '?'}ms)</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-3 w-3 mr-1 animate-spin" />Modrinth</span>
+                    <span className="text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-3 w-3 mr-1 animate-spin" />CurseForge</span>
                   </>
                 )}
               </p>

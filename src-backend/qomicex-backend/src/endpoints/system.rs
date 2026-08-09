@@ -1,6 +1,7 @@
 //! System 端点（对应源 Endpoints/SystemEndpoints.cs）。
 //! 自包含切片：无需额外服务注入，用于验证框架/错误封装/设置持久化/CORS/HTTP ping。
 
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use axum::extract::{Path as AxumPath, State};
@@ -16,10 +17,26 @@ use crate::settings;
 use crate::settings::SettingsResponse;
 use crate::state::SharedState;
 
+/// ping 单源超时：所有 ping 端点并行执行，单个源 5s 内必须返回。
+/// 实测 Modrinth 官方 API 约 3.1s，3s 超时会误判不可用。
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// 共享 ping client（短超时）。一次构建全局复用连接池，
+/// 避免 `ping_head`/`ping_get_fast` 每次请求新建 client。
+fn ping_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(PING_TIMEOUT)
+            .user_agent("QomicexLauncher/1.0")
+            .build()
+            .expect("构建 ping client 失败")
+    })
+}
+
 const DOWNLOAD_SOURCES: &[(i32, &str, &str)] = &[
-    (0, "官方源", "https://libraries.minecraft.net"),
+    // 官方源 ping 目标用真实存在的库文件：根路径 HEAD 恒 404，会误判不可用
+    (0, "官方源", "https://libraries.minecraft.net/org/ow2/asm/asm/9.6/asm-9.6.jar"),
     (1, "BMCLAPI 镜像", "https://bmclapi2.bangbang93.com"),
 ];
 
@@ -66,13 +83,16 @@ async fn health() -> ApiResult<Json<HealthResponse>> {
     }))
 }
 
-async fn diagnostics_health(State(state): State<SharedState>) -> ApiResult<Json<DiagnosticsHealthResponse>> {
-    let (modrinth_ok, modrinth_lat) = ping_get(&state.http_client, "https://api.modrinth.com/v2/statistics").await;
-    let (cf_ok, cf_lat) = ping_get(&state.http_client, "https://api.curseforge.com").await;
+async fn diagnostics_health() -> ApiResult<Json<DiagnosticsHealthResponse>> {
+    // 并行 ping（tokio::join!），避免串行时慢源阻塞整个诊断端点
+    let (modrinth, curseforge) = tokio::join!(
+        ping_get_fast("https://api.modrinth.com/v2/statistics"),
+        ping_get_fast("https://api.curseforge.com"),
+    );
     Ok(Json(DiagnosticsHealthResponse {
         backend: true,
-        modrinth: PingResult { ok: modrinth_ok, latency: modrinth_lat },
-        curseforge: PingResult { ok: cf_ok, latency: cf_lat },
+        modrinth: PingResult { ok: modrinth.0, latency: modrinth.1 },
+        curseforge: PingResult { ok: curseforge.0, latency: curseforge.1 },
     }))
 }
 
@@ -200,13 +220,17 @@ async fn get_background(AxumPath(name): AxumPath<String>) -> ApiResult<Response>
 }
 
 async fn ping_download_sources() -> ApiResult<Json<Vec<DownloadSourcePing>>> {
+    // 并行 ping 全部源（join_all 保序），总耗时 = 最慢单源 ≤ PING_TIMEOUT
+    let pings = futures::future::join_all(
+        DOWNLOAD_SOURCES.iter().map(|(_, _, url)| ping_head(url)),
+    )
+    .await;
     let mut results = Vec::with_capacity(DOWNLOAD_SOURCES.len());
-    for (id, name, url) in DOWNLOAD_SOURCES {
-        let (lat, ok) = ping_head(url).await;
+    for ((id, name, url), (lat, ok)) in DOWNLOAD_SOURCES.iter().zip(pings) {
         results.push(DownloadSourcePing {
             id: *id,
-            name: name.to_string(),
-            url: url.to_string(),
+            name: (*name).to_string(),
+            url: (*url).to_string(),
             latency: lat,
             ok,
         });
@@ -215,13 +239,16 @@ async fn ping_download_sources() -> ApiResult<Json<Vec<DownloadSourcePing>>> {
 }
 
 async fn ping_mod_sources() -> ApiResult<Json<Vec<ModSourcePing>>> {
+    let pings = futures::future::join_all(
+        MOD_SOURCES.iter().map(|(_, _, url)| ping_get_fast(url)),
+    )
+    .await;
     let mut results = Vec::with_capacity(MOD_SOURCES.len());
-    for (id, name, url) in MOD_SOURCES {
-        let (ok, lat) = ping_get_fast(url).await;
+    for ((id, name, url), (ok, lat)) in MOD_SOURCES.iter().zip(pings) {
         results.push(ModSourcePing {
             id: *id,
-            name: name.to_string(),
-            url: url.to_string(),
+            name: (*name).to_string(),
+            url: (*url).to_string(),
             ok,
             latency: lat,
             can_connect: ok,
@@ -231,10 +258,13 @@ async fn ping_mod_sources() -> ApiResult<Json<Vec<ModSourcePing>>> {
 }
 
 async fn auto_select_download_source() -> ApiResult<Json<AutoSelectResponse>> {
+    let pings = futures::future::join_all(
+        DOWNLOAD_SOURCES.iter().map(|(_, _, url)| ping_head(url)),
+    )
+    .await;
     let mut best_id = 0;
     let mut best_latency = i64::MAX;
-    for (id, _, url) in DOWNLOAD_SOURCES {
-        let (lat, ok) = ping_head(url).await;
+    for ((id, _, _), (lat, ok)) in DOWNLOAD_SOURCES.iter().zip(pings) {
         if ok && lat < best_latency {
             best_latency = lat;
             best_id = *id;
@@ -248,10 +278,13 @@ async fn auto_select_download_source() -> ApiResult<Json<AutoSelectResponse>> {
 }
 
 async fn auto_select_mod_source() -> ApiResult<Json<AutoSelectResponse>> {
+    let pings = futures::future::join_all(
+        MOD_SOURCES.iter().map(|(_, _, url)| ping_get_fast(url)),
+    )
+    .await;
     let mut best_id = 0;
     let mut best_latency = i64::MAX;
-    for (id, _, url) in MOD_SOURCES {
-        let (ok, lat) = ping_get_fast(url).await;
+    for ((id, _, _), (ok, lat)) in MOD_SOURCES.iter().zip(pings) {
         if ok && lat < best_latency {
             best_latency = lat;
             best_id = *id;
@@ -275,32 +308,16 @@ fn backgrounds_dir() -> std::path::PathBuf {
 }
 
 async fn ping_head(url: &str) -> (i64, bool) {
-    let client = match reqwest::Client::builder().timeout(PING_TIMEOUT).build() {
-        Ok(c) => c,
-        Err(_) => return (-1, false),
-    };
     let sw = Instant::now();
-    match client.head(url).send().await {
+    match ping_client().head(url).send().await {
         Ok(resp) => (sw.elapsed().as_millis() as i64, resp.status().is_success()),
         Err(_) => (-1, false),
     }
 }
 
-async fn ping_get(client: &reqwest::Client, url: &str) -> (bool, i64) {
-    let sw = Instant::now();
-    match client.get(url).send().await {
-        Ok(resp) => (resp.status().is_success(), sw.elapsed().as_millis() as i64),
-        Err(_) => (false, -1),
-    }
-}
-
 async fn ping_get_fast(url: &str) -> (bool, i64) {
-    let client = match reqwest::Client::builder().timeout(PING_TIMEOUT).build() {
-        Ok(c) => c,
-        Err(_) => return (false, -1),
-    };
     let sw = Instant::now();
-    match client.get(url).send().await {
+    match ping_client().get(url).send().await {
         Ok(resp) => (resp.status().is_success(), sw.elapsed().as_millis() as i64),
         Err(_) => (false, -1),
     }
@@ -318,3 +335,5 @@ async fn clear_curseforge_cache(
     let deleted = state.curseforge_fetch.clear_cache();
     Ok(Json(ClearCurseForgeCacheResponse { deleted }))
 }
+
+

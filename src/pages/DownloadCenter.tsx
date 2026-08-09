@@ -70,6 +70,8 @@ const STAGE_LABELS: Record<string, string> = {
   'downloading-loader-libs': '下载加载器库',
   'installing-loader': '安装加载器',
   'downloading-addons': '下载附加内容',
+  'downloading-modpack': '下载整合包',
+  'parsing-modpack': '解析整合包',
   'modpack-files': '下载整合包文件',
   'modpack-overrides': '解压覆盖文件',
 }
@@ -237,6 +239,12 @@ export default function DownloadCenter() {
               } else {
                 updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
               }
+            } else if (p.status === 'completed') {
+              // 任务已完成后才被 SSE 剔除（get_all_active 不含 completed），
+              // 此处补正终态，否则任务会永远卡在"连接中/下载中"
+              updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+            } else if (p.status === 'failed' || p.status === 'cancelled') {
+              updateTask(task.id, { status: p.status, error: p.error || undefined })
             }
           }).catch(() => {
             updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })

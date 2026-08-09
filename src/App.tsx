@@ -65,7 +65,8 @@ function AppContent() {
     const poll = async () => {
       while (!cancelled && attempts < 10) {
         try {
-          await get('/diagnostics/health')
+          // 用轻量 /health（不触外部网络 ping），避免就绪判定被慢速诊断端点阻塞
+          await get('/health')
           if (!cancelled) setBackendState('ready')
           return
         } catch { attempts++ }
