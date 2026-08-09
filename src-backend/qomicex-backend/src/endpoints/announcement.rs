@@ -20,7 +20,6 @@
 use std::path::PathBuf;
 
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};

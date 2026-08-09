@@ -39,6 +39,17 @@ pwsh ./build-release.ps1
 
 No test framework. Backend API test script: `bash scripts/test-api-filters.sh`.
 
+## Rust 测试
+
+- **Tauri 侧测试**（WASM 网关）：`cd src-tauri && cargo test --lib plugin_gateway`。
+  夹具在 `src-tauri/tests/fixtures/`：`dev.test.wasm/`（预编译 `plugin.wasm` + `manifest.json`）
+  会被测试自动部署到临时 `QOMICEX_HOME`，无需手工预置。
+- **重编 WASM 插件**：`rustup target add wasm32-unknown-unknown` 后
+  `cd src-tauri/tests/fixtures/dev-test-wasm-src && cargo build --release --target wasm32-unknown-unknown`，
+  把 `target/wasm32-unknown-unknown/release/dev_test_wasm.wasm` 复制为
+  `../dev.test.wasm/plugin.wasm`。
+- **Rust 后端**（`src-backend/qomicex-backend/`）：无单元测试，`cargo test` 仅编译校验；行为验证走 `bash scripts/test-api-filters.sh`。
+
 ## Conventional Commits
 
 All commits must follow [Conventional Commits v1.0.0](https://www.conventionalcommits.org/zh-hans/v1.0.0/):

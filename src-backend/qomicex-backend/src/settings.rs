@@ -91,6 +91,8 @@ pub struct SettingsResponse {
     pub bing_api_key: Option<String>,
     pub corner_radius: i32,
     pub window_corners: bool,
+    pub curseforge_version_fetch_concurrency: i32,
+    pub curseforge_version_cache_ttl_seconds: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +148,8 @@ impl Default for SettingsResponse {
             bing_api_key: None,
             corner_radius: 8,
             window_corners: true,
+            curseforge_version_fetch_concurrency: 10,
+            curseforge_version_cache_ttl_seconds: 300,
         }
     }
 }
@@ -154,12 +158,45 @@ fn settings_path() -> PathBuf {
     resolve_base_dir().join("QML").join("settings.json")
 }
 
+/// CurseForge 版本拉取相关的取值范围。与前端 Settings 页面的 min/max 保持一致。
+pub const CF_FETCH_CONCURRENCY_RANGE: (i32, i32) = (1, 20);
+pub const CF_CACHE_TTL_SECONDS_RANGE: (i32, i32) = (0, 3600);
+
+impl SettingsResponse {
+    /// 把数值型设置钳到合法区间。
+    ///
+    /// 必须在落盘与投入使用之前调用：这些值会被拿去构造 `Semaphore` 和 `Duration`，
+    /// 而负的 i32 转成 usize 是个天文数字，会让 `Semaphore::new` 直接 panic。
+    /// 前端虽然也钳了，但 settings.json 可手改、本地 HTTP API 也能被插件直接调用。
+    pub fn clamp_numeric_ranges(&mut self) {
+        let (lo, hi) = CF_FETCH_CONCURRENCY_RANGE;
+        self.curseforge_version_fetch_concurrency =
+            self.curseforge_version_fetch_concurrency.clamp(lo, hi);
+        let (lo, hi) = CF_CACHE_TTL_SECONDS_RANGE;
+        self.curseforge_version_cache_ttl_seconds =
+            self.curseforge_version_cache_ttl_seconds.clamp(lo, hi);
+    }
+
+    /// 导出 CurseForge 拉取服务的配置。取值已按 [`Self::clamp_numeric_ranges`] 的
+    /// 区间理解，但这里仍做一次下界保护，避免调用方漏钳。
+    pub fn curseforge_fetch_config(&self) -> crate::services::curseforge_fetch::CurseForgeFetchConfig {
+        crate::services::curseforge_fetch::CurseForgeFetchConfig {
+            concurrency: self.curseforge_version_fetch_concurrency.max(1) as usize,
+            cache_ttl: std::time::Duration::from_secs(
+                self.curseforge_version_cache_ttl_seconds.max(0) as u64,
+            ),
+        }
+    }
+}
+
 /// 加载设置（对应 SystemEndpoints.LoadSettings：文件缺失/解析失败 → 默认值）。
 pub fn load_settings() -> SettingsResponse {
     let path = settings_path();
     if path.exists() {
         if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(parsed) = serde_json::from_str::<SettingsResponse>(&content) {
+            if let Ok(mut parsed) = serde_json::from_str::<SettingsResponse>(&content) {
+                // 磁盘上的值可能被手改成越界数值，读入即钳位。
+                parsed.clamp_numeric_ranges();
                 return parsed;
             }
         }

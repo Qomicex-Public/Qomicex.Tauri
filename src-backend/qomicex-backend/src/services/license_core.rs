@@ -8,8 +8,12 @@
 //! ⚠️ Server compatibility: machine-code construction and the AES-GCM envelope
 //! follow the C# CryptHelper exactly. End-to-end parity against the real
 //! license server must still be verified with a genuine license.
+#![allow(dead_code)]
 
-use crate::services::license::{license_file_path, license_password};
+#[cfg(feature = "license-required")]
+use crate::services::license::license_file_path;
+#[cfg(feature = "license-required")]
+use crate::services::license::license_password;
 
 #[derive(Debug)]
 pub enum LicenseError {

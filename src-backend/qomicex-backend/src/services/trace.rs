@@ -14,6 +14,7 @@ use crate::settings::resolve_base_dir;
 /// 对应 `TraceBufferStore`（内部 `Queue<string>` + `lock`，满时 `Dequeue` 旧条目）。
 pub struct TraceBufferStore {
     entries: Mutex<VecDeque<String>>,
+    #[allow(dead_code)]
     capacity: usize,
 }
 
@@ -27,6 +28,7 @@ impl TraceBufferStore {
     }
 
     /// 追加一行（对应 `Add`）。满时淘汰最旧的一行。
+    #[allow(dead_code)]
     pub fn append(&self, line: String) {
         let mut entries = self.entries.lock().unwrap();
         if entries.len() == self.capacity {
@@ -103,6 +105,7 @@ impl LogLevelManager {
         *self.level.lock().unwrap() = level;
     }
 
+    #[allow(dead_code)]
     pub fn get_level(&self) -> String {
         self.level.lock().unwrap().clone()
     }

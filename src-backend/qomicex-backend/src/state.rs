@@ -12,12 +12,17 @@ use qomicex_core::builder::GameCoreBuilder;
 use qomicex_core::core::GameCore;
 use qomicex_core::models::download::DownloadMirror;
 use qomicex_downloader::{DownloadManager, DownloadOptions};
+use tokio::sync::RwLock;
 
 use crate::services::account::AccountService;
+use crate::services::curseforge_fetch::CurseForgeVersionFetchService;
 use crate::services::install_tracker::InstallTracker;
 use crate::services::instance::InstanceService;
+use crate::services::launch_tracker::LaunchTracker;
+use crate::services::plugin::{FileAuthService, PluginGatewayClient, PluginStore};
 use crate::services::trace::{LogLevelManager, TraceBufferStore, TraceDumpService};
 use crate::settings;
+use crate::settings::SettingsResponse;
 
 pub const DEFAULT_PORT: u16 = 5000;
 
@@ -33,8 +38,10 @@ pub struct AppState {
     /// 全局共享 HTTP 客户端。
     pub http_client: reqwest::Client,
     /// 启动器版本串（如 "Qomicex.Launcher/1.0.0"）。
+    #[allow(dead_code)]
     pub user_agent: String,
     /// 启动器版本号（major.minor.build）。
+    #[allow(dead_code)]
     pub app_version: String,
     /// 游戏实例服务（对应 Program.cs 的 InstanceService）。
     pub instance: Arc<InstanceService>,
@@ -45,9 +52,24 @@ pub struct AppState {
     /// trace 落盘服务（对应 TraceDumpService）。
     pub trace_dump: Arc<TraceDumpService>,
     /// 日志级别管理（对应 LogLevelManager）。
+    #[allow(dead_code)]
     pub log_level: Arc<LogLevelManager>,
     /// 安装任务跟踪（对应 InstallTracker）。
     pub install_tracker: Arc<InstallTracker>,
+    /// 启动进程跟踪（对应 LaunchTracker）。
+    pub launch_tracker: Arc<LaunchTracker>,
+    /// 插件商店（对应 PluginStore）。
+    pub plugin_store: Arc<PluginStore>,
+    /// 插件文件授权（对应 FileAuthService）。
+    pub plugin_auth: Arc<FileAuthService>,
+    /// WASM 网关桥接客户端（对应 PluginGatewayClient）。
+    pub plugin_gateway: Arc<PluginGatewayClient>,
+    /// 插件 proxy 专用 HTTP 客户端（对应命名 HttpClient "PluginProxy"）。
+    pub proxy_client: reqwest::Client,
+    /// 当前设置（内存缓存，PUT /settings 时同步更新）。
+    pub settings: Arc<RwLock<SettingsResponse>>,
+    /// CurseForge 版本异步拉取服务（对应 CurseForgeVersionFetchService）。
+    pub curseforge_fetch: Arc<CurseForgeVersionFetchService>,
 }
 
 impl AppState {
@@ -95,6 +117,14 @@ impl AppState {
         // 下载管理器（对应 DownloadSessionManagerBuilder 的核心参数）。
         let download_manager = Arc::new(DownloadManager::new(DownloadOptions::default(), 64));
 
+        // 插件 proxy 客户端（对应命名 HttpClient "PluginProxy"）。
+        let proxy_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .user_agent("QomicexLauncher/1.0")
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .expect("构建插件代理 HTTP 客户端失败");
+
         // 共享后端服务（对应 Program.cs 中 Singleton 注册）。
         let instance = Arc::new(InstanceService::new());
         let account = Arc::new(AccountService::new().unwrap_or_default());
@@ -110,6 +140,17 @@ impl AppState {
         log_level.set_level(saved_log);
 
         let install_tracker = Arc::new(InstallTracker::new(core.clone()));
+        let launch_tracker = Arc::new(LaunchTracker::new());
+
+        let plugin_store = Arc::new(PluginStore::new());
+        let plugin_auth = Arc::new(FileAuthService::new());
+        let plugin_gateway = Arc::new(PluginGatewayClient::new(http_client.clone()));
+        let settings = Arc::new(RwLock::new(settings_now.clone()));
+        let curseforge_fetch = CurseForgeVersionFetchService::new_with_config(
+            http_client.clone(),
+            curse_forge_api_key.clone(),
+            settings_now.curseforge_fetch_config(),
+        );
 
         Self {
             core,
@@ -125,6 +166,13 @@ impl AppState {
             trace_dump,
             log_level,
             install_tracker,
+            launch_tracker,
+            plugin_store,
+            plugin_auth,
+            plugin_gateway,
+            proxy_client,
+            settings,
+            curseforge_fetch,
         }
     }
 }

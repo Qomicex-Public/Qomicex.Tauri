@@ -38,6 +38,18 @@ function formatSpeed(bytesPerSec: number): string {
   return `${bytesPerSec.toFixed(0)} B/s`
 }
 
+function formatBytes(bytes: number | undefined): string {
+  if (bytes === undefined || bytes <= 0) return ''
+  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${bytes.toFixed(0)} B`
+}
+
+/** Re-verify an SSE-absent file task at most this often, at most this many times. */
+const STALE_FILE_RECHECK_MS = 2000
+const STALE_FILE_MAX_CHECKS = 10
+
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   queued: { label: '排队中', color: 'text-muted-foreground bg-muted border-border' },
   downloading: { label: '下载中', color: 'text-blue-400 bg-blue-500/10 border-blue-500/25' },
@@ -85,13 +97,19 @@ export default function DownloadCenter() {
   const prevJavaIds = useRef<Set<string>>(new Set())
   const checkedStaleJavaIds = useRef<Set<string>>(new Set())
   const checkedStaleInstallIds = useRef<Set<string>>(new Set())
-  const checkedStaleFileIds = useRef<Set<string>>(new Set())
+  /**
+   * File tasks absent from the SSE payload get re-verified against the backend,
+   * because "absent" is ambiguous (not started yet / completed & evicted /
+   * backend restarted). Attempts are counted and throttled so this can't turn
+   * into an unbounded polling loop for a task that stays absent and active.
+   */
+  const staleFileChecks = useRef<Map<string, { attempts: number; lastAt: number }>>(new Map())
 
   // Reset stale-check caches on SSE reconnect so zombie tasks get re-verified
   useEffect(() => {
     checkedStaleInstallIds.current = new Set()
     checkedStaleJavaIds.current = new Set()
-    checkedStaleFileIds.current = new Set()
+    staleFileChecks.current = new Map()
   }, [reconnectKey])
 
   useEffect(() => {
@@ -149,25 +167,35 @@ export default function DownloadCenter() {
           else if (match.status === 'failed') newStatus = 'failed'
           updateTask(task.id, {
             status: newStatus,
-            progress: Math.round(match.progress),
-            speed: match.speed,
+            progress: newStatus === 'completed' ? 100 : Math.round(match.progress),
+            speed: newStatus === 'completed' ? 0 : match.speed,
             error: match.error || undefined,
             currentFile: match.currentFile || undefined,
+            downloadedBytes: match.downloadedBytes,
+            totalBytes: match.totalBytes,
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
           })
-        } else if (!checkedStaleFileIds.current.has(task.taskId)) {
-          checkedStaleFileIds.current.add(task.taskId)
-          getResourceDownloadProgress(task.taskId).then(p => {
-            if (!p || p.status === 'not_found') {
-              updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
-            } else if (p.status === 'completed') {
-              updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
-            } else if (p.status === 'failed' || p.status === 'cancelled') {
-              updateTask(task.id, { status: p.status, error: p.error || undefined })
-            }
-          }).catch(() => {
-            updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })
-          })
+        } else {
+          // Session not in SSE — either not started yet, completed & removed, or backend restarted.
+          const prev = staleFileChecks.current.get(task.taskId)
+          const attempts = prev?.attempts ?? 0
+          const sinceLast = Date.now() - (prev?.lastAt ?? 0)
+          if (attempts >= STALE_FILE_MAX_CHECKS) {
+            updateTask(task.id, { status: 'failed', error: '任务状态无法确认（后端未报告该会话）' })
+          } else if (sinceLast >= STALE_FILE_RECHECK_MS) {
+            staleFileChecks.current.set(task.taskId, { attempts: attempts + 1, lastAt: Date.now() })
+            getResourceDownloadProgress(task.taskId).then(p => {
+              if (!p || p.status === 'not_found') {
+                updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
+              } else if (p.status === 'completed') {
+                updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+              } else if (p.status === 'failed' || p.status === 'cancelled') {
+                updateTask(task.id, { status: p.status, error: p.error || undefined })
+              }
+            }).catch(() => {
+              updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })
+            })
+          }
         }
         continue
       }
@@ -435,17 +463,26 @@ export default function DownloadCenter() {
                        task.status === 'failed' ? (task.error ? `失败: ${task.error}` : '下载失败') :
                        task.status === 'paused' ? `已暂停 ${task.progress}%` :
                        task.status === 'queued' ? '等待中' :
-                       <>
-                         {task.stage && STAGE_LABELS[task.stage] ? STAGE_LABELS[task.stage] : '下载中'} {task.progress}%
-                         {task.currentFile && <span className="ml-1.5 opacity-70">· {task.currentFile}</span>}
-                       </>}
+                       // "连接中" only while nothing is known yet — a large file can sit at
+                       // a rounded 0% with bytes already flowing.
+                       (task.progress > 0 || (task.downloadedBytes ?? 0) > 0 || (task.totalBytes ?? 0) > 0) ? (
+                         <>
+                           {task.stage && STAGE_LABELS[task.stage] ? STAGE_LABELS[task.stage] : '下载中'} {task.progress}%
+                           {task.currentFile && <span className="ml-1.5 opacity-70">· {task.currentFile}</span>}
+                         </>
+                       ) : (
+                         <span>连接中…</span>
+                       )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2 ml-2">
                       {task.totalFiles !== undefined && task.totalFiles > 0 && task.stage && (
                         <span>{task.completedFiles ?? 0}/{task.totalFiles} 文件</span>
                       )}
+                      {task.totalBytes !== undefined && task.totalBytes > 0 && (
+                        <span className="tabular-nums">{formatBytes(task.downloadedBytes)} / {formatBytes(task.totalBytes)}</span>
+                      )}
                       {task.speed !== undefined && task.speed > 0 && <span className="tabular-nums">{formatSpeed(task.speed)}</span>}
-                      {task.status === 'downloading' && <span className="tabular-nums">{task.progress}%</span>}
+                      {task.status === 'downloading' && task.progress > 0 && <span className="tabular-nums">{task.progress}%</span>}
                     </span>
                   </div>
                   {task.status === 'failed' && task.error && (

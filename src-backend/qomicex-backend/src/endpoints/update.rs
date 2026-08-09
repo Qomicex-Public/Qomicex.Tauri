@@ -282,6 +282,7 @@ struct CheckQuery {
 struct ManifestQuery {
     current: String,
     target: String,
+    #[allow(dead_code)]
     arch: Option<String>, // accepted by the C# route but unused.
 }
 

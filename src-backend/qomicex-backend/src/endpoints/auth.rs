@@ -20,8 +20,6 @@ use crate::error::{ApiError, ApiResult};
 use crate::services::account::StoredAccount;
 use crate::state::SharedState;
 
-use qomicex_core::models::auth::AuthRequest as CoreAuthRequest;
-
 const YGGDRASIL_DEFAULT: &str = "https://littleskin.cn/api/yggdrasil";
 
 pub fn router() -> Router<SharedState> {
@@ -637,25 +635,6 @@ async fn invalidate(
 /// Map a qomicex_core Error into an ApiError (C#: unhandled -> 500).
 fn map_core_err(e: qomicex_core::error::Error) -> ApiError {
     ApiError::internal(e.to_string())
-}
-
-/// Build the common AuthResponse from a core AuthResult (C#: ToResponse).
-fn to_response(result: qomicex_core::models::auth::AuthResult) -> AuthResponse {
-    AuthResponse {
-        success: result.success,
-        username: result.username,
-        access_token: result.access_token,
-        uuid: result.uuid,
-        user_type: result.user_type,
-        error_message: result.error_message,
-        refresh_token: result.refresh_token,
-        device_code: None,
-        user_code: None,
-        verification_uri: None,
-        interval: None,
-        expires_in: None,
-        is_pending: None,
-    }
 }
 
 /// Guid.NewGuid().ToString("N") equivalent (lowercase hex, no dashes).

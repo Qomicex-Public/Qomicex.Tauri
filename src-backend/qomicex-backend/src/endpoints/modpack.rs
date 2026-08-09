@@ -662,6 +662,7 @@ pub struct ModpackInstallRequest {
     pub game_dir: String,
     pub version_isolation: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
     pub modpack_files: Option<Vec<ModpackFileEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrides_zip: Option<String>,
@@ -678,10 +679,13 @@ pub struct ModpackInstallRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
     pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
     pub version_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
     pub optifine_version: Option<String>,
 }
 

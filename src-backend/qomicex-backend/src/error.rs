@@ -19,12 +19,31 @@ pub struct ApiError {
 }
 
 impl ApiError {
+    /// 通用构造（任意状态码/错误码）。
+    pub fn new(status: StatusCode, code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            detail: None,
+            status,
+        }
+    }
+
     pub fn bad_request(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
             detail: None,
             status: StatusCode::BAD_REQUEST,
+        }
+    }
+
+    pub fn forbidden(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            detail: None,
+            status: StatusCode::FORBIDDEN,
         }
     }
 
@@ -88,9 +107,16 @@ impl IntoResponse for ApiError {
 /// 便捷 Result 别名，供各端点 handler 使用。
 pub type ApiResult<T> = Result<T, ApiError>;
 
-/// 将任意 std::io::Error 包装为 500（内部错误）。
+/// 将 std::io::Error 映射为 HTTP 错误（对应源 ErrorHandlingMiddleware.MapException）：
+/// `NotFound`→404（FileNotFoundException 语义）、`PermissionDenied`→403、
+/// 其余→500（IOException 语义）。
 impl From<std::io::Error> for ApiError {
     fn from(e: std::io::Error) -> Self {
-        ApiError::internal(e.to_string())
+        use std::io::ErrorKind;
+        match e.kind() {
+            ErrorKind::NotFound => ApiError::not_found("NOT_FOUND", e.to_string()),
+            ErrorKind::PermissionDenied => ApiError::forbidden("FORBIDDEN", e.to_string()),
+            _ => ApiError::internal(e.to_string()),
+        }
     }
 }

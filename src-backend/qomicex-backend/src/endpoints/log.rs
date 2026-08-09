@@ -166,8 +166,6 @@ async fn export_all(State(state): State<SharedState>) -> ApiResult<Response> {
             return Err(ApiError::not_found("LOG_NOT_FOUND", "No log files"));
         }
     };
-    let stamp = Local::now().format("%Y%m%d-%H%M%S");
-    let file_name = format!("logs-{stamp}.zip");
     Ok((
         StatusCode::OK,
         [
