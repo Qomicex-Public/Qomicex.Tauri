@@ -218,8 +218,10 @@ jobs:
       - name: Stage backend binary
         shell: pwsh
         run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
           Move-Item -Force src-backend/qomicex-backend/target/x86_64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
-          # Packet.dll: 后端 exe 导入表依赖(npcap), 随构建产物进入 binaries/
+          # Packet.dll: ��� exe ���������(npcap), �湹��������� binaries/
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.dll src-tauri/binaries/Packet.dll
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
@@ -306,8 +308,10 @@ jobs:
       - name: Stage backend binary
         shell: pwsh
         run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
           Move-Item -Force src-backend/qomicex-backend/target/aarch64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
-          # Packet.dll: 后端 exe 导入表依赖(npcap), 随构建产物进入 binaries/
+          # Packet.dll: ��� exe ���������(npcap), �湹��������� binaries/
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.dll src-tauri/binaries/Packet.dll
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
@@ -394,6 +398,8 @@ jobs:
           cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target x86_64-unknown-linux-gnu $FEATURES
       - name: Stage backend binary
         run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/x86_64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
@@ -485,6 +491,8 @@ jobs:
           cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target aarch64-unknown-linux-gnu $FEATURES
       - name: Stage backend binary
         run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/aarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
@@ -574,6 +582,8 @@ jobs:
           cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target loongarch64-unknown-linux-gnu $FEATURES
       - name: Stage backend binary
         run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/loongarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
@@ -661,6 +671,8 @@ jobs:
           cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target aarch64-apple-darwin $FEATURES
       - name: Stage backend binary
         run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/aarch64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
@@ -771,6 +783,8 @@ jobs:
           cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target x86_64-apple-darwin $FEATURES
       - name: Stage backend binary
         run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/x86_64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
