@@ -13,7 +13,7 @@ inputs:
 outputs:
   protoc-path:
     description: 'protoc 可执行文件路径（供 build 步骤 PROTOC 环境变量）'
-    value: ${{ steps.protoc.outputs.path }}
+    value: ${{ steps.protoc-exe.outputs.path }}
 
 runs:
   using: composite
@@ -30,6 +30,18 @@ runs:
       uses: arduino/setup-protoc@v3
       with:
         version: "35.1"
+
+    - name: Resolve protoc executable path
+      id: protoc-exe
+      shell: bash
+      run: |
+        # setup-protoc 的 path output 是安装目录，prost 需要可执行文件本身
+        # （目录作为 PROTOC 会被 prost 尝试执行 → Windows 报 Access is denied）。
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          echo "path=${{ steps.protoc.outputs.path }}/bin/protoc.exe" >> "$GITHUB_OUTPUT"
+        else
+          echo "path=${{ steps.protoc.outputs.path }}/bin/protoc" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Install 7-Zip (easytier VC-LTL/YY-Thunks unpack)
       if: runner.os == 'Windows'
