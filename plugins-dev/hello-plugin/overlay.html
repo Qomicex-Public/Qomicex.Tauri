@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hello 悬浮窗</title>
+    <style>
+      body { padding: 12px; height: 100%; }
+      .o-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      .o-title { font-size: 14px; font-weight: 600; color: hsl(var(--foreground)); }
+      .o-sub { font-size: 11px; color: hsl(var(--muted-foreground)); margin-top: 2px; }
+      .o-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      .o-out { margin-top: 12px; font-size: 11px; color: hsl(var(--muted-foreground)); word-break: break-all; max-height: 180px; overflow: auto; white-space: pre-wrap; font-family: monospace; }
+    </style>
+  </head>
+  <body>
+    <div class="o-head">
+      <span style="font-size:20px">🪟</span>
+      <div>
+        <div class="o-title">Hello 悬浮窗</div>
+        <div class="o-sub" id="sub">初始化中…</div>
+      </div>
+    </div>
+
+    <div class="p-card">
+      <div class="p-card-title">悬浮窗能力演示</div>
+      <div class="p-row p-row--wrap">
+        <button class="p-btn p-btn--primary" id="btn-toast">showToast</button>
+        <button class="p-btn p-btn--default" id="btn-info">getSystemInfo</button>
+        <button class="p-btn p-btn--outline" id="btn-nav">navigate</button>
+      </div>
+      <pre class="p-pre" id="out">点击按钮查看结果</pre>
+    </div>
+
+    <script>
+      (function () {
+        var out = document.getElementById('out')
+        var sub = document.getElementById('sub')
+
+        function api() { return window.__PLUGIN_API__ }
+
+        document.addEventListener('DOMContentLoaded', function () {
+          if (sub) sub.textContent = 'plugin: ' + (window.__PLUGIN_ID__ || '?')
+        })
+
+        function show(label, fn) {
+          if (out) out.textContent = label + ' …'
+          Promise.resolve(fn()).then(function (res) {
+            if (out) out.textContent = '✓ ' + label + '\n' + JSON.stringify(res, null, 2)
+          }).catch(function (e) {
+            if (out) out.textContent = '✗ ' + label + '\n' + (e && e.message ? e.message : String(e))
+          })
+        }
+
+        document.getElementById('btn-toast').addEventListener('click', function () {
+          show('showToast', function () {
+            api().call('showToast', '来自悬浮窗的问候', 'success')
+            return 'sent'
+          })
+        })
+        document.getElementById('btn-info').addEventListener('click', function () {
+          show('getSystemInfo', function () { return api().call('getSystemInfo') })
+        })
+        document.getElementById('btn-nav').addEventListener('click', function () {
+          show('navigate', function () { api().call('navigate', '/settings'); return 'navigated' })
+        })
+      })()
+    </script>
+  </body>
+</html>

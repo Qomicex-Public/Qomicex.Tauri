@@ -1,9 +1,9 @@
-[submodule "src-backend/Qomicex.Connector.Part.Scaffolding"]
-	path = src-backend/Qomicex.Connector.Part.Scaffolding
-	url = git@github.com:Qomicex-Public/Qomicex.Connector.Part.Scaffolding.git
-[submodule "src-backend/Qomicex.Core.AOT"]
-	path = src-backend/Qomicex.Core.AOT
-	url = git@github.com:Qomicex-Public/Qomicex.Core.AOT.git
-[submodule "src-backend/Qomicex.Downloader.Refactor"]
-	path = src-backend/Qomicex.Downloader.Refactor
-	url = git@github.com:Qomicex-Public/Qomicex.Downloader.Refactor.git
+[submodule "qomicex-core-rust"]
+	path = qomicex-core-rust
+	url = git@github.com:Qomicex-Public/qomicex-core-rust.git
+[submodule "qomicex-downloader-rust"]
+	path = qomicex-downloader-rust
+	url = git@github.com:Qomicex-Public/qomicex-downloader-rust.git
+[submodule "qomicex-connector-rust"]
+	path = qomicex-connector-rust
+	url = git@github.com:Qomicex-Public/qomicex-connector-rust.git

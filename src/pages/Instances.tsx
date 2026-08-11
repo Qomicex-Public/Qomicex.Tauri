@@ -339,6 +339,12 @@ export default function Instances() {
       }
     }
 
+    // 后端按 loaderVersion 精确匹配（大小写不敏感）；空串会导致找不到任何安装器。
+    if (form.loader && !resolvedVersion?.trim()) {
+      await msgAlert(`请选择 ${form.loader} 的具体版本后再下载。`)
+      return
+    }
+
     try {
       const isAprilFools = remoteVersions.some((v) => v.id === form.gameVersion && v.type === 'april_fools')
       const data: CreateInstanceRequest = {

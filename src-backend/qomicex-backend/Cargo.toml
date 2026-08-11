@@ -1,0 +1,71 @@
+[features]
+default = []
+# Mirrors the C# LICENSE_REQUIRED build flag: only when enabled is the closed
+# license core (Ed25519 verify + remote check) compiled in.
+license-required = [
+  "dep:ed25519-dalek",
+  "dep:hmac",
+  "dep:pbkdf2",
+  "dep:hkdf",
+  "dep:aes-gcm",
+]
+
+[package]
+name = "qomicex-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Qomicex standalone HTTP backend (Rust rewrite of Qomicex.Launcher.Backend.Neo)"
+license = "GPL-3.0"
+
+[[bin]]
+name = "qomicex-backend"
+path = "src/main.rs"
+
+[dependencies]
+qomicex-core = { package = "qomicex-core-rust", path = "../../qomicex-core-rust" }
+qomicex-downloader = { path = "../../qomicex-downloader-rust" }
+qomicex-connector = { path = "../../qomicex-connector-rust/crates/qomicex-connector" }
+
+axum = { version = "0.8", features = ["multipart"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2", "multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util", "fs", "process"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sysinfo = "0.30"
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+dirs = "5"
+open = "5"
+
+# --- License core (only when feature `license-required` is enabled) ---
+ed25519-dalek = { version = "2", optional = true }
+sha2 = "0.10"
+hmac = { version = "0.12", optional = true }
+pbkdf2 = { version = "0.12", optional = true }
+hkdf = { version = "0.12", optional = true }
+aes-gcm = { version = "0.10", optional = true }
+base64 = "0.22"
+
+# --- Plugin system ---
+zip = { version = "2", default-features = false, features = ["deflate"] }
+urlencoding = "2"
+url = "2"
+
+winreg = "0.52"
+md-5 = "0.10"
+
+# --- 日志捕获（实时日志：stderr 重定向到 trace 缓冲）---
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+lto = true

@@ -20,52 +20,75 @@
             }
         },
         {
-            "name": "启动 ASP.NET Core",
-            "type": "coreclr",
+            "name": "启动 Rust 后端",
+            "type": "node",
             "request": "launch",
-            "preLaunchTask": "build-backend",
-            "program": "dotnet",
-            "args": [
+            "runtimeExecutable": "cargo",
+            "runtimeArgs": [
                 "run",
-                "--project",
-                "${workspaceFolder}/src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj",
-                "--",
-                "--urls=http://localhost:5000"
+                "--manifest-path",
+                "${workspaceFolder}/src-backend/qomicex-backend/Cargo.toml"
             ],
-            "cwd": "${workspaceFolder}/src-backend",
+            "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "stopAtEntry": false,
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
             "env": {
-                "ASPNETCORE_ENVIRONMENT": "Development"
             }
         },
         {
-            "name": "启动 ASP.NET Core (许可证验证)",
-            "type": "coreclr",
+            "name": "启动 Rust 后端 (许可证验证)",
+            "type": "node",
             "request": "launch",
-            "preLaunchTask": "build-backend-license",
-            "program": "dotnet",
-            "args": [
+            "runtimeExecutable": "cargo",
+            "runtimeArgs": [
                 "run",
-                "--project",
-                "${workspaceFolder}/src-backend/Qomicex.Launcher.Backend.Neo/Qomicex.Launcher.Backend.Neo.csproj",
-                "-p:LicenseRequired=true",
-                "--",
-                "--urls=http://localhost:5000"
+                "--manifest-path",
+                "${workspaceFolder}/src-backend/qomicex-backend/Cargo.toml",
+                "--features",
+                "license-required"
             ],
-            "cwd": "${workspaceFolder}/src-backend",
+            "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "stopAtEntry": false,
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
             "env": {
-                "ASPNETCORE_ENVIRONMENT": "Development"
             }
+        },
+        {
+            "name": "调试 Rust 后端",
+            "type": "lldb",
+            "request": "launch",
+            "preLaunchTask": "build-backend-rust",
+            "program": "${workspaceFolder}/src-backend/qomicex-backend/target/debug/qomicex-backend.exe",
+            "cwd": "${workspaceFolder}/src-backend/qomicex-backend",
+            "console": "integratedTerminal",
+            "sourceLanguages": [
+                "rust"
+            ],
+            "env": {}
+        },
+        {
+            "name": "调试 Rust 后端 (许可证验证)",
+            "type": "lldb",
+            "request": "launch",
+            "preLaunchTask": "build-backend-rust-license",
+            "program": "${workspaceFolder}/src-backend/qomicex-backend/target/debug/qomicex-backend.exe",
+            "cwd": "${workspaceFolder}/src-backend/qomicex-backend",
+            "console": "integratedTerminal",
+            "sourceLanguages": [
+                "rust"
+            ],
+            "env": {}
         }
     ],
     "compounds": [
         {
             "name": "启动 Qomicex.Tauri",
             "configurations": [
-                "启动 ASP.NET Core",
+                "启动 Rust 后端",
                 "启动 Tauri"
             ],
             "stopAll": true
@@ -73,7 +96,23 @@
         {
             "name": "启动 Qomicex.Tauri (许可证验证)",
             "configurations": [
-                "启动 ASP.NET Core (许可证验证)",
+                "启动 Rust 后端 (许可证验证)",
+                "启动 Tauri"
+            ],
+            "stopAll": true
+        },
+        {
+            "name": "启动 Qomicex.Tauri (Rust 后端调试)",
+            "configurations": [
+                "调试 Rust 后端",
+                "启动 Tauri"
+            ],
+            "stopAll": true
+        },
+        {
+            "name": "启动 Qomicex.Tauri (Rust 后端调试, 许可证验证)",
+            "configurations": [
+                "调试 Rust 后端 (许可证验证)",
                 "启动 Tauri"
             ],
             "stopAll": true

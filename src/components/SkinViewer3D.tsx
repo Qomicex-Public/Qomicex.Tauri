@@ -12,9 +12,11 @@ interface Props {
   background?: string | number
   panoramaUrl?: string
   zoom?: number
+  capeUrl?: string | null
+  showCape?: boolean
 }
 
-export function SkinViewer3D({ textureUrl, model = 'classic', className, width = 300, height = 400, name, showNameTag = true, background = 'rgb(30,30,37)', panoramaUrl, zoom = 0.7 }: Props) {
+export function SkinViewer3D({ textureUrl, model = 'classic', className, width = 300, height = 400, name, showNameTag = true, background = 'rgb(30,30,37)', panoramaUrl, zoom = 0.7, capeUrl = null, showCape = true }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewerRef = useRef<SkinViewer | null>(null)
 
@@ -53,6 +55,24 @@ export function SkinViewer3D({ textureUrl, model = 'classic', className, width =
       viewerRef.current.loadPanorama(panoramaUrl)
     }
   }, [panoramaUrl])
+
+  // 披风加载/重置：源变化时重新加载，开关控制可见性
+  useEffect(() => {
+    if (!viewerRef.current) return
+    const v = viewerRef.current
+    if (!capeUrl) {
+      v.resetCape()
+      return
+    }
+    v.loadCape(capeUrl).catch(() => {})
+    return () => { v.resetCape() }
+  }, [capeUrl])
+
+  useEffect(() => {
+    if (viewerRef.current?.playerObject) {
+      viewerRef.current.playerObject.cape.visible = showCape && !!capeUrl
+    }
+  }, [showCape, capeUrl])
 
   return <canvas ref={canvasRef} className={className} />
 }

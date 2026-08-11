@@ -1,0 +1,43 @@
+{
+  "id": "hello-plugin",
+  "name": "Hello 示例插件",
+  "version": "0.1.0",
+  "minLauncherVersion": "0.1.0",
+  "layers": ["l2"],
+  "permissions": [
+    "config:read",
+    "config:write",
+    "system:info",
+    "ui:toast",
+    "ui:navigate",
+    "ui:sub_window",
+    "network:fetch",
+    "network:cors_proxy",
+    "download:manage",
+    "plugin:list",
+    "shell:execute",
+    "filesystem:read",
+    "filesystem:write"
+  ],
+  "dependencies": [
+    { "id": "hello-plugin-core", "optional": true }
+  ],
+  "entry": {
+    "frontend": "dist/index.html",
+    "theme": "dist/theme.css"
+  },
+  "contributes": {
+    "menuItems": [
+      { "path": "/plugins/p/hello-plugin", "label": "Hello 示例", "icon": "👋", "action": "page" },
+      { "path": "", "label": "悬浮窗", "icon": "🪟", "action": "overlay" }
+    ],
+    "overlay": {
+      "file": "dist/overlay.html",
+      "title": "Hello 悬浮窗",
+      "width": 400,
+      "height": 480,
+      "minimizable": true,
+      "resizable": true
+    }
+  }
+}

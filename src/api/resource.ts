@@ -50,8 +50,17 @@ export function startCurseForgeVersionFetch(id: string, gameVersion?: string, lo
   )
 }
 
-export function getCurseForgeVersionFetchProgress(taskId: string): Promise<{ loadedVersionCount: number; totalVersionCount: number; done: boolean }> {
-  return get<{ loadedVersionCount: number; totalVersionCount: number; done: boolean }>(`/resources/versions/fetch-progress/${taskId}`)
+export interface CurseForgeFetchProgress {
+  loadedVersionCount: number
+  totalVersionCount: number
+  done: boolean
+  /** Non-null when the fetch failed: the result is unusable and must not be read
+   *  as "this resource has no versions". */
+  error?: string | null
+}
+
+export function getCurseForgeVersionFetchProgress(taskId: string): Promise<CurseForgeFetchProgress> {
+  return get<CurseForgeFetchProgress>(`/resources/versions/fetch-progress/${taskId}`)
 }
 
 export function getCurseForgeVersionFetchResult(taskId: string): Promise<ResourceVersion[]> {

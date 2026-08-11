@@ -8,6 +8,7 @@ import type { Announcement } from '../api/announcements.ts'
 
 export function AnnouncementCard() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
+  const [index, setIndex] = useState(0)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
@@ -21,7 +22,7 @@ export function AnnouncementCard() {
   // 未加载完成或无公告时不渲染
   if (!loaded || announcements.length === 0) return null
 
-  const current = announcements[0]
+  const current = announcements[index]
 
   // 摘要：取 content 前 60 字符，去除 Markdown 标记
   const plainText = current.content.replace(/[#*_`\[\]()>~]/g, '').trim()
@@ -30,7 +31,17 @@ export function AnnouncementCard() {
   function handleClose(e: React.MouseEvent) {
     e.stopPropagation()
     dismissAnnouncement(current.id)
-    setAnnouncements((prev) => prev.slice(1))
+    const next = announcements.filter((a) => a.id !== current.id)
+    setAnnouncements(next)
+    setIndex((i) => Math.min(i, next.length - 1))
+  }
+
+  function handleNext() {
+    setIndex((i) => Math.min(i + 1, announcements.length - 1))
+  }
+
+  function handlePrev() {
+    setIndex((i) => Math.max(i - 1, 0))
   }
 
   return (
@@ -55,6 +66,10 @@ export function AnnouncementCard() {
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         announcement={current}
+        onNext={handleNext}
+        hasNext={index < announcements.length - 1}
+        onPrev={handlePrev}
+        hasPrev={index > 0}
       />
     </>
   )

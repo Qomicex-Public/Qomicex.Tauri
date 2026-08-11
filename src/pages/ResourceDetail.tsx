@@ -32,6 +32,7 @@ import { translateCategory } from '../lib/categoryTranslations.ts'
 import { downloadTo } from '../api/resource-download.ts'
 import { getInstance, getDefaultInstance } from '../api/instance.ts'
 import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance, ResolvedDependency } from '../types/index.ts'
+import { addTask } from '../stores/downloadStore.ts'
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -165,7 +166,6 @@ export default function ResourceDetailPage() {
   const [selectedLoader, setSelectedLoader] = useState(urlLoader || 'all')
   const [downloadsByVersion, setDownloadsByVersion] = useState<Record<string, ResourceFile[]>>({})
   const [loadingDownloadsFor, setLoadingDownloadsFor] = useState<string | null>(null)
-  const [downloadingFor, setDownloadingFor] = useState<string | null>(null)
 
   const [modpackInstallVersion, setModpackInstallVersion] = useState<ResourceVersion | null>(null)
   const [installVersion, setInstallVersion] = useState<ResourceVersion | null>(null)
@@ -187,61 +187,87 @@ export default function ResourceDetailPage() {
   }, [])
 
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
-    setDownloadingFor(versionId)
+    // Everything awaited must stay inside the try: a rejection from the CurseForge
+    // URL refresh or from the save dialog would otherwise be an unhandled rejection
+    // and the button would silently do nothing.
     try {
       let downloadUrl = url
+      let targetName = fileName
       if (source === 'curseforge' && resourceId) {
         const fresh = await getResourceVersionDownloads(resourceId, versionId, source)
         if (fresh?.[0]?.url) downloadUrl = fresh[0].url
+        // The backend resolves the authoritative file name alongside the fresh URL;
+        // prefer it over the (possibly cached) name from the version list.
+        if (fresh?.[0]?.fileName) targetName = fresh[0].fileName
       }
       const folderMap: Record<string, string> = { mod: 'mods', resourcepack: 'resourcepacks', shader: 'shaderpacks', save: 'saves', datapack: 'datapacks' }
       const subDir = folderMap[category] || ''
-      let defaultPath = fileName
+      let defaultPath = targetName
       if (instance && subDir) {
         const base = instance.gameDir.replace(/\\/g, '/')
         const isolated = instance.versionIsolation ?? true
         const vn = instance.name
         const dir = isolated ? `${base}/versions/${vn}/${subDir}` : `${base}/${subDir}`
-        defaultPath = `${dir}/${fileName}`
+        defaultPath = `${dir}/${targetName}`
       }
       const targetPath = await save({ defaultPath })
-      if (!targetPath) { setDownloadingFor(null); return }
-      await downloadTo(downloadUrl, targetPath)
-      notify(`已下载到：${targetPath}`, 'success')
-    } catch { notify('下载失败', 'error') }
-    setDownloadingFor(null)
-  }, [source, resourceId, category, instance, notify])
+      if (!targetPath) return
+      const { taskId } = await downloadTo(downloadUrl, targetPath)
+      addTask({
+        id: taskId,
+        name: targetName,
+        type: 'file',
+        gameVersion: '',
+        status: 'queued',
+        progress: 0,
+        taskId,
+        currentFile: targetName,
+        icon: detail?.iconUrl,
+        createdAt: new Date().toISOString(),
+      })
+      notify('已加入下载列表', 'success')
+    } catch {
+      notify('下载失败', 'error')
+    }
+  }, [source, resourceId, category, instance, detail, notify])
 
   const handleFtbExportJson = useCallback(async (versionId: string, versionName: string) => {
-    setDownloadingFor(versionId)
+    const exportUrl = `${API_BASE}/api/resources/ftb/${resourceId}/export?versionId=${encodeURIComponent(versionId)}`
+    const fileName = `${detail?.title || 'modpack'}-${versionName}.json`
     try {
-      const exportUrl = `${API_BASE}/api/resources/ftb/${resourceId}/export?versionId=${encodeURIComponent(versionId)}`
-      const defaultPath = `${detail?.title || 'modpack'}-${versionName}.json`
-      const targetPath = await save({ defaultPath })
-      if (!targetPath) { setDownloadingFor(null); return }
-      await downloadTo(exportUrl, targetPath)
-      notify(`已导出到：${targetPath}`, 'success')
-    } catch { notify('导出失败', 'error') }
-    setDownloadingFor(null)
+      const targetPath = await save({ defaultPath: fileName })
+      if (!targetPath) return
+      const { taskId } = await downloadTo(exportUrl, targetPath)
+      addTask({
+        id: taskId,
+        name: fileName,
+        type: 'file',
+        gameVersion: '',
+        status: 'queued',
+        progress: 0,
+        taskId,
+        currentFile: fileName,
+        icon: detail?.iconUrl,
+        createdAt: new Date().toISOString(),
+      })
+      notify('已加入下载列表', 'success')
+    } catch {
+      notify('导出失败', 'error')
+    }
   }, [resourceId, detail, notify])
 
+  // Effect A: load detail only — show page ASAP, versions load independently
   useEffect(() => {
     if (!resourceId) return
     const id = resourceId
 
     let cancelled = false
 
-    async function load() {
+    async function loadDetail() {
       setLoading(true)
-      setLoadingVersions(true)
       setError(null)
-      setVersionsError(null)
-      setDownloadsByVersion({})
-      setLoadingDownloadsFor(null)
       setTranslation(null)
       setBodyTranslation(null)
-
-      // Phase 1: load detail only — show page ASAP
       try {
         const cacheKey = `api-resource-detail-${id}-${source}`
         const cached = cacheGet<ResourceDetail>(cacheKey)
@@ -256,34 +282,69 @@ export default function ResourceDetailPage() {
         if (cancelled) return
         setError(e instanceof Error ? e.message : '加载资源详情失败')
         setLoading(false)
-        setLoadingVersions(false)
-        return
       }
+    }
 
-      // Phase 2: load versions in background
+    loadDetail()
+    return () => { cancelled = true }
+  }, [resourceId, source, category, detailRefreshKey])
+
+  // Effect B: load versions + default instance filters (independent of detail)
+  useEffect(() => {
+    if (!resourceId) return
+    const id = resourceId
+
+    let cancelled = false
+    let abortController: AbortController | undefined
+
+    async function loadVersions() {
+      setLoadingVersions(true)
+      setVersionsError(null)
+      setDownloadsByVersion({})
+      setLoadingDownloadsFor(null)
+
+      const cacheKey = `api-resource-versions-${id}-${source}`
+      const cached = cacheGet<ResourceVersion[]>(cacheKey)
+      if (cached) setVersions(cached)
+
+      let versionList: ResourceVersion[] = []
       if (source === 'curseforge') {
         try {
           const { taskId, totalVersionCount, loadedVersionCount } = await startCurseForgeVersionFetch(id)
           if (cancelled) return
           setVersionFetchProgress({ loaded: loadedVersionCount, total: totalVersionCount })
 
-          // poll progress every 500ms
+          // Poll progress every 500ms, with a hard deadline so a backend task that
+          // never reaches `done` (e.g. a panicked worker) can't leave us polling forever.
           const pollMs = 500
+          const pollDeadline = Date.now() + 5 * 60 * 1000
+          abortController = new AbortController()
           const poll = async (): Promise<ResourceVersion[]> => {
             while (true) {
-              await new Promise(r => setTimeout(r, pollMs))
-              if (cancelled) throw new Error('cancelled')
+              await new Promise((resolve, reject) => {
+                const timer = setTimeout(resolve, pollMs)
+                abortController!.signal.addEventListener('abort', () => {
+                  clearTimeout(timer)
+                  reject(new Error('cancelled'))
+                }, { once: true })
+              })
+              if (abortController!.signal.aborted) throw new Error('cancelled')
               const p = await getCurseForgeVersionFetchProgress(taskId)
-              if (cancelled) throw new Error('cancelled')
+              if (abortController!.signal.aborted) throw new Error('cancelled')
               setVersionFetchProgress({ loaded: p.loadedVersionCount, total: p.totalVersionCount })
+              // A failed fetch reports done with an error; treating it as success
+              // would render an empty list as "this resource has no versions".
+              if (p.error) throw new Error(p.error)
               if (p.done) {
                 return getCurseForgeVersionFetchResult(taskId)
               }
+              if (Date.now() > pollDeadline) throw new Error('加载版本列表超时')
             }
           }
-          const versionList = await poll()
+          versionList = await poll()
           if (cancelled) return
           setVersions(versionList)
+          cacheSet(cacheKey, versionList)
         } catch (e) {
           if (cancelled) return
           setVersionsError(e instanceof Error ? e.message : '加载版本列表失败')
@@ -292,9 +353,10 @@ export default function ResourceDetailPage() {
         if (!cancelled) setLoadingVersions(false)
       } else {
         try {
-          const versionList = await getResourceVersions(id, source)
+          versionList = await getResourceVersions(id, source)
           if (cancelled) return
           setVersions(versionList)
+          cacheSet(cacheKey, versionList)
         } catch (e) {
           if (cancelled) return
           setVersionsError(e instanceof Error ? e.message : '加载版本列表失败')
@@ -312,8 +374,8 @@ export default function ResourceDetailPage() {
             setInstance(inst)
             if (inst.loader) {
               const loader = inst.loader.toLowerCase().trim()
-              const hasVersion = !inst.gameVersion || versions.some(v => v.gameVersions.includes(inst.gameVersion))
-              const hasLoader = versions.some(v => v.loaders.length === 0 || v.loaders.includes(loader))
+              const hasVersion = !inst.gameVersion || versionList.some(v => v.gameVersions.includes(inst.gameVersion))
+              const hasLoader = versionList.some(v => v.loaders.length === 0 || v.loaders.includes(loader))
               if (!urlGameVersion && inst.gameVersion && hasVersion) setSelectedGameVersion(inst.gameVersion)
               if (!urlLoader && hasLoader) setSelectedLoader(loader)
             }
@@ -322,11 +384,9 @@ export default function ResourceDetailPage() {
       }
     }
 
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [resourceId, source, detailRefreshKey])
+    loadVersions()
+    return () => { cancelled = true; abortController?.abort() }
+  }, [resourceId, source, instanceIdParam, urlGameVersion, urlLoader, detailRefreshKey])
 
   const gameVersionOptions = useMemo(() => {
     return ['all', ...new Set(versions.flatMap((version) => version.gameVersions).filter(Boolean))]
@@ -409,12 +469,51 @@ export default function ResourceDetailPage() {
         <div className="space-y-6 p-8">
 
       {loading ? (
-        <Card className="p-8">
-          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />
-            正在加载资源详情...
+        <div className="space-y-6">
+          <Card className="overflow-hidden">
+            <CardContent className="p-0">
+              <div className="grid gap-0 lg:grid-cols-[220px_minmax(0,1fr)]">
+                <div className="flex items-start justify-center bg-muted/30 p-6">
+                  <div className="h-36 w-36 animate-pulse rounded-2xl bg-muted" />
+                </div>
+                <div className="space-y-5 p-6">
+                  <div className="space-y-3">
+                    <div className="h-7 w-2/3 animate-pulse rounded bg-muted" />
+                    <div className="h-4 w-full animate-pulse rounded bg-muted" />
+                    <div className="h-4 w-5/6 animate-pulse rounded bg-muted" />
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="h-8 w-24 animate-pulse rounded-lg bg-muted" />
+                    <div className="h-8 w-24 animate-pulse rounded-lg bg-muted" />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <Card>
+              <CardContent className="space-y-4 p-6">
+                <div className="h-6 w-28 animate-pulse rounded bg-muted" />
+                <div className="space-y-2">
+                  <div className="h-3 w-full animate-pulse rounded bg-muted" />
+                  <div className="h-3 w-5/6 animate-pulse rounded bg-muted" />
+                  <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="space-y-4 p-6">
+                <div className="h-6 w-32 animate-pulse rounded bg-muted" />
+                <div className="space-y-2">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="h-16 animate-pulse rounded-xl bg-muted" />
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        </Card>
+        </div>
       ) : error || !detail ? (
         <Card className="p-8">
           <div className="space-y-2 text-center">
@@ -682,19 +781,17 @@ export default function ResourceDetailPage() {
                                       <Button
                                         size="sm"
                                         variant="outline"
-                                        disabled={downloadingFor === version.id}
                                         onClick={() => handleFtbExportJson(version.id, version.name)}
                                       >
-                                        <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faFloppyDisk} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
+                                        <FontAwesomeIcon icon={faFloppyDisk} className="h-3 w-3" />
                                       </Button>
                                     ) : version.downloads?.[0]?.url ? (
                                       <Button
                                         size="sm"
                                         variant="outline"
-                                        disabled={downloadingFor === version.id}
                                         onClick={() => handleDownload(version.id, version.downloads[0].url, version.downloads[0].fileName)}
                                       >
-                                        <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faFloppyDisk} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
+                                        <FontAwesomeIcon icon={faFloppyDisk} className="h-3 w-3" />
                                       </Button>
                                     ) : null}
                                   </Tooltip>
@@ -704,11 +801,10 @@ export default function ResourceDetailPage() {
                                   <Button
                                     size="sm"
                                     className="shrink-0"
-                                    disabled={downloadingFor === version.id}
                                     onClick={() => handleDownload(version.id, downloadsByVersion[version.id][0].url, downloadsByVersion[version.id][0].fileName)}
                                   >
-                                    <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faDownload} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
-                                    {downloadingFor === version.id ? '安装中...' : '安装'}
+                                    <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                    安装
                                   </Button>
                                 ) : (
                                   <Button
@@ -734,10 +830,9 @@ export default function ResourceDetailPage() {
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      disabled={downloadingFor === version.id}
                                       onClick={() => handleDownload(version.id, version.downloads[0].url, version.downloads[0].fileName)}
                                     >
-                                      <FontAwesomeIcon icon={downloadingFor === version.id ? faRotate : faFloppyDisk} className={cn('h-3 w-3', downloadingFor === version.id && 'animate-spin')} />
+                                      <FontAwesomeIcon icon={faFloppyDisk} className="h-3 w-3" />
                                     </Button>
                                   </Tooltip>
                                 </div>

@@ -1,0 +1,58 @@
+name: Setup connector build
+description: >
+  联机（qomicex-connector / easytier）构建前置：
+  easytier git 依赖认证（SSH → HTTPS+QOMICEX_PAT）、protoc（prost 编译）、
+  Windows 7-Zip（easytier build.rs 自动解压 VC-LTL/YY-Thunks）、
+  Packet.lib 复制（相对路径链接）。
+
+inputs:
+  pat:
+    description: 'GitHub PAT（读取 Qomicex-Public 仓库，用于 easytier 依赖认证）'
+    required: true
+
+outputs:
+  protoc-path:
+    description: 'protoc 可执行文件路径（供 build 步骤 PROTOC 环境变量）'
+    value: ${{ steps.protoc-exe.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Configure cargo git auth (easytier SSH -> HTTPS+token)
+      shell: bash
+      run: |
+        # easytier 依赖写死 ssh://git@github.com/；GitHub Actions 无 SSH key，
+        # 用 git insteadOf 全局重写为 HTTPS + PAT（net.git-fetch-with-cli 走 git cli）。
+        git config --global url."https://x-access-token:${{ inputs.pat }}@github.com/".insteadOf "ssh://git@github.com/"
+
+    - name: Install protoc
+      id: protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        version: "35.1"
+
+    - name: Resolve protoc executable path
+      id: protoc-exe
+      shell: bash
+      run: |
+        # setup-protoc 的 path output 是安装目录，prost 需要可执行文件本身
+        # （目录作为 PROTOC 会被 prost 尝试执行 → Windows 报 Access is denied）。
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          echo "path=${{ steps.protoc.outputs.path }}/bin/protoc.exe" >> "$GITHUB_OUTPUT"
+        else
+          echo "path=${{ steps.protoc.outputs.path }}/bin/protoc" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Install 7-Zip (easytier VC-LTL/YY-Thunks unpack)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: choco install 7zip.install -y --no-progress
+
+    - name: Copy Packet.lib for easytier link (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # easytier build.rs 以相对路径 easytier/third_party/x86_64/ 搜索 Packet.lib
+        # （按 rustc CWD = 后端 crate 目录解析）；缺失报 LNK1181。
+        New-Item -ItemType Directory -Force src-backend/qomicex-backend/easytier/third_party/x86_64 | Out-Null
+        Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.lib src-backend/qomicex-backend/easytier/third_party/x86_64/

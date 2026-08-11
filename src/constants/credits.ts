@@ -36,14 +36,14 @@ export const CONTRIBUTORS: Contributor[] = [
 ]
 
 export const BACKEND_DEPENDENCIES: Record<string, Dependency[]> = {
-  '.NET 与运行时': [
-    { name: '.NET 10', version: '10.x', url: 'https://dotnet.microsoft.com', license: 'MIT' },
-    { name: 'ASP.NET Core', version: '10.x', url: 'https://learn.microsoft.com/aspnet/core', license: 'MIT' },
+  'Rust 后端运行时': [
+    { name: 'Rust', version: 'stable', url: 'https://www.rust-lang.org', license: 'MIT/Apache-2.0' },
+    { name: 'axum', version: '0.8', url: 'https://github.com/tokio-rs/axum', license: 'MIT' },
+    { name: 'tokio', version: '1.x', url: 'https://tokio.rs', license: 'MIT' },
   ],
   '核心库': [
-    { name: 'Qomicex.Core', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Core', license: '自研' },
-    { name: 'Qomicex.Connector', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Connector.Part.Scaffolding', license: '自研' },
-    { name: 'Qomicex.Downloader', version: '内置', url: 'https://github.com/Qomicex-Public/Qomicex.Downloader.Refactor', license: '自研' },
+    { name: 'qomicex-core-rust', version: '0.1.0', url: 'https://github.com/Qomicex-Public/qomicex-core-rust', license: 'GPL-3.0' },
+    { name: 'qomicex-downloader-rust', version: '0.1.0', url: 'https://github.com/Qomicex-Public/qomicex-downloader-rust', license: 'MIT' },
   ],
 }
 

@@ -48,7 +48,7 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache, setDataDir } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache, clearCurseForgeCache, setDataDir } from '../api/settings.ts'
 import { setPluginState as apiSetPluginState } from '../api/plugins.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS } from '../constants/credits.ts'
@@ -470,6 +470,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 export default function Settings() {
   const { error: msgError, confirm: msgConfirm, notify } = useMessageBox()
   const [clearingCache, setClearingCache] = useState(false)
+  const [clearingCurseForgeCache, setClearingCurseForgeCache] = useState(false)
   const { state: debugState } = useDebug()
   const [category, setCategory] = useState(() => {
     const params = new URLSearchParams(window.location.search)
@@ -689,7 +690,7 @@ export default function Settings() {
       const pings = await pingDownloadSources()
       setSourcePings(pings)
       if (settings.autoSelectDownloadSource) {
-        const best = pings.filter(p => p.available).sort((a, b) => a.latencyMs - b.latencyMs)[0]
+        const best = pings.filter(p => p.ok).sort((a, b) => a.latency - b.latency)[0]
         if (best && best.id !== settings.downloadSource) {
           update('downloadSource', best.id)
         }
@@ -707,7 +708,7 @@ export default function Settings() {
       const pings = await pingModSources()
       setModPings(pings)
       if (settings.autoSelectModMirror) {
-        const best = pings.filter(p => p.available).sort((a, b) => a.modrinthLatency - b.modrinthLatency)[0]
+        const best = pings.filter(p => p.ok).sort((a, b) => a.latency - b.latency)[0]
         if (best && best.id !== settings.modMirror) {
           update('modMirror', best.id)
         }
@@ -829,6 +830,18 @@ export default function Settings() {
       await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '清理缓存失败')
     } finally {
       setClearingCache(false)
+    }
+  }
+
+  async function handleClearCurseForgeCache() {
+    setClearingCurseForgeCache(true)
+    try {
+      await clearCurseForgeCache()
+      notify('CurseForge 版本缓存已清除', 'success')
+    } catch (e) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '清除 CurseForge 缓存失败')
+    } finally {
+      setClearingCurseForgeCache(false)
     }
   }
 
@@ -993,10 +1006,10 @@ export default function Settings() {
                   <div className="flex flex-wrap items-center gap-2">
                     {DOWNLOAD_SOURCES.map((s) => {
                       const ping = sourcePings.find(p => p.id === s.value)
-                      const showLatency = ping && ping.latencyMs >= 0
-                      const latencyColor = !ping?.available ? 'text-destructive'
-                        : ping.latencyMs < 200 ? 'text-emerald-400'
-                        : ping.latencyMs < 400 ? 'text-amber-400'
+                      const showLatency = ping && ping.latency >= 0
+                      const latencyColor = !ping?.ok ? 'text-destructive'
+                        : ping.latency < 200 ? 'text-emerald-400'
+                        : ping.latency < 400 ? 'text-amber-400'
                         : 'text-destructive'
                       return (
                         <button
@@ -1015,7 +1028,7 @@ export default function Settings() {
                           {pingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!pingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
-                              {ping.latencyMs}ms
+                              {ping.latency}ms
                             </span>
                           )}
                           {!pingLoading && !showLatency && (
@@ -1051,10 +1064,10 @@ export default function Settings() {
                       { value: 1, label: 'MCIM 镜像' },
                     ].map((s) => {
                       const ping = modPings.find(p => p.id === s.value)
-                      const showLatency = ping && ping.modrinthLatency >= 0
-                      const latencyColor = !ping?.available ? 'text-destructive'
-                        : ping.modrinthLatency < 200 ? 'text-emerald-400'
-                        : ping.modrinthLatency < 400 ? 'text-amber-400'
+                      const showLatency = ping && ping.latency >= 0
+                      const latencyColor = !ping?.ok ? 'text-destructive'
+                        : ping.latency < 200 ? 'text-emerald-400'
+                        : ping.latency < 400 ? 'text-amber-400'
                         : 'text-destructive'
                       return (
                         <button
@@ -1073,7 +1086,7 @@ export default function Settings() {
                           {modPingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!modPingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
-                              {ping.modrinthLatency}ms
+                              {ping.latency}ms
                             </span>
                           )}
                           {!modPingLoading && !showLatency && (
@@ -1187,6 +1200,61 @@ export default function Settings() {
                   <Button size="sm" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
                     <FontAwesomeIcon icon={clearingCache ? faRotate : faTrashCan} className={cn('h-4 w-4', clearingCache && 'animate-spin')} />
                     清理缓存
+                  </Button>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="curseforgeVersionFetchConcurrency">CurseForge 版本列表并发数</Label>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionFetchConcurrency', Math.max(1, Math.min(20, settings.curseforgeVersionFetchConcurrency - 1)))} disabled={settings.curseforgeVersionFetchConcurrency <= 1}>
+                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                    </Button>
+                    <Input
+                      id="curseforgeVersionFetchConcurrency"
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={settings.curseforgeVersionFetchConcurrency}
+                      onChange={(e) => update('curseforgeVersionFetchConcurrency', Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
+                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionFetchConcurrency', Math.min(20, settings.curseforgeVersionFetchConcurrency + 1))} disabled={settings.curseforgeVersionFetchConcurrency >= 20}>
+                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">同时拉取的页面数量（1-20），数值越大版本列表加载越快</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="curseforgeVersionCacheTtlSeconds">CurseForge 版本列表缓存有效期（秒）</Label>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionCacheTtlSeconds', Math.max(0, settings.curseforgeVersionCacheTtlSeconds - 10))} disabled={settings.curseforgeVersionCacheTtlSeconds <= 0}>
+                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                    </Button>
+                    <Input
+                      id="curseforgeVersionCacheTtlSeconds"
+                      type="number"
+                      min={0}
+                      max={3600}
+                      value={settings.curseforgeVersionCacheTtlSeconds}
+                      onChange={(e) => update('curseforgeVersionCacheTtlSeconds', Math.max(0, Math.min(3600, parseInt(e.target.value) || 0)))}
+                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionCacheTtlSeconds', Math.min(3600, settings.curseforgeVersionCacheTtlSeconds + 10))} disabled={settings.curseforgeVersionCacheTtlSeconds >= 3600}>
+                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">0 = 永久缓存（直到重启或手动清除），默认 300 秒（5 分钟）</p>
+                </div>
+
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label>CurseForge 版本缓存</Label>
+                    <p className="text-xs text-muted-foreground">清除 CurseForge 版本列表的内存缓存</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={handleClearCurseForgeCache} disabled={clearingCurseForgeCache}>
+                    <FontAwesomeIcon icon={clearingCurseForgeCache ? faRotate : faTrashCan} className={cn('h-4 w-4', clearingCurseForgeCache && 'animate-spin')} />
+                    清除 CurseForge 版本缓存
                   </Button>
                 </div>
               </CardContent>

@@ -385,6 +385,9 @@ export interface DownloadTask {
   taskId?: string
   /** for batch tasks - all child taskIds */
   batchTaskIds?: string[]
+  /** for file downloads - bytes so far / total bytes */
+  downloadedBytes?: number
+  totalBytes?: number
 }
 
 export interface ResourceDownloadState {
@@ -667,4 +670,11 @@ export interface SkinProfile {
   capeUrl: string | null
   model: string
   skinSource?: string
+}
+
+/** 微软披风（GET /minecraft/profile 的 capes 数组项）。 */
+export interface McCape {
+  id: string
+  state: string
+  alias?: string | null
 }

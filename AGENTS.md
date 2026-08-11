@@ -6,23 +6,32 @@
 |-------|------|-----|------|
 | Desktop shell | Tauri v2 (Rust) | `src-tauri/` | — |
 | Frontend | React 19 + Vite 7 + TS + Tailwind | `src/` | 1420 |
-| Backend API | ASP.NET Core 10 (NativeAOT) | `src-backend/Qomicex.Launcher.Backend.Neo/` | 5000 |
+| Backend API | Rust (axum + tokio) | `src-backend/qomicex-backend/` | 5000 |
 
 Vite proxies `/api/*` → `http://localhost:5000` (`vite.config.ts`).
 
-`src-backend/` has 4 projects: `Qomicex.Launcher.Backend.Neo` (main API, NativeAOT), `Qomicex.Core.AOT/` (submodule), `Qomicex.Downloader` (download lib), `Qomicex.Connector.Part.Scaffolding/` (submodule).
+`src-backend/` has 1 project: `qomicex-backend` (Rust backend, rewrite of the removed C# `Qomicex.Launcher.Backend.Neo`).
 
-Backend references Core (via `Qomicex.Core.AOT/`) and `Qomicex.Connector`.
+External Rust crates are git submodules at the repo root: `qomicex-core-rust/` (core lib), `qomicex-downloader-rust/` (downloader) and `qomicex-connector-rust/` (联机/SCF 协议, 依赖 EasyTier4QML fork).
 
-Submodules (recursive checkout): `src-backend/Qomicex.Core.AOT/`, `src-backend/Qomicex.Connector.Part.Scaffolding/`.
+Submodules (recursive checkout): `qomicex-core-rust/`, `qomicex-downloader-rust/`, `qomicex-connector-rust/`.
 
-Legacy code (pre-Neo) is preserved on the `legacy` branch.
+Legacy code (pre-Neo / pre-Rust) is preserved on the `legacy` branch.
+
+## 联机（connector）构建注意事项
+
+- 仓库根 `.cargo/config.toml` 提供 `PROTOC` / `VC_LTL` / `YY_THUNKS` 环境变量与 `net.git-fetch-with-cli = true`（easytier 构建必需；路径为本机特定，换机器需调整）。
+- easytier build.rs 以相对路径 `easytier/third_party/x86_64/` 搜索 `Packet.lib`（按 rustc CWD 解析）→ 已复制到 `src-backend/qomicex-backend/easytier/third_party/x86_64/`，删除会导致 `LNK1181: Packet.lib`。
+- 运行 `qomicex-backend.exe` 需要 `Packet.dll`（npcap，来自 connector-rust `easytier/third_party/x86_64/`）在 exe 同目录；缺失时进程退出 `0xC0000135 (STATUS_DLL_NOT_FOUND)`。release 打包（release.yml / Tauri bundle）必须一并带上。
+- 联机端点：`src-backend/qomicex-backend/src/endpoints/connector.rs`（9 个 `/connector/*` 端点）。EasyTier 为库内嵌（非子进程），`/connector/easytier/*` 恒返回 installed。EasyTier 使用 smoltcp 用户态协议栈，**不支持 127.0.0.1 回环**——本机无法验证 host→join 全链路，需两台真实机器。
 
 ## Commands
 
 ```bash
 # Backend dev
-cd src-backend/Qomicex.Launcher.Backend.Neo && dotnet run
+cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml
+# with license verification enabled
+cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml --features license-required
 
 # Frontend dev (plain Vite)
 npm run dev          # on :1420
@@ -38,6 +47,17 @@ pwsh ./build-release.ps1
 ```
 
 No test framework. Backend API test script: `bash scripts/test-api-filters.sh`.
+
+## Rust 测试
+
+- **Tauri 侧测试**（WASM 网关）：`cd src-tauri && cargo test --lib plugin_gateway`。
+  夹具在 `src-tauri/tests/fixtures/`：`dev.test.wasm/`（预编译 `plugin.wasm` + `manifest.json`）
+  会被测试自动部署到临时 `QOMICEX_HOME`，无需手工预置。
+- **重编 WASM 插件**：`rustup target add wasm32-unknown-unknown` 后
+  `cd src-tauri/tests/fixtures/dev-test-wasm-src && cargo build --release --target wasm32-unknown-unknown`，
+  把 `target/wasm32-unknown-unknown/release/dev_test_wasm.wasm` 复制为
+  `../dev.test.wasm/plugin.wasm`。
+- **Rust 后端**（`src-backend/qomicex-backend/`）：无单元测试，`cargo test` 仅编译校验；行为验证走 `bash scripts/test-api-filters.sh`。
 
 ## Conventional Commits
 
@@ -60,13 +80,13 @@ Types: `feat`, `fix`, `build`, `chore`, `ci`, `docs`, `perf`, `refactor`, `rever
 
 `.github/workflows/release.yml` — `workflow_dispatch` (填版本各部分，自动构造标准版本号) 或 `release: [published]` (从 tag 解析版本)。版本格式: `v<major>.<minor>.<patch>-<type><序数>.<补丁/构建>`，其中 release/beta 用人工输入的序数，alpha 自动取当天日期+当日构建序号。
 
-构建时可选择: 平台、打包格式、架构、是否启用许可证验证 (`-p:LicenseRequired=true`)，是否标记 GitHub Pre-release。
+构建时可选择: 平台、打包格式、架构、是否启用许可证验证 (`--features license-required`)，是否标记 GitHub Pre-release。
 
-requires `QOMICEX_PAT` secret for submodule checkout. Builds publish backend per-RID, embed it into `src-tauri/binaries/`, then build Tauri bundle.
+requires `QOMICEX_PAT` secret for submodule checkout. Builds cargo backend per target triple (`cargo build --target <triple>`，输出到 `src-backend/qomicex-backend/target/<triple>/release/`)，将其嵌入 `src-tauri/binaries/`（release 构建经 `include_bytes!`），再构建 Tauri bundle。无需 .NET SDK。
 
 CI 使用 **pnpm**（非 npm）：`pnpm install --frozen-lockfile` 后必须 `pnpm --filter @qomicex/plugin-ui build`（workspace 包需先构建 `dist/`）。`actions/setup-node` 配 `cache: pnpm`，之前需 `pnpm/action-setup@v4`。
 
-Mac 的 Create DMG 步骤必须给 `hdiutil create` 传显式 `-size`（按 `du -sm "$STAGING"` ×1.3 + 64MiB 计算）：`-srcfolder` 自动估算会偏小，嵌入 NativeAOT 后端后镜像内复制到一半报 `No space left on device`（宿主盘其实有空间）。UDZO 压缩会回收多余空间，不影响最终 DMG 大小。
+Mac 的 Create DMG 步骤必须给 `hdiutil create` 传显式 `-size`（按 `du -sm "$STAGING"` ×1.3 + 64MiB 计算）：`-srcfolder` 自动估算会偏小，嵌入 Rust 后端后镜像内复制到一半报 `No space left on device`（宿主盘其实有空间）。UDZO 压缩会回收多余空间，不影响最终 DMG 大小。
 
 `release-cnb` job 用官方 **CNB CLI**：`npm install -g @cnbcool/cnb-cli`（命令 `cnb`）。**不存在 `git-cnb`**（GitHub 无此仓库）。创建 release：`cnb releases post-release --repo <org>/<repo> --tag-name ... --name ... [--prerelease] --body-file ...`（`--verbose` 输出完整 JSON，用 jq 取 `.data.id`）；资产上传是两段式：`cnb releases post-release-asset-upload-url`（取 `.data.upload_url`/`.data.verify_url`）→ `curl -X PUT --upload-file` → `cnb releases post-release-asset-upload-confirmation`（token/path 从 verify_url 最后两段提取）。CNB 需要 `repo-release:rw` 权限。
 
@@ -92,21 +112,22 @@ import { x } from './baz'                  // WRONG — Vite will error
 
 ## Backend conventions
 
-- **20 endpoint modules** in `Endpoints/` → `api/<name>` routes. Includes `DiagnosticsController` (`/api/diagnostics/health`, `/api/diagnostics/trace`, `/api/diagnostics/dump`).
-- `Program.cs` registers: CORS (any origin), 5 named `HttpClient`s (Modrinth, CurseForge, FTB, AuthlibInjector, default), `DownloadManager`, `InstanceInstallService`, `LaunchService`, `FtbService`, `ModpackService`, `ResourceDownloadService`, `JavaRuntimeStore`, `JavaDownloadService`, `SkinService`, `McmodService`, `AccountService`, `MsAccount`, `TraceBufferStore`/`TraceDumpService`, `LanGameListenerService`, `ConnectorService`/`GameProcessInspector`/`EasyTierProvider`.
-- Embedded resources: `Alex.png`, `mcmod_data.json` (in `.csproj`).
+- **22 endpoint modules** in `src-backend/qomicex-backend/src/endpoints/` → `api/<name>` routes, assembled in `app.rs` (`build_router`). `main.rs` loads config (`settings.rs`) then serves.
+- Router: `.nest("/api", ...)` + permissive CORS (`CorsLayer`) + `TraceLayer`; `/api/ping` liveness probe. `middleware/not_found.rs` handles 404 (registered before `.layer()` so CORS wraps fallback).
+- Shared services in `services/` and `state.rs` (`AppState`): reqwest HTTP clients (Modrinth, CurseForge, FTB, etc.), `InstallTracker`, `LaunchTracker`, account/skin services, trace buffer, plugin service. License core only under `--features license-required`.
+- Embedded resources: `Alex.png`, `mcmod_data.json`, `appsettings.json` (via `include_bytes!` / `include_str!`).
 - `appsettings.json` includes a `CurseForge:ApiKey` (set in repo).
-- OpenAPI endpoint available in dev mode (`/openapi/v1.json`).
+- No OpenAPI endpoint (C# `/openapi/v1.json` removed in the Rust rewrite).
 
 ## Error handling
 
-**Backend**: unhandled exceptions → `Middleware/ErrorHandlingMiddleware.cs` → returns:
+**Backend**: errors → `ApiError` (`src-backend/qomicex-backend/src/error.rs`, mirrors C# `ApiError`) → returns:
 ```json
 { "code": "ERROR_CODE", "message": "...", "detail": "...", "traceId": "...", "timestamp": "...", "status": 500 }
 ```
-- Do NOT add try/catch in controllers. Let exceptions bubble.
-- For expected errors, throw `ApiException`: `ApiException.BadRequest(...)`, `ApiException.NotFound(...)`, etc. (`Common/ApiError.cs`).
-- Exception→HTTP mapping in `ErrorHandlingMiddleware.MapException`: `ApiException`→its code, `ArgumentNullException`→400, `FileNotFoundException`→404, `HttpRequestException`→502, `TaskCanceledException`→499, `JsonException`→400, default→500.
+- Do NOT add ad-hoc result wrapping in handlers. Return `ApiResult<T>` and let `ApiError` propagate.
+- For expected errors use constructors: `ApiError::bad_request(...)`, `ApiError::not_found(...)`, `ApiError::forbidden(...)`, `ApiError::upstream(...)`, `ApiError::internal(...)`.
+- `From<std::io::Error>` maps `NotFound`→404, `PermissionDenied`→403, else→500 (mirrors C# `MapException`).
 
 **Frontend**: `src/api/client.ts` exports `ApiError` with `.code`, `.status`, `.detail`, `.traceId`, `.displayMessage`.
 ```ts
@@ -118,15 +139,13 @@ try { ... } catch (e) { if (e instanceof ApiError) showToast(e.displayMessage) }
 
 The launcher ships on **Windows, Linux, macOS**. Never assume Windows.
 
-### C# (Backend / Core)
-- Use `Path.Combine(...)`, never hardcoded drive letters or `\\` separators.
-- Use `Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })`, not `explorer.exe`.
-- Platform guards: `OperatingSystem.IsWindows()` / `IsLinux()` / `IsMacOS()` (not `PlatformID.Win32NT`).
-- `RuntimeInformation.OSDescription` may not contain `"Linux"` on some distros — prefer `OperatingSystem.IsLinux()`.
-- Shell: `/bin/sh` fallback (not `/bin/bash`).
-- `dotnet publish` needs `-p:IncludeNativeLibrariesForSelfExtract=true` (SkiaSharp).
-- Data dir: `LocalApplicationData` + app name, with `QOMICEX_HOME` env override for portable mode. Never write to `AppContext.BaseDirectory`.
-- Qomicex.Core.AOT: check `ContainsKey(osName)` before accessing `obj["natives"]`. Detect `aarch64`/`ARM64` before falling to `x86`.
+### Rust (Backend / Core)
+- Use `std::path::PathBuf`/`Path::join` — never hardcoded drive letters or `\\` separators.
+- Platform guards: `#[cfg(windows)]` / `#[cfg(unix)]` (not `cfg(not(windows))`); runtime check with `std::env::consts::OS`.
+- Shell: `/bin/sh` on unix, powershell/cmd on Windows (see `services/plugin.rs`).
+- Data dir: `dirs` crate (`LocalApplicationData`-equivalent) + app name, with `QOMICEX_HOME` env override for portable mode. Never write relative to the exe dir.
+- No .NET — native OS APIs only (winreg on Windows, sysinfo for diagnostics).
+- Set `0o755` permissions after `std::fs::write` for binaries.
 
 ### Frontend (TS)
 - Normalize backend paths: `.replace(/\\/g, '/')`.
@@ -152,7 +171,7 @@ Version-isolated dirs (`mods`, `saves`, `resourcepacks`, `shaderpacks`, `screens
 
 ## Plugin system
 
-- **Manifest**: `src/plugins/types.ts` / `src-backend/.../Models/PluginManifest.cs` — `PluginManifest`, `PluginContributes`, `PluginMenuItem`.
+- **Manifest**: `src/plugins/types.ts` / `PluginManifest` in `src-backend/qomicex-backend/src/services/plugin.rs` — `PluginManifest`, `PluginContributes`, `PluginMenuItem`.
 - **Activation**: `activatePlugin()` in `src/plugins/plugin-loader.tsx:9` — calls `renderInline()`, registers sidebar slots, loads theme CSS.
 - **Inline rendering**: `sandbox.ts:113` `renderInline()` — fetches `dist/index.html`, strips `<html>/<head>/<body>`, sets `container.innerHTML` with bridge script appended.
 - **Plugin page**: `src/pages/PluginPage.tsx` — mounts at `/plugins/p/:pluginId`. Switches plugins by clearing `containerRef.innerHTML` before appending new container. Scripts activate once (`data-scripts-activated` flag).

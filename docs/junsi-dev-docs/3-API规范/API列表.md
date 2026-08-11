@@ -1512,3 +1512,217 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 | `TaskCanceledException` | 499 |
 | `JsonException` | 400 |
 | 其他未处理异常 | 500 |
+
+
+### 2026-08-09 更新
+# API 端点参考
+
+> 更新日期：2026-08-09
+
+后端基础地址：`http://localhost:5000`（绑定 127.0.0.1，`QOMICEX_PORT` 可覆盖）。前端 Vite 代理将 `/api/*` 转发到此地址。
+
+**当前后端**：Rust Axum 0.8（`src-backend/qomicex-backend/`）。自 ADR-004 起为唯一主后端，C# 版 `Qomicex.Launcher.Backend.Neo` 保留在 `legacy` 分支。
+
+**状态图例**：
+- ✅ 已实现
+- ⚠️ **501** — 路由已注册但返回 `501 NOT_IMPLEMENTED`（stub，等待服务移植）
+- 🚫 未移植 — C# 版有、Rust 版尚未实现
+
+**缺失模块**：🚫 `Plugin`（/api/plugins* 全部，含 wasm/download/files/shell/proxy/cache）、🚫 `Connector`（/api/connector* 全部）。
+
+所有未捕获异常按统一错误格式返回（详见底部"错误格式"章节）。
+
+---
+
+## 目录
+
+- [账号 Account](#1-账号-account)
+- [认证 Auth](#2-认证-auth)
+- [公告 Announcement](#3-公告-announcement)
+- [联机 Connector](#4-联机-connector)
+- [实例 Instance](#5-实例-instance)
+- [实例文件 Instance Files](#6-实例文件-instance-files)
+- [Java 运行时](#7-java-运行时)
+- [启动 Launch](#8-启动-launch)
+- [许可证 License](#9-许可证-license)
+- [加载器 Loader](#10-加载器-loader)
+- [日志 Log](#11-日志-log)
+- [中文名 Mcmod](#12-中文名-mcmod)
+- [整合包 Modpack](#13-整合包-modpack)
+- [插件 Plugin](#14-插件-plugin)
+- [进度 SSE](#15-进度-sse-stream)
+- [资源中心 Resource Center](#16-资源中心-resource-center)
+- [资源下载 Resource Download](#17-资源下载-resource-download)
+- [资源补全 Resource Complete](#18-资源补全-resource-complete)
+- [皮肤 Skin](#19-皮肤-skin)
+- [系统 System](#20-系统-system)
+- [更新 Update](#21-更新-update)
+- [版本 Version](#22-版本-version)
+
+
+
+### 2026-08-09 更新
+## 4. 联机 Connector
+
+> 🚫 **未移植**：本节为 C# 版（legacy 分支）端点，Rust 后端尚未实现 `/api/connector*`（对应 Rust crate `qomicex-connector-rust` 尚未接入）。
+
+**分组前缀：** `/api/connector`
+
+
+
+### 2026-08-09 更新
+## 14. 插件 Plugin
+
+> 🚫 **未移植**：本节为 C# 版（legacy 分支）端点，Rust 后端尚未实现 `/api/plugins*`（upload/files/settings/cache/proxy/wasm/download/shell 等全部端点）。插件系统详细规范见《插件系统 API》文档。
+
+**分组前缀：** `/api/plugins`
+
+
+
+### 2026-08-09 更新
+### POST `/api/instance/{id}/launch`
+
+> ⚠️ **501 stub**：Rust 后端已注册路由但未实现（等待 LaunchTracker 移植），返回 `501 NOT_IMPLEMENTED`。
+
+启动实例（异步）。
+
+
+
+### 2026-08-09 更新
+### GET `/api/instance/{id}/launch/progress`
+
+> ⚠️ **501 stub**：Rust 后端未实现，返回 `501 NOT_IMPLEMENTED`。
+
+轮询启动进度。
+
+**响应：** `LaunchProgressDto`
+
+### POST `/api/instance/{id}/launch/cancel`
+
+> ⚠️ **501 stub**：Rust 后端未实现，返回 `501 NOT_IMPLEMENTED`。
+
+取消启动。
+
+
+
+### 2026-08-09 更新
+### Servers
+
+> ⚠️ **501 stub**：Rust 后端未实现（servers/lan-games/server-ping 全部返回 501）。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/servers` | 服务器列表 |
+| POST | `/servers` | 添加服务器 `{ "name": "...", "ip": "..." }` |
+| DELETE | `/servers?ip=...` | 删除服务器 |
+| GET | `/server-ping?address=...` | Ping 服务器 |
+| GET | `/lan-games` | 发现局域网游戏 |
+
+### Options
+
+> ⚠️ **501 stub**：Rust 后端未实现（依赖 per-instance OptionsProvider，尚未移植）。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/options` | 获取游戏设置列表（中文） |
+| GET | `/options/{name}` | 获取单项设置定义 |
+| PUT | `/options/{name}` | 修改设置 `{ "value": "..." }` |
+
+
+
+### 2026-08-09 更新
+### POST `/api/resources/{id}/versions/start-fetch`
+
+> ⚠️ **501 stub**：Rust 后端未实现（CurseForge 异步版本拉取未移植）。
+
+启动 CurseForge 版本列表异步拉取。
+
+### GET `/api/resources/versions/fetch-progress/{taskId}`
+
+> ⚠️ **501 stub**：Rust 后端未实现，返回 `501 NOT_IMPLEMENTED`。
+
+查询拉取进度。
+
+### GET `/api/resources/versions/fetch-result/{taskId}`
+
+> ⚠️ **501 stub**：Rust 后端未实现，返回 `501 NOT_IMPLEMENTED`。
+
+获取拉取结果。
+
+
+
+### 2026-08-09 更新
+# API 端点参考
+
+> 更新日期：2026-08-09
+
+后端基础地址：`http://localhost:5000`（绑定 127.0.0.1，`QOMICEX_PORT` 可覆盖）。前端 Vite 代理将 `/api/*` 转发到此地址。
+
+**当前后端**：Rust Axum 0.8（`src-backend/qomicex-backend/`）。自 ADR-004 起为唯一主后端，C# 版 `Qomicex.Launcher.Backend.Neo` 保留在 `legacy` 分支。
+
+**状态图例**：
+- ✅ 已实现
+- ⚠️ **501** — 路由已注册但返回 `501 NOT_IMPLEMENTED`（stub，等待服务移植）
+- 🚫 未移植 — C# 版有、Rust 版尚未实现
+
+**缺失模块**：🚫 `Connector`（/api/connector* 全部，对应 Rust crate `qomicex-connector-rust` 尚未接入）。
+
+所有未捕获异常按统一错误格式返回（详见底部"错误格式"章节）。
+
+
+
+### 2026-08-09 更新
+## 14. 插件 Plugin
+
+**分组前缀：** `/api/plugins`（Rust `src-backend/qomicex-backend/src/endpoints/plugin.rs`，✅ 已实现）
+
+
+
+### 2026-08-09 更新
+## 4. 联机 Connector
+
+> 🚫 **未移植**：本节为 C# 版（legacy 分支）端点，Rust 后端尚未实现 `/api/connector*`（对应 Rust crate `qomicex-connector-rust` 尚未接入 `app.rs`）。
+
+**分组前缀：** `/api/connector`
+
+
+
+### 2026-08-09 更新
+### POST `/api/instance/{id}/launch`
+
+启动实例（异步）。
+
+
+
+### 2026-08-09 更新
+### GET `/api/instance/{id}/launch/progress`
+
+轮询启动进度。
+
+**响应：** `LaunchProgressDto`
+
+### POST `/api/instance/{id}/launch/cancel`
+
+取消启动。
+
+
+
+### 2026-08-09 更新
+### POST `/api/resources/{id}/versions/start-fetch`
+
+启动 CurseForge 版本列表异步拉取。
+
+```json
+{ "gameVersion": "1.20.1", "loader": "forge" }
+```
+
+**响应：** `{ "taskId": "...", "totalVersionCount": 0, "loadedVersionCount": 0 }`
+
+### GET `/api/resources/versions/fetch-progress/{taskId}`
+
+查询拉取进度。
+
+### GET `/api/resources/versions/fetch-result/{taskId}`
+
+获取拉取结果。
+

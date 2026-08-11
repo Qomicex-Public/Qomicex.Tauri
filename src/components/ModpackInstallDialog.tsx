@@ -20,6 +20,8 @@ const STAGE_LABELS: Record<string, string> = {
   'downloading-loader-libs': '下载加载器库',
   'installing-loader': '安装加载器',
   'downloading-addons': '下载附加内容',
+  'downloading-modpack': '下载整合包',
+  'parsing-modpack': '解析整合包',
   'modpack-files': '下载整合包文件',
   'modpack-overrides': '解压覆盖文件',
 }
