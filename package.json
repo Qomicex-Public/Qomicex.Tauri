@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "bump-version": "node scripts/bump-version.mjs",
-    "dev:backend": "cargo +stable-x86_64-pc-windows-gnu run --manifest-path src-backend/qomicex-backend/Cargo.toml"
+    "dev:backend": "cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.2.0",

@@ -7,10 +7,13 @@
 | Desktop shell | Tauri v2 (Rust) | `src-tauri/` | — |
 | Frontend | React 19 + Vite 7 + TS + Tailwind | `src/` | 1420 |
 | Backend API | Rust (axum + tokio) | `src-backend/qomicex-backend/` | 5000 |
+| UI component lib | workspace package `@qomicex/plugin-ui` | `packages/plugin-ui/` | — |
 
-Vite proxies `/api/*` → `http://localhost:5000` (`vite.config.ts`).
+Vite proxies `/api/*` → `http://localhost:5000` and `/announcements-proxy` → `https://api.qomicex.top` (`vite.config.ts`). The frontend client also calls `http://localhost:5000/api` directly (`src/api/client.ts` `API_BASE`), so the proxy is a fallback, not the primary path.
 
-`src-backend/` has 1 project: `qomicex-backend` (Rust backend, rewrite of the removed C# `Qomicex.Launcher.Backend.Neo`).
+Backend binds `127.0.0.1:5000` by default; `QOMICEX_PORT` env overrides the port (`main.rs`).
+
+`src-backend/` has 1 tracked project: `qomicex-backend` (Rust backend, rewrite of the removed C# `Qomicex.Launcher.Backend.Neo`). The `Qomicex.Launcher.Backend.Neo/` directory still exists locally but is **gitignored leftover runtime data** (no source; contains an NTFS-reserved-named artifact that can't be removed via Win32) — do not treat it as code.
 
 External Rust crates are git submodules at the repo root: `qomicex-core-rust/` (core lib), `qomicex-downloader-rust/` (downloader) and `qomicex-connector-rust/` (联机/SCF 协议, 依赖 EasyTier4QML fork).
 
@@ -18,10 +21,22 @@ Submodules (recursive checkout): `qomicex-core-rust/`, `qomicex-downloader-rust/
 
 Legacy code (pre-Neo / pre-Rust) is preserved on the `legacy` branch.
 
+## Package manager (critical)
+
+The repo is **pnpm-managed**: `pnpm-lock.yaml` + `@qomicex/plugin-ui: "workspace:*"`. `package-lock.json` is stale and npm does **not** support `workspace:*`. On a fresh checkout:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter @qomicex/plugin-ui build   # dist/ is gitignored; frontend imports resolve to it
+```
+
+`@qomicex/plugin-ui` resolves to `packages/plugin-ui/dist/index.js` (`main`/`types` in its package.json). After editing any file in `packages/plugin-ui/src/`, rebuild the package or the launcher will keep using the stale `dist/`. `tailwind.config.js` scans both `packages/plugin-ui/src` and `packages/plugin-ui/dist`.
+
 ## 联机（connector）构建注意事项
 
-- 仓库根 `.cargo/config.toml` 提供 `PROTOC` / `VC_LTL` / `YY_THUNKS` 环境变量与 `net.git-fetch-with-cli = true`（easytier 构建必需；路径为本机特定，换机器需调整）。
+- 仓库根 `.cargo/config.toml` 提供 `PROTOC` / `VC_LTL` / `YY_THUNKS` 环境变量与 `net.git-fetch-with-cli = true`（easytier 构建必需；路径为本机特定，当前指向 `C:/Users/tmoam/...` WinGet profile，换机器需调整）。
 - easytier build.rs 以相对路径 `easytier/third_party/x86_64/` 搜索 `Packet.lib`（按 rustc CWD 解析）→ 已复制到 `src-backend/qomicex-backend/easytier/third_party/x86_64/`，删除会导致 `LNK1181: Packet.lib`。
+- CI 用 `.github/actions/setup-connector-build/action.yml` 复合 action 配置这些前置：easytier git 依赖 SSH→HTTPS+PAT 重写（`git config url.insteadOf`）、`arduino/setup-protoc` 装 protoc、Windows 装 7-Zip（easytier build.rs 自动解压 VC-LTL/YY-Thunks）、复制 `Packet.lib`。
 - 运行 `qomicex-backend.exe` 需要 `Packet.dll`（npcap，来自 connector-rust `easytier/third_party/x86_64/`）在 exe 同目录；缺失时进程退出 `0xC0000135 (STATUS_DLL_NOT_FOUND)`。release 打包（release.yml / Tauri bundle）必须一并带上。
 - 联机端点：`src-backend/qomicex-backend/src/endpoints/connector.rs`（9 个 `/connector/*` 端点）。EasyTier 为库内嵌（非子进程），`/connector/easytier/*` 恒返回 installed。EasyTier 使用 smoltcp 用户态协议栈，**不支持 127.0.0.1 回环**——本机无法验证 host→join 全链路，需两台真实机器。
 
@@ -33,20 +48,17 @@ cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml
 # with license verification enabled
 cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml --features license-required
 
-# Frontend dev (plain Vite)
-npm run dev          # on :1420
+# Frontend dev (plain Vite, after plugin-ui build)
+pnpm run dev          # on :1420
 
 # Tauri desktop dev (replaces plain vite)
-npm run tauri dev
+pnpm run tauri dev
 
 # Build (tsc then vite build — type errors fail the build)
-npm run build
-
-# Local Windows release build
-pwsh ./build-release.ps1
+pnpm run build
 ```
 
-No test framework. Backend API test script: `bash scripts/test-api-filters.sh`.
+No test framework. Backend API test script: `bash scripts/test-api-filters.sh` (and a `test-api-filters.ps1` twin) against `http://localhost:5000/api`.
 
 ## Rust 测试
 
@@ -82,13 +94,13 @@ Types: `feat`, `fix`, `build`, `chore`, `ci`, `docs`, `perf`, `refactor`, `rever
 
 构建时可选择: 平台、打包格式、架构、是否启用许可证验证 (`--features license-required`)，是否标记 GitHub Pre-release。
 
-requires `QOMICEX_PAT` secret for submodule checkout. Builds cargo backend per target triple (`cargo build --target <triple>`，输出到 `src-backend/qomicex-backend/target/<triple>/release/`)，将其嵌入 `src-tauri/binaries/`（release 构建经 `include_bytes!`），再构建 Tauri bundle。无需 .NET SDK。
+requires `QOMICEX_PAT` secret for submodule checkout. Builds cargo backend per target triple (`cargo build --target <triple>`，输出到 `src-backend/qomicex-backend/target/<triple>/release/`)，将其嵌入 `src-tauri/binaries/`（release 构建经 `include_bytes!`，Windows 还需复制 `Packet.dll`），再构建 Tauri bundle。无需 .NET SDK。
 
 CI 使用 **pnpm**（非 npm）：`pnpm install --frozen-lockfile` 后必须 `pnpm --filter @qomicex/plugin-ui build`（workspace 包需先构建 `dist/`）。`actions/setup-node` 配 `cache: pnpm`，之前需 `pnpm/action-setup@v4`。
 
 Mac 的 Create DMG 步骤必须给 `hdiutil create` 传显式 `-size`（按 `du -sm "$STAGING"` ×1.3 + 64MiB 计算）：`-srcfolder` 自动估算会偏小，嵌入 Rust 后端后镜像内复制到一半报 `No space left on device`（宿主盘其实有空间）。UDZO 压缩会回收多余空间，不影响最终 DMG 大小。
 
-`release-cnb` job 用官方 **CNB CLI**：`npm install -g @cnbcool/cnb-cli`（命令 `cnb`）。**不存在 `git-cnb`**（GitHub 无此仓库）。创建 release：`cnb releases post-release --repo <org>/<repo> --tag-name ... --name ... [--prerelease] --body-file ...`（`--verbose` 输出完整 JSON，用 jq 取 `.data.id`）；资产上传是两段式：`cnb releases post-release-asset-upload-url`（取 `.data.upload_url`/`.data.verify_url`）→ `curl -X PUT --upload-file` → `cnb releases post-release-asset-upload-confirmation`（token/path 从 verify_url 最后两段提取）。CNB 需要 `repo-release:rw` 权限。
+`.github/workflows/mirror.yml` — 将仓库（含子模块）镜像同步到 CNB（cnb.cool）。纯 git 操作（`git remote add cnb` + `push --mirror`，子模块逐个镜像并改写 `.gitmodules`），不依赖任何 CNB CLI。需要 `QOMICEX_PAT`、`CNB_ACCESS_TOKEN` secret 和 `CNB_REPO` variable。
 
 ## Import rules (critical)
 
@@ -97,15 +109,16 @@ All local TS/TSX imports **must include file extensions** — Vite path bug:
 import { foo } from './bar.ts'             // correct
 import { x } from './baz'                  // WRONG — Vite will error
 ```
+Exception: directory barrels like `src/components/ui` (its `index.ts`) resolve fine without an extension, but explicit `./components/ui/index.ts` also works.
 
 ## Frontend conventions
 
-- `cn()` from `src/lib/utils.ts` for Tailwind class merging.
+- `cn()` from `@qomicex/plugin-ui` (re-exported via `src/components/ui/index.ts`) for Tailwind class merging.
 - Dark mode via CSS variables in `src/index.css`, Tailwind `darkMode: "class"`.
 - Strict TS: `noUnusedLocals`, `noUnusedParameters`, `strict: true`.
-- Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 11 routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/connect`, `/settings`, `/running`. `LaunchProgressDialog` rendered outside routes.
+- Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 12 routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/connect`, `/settings`, `/running`, `/plugins/p/:pluginId`. `LaunchProgressDialog` rendered outside routes. Frontend also renders `SplashScreen` until the backend `/api/health` poll succeeds.
 - **Internal nav: `<Link>` not `<a>`** — plain `<a>` reloads the page, resetting persistent state. External links use `<a target="_blank">`.
-- UI components: `src/components/ui/{badge,button,card,checkbox,combobox,dialog,input,label,message-box,select,separator,table,textarea,tooltip}.tsx`. Import via `'../components/ui/<name>.tsx'` (extension required).
+- **UI components live in `packages/plugin-ui/src/components/`** (Badge, Button, Card, Checkbox, Combobox, Dialog, Input, Label, MessageBox, Select, Separator, Table, Tabs, Textarea, Tooltip, BatchToolbar). `src/components/ui/` is only a re-export barrel. Import via `'../components/ui'` or `'@qomicex/plugin-ui'`. **After editing a component, rebuild plugin-ui** (its `dist/` is gitignored and the launcher imports resolve there).
 - **Tooltip**: use instead of native `title`. Always wrap icon-only buttons.
 - **Select**: use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>`.
 - `LogAnalysis.tsx` exists but is **not registered** in the router.
@@ -113,9 +126,10 @@ import { x } from './baz'                  // WRONG — Vite will error
 ## Backend conventions
 
 - **22 endpoint modules** in `src-backend/qomicex-backend/src/endpoints/` → `api/<name>` routes, assembled in `app.rs` (`build_router`). `main.rs` loads config (`settings.rs`) then serves.
-- Router: `.nest("/api", ...)` + permissive CORS (`CorsLayer`) + `TraceLayer`; `/api/ping` liveness probe. `middleware/not_found.rs` handles 404 (registered before `.layer()` so CORS wraps fallback).
-- Shared services in `services/` and `state.rs` (`AppState`): reqwest HTTP clients (Modrinth, CurseForge, FTB, etc.), `InstallTracker`, `LaunchTracker`, account/skin services, trace buffer, plugin service. License core only under `--features license-required`.
-- Embedded resources: `Alex.png`, `mcmod_data.json`, `appsettings.json` (via `include_bytes!` / `include_str!`).
+- Router: `.nest("/api", ...)` + permissive CORS (`CorsLayer`) + `TraceLayer`; `/api/ping` (in `app.rs`) and `/api/health` (in `system.rs`) liveness probes — the frontend polls `/api/health`. `middleware/not_found.rs` handles 404 (registered before `.layer()` so CORS wraps fallback).
+- Data dir resolution (`settings.rs` `resolve_base_dir`): `QOMICEX_HOME` env → `.qomicex-bootstrap` file (content is the path) → `{LocalAppData}/qomicex-launcher`.
+- Shared services in `services/` and `state.rs` (`AppState`): reqwest HTTP clients (Modrinth, CurseForge, FTB, etc.), `InstallTracker`, `LaunchTracker`, account/skin services, trace buffer, plugin service. License core only under `--features license-required` (`#[cfg(feature = "license-required")]` in `license_core.rs`).
+- Embedded resources: `Resources/Alex.png`, `Resources/mcmod_data.json`, `appsettings.json` (via `include_bytes!` / `include_str!`).
 - `appsettings.json` includes a `CurseForge:ApiKey` (set in repo).
 - No OpenAPI endpoint (C# `/openapi/v1.json` removed in the Rust rewrite).
 
@@ -172,22 +186,22 @@ Version-isolated dirs (`mods`, `saves`, `resourcepacks`, `shaderpacks`, `screens
 ## Plugin system
 
 - **Manifest**: `src/plugins/types.ts` / `PluginManifest` in `src-backend/qomicex-backend/src/services/plugin.rs` — `PluginManifest`, `PluginContributes`, `PluginMenuItem`.
-- **Activation**: `activatePlugin()` in `src/plugins/plugin-loader.tsx:9` — calls `renderInline()`, registers sidebar slots, loads theme CSS.
-- **Inline rendering**: `sandbox.ts:113` `renderInline()` — fetches `dist/index.html`, strips `<html>/<head>/<body>`, sets `container.innerHTML` with bridge script appended.
+- **Activation**: `activatePlugin()` in `src/plugins/plugin-loader.tsx:57` — calls `renderInline()`, registers sidebar slots, loads theme CSS.
+- **Inline rendering**: `sandbox.ts:212` `renderInline()` — fetches `dist/index.html`, strips `<html>/<head>/<body>`, sets `container.innerHTML` with bridge script appended.
 - **Plugin page**: `src/pages/PluginPage.tsx` — mounts at `/plugins/p/:pluginId`. Switches plugins by clearing `containerRef.innerHTML` before appending new container. Scripts activate once (`data-scripts-activated` flag).
 - **Overlay system**: `PluginOverlayManager.tsx` — overlays are iframes with `sandbox="allow-scripts"`. Created via `createPluginBridge().createOverlay()`. Global `window.__pluginOverlayStore` exposes store methods.
-- **Sidebar action**: `menuItems[].action: "overlay"` + `contributes.overlay.file` → sidebar button calls `createOverlay` directly, no page navigation (`plugin-loader.tsx:76` `OverlaySidebarButton`).
+- **Sidebar action**: `menuItems[].action: "overlay"` + `contributes.overlay.file` → sidebar button calls `createOverlay` directly, no page navigation (`plugin-loader.tsx:151` `OverlaySidebarButton`).
 - **Plugin packages**: `.qplugin` = `.zip` with `manifest.json` at root. Upload via `POST /api/plugins/upload`. States persisted to `{BaseDir}/plugin-states.json`.
 - **Dev plugins**: placed in `plugins-dev/` directory during development.
-- **Plugin build (Vite + React)**: Plugins using Vite/React/Tailwind scaffold follow example-toolkit pattern: `package.json` with `@qomicex/plugin-ui` + `@qomicex/plugin-ui/tailwind-preset`, `tsc && vite build` for build, `bash scripts/build.sh` for `.qplugin` packaging. Multi-page builds supported via `rollupOptions.input`.
+- **Plugin build (Vite + React)**: Plugins using Vite/React/Tailwind scaffold follow example-toolkit pattern: `package.json` with `@qomicex/plugin-ui` + `@qomicex/plugin-ui/tailwind-preset`, `tsc && vite build` for build, the plugin's own `scripts/build.sh` for `.qplugin` packaging. Multi-page builds supported via `rollupOptions.input`.
 - **Plugin API bridge**: `window.__PLUGIN_API__` (inline) / `parent.postMessage` (iframe) — methods: `getSettings`, `setSettings`, `callBackend`, `navigate`, `showToast`, `proxyFetchStream`, `registerMethod`, `callPlugin`, `readFile`, `writeFile`, `execCommand`, `overlay.*`, `download.*`（`download.addTask|progress|cancel|list`，权限 `download:manage`，复用 `DownloadSessionManager` 使任务进入下载中心；`download.registerInstall`，权限 `instance:write`，仅在前端下载中心登记安装任务）、`modpack.install`（权限 `instance:write`，一键安装整合包，走 `POST /api/modpack/install-direct`，复用 `ModpackService`+`InstallTracker` 与前端整合包页同管线）。`proxyFetch` 走 `POST /api/plugins/proxy`（`stream: true` 时后端转发 SSE 流式响应，前端经 `proxyFetchStream(req, { onChunk, onError })` 消费）。文件读写走授权制（`/api/plugins/files/{id}/read|write|delete|authorize`，未授权返回 403 `FS_AUTHORIZATION_REQUIRED`，前端 `window.confirm` 弹窗授权后重试；`deleteFile` 权限 `filesystem:write`）；shell 执行走 `/api/plugins/shell/{id}`（win: powershell，linux/mac: /bin/sh，超时默认 15s 范围 1-120s）。
 - **Plugin dependencies**: manifest `dependencies: [{id, version?, optional?}]`，安装时检查必装前置（缺失拒装 `PLUGIN_MISSING_DEPENDENCY`），激活时检查前置已启用（缺失则禁用）。`registerMethod`/`callPlugin` 提供插件间方法调用，主窗口 `__pluginRegistry` 统一中转（`src/plugins/plugin-registry.ts`），激活顺序由 `sortByDependencies` 拓扑排序保证。
 - **Layers 渲染**: manifest `layers` 含 `l2` → iframe 沙箱（`createSandbox`，srcdoc + postMessage 桥，脚本自动执行）；不含 `l2` → 内联渲染（需进入 `/plugins/p/:id` 页面脚本才执行）。纯 `["l3"]` 的 installed 插件不自动激活。
-- **L3 WASM 网关**: `src-tauri/src/plugin_gateway/`（wasmtime 核心模块）—— `loader.rs` 扫描 `plugins/{id}/plugin.wasm`（需 manifest layers 含 l3），注入 host 函数（`qomicex` 模块：`log`/`http_fetch`/`instance_list`/`db_set`/`db_get`/`get_plugin_id`），插件导出 `on_load`/`on_unload`/`get_manifest`。`server.rs` 提供 `GET /plugins`、`GET /plugins/{id}/info`、`POST /plugins/{id}/invoke`、`GET /health`，端口写入 `plugins/.gateway_port`。路径与后端一致（`config::base_dir`，QOMICEX_HOME 优先）。后端经 `PluginGatewayClient` 代理暴露 `/api/plugins/wasm`、`/api/plugins/wasm/{id}`、`/api/plugins/wasm/{id}/invoke`，前端 API `callWasm`/`listWasmPlugins`（权限 `wasm:execute`）。
+- **L3 WASM 网关**: `src-tauri/src/plugin_gateway/`（wasmtime 26 核心模块）—— `loader.rs` 扫描 `plugins/{id}/plugin.wasm`（需 manifest layers 含 l3），注入 host 函数（`qomicex` 模块：`log`/`http_fetch`/`instance_list`/`db_set`/`db_get`/`get_plugin_id`），插件导出 `on_load`/`on_unload`/`get_manifest`。`server.rs` 提供 `GET /plugins`、`GET /plugins/{id}/info`、`POST /plugins/{id}/invoke`、`GET /health`，端口写入 `plugins/.gateway_port`。路径与后端一致（`config::base_dir`，QOMICEX_HOME 优先）。后端经 `PluginGatewayClient` 代理暴露 `/api/plugins/wasm`、`/api/plugins/wasm/{id}`、`/api/plugins/wasm/{id}/invoke`，前端 API `callWasm`/`listWasmPlugins`（权限 `wasm:execute`）。
 
 ## Tauri details
 
-- Backend binary is embedded via `include_bytes!` in release builds (`lib.rs:7-9`), extracted to temp dir on startup. In dev, backend runs separately.
-- Linux: window decorations enabled by default (`lib.rs:86-88`).
+- Backend binary is embedded via `include_bytes!` in release builds only (`#[cfg(all(windows, not(debug_assertions)))]` → `src-tauri/binaries/backend.exe`, unix → `backend`), extracted to a temp dir on startup. In dev the constant is empty and the backend runs separately. Backend child is killed on exit via `BackendChild` state. Setting `QOMICEX_LAUNCHER_MANAGED` skips spawn.
+- **Window decorations**: Windows calls `set_decorations(false)` in setup (`lib.rs:138-141`); Linux/macOS keep the default (decorated).
 - Capability permissions: `core:default`, window controls, `opener:default`, `opener:allow-open-path`, `opener:allow-reveal-item-in-dir`, `dialog:default`, `updater:default`.
-- Backend child process state managed via `BackendChild` Tauri state, cleaned up on exit.
+- CSP in `tauri.conf.json` allows `http://localhost:5000`/`ws://localhost:5000` for the embedded backend; updater endpoints include `https://api.qomicex.top`, localhost:8787, and localhost:5000.
