@@ -70,6 +70,12 @@ struct ModMetadataDto {
     curse_forge_id: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     modrinth_id: Option<String>,
+    /// Modrinth 版本（文件）id（enrich 反查后填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modrinth_version_id: Option<String>,
+    /// CurseForge 文件 id（enrich 反查后填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curse_forge_file_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -210,6 +216,7 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/files/mods/progress", get(mods_progress))
         .route("/instance/{id}/files/installed-names", get(installed_names))
         .route("/instance/{id}/files/mods/metadata", get(mods_metadata))
+        .route("/instance/{id}/files/mods/enrich", post(mods_enrich))
         .route("/instance/{id}/files/mods/enable", post(enable_mod))
         .route("/instance/{id}/files/mods/disable", post(disable_mod))
         .route(
@@ -509,16 +516,25 @@ async fn mods_metadata(
         .local_resource_provider()
         .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
     set_progress(&id, 0, 0);
-    let list = {
-        let mut on_progress = |current: i32, total: i32| set_progress(&id, current, total);
-        mods.get_mod_list(Some(&mut on_progress))
-            .await
-            .map_err(map_core_error)?
-    };
+    // 列表展示用 light 扫描（本地扫描 + 元数据解析，秒级）：MR/CF 网络反查（mr/cf id、图标）
+    // 会让 180+ mods 的请求耗时 20-50s，远超前端 15s 全局请求超时 → mod 列表永远显示不出来。
+    // id 反查由 ModUpdateDialog 的 checkModUpdates 端点按需进行。
+    let list = mods
+        .get_mod_list_light()
+        .await
+        .map_err(map_core_error)?;
     remove_progress(&id);
 
-    let mut result: Vec<ModMetadataDto> = list
-        .iter()
+    let mut result: Vec<ModMetadataDto> = map_mod_dtos(&list);
+
+    fill_remote_icons(&state.http_client, &state.curse_forge_api_key, &mut result).await;
+
+    Ok(Json(result).into_response())
+}
+
+/// ModInfo → ModMetadataDto 映射（mods_metadata 与 mods_enrich 共用）。
+fn map_mod_dtos(list: &[qomicex_core::models::expansion::local::ModInfo]) -> Vec<ModMetadataDto> {
+    list.iter()
         .map(|m| {
             let source = if m.curse_forge_id > 0 {
                 Some("curseforge".to_string())
@@ -552,6 +568,12 @@ async fn mods_metadata(
                     None
                 },
                 modrinth_id: opt_nonempty(&m.modrinth_id),
+                modrinth_version_id: opt_nonempty(&m.modrinth_version_id),
+                curse_forge_file_id: if m.curse_forge_file_id > 0 {
+                    Some(m.curse_forge_file_id)
+                } else {
+                    None
+                },
                 source,
                 // TODO: mcmod Chinese-name enrichment (McmodService has no
                 // Rust peer yet), so mcmod_id / chinese_name are left empty;
@@ -563,11 +585,87 @@ async fn mods_metadata(
                 last_modified,
             }
         })
+        .collect()
+}
+
+/// enrich 结果条目：按 file_name 合并到前端 mod 列表（两段式第二步）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModEnrichDto {
+    file_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curse_forge_id: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modrinth_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modrinth_version_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curse_forge_file_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    /// 远程图标 URL（本地无图标时按 id 批量反查填充；对应 C# 反查后图标兜底）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon_url: Option<String>,
+    /// 远程项目名称（CF name / MR title 回填）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    /// mcmod.cn 中文名（离线映射）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chinese_name: Option<String>,
+    /// mcmod.cn id（右键 MC百科 跳转）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mcmod_id: Option<i32>,
+}
+
+/// POST /instance/{id}/files/mods/enrich — 两段式第二步：light 扫描后批量网络反查
+/// 远程 id（Modrinth SHA1 → project/version id、CurseForge 指纹 → mod/file id）。
+/// 独立于 metadata（metadata 保持秒回），慢反查不阻塞列表展示。
+async fn mods_enrich(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<Vec<ModEnrichDto>>> {
+    let r = resolve(&id, &state)?;
+    let mods = state
+        .core
+        .local_resource_provider()
+        .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
+    let mut list = mods
+        .get_mod_list_light()
+        .await
+        .map_err(map_core_error)?;
+    mods.enrich_mod_ids(&mut list).await;
+    // 反查 id 后填充远程图标（CF/MR 批量 logo URL；对应 C# 反查后图标兜底）
+    let mut dtos = map_mod_dtos(&list);
+    fill_remote_icons(&state.http_client, &state.curse_forge_api_key, &mut dtos).await;
+    // mcmod 中文名离线映射（远程名优先，本地名兜底；对应 C# BatchLookupWithIds）
+    let mcmod = crate::endpoints::mcmod::mcmod_data();
+    let result = dtos
+        .iter()
+        .map(|d| {
+            let cn = mcmod.lookup_with_id(&d.name);
+            let cn = cn.or_else(|| {
+                let local_name = list
+                    .iter()
+                    .find(|m| Path::new(&m.file_path).file_name().map(|n| n.to_string_lossy().into_owned()) == Some(d.file_name.clone()))
+                    .map(|m| m.name.clone())
+                    .unwrap_or_default();
+                mcmod.lookup_with_id(&local_name)
+            });
+            ModEnrichDto {
+                file_name: d.file_name.clone(),
+                curse_forge_id: d.curse_forge_id,
+                modrinth_id: d.modrinth_id.clone(),
+                modrinth_version_id: d.modrinth_version_id.clone(),
+                curse_forge_file_id: d.curse_forge_file_id,
+                source: d.source.clone(),
+                icon_url: d.icon_url.clone(),
+                name: Some(d.name.clone()),
+                chinese_name: cn.as_ref().map(|(c, _)| c.clone()),
+                mcmod_id: cn.map(|(_, id)| id),
+            }
+        })
         .collect();
-
-    fill_remote_icons(&state.http_client, &state.curse_forge_api_key, &mut result).await;
-
-    Ok(Json(result).into_response())
+    Ok(Json(result))
 }
 
 async fn enable_mod(
@@ -1121,15 +1219,22 @@ async fn fill_remote_icons(
                     if let Some(array) = json.get("data").and_then(|d| d.as_array()) {
                         for item in array {
                             let mod_id = item.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let name = item.get("name").and_then(|v| v.as_str());
                             let url = item
                                 .get("logo")
                                 .and_then(|l| l.get("url"))
                                 .and_then(|u| u.as_str());
-                            if let Some(url) = url {
-                                let id = mod_id as i32;
-                                for &i in &cf_idx {
-                                    if result[i].curse_forge_id == Some(id) && result[i].icon_url.is_none() {
-                                        result[i].icon_url = Some(url.to_string());
+                            let id = mod_id as i32;
+                            for &i in &cf_idx {
+                                if result[i].curse_forge_id == Some(id) {
+                                    // 远程名称（CF 项目标题，回填显示名）
+                                    if let Some(name) = name {
+                                        result[i].name = name.to_string();
+                                    }
+                                    if result[i].icon_url.is_none() {
+                                        if let Some(url) = url {
+                                            result[i].icon_url = Some(url.to_string());
+                                        }
                                     }
                                 }
                             }
@@ -1166,19 +1271,21 @@ async fn fill_remote_icons(
                                 Some(u) if !u.is_empty() => Some(u.to_string()),
                                 _ => None,
                             };
+                            let title = item.get("title").and_then(|v| v.as_str());
                             let pid = item.get("id").and_then(|v| v.as_str());
                             let slug = item.get("slug").and_then(|v| v.as_str());
-                            let url = match url {
-                                Some(url) => Some(url),
-                                None => continue,
-                            };
                             for &i in &mr_idx {
                                 let mine = result[i].modrinth_id.as_deref();
-                                if result[i].icon_url.is_none()
-                                    && mine.is_some()
-                                    && (mine == pid || mine == slug)
-                                {
-                                    result[i].icon_url = url.clone();
+                                if mine.is_some() && (mine == pid || mine == slug) {
+                                    // 远程名称（MR 项目标题，回填显示名）
+                                    if let Some(title) = title {
+                                        result[i].name = title.to_string();
+                                    }
+                                    if result[i].icon_url.is_none() {
+                                        if let Some(url) = url.clone() {
+                                            result[i].icon_url = Some(url);
+                                        }
+                                    }
                                 }
                             }
                         }

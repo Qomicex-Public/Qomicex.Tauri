@@ -39,7 +39,7 @@ struct ReverseEntry {
 }
 
 /// Immutable offline index built once from the mcmod.cn dump.
-struct McmodData {
+pub(crate) struct McmodData {
     /// Normalized English key -> (Chinese name, mcmod.cn id).
     forward: HashMap<String, (String, i32)>,
     /// Chinese alias candidates for reverse (Chinese -> English slug) resolution.
@@ -72,6 +72,15 @@ impl McmodData {
             return None;
         }
         self.forward.get(&key).map(|(cn, _id)| cn.clone())
+    }
+
+    /// 英文名 → (中文名, mcmod.cn id)（对应 C# BatchLookupWithIds；enrich 接线用）。
+    pub(crate) fn lookup_with_id(&self, en_name: &str) -> Option<(String, i32)> {
+        let key = normalize_en(en_name);
+        if key.is_empty() {
+            return None;
+        }
+        self.forward.get(&key).cloned()
     }
 
     /// Reverse resolution of a Chinese keyword to an English slug term.
@@ -292,7 +301,7 @@ fn runtime_override() -> Option<String> {
 /// Process-level single init of the offline index.
 static MCMOD_DATA: OnceLock<McmodData> = OnceLock::new();
 
-fn mcmod_data() -> &'static McmodData {
+pub(crate) fn mcmod_data() -> &'static McmodData {
     MCMOD_DATA.get_or_init(McmodData::load)
 }
 

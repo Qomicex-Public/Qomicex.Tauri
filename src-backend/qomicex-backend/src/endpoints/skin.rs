@@ -45,13 +45,13 @@ fn mc_profile_cache() -> &'static Mutex<HashMap<String, (Instant, Value)>> {
 const DEFAULT_SKIN_LITERAL: &[u8] =
     include_bytes!("../../Resources/Alex.png");
 
-/// File-private skin service (source: Services/SkinService.cs).
-struct SkinService {
+/// 皮肤服务（源：Services/SkinService.cs）。pub(crate)：connector.rs 联机头像复用。
+pub(crate) struct SkinService {
     http: Client,
 }
 
 impl SkinService {
-    fn new(http: Client) -> Self {
+    pub(crate) fn new(http: Client) -> Self {
         Self { http }
     }
 
@@ -188,7 +188,7 @@ impl SkinService {
     }
 
     /// Resolve the effective skin bytes: local override -> remote -> default.
-    async fn resolve_skin_bytes(&self, uuid: &str, login: &str, server: Option<&str>) -> Vec<u8> {
+    pub(crate) async fn resolve_skin_bytes(&self, uuid: &str, login: &str, server: Option<&str>) -> Vec<u8> {
         if let Some(bytes) = self.get_local_skin(uuid) {
             return bytes;
         }
