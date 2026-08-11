@@ -655,7 +655,7 @@ Yggdrasil 认证登录。
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/download/catalog` | 获取可下载 Java 版本目录 |
-| POST | `/download/start` | 开始下载 Java `{ "version": "...", "arch": "x64" }` |
+| POST | `/download/start` | 开始下载 Java `{ "vendor": "temurin\|zulu", "version": 17, "platform": "windows", "architecture": "x64" }`，后台管线 queued→resolving→downloading→extracting→registering→completed，完成后自动注册运行时 |
 | GET | `/download/progress/{taskId}` | 查询下载进度 |
 | DELETE | `/download/{taskId}` | 取消下载 |
 | POST | `/download/{taskId}/pause` | 暂停下载 |
