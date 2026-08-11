@@ -57,6 +57,10 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 urlencoding = "2"
 url = "2"
 
+# --- Java 运行时下载解压 ---
+tar = "0.4"
+flate2 = "1"
+
 winreg = "0.52"
 md-5 = "0.10"
 

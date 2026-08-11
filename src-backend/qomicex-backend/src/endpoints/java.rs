@@ -14,8 +14,10 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use qomicex_downloader::{DownloadEvent, DownloadManager, DownloadTask, TaskState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::broadcast;
 
 use qomicex_core::core::GameCore;
 use qomicex_core::models::java::{
@@ -59,7 +61,7 @@ fn java_data(shared: &SharedState) -> Arc<JavaStateData> {
             Arc::new(JavaStateData {
                 core: core.clone(),
                 store: store.clone(),
-                download: JavaDownloadService::new(core, store),
+                download: JavaDownloadService::new(core, store, shared.download_manager.clone()),
             })
         })
         .clone()
@@ -263,26 +265,27 @@ impl JavaRuntimeStore {
 
 /// Java 下载服务（对应 Services/JavaDownloadService.cs）。
 ///
-/// 任务状态为内存字典；落盘目录 `{BaseDir}/Runtime/Java`。
-/// ⚠️ 不真实下载：GetCatalog 返回静态目录；Start 仅校验平台 + 解析包并创建
-/// `queued` 任务，不执行后台下载 / 解压 / 注册（真实管线留待后续批次）。
+/// 任务状态为内存字典；落盘目录 `{BaseDir}/QML/Runtime/Java`。
+/// 真实管线：queued → resolving → downloading（共享 `DownloadManager`，
+/// 暂停/取消/进度与下载中心同一通道）→ extracting → registering
+/// （自动写入自定义运行时列表）→ completed。
 struct JavaDownloadService {
     core: Arc<GameCore>,
-    #[allow(dead_code)]
     store: Arc<JavaRuntimeStore>,
+    manager: Arc<DownloadManager>,
     tasks: Mutex<HashMap<String, JavaDownloadTaskState>>,
 }
 
 impl JavaDownloadService {
-    fn new(core: Arc<GameCore>, store: Arc<JavaRuntimeStore>) -> Arc<Self> {
+    fn new(core: Arc<GameCore>, store: Arc<JavaRuntimeStore>, manager: Arc<DownloadManager>) -> Arc<Self> {
         Arc::new(Self {
             core,
             store,
+            manager,
             tasks: Mutex::new(HashMap::new()),
         })
     }
 
-    #[allow(unused_variables)]
     fn get_catalog(&self) -> JavaDownloadCatalogResponse {
         let host = host_platform();
         JavaDownloadCatalogResponse {
@@ -307,7 +310,7 @@ impl JavaDownloadService {
         }
     }
 
-    async fn start(&self, request: JavaDownloadStartRequest) -> ApiResult<JavaDownloadStartResponse> {
+    async fn start(self: &Arc<Self>, request: JavaDownloadStartRequest) -> ApiResult<JavaDownloadStartResponse> {
         let host = host_platform();
         if !request.platform.eq_ignore_ascii_case(&host) {
             return Err(ApiError::bad_request(
@@ -315,8 +318,6 @@ impl JavaDownloadService {
                 "首版仅支持下载当前宿主平台的 Java 包",
             ));
         }
-
-        let (url, file_name) = resolve_package(&self.core, &request).await?;
 
         let task_id = new_task_id();
         let target_dir = java_download_dir()
@@ -326,20 +327,21 @@ impl JavaDownloadService {
             .to_string_lossy()
             .into_owned();
 
-        let _ = self.tasks.lock().map(|mut t| {
-            t.insert(
-                task_id.clone(),
-                JavaDownloadTaskState {
-                    task_id: task_id.clone(),
-                    status: "queued".into(),
-                    target_dir: target_dir.clone(),
-                    file_name: file_name.clone(),
-                    download_url: url,
-                    ..Default::default()
-                },
-            )
+        self.tasks.lock().unwrap().insert(
+            task_id.clone(),
+            JavaDownloadTaskState {
+                task_id: task_id.clone(),
+                status: "queued".into(),
+                target_dir: target_dir.clone(),
+                ..Default::default()
+            },
+        );
+
+        let this = self.clone();
+        let spawn_task_id = task_id.clone();
+        tokio::spawn(async move {
+            this.run_task(spawn_task_id, request).await;
         });
-        // TODO: 真实下载（HTTP + 解压 + 注册）未实现，任务保持 queued。
 
         Ok(JavaDownloadStartResponse {
             task_id,
@@ -348,43 +350,172 @@ impl JavaDownloadService {
         })
     }
 
+    /// 后台任务状态机（对应 C# RunTaskAsync）。
+    async fn run_task(self: Arc<Self>, task_id: String, request: JavaDownloadStartRequest) {
+        let mut tmp_dir: Option<PathBuf> = None;
+        let result = self.run_task_inner(&task_id, request, &mut tmp_dir).await;
+        match result {
+            Ok(TaskExit::Done) => {}
+            Ok(TaskExit::Cancelled) => {
+                // 外部 cancel 已置状态，保留不动（防止 extracting 阶段被覆盖）。
+            }
+            Err(message) => {
+                self.update_task(&task_id, |t| {
+                    t.status = "failed".into();
+                    t.error = Some(message);
+                    t.speed = 0.0;
+                });
+            }
+        }
+        if let Some(dir) = tmp_dir {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    async fn run_task_inner(
+        &self,
+        task_id: &str,
+        request: JavaDownloadStartRequest,
+        tmp_dir: &mut Option<PathBuf>,
+    ) -> Result<TaskExit, String> {
+        if self.is_cancelled(task_id) {
+            return Ok(TaskExit::Cancelled);
+        }
+
+        self.set_status(task_id, "resolving");
+        let (url, file_name) = resolve_package(&self.core, &request).await.map_err(|e| e.message)?;
+        if self.is_cancelled(task_id) {
+            return Ok(TaskExit::Cancelled);
+        }
+        self.update_task(task_id, |t| {
+            t.file_name = file_name.clone();
+            t.download_url = url.clone();
+        });
+
+        self.set_status(task_id, "downloading");
+        let tmp = java_download_dir().join(".tmp").join(task_id);
+        std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+        *tmp_dir = Some(tmp.clone());
+        let archive_path = tmp.join(&file_name);
+
+        let mut rx = self.manager.subscribe();
+        let dl_id = self.manager.add(DownloadTask::new(url, archive_path.clone()));
+        self.update_task(task_id, |t| t.dl_task_id = Some(dl_id));
+
+        loop {
+            match rx.recv().await {
+                Ok(DownloadEvent::Progress { id, downloaded, total, speed_bps, .. }) if id == dl_id => {
+                    self.update_task(task_id, |t| {
+                        t.progress = if total > 0 {
+                            (downloaded as f64 / total as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+                        t.speed = speed_bps as f64;
+                    });
+                }
+                Ok(DownloadEvent::StateChanged { id, state, detail }) if id == dl_id => match state {
+                    TaskState::Completed => break,
+                    TaskState::Failed => return Err(detail.unwrap_or_else(|| "下载失败".into())),
+                    TaskState::Cancelled => return Ok(TaskExit::Cancelled),
+                    TaskState::Paused => {
+                        // 外部 pause 已置 java 状态；等待 resume 后事件继续。
+                        self.update_task(task_id, |t| t.speed = 0.0);
+                    }
+                    TaskState::Queued | TaskState::Downloading => {}
+                },
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(broadcast::error::RecvError::Closed) => return Err("下载通道已关闭".into()),
+            }
+        }
+        if self.is_cancelled(task_id) {
+            return Ok(TaskExit::Cancelled);
+        }
+        self.update_task(task_id, |t| {
+            t.progress = 100.0;
+            t.speed = 0.0;
+        });
+
+        self.set_status(task_id, "extracting");
+        let target_dir = self.target_dir_of(task_id).unwrap_or_default();
+        extract_archive(&archive_path, &PathBuf::from(&target_dir), &file_name)?;
+        if self.is_cancelled(task_id) {
+            return Ok(TaskExit::Cancelled);
+        }
+
+        self.set_status(task_id, "registering");
+        let java_exe = find_java_executable(Path::new(&target_dir))
+            .ok_or_else(|| "解压后未找到 Java 可执行文件".to_string())?;
+        self.store.add_custom(java_exe).await.map_err(|e| e.message)?;
+
+        self.update_task(task_id, |t| {
+            t.progress = 100.0;
+            t.speed = 0.0;
+        });
+        self.set_status(task_id, "completed");
+        Ok(TaskExit::Done)
+    }
+
     fn get_progress(&self, task_id: &str) -> Option<JavaDownloadProgressResponse> {
         let guard = self.tasks.lock().unwrap();
         guard.get(task_id).map(|t| t.progress_response())
     }
 
-    fn cancel(&self, task_id: &str) -> bool {
-        let mut guard = self.tasks.lock().unwrap();
-        if let Some(t) = guard.get_mut(task_id) {
+    async fn cancel(&self, task_id: &str) -> bool {
+        let dl_id = {
+            let mut guard = self.tasks.lock().unwrap();
+            let Some(t) = guard.get_mut(task_id) else {
+                return false;
+            };
             t.status = "cancelled".to_string();
-            true
-        } else {
-            false
+            t.speed = 0.0;
+            t.dl_task_id
+        };
+        if let Some(id) = dl_id {
+            let _ = self.manager.cancel(id).await;
         }
+        true
     }
 
-    fn pause(&self, task_id: &str) -> bool {
-        let mut guard = self.tasks.lock().unwrap();
-        match guard.get_mut(task_id) {
-            Some(t) if t.status == "downloading" => {
-                t.paused = true;
-                t.status = "paused".to_string();
-                true
+    async fn pause(&self, task_id: &str) -> bool {
+        let dl_id = {
+            let mut guard = self.tasks.lock().unwrap();
+            let Some(t) = guard.get_mut(task_id) else {
+                return false;
+            };
+            if t.status != "downloading" {
+                return false;
             }
-            _ => false,
+            t.status = "paused".to_string();
+            t.dl_task_id
+        };
+        if let Some(id) = dl_id {
+            if let Err(e) = self.manager.pause(id).await {
+                eprintln!("[JavaDownloadService] pause failed: {e}");
+            }
         }
+        true
     }
 
-    fn resume(&self, task_id: &str) -> bool {
-        let mut guard = self.tasks.lock().unwrap();
-        match guard.get_mut(task_id) {
-            Some(t) if t.status == "paused" => {
-                t.paused = false;
-                t.status = "downloading".to_string();
-                true
+    async fn resume(&self, task_id: &str) -> bool {
+        let dl_id = {
+            let mut guard = self.tasks.lock().unwrap();
+            let Some(t) = guard.get_mut(task_id) else {
+                return false;
+            };
+            if t.status != "paused" {
+                return false;
             }
-            _ => false,
+            t.status = "downloading".to_string();
+            t.dl_task_id
+        };
+        if let Some(id) = dl_id {
+            if let Err(e) = self.manager.resume(id).await {
+                eprintln!("[JavaDownloadService] resume failed: {e}");
+            }
         }
+        true
     }
 
     fn get_all_active(&self) -> Vec<JavaDownloadProgressResponse> {
@@ -400,6 +531,45 @@ impl JavaDownloadService {
             .map(|t| t.progress_response())
             .collect()
     }
+
+    /// 全部任务（含终态），供 `/progress/stream` 推送，前端才能收到 completed。
+    fn get_all(&self) -> Vec<JavaDownloadProgressResponse> {
+        let guard = self.tasks.lock().unwrap();
+        guard.values().map(|t| t.progress_response()).collect()
+    }
+
+    // ---------------- 内部 ----------------
+
+    fn set_status(&self, task_id: &str, status: &str) {
+        self.update_task(task_id, |t| t.status = status.to_string());
+    }
+
+    fn update_task(&self, task_id: &str, f: impl FnOnce(&mut JavaDownloadTaskState)) {
+        if let Ok(mut guard) = self.tasks.lock() {
+            if let Some(t) = guard.get_mut(task_id) {
+                f(t);
+            }
+        }
+    }
+
+    fn is_cancelled(&self, task_id: &str) -> bool {
+        self.tasks
+            .lock()
+            .map(|g| g.get(task_id).map(|t| t.status == "cancelled").unwrap_or(false))
+            .unwrap_or(false)
+    }
+
+    fn target_dir_of(&self, task_id: &str) -> Option<String> {
+        self.tasks
+            .lock()
+            .map(|g| g.get(task_id).map(|t| t.target_dir.clone()))
+            .unwrap_or(None)
+    }
+}
+
+enum TaskExit {
+    Done,
+    Cancelled,
 }
 
 /// 任务内部状态（对应 C# JavaDownloadTaskState）。
@@ -414,7 +584,7 @@ struct JavaDownloadTaskState {
     error: Option<String>,
     #[allow(dead_code)]
     download_url: String,
-    paused: bool,
+    dl_task_id: Option<u64>,
 }
 
 impl JavaDownloadTaskState {
@@ -592,7 +762,7 @@ async fn download_cancel(
     State(s): State<SharedState>,
     AxumPath(task_id): AxumPath<String>,
 ) -> ApiResult<StatusCode> {
-    if java_data(&s).download.cancel(&task_id) {
+    if java_data(&s).download.cancel(&task_id).await {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found("JAVA_DOWNLOAD_TASK_NOT_FOUND", "Java 下载任务不存在"))
@@ -603,7 +773,7 @@ async fn download_pause(
     State(s): State<SharedState>,
     AxumPath(task_id): AxumPath<String>,
 ) -> ApiResult<StatusCode> {
-    if java_data(&s).download.pause(&task_id) {
+    if java_data(&s).download.pause(&task_id).await {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found("JAVA_DOWNLOAD_TASK_NOT_FOUND", "Java 下载任务不存在"))
@@ -614,7 +784,7 @@ async fn download_resume(
     State(s): State<SharedState>,
     AxumPath(task_id): AxumPath<String>,
 ) -> ApiResult<StatusCode> {
-    if java_data(&s).download.resume(&task_id) {
+    if java_data(&s).download.resume(&task_id).await {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found("JAVA_DOWNLOAD_TASK_NOT_FOUND", "Java 下载任务不存在"))
@@ -837,6 +1007,85 @@ fn java_download_dir() -> PathBuf {
     let dir = table_base_dir().join("Runtime").join("Java");
     let _ = std::fs::create_dir_all(&dir);
     dir
+}
+
+/// 解压下载包（对应 C# ExtractAsync）：zip 直接解压；tar.gz 解压后补可执行位。
+fn extract_archive(archive_path: &Path, target_dir: &Path, file_name: &str) -> Result<(), String> {
+    std::fs::create_dir_all(target_dir).map_err(|e| e.to_string())?;
+    let lower = file_name.to_ascii_lowercase();
+    if lower.ends_with(".zip") {
+        let file = std::fs::File::open(archive_path).map_err(|e| e.to_string())?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+        archive.extract(target_dir).map_err(|e| e.to_string())
+    } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
+        let file = std::fs::File::open(archive_path).map_err(|e| e.to_string())?;
+        let decoder = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(decoder);
+        archive.unpack(target_dir).map_err(|e| e.to_string())?;
+        set_executable_permissions(target_dir);
+        Ok(())
+    } else {
+        Err("当前仅支持 zip / tar.gz 自动解压".to_string())
+    }
+}
+
+/// unix 下恢复 `bin/java` 的可执行位（tar 解压不保留权限，对应 C# SetExecutablePermissions）。
+#[cfg(unix)]
+fn set_executable_permissions(root: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut found = Vec::new();
+    collect_files_recursive(root, &mut found);
+    for f in found {
+        let in_bin = f
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.eq_ignore_ascii_case("bin"))
+            .unwrap_or(false);
+        if in_bin {
+            let _ = std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn set_executable_permissions(_root: &Path) {}
+
+/// 解压结果中定位 `bin/java(.exe)`（对应 C# FindJavaExecutable）。
+fn find_java_executable(root: &Path) -> Option<String> {
+    let java_name: &str = if cfg!(windows) { "java.exe" } else { "java" };
+    let mut found = Vec::new();
+    collect_files_recursive(root, &mut found);
+    found.into_iter().find(|p| {
+        let name_ok = p
+            .file_name()
+            .map(|n| n.to_string_lossy().as_ref() == java_name)
+            .unwrap_or(false);
+        let in_bin = p
+            .parent()
+            .and_then(|par| par.file_name())
+            .map(|n| n.eq_ignore_ascii_case("bin"))
+            .unwrap_or(false);
+        name_ok && in_bin
+    }).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// 全部 Java 下载任务快照（含终态），供 `/progress/stream` 推送
+/// `javaDownloads` 通道（前端下载中心依赖它推进任务状态）。
+pub(crate) fn active_java_download_snapshots() -> Vec<Value> {
+    let Some(state) = JAVA_STATE.get() else {
+        return Vec::new();
+    };
+    state.download.get_all().into_iter().map(|p| {
+        serde_json::json!({
+            "taskId": p.task_id,
+            "status": p.status,
+            "progress": p.progress,
+            "speed": p.speed,
+            "fileName": p.file_name,
+            "targetDir": p.target_dir,
+            "error": p.error,
+        })
+    }).collect()
 }
 
 /// 下载管线未实现时的错误占位（对应 C# Trace.WriteLine 语义）。

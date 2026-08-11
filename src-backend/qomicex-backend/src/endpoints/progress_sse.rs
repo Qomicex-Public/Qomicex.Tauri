@@ -3,12 +3,12 @@
 //! Route: `/progress/stream` (mounted under `/api` => `/api/progress/stream`).
 //! Streams a JSON payload excerpt: current active install tasks plus a summary.
 //!
-//! Scope notes (this batch):
+//! Scope notes:
 //! - Install items come from `state.install_tracker` (`InstallTracker::get_all_active`).
-//! - Java download tasks (`JavaDownloadService`) and resource download sessions
-//!   (`DownloadSessionManager`) are not yet exposed on `SharedState`, so
-//!   `javaDownloads` / `resources` are emitted as empty lists (TODO: push those
-//!   services onto state and fill them in to match the source contract).
+//! - Java download tasks come from `endpoints::java` snapshots (all states,
+//!   including terminal ones, so the download center can observe completion).
+//! - Resource downloads come from `resource_download`'s registry plus the
+//!   plugin download sessions (both share the `resources` channel).
 //!
 //! Dependencies used:
 //! - `axum::response::sse` (requires axum `sse` feature -- NOT enabled in Cargo.toml).
@@ -114,6 +114,50 @@ fn build_payload(tracker: &InstallTracker) -> ProgressSsePayload {
     let mut active_count = installs.len();
 
     // Resource downloads (qomicex-downloader) mirrored in resource_download's
+    // registry plus plugin-started sessions. Without the resources channel the
+    // download center shows those tasks as stuck queued.
+    let resources = build_resources();
+    active_count += resources
+        .iter()
+        .filter(|v| {
+            v.get("status")
+                .and_then(|s| s.as_str())
+                .map(|s| matches!(s, "queued" | "downloading" | "paused"))
+                .unwrap_or(false)
+        })
+        .count();
+
+    let java_downloads = crate::endpoints::java::active_java_download_snapshots();
+    active_count += java_downloads
+        .iter()
+        .filter(|v| {
+            v.get("status")
+                .and_then(|s| s.as_str())
+                .map(|s| {
+                    matches!(
+                        s,
+                        "queued" | "resolving" | "downloading" | "paused" | "extracting" | "registering"
+                    )
+                })
+                .unwrap_or(false)
+        })
+        .count();
+
+    ProgressSsePayload {
+        kind: "progress".to_string(),
+        installs,
+        java_downloads,
+        resources,
+        summary: ProgressSseSummary {
+            active_count,
+            total_speed,
+        },
+    }
+}
+
+/// Resource downloads + plugin sessions (`resources` channel).
+fn build_resources() -> Vec<serde_json::Value> {
+    // Resource downloads (qomicex-downloader) mirrored in resource_download's
     // registry. Without this the download center shows those tasks as stuck
     // queued (the SSE `resources` array was empty).
     let mut resources: Vec<serde_json::Value> = crate::endpoints::resource_download::download_snapshots()
@@ -126,9 +170,6 @@ fn build_payload(tracker: &InstallTracker) -> ProgressSsePayload {
             } else {
                 0.0
             };
-            if matches!(s.status.as_str(), "queued" | "downloading" | "paused") {
-                active_count += 1;
-            }
             serde_json::json!({
                 "sessionId": id.to_string(),
                 "type": "resource",
@@ -147,26 +188,6 @@ fn build_payload(tracker: &InstallTracker) -> ProgressSsePayload {
     // Plugin-started downloads (plugin session registry) share the same
     // `resources` channel so they appear live in the download center.
     let plugin_sessions = crate::endpoints::plugin::download_sessions_json();
-    let plugin_active = plugin_sessions
-        .iter()
-        .filter(|r| {
-            r.get("status")
-                .and_then(|v| v.as_str())
-                .map(|s| matches!(s, "queued" | "downloading" | "paused"))
-                .unwrap_or(false)
-        })
-        .count();
     resources.extend(plugin_sessions);
-    active_count += plugin_active;
-
-    ProgressSsePayload {
-        kind: "progress".to_string(),
-        installs,
-        java_downloads: Vec::new(),
-        resources,
-        summary: ProgressSseSummary {
-            active_count,
-            total_speed,
-        },
-    }
+    resources
 }
