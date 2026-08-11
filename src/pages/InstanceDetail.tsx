@@ -22,7 +22,7 @@ import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscrib
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto } from '../types/index.ts'
-import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
+import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -36,6 +36,7 @@ import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
 import ModUpdateDialog from '../components/ModUpdateDialog.tsx'
 import type { ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata } from '../types/index.ts'
 import ResourcePackCard from '../components/ResourcePackCard.tsx'
+import DragSelectArea from '../components/DragSelectArea.tsx'
 import ShaderCard from '../components/ShaderCard.tsx'
 import SaveCard from '../components/SaveCard.tsx'
 import ScreenshotCard from '../components/ScreenshotCard.tsx'
@@ -375,6 +376,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [search, setSearch] = useState('')
   const [mods, setMods] = useState<ModMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [loadProgress, setLoadProgress] = useState<{ current: number; total: number } | null>(null)
   const [versionDialogMod, setVersionDialogMod] = useState<ModMetadata | null>(null)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
@@ -402,12 +404,45 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchConfirm, setBatchConfirm] = useState<{ type: 'enable' | 'disable' | 'delete' } | null>(null)
   const [batchProcessing, setBatchProcessing] = useState(false)
+  /** 远程信息反查（enrich）进行中：列表顶部显示加载提示 */
+  const [enriching, setEnriching] = useState(false)
 
   const loadMods = useCallback(async () => {
     setSelected(new Set())
+    setLoadError(null)
     const cacheKey = `api-instance-${instanceId}-mods`
+    // enrich 合并（两段式第二步）：异步反查远程 id/图标，合并后回写缓存，
+    // 使缓存命中场景（30s 内重复打开）也能拿到远程信息。
+    const applyEnrich = async () => {
+      setEnriching(true)
+      try {
+        const entries = await enrichMods(instanceId)
+        const map = new Map(entries.map(e => [e.fileName, e]))
+        setMods(prev => {
+          const next = prev.map(m => {
+            const e = map.get(m.fileName)
+            if (!e) return m
+            return {
+              ...m,
+              name: e.name ?? m.name,
+              curseForgeId: e.curseForgeId ?? m.curseForgeId,
+              modrinthId: e.modrinthId ?? m.modrinthId,
+              modrinthVersionId: e.modrinthVersionId ?? m.modrinthVersionId,
+              curseForgeFileId: e.curseForgeFileId ?? m.curseForgeFileId,
+              source: e.source ?? m.source,
+              iconUrl: e.iconUrl ?? m.iconUrl,
+              chineseName: e.chineseName ?? m.chineseName,
+              mcmodId: e.mcmodId ?? m.mcmodId,
+            }
+          })
+          cacheSet(cacheKey, next)
+          return next
+        })
+      } catch { /* 反查失败不影响列表 */ }
+      finally { setEnriching(false) }
+    }
     const fresh = cacheFresh<ModMetadata[]>(cacheKey)
-    if (fresh) { setMods(fresh); setLoading(false); return }
+    if (fresh) { setMods(fresh); setLoading(false); void applyEnrich(); return }
     const stale = cacheGet<ModMetadata[]>(cacheKey)
     if (stale) { setMods(stale); setLoading(false) }
     setLoading(true)
@@ -425,7 +460,12 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       setLoadProgress(null)
       setMods(data)
       cacheSet(cacheKey, data)
-    } catch (e) { console.error('Load mods failed:', e); setMods([]) }
+      void applyEnrich()
+    } catch (e) {
+      console.error('Load mods failed:', e)
+      setMods([])
+      setLoadError(e instanceof Error ? e.message : String(e))
+    }
     setLoading(false)
   }, [instanceId])
 
@@ -512,6 +552,20 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     setBatchConfirm(null)
   }, [batchConfirm, selected, instanceId, loadMods])
 
+  // 拖动框选：Shift 追加，普通替换（DragSelectArea 回调）
+  const handleDragSelect = useCallback((names: string[], mode: 'replace' | 'add') => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (mode === 'add') {
+        names.forEach(n => next.add(n))
+      } else {
+        next.clear()
+        names.forEach(n => next.add(n))
+      }
+      return next
+    })
+  }, [])
+
   if (!loader) {
     return (
       <Card>
@@ -578,6 +632,13 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             </Select>
           </div>
 
+          {enriching && (
+            <div className="mb-3 flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+              <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin text-primary" />
+              正在获取远程信息（Modrinth/CurseForge 匹配 id、图标、中文名）...
+            </div>
+          )}
+
           {loading ? (
             <div className="space-y-3">
               {loadProgress && loadProgress.total > 0 && (
@@ -610,28 +671,35 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                 ))}
               </div>
             </div>
+          ) : loadError ? (
+            <div className="py-8 text-center text-sm text-destructive">
+              加载 Mod 列表失败：{loadError}
+            </div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
               {search ? '无匹配 Mod' : '暂无 Mod'}
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              {filtered.map((mod) => (
-                  <ModCard
-                    key={mod.fileName}
-                    mod={mod}
-                    instanceId={instanceId}
-                    gameVersion={gameVersion}
-                    loader={loader}
-                    onRefresh={loadMods}
-                    onToggle={toggleModLocal}
-                    onChangeVersion={setVersionDialogMod}
-                    selected={selected.has(mod.fileName)}
-                    onSelect={(fileName, shift, ctrl) => toggleSelect(fileName, shift, ctrl)}
-                    hasUpdate={updateFileNames.has(mod.fileName)}
-                  />
-              ))}
-            </div>
+            <DragSelectArea onSelect={handleDragSelect}>
+              <div className="flex flex-col gap-2">
+                {filtered.map((mod) => (
+                  <div key={mod.fileName} data-select-item={mod.fileName}>
+                    <ModCard
+                      mod={mod}
+                      instanceId={instanceId}
+                      gameVersion={gameVersion}
+                      loader={loader}
+                      onRefresh={loadMods}
+                      onToggle={toggleModLocal}
+                      onChangeVersion={setVersionDialogMod}
+                      selected={selected.has(mod.fileName)}
+                      onSelect={(fileName, shift, ctrl) => toggleSelect(fileName, shift, ctrl)}
+                      hasUpdate={updateFileNames.has(mod.fileName)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </DragSelectArea>
           )}
         </CardContent>
       </Card>
@@ -736,6 +804,20 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
     lastClickedRef.current = packs.findIndex(p => p.fileName === fileName)
   }, [packs])
 
+  // 拖动框选：Shift 追加，普通替换
+  const handleDragSelect = useCallback((names: string[], mode: 'replace' | 'add') => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (mode === 'add') {
+        names.forEach(n => next.add(n))
+      } else {
+        next.clear()
+        names.forEach(n => next.add(n))
+      }
+      return next
+    })
+  }, [])
+
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
     const names = Array.from(selected)
@@ -804,11 +886,15 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             {search ? '无匹配资源包' : '暂无资源包'}
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            {filtered.map((pack) => (
-              <ResourcePackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
-            ))}
-          </div>
+          <DragSelectArea onSelect={handleDragSelect}>
+            <div className="flex flex-col gap-2">
+              {filtered.map((pack) => (
+                <div key={pack.fileName} data-select-item={pack.fileName}>
+                  <ResourcePackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
+                </div>
+              ))}
+            </div>
+          </DragSelectArea>
         )}
       </CardContent>
       <BatchToolbar
@@ -885,6 +971,20 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
     lastClickedRef.current = shaders.findIndex(s => s.fileName === fileName)
   }, [shaders])
 
+  // 拖动框选：Shift 追加，普通替换
+  const handleDragSelect = useCallback((names: string[], mode: 'replace' | 'add') => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (mode === 'add') {
+        names.forEach(n => next.add(n))
+      } else {
+        next.clear()
+        names.forEach(n => next.add(n))
+      }
+      return next
+    })
+  }, [])
+
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
     const names = Array.from(selected)
@@ -953,11 +1053,15 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             {search ? '无匹配光影包' : '暂无光影包'}
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            {filtered.map((shader) => (
-              <ShaderCard key={shader.fileName} shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(shader.fileName)} onSelect={(e) => toggleSelect(shader.fileName, e.shiftKey, e.ctrlKey)} />
-            ))}
-          </div>
+          <DragSelectArea onSelect={handleDragSelect}>
+            <div className="flex flex-col gap-2">
+              {filtered.map((shader) => (
+                <div key={shader.fileName} data-select-item={shader.fileName}>
+                  <ShaderCard shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(shader.fileName)} onSelect={(e) => toggleSelect(shader.fileName, e.shiftKey, e.ctrlKey)} />
+                </div>
+              ))}
+            </div>
+          </DragSelectArea>
         )}
       </CardContent>
       <BatchToolbar
@@ -1030,6 +1134,20 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
     lastClickedRef.current = packs.findIndex(p => p.fileName === fileName)
   }, [packs])
 
+  // 拖动框选：Shift 追加，普通替换
+  const handleDragSelect = useCallback((names: string[], mode: 'replace' | 'add') => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (mode === 'add') {
+        names.forEach(n => next.add(n))
+      } else {
+        next.clear()
+        names.forEach(n => next.add(n))
+      }
+      return next
+    })
+  }, [])
+
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
     const names = Array.from(selected)
@@ -1098,11 +1216,15 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
             {search ? '无匹配数据包' : '暂无数据包'}
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            {filtered.map((pack) => (
-              <DataPackCard key={pack.fileName} pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
-            ))}
-          </div>
+          <DragSelectArea onSelect={handleDragSelect}>
+            <div className="flex flex-col gap-2">
+              {filtered.map((pack) => (
+                <div key={pack.fileName} data-select-item={pack.fileName}>
+                  <DataPackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
+                </div>
+              ))}
+            </div>
+          </DragSelectArea>
         )}
       </CardContent>
       <BatchToolbar

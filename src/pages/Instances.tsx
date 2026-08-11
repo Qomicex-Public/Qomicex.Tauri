@@ -70,6 +70,12 @@ const REMOTE_SORT_OPTIONS = [
 
 function cn(...classes: (string | boolean | undefined | null)[]): string { return classes.filter(Boolean).join(' ') }
 
+/** 取扫描版本里第一个真实加载器（过滤 Vanilla/Unknown——原版实例 loader 应保持空） */
+function firstRealLoader(v: ScannedVersion): { type?: string; version?: string } {
+  const l = v.loaders?.find((x) => x.type && x.type !== 'Vanilla' && x.type !== 'Unknown')
+  return { type: l?.type, version: l?.version }
+}
+
 function autoInstanceName(gameVersion: string, loader: string, loaderVersion: string): string {
   let name = gameVersion
   if (loader) {
@@ -177,8 +183,8 @@ export default function Instances() {
         const created = await Promise.all(toCreate.map((v) => createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
-          loader: v.loaders?.find((l) => l.type)?.type,
-          loaderVersion: v.loaders?.find((l) => l.version)?.version,
+          loader: firstRealLoader(v).type,
+          loaderVersion: firstRealLoader(v).version,
           gameDir: dir,
           maxMemory: 4096,
           iconData: v.modpack?.iconData,
@@ -408,8 +414,8 @@ export default function Instances() {
         inst = await createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
-          loader: v.loaders?.find(l => l.type)?.type,
-          loaderVersion: v.loaders?.find(l => l.version)?.version,
+          loader: firstRealLoader(v).type,
+          loaderVersion: firstRealLoader(v).version,
           gameDir: currentDir!,
           maxMemory: 4096,
           iconData: v.modpack?.iconData,
@@ -457,8 +463,8 @@ export default function Instances() {
       const created = await createInstance({
         name: v.name,
         gameVersion: v.gameVersion,
-        loader: v.loaders?.find((l) => l.type)?.type,
-        loaderVersion: v.loaders?.find((l) => l.version)?.version,
+        loader: firstRealLoader(v).type,
+        loaderVersion: firstRealLoader(v).version,
         maxMemory: 4096,
         gameDir: currentDir,
         iconData: v.modpack?.iconData,
@@ -481,8 +487,8 @@ export default function Instances() {
         inst = await createInstance({
           name: v.name,
           gameVersion: v.gameVersion,
-          loader: v.loaders?.find((l) => l.type)?.type,
-          loaderVersion: v.loaders?.find((l) => l.version)?.version,
+          loader: firstRealLoader(v).type,
+          loaderVersion: firstRealLoader(v).version,
           gameDir: currentDir!,
           maxMemory: 4096,
           iconData: v.modpack?.iconData,

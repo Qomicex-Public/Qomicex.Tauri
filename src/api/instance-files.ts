@@ -1,5 +1,5 @@
 import { get, del, post } from './client.ts'
-import type { FileEntry, ModMetadata, ModUpdateEntry, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState, LanGameEntry } from '../types/index.ts'
+import type { FileEntry, ModMetadata, ModEnrichEntry, ModUpdateEntry, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState, LanGameEntry } from '../types/index.ts'
 
 export function getSaves(instanceId: string): Promise<FileEntry[]> {
   return get<FileEntry[]>(`/instance/${instanceId}/files/saves`)
@@ -69,6 +69,15 @@ export function getModsProgress(instanceId: string): Promise<{ current: number; 
 
 export function getModsMetadata(instanceId: string): Promise<ModMetadata[]> {
   return get<ModMetadata[]>(`/instance/${instanceId}/files/mods/metadata`)
+}
+
+/** 两段式第二步：批量反查远程 id（Modrinth project/version id、CurseForge mod/file id）。
+ * 反查可达 10-30s，用 90s 信号绕过全局 15s 超时（失败由调用方静默处理）。 */
+export function enrichMods(instanceId: string): Promise<ModEnrichEntry[]> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 90_000)
+  return post<ModEnrichEntry[]>(`/instance/${instanceId}/files/mods/enrich`, undefined, { signal: controller.signal })
+    .finally(() => clearTimeout(timer))
 }
 
 export function enableMod(instanceId: string, name: string): Promise<void> {

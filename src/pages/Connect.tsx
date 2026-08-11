@@ -13,7 +13,8 @@ import { Select, SelectOption } from '../components/ui'
 import { useMessageBox } from '../components/ui'
 import { ApiError } from '../api/client.ts'
 import * as connectorApi from '../api/connector.ts'
-import { getInstances } from '../api/instance.ts'
+import type { MatchInstancesResponse } from '../api/connector.ts'
+import { getInstances, launchInstance } from '../api/instance.ts'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
 import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult } from '../types/index.ts'
 
@@ -83,6 +84,82 @@ function PlayerList({ players }: { players: ConnectorPlayer[] }) {
   )
 }
 
+const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
+  modrinth: { label: 'Modrinth', cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' },
+  curseforge: { label: 'CurseForge', cls: 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/30' },
+}
+
+function RoomModsCard({ data, onLaunch, launching }: {
+  data: MatchInstancesResponse | null
+  onLaunch: (instanceId: string) => void
+  launching: string | null
+}) {
+  const mods = data?.mods ?? []
+  const instances = data?.instances ?? []
+  const matched = instances.filter(i => i.matched)
+  const unmatched = instances.filter(i => !i.matched)
+  return (
+    <div className="space-y-3">
+      <div>
+        <Label>房主 Mods ({mods.length})</Label>
+        {mods.length === 0 ? (
+          <p className="text-xs text-muted-foreground">房主未发布 mods 列表（或扫描中）</p>
+        ) : (
+          <ul className="mt-1 max-h-40 space-y-0.5 overflow-y-auto rounded border border-border/50 p-2 text-xs">
+            {mods.map((m, i) => {
+              const badge = SOURCE_BADGE[m.source]
+              return (
+                <li key={m.hash + i} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate">{m.name || m.hash.slice(0, 12)}</span>
+                  {badge && (
+                    <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${badge.cls}`}>{badge.label}</span>
+                  )}
+                  <code className="shrink-0 text-[10px] text-muted-foreground">{m.hash.slice(0, 8)}</code>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+      <div>
+        <Label>匹配实例（{mods.length === 0 ? '房主未发布 mods' : `本地 ${instances.length} 个同版本实例`}）</Label>
+        {instances.length === 0 && mods.length > 0 && (
+          <p className="text-xs text-muted-foreground">没有与房主游戏版本/loader 相同的本地实例</p>
+        )}
+        {matched.length > 0 && (
+          <div className="mt-1 space-y-1.5">
+            {matched.map(inst => (
+              <div key={inst.instanceId} className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{inst.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {inst.gameVersion}{inst.loader ? ` · ${inst.loader} ${inst.loaderVersion ?? ''}` : ''}
+                    <span className="ml-2 text-emerald-600 dark:text-emerald-400">mods 一致 ({inst.modCount})</span>
+                  </div>
+                </div>
+                <Button size="sm" onClick={() => onLaunch(inst.instanceId)} disabled={launching !== null}>
+                  {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
+                  快捷启动
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {unmatched.length > 0 && (
+          <div className="mt-1 space-y-1">
+            {unmatched.map(inst => (
+              <div key={inst.instanceId} className="flex items-center gap-2 rounded border border-border/50 px-3 py-1.5 text-sm">
+                <span className="min-w-0 flex-1 truncate">{inst.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">mods 不一致 ({inst.modCount})</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Connect() {
   const { error: msgError } = useMessageBox()
   const [status, setStatus] = useState<ConnectorStatus>({
@@ -102,10 +179,25 @@ export default function Connect() {
   const [detectedPort, setDetectedPort] = useState<number | null>(null)
   const [natType, setNatType] = useState<NatTypeResult | null>(null)
   const [natTypeBusy, setNatTypeBusy] = useState(false)
+  const [matchData, setMatchData] = useState<MatchInstancesResponse | null>(null)
+  const [matchLoading, setMatchLoading] = useState(false)
+  const [launchingMatch, setLaunchingMatch] = useState<string | null>(null)
 
   const refreshStatus = useCallback(async () => {
     try { setStatus(await connectorApi.getStatus()) } catch { /* ignore poll errors */ }
   }, [])
+
+  // guest 模式：拉取房主 mods + 本地匹配实例（进入房间/每次轮询到 guest 时刷新一次）
+  useEffect(() => {
+    if (status.mode !== 'guest') { setMatchData(null); return }
+    let cancelled = false
+    setMatchLoading(true)
+    connectorApi.matchInstances()
+      .then(data => { if (!cancelled) setMatchData(data) })
+      .catch(() => { /* 房主不支持/扫描失败，保持空 */ })
+      .finally(() => { if (!cancelled) setMatchLoading(false) })
+    return () => { cancelled = true }
+  }, [status.mode, status.roomCode])
 
   useEffect(() => {
     refreshStatus()
@@ -191,9 +283,20 @@ export default function Connect() {
 
   const handleLeave = async () => {
     setBusy(true)
-    try { await connectorApi.leave(); await refreshStatus() }
+    try { await connectorApi.leave(); await refreshStatus(); setMatchData(null) }
     catch (e) { msgError(fmtErr(e)) }
     finally { setBusy(false) }
+  }
+
+  // 快捷启动匹配实例：启动并自动加入房间（joinServer = 本机转发端口）
+  const handleQuickLaunch = async (instanceId: string) => {
+    if (!status.mcPort) { msgError('房间尚未就绪'); return }
+    setLaunchingMatch(instanceId)
+    try {
+      const result = await launchInstance(instanceId, { joinServer: `127.0.0.1:${status.mcPort}` })
+      if (!result.success) msgError(result.error || '启动失败')
+    } catch (e) { msgError(fmtErr(e)) }
+    finally { setLaunchingMatch(null) }
   }
 
   const copy = (text: string) => navigator.clipboard.writeText(text)
@@ -415,6 +518,13 @@ export default function Connect() {
               </p>
             )}
             <PlayerList players={status.players} />
+            {matchLoading && !matchData ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <FontAwesomeIcon icon={faSpinner} spin /> 正在扫描本地实例与房主 mods 比对...
+              </div>
+            ) : (
+              <RoomModsCard data={matchData} onLaunch={handleQuickLaunch} launching={launchingMatch} />
+            )}
             <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
               <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />退出房间
             </Button>

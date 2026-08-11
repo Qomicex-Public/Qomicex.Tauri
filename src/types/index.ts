@@ -471,12 +471,34 @@ export interface ModMetadata {
   iconBase64?: string | null
   curseForgeId?: number | null
   modrinthId?: string | null
+  /** Modrinth 版本（文件）id（enrich 反查后填充） */
+  modrinthVersionId?: string | null
+  /** CurseForge 文件 id（enrich 反查后填充） */
+  curseForgeFileId?: number | null
   source?: string | null
   mcmodId?: number | null
   chineseName?: string | null
   active: boolean
   fileSize?: number
   lastModified?: string
+}
+
+/** mods/enrich 返回条目（两段式第二步：按 fileName 合并 id 到列表） */
+export interface ModEnrichEntry {
+  fileName: string
+  curseForgeId?: number | null
+  modrinthId?: string | null
+  modrinthVersionId?: string | null
+  curseForgeFileId?: number | null
+  source?: string | null
+  /** 远程图标 URL（本地无图标时反查填充） */
+  iconUrl?: string | null
+  /** 远程项目名称（CF name / MR title） */
+  name?: string | null
+  /** mcmod.cn 中文名 */
+  chineseName?: string | null
+  /** mcmod.cn id */
+  mcmodId?: number | null
 }
 
 export interface ResourcePackMetadata {

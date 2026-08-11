@@ -21,6 +21,32 @@ export function leave(): Promise<{ status: string }> {
   return post('/connector/leave')
 }
 
+export interface GameModEntry {
+  source: string
+  id: string
+  hash: string
+  name: string
+}
+
+export interface MatchedInstance {
+  instanceId: string
+  name: string
+  gameVersion: string
+  loader?: string | null
+  loaderVersion?: string | null
+  matched: boolean
+  modCount: number
+}
+
+export interface MatchInstancesResponse {
+  mods: GameModEntry[]
+  instances: MatchedInstance[]
+}
+
+export function matchInstances(): Promise<MatchInstancesResponse> {
+  return get<MatchInstancesResponse>('/connector/match-instances')
+}
+
 export function getEasyTierStatus(): Promise<EasyTierStatus> {
   return get<EasyTierStatus>('/connector/easytier/status')
 }
