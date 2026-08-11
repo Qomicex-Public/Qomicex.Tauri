@@ -9,6 +9,8 @@
 //! （easytier-core crate，无需下载独立二进制）。
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -22,6 +24,7 @@ use qomicex_connector::client::ScaffoldingClient;
 use qomicex_connector::guest::scaffolding_guest::ScaffoldingGuest;
 use qomicex_connector::models::player::PlayerKind;
 use qomicex_connector::protocols::DelegateProtocol;
+use qomicex_connector::util::CancellationToken;
 
 use crate::endpoints::skin::SkinService;
 use crate::error::{ApiError, ApiResult};
@@ -129,6 +132,46 @@ static CONNECTOR: OnceLock<Arc<ConnectorState>> = OnceLock::new();
 
 /// 联机节点服务端点（私人节点，调用方注入；crate 默认仍是官方 nodes.qomicex.top）。
 const RELAY_ENDPOINT: &str = "https://api.qomicex.top/api/nodes";
+
+/// 建房/加入房间整体超时：easytier 启动 ≤30s + P2P 打洞重试 ~50s，远超前端
+/// 全局 15s。超时后协作取消（ct 打断重试循环）+ 等清理 + close_all 兜底，
+/// 保证 easytier 实例不残留（残留同名节点会让后续 join 的 discover 超时）。
+/// 前端长超时 120s 需覆盖 75s + 清理尾随（easytier 启动 30s 兜底）。
+const CONNECTOR_OPERATION_TIMEOUT: Duration = Duration::from_secs(75);
+
+/// 在整体超时内执行联机操作（建房 / 加入房间）。
+///
+/// 用 oneshot 通道而非 JoinHandle：超时分支需要等待子任务完成清理
+/// （ct 协作取消后重试循环立即退出，easytier 启动最坏 30s 兜底），
+/// 之后 close_all 回收托管实例并复位 Idle，杜绝实例残留与状态卡死。
+async fn run_with_connector_timeout<T, F>(
+    timeout_code: &'static str,
+    timeout_message: &'static str,
+    f: F,
+) -> Result<T, ApiError>
+where
+    F: FnOnce(CancellationToken) -> Pin<Box<dyn Future<Output = Result<T, ApiError>> + Send>> + Send + 'static,
+    T: Send + 'static,
+{
+    let op_ct = CancellationToken::new();
+    let task_ct = op_ct.clone();
+    let (tx, mut rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let result = f(task_ct).await;
+        let _ = tx.send(result);
+    });
+    tokio::select! {
+        r = &mut rx => r.unwrap_or_else(|_| Err(ApiError::internal("联机任务异常终止"))),
+        _ = tokio::time::sleep(CONNECTOR_OPERATION_TIMEOUT) => {
+            op_ct.cancel();
+            let _ = rx.await;
+            let conn = connector();
+            conn.client.close_all(conn.ct.clone()).await;
+            *conn.mode.lock().await = Mode::Idle;
+            Err(ApiError::bad_request(timeout_code, timeout_message))
+        }
+    }
+}
 
 fn connector() -> &'static Arc<ConnectorState> {
     CONNECTOR.get_or_init(|| {
@@ -331,18 +374,29 @@ async fn host_port(
             .unwrap()
             .insert(machine_id(), icon);
     }
-    let center = conn
-        .client
-        .create_room(
-            player_name(&state).await,
-            machine_id(),
-            vendor_string(),
-            req.port,
-            conn.ct.clone(),
-            custom_protocols(),
-        )
-        .await
-        .map_err(map_connector_error)?;
+    let center = run_with_connector_timeout(
+        "CONNECTOR_HOST_TIMEOUT",
+        "建房超时，请检查网络后重试",
+        {
+            let conn = connector();
+            move |ct| {
+                Box::pin(async move {
+                    conn.client
+                        .create_room(
+                            player_name(&state).await,
+                            machine_id(),
+                            vendor_string(),
+                            req.port,
+                            ct,
+                            custom_protocols(),
+                        )
+                        .await
+                        .map_err(map_connector_error)
+                })
+            }
+        },
+    )
+    .await?;
     *conn.mode.lock().await = Mode::Host(center.clone());
     *conn.host_center.write().unwrap() = Some(center.clone());
     // host_port 建房无实例上下文：mods 扫描留空（guest 端拿空列表）
@@ -478,56 +532,19 @@ async fn join_room(
         *mode = Mode::Starting;
     }
 
-    let joined = async {
-        let guest = conn
-            .client
-            .join_room(
-                &req.code,
-                player_name(&state).await,
-                machine_id(),
-                vendor_string(),
-                vec![
-                    "qml:game_info".to_string(),
-                    "qml:player_icons".to_string(),
-                    "qml:player_leave".to_string(),
-                    "qml:game_mods".to_string(),
-                ],
-                conn.ct.clone(),
-            )
-            .await
-            .map_err(map_connector_error)?;
-        let (mc_host, mc_port) = guest
-            .map_minecraft_port(conn.ct.clone())
-            .await
-            .map_err(map_connector_error)?;
-        // 上传自己头像 → 合并全房间头像映射（qml:player_icons 交换协议）
-        let icon = self_icon(&state).await;
-        if !icon.is_empty() {
-            match guest
-                .send_json_req::<PlayerIconUpload, PlayerIconMap>(
-                    "qml:player_icons",
-                    &PlayerIconUpload {
-                        machine_id: machine_id(),
-                        icon_base64: icon,
-                    },
-                )
-                .await
-            {
-                Ok(map) => {
-                    conn.icon_map.write().unwrap().extend(map.icons);
-                }
-                Err(e) => tracing::warn!("上传玩家头像失败: {e}"),
+    let joined = run_with_connector_timeout(
+        "CONNECTOR_JOIN_TIMEOUT",
+        "加入房间超时，请检查网络或房间码后重试",
+        {
+            let code = req.code.clone();
+            move |ct| {
+                let conn = connector();
+                Box::pin(async move {
+                    join_inner(&conn, &state, &code, ct).await
+                })
             }
-        }
-        // 拉取房主 mods 列表（qml:game_mods；房主不支持该协议时失败 → 忽略）
-        match guest.send_json::<GameModsResponse>("qml:game_mods").await {
-            Ok(resp) => {
-                *conn.room_mods.write().unwrap() = Some(resp.mods);
-            }
-            Err(e) => tracing::debug!("拉取房主 mods 失败: {e}"),
-        }
-        Ok::<_, ApiError>((guest, mc_host, mc_port))
-    }
+        },
+    )
     .await;
 
     match joined {
@@ -547,6 +564,63 @@ async fn join_room(
             Err(e)
         }
     }
+}
+
+/// join_room 的具体操作（在整体超时内执行；`ct` 触发时各等待点协作退出）。
+async fn join_inner(
+    conn: &ConnectorState,
+    state: &SharedState,
+    code: &str,
+    ct: CancellationToken,
+) -> Result<(Arc<ScaffoldingGuest>, String, u16), ApiError> {
+    let guest = conn
+        .client
+        .join_room(
+            code,
+            player_name(state).await,
+            machine_id(),
+            vendor_string(),
+            vec![
+                "qml:game_info".to_string(),
+                "qml:player_icons".to_string(),
+                "qml:player_leave".to_string(),
+                "qml:game_mods".to_string(),
+            ],
+            ct.clone(),
+        )
+        .await
+        .map_err(map_connector_error)?;
+    let (mc_host, mc_port) = guest
+        .map_minecraft_port(ct)
+        .await
+        .map_err(map_connector_error)?;
+    // 上传自己头像 → 合并全房间头像映射（qml:player_icons 交换协议）
+    let icon = self_icon(state).await;
+    if !icon.is_empty() {
+        match guest
+            .send_json_req::<PlayerIconUpload, PlayerIconMap>(
+                "qml:player_icons",
+                &PlayerIconUpload {
+                    machine_id: machine_id(),
+                    icon_base64: icon,
+                },
+            )
+            .await
+        {
+            Ok(map) => {
+                conn.icon_map.write().unwrap().extend(map.icons);
+            }
+            Err(e) => tracing::warn!("上传玩家头像失败: {e}"),
+        }
+    }
+    // 拉取房主 mods 列表（qml:game_mods；房主不支持该协议时失败 → 忽略）
+    match guest.send_json::<GameModsResponse>("qml:game_mods").await {
+        Ok(resp) => {
+            *conn.room_mods.write().unwrap() = Some(resp.mods);
+        }
+        Err(e) => tracing::debug!("拉取房主 mods 失败: {e}"),
+    }
+    Ok((guest, mc_host, mc_port))
 }
 
 /// GET /connector/status — 当前联机会话状态（前端 2s 轮询）。
