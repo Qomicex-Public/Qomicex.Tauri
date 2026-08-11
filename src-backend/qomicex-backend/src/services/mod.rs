@@ -8,3 +8,4 @@ pub mod launch_tracker;
 pub mod license;
 pub mod license_core;
 pub mod plugin;
+pub mod translation;

@@ -10,7 +10,6 @@
 //! producing the identical public routes /api/resources/... .
 
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -138,7 +137,6 @@ struct TranslateResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TranslateTextRequest {
-    #[allow(dead_code)]
     text: String,
 }
 
@@ -189,6 +187,8 @@ struct VersionsQuery {
 struct DownloadsQuery {
     #[serde(default)]
     source: Option<String>,
+    #[serde(default)]
+    version_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -715,7 +715,7 @@ async fn versions(
                     targets
                         .map(|t| {
                             t.iter().any(|x| {
-                                x.version
+                                x.name
                                     .as_deref()
                                     .map(|v| v.eq_ignore_ascii_case(l))
                                     .unwrap_or(false)
@@ -749,7 +749,7 @@ async fn versions(
                             Some("modloader") | Some("forge") | Some("fabric") | Some("neoforge")
                         )
                     })
-                    .filter_map(|t| t.version.clone().or_else(|| t.name.clone()))
+                    .filter_map(|t| t.name.clone().or_else(|| t.version.clone()))
                     .filter(|s| !s.is_empty())
                     .collect::<Vec<_>>();
                 ResourceVersionDto {
@@ -761,7 +761,7 @@ async fn versions(
                     downloads: vec![],
                     dependencies: None,
                     date_published: Some(
-                        chrono::DateTime::from_timestamp_millis(v.updated)
+                        chrono::DateTime::from_timestamp_secs(v.released)
                             .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
                             .unwrap_or_default(),
                     ),
@@ -868,7 +868,8 @@ async fn version_downloads(
 
 async fn ftb_export(
     State(state): State<SharedState>,
-    AxumPath((project_id, version_id)): AxumPath<(String, String)>,
+    AxumPath(project_id): AxumPath<String>,
+    Query(q): Query<DownloadsQuery>,
 ) -> ApiResult<Response> {
     let ftb_id: i32 = match project_id.parse() {
         Ok(v) => v,
@@ -879,7 +880,9 @@ async fn ftb_export(
             ))
         }
     };
-    let ftb_ver_id: i32 = match version_id.parse() {
+    // 前端把 versionId 放在 query（source=ftb 分支的 downloads 同样如此），
+    // 与 C# 原版 `?versionId=` 一致；无该参数视为找不到版本。
+    let ftb_ver_id: i32 = match q.version_id.as_deref().unwrap_or_default().parse() {
         Ok(v) => v,
         Err(_) => {
             return Err(ApiError::not_found(
@@ -1025,11 +1028,35 @@ fn empty_translate() -> TranslateResponse {
 }
 
 async fn translate_text(
-    _state: State<SharedState>,
-    _req: Json<TranslateTextRequest>,
+    State(state): State<SharedState>,
+    req: Json<TranslateTextRequest>,
 ) -> ApiResult<Response> {
-    // TODO: translation providers (Google/Bing/MyMemory + TextProtector) not ported.
-    Ok((StatusCode::NOT_IMPLEMENTED, "501").into_response())
+    let settings = state.settings.read().await;
+    let provider_name = settings.translation_provider.clone();
+    let bing_api_key = settings.bing_api_key.clone();
+    drop(settings);
+
+    // 源：TextProtector.Protect → service.TranslateAsync → Restore；任何失败返回
+    // TranslateResponse(null, null, null)（源 catch 语义），不视为 HTTP 错误。
+    let (protected_text, map) =
+        crate::services::translation::protect(req.text.trim());
+    let provider = crate::services::translation::create_provider(&provider_name, bing_api_key);
+    let translated = crate::services::translation::translate(
+        &state.http_client,
+        &provider,
+        &protected_text,
+    )
+    .await;
+    let translated = translated
+        .map(|t| crate::services::translation::restore(&t, &map))
+        .filter(|t| !t.is_empty());
+
+    Ok(Json(TranslateResponse {
+        original: Some(req.text.clone()),
+        translated,
+        translated_at: None,
+    })
+    .into_response())
 }
 
 // =====================================================================

@@ -242,6 +242,7 @@ export default function ResourceCenter() {
       setPage(pageNum)
       setLoading(false)
       setInitialLoading(false)
+      batchLookupChineseNames(cached.items.map(i => i.title)).then(m => category === 'mod' ? setCnNames(prev => ({ ...prev, ...m })) : setCnNames({}))
       return
     }
     if (!append) setIsReplacing(true)

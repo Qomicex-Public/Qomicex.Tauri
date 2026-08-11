@@ -38,6 +38,11 @@ async fn main() {
         .unwrap_or(DEFAULT_PORT);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
+    // 预热 mcmod 中文名索引（首个 /mcmod/* 请求不再承担 5.5MB JSON 冷加载）。
+    // 在 async 上下文里同步构建会阻塞当前 worker；这里放在 serve 之前的
+    // 启动阶段执行，最坏情况只是延迟监听建立，不影响运行时请求。
+    endpoints::mcmod::prewarm();
+
     // 外部管理器已拉起后端时（如 Tauri 开发期附加），可跳过自建监听逻辑的校验提示。
     let app = app::build_router(std::sync::Arc::new(state));
 

@@ -271,7 +271,11 @@ export default function ResourceDetailPage() {
       try {
         const cacheKey = `api-resource-detail-${id}-${source}`
         const cached = cacheGet<ResourceDetail>(cacheKey)
-        if (cached) { setDetail(cached); setLoading(false) }
+        if (cached) {
+          setDetail(cached); setLoading(false)
+          // 缓存命中时立即查中文名：网络请求失败/慢时标题也不缺翻译
+          if (category === 'mod') lookupChineseName(cached.title).then(setCnName)
+        }
         const resourceDetail = await getResourceDetail(id, source, category)
         if (cancelled) return
         setDetail(resourceDetail)
