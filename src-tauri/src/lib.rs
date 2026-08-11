@@ -14,6 +14,13 @@ const BACKEND: &[u8] = include_bytes!("../binaries/backend");
 #[cfg(debug_assertions)]
 const BACKEND: &[u8] = &[];
 
+// easytier 的 faketcp 在 Windows 需要 npcap 的 Packet.dll，必须与后端 exe 同目录
+// （缺失时 qomicex-backend.exe 以 0xC0000135 退出）。随后端一并嵌入并解压。
+#[cfg(all(windows, not(debug_assertions)))]
+const PACKET_DLL: &[u8] = include_bytes!("../binaries/Packet.dll");
+#[cfg(not(all(windows, not(debug_assertions))))]
+const PACKET_DLL: &[u8] = &[];
+
 #[cfg(windows)]
 const BACKEND_EXE: &str = "qomicex-backend.exe";
 #[cfg(unix)]
@@ -53,20 +60,40 @@ fn extract_backend() -> Option<std::path::PathBuf> {
     let primary = base.join(BACKEND_EXE);
 
     match std::fs::write(&primary, BACKEND) {
-        Ok(()) => return Some(primary),
+        Ok(()) => {
+            extract_sidecar_dlls(&base);
+            return Some(primary);
+        }
         Err(e) => eprintln!("[backend] write to {} failed: {e}", primary.display()),
     }
 
     // Fallback: unique per-process file if the primary path is not writable.
     let unique = base.join(format!("{}-{}", std::process::id(), BACKEND_EXE));
     match std::fs::write(&unique, BACKEND) {
-        Ok(()) => Some(unique),
+        Ok(()) => {
+            extract_sidecar_dlls(&base);
+            Some(unique)
+        }
         Err(e) => {
             eprintln!("[backend] write to {} failed: {e}", unique.display());
             None
         }
     }
 }
+
+/// 写出后端运行时需要的同目录 DLL（当前仅 Windows 的 Packet.dll）。
+#[cfg(windows)]
+fn extract_sidecar_dlls(base: &std::path::Path) {
+    if PACKET_DLL.is_empty() {
+        return;
+    }
+    if let Err(e) = std::fs::write(base.join("Packet.dll"), PACKET_DLL) {
+        eprintln!("[backend] write Packet.dll failed: {e}");
+    }
+}
+
+#[cfg(not(windows))]
+fn extract_sidecar_dlls(_base: &std::path::Path) {}
 
 fn spawn_backend(app: &tauri::App) {
     if std::env::var("QOMICEX_LAUNCHER_MANAGED").is_ok() {
