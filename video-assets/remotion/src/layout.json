@@ -1,0 +1,246 @@
+{
+ "pageW": 1920,
+ "dashboard": {
+  "pageH": 1080,
+  "cutouts": [
+   {
+    "file": "dash-brand.png",
+    "x": 846.703125,
+    "y": 471,
+    "w": 290.59375,
+    "h": 60
+   },
+   {
+    "file": "dash-account.png",
+    "x": 1600,
+    "y": 132,
+    "w": 288,
+    "h": 97
+   },
+   {
+    "file": "dash-launch.png",
+    "x": 96,
+    "y": 958,
+    "w": 1792,
+    "h": 90
+   }
+  ]
+ },
+ "instances": {
+  "pageH": 1080,
+  "cutouts": [
+   {
+    "file": "inst-grid.png",
+    "x": 96,
+    "y": 258,
+    "w": 1792,
+    "h": 187.5
+   },
+   {
+    "file": "inst-card1.png",
+    "x": 96,
+    "y": 258,
+    "w": 285.328125,
+    "h": 187.5
+   },
+   {
+    "file": "inst-card2.png",
+    "x": 397.328125,
+    "y": 258,
+    "w": 285.328125,
+    "h": 187.5
+   },
+   {
+    "file": "inst-card3.png",
+    "x": 698.65625,
+    "y": 258,
+    "w": 285.34375,
+    "h": 187.5
+   },
+   {
+    "file": "inst-card4.png",
+    "x": 1000,
+    "y": 258,
+    "w": 285.328125,
+    "h": 187.5
+   },
+   {
+    "file": "inst-card5.png",
+    "x": 1301.328125,
+    "y": 258,
+    "w": 285.328125,
+    "h": 187.5
+   },
+   {
+    "file": "inst-card6.png",
+    "x": 1602.65625,
+    "y": 258,
+    "w": 285.34375,
+    "h": 187.5
+   }
+  ]
+ },
+ "downloads": {
+  "pageH": 1080,
+  "cutouts": [
+   {
+    "file": "dl-task1.png",
+    "x": 96,
+    "y": 210,
+    "w": 1792,
+    "h": 113
+   },
+   {
+    "file": "dl-task2.png",
+    "x": 96,
+    "y": 335,
+    "w": 1792,
+    "h": 113
+   },
+   {
+    "file": "dl-task3.png",
+    "x": 96,
+    "y": 460,
+    "w": 1792,
+    "h": 113
+   },
+   {
+    "file": "dl-task4.png",
+    "x": 96,
+    "y": 585,
+    "w": 1792,
+    "h": 113
+   },
+   {
+    "file": "dl-task5.png",
+    "x": 96,
+    "y": 710,
+    "w": 1792,
+    "h": 113
+   }
+  ]
+ },
+ "accounts": {
+  "pageH": 1080,
+  "cutouts": [
+   {
+    "file": "acc-card1.png",
+    "x": 96,
+    "y": 168,
+    "w": 1792,
+    "h": 66
+   },
+   {
+    "file": "acc-card2.png",
+    "x": 96,
+    "y": 240,
+    "w": 1792,
+    "h": 66
+   },
+   {
+    "file": "acc-card3.png",
+    "x": 96,
+    "y": 312,
+    "w": 1792,
+    "h": 66
+   }
+  ]
+ },
+ "resource-center": {
+  "pageH": 1080,
+  "cutouts": [
+   {
+    "file": "rc-card1.png",
+    "x": 96,
+    "y": 374.5,
+    "w": 1792,
+    "h": 160
+   },
+   {
+    "file": "rc-card2.png",
+    "x": 96,
+    "y": 546.5,
+    "w": 1792,
+    "h": 160
+   },
+   {
+    "file": "rc-card3.png",
+    "x": 96,
+    "y": 718.5,
+    "w": 1792,
+    "h": 160
+   },
+   {
+    "file": "rc-card4.png",
+    "x": 96,
+    "y": 890.5,
+    "w": 1792,
+    "h": 160
+   },
+   {
+    "file": "rc-sodium-card.png",
+    "x": 96,
+    "y": 374.5,
+    "w": 1792,
+    "h": 160
+   }
+  ]
+ },
+ "connect": {
+  "pageH": 1080,
+  "cutouts": [
+   {
+    "file": "conn-card1.png",
+    "x": 117,
+    "y": 299,
+    "w": 1750,
+    "h": 36
+   },
+   {
+    "file": "conn-card2.png",
+    "x": 117,
+    "y": 435,
+    "w": 1750,
+    "h": 24
+   }
+  ]
+ },
+ "settings": {
+  "pageH": 1080,
+  "cutouts": [
+   {
+    "file": "set-panel1.png",
+    "x": 304,
+    "y": 124,
+    "w": 1584,
+    "h": 1250
+   },
+   {
+    "file": "set-panel2.png",
+    "x": 304,
+    "y": 1310,
+    "w": 1584,
+    "h": 410
+   }
+  ]
+ },
+ "account-detail": {
+  "pageH": 1080,
+  "cutouts": [
+   {
+    "file": "acd-skin1.png",
+    "x": 96,
+    "y": 128,
+    "w": 581.328125,
+    "h": 474
+   },
+   {
+    "file": "acd-skin2.png",
+    "x": 701.328125,
+    "y": 128,
+    "w": 1186.671875,
+    "h": 150
+   }
+  ]
+ }
+}
