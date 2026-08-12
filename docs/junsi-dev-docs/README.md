@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-08-11 20:49
+最后更新：2026-08-12 15:36
 
 ## 1-决策记录
 
@@ -9,6 +9,7 @@
 - [ADR-002：FTB 整合包在线安装功能 — 进度更新与任务管理修复](1-决策记录/ADR-002-FTB-整合包在线安装功能---进度更新与任务管理修复.md)
 - [ADR-004： C# ASP.NET → Rust/Tauri IPC 全量迁移架构决策](1-决策记录/ADR-004--C--ASP-NET---Rust-Tauri-IPC-全量迁移架构决策.md)
 - [ADR-005：mod 远程 id 匹配两段式：metadata light + enrich 端点](1-决策记录/ADR-005-mod-远程-id-匹配两段式-metadata-light---enrich-端点.md)
+- [ADR-006：winreg 依赖平台作用域修正（target.windows）](1-决策记录/ADR-006-winreg-依赖平台作用域修正-target-windows-.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 
 ## 2-架构设计
@@ -22,6 +23,7 @@
 - [架构设计](2-架构设计/架构设计.md)
 - [模块划分](2-架构设计/模块划分.md)
 - [联机故障诊断](2-架构设计/联机故障诊断-easytier中继数据面.md)
+- [联机故障诊断-easytier中继数据面未打通](2-架构设计/联机故障诊断-easytier中继数据面未打通.md)
 - [联机流程（Connector）](2-架构设计/联机流程.md)
 - [设置管理流程](2-架构设计/设置管理流程.md)
 - [账号管理流程](2-架构设计/账号管理流程.md)
