@@ -9,6 +9,9 @@ updates:
       frontend:
         patterns:
           - "*"
+    ignore:
+      - dependency-name: "@qomicex/plugin-ui"
+        update-types: [ "version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch" ]
 
   - package-ecosystem: cargo
     directory: /src-backend/qomicex-backend
