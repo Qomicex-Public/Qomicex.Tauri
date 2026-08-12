@@ -383,7 +383,7 @@ mod crypt {
                             .chars()
                             .filter(|c| c.is_ascii_hexdigit())
                             .collect();
-                        if cleaned.len() >= 12 && cleaned.iter().any(|&c| c != '0') {
+                        if cleaned.len() >= 12 && cleaned.chars().any(|c| c != '0') {
                             return cleaned;
                         }
                     }
