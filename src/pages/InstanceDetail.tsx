@@ -43,6 +43,7 @@ import ScreenshotCard from '../components/ScreenshotCard.tsx'
 import DataPackCard from '../components/DataPackCard.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import { useDebug } from '../components/DebugContext.tsx'
+import { MinecraftText } from '../components/MinecraftText.tsx'
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -1455,7 +1456,9 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                             </>}
                           </div>
                           {ps?.description && (
-                            <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1">{ps.description.replace(/§[0-9a-fk-or]/gi, '')}</p>
+                            <p className="mt-1 text-xs text-muted-foreground/70 whitespace-pre-line leading-relaxed">
+                              <MinecraftText text={ps.description} />
+                            </p>
                           )}
                         </div>
                         <div className="flex items-center gap-0.5 shrink-0">
@@ -1508,7 +1511,9 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                           {g.gameVersion !== 'Unknown' && <><span className="text-border">·</span><span>{g.gameVersion}</span></>}
                         </div>
                         {g.motd && (
-                          <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1">{g.motd}</p>
+                          <p className="mt-1 text-xs text-muted-foreground/70 whitespace-pre-line leading-relaxed">
+                            <MinecraftText text={g.motd} />
+                          </p>
                         )}
                       </div>
                       <Button size="sm" onClick={() => onQuickJoinServer(`${g.ip}:${g.port}`)} className="shrink-0 gap-1.5 h-7 text-xs">
