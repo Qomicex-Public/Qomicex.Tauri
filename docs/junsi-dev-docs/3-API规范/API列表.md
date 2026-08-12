@@ -1774,3 +1774,17 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 **状态响应**：`ConnectorPlayer` 增加 `machineId` 字段（踢出按钮按 machineId 调用）。
 
+## 2026-08-13 修订：Servers 端点已实现（不再 501）
+
+上方 "### Servers" 一节标注的 "501 stub：servers/lan-games/server-ping 全部返回 501" 已失效，现全部由 Rust 后端真实实现（`src-backend/qomicex-backend/src/endpoints/instance_files.rs`，C# MapServerEndpoints → Rust 迁移）：
+
+| 方法 | 路径 | 说明 | 实现 |
+|------|------|------|------|
+| GET | `/servers` | 服务器列表（OldServerEntryDto[]：name/ip/iconBase64?/acceptTextures，ip 映射自 ServerEntry.address） | list_servers |
+| POST | `/servers` | 添加服务器 `{ "name": "...", "ip": "..." }`，缺字段 400；写入时 AcceptTextures=true → 200 | add_server |
+| DELETE | `/servers?ip=...` | 删除服务器 → 204 NoContent | delete_server |
+| GET | `/server-ping?address=...` | Ping 服务器，ServerState camelCase 直通（isOnline/ping/onlinePlayers/maxPlayers/version/description/errorMessage/iconBase64），address 必填否则 400 | server_ping |
+| GET | `/lan-games` | 发现局域网游戏（5s 超时），LanServerEntry[] 直通（motd/address/port/displayAddress） | lan_games |
+
+实现基于 core 的 `LocalResourcesFactory::create_server_manager(version, version_specific)`（qomicex-core-rust 6278009 / ADR-007）。Options 系列端点仍为 501 stub（依赖尚未移植的 per-instance OptionsProvider）。
+

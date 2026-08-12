@@ -10,8 +10,6 @@
 //! NOT YET PORTED (501 placeholders):
 //! - Upload/multipart: the C# source file has NO upload routes, so none are
 //!   declared here.
-//! - Servers / server-ping / lan-games: rely on a per-instance ServerManager
-//!   (the core exposes a singleton only), left as 501.
 //! - Options: rely on a per-instance OptionsProvider, left as 501.
 //! - mcmod Chinese-name lookup in mods/metadata: McmodService has no Rust peer
 //!   yet, that enrichment is skipped (see TODO in mods_metadata).
@@ -183,6 +181,36 @@ struct NameQuery {
 struct CategoryQuery {
     #[serde(default)]
     category: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct AddressQuery {
+    #[serde(default)]
+    address: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct IpQuery {
+    #[serde(default)]
+    ip: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddServerRequest {
+    name: Option<String>,
+    ip: Option<String>,
+}
+
+/// 服务器条目 DTO（C# OldServerEntryDto，camelCase）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OldServerEntryDto {
+    name: String,
+    ip: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon_base64: Option<String>,
+    accept_textures: bool,
 }
 
 // =====================================================================
@@ -409,17 +437,17 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/files/saves/rename", post(rename_save))
         .route("/instance/{id}/files/saves/backup", post(backup_save))
         .route("/instance/{id}/files/saves", delete(delete_save))
-        // servers (stubs; rely on a not-yet-portable per-instance ServerManager)
+        // servers
         .route(
             "/instance/{id}/files/servers",
-            get(servers_501).post(servers_501),
+            get(list_servers).post(add_server),
         )
         .route(
             "/instance/{id}/files/servers",
-            delete(servers_delete_501),
+            delete(delete_server),
         )
-        .route("/instance/{id}/files/server-ping", get(server_ping_501))
-        .route("/instance/{id}/files/lan-games", get(lan_games_501))
+        .route("/instance/{id}/files/server-ping", get(server_ping))
+        .route("/instance/{id}/files/lan-games", get(lan_games))
         // options (stubs; rely on a not-yet-portable per-instance OptionsProvider)
         .route("/instance/{id}/files/options", get(options_list_501))
         .route(
@@ -1432,24 +1460,113 @@ async fn delete_save(
 }
 
 // =====================================================================
-// 501 stubs: servers / options
+// Handlers: servers (C# MapServerEndpoints)
 // =====================================================================
 
-async fn servers_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Servers list/add"))
+/// 获取服务器列表（C# LoadServerList → OldServerEntryDto[]）。
+async fn list_servers(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<Vec<OldServerEntryDto>>> {
+    let r = resolve(&id, &state)?;
+    let sm = state
+        .core
+        .local_resource_provider()
+        .create_server_manager(&r.version, r.isolated);
+    let result: Vec<OldServerEntryDto> = sm
+        .load_server_list()
+        .into_iter()
+        .map(|s| OldServerEntryDto {
+            name: s.name,
+            ip: s.address,
+            icon_base64: s.icon_base64,
+            accept_textures: s.accept_textures,
+        })
+        .collect();
+    Ok(Json(result))
 }
 
-async fn servers_delete_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Servers delete"))
+/// 新增或更新服务器（C# AddOrUpdateServer(ServerEntry{Name, Address=Ip,
+/// AcceptTextures=true}) → 200）。
+async fn add_server(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Json(req): Json<AddServerRequest>,
+) -> ApiResult<StatusCode> {
+    let name = req
+        .name
+        .ok_or_else(|| ApiError::bad_request("MISSING_NAME", "name is required"))?;
+    let ip = req
+        .ip
+        .ok_or_else(|| ApiError::bad_request("MISSING_IP", "ip is required"))?;
+    let r = resolve(&id, &state)?;
+    let sm = state
+        .core
+        .local_resource_provider()
+        .create_server_manager(&r.version, r.isolated);
+    sm.add_or_update_server(&qomicex_core::models::local::ServerEntry {
+        name,
+        address: ip,
+        accept_textures: true,
+        ..qomicex_core::models::local::ServerEntry::default()
+    });
+    Ok(StatusCode::OK)
 }
 
-async fn server_ping_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Server ping"))
+/// 删除服务器（C# RemoveServer(ip)，?ip=xxx → 204 NoContent）。
+async fn delete_server(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Query(q): Query<IpQuery>,
+) -> ApiResult<StatusCode> {
+    let ip = q
+        .ip
+        .ok_or_else(|| ApiError::bad_request("MISSING_IP", "ip is required"))?;
+    let r = resolve(&id, &state)?;
+    let sm = state
+        .core
+        .local_resource_provider()
+        .create_server_manager(&r.version, r.isolated);
+    sm.remove_server(&ip);
+    Ok(StatusCode::NO_CONTENT)
 }
 
-async fn lan_games_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("LAN games discover"))
+/// 查询服务器状态（C# GetServerStateByAddress，?address=xxx；
+/// ServerState camelCase 序列化与前端 ServerState 一致，直通返回）。
+async fn server_ping(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Query(q): Query<AddressQuery>,
+) -> ApiResult<Json<qomicex_core::models::local::ServerState>> {
+    let address = q
+        .address
+        .ok_or_else(|| ApiError::bad_request("MISSING_ADDRESS", "address is required"))?;
+    let r = resolve(&id, &state)?;
+    let sm = state
+        .core
+        .local_resource_provider()
+        .create_server_manager(&r.version, r.isolated);
+    Ok(Json(sm.get_server_state_by_address(&address)))
 }
+
+/// 发现局域网服务器（C# DiscoverLanServers(TimeSpan.FromSeconds(5))）。
+async fn lan_games(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<Vec<qomicex_core::models::local::LanServerEntry>>> {
+    let r = resolve(&id, &state)?;
+    let sm = state
+        .core
+        .local_resource_provider()
+        .create_server_manager(&r.version, r.isolated);
+    Ok(Json(
+        sm.discover_lan_servers(std::time::Duration::from_secs(5)),
+    ))
+}
+
+// =====================================================================
+// 501 stubs: options
+// =====================================================================
 
 async fn options_list_501() -> ApiResult<StatusCode> {
     Err(not_implemented("Options list"))
