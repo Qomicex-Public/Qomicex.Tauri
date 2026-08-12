@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-08-12 15:36
+最后更新：2026-08-13 00:20
 
 ## 1-决策记录
 
@@ -10,6 +10,7 @@
 - [ADR-004： C# ASP.NET → Rust/Tauri IPC 全量迁移架构决策](1-决策记录/ADR-004--C--ASP-NET---Rust-Tauri-IPC-全量迁移架构决策.md)
 - [ADR-005：mod 远程 id 匹配两段式：metadata light + enrich 端点](1-决策记录/ADR-005-mod-远程-id-匹配两段式-metadata-light---enrich-端点.md)
 - [ADR-006：winreg 依赖平台作用域修正（target.windows）](1-决策记录/ADR-006-winreg-依赖平台作用域修正-target-windows-.md)
+- [ADR-007：LocalResourcesFactory.create_server_manager 工厂方法（ServerManager 移植）](1-决策记录/ADR-007-LocalResourcesFactory-create_server_manager-工厂方法-ServerManager-移植-.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 
 ## 2-架构设计

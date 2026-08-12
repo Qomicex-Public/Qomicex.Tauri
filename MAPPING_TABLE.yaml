@@ -92,3 +92,70 @@ removed:
   - ignoreRangeProbe200Ok 参数 (Watchdog 机制替代)
   - singleFileThreadCount 参数 (不再暴露)
   - .qdtmp 临时文件后缀 (FileWriter 内部处理)
+
+# =====================================================================
+# Qomicex.Launcher.Backend.Neo → qomicex-backend 服务器管理映射表
+# 生成时间: 2026-08-13
+# 迁移分支: migrate/server-management
+# 源端点: InstanceFilesEndpoints.cs MapServerEndpoints (C#)
+# 目标端点: src-backend/qomicex-backend/src/endpoints/instance_files.rs
+# =====================================================================
+
+endpoints:
+  GET /api/instance/{id}/files/servers:
+    new: get_servers
+    notes: "LoadServerList() → OldServerEntryDto[] (Name/Ip/IconBase64/AcceptTextures)，Ip 映射自 ServerEntry.Address"
+
+  POST /api/instance/{id}/files/servers:
+    new: add_server
+    notes: "AddOrUpdateServer({Name, Ip→Address, AcceptTextures=true})，body: {name, ip}"
+
+  DELETE /api/instance/{id}/files/servers?ip=:
+    new: delete_server
+    notes: "RemoveServer(ip) → 204 NoContent"
+
+  GET /api/instance/{id}/files/server-ping?address=:
+    new: server_ping
+    notes: "GetServerStateByAddress → ServerStateResultDto；超时 → isOnline=false + errorMessage='连接超时'"
+
+  GET /api/instance/{id}/files/lan-games:
+    new: lan_games
+    notes: "DiscoverLanServers(5s) → LanServerEntry[] (motd/address/port/displayAddress)"
+
+types:
+  ServerEntry (C#):
+    new: qomicex_core::models::local::ServerEntry
+    property_mapping:
+      Name: name
+      Address: address
+      IconBase64: icon_base64 (Option)
+      AcceptTextures: accept_textures
+      Hidden: hidden
+
+  ServerState (C#):
+    new: qomicex_core::models::local::ServerState
+    property_mapping:
+      Name: name
+      Address: address
+      IsOnline: is_online
+      Ping: ping (long→i64)
+      OnlinePlayers: online_players
+      MaxPlayers: max_players
+      Version: version
+      Description: description
+      ErrorMessage: error_message
+      IconBase64: icon_base64 (Option)
+
+  LanServerEntry (C#):
+    new: qomicex_core::models::local::LanServerEntry
+    property_mapping:
+      Motd: motd
+      Address: address
+      Port: port
+      DisplayAddress: display_address
+    notes: "前端 LanGameEntry 声明的 ip/worldName/onlinePlayers/maxPlayers/gameVersion 与 C# 响应字段不一致（源项目遗留），本次不改前端"
+
+factories:
+  ContentService.CreateServerManager(gameDir, version, isolated):
+    new: LocalResourcesFactory::create_server_manager(version, version_specific) -> Box<dyn ServerManager>
+    notes: "core 新增工厂方法，gameDir 由工厂持有（对应 create_mods 既有模式）"
