@@ -1,8 +1,8 @@
 //! Connector endpoints（联机）：SCF 协议 + EasyTier 组网（qomicex-connector crate）。
 //!
-//! 对应前端 `src/api/connector.ts` 的 9 个端点（Connect.tsx 页面）：
-//! host/port、host/instance、join、status、leave、easytier/status、
-//! easytier/download、scan-ports、nat-type。
+//! 对应前端 `src/api/connector.ts` 的 11 个端点（Connect.tsx 页面）：
+//! host/port、host/instance、join、status、match-instances、leave、kick、
+//! easytier/status、easytier/download、scan-ports、nat-type。
 //!
 //! 架构：进程级单例 `ScaffoldingClient`（中继节点在线获取 nodes.qomicex.top），
 //! 当前会话模式（idle/starting/host/guest）由 Mutex 保护；EasyTier 为库内嵌
@@ -327,6 +327,7 @@ fn to_frontend_player(
             PlayerKind::Host => "host",
             PlayerKind::Guest => "guest",
         },
+        machine_id: p.machine_id.clone(),
     }
 }
 
@@ -342,6 +343,7 @@ pub fn router() -> Router<SharedState> {
         .route("/connector/status", get(status))
         .route("/connector/match-instances", get(match_instances))
         .route("/connector/leave", post(leave))
+        .route("/connector/kick", post(kick_player))
         .route("/connector/easytier/status", get(easytier_status))
         .route("/connector/easytier/download", post(easytier_download))
         .route("/connector/scan-ports", get(scan_ports))
@@ -1026,6 +1028,32 @@ async fn leave(State(state): State<SharedState>) -> ApiResult<Json<StatusMessage
     }))
 }
 
+/// POST /connector/kick — 房主手动踢出指定 guest。
+///
+/// 三层断开：① easytier 关闭该玩家全部连接（非 QML SCF 客户端仅此手段）；
+/// ② 断开其 Scaffolding TCP（QML guest 心跳失败后整体退出）；③ 玩家列表移除。
+async fn kick_player(Json(req): Json<KickRequest>) -> ApiResult<Json<StatusMessageResponse>> {
+    let conn = connector();
+    let mode = conn.mode.lock().await;
+    let Mode::Host(center) = &*mode else {
+        return Err(ApiError::bad_request(
+            "CONNECTOR_NOT_HOST",
+            "仅房主可踢出玩家",
+        ));
+    };
+    if req.machine_id == machine_id() {
+        return Err(ApiError::bad_request(
+            "CONNECTOR_KICK_SELF",
+            "不能踢出房主自己",
+        ));
+    }
+    center.kick_player(&req.machine_id).await;
+    conn.icon_map.write().unwrap().remove(&req.machine_id);
+    Ok(Json(StatusMessageResponse {
+        status: "kicked".to_string(),
+    }))
+}
+
 /// GET /connector/easytier/status — EasyTier 为库内嵌，恒"已就绪"。
 async fn easytier_status() -> ApiResult<Json<EasyTierStatusResponse>> {
     Ok(Json(EasyTierStatusResponse {
@@ -1324,6 +1352,12 @@ pub struct JoinRequest {
     pub code: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KickRequest {
+    pub machine_id: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JoinResponse {
@@ -1338,6 +1372,7 @@ pub struct ConnectorPlayer {
     pub vendor: String,
     pub icon_base64: Option<String>,
     pub kind: &'static str,
+    pub machine_id: String,
 }
 
 #[derive(Debug, Serialize)]

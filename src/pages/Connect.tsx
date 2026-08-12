@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus, faWifi, faArrowLeft } from '@fortawesome/free-solid-svg-icons'
-import { Tabs, TabContent } from '../components/ui'
+import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus, faWifi, faArrowLeft, faUserSlash } from '@fortawesome/free-solid-svg-icons'
+import { Tabs, TabContent, Tooltip } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { Card } from '../components/ui'
@@ -33,7 +33,7 @@ function fmtErr(e: unknown): string {
 
 const skinHeadCache = new Map<string, string>()
 
-function PlayerRow({ p }: { p: ConnectorPlayer }) {
+function PlayerRow({ p, onKick }: { p: ConnectorPlayer; onKick?: () => void }) {
   const [headUrl, setHeadUrl] = useState<string | null>(() => skinHeadCache.get(p.name) ?? null)
 
   useEffect(() => {
@@ -63,23 +63,30 @@ function PlayerRow({ p }: { p: ConnectorPlayer }) {
           {p.name.charAt(0).toUpperCase()}
         </div>
       )}
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">
           {p.name}
           {p.kind === 'host' && <span className="ml-2 text-xs text-primary">房主</span>}
         </div>
         <div className="truncate text-xs text-muted-foreground">{p.vendor}</div>
       </div>
+      {onKick && (
+        <Tooltip content="踢出">
+          <Button size="sm" variant="ghost" onClick={onKick} className="h-8 w-8 shrink-0 text-destructive hover:text-destructive">
+            <FontAwesomeIcon icon={faUserSlash} />
+          </Button>
+        </Tooltip>
+      )}
     </div>
   )
 }
 
-function PlayerList({ players }: { players: ConnectorPlayer[] }) {
+function PlayerList({ players, onKick }: { players: ConnectorPlayer[]; onKick?: (p: ConnectorPlayer) => void }) {
   if (players.length === 0) return <p className="text-sm text-muted-foreground">暂无玩家</p>
   return (
     <div className="space-y-2">
       <Label>玩家列表 ({players.length})</Label>
-      {players.map((p, i) => <PlayerRow key={p.name + i} p={p} />)}
+      {players.map((p, i) => <PlayerRow key={p.machineId || p.name + i} p={p} onKick={onKick ? () => onKick(p) : undefined} />)}
     </div>
   )
 }
@@ -184,6 +191,7 @@ export default function Connect() {
   const [launchingMatch, setLaunchingMatch] = useState<string | null>(null)
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [hostError, setHostError] = useState<string | null>(null)
+  const [kickBusy, setKickBusy] = useState(false)
   const startInstanceIdRef = useRef<string | null>(null)
   const lpTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -324,6 +332,13 @@ export default function Connect() {
     }
   }
 
+  const handleKick = async (p: ConnectorPlayer) => {
+    setKickBusy(true)
+    try { await connectorApi.kickPlayer(p.machineId); await refreshStatus() }
+    catch (e) { msgError(fmtErr(e)) }
+    finally { setKickBusy(false) }
+  }
+
   // 快捷启动匹配实例：启动并自动加入房间（joinServer = 本机转发端口）
   const handleQuickLaunch = async (instanceId: string) => {
     if (!status.mcPort) { msgError('房间尚未就绪'); return }
@@ -347,14 +362,18 @@ export default function Connect() {
 
   const natTypeBadge = (() => {
     if (!natType) return null
-    const cfg: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-      cone: { label: 'UDP: 宽松  TCP: 中等', variant: 'default' },
-      symmetric: { label: 'UDP: 严格(对称)  TCP: 严格', variant: 'destructive' },
-      blocked: { label: 'UDP: 阻断  TCP: 阻断', variant: 'destructive' },
-      unknown: { label: '不确定', variant: 'secondary' },
+    const cfg: Record<string, { label: string; tooltip: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
+      cone: { label: '完全锥形', tooltip: 'UDP: 宽松  TCP: 中等', variant: 'default' },
+      symmetric: { label: '严格对称', tooltip: 'UDP: 严格  TCP: 严格', variant: 'destructive' },
+      blocked: { label: '不可穿透', tooltip: 'UDP: 阻断  TCP: 阻断', variant: 'destructive' },
+      unknown: { label: '不确定', tooltip: 'NAT 类型未知', variant: 'secondary' },
     }
-    const c = cfg[natType.type] ?? { label: natType.type, variant: 'secondary' as const }
-    return <Badge variant={c.variant}>{c.label}</Badge>
+    const c = cfg[natType.type] ?? { label: natType.type, tooltip: natType.type, variant: 'secondary' as const }
+    return (
+      <Tooltip content={c.tooltip}>
+        <Badge variant={c.variant}>{c.label}</Badge>
+      </Tooltip>
+    )
   })()
 
   const isHost = status.mode === 'host'
@@ -541,7 +560,7 @@ export default function Connect() {
                 <FontAwesomeIcon icon={faCopy} />
               </Button>
             </div>
-            <PlayerList players={status.players} />
+            <PlayerList players={status.players} onKick={(p) => { if (p.kind !== 'host' && !kickBusy) handleKick(p) }} />
             <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
               <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />关闭房间
             </Button>

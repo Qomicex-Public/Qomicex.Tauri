@@ -182,6 +182,7 @@ export interface ConnectorPlayer {
   vendor: string
   iconBase64: string | null
   kind: 'host' | 'guest'
+  machineId: string
 }
 
 export interface ConnectorGameInfo {

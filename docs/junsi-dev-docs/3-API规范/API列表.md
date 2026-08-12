@@ -1750,3 +1750,27 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 离开房间/停止联机。**Starting 阶段调用时会经 LaunchTracker 杀掉正在启动/已启动的游戏进程**（置取消信号 + kill + 清进度），后台端口轮询检测到取消后放弃建房。
 
+
+
+### 2026-08-12 更新
+> **修订（2026-08-12）—— 踢人端点：**
+
+### POST `/api/connector/kick`
+
+房主手动踢出指定 guest（仅 host 模式；踢房主自己返回 400 `CONNECTOR_KICK_SELF`，非 host 返回 400 `CONNECTOR_NOT_HOST`）。
+
+```json
+{ "machineId": "..." }
+```
+
+**响应：** `{ "status": "kicked" }`
+
+**踢出语义（三层断开，`ScaffoldingCenter::kick_player`）：**
+1. **easytier**：`disconnect_peer(easytier_id)` 关闭该玩家全部虚拟网络连接（非 QML SCF 客户端不受 Scaffolding 协议控制，仅此手段；对方若持续在线可能自动重连——fork 无控制面 deny）
+2. **Scaffolding TCP**：`ClientRegistry::disconnect_machine` 按 machine_id 定向取消连接令牌（QML guest 心跳失败后整体退出）
+3. **玩家列表**：`remove_player` 移除 + 头像映射清理
+
+依赖：`qomicex-connector-rust` rev `1207d45`（踢人能力）；easytier fork `EasyTier4QML` rev `8fccc86`（`PeerManager::close_peer` / `Easytier::disconnect_peer` 全断连接 API）。
+
+**状态响应**：`ConnectorPlayer` 增加 `machineId` 字段（踢出按钮按 machineId 调用）。
+

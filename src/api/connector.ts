@@ -47,6 +47,10 @@ export function leave(): Promise<{ status: string }> {
   return post('/connector/leave')
 }
 
+export function kickPlayer(machineId: string): Promise<{ status: string }> {
+  return post('/connector/kick', { machineId })
+}
+
 export interface GameModEntry {
   source: string
   id: string
