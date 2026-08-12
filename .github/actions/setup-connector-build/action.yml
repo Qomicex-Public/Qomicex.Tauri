@@ -55,7 +55,10 @@ runs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        # easytier build.rs 以相对路径 easytier/third_party/x86_64/ 搜索 Packet.lib
-        # （按 rustc CWD = 后端 crate 目录解析）；缺失报 LNK1181。
+        # easytier build.rs 按 TARGET 选择相对路径 link-search（按 rustc CWD = 后端
+        # crate 目录解析）：x86_64 → easytier/third_party/x86_64/，
+        # aarch64 → easytier/third_party/arm64/；缺目录报 LNK1181。
         New-Item -ItemType Directory -Force src-backend/qomicex-backend/easytier/third_party/x86_64 | Out-Null
+        New-Item -ItemType Directory -Force src-backend/qomicex-backend/easytier/third_party/arm64 | Out-Null
         Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.lib src-backend/qomicex-backend/easytier/third_party/x86_64/
+        Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/Packet.lib src-backend/qomicex-backend/easytier/third_party/arm64/

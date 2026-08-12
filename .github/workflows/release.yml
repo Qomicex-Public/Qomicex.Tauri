@@ -311,8 +311,8 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
           Move-Item -Force src-backend/qomicex-backend/target/aarch64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
-          # Packet.dll: ��� exe ���������(npcap), �湹��������� binaries/
-          Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.dll src-tauri/binaries/Packet.dll
+          # Packet.dll: ARM64 进程必须用 ARM64 版（x64 版加载失败 0xC0000135）
+          Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/Packet.dll src-tauri/binaries/Packet.dll
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
