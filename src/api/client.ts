@@ -113,8 +113,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return JSON.parse(text) as T
 }
 
-export function get<T>(path: string): Promise<T> {
-  return request<T>(path)
+export function get<T>(path: string, options?: RequestInit): Promise<T> {
+  return request<T>(path, options)
 }
 
 export function post<T>(path: string, body?: unknown, options?: RequestInit): Promise<T> {

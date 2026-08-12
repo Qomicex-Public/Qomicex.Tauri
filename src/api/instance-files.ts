@@ -145,9 +145,18 @@ export function getLanGames(instanceId: string): Promise<LanGameEntry[]> {
 }
 
 export function checkModUpdates(instanceId: string): Promise<ModUpdateEntry[]> {
-  return get<ModUpdateEntry[]>(`/instance/${instanceId}/files/mods/check-updates`)
+  // CurseForge fingerprints 批量反查可达 30-50s，用 120s 信号绕过全局 15s 超时
+  // （失败由调用方静默处理，同 enrichMods 模式）
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 120_000)
+  return get<ModUpdateEntry[]>(`/instance/${instanceId}/files/mods/check-updates`, { signal: controller.signal })
+    .finally(() => clearTimeout(timer))
 }
 
 export function batchUpdateMods(instanceId: string, updates: ModUpdateEntry[]): Promise<void> {
-  return post(`/instance/${instanceId}/files/mods/batch-update`, { updates })
+  // 批量下载替换多个 mod 耗时随数量增长，用 180s 信号绕过全局 15s 超时
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 180_000)
+  return post<void>(`/instance/${instanceId}/files/mods/batch-update`, { updates }, { signal: controller.signal })
+    .finally(() => clearTimeout(timer))
 }
