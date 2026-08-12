@@ -226,8 +226,13 @@ impl JavaRuntimeStore {
     }
 
     /// 校验单一路径（对应 ValidatePathAsync，Custom 模式 root=父父目录）。
+    ///
+    /// 兼容目录输入：传入 java 安装根目录（如 `...\jre-legacy` 或
+    /// `...\.minecraft\runtime\java-runtime-alpha`）时自动定位 `bin/java(.exe)`
+    /// 再校验（C# 原版仅支持 exe 文件路径；目录输入在手动添加场景常见）。
     async fn validate_path(&self, java_path: &str) -> Option<JavaRuntimeDto> {
         let java_path = full_path(java_path);
+        let java_path = resolve_java_executable(&java_path)?;
         let java_home = Path::new(&java_path)
             .parent()
             .and_then(|p| p.parent())
@@ -984,6 +989,33 @@ fn path_eq(a: &str, b: &str) -> bool {
     } else {
         a == b
     }
+}
+
+/// 路径归一为 java 可执行文件：已是 exe 文件 → 原样；目录 → 递归找
+/// `bin/java(.exe)`（validate_path 目录输入兼容）。
+fn resolve_java_executable(p: &str) -> Option<String> {
+    let path = Path::new(p);
+    if path.is_file() {
+        return Some(p.to_string());
+    }
+    if !path.is_dir() {
+        return None;
+    }
+    let java_name: &str = if cfg!(windows) { "java.exe" } else { "java" };
+    let mut found = Vec::new();
+    collect_files_recursive(path, &mut found);
+    found.into_iter().find(|f| {
+        let name_ok = f
+            .file_name()
+            .map(|n| n.to_string_lossy().as_ref() == java_name)
+            .unwrap_or(false);
+        let in_bin = f
+            .parent()
+            .and_then(|par| par.file_name())
+            .map(|n| n.eq_ignore_ascii_case("bin"))
+            .unwrap_or(false);
+        name_ok && in_bin
+    }).map(|f| f.to_string_lossy().into_owned())
 }
 
 fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
