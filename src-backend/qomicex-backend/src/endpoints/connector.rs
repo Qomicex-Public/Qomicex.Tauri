@@ -716,7 +716,20 @@ async fn join_room(
 
     match joined {
         Ok((guest, mc_host, mc_port)) => {
-            *conn.mode.lock().await = Mode::Guest(guest);
+            *conn.mode.lock().await = Mode::Guest(guest.clone());
+            // 连接丢失监听（被踢/房主关房/网络断开）：guest 端自动退出房间复位 Idle。
+            // 否则 status 恒返回 mode=guest、玩家列表为空，UI 卡在"还在房间里"。
+            // watch 语义：初始 false，心跳/发送失败时置 true 并唤醒。
+            let mut lost_rx = guest.connection_lost_rx();
+            tokio::spawn(async move {
+                while !*lost_rx.borrow() {
+                    if lost_rx.changed().await.is_err() {
+                        return; // 发送端关闭（guest 释放）
+                    }
+                }
+                tracing::info!("联机: guest 连接丢失，自动退出房间");
+                reset_connector_state(false).await;
+            });
             Ok(Json(JoinResponse {
                 mc_host,
                 mc_port,
@@ -858,9 +871,13 @@ async fn status() -> ApiResult<Json<ConnectorStatusResponse>> {
                 }
                 Err(e) => resp.error = Some(e.to_string()),
             }
-            // 房主版本信息（qml:game_info 扩展协议）
+            // 房主版本信息（qml:game_info 扩展协议）；写回缓存供 match_instances 过滤
+            // （此前只写响应不写缓存，guest 端过滤条件永远拿空版本 → 列出全部实例）
             match guest.send_json::<ConnectorGameInfo>("qml:game_info").await {
-                Ok(info) => resp.game_info = Some(info),
+                Ok(info) => {
+                    resp.game_info = Some(info.clone());
+                    *conn.game_info.write().unwrap() = Some(info);
+                }
                 Err(_) => {}
             }
         }
@@ -893,6 +910,25 @@ pub struct MatchInstancesResponse {
     pub instances: Vec<MatchedInstance>,
 }
 
+/// 主动向房主拉取版本信息（guest 缓存为空时兜底；失败返回 default）。
+async fn fetch_host_game_info() -> ConnectorGameInfo {
+    let conn = connector();
+    let guest_opt = {
+        let mode = conn.mode.lock().await;
+        match &*mode {
+            Mode::Guest(g) => Some(g.clone()),
+            _ => None,
+        }
+    };
+    match guest_opt {
+        Some(g) => g
+            .send_json::<ConnectorGameInfo>("qml:game_info")
+            .await
+            .unwrap_or_default(),
+        None => ConnectorGameInfo::default(),
+    }
+}
+
 /// GET /connector/match-instances — 房客端：按房主版本/loader 筛选本地实例，
 /// 扫描各实例 mods（core 管线）与房主 mods 比对，返回匹配结果（前端展示快捷启动）。
 async fn match_instances(
@@ -900,7 +936,26 @@ async fn match_instances(
 ) -> ApiResult<Json<MatchInstancesResponse>> {
     let conn = connector();
     let room_mods = conn.room_mods.read().unwrap().clone().unwrap_or_default();
-    let info = conn.game_info.read().unwrap().clone().unwrap_or_default();
+    // guest 端 game_info 由 status() 轮询写回缓存；首次匹配请求可能早于首轮轮询
+    // （前端只在进房时调一次），缓存为空时主动向房主拉取一次，保证版本过滤生效。
+    // 先取出再 match：scrutinee 临时 guard（!Send）若存活进含 await 的分支会使 future 非 Send
+    let cached_info = conn.game_info.read().unwrap().clone();
+    let info = match cached_info {
+        Some(i) => i,
+        None => {
+            let i = fetch_host_game_info().await;
+            *conn.game_info.write().unwrap() = Some(i.clone());
+            i
+        }
+    };
+    // 房主无版本信息（host_port 手动建房 / 不支持 qml:game_info）：无法筛选，
+    // 返回空列表避免列出全部实例误导（前端提示房主未提供版本信息）。
+    if info.game_version.is_empty() {
+        return Ok(Json(MatchInstancesResponse {
+            mods: room_mods,
+            instances: Vec::new(),
+        }));
+    }
 
     let candidates: Vec<crate::services::instance::GameInstance> = state
         .instance
@@ -961,7 +1016,13 @@ async fn match_instances(
                     hashes
                 }
             };
-            let matched = !room_hashes.is_empty() && room_hashes.is_subset(&local_hashes);
+            // 房主无 mods（原版/未发布）：仅当本地实例也无 mods 才算一致，
+            // 否则原版房主永远匹配不上（空集 ⊄ 非空集被原逻辑排除）。
+            let matched = if room_hashes.is_empty() {
+                local_hashes.is_empty()
+            } else {
+                room_hashes.is_subset(&local_hashes)
+            };
             MatchedInstance {
                 instance_id: inst.id,
                 name: inst.name,
@@ -985,22 +1046,14 @@ async fn match_instances(
     }))
 }
 
-/// POST /connector/leave — 退出房间/关闭房间。
-async fn leave(State(state): State<SharedState>) -> ApiResult<Json<StatusMessageResponse>> {
+/// 复位联机会话到 Idle：close_all 回收托管实例 + 清空全部会话缓存。
+/// `notify_leave` 为 true 时向房主发送 qml:player_leave 优雅退出通知
+/// （手动 leave 用；连接丢失场景传 false——TCP 可能已断，发送会等读超时拖慢清理）。
+async fn reset_connector_state(notify_leave: bool) {
     let conn = connector();
-    let mode = conn.mode.lock().await;
-    match &*mode {
-        Mode::Idle => {}
-        Mode::Starting | Mode::Host(_) | Mode::Guest(_) => {
-            // Starting：杀正在启动/已启动的游戏进程（LaunchTracker 置取消 + 杀进程 + 清进度），
-            // 后台端口轮询检测到取消信号后自动放弃建房。
-            if let Mode::Starting = &*mode {
-                if let Some(id) = conn.starting_instance.read().unwrap().as_ref() {
-                    state.launch_tracker.stop(id);
-                }
-            }
-            // guest 优雅退出：通知 center 立即移除自己（qml:player_leave），
-            // 否则房主端列表要等心跳超时（15s）才消失。
+    {
+        let mode = conn.mode.lock().await;
+        if notify_leave {
             if let Mode::Guest(guest) = &*mode {
                 let _ = guest
                     .send_json_req::<PlayerLeaveNotify, bool>(
@@ -1011,11 +1064,10 @@ async fn leave(State(state): State<SharedState>) -> ApiResult<Json<StatusMessage
                     )
                     .await;
             }
-            conn.client.close_all(conn.ct.clone()).await;
-            *conn.game_info.write().unwrap() = None;
         }
     }
-    drop(mode);
+    conn.client.close_all(conn.ct.clone()).await;
+    *conn.game_info.write().unwrap() = None;
     *conn.starting_instance.write().unwrap() = None;
     *conn.host_center.write().unwrap() = None;
     conn.icon_map.write().unwrap().clear();
@@ -1023,6 +1075,22 @@ async fn leave(State(state): State<SharedState>) -> ApiResult<Json<StatusMessage
     *conn.host_instance.write().unwrap() = None;
     *conn.host_mods.write().unwrap() = None;
     *conn.mode.lock().await = Mode::Idle;
+}
+
+/// POST /connector/leave — 退出房间/关闭房间。
+async fn leave(State(state): State<SharedState>) -> ApiResult<Json<StatusMessageResponse>> {
+    let conn = connector();
+    {
+        let mode = conn.mode.lock().await;
+        // Starting：杀正在启动/已启动的游戏进程（LaunchTracker 置取消 + 杀进程 + 清进度），
+        // 后台端口轮询检测到取消信号后自动放弃建房。
+        if let Mode::Starting = &*mode {
+            if let Some(id) = conn.starting_instance.read().unwrap().as_ref() {
+                state.launch_tracker.stop(id);
+            }
+        }
+    }
+    reset_connector_state(true).await;
     Ok(Json(StatusMessageResponse {
         status: "left".to_string(),
     }))
@@ -1041,7 +1109,15 @@ async fn kick_player(Json(req): Json<KickRequest>) -> ApiResult<Json<StatusMessa
             "仅房主可踢出玩家",
         ));
     };
-    if req.machine_id == machine_id() {
+    // 权威自踢校验：以 center 玩家列表里 kind==Host 的 machine_id 为准
+    // （比机器码重算更可靠——machine_code 依赖 getmac 首个有效 MAC，
+    // VPN 网卡顺序变化时可能漂移导致自踢校验失效、房主断开自己的 easytier）。
+    let host_machine_id = center
+        .get_players()
+        .iter()
+        .find(|p| p.kind == PlayerKind::Host)
+        .map(|p| p.machine_id.clone());
+    if Some(&req.machine_id) == host_machine_id.as_ref() || req.machine_id == machine_id() {
         return Err(ApiError::bad_request(
             "CONNECTOR_KICK_SELF",
             "不能踢出房主自己",

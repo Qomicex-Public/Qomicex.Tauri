@@ -14,7 +14,8 @@ import { useMessageBox } from '../components/ui'
 import { ApiError } from '../api/client.ts'
 import * as connectorApi from '../api/connector.ts'
 import type { MatchInstancesResponse } from '../api/connector.ts'
-import { getInstances, launchInstance, getLaunchProgress } from '../api/instance.ts'
+import { getInstances, getLaunchProgress } from '../api/instance.ts'
+import { useRunning } from '../contexts/RunningContext.tsx'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
 import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult, LaunchProgress } from '../types/index.ts'
 
@@ -86,7 +87,7 @@ function PlayerList({ players, onKick }: { players: ConnectorPlayer[]; onKick?: 
   return (
     <div className="space-y-2">
       <Label>玩家列表 ({players.length})</Label>
-      {players.map((p, i) => <PlayerRow key={p.machineId || p.name + i} p={p} onKick={onKick ? () => onKick(p) : undefined} />)}
+      {players.map((p, i) => <PlayerRow key={p.machineId || p.name + i} p={p} onKick={onKick && p.kind !== 'host' ? () => onKick(p) : undefined} />)}
     </div>
   )
 }
@@ -96,15 +97,17 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   curseforge: { label: 'CurseForge', cls: 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/30' },
 }
 
-function RoomModsCard({ data, onLaunch, launching }: {
+function RoomModsCard({ data, onLaunch, launching, hostVersion }: {
   data: MatchInstancesResponse | null
   onLaunch: (instanceId: string) => void
   launching: string | null
+  hostVersion: string
 }) {
   const mods = data?.mods ?? []
   const instances = data?.instances ?? []
   const matched = instances.filter(i => i.matched)
   const unmatched = instances.filter(i => !i.matched)
+  const noHostInfo = !hostVersion
   return (
     <div className="space-y-3">
       <div>
@@ -129,7 +132,10 @@ function RoomModsCard({ data, onLaunch, launching }: {
         )}
       </div>
       <div>
-        <Label>匹配实例（{mods.length === 0 ? '房主未发布 mods' : `本地 ${instances.length} 个同版本实例`}）</Label>
+        <Label>匹配实例（{noHostInfo ? '房主未提供版本信息' : mods.length === 0 ? '房主未发布 mods' : `本地 ${instances.length} 个同版本实例`}）</Label>
+        {noHostInfo && (
+          <p className="text-xs text-muted-foreground">房主未提供版本信息，无法匹配本地实例</p>
+        )}
         {instances.length === 0 && mods.length > 0 && (
           <p className="text-xs text-muted-foreground">没有与房主游戏版本/loader 相同的本地实例</p>
         )}
@@ -169,6 +175,7 @@ function RoomModsCard({ data, onLaunch, launching }: {
 
 export default function Connect() {
   const { error: msgError } = useMessageBox()
+  const { launchInstance, watchInstance } = useRunning()
   const [status, setStatus] = useState<ConnectorStatus>({
     mode: 'idle', roomCode: null, mcHost: null, mcPort: null, gameInfo: null, players: [], error: null,
   })
@@ -304,11 +311,17 @@ export default function Connect() {
 
   const handleHostInstance = async () => {
     if (!selectedInstance) { msgError('请选择一个实例'); return }
+    const inst = instances.find(i => i.id === selectedInstance)
     setHostError(null)
     setLaunchProgress(null)
     startInstanceIdRef.current = selectedInstance
     setBusy(true)
-    try { await connectorApi.hostByInstance(selectedInstance); await refreshStatus() }
+    try {
+      await connectorApi.hostByInstance(selectedInstance)
+      // 后端代启：注册进"运行中的游戏"（轮询进度直至 running/终态）
+      if (inst) watchInstance(inst.id, inst.name)
+      await refreshStatus()
+    }
     catch (e) { startInstanceIdRef.current = null; msgError(fmtErr(e)) }
     finally { setBusy(false) }
   }
@@ -344,8 +357,9 @@ export default function Connect() {
     if (!status.mcPort) { msgError('房间尚未就绪'); return }
     setLaunchingMatch(instanceId)
     try {
-      const result = await launchInstance(instanceId, { joinServer: `127.0.0.1:${status.mcPort}` })
-      if (!result.success) msgError(result.error || '启动失败')
+      const inst = matchData?.instances.find(i => i.instanceId === instanceId)
+      // 走 RunningContext：进入"运行中的游戏"、崩溃弹窗、启动/退出通知
+      await launchInstance(instanceId, inst?.name || instanceId, undefined, { joinServer: `127.0.0.1:${status.mcPort}` })
     } catch (e) { msgError(fmtErr(e)) }
     finally { setLaunchingMatch(null) }
   }
@@ -591,7 +605,7 @@ export default function Connect() {
                 <FontAwesomeIcon icon={faSpinner} spin /> 正在扫描本地实例与房主 mods 比对...
               </div>
             ) : (
-              <RoomModsCard data={matchData} onLaunch={handleQuickLaunch} launching={launchingMatch} />
+              <RoomModsCard data={matchData} onLaunch={handleQuickLaunch} launching={launchingMatch} hostVersion={status.gameInfo?.gameVersion ?? ''} />
             )}
             <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
               <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />退出房间

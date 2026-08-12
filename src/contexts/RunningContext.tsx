@@ -27,6 +27,7 @@ export interface RunningContextValue {
   launchProgress: LaunchProgress | null
   launchingInstanceId: string | null
   launchInstance: (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions) => Promise<LaunchResult>
+  watchInstance: (id: string, name: string) => void
   cancelLaunch: (id?: string) => Promise<void>
   killInstance: (id: string) => Promise<void>
   setNotifyImpl: (fn: (msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void) => void
@@ -73,6 +74,70 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     const ref = pollRefs.current.get(id)
     if (ref) { clearTimeout(ref); pollRefs.current.delete(id) }
   }, [])
+
+  /** 轮询启动进度直到终态（running 注册进运行列表 / failed/crashed 弹窗 / completed 移除）。
+   * 供 launchInstance（启动后）与 watchInstance（联机房主由后端代启，仅监听）复用。 */
+  const startPoll = useCallback((id: string, name: string) => {
+    const poll = async () => {
+      try {
+        const p = await getLaunchProgress(id)
+        if (p.stage === 'crashed' || p.stage === 'failed') {
+          setLaunchProgress(p)
+          clearInstancePoll(id)
+          setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
+          setLaunchingInstanceId(null)
+          notifyRef.current?.('游戏已崩溃', 'error')
+          // Auto-trigger crash analysis dialog
+          const crashTitle = p.stage === 'crashed' ? '游戏崩溃' : '启动失败'
+          const crashMessage = p.error || (p.stage === 'crashed' ? `游戏异常退出 (代码: ${p.exitCode ?? '?'})` : '启动过程中出现错误')
+          setCrashDialogState({
+            instanceId: id,
+            title: crashTitle,
+            message: crashMessage,
+            detail: p.error || null,
+            crashReport: p.crashReport || null,
+            args: p.arguments || null,
+            loading: true,
+          })
+          analyzeCrash(id)
+            .then(res => {
+              setCrashDialogState(prev => prev ? { ...prev, analysis: res.analysis, mcloGsUrl: res.mcloGsUrl, qrCodeBase64: res.qrCodeBase64, loading: false } : null)
+            })
+            .catch(() => {
+              setCrashDialogState(prev => prev ? { ...prev, loading: false, error: '分析服务暂不可用' } : null)
+            })
+        } else if (p.stage === 'completed') {
+          setLaunchProgress(null)
+          clearInstancePoll(id)
+          setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
+          setLaunchingInstanceId(null)
+          notifyRef.current?.('游戏已退出', 'info')
+        } else if (p.stage === 'running') {
+          setLaunchProgress(null)
+          setRunningInstances(prev => {
+            if (prev.some(r => r.instanceId === id)) return prev
+            notifyRef.current?.('游戏已启动', 'success')
+            return [...prev, { instanceId: id, name, startedAt: Date.now(), stage: 'running', processId: p.processId }]
+          })
+          pollRefs.current.set(id, window.setTimeout(poll, 5000))
+        } else {
+          setLaunchProgress(p)
+          pollRefs.current.set(id, window.setTimeout(poll, 500))
+        }
+      } catch {
+        clearInstancePoll(id)
+        setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
+        setLaunchProgress(null)
+        setLaunchingInstanceId(null)
+      }
+    }
+    pollRefs.current.set(id, window.setTimeout(poll, 500))
+  }, [clearInstancePoll])
+
+  /** 监听一个由后端代启（联机 host/instance）的实例，进入运行列表并跟踪终态。 */
+  const watchInstance = useCallback((id: string, name: string) => {
+    startPoll(id, name)
+  }, [startPoll])
 
   const launchInstance = useCallback(async (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions): Promise<LaunchResult> => {
     launchingIdRef.current = id
@@ -133,62 +198,9 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       return result
     }
 
-    const poll = async () => {
-      try {
-        const p = await getLaunchProgress(id)
-        if (p.stage === 'crashed' || p.stage === 'failed') {
-          setLaunchProgress(p)
-          clearInstancePoll(id)
-          setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
-          setLaunchingInstanceId(null)
-          notifyRef.current?.('游戏已崩溃', 'error')
-          // Auto-trigger crash analysis dialog
-          const crashTitle = p.stage === 'crashed' ? '游戏崩溃' : '启动失败'
-          const crashMessage = p.error || (p.stage === 'crashed' ? `游戏异常退出 (代码: ${p.exitCode ?? '?'})` : '启动过程中出现错误')
-          setCrashDialogState({
-            instanceId: id,
-            title: crashTitle,
-            message: crashMessage,
-            detail: p.error || null,
-            crashReport: p.crashReport || null,
-            args: p.arguments || null,
-            loading: true,
-          })
-          analyzeCrash(id)
-            .then(res => {
-              setCrashDialogState(prev => prev ? { ...prev, analysis: res.analysis, mcloGsUrl: res.mcloGsUrl, qrCodeBase64: res.qrCodeBase64, loading: false } : null)
-            })
-            .catch(() => {
-              setCrashDialogState(prev => prev ? { ...prev, loading: false, error: '分析服务暂不可用' } : null)
-            })
-        } else if (p.stage === 'completed') {
-          setLaunchProgress(null)
-          clearInstancePoll(id)
-          setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
-          setLaunchingInstanceId(null)
-          notifyRef.current?.('游戏已退出', 'info')
-        } else if (p.stage === 'running') {
-          setLaunchProgress(null)
-          setRunningInstances(prev => {
-            if (prev.some(r => r.instanceId === id)) return prev
-            notifyRef.current?.('游戏已启动', 'success')
-            return [...prev, { instanceId: id, name, startedAt: Date.now(), stage: 'running', processId: p.processId }]
-          })
-          pollRefs.current.set(id, window.setTimeout(poll, 5000))
-        } else {
-          setLaunchProgress(p)
-          pollRefs.current.set(id, window.setTimeout(poll, 500))
-        }
-      } catch {
-        clearInstancePoll(id)
-        setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
-        setLaunchProgress(null)
-        setLaunchingInstanceId(null)
-      }
-    }
-    pollRefs.current.set(id, window.setTimeout(poll, 500))
+    startPoll(id, name)
     return result
-  }, [clearInstancePoll, confirm])
+  }, [clearInstancePoll, confirm, startPoll])
 
   const cancelLaunch = useCallback(async (id?: string) => {
     const targetId = id || launchingIdRef.current
@@ -216,7 +228,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   }, [clearInstancePoll])
 
   return (
-    <RunningCtx.Provider value={{ runningInstances, launchProgress, launchingInstanceId, launchInstance, cancelLaunch, killInstance, setNotifyImpl, crashDialogState, clearCrashDialog, showLaunchError }}>
+    <RunningCtx.Provider value={{ runningInstances, launchProgress, launchingInstanceId, launchInstance, watchInstance, cancelLaunch, killInstance, setNotifyImpl, crashDialogState, clearCrashDialog, showLaunchError }}>
       {children}
     </RunningCtx.Provider>
   )
