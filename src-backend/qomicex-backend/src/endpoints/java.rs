@@ -638,7 +638,17 @@ async fn search(State(s): State<SharedState>, Query(q): Query<ModeQuery>) -> Api
         ..Default::default()
     };
     let results = java_data(&s).core.java_provider().search(&options).await.map_err(map_core_error)?;
-    Ok(Json(results.into_iter().map(JavaRuntimeDto::from).collect()))
+    // 合并启动器自带的下载目录（C# 原版只有 /list 合并；前端扫描走 /search，
+    // 不加则下载安装的 Java 永远不出现在扫描结果，见 javaStore.scanRuntimes）
+    let data = java_data(&s);
+    let mut merged: HashMap<String, JavaRuntimeDto> = HashMap::new();
+    for r in results {
+        merged.insert(full_path(&r.path), JavaRuntimeDto::from(r));
+    }
+    for r in data.store.scan_java_download_dir().await {
+        merged.entry(full_path(&r.path)).or_insert(r);
+    }
+    Ok(Json(merged.into_values().collect()))
 }
 
 async fn get_custom(State(s): State<SharedState>) -> ApiResult<Json<Vec<JavaRuntimeDto>>> {
