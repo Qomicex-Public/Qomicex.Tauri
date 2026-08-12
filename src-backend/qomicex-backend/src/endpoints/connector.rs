@@ -994,11 +994,16 @@ async fn tcp_listen_table() -> Vec<(u16, i32)> {
 /// 映射端口一致 → cone，变化 → symmetric，无响应 → blocked。
 async fn stun_detect_nat() -> Option<NatTypeResult> {
     const STUN_SERVERS: &[&str] = &["stun.qq.com:3478", "stun.l.google.com:19302"];
+    // ⚠️ 修复：单服务器失败不再 `?` 短路返回 None，遍历全部服务器直到有响应
+    // （原实现 stun.qq.com 无响应即返回 None → NAT 类型恒为 unknown）
     for server in STUN_SERVERS {
-        let mapped1 = stun_binding_once(server).await?;
+        let Some(mapped1) = stun_binding_once(server).await else {
+            continue;
+        };
         // 用同一本地端口第二次请求
-        let port = mapped1.local_port;
-        let mapped2 = stun_binding_once_on(server, port).await?;
+        let Some(mapped2) = stun_binding_once_on(server, mapped1.local_port).await else {
+            continue;
+        };
         let r#type = if mapped1.mapped_port == mapped2.mapped_port {
             "cone"
         } else {
@@ -1008,6 +1013,7 @@ async fn stun_detect_nat() -> Option<NatTypeResult> {
             r#type: r#type.to_string(),
         });
     }
+    // 所有服务器均无响应 → blocked
     Some(NatTypeResult {
         r#type: "blocked".to_string(),
     })

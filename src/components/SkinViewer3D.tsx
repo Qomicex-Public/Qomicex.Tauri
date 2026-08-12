@@ -29,7 +29,6 @@ export function SkinViewer3D({ textureUrl, model = 'classic', className, width =
       skin: textureUrl,
       model: model === 'slim' ? 'slim' : 'default',
       background,
-      panorama: panoramaUrl,
       zoom,
     })
     viewer.autoRotate = true
@@ -52,7 +51,9 @@ export function SkinViewer3D({ textureUrl, model = 'classic', className, width =
 
   useEffect(() => {
     if (viewerRef.current && panoramaUrl) {
-      viewerRef.current.loadPanorama(panoramaUrl)
+      // loadPanorama 返回 Promise：加载失败（如 WebGL 纹理超限）时静默忽略，
+      // 回落到 background 色，避免未处理 rejection
+      viewerRef.current.loadPanorama(panoramaUrl).catch(() => {})
     }
   }, [panoramaUrl])
 

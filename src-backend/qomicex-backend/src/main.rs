@@ -26,6 +26,17 @@ fn init_tracing() {
 
 #[tokio::main]
 async fn main() {
+    // 控制台代码页默认 936 (GBK)，UTF-8 中文日志输出到控制台会乱码；
+    // 启动即切换为 UTF-8 代码页（SetConsoleOutputCP 仅在 Windows 存在）。
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::SetConsoleOutputCP;
+        const CP_UTF8: u32 = 65001;
+        unsafe {
+            SetConsoleOutputCP(CP_UTF8);
+        }
+    }
+
     // 先构建 state（内部注册全局 trace 缓冲），再初始化 tracing 与 stderr 捕获，
     // 保证日志写入有目标可落。
     let state = AppState::build();
