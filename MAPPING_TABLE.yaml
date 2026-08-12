@@ -116,7 +116,7 @@ endpoints:
 
   GET /api/instance/{id}/files/server-ping?address=:
     new: server_ping
-    notes: "GetServerStateByAddress → ServerStateResultDto；超时 → isOnline=false + errorMessage='连接超时'"
+    notes: "GetServerStateByAddress → ServerStateResultDto；超时 → isOnline=false + errorMessage='连接超时'；Rust async 变体：C# GetServerStateByAddress → get_server_state_by_address_async（后端 axum handler 直调 async 编排核心，避免同步变体在 tokio worker 线程内 block_on 的 'Cannot start a runtime from within a runtime' panic），同步方法 get_server_state_by_address 保留兼容（block_on 委托同一核心）"
 
   GET /api/instance/{id}/files/lan-games:
     new: lan_games

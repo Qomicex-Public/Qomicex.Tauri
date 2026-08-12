@@ -1532,7 +1532,8 @@ async fn delete_server(
 }
 
 /// 查询服务器状态（C# GetServerStateByAddress，?address=xxx；
-/// ServerState camelCase 序列化与前端 ServerState 一致，直通返回）。
+/// ServerState camelCase 序列化与前端 ServerState 一致，直通返回；
+/// async 变体直调 core 编排核心，避免同步变体在 tokio worker 线程内 block_on panic）。
 async fn server_ping(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
@@ -1546,7 +1547,7 @@ async fn server_ping(
         .core
         .local_resource_provider()
         .create_server_manager(&r.version, r.isolated);
-    Ok(Json(sm.get_server_state_by_address(&address)))
+    Ok(Json(sm.get_server_state_by_address_async(&address).await))
 }
 
 /// 发现局域网服务器（C# DiscoverLanServers(TimeSpan.FromSeconds(5))）。
