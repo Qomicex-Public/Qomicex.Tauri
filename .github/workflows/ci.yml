@@ -24,7 +24,9 @@ jobs:
       - run: pnpm audit --audit-level moderate || true
 
   backend-check:
-    if: ${{ secrets.QOMICEX_PAT }}
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
