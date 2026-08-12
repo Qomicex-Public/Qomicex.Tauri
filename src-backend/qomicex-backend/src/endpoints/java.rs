@@ -977,7 +977,10 @@ fn full_path(p: &str) -> String {
 
 fn path_eq(a: &str, b: &str) -> bool {
     if cfg!(windows) {
-        a.eq_ignore_ascii_case(b)
+        // core 的 normalize_path 统一正斜杠（util/platform.rs），后端 full_path
+        // 保留反斜杠 → 比较前归一化分隔符，否则 `C:/a` vs `C:\a` 恒不等（手动添加
+        // Java / 下载注册均 404 JAVA_RUNTIME_NOT_FOUND）
+        a.replace('\\', "/").eq_ignore_ascii_case(&b.replace('\\', "/"))
     } else {
         a == b
     }
