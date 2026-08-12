@@ -177,13 +177,70 @@ jobs:
           echo "License: ${{ steps.construct.outputs.licenseRequired }}"
           echo "Required: ${{ steps.construct.outputs.required }}"
 
+  quality-gate:
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - name: Setup connector build
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Cargo check
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: cargo check --manifest-path src-backend/qomicex-backend/Cargo.toml
+      - name: Cargo test
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml
+      - name: Tauri tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib plugin_gateway
+      - name: Cargo fmt
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+        run: |
+          cargo fmt --manifest-path src-backend/qomicex-backend/Cargo.toml -- --check
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Cargo clippy
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: |
+          cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
+          cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
+      - name: Cargo audit
+        run: cargo install cargo-audit && cargo audit --manifest-path src-backend/qomicex-backend/Cargo.toml
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      - run: pnpm run build
+      - run: pnpm audit --audit-level moderate || true
+      - run: pnpm --filter @qomicex/plugin-ui audit --audit-level moderate || true
+
   windows-x64:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'x64'))
-    needs: [setup]
+    needs: [setup, quality-gate]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -276,7 +333,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'arm64'))
-    needs: [setup]
+    needs: [setup, quality-gate]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -369,7 +426,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'x64'))
-    needs: [setup]
+    needs: [setup, quality-gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -462,7 +519,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'arm64'))
-    needs: [setup]
+    needs: [setup, quality-gate]
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -553,7 +610,7 @@ jobs:
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'loongarch64'))
-    needs: [setup]
+    needs: [setup, quality-gate]
     runs-on: [self-hosted, loongarch64]
     steps:
       - uses: actions/checkout@v4
@@ -645,7 +702,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'arm64'))
-    needs: [setup]
+    needs: [setup, quality-gate]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -757,7 +814,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'x64'))
-    needs: [setup]
+    needs: [setup, quality-gate]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -864,11 +921,11 @@ jobs:
             src-tauri/target/x86_64-apple-darwin/release/bundle/**/*.dmg.sig
 
   release:
-    if: success()
     permissions:
       contents: write
     needs:
       - setup
+      - quality-gate
       - windows-x64
       - windows-arm64
       - linux-x64
