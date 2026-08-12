@@ -37,6 +37,18 @@ cargo check --manifest-path C:\Project\Qomicex.Tauri\src-backend\qomicex-backend
 - `options` 系列 501 stub（per-instance OptionsProvider 未移植）—— 本次范围外
 - core 子模块 origin/main 有他人提交 b26fcfe（编译修复），本地 rebase 已合并
 
+## 补充修复（阶段五运行时验证发现）
+
+- **Bug**：`server_ping` 调用 core 同步方法 `get_server_state_by_address`（sync-over-async，内部 `Handle::current().block_on`）→ 在 axum tokio worker 线程内 panic "Cannot start a runtime from within a runtime"（运行时复现）
+- **修复**（core 062d4d2 + 后端 4eae389）：
+  - core：提取 async 编排核心为固有方法 `get_server_state_by_address_inner`；trait 新增 `get_server_state_by_address_async`；同步方法 block_on 委托（兼容既有调用方）
+  - 后端：`server_ping` 改 `.await` 调用 async 变体
+- **运行时复测**（1.12.2 实例 f61c23f8-a40，后端 PID 42984）：
+  - `server-ping?address=2B2T.XIN:25565` → 200，`isOnline=true, ping=74, 101/1024 玩家, version=BungeeCord 1.8.x-26.1.x`
+  - `server-ping?address=192.0.2.1:25565`（不可达）→ 200，`isOnline=false, errorMessage=The operation was canceled.`，无 panic
+  - `lan-games` → 200，空列表（5s 扫描正常）
+  - 后端日志无 "Cannot start a runtime from within a runtime"
+
 ## 下一步
 
-阶段五：QA 快照比对（源 C# 端点语义 vs 目标 Rust 实现）。
+阶段六：合并回 main + ADR。
