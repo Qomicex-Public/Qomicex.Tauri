@@ -54,7 +54,7 @@ struct FileEntryDto {
     extension: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ModMetadataDto {
     file_name: String,
@@ -205,6 +205,121 @@ fn remove_progress(id: &str) {
 }
 
 // =====================================================================
+// Mods list disk cache (6h TTL) + stale-while-revalidate refresh lock
+// =====================================================================
+
+const MODS_CACHE_TTL_SECS: i64 = 6 * 3600;
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModsCacheEntry {
+    fetched_at: i64,
+    entries: Vec<ModMetadataDto>,
+}
+
+static REFRESH_LOCK: LazyLock<Mutex<HashMap<String, ()>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn mods_cache_path(data_dir: &PathBuf, instance_id: &str) -> PathBuf {
+    data_dir
+        .join("QML")
+        .join("mods-cache")
+        .join(format!("{instance_id}-mods.json"))
+}
+
+fn read_mods_cache(data_dir: &PathBuf, instance_id: &str) -> Option<Vec<ModMetadataDto>> {
+    let path = mods_cache_path(data_dir, instance_id);
+    let bytes = std::fs::read(path).ok()?;
+    let cache: ModsCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    let now = now_secs();
+    if now - cache.fetched_at < MODS_CACHE_TTL_SECS {
+        Some(cache.entries)
+    } else {
+        None
+    }
+}
+
+fn read_mods_cache_stale(data_dir: &PathBuf, instance_id: &str) -> Option<Vec<ModMetadataDto>> {
+    let path = mods_cache_path(data_dir, instance_id);
+    let bytes = std::fs::read(path).ok()?;
+    let cache: ModsCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    Some(cache.entries)
+}
+
+fn write_mods_cache(data_dir: &PathBuf, instance_id: &str, entries: Vec<ModMetadataDto>) {
+    let path = mods_cache_path(data_dir, instance_id);
+    let _ = std::fs::create_dir_all(path.parent().unwrap());
+    let cache = ModsCacheEntry {
+        fetched_at: now_secs(),
+        entries,
+    };
+    if let Ok(json) = serde_json::to_vec(&cache) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+async fn refresh_mods_cache(
+    state: &SharedState,
+    instance_id: &str,
+) -> ApiResult<Vec<ModMetadataDto>> {
+    let r = resolve(instance_id, state)?;
+    let mods = state
+        .core
+        .local_resource_provider()
+        .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
+    let mut list = mods
+        .get_mod_list(None)
+        .await
+        .map_err(map_core_error)?;
+    mods.enrich_mod_ids(&mut list).await;
+    let mut dtos = map_mod_dtos(&list);
+    fill_remote_icons(&state.http_client, &state.curse_forge_api_key, &mut dtos).await;
+    let mcmod = crate::endpoints::mcmod::mcmod_data();
+    let result: Vec<ModMetadataDto> = dtos
+        .iter()
+        .map(|d| {
+            let cn = mcmod.lookup_with_id(&d.name);
+            let cn = cn.or_else(|| {
+                let local_name = list
+                    .iter()
+                    .find(|m| Path::new(&m.file_path).file_name().map(|n| n.to_string_lossy().into_owned()) == Some(d.file_name.clone()))
+                    .map(|m| m.name.clone())
+                    .unwrap_or_default();
+                mcmod.lookup_with_id(&local_name)
+            });
+            ModMetadataDto {
+                file_name: d.file_name.clone(),
+                name: d.name.clone(),
+                version: d.version.clone(),
+                description: d.description.clone(),
+                authors: d.authors.clone(),
+                icon_url: d.icon_url.clone(),
+                icon_base64: d.icon_base64.clone(),
+                curse_forge_id: d.curse_forge_id,
+                modrinth_id: d.modrinth_id.clone(),
+                modrinth_version_id: d.modrinth_version_id.clone(),
+                curse_forge_file_id: d.curse_forge_file_id,
+                source: d.source.clone(),
+                mcmod_id: cn.as_ref().map(|(_, id)| *id),
+                chinese_name: cn.as_ref().map(|(c, _)| c.clone()),
+                active: d.active,
+                file_size: d.file_size,
+                last_modified: d.last_modified.clone(),
+            }
+        })
+        .collect();
+    write_mods_cache(&state.data_dir, instance_id, result.clone());
+    Ok(result)
+}
+
+// =====================================================================
 // Router (C# MapGroup prefix is "/api/instance/{id}/files")
 // =====================================================================
 
@@ -232,6 +347,14 @@ pub fn router() -> Router<SharedState> {
             post(batch_delete_mods),
         )
         .route("/instance/{id}/files/mods", delete(delete_mod))
+        .route(
+            "/instance/{id}/files/mods/check-updates",
+            get(check_mod_updates),
+        )
+        .route(
+            "/instance/{id}/files/mods/batch-update",
+            post(batch_update_mods),
+        )
         // resourcepacks
         .route(
             "/instance/{id}/files/resourcepacks",
@@ -510,26 +633,22 @@ async fn mods_metadata(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Response> {
-    let r = resolve(&id, &state)?;
-    let mods = state
-        .core
-        .local_resource_provider()
-        .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
-    set_progress(&id, 0, 0);
-    // 列表展示用 light 扫描（本地扫描 + 元数据解析，秒级）：MR/CF 网络反查（mr/cf id、图标）
-    // 会让 180+ mods 的请求耗时 20-50s，远超前端 15s 全局请求超时 → mod 列表永远显示不出来。
-    // id 反查由 ModUpdateDialog 的 checkModUpdates 端点按需进行。
-    let list = mods
-        .get_mod_list_light()
-        .await
-        .map_err(map_core_error)?;
-    remove_progress(&id);
-
-    let mut result: Vec<ModMetadataDto> = map_mod_dtos(&list);
-
-    fill_remote_icons(&state.http_client, &state.curse_forge_api_key, &mut result).await;
-
-    Ok(Json(result).into_response())
+    // Disk cache (6h TTL): fresh hit skips scan + network entirely.
+    if let Some(entries) = read_mods_cache(&state.data_dir, &id) {
+        return Ok(Json(entries).into_response());
+    }
+    // Stale hit: return stale + spawn background refresh (stale-while-revalidate).
+    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id) {
+        let state2 = state.clone();
+        let id2 = id.clone();
+        tokio::spawn(async move {
+            let _ = refresh_mods_cache(&state2, &id2).await;
+        });
+        return Ok(Json(entries).into_response());
+    }
+    // No cache: full scan + write cache.
+    let entries = refresh_mods_cache(&state, &id).await?;
+    Ok(Json(entries).into_response())
 }
 
 /// ModInfo → ModMetadataDto 映射（mods_metadata 与 mods_enrich 共用）。
@@ -588,6 +707,57 @@ fn map_mod_dtos(list: &[qomicex_core::models::expansion::local::ModInfo]) -> Vec
         .collect()
 }
 
+/// check-updates 结果条目（对应前端 ModUpdateEntry）。
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModUpdateEntryDto {
+    file_name: String,
+    name: String,
+    current_version: String,
+    latest_version: String,
+    project_id: String,
+    source: String,
+    download_url: String,
+    new_file_name: String,
+}
+
+/// 简易版本比较（按数值段比较，同 services/plugin.rs version_compare）。
+fn version_compare(a: &str, b: &str) -> i32 {
+    let pa = version_parse(a);
+    let pb = version_parse(b);
+    let len = pa.len().max(pb.len());
+    for i in 0..len {
+        let va = pa.get(i).copied().unwrap_or(0);
+        let vb = pb.get(i).copied().unwrap_or(0);
+        if va != vb {
+            return if va < vb { -1 } else { 1 };
+        }
+    }
+    0
+}
+
+fn version_parse(version: &str) -> Vec<i32> {
+    let cleaned = version
+        .trim()
+        .split('-')
+        .next()
+        .unwrap_or("")
+        .split('+')
+        .next()
+        .unwrap_or("");
+    let mut nums = Vec::new();
+    for seg in cleaned.split('.') {
+        match seg.parse::<i32>() {
+            Ok(n) => nums.push(n),
+            Err(_) => break,
+        }
+    }
+    if nums.is_empty() {
+        nums.push(0);
+    }
+    nums
+}
+
 /// enrich 结果条目：按 file_name 合并到前端 mod 列表（两段式第二步）。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -624,6 +794,47 @@ async fn mods_enrich(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<ModEnrichDto>>> {
+    // Disk cache (6h TTL): fresh hit skips scan + network entirely.
+    if let Some(entries) = read_mods_cache(&state.data_dir, &id) {
+        return Ok(Json(entries_to_enrich(entries)));
+    }
+    // Stale hit: return stale + spawn background refresh.
+    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id) {
+        let state2 = state.clone();
+        let id2 = id.clone();
+        tokio::spawn(async move {
+            let _ = refresh_mods_cache(&state2, &id2).await;
+        });
+        return Ok(Json(entries_to_enrich(entries)));
+    }
+    // No cache: full scan + enrich + write cache.
+    let entries = refresh_mods_cache(&state, &id).await?;
+    Ok(Json(entries_to_enrich(entries)))
+}
+
+fn entries_to_enrich(entries: Vec<ModMetadataDto>) -> Vec<ModEnrichDto> {
+    entries
+        .into_iter()
+        .map(|d| ModEnrichDto {
+            file_name: d.file_name,
+            curse_forge_id: d.curse_forge_id,
+            modrinth_id: d.modrinth_id,
+            modrinth_version_id: d.modrinth_version_id,
+            curse_forge_file_id: d.curse_forge_file_id,
+            source: d.source,
+            icon_url: d.icon_url,
+            name: Some(d.name),
+            chinese_name: d.chinese_name,
+            mcmod_id: d.mcmod_id,
+        })
+        .collect()
+}
+
+/// GET /instance/{id}/files/mods/check-updates — 检查模组更新（补全前端 ModUpdateDialog 缺失路由）。
+async fn check_mod_updates(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<Vec<ModUpdateEntryDto>>> {
     let r = resolve(&id, &state)?;
     let mods = state
         .core
@@ -634,38 +845,158 @@ async fn mods_enrich(
         .await
         .map_err(map_core_error)?;
     mods.enrich_mod_ids(&mut list).await;
-    // 反查 id 后填充远程图标（CF/MR 批量 logo URL；对应 C# 反查后图标兜底）
-    let mut dtos = map_mod_dtos(&list);
-    fill_remote_icons(&state.http_client, &state.curse_forge_api_key, &mut dtos).await;
-    // mcmod 中文名离线映射（远程名优先，本地名兜底；对应 C# BatchLookupWithIds）
-    let mcmod = crate::endpoints::mcmod::mcmod_data();
-    let result = dtos
+
+    let mut updates = Vec::new();
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+    let client = state.http_client.clone();
+    let api_key = state.curse_forge_api_key.clone();
+
+    let mut handles = Vec::new();
+    for info in list.iter() {
+        if info.modrinth_id.is_empty() && info.curse_forge_id == 0 {
+            continue;
+        }
+        let info = info.clone();
+        let client = client.clone();
+        let api_key = api_key.clone();
+        let permit = sem.clone().acquire_owned().await;
+        handles.push(tokio::spawn(async move {
+            let _permit = permit;
+            if !info.modrinth_id.is_empty() {
+                check_modrinth_update(&client, &info).await
+            } else if info.curse_forge_id != 0 {
+                check_curseforge_update(&client, &info, &api_key).await
+            } else {
+                None
+            }
+        }));
+    }
+
+    for handle in handles {
+        if let Ok(Some(update)) = handle.await {
+            updates.push(update);
+        }
+    }
+
+    Ok(Json(updates))
+}
+
+async fn check_modrinth_update(
+    client: &reqwest::Client,
+    info: &qomicex_core::models::expansion::local::ModInfo,
+) -> Option<ModUpdateEntryDto> {
+    let url = format!(
+        "https://api.modrinth.com/v2/project/{}/version",
+        urlencode(&info.modrinth_id)
+    );
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let versions: Vec<serde_json::Value> = resp.json().await.ok()?;
+    let mut latest: Option<&serde_json::Value> = None;
+    for v in &versions {
+        let gv = v.get("game_versions").and_then(|g| g.as_array())?;
+        // 简化：取首个版本（最新发布）
+        latest = Some(v);
+        break;
+    }
+    let latest = latest?;
+    let latest_version = latest
+        .get("version_number")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if latest_version.is_empty() || version_compare(latest_version, &info.version) <= 0 {
+        return None;
+    }
+    let download_url = latest
+        .get("files")
+        .and_then(|f| f.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|f| f.get("url"))
+        .and_then(|u| u.as_str())
+        .unwrap_or("");
+    let new_file_name = latest
+        .get("files")
+        .and_then(|f| f.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|f| f.get("filename"))
+        .and_then(|u| u.as_str())
+        .unwrap_or_default()
+        .to_string();
+    Some(ModUpdateEntryDto {
+        file_name: Path::new(&info.file_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        name: info.name.clone(),
+        current_version: info.version.clone(),
+        latest_version: latest_version.to_string(),
+        project_id: info.modrinth_id.clone(),
+        source: "modrinth".to_string(),
+        download_url: download_url.to_string(),
+        new_file_name,
+    })
+}
+
+async fn check_curseforge_update(
+    client: &reqwest::Client,
+    info: &qomicex_core::models::expansion::local::ModInfo,
+    api_key: &str,
+) -> Option<ModUpdateEntryDto> {
+    let url = format!(
+        "https://api.curseforge.com/v1/mods/{}/files?pageSize=1",
+        info.curse_forge_id
+    );
+    let resp = client
+        .get(&url)
+        .header("x-api-key", api_key)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let json: serde_json::Value = resp.json().await.ok()?;
+    let files = json.get("data").and_then(|d| d.as_array())?;
+    let latest = files.first()?;
+    let latest_version = latest
+        .get("displayName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if latest_version.is_empty() || version_compare(latest_version, &info.version) <= 0 {
+        return None;
+    }
+    let download_url = latest
+        .get("downloadUrl")
+        .and_then(|u| u.as_str())
+        .unwrap_or("");
+    Some(ModUpdateEntryDto {
+        file_name: Path::new(&info.file_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        name: info.name.clone(),
+        current_version: info.version.clone(),
+        latest_version: latest_version.to_string(),
+        project_id: info.curse_forge_id.to_string(),
+        source: "curseforge".to_string(),
+        download_url: download_url.to_string(),
+        new_file_name: latest_version.to_string(),
+    })
+}
+
+fn urlencode(s: &str) -> String {
+    s.as_bytes()
         .iter()
-        .map(|d| {
-            let cn = mcmod.lookup_with_id(&d.name);
-            let cn = cn.or_else(|| {
-                let local_name = list
-                    .iter()
-                    .find(|m| Path::new(&m.file_path).file_name().map(|n| n.to_string_lossy().into_owned()) == Some(d.file_name.clone()))
-                    .map(|m| m.name.clone())
-                    .unwrap_or_default();
-                mcmod.lookup_with_id(&local_name)
-            });
-            ModEnrichDto {
-                file_name: d.file_name.clone(),
-                curse_forge_id: d.curse_forge_id,
-                modrinth_id: d.modrinth_id.clone(),
-                modrinth_version_id: d.modrinth_version_id.clone(),
-                curse_forge_file_id: d.curse_forge_file_id,
-                source: d.source.clone(),
-                icon_url: d.icon_url.clone(),
-                name: Some(d.name.clone()),
-                chinese_name: cn.as_ref().map(|(c, _)| c.clone()),
-                mcmod_id: cn.map(|(_, id)| id),
+        .map(|&b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+                (b as char).to_string()
+            } else {
+                format!("%{:02X}", b)
             }
         })
-        .collect();
-    Ok(Json(result))
+        .collect()
 }
 
 async fn enable_mod(
@@ -756,6 +1087,39 @@ async fn batch_delete_mods(
     let dir = category_dir(&r, "mods");
     for name in names {
         delete_mod_file(&dir.join(&name));
+    }
+    Ok(StatusCode::OK)
+}
+
+/// POST /instance/{id}/files/mods/batch-update — 批量更新模组（下载新版本并替换旧文件）。
+async fn batch_update_mods(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Json(updates): Json<Vec<ModUpdateEntryDto>>,
+) -> ApiResult<StatusCode> {
+    let r = resolve(&id, &state)?;
+    let dir = category_dir(&r, "mods");
+    for update in updates {
+        let old_path = dir.join(&update.file_name);
+        delete_mod_file(&old_path);
+        if update.download_url.is_empty() || update.new_file_name.is_empty() {
+            continue;
+        }
+        let resp = state
+            .http_client
+            .get(&update.download_url)
+            .send()
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        if !resp.status().is_success() {
+            continue;
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let new_path = dir.join(&update.new_file_name);
+        std::fs::write(&new_path, &bytes).map_err(ApiError::from)?;
     }
     Ok(StatusCode::OK)
 }
@@ -1178,7 +1542,8 @@ fn map_core_error(e: qomicex_core::error::Error) -> ApiError {
 
 /// Fallback remote-icon enrichment for mods without a local icon. Mirrors C#
 /// FillRemoteIcons: CurseForge by mod id, then Modrinth by project id/slug.
-/// All errors are swallowed so a lookup failure cannot break the metadata flow.
+/// CF 与 MR 反查并行（tokio::join!）。All errors are swallowed so a lookup
+/// failure cannot break the metadata flow.
 async fn fill_remote_icons(
     client: &reqwest::Client,
     api_key: &str,
@@ -1200,12 +1565,27 @@ async fn fill_remote_icons(
         .copied()
         .filter(|&i| result[i].curse_forge_id.is_some())
         .collect();
-    if !cf_idx.is_empty() && !api_key.is_empty() {
-        let ids: Vec<i32> = cf_idx
-            .iter()
-            .map(|&i| result[i].curse_forge_id.unwrap_or(0))
-            .collect();
-        let body = serde_json::json!({ "modIds": ids });
+    // Modrinth: GET /v2/projects?ids=[...].
+    let mr_idx: Vec<usize> = empty
+        .iter()
+        .copied()
+        .filter(|&i| result[i].icon_url.is_none() && result[i].modrinth_id.is_some())
+        .collect();
+
+    let cf_ids: Vec<i32> = cf_idx
+        .iter()
+        .map(|&i| result[i].curse_forge_id.unwrap_or(0))
+        .collect();
+    let mr_pids: Vec<String> = mr_idx
+        .iter()
+        .filter_map(|&i| result[i].modrinth_id.clone())
+        .collect();
+
+    let cf_fut = async {
+        if cf_ids.is_empty() || api_key.is_empty() {
+            return None;
+        }
+        let body = serde_json::json!({ "modIds": cf_ids });
         let resp = client
             .post("https://api.curseforge.com/v1/mods")
             .header("x-api-key", api_key)
@@ -1217,27 +1597,54 @@ async fn fill_remote_icons(
             if resp.status().is_success() {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
                     if let Some(array) = json.get("data").and_then(|d| d.as_array()) {
-                        for item in array {
-                            let mod_id = item.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
-                            let name = item.get("name").and_then(|v| v.as_str());
-                            let url = item
-                                .get("logo")
-                                .and_then(|l| l.get("url"))
-                                .and_then(|u| u.as_str());
-                            let id = mod_id as i32;
-                            for &i in &cf_idx {
-                                if result[i].curse_forge_id == Some(id) {
-                                    // 远程名称（CF 项目标题，回填显示名）
-                                    if let Some(name) = name {
-                                        result[i].name = name.to_string();
-                                    }
-                                    if result[i].icon_url.is_none() {
-                                        if let Some(url) = url {
-                                            result[i].icon_url = Some(url.to_string());
-                                        }
-                                    }
-                                }
-                            }
+                        return Some(array.clone());
+                    }
+                }
+            }
+        }
+        None
+    };
+
+    let mr_fut = async {
+        if mr_pids.is_empty() {
+            return None;
+        }
+        let resp = client
+            .get("https://api.modrinth.com/v2/projects")
+            .query(&[("ids", serde_json::json!(mr_pids).to_string())])
+            .send()
+            .await;
+        if let Ok(resp) = resp {
+            if resp.status().is_success() {
+                if let Ok(array) = resp.json::<serde_json::Value>().await {
+                    if let Some(array) = array.as_array() {
+                        return Some(array.clone());
+                    }
+                }
+            }
+        }
+        None
+    };
+
+    let (cf_array, mr_array) = tokio::join!(cf_fut, mr_fut);
+
+    if let Some(array) = cf_array {
+        for item in array {
+            let mod_id = item.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let name = item.get("name").and_then(|v| v.as_str());
+            let url = item
+                .get("logo")
+                .and_then(|l| l.get("url"))
+                .and_then(|u| u.as_str());
+            let id = mod_id as i32;
+            for &i in &cf_idx {
+                if result[i].curse_forge_id == Some(id) {
+                    if let Some(name) = name {
+                        result[i].name = name.to_string();
+                    }
+                    if result[i].icon_url.is_none() {
+                        if let Some(url) = url {
+                            result[i].icon_url = Some(url.to_string());
                         }
                     }
                 }
@@ -1245,49 +1652,25 @@ async fn fill_remote_icons(
         }
     }
 
-    // Modrinth: GET /v2/projects?ids=["a","b"]. reqwest encodes the query.
-    let mr_idx: Vec<usize> = empty
-        .iter()
-        .copied()
-        .filter(|&i| result[i].icon_url.is_none() && result[i].modrinth_id.is_some())
-        .collect();
-    if !mr_idx.is_empty() {
-        let pids: Vec<String> = mr_idx
-            .iter()
-            .filter_map(|&i| result[i].modrinth_id.clone())
-            .collect();
-        let resp = client
-            .get("https://api.modrinth.com/v2/projects")
-            .query(&[("ids", serde_json::json!(pids).to_string())])
-            .send()
-            .await;
-        if let Ok(resp) = resp {
-            if resp.status().is_success() {
-                if let Ok(array) = resp.json::<serde_json::Value>().await {
-                    if let Some(array) = array.as_array() {
-                        for item in array {
-                            let url = item.get("icon_url").and_then(|u| u.as_str());
-                            let url = match url {
-                                Some(u) if !u.is_empty() => Some(u.to_string()),
-                                _ => None,
-                            };
-                            let title = item.get("title").and_then(|v| v.as_str());
-                            let pid = item.get("id").and_then(|v| v.as_str());
-                            let slug = item.get("slug").and_then(|v| v.as_str());
-                            for &i in &mr_idx {
-                                let mine = result[i].modrinth_id.as_deref();
-                                if mine.is_some() && (mine == pid || mine == slug) {
-                                    // 远程名称（MR 项目标题，回填显示名）
-                                    if let Some(title) = title {
-                                        result[i].name = title.to_string();
-                                    }
-                                    if result[i].icon_url.is_none() {
-                                        if let Some(url) = url.clone() {
-                                            result[i].icon_url = Some(url);
-                                        }
-                                    }
-                                }
-                            }
+    if let Some(array) = mr_array {
+        for item in array {
+            let url = item.get("icon_url").and_then(|u| u.as_str());
+            let url = match url {
+                Some(u) if !u.is_empty() => Some(u.to_string()),
+                _ => None,
+            };
+            let title = item.get("title").and_then(|v| v.as_str());
+            let pid = item.get("id").and_then(|v| v.as_str());
+            let slug = item.get("slug").and_then(|v| v.as_str());
+            for &i in &mr_idx {
+                let mine = result[i].modrinth_id.as_deref();
+                if mine.is_some() && (mine == pid || mine == slug) {
+                    if let Some(title) = title {
+                        result[i].name = title.to_string();
+                    }
+                    if result[i].icon_url.is_none() {
+                        if let Some(url) = url.clone() {
+                            result[i].icon_url = Some(url);
                         }
                     }
                 }
