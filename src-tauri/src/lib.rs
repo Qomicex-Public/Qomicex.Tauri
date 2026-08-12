@@ -21,6 +21,12 @@ const PACKET_DLL: &[u8] = include_bytes!("../binaries/Packet.dll");
 #[cfg(not(all(windows, not(debug_assertions))))]
 const PACKET_DLL: &[u8] = &[];
 
+// easytier TUN 模式（管理员运行）在 Windows 需要 wintun.dll（运行时动态加载）。
+#[cfg(all(windows, not(debug_assertions)))]
+const WINTUN_DLL: &[u8] = include_bytes!("../binaries/wintun.dll");
+#[cfg(not(all(windows, not(debug_assertions))))]
+const WINTUN_DLL: &[u8] = &[];
+
 #[cfg(windows)]
 const BACKEND_EXE: &str = "qomicex-backend.exe";
 #[cfg(unix)]
@@ -81,14 +87,18 @@ fn extract_backend() -> Option<std::path::PathBuf> {
     }
 }
 
-/// 写出后端运行时需要的同目录 DLL（当前仅 Windows 的 Packet.dll）。
+/// 写出后端运行时需要的同目录 DLL（Windows：Packet.dll + wintun.dll）。
 #[cfg(windows)]
 fn extract_sidecar_dlls(base: &std::path::Path) {
-    if PACKET_DLL.is_empty() {
-        return;
+    if !PACKET_DLL.is_empty() {
+        if let Err(e) = std::fs::write(base.join("Packet.dll"), PACKET_DLL) {
+            eprintln!("[backend] write Packet.dll failed: {e}");
+        }
     }
-    if let Err(e) = std::fs::write(base.join("Packet.dll"), PACKET_DLL) {
-        eprintln!("[backend] write Packet.dll failed: {e}");
+    if !WINTUN_DLL.is_empty() {
+        if let Err(e) = std::fs::write(base.join("wintun.dll"), WINTUN_DLL) {
+            eprintln!("[backend] write wintun.dll failed: {e}");
+        }
     }
 }
 

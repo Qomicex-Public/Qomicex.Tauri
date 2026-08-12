@@ -221,8 +221,10 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
           Move-Item -Force src-backend/qomicex-backend/target/x86_64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
-          # Packet.dll: ��� exe ���������(npcap), �湹��������� binaries/
+          # Packet.dll: 需与后端 exe 同目录(npcap)，一并打进 binaries/
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.dll src-tauri/binaries/Packet.dll
+          # wintun.dll: easytier TUN 模式（管理员运行）动态加载
+          Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/wintun.dll src-tauri/binaries/wintun.dll
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis
@@ -266,6 +268,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/**/*.exe
             src-tauri/binaries/Packet.dll
+            src-tauri/binaries/wintun.dll
 
   windows-arm64:
     if: |
@@ -313,6 +316,8 @@ jobs:
           Move-Item -Force src-backend/qomicex-backend/target/aarch64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
           # Packet.dll: ARM64 进程必须用 ARM64 版（x64 版加载失败 0xC0000135）
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/Packet.dll src-tauri/binaries/Packet.dll
+          # wintun.dll: easytier TUN 模式（管理员运行）动态加载，ARM64 版
+          Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/wintun.dll src-tauri/binaries/wintun.dll
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
@@ -356,6 +361,7 @@ jobs:
           path: |
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
             src-tauri/binaries/Packet.dll
+            src-tauri/binaries/wintun.dll
 
   linux-x64:
     if: |
