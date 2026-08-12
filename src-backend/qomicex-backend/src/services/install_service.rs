@@ -1009,6 +1009,8 @@ pub(crate) async fn download_batch(
             f.total_files = total as i32;
             f.completed_files = done as i32;
             f.current_file = current_file;
+            // 当前批次（文件）的真实下载进度 0-100；批次结束清 0（阶段即将切换）
+            f.current_file_progress = if done >= total { 0.0 } else { pct_in * 100.0 };
             f.speed = current_speed;
             if paused_now {
                 f.stage = "paused".to_string();

@@ -358,6 +358,7 @@ export interface InstallProgressResponse {
   completedFiles: number
   failedFiles: number
   currentFile: string
+  currentFileProgress: number
   speed: number
   isPaused: boolean
 }
@@ -377,6 +378,8 @@ export interface DownloadTask {
   currentFile?: string
   totalFiles?: number
   completedFiles?: number
+  /** 当前文件批次下载进度 0-100（按字节；仅下载阶段 > 0） */
+  currentFileProgress?: number
   error?: string
   createdAt: string
   completedAt?: string

@@ -11,6 +11,7 @@ export interface InstallState {
   completedFiles: number
   failedFiles: number
   currentFile: string
+  currentFileProgress: number
   speed: number
   isPaused: boolean
 }

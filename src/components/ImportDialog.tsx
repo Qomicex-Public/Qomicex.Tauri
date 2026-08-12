@@ -202,7 +202,8 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span>{STAGE_LABELS[progress.status] || progress.status}</span>
+                  <span>{STAGE_LABELS[progress.stage] ?? STAGE_LABELS[progress.status] ?? (progress.stage || progress.status)}</span>
+                  {progress.currentFileProgress > 0 && <span>({Math.round(progress.currentFileProgress)}%)</span>}
                   {progress.totalFiles != null && progress.totalFiles > 0 && <span>{progress.completedFiles ?? 0}/{progress.totalFiles}</span>}
                 </div>
                 {progress.currentFile && (

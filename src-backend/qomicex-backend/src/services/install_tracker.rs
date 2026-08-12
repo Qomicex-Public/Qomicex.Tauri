@@ -89,6 +89,8 @@ pub struct InstallProgress {
     pub completed_files: i32,
     pub failed_files: i32,
     pub current_file: String,
+    /// 当前文件批次下载进度（0-100，按字节；非下载阶段为 0）。
+    pub current_file_progress: f64,
     pub speed: f64,
     pub is_paused: bool,
     pub stage: String,
@@ -161,6 +163,7 @@ pub struct ProgressField {
     pub total_files: i32,
     pub completed_files: i32,
     pub failed_files: i32,
+    pub current_file_progress: f64,
     pub speed: f64,
 }
 
@@ -175,6 +178,7 @@ impl ProgressField {
             completed_files: self.completed_files,
             failed_files: self.failed_files,
             current_file: self.current_file.clone(),
+            current_file_progress: self.current_file_progress,
             speed: self.speed,
             is_paused,
             stage: self.stage.clone(),
@@ -219,6 +223,7 @@ impl InstallState {
                 total_files: 0,
                 completed_files: 0,
                 failed_files: 0,
+                current_file_progress: 0.0,
                 speed: 0.0,
             }),
             cancelled: AtomicBool::new(false),

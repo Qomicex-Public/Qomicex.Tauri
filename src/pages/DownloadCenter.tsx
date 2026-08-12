@@ -218,6 +218,7 @@ export default function DownloadCenter() {
             currentFile: match.currentFile || undefined,
             totalFiles: match.totalFiles || undefined,
             completedFiles: match.completedFiles || undefined,
+            currentFileProgress: match.currentFileProgress,
             error: match.error || undefined,
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
           })
@@ -473,12 +474,12 @@ export default function DownloadCenter() {
                        task.status === 'queued' ? '等待中' :
                        // "连接中" only while nothing is known yet — a large file can sit at
                        // a rounded 0% with bytes already flowing.
-                       (task.progress > 0 || (task.downloadedBytes ?? 0) > 0 || (task.totalBytes ?? 0) > 0) ? (
-                         <>
-                           {task.stage && STAGE_LABELS[task.stage] ? STAGE_LABELS[task.stage] : '下载中'} {task.progress}%
-                           {task.currentFile && <span className="ml-1.5 opacity-70">· {task.currentFile}</span>}
-                         </>
-                       ) : (
+                         (task.progress > 0 || (task.downloadedBytes ?? 0) > 0 || (task.totalBytes ?? 0) > 0) ? (
+                          <>
+                            {task.stage && STAGE_LABELS[task.stage] ? STAGE_LABELS[task.stage] : '下载中'} ({Math.round((task.currentFileProgress ?? 0) > 0 ? (task.currentFileProgress ?? 0) : task.progress)}%)
+                            {task.currentFile && <span className="ml-1.5 opacity-70">· {task.currentFile}</span>}
+                          </>
+                        ) : (
                          <span>连接中…</span>
                        )}
                     </span>
