@@ -103,9 +103,6 @@ impl AppState {
             .build()
             .expect("构建共享 HTTP 客户端失败");
 
-        let mods_icon_dir = settings::resolve_base_dir().join("QML").join("mod-icons");
-        let _ = std::fs::create_dir_all(&mods_icon_dir);
-
         let mut builder = GameCoreBuilder::new();
         builder
             .configure(|o| {
@@ -114,12 +111,10 @@ impl AppState {
                 o.max_concurrent_downloads = 8;
                 o.cache_expiry = Duration::from_secs(1800);
                 o.user_agent = user_agent.clone();
-                o.icon_cache_dir = Some(mods_icon_dir.to_string_lossy().into_owned());
             })
             .use_microsoft_auth(microsoft_client_id)
             .use_download_mirror(global_mirror)
-            .with_http_client(http_client.clone())
-            .with_icon_cache_dir(mods_icon_dir);
+            .with_http_client(http_client.clone());
         let core = builder.build();
 
         // 下载管理器（对应 DownloadSessionManagerBuilder 的核心参数）。
