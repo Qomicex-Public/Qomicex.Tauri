@@ -5,6 +5,8 @@
 //! InstallTracker which are ported separately, so they are stubbed here with
 //! 501 NOT_IMPLEMENTED placeholders until those services land.
 
+use std::sync::Arc;
+
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -12,6 +14,7 @@ use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use qomicex_core::core::GameCore;
 use qomicex_core::models::auth::{AuthMode, AuthOptions};
 use qomicex_core::models::installer::ModLoaderType;
 use qomicex_core::models::launch::{JavaOptions, LaunchOptions};
@@ -520,41 +523,10 @@ async fn launch_instance(
             tracker.set_progress(&instance_id, progress.clone());
 
             // Determine required Java major version from the version JSON chain.
-            let required_java = required_java_version(&game_dir, &name);
-            let loader_lower = instance_loader(&game_dir, &name).unwrap_or_default();
-            let effective_required = apply_loader_java_requirement(&loader_lower, &name, required_java);
-
             // Pick the Java runtime: user-specified path wins, else auto-recommend.
-            let selected_java_path = match &user_java_path {
-                Some(path) if !path.is_empty() => path.clone(),
-                _ => {
-                    let metadata = CompleteVersionMetadata {
-                        id: name.clone(),
-                        r#type: "release".to_string(),
-                        main_class: String::new(),
-                        inherits_from: None,
-                        jar: None,
-                        arguments: None,
-                        libraries: Vec::new(),
-                        asset_index: None,
-                        downloads: None,
-                        java_version: Some(JavaVersion {
-                            component: "jre-legacy".to_string(),
-                            major_version: effective_required,
-                        }),
-                        minimum_launcher_version: None,
-                        release_time: String::new(),
-                        time: String::new(),
-                    };
-                    let java_results = java::scan_quick(core.clone()).await;
-                    let recommended = core
-                        .java_provider()
-                        .recommand(&java_results, &metadata)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    recommended.path
-                }
-            };
+            let selected_java_path = resolve_java_path(&core, &game_dir, &name, &user_java_path)
+                .await
+                .map_err(|e| e)?;
 
             if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err("启动已取消".to_string());
@@ -821,7 +793,7 @@ fn instance_not_found(id: &str) -> ApiError {
 /// Build core `AuthOptions` from a stored account (source: ResolveAuthOptions).
 /// Microsoft accounts refresh their token via the core auth provider; failures
 /// are swallowed (the stale token is still passed through, matching C# catch{}).
-fn resolve_auth_options(account: Option<crate::services::account::StoredAccount>) -> AuthOptions {
+pub(crate) fn resolve_auth_options(account: Option<crate::services::account::StoredAccount>) -> AuthOptions {
     let Some(account) = account else {
         return AuthOptions::default();
     };
@@ -867,6 +839,50 @@ fn required_java_version(game_dir: &str, version: &str) -> i32 {
         .join(version)
         .join(format!("{version}.json"));
     required_java_from_path(&path, game_dir)
+}
+
+/// 选择启动用 Java 路径：用户指定优先，否则按版本 JSON 的 Java 要求自动推荐
+/// （scan_quick + recommand，与 C# launch 流程一致）。供普通启动与联机建房复用。
+pub(crate) async fn resolve_java_path(
+    core: &Arc<GameCore>,
+    game_dir: &str,
+    name: &str,
+    user_java_path: &Option<String>,
+) -> Result<String, String> {
+    if let Some(path) = user_java_path.as_ref().filter(|p| !p.is_empty()) {
+        return Ok(path.clone());
+    }
+    let required_java = required_java_version(game_dir, name);
+    let loader_lower = instance_loader(game_dir, name).unwrap_or_default();
+    let effective_required = apply_loader_java_requirement(&loader_lower, name, required_java);
+    let metadata = CompleteVersionMetadata {
+        id: name.to_string(),
+        r#type: "release".to_string(),
+        main_class: String::new(),
+        inherits_from: None,
+        jar: None,
+        arguments: None,
+        libraries: Vec::new(),
+        asset_index: None,
+        downloads: None,
+        java_version: Some(JavaVersion {
+            component: "jre-legacy".to_string(),
+            major_version: effective_required,
+        }),
+        minimum_launcher_version: None,
+        release_time: String::new(),
+        time: String::new(),
+    };
+    let java_results = java::scan_quick(core.clone()).await;
+    if java_results.is_empty() {
+        return Err("未找到可用的 Java 运行时，请在实例设置中指定 Java 路径".to_string());
+    }
+    let recommended = core
+        .java_provider()
+        .recommand(&java_results, &metadata)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(recommended.path)
 }
 
 fn required_java_from_path(path: &std::path::Path, game_dir: &str) -> i32 {

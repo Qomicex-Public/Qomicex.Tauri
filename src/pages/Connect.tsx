@@ -14,9 +14,9 @@ import { useMessageBox } from '../components/ui'
 import { ApiError } from '../api/client.ts'
 import * as connectorApi from '../api/connector.ts'
 import type { MatchInstancesResponse } from '../api/connector.ts'
-import { getInstances, launchInstance } from '../api/instance.ts'
+import { getInstances, launchInstance, getLaunchProgress } from '../api/instance.ts'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
-import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult } from '../types/index.ts'
+import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult, LaunchProgress } from '../types/index.ts'
 
 function fmtSpeed(bytesPerSec: number): string {
   if (bytesPerSec <= 0) return ''
@@ -182,6 +182,10 @@ export default function Connect() {
   const [matchData, setMatchData] = useState<MatchInstancesResponse | null>(null)
   const [matchLoading, setMatchLoading] = useState(false)
   const [launchingMatch, setLaunchingMatch] = useState<string | null>(null)
+  const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
+  const [hostError, setHostError] = useState<string | null>(null)
+  const startInstanceIdRef = useRef<string | null>(null)
+  const lpTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const refreshStatus = useCallback(async () => {
     try { setStatus(await connectorApi.getStatus()) } catch { /* ignore poll errors */ }
@@ -237,6 +241,31 @@ export default function Connect() {
     }
   }, [status.mode, refreshStatus])
 
+  // Starting 阶段轮询 LaunchTracker 显示启动步骤/进度；failed/crashed → 卡片常驻错误
+  useEffect(() => {
+    if (status.mode !== 'starting' || hostError || !startInstanceIdRef.current) return
+    lpTimer.current = setInterval(async () => {
+      const id = startInstanceIdRef.current
+      if (!id) return
+      try {
+        const p = await getLaunchProgress(id)
+        if (p.stage === 'failed' || p.stage === 'crashed') {
+          setLaunchProgress(null)
+          setHostError(p.error || (p.stage === 'crashed' ? '游戏异常退出' : '启动失败'))
+          if (lpTimer.current) clearInterval(lpTimer.current)
+        } else if (p.stage === 'completed') {
+          setLaunchProgress(null)
+          if (lpTimer.current) clearInterval(lpTimer.current)
+        } else {
+          setLaunchProgress(p)
+        }
+      } catch {
+        if (lpTimer.current) clearInterval(lpTimer.current)
+      }
+    }, 500)
+    return () => { if (lpTimer.current) clearInterval(lpTimer.current) }
+  }, [status.mode, hostError])
+
   useEffect(() => {
     if (hostSubMode !== 'scan') return
     setScanning(true)
@@ -267,9 +296,12 @@ export default function Connect() {
 
   const handleHostInstance = async () => {
     if (!selectedInstance) { msgError('请选择一个实例'); return }
+    setHostError(null)
+    setLaunchProgress(null)
+    startInstanceIdRef.current = selectedInstance
     setBusy(true)
     try { await connectorApi.hostByInstance(selectedInstance); await refreshStatus() }
-    catch (e) { msgError(fmtErr(e)) }
+    catch (e) { startInstanceIdRef.current = null; msgError(fmtErr(e)) }
     finally { setBusy(false) }
   }
 
@@ -285,7 +317,11 @@ export default function Connect() {
     setBusy(true)
     try { await connectorApi.leave(); await refreshStatus(); setMatchData(null) }
     catch (e) { msgError(fmtErr(e)) }
-    finally { setBusy(false) }
+    finally {
+      setBusy(false)
+      setLaunchProgress(null)
+      startInstanceIdRef.current = null
+    }
   }
 
   // 快捷启动匹配实例：启动并自动加入房间（joinServer = 本机转发端口）
@@ -466,19 +502,32 @@ export default function Connect() {
         </>
       )}
 
-      {isStarting && (
-        <Card className="space-y-4 border p-5">
-          <h2 className="text-lg font-semibold">创建房间</h2>
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <FontAwesomeIcon icon={faSpinner} spin />
-              <span>正在启动游戏，请在游戏内点击"对局域网开放"…</span>
+      {(isStarting || hostError) && (
+        hostError ? (
+          <Card className="space-y-4 border p-5">
+            <h2 className="text-lg font-semibold text-destructive">启动失败</h2>
+            <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{hostError}</p>
+            <Button onClick={() => setHostError(null)} className="w-full">知道了</Button>
+          </Card>
+        ) : (
+          <Card className="space-y-4 border p-5">
+            <h2 className="text-lg font-semibold">启动实例并创建房间</h2>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <FontAwesomeIcon icon={faSpinner} spin />
+                <span>{launchProgress ? launchProgress.message : '正在启动...'}</span>
+              </div>
+              {launchProgress && (
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(2, launchProgress.progress)}%` }} />
+                </div>
+              )}
+              <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
+                <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />取消
+              </Button>
             </div>
-            <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />取消
-            </Button>
-          </div>
-        </Card>
+          </Card>
+        )
       )}
 
       {isHost && (

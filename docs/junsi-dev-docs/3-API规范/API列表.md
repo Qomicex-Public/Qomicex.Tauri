@@ -1726,3 +1726,27 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 获取拉取结果。
 
+
+
+### 2026-08-12 更新
+> **修订（2026-08-12）—— `/api/connector/host/instance` 与 `/api/connector/leave` 行为：**
+
+### POST `/api/connector/host/instance`
+
+基于实例开房（异步，立即返回 `status: "starting"`）。
+
+```json
+{ "instanceId": "..." }
+```
+
+**响应：** `{ "status": "starting", "message": null, "error": null }`
+
+**启动进度/失败语义（Rust 重写后）：**
+- 启动与建房在后台任务执行，进度写入 `LaunchTracker`（复用 `/api/instance/{id}/launch/progress` 轮询）：`starting` →（完整性/环境/启动）→ `running`（游戏已启动，正在检测局域网端口）→ 建房成功 `mode=host`。
+- 启动失败：立即写 `failed` 阶段（`error` 含原因）+ `mode=idle` 复位，**不再白等端口轮询 60s**。
+- 60s 内未检测到局域网端口 / 建房失败：写 `failed` 阶段 + `mode=idle`。
+
+### POST `/api/connector/leave`
+
+离开房间/停止联机。**Starting 阶段调用时会经 LaunchTracker 杀掉正在启动/已启动的游戏进程**（置取消信号 + kill + 清进度），后台端口轮询检测到取消后放弃建房。
+

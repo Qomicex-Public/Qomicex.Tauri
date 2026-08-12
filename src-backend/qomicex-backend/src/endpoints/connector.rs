@@ -28,6 +28,7 @@ use qomicex_connector::util::CancellationToken;
 
 use crate::endpoints::skin::SkinService;
 use crate::error::{ApiError, ApiResult};
+use crate::services::launch_tracker::LaunchProgress;
 use crate::state::SharedState;
 
 /// 玩家列表里展示的 vendor（对齐 C# `Qomicex.Launcher {ver}/Qomicex.Connector | EasyTier{et}`）。
@@ -118,6 +119,8 @@ struct ConnectorState {
     last_guest_player_count: std::sync::Mutex<i32>,
     /// host 建房对应的实例（host_port 建房为 None；qml:game_mods 扫描源）
     host_instance: Arc<RwLock<Option<crate::services::instance::GameInstance>>>,
+    /// Starting 阶段正在启动的实例 id（leave 取消时经 LaunchTracker 杀进程）
+    starting_instance: Arc<RwLock<Option<String>>>,
     /// host 端 mods 扫描缓存（None=尚未扫描/无实例；Some(空)=已扫描无 mods）
     host_mods: Arc<RwLock<Option<Vec<GameModEntry>>>>,
     /// guest 侧缓存：从房主拉取的 mods 列表（qml:game_mods；房主不支持时 None）
@@ -185,6 +188,7 @@ fn connector() -> &'static Arc<ConnectorState> {
             icon_map: Arc::new(RwLock::new(HashMap::new())),
             last_guest_player_count: std::sync::Mutex::new(-1),
             host_instance: Arc::new(RwLock::new(None)),
+            starting_instance: Arc::new(RwLock::new(None)),
             host_mods: Arc::new(RwLock::new(None)),
             room_mods: Arc::new(RwLock::new(None)),
             instance_mods_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -449,13 +453,144 @@ async fn host_instance(
         });
     }
     let core = state.core.clone();
+    let tracker = state.launch_tracker.clone();
     let instance_clone = instance.clone();
+    let starting_id = instance.id.clone();
+    // 与普通启动路径一致：用默认账号解析 auth（离线/微软/外置登录），
+    // 否则 --accessToken 为空会被 joptsimple 拒绝（Missing required option）
+    let auth_options = crate::endpoints::instance::resolve_auth_options(
+        state.account.get_default().await.ok().flatten(),
+    );
+    // 记录 starting 实例，leave 取消时经 LaunchTracker 杀进程
+    *conn.starting_instance.write().unwrap() = Some(starting_id.clone());
     tokio::spawn(async move {
-        let launch_options = build_launch_options(&instance_clone);
-        let _ = core.launch().launch(launch_options).await;
+        let cancel_flag = tracker.get_or_create_cancel(&starting_id);
+        tracker.set_progress(
+            &starting_id,
+            LaunchProgress {
+                stage: "starting".to_string(),
+                message: "准备启动...".to_string(),
+                progress: 0.0,
+                is_running: false,
+                ..Default::default()
+            },
+        );
 
+        // 启动失败 → 立即写 failed 并复位 Idle（不再白等端口轮询 60s）
+        // Java 路径：用户指定优先，否则自动推荐（与普通启动一致；空路径 core 会报错）
+        let resolved_java = crate::endpoints::instance::resolve_java_path(
+            &core,
+            &instance_clone.game_dir,
+            &instance_clone.name,
+            &instance_clone.java_path,
+        )
+        .await;
+        let launch_result: Result<i32, qomicex_core::error::Error> = match resolved_java {
+            Err(err) => Err(qomicex_core::error::Error::Params {
+                message: err,
+                source: None,
+            }),
+            Ok(java_path) => {
+                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    Err(qomicex_core::error::Error::Params {
+                        message: "启动已取消".to_string(),
+                        source: None,
+                    })
+                } else {
+                    let launch_options = build_launch_options(&instance_clone, &java_path, Some(auth_options));
+                    // core.launch() 内部可能做完整性检查/下载（数分钟），期间写心跳进度
+                    let launch_fut = core.launch().launch(launch_options);
+                    tokio::pin!(launch_fut);
+                    let result = loop {
+                        tokio::select! {
+                            r = &mut launch_fut => break r,
+                            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                                tracker.set_progress(
+                                    &starting_id,
+                                    LaunchProgress {
+                                        stage: "launching".to_string(),
+                                        message: "正在启动游戏（检查/下载文件）...".to_string(),
+                                        progress: 50.0,
+                                        is_running: false,
+                                        ..Default::default()
+                                    },
+                                );
+                            }
+                        }
+                    };
+                    result.and_then(|r| {
+                        if r.success {
+                            Ok(r.process_id)
+                        } else {
+                            Err(qomicex_core::error::Error::Params {
+                                message: r.message.unwrap_or_else(|| "启动失败".to_string()),
+                                source: None,
+                            })
+                        }
+                    })
+                }
+            }
+        };
+
+        match launch_result {
+            Ok(pid) => {
+                // 取消竞态：launch 期间用户点了取消（进程可能刚启动），补杀一次防残留
+                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    crate::services::launch_tracker::kill_process(pid);
+                    return;
+                }
+                tracker.track(&starting_id, pid);
+                tracker.set_progress(
+                    &starting_id,
+                    LaunchProgress {
+                        stage: "running".to_string(),
+                        message: "游戏运行中，正在检测局域网端口...".to_string(),
+                        progress: 100.0,
+                        is_running: true,
+                        process_id: Some(pid),
+                        ..Default::default()
+                    },
+                );
+            }
+            Err(err) => {
+                let mut chain = err.to_string();
+                let mut cur = std::error::Error::source(&err);
+                while let Some(c) = cur {
+                    chain.push_str(" | cause: ");
+                    chain.push_str(&c.to_string());
+                    cur = c.source();
+                }
+                let err_str = err.to_string();
+                tracing::error!("联机: 启动游戏失败: {chain}");
+                let _ = std::fs::create_dir_all(std::path::Path::new(&instance_clone.game_dir).join("logs"));
+                let _ = std::fs::write(
+                    std::path::Path::new(&instance_clone.game_dir).join("logs/launch-errors.log"),
+                    format!("[{:?}] [{}] {}\n\n", chrono::Utc::now(), starting_id, err_str),
+                );
+                tracker.set_progress(
+                    &starting_id,
+                    LaunchProgress {
+                        stage: "failed".to_string(),
+                        message: "启动失败".to_string(),
+                        progress: 0.0,
+                        is_running: false,
+                        error: Some(err_str),
+                        ..Default::default()
+                    },
+                );
+                let conn = connector();
+                *conn.mode.lock().await = Mode::Idle;
+                *conn.starting_instance.write().unwrap() = None;
+                return;
+            }
+        }
+
+        // 端口轮询（锁外；cancel 后 leave 可立即复位，建房残留由此杜绝）
         let deadline = Instant::now() + Duration::from_secs(60);
         let created = loop {
+            if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                break None;
+            }
             if let Some(port) = scan_java_listening_ports().await.into_iter().next() {
                 break Some(port);
             }
@@ -467,6 +602,7 @@ async fn host_instance(
 
         let conn = connector();
         let mut mode = conn.mode.lock().await;
+        *conn.starting_instance.write().unwrap() = None;
         match created {
             Some(port) => {
                 // 自己头像进房间映射（guest 端列表可见）
@@ -496,15 +632,44 @@ async fn host_instance(
                     }
                     Err(e) => {
                         tracing::error!("联机: 建房失败: {e}");
+                        tracker.set_progress(
+                            &starting_id,
+                            LaunchProgress {
+                                stage: "failed".to_string(),
+                                message: "建房失败".to_string(),
+                                progress: 0.0,
+                                is_running: false,
+                                error: Some(format!("建房失败: {e}")),
+                                ..Default::default()
+                            },
+                        );
                         *mode = Mode::Idle;
                     }
                 }
             }
             None => {
+                // 用户取消：进度已被 leave 清掉，不再写 failed（与 stop 清进度语义一致）
+                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    tracing::info!("联机: 建房已取消（用户操作）");
+                    return;
+                }
                 tracing::warn!("联机: 60s 内未检测到局域网端口，建房取消");
+                let msg = "60 秒内未检测到局域网端口，建房已取消".to_string();
+                tracker.set_progress(
+                    &starting_id,
+                    LaunchProgress {
+                        stage: "failed".to_string(),
+                        message: msg.clone(),
+                        progress: 0.0,
+                        is_running: false,
+                        error: Some(msg),
+                        ..Default::default()
+                    },
+                );
                 *mode = Mode::Idle;
             }
         }
+        // 成功建房后保留 running 进度（游戏仍在运行）
     });
 
     Ok(Json(StatusMessageResponse {
@@ -819,12 +984,19 @@ async fn match_instances(
 }
 
 /// POST /connector/leave — 退出房间/关闭房间。
-async fn leave() -> ApiResult<Json<StatusMessageResponse>> {
+async fn leave(State(state): State<SharedState>) -> ApiResult<Json<StatusMessageResponse>> {
     let conn = connector();
     let mode = conn.mode.lock().await;
     match &*mode {
         Mode::Idle => {}
         Mode::Starting | Mode::Host(_) | Mode::Guest(_) => {
+            // Starting：杀正在启动/已启动的游戏进程（LaunchTracker 置取消 + 杀进程 + 清进度），
+            // 后台端口轮询检测到取消信号后自动放弃建房。
+            if let Mode::Starting = &*mode {
+                if let Some(id) = conn.starting_instance.read().unwrap().as_ref() {
+                    state.launch_tracker.stop(id);
+                }
+            }
             // guest 优雅退出：通知 center 立即移除自己（qml:player_leave），
             // 否则房主端列表要等心跳超时（15s）才消失。
             if let Mode::Guest(guest) = &*mode {
@@ -842,6 +1014,7 @@ async fn leave() -> ApiResult<Json<StatusMessageResponse>> {
         }
     }
     drop(mode);
+    *conn.starting_instance.write().unwrap() = None;
     *conn.host_center.write().unwrap() = None;
     conn.icon_map.write().unwrap().clear();
     *conn.last_guest_player_count.lock().unwrap() = -1;
@@ -1080,33 +1253,30 @@ fn parse_stun_mapped_port(buf: &[u8], tx: &[u8; 12]) -> Option<u16> {
 // launch 组装（复用 launch.rs 语义）
 // =====================================================================
 
-fn build_launch_options(instance: &crate::services::instance::GameInstance) -> qomicex_core::models::launch::LaunchOptions {
+fn build_launch_options(
+    instance: &crate::services::instance::GameInstance,
+    java_path: &str,
+    auth_options: Option<qomicex_core::models::auth::AuthOptions>,
+) -> qomicex_core::models::launch::LaunchOptions {
     use qomicex_core::models::launch::LaunchOptions;
     LaunchOptions {
         version: instance.name.clone(),
         version_isolation: instance.version_isolation.unwrap_or(false),
         join_server: None,
         join_world: None,
+        // 与普通启动路径（instance.rs launch_instance）一致：显式 game_root 覆盖
+        // core 默认目录，避免 natives/java.library.path 落到带 \\?\ 前缀的 verbatim
+        // 路径上（混合 / 分隔符在 verbatim 语法下非法 → os error 123）。
+        game_root: Some(instance.game_dir.clone()),
         java_options: Some(qomicex_core::models::launch::JavaOptions {
-            java_path: instance
-                .java_path
-                .clone()
-                .or_else(|| {
-                    let s = crate::settings::load_settings().default_java_path;
-                    if s.is_empty() {
-                        None
-                    } else {
-                        Some(s)
-                    }
-                })
-                .unwrap_or_default(),
+            java_path: java_path.to_string(),
             max_memory_mb: instance.max_memory,
             extra_jvm_args: instance
                 .jvm_args
                 .clone()
                 .map(|s| s.split(' ').filter(|t| !t.is_empty()).map(String::from).collect()),
         }),
-        auth_options: None,
+        auth_options,
         ..Default::default()
     }
 }

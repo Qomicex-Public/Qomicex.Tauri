@@ -67,9 +67,12 @@ export default function LaunchProgressDialog() {
           <p className="text-xs text-muted-foreground">进程 ID: {launchProgress.processId}</p>
         )}
         {!isFinal ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-            正在启动...
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-2">
+              <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+              正在启动...
+            </span>
+            <button onClick={() => cancelLaunch()} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground">取消</button>
           </div>
         ) : (
           <div className="flex items-center justify-center gap-2 pt-2">

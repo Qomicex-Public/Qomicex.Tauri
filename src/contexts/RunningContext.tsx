@@ -98,7 +98,25 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       } catch { /* 检查失败不影响启动 */ }
     }
 
-    const result = await apiLaunchInstance(id, quickJoin)
+    let result: LaunchResult
+    try {
+      result = await apiLaunchInstance(id, quickJoin)
+    } catch (e) {
+      // 请求异常（超时/后端不可达）：清掉启动 dialog，避免残留"准备启动"无法关闭
+      setLaunchProgress(null)
+      setLaunchingInstanceId(null)
+      launchingIdRef.current = null
+      setCrashDialogState({
+        instanceId: id,
+        title: '启动失败',
+        message: e instanceof Error ? e.message : String(e),
+        detail: null,
+        crashReport: null,
+        args: null,
+        loading: false,
+      })
+      return { success: false, processId: 0 } as LaunchResult
+    }
     if (!result.success) {
       setLaunchProgress(null)
       setLaunchingInstanceId(null)
@@ -174,15 +192,15 @@ export function RunningProvider({ children }: { children: ReactNode }) {
 
   const cancelLaunch = useCallback(async (id?: string) => {
     const targetId = id || launchingIdRef.current
-    if (!targetId) {
-      setLaunchProgress(null)
-      return
-    }
-    try { await apiCancelLaunch(targetId) } catch {}
+    // 先清 UI（dialog 立即关闭），后端杀进程放后台，避免取消 API 挂起时 dialog 关不掉
     setLaunchProgress(null)
     setLaunchingInstanceId(null)
-    clearInstancePoll(targetId)
+    launchingIdRef.current = null
+    if (targetId) clearInstancePoll(targetId)
     setRunningInstances(prev => prev.filter(r => r.instanceId !== targetId))
+    if (targetId) {
+      try { await apiCancelLaunch(targetId) } catch {}
+    }
     notifyRef.current?.('已取消启动', 'info')
   }, [clearInstancePoll])
 
