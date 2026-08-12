@@ -30,6 +30,9 @@ runs:
       uses: arduino/setup-protoc@v3
       with:
         version: "35.1"
+        # 认证请求有更高 GitHub API rate limit；不带 token 时共享 runner IP
+        # 可能被限流（API rate limit exceeded，实测 arm64 mac 偶发触发）
+        repo-token: ${{ github.token }}
 
     - name: Resolve protoc executable path
       id: protoc-exe
