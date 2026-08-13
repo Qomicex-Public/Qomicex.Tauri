@@ -23,10 +23,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/loong64
+      # loong64 不在默认 binfmt 镜像覆盖范围内，用 loong64 官方组织的 qemu-user-static
+      # 注册 loong64 用户态模拟（与 loong64/docker-debian-build 构建 debian 镜像同款方案）
+      - name: Set up QEMU (loong64)
+        run: docker run --rm --privileged ghcr.io/loong64/qemu-user-static --reset -p yes
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
