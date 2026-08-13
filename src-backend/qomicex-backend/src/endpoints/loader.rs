@@ -91,7 +91,10 @@ async fn loader_versions(
 
     let loader_str = q.loader.as_deref().unwrap_or("All");
     let loader_type = parse_loader(loader_str).ok_or_else(|| {
-        ApiError::bad_request("LOADER_VERSION_INVALID_LOADER", format!("Invalid loader: {loader_str}"))
+        ApiError::bad_request(
+            "LOADER_VERSION_INVALID_LOADER",
+            format!("Invalid loader: {loader_str}"),
+        )
     })?;
 
     let results = state
@@ -127,7 +130,12 @@ async fn loader_addons(
     let mut result: Vec<LoaderAddonInfo> = Vec::new();
 
     if q.loader.eq_ignore_ascii_case("Forge") {
-        if let Some(gv) = q.game_version.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(gv) = q
+            .game_version
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             if let Ok(optifine_versions) = state
                 .core
                 .installer_provider()
@@ -142,7 +150,8 @@ async fn loader_addons(
                         id: "optifine".to_string(),
                         label: "OptiFine".to_string(),
                         recommended: latest.is_recommand,
-                        description: "Minecraft 性能优化与光影支持，提升 FPS 并支持光影着色器".to_string(),
+                        description: "Minecraft 性能优化与光影支持，提升 FPS 并支持光影着色器"
+                            .to_string(),
                         icon_url: "https://optifine.net/favicon.ico".to_string(),
                         project_url: latest.url.clone(),
                         downloads: 0,
@@ -206,7 +215,8 @@ fn parse_loader(s: &str) -> Option<ModLoaderType> {
 
 /// 将 core 层错误映射为后端 API 错误（语义对应源 ErrorHandlingMiddleware 默认 500 / HttpRequestException 502）。
 fn map_core_error(e: qomicex_core::error::Error) -> ApiError {
-    let is_upstream = matches!(&e, qomicex_core::error::Error::Http { status: Some(s), .. } if *s >= 500);
+    let is_upstream =
+        matches!(&e, qomicex_core::error::Error::Http { status: Some(s), .. } if *s >= 500);
     if is_upstream {
         ApiError::upstream(e.to_string())
     } else {

@@ -106,7 +106,12 @@ impl AccountService {
 
     /// 列出全部账号（源 `GetAccountsAsync`）。返回 AccountInfo 列表。
     pub async fn get_accounts(&self) -> ApiResult<Vec<AccountInfo>> {
-        Ok(self.load().await?.iter().map(StoredAccount::to_info).collect())
+        Ok(self
+            .load()
+            .await?
+            .iter()
+            .map(StoredAccount::to_info)
+            .collect())
     }
 
     /// 取出并清除「账号曾丢失」标志（源 `CheckAccountsLost`）。

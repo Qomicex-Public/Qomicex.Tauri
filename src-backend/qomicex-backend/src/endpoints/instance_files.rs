@@ -298,14 +298,12 @@ async fn refresh_mods_cache(
     instance_id: &str,
 ) -> ApiResult<Vec<ModMetadataDto>> {
     let r = resolve(instance_id, state)?;
-    let mods = state
-        .core
-        .local_resource_provider()
-        .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
-    let mut list = mods
-        .get_mod_list(None)
-        .await
-        .map_err(map_core_error)?;
+    let mods = state.core.local_resource_provider().create_mods(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
+    let mut list = mods.get_mod_list(None).await.map_err(map_core_error)?;
     mods.enrich_mod_ids(&mut list).await;
     let mut dtos = map_mod_dtos(&list);
     fill_remote_icons(&state.http_client, &state.curse_forge_api_key, &mut dtos).await;
@@ -317,7 +315,12 @@ async fn refresh_mods_cache(
             let cn = cn.or_else(|| {
                 let local_name = list
                     .iter()
-                    .find(|m| Path::new(&m.file_path).file_name().map(|n| n.to_string_lossy().into_owned()) == Some(d.file_name.clone()))
+                    .find(|m| {
+                        Path::new(&m.file_path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            == Some(d.file_name.clone())
+                    })
                     .map(|m| m.name.clone())
                     .unwrap_or_default();
                 mcmod.lookup_with_id(&local_name)
@@ -414,10 +417,7 @@ pub fn router() -> Router<SharedState> {
         )
         .route("/instance/{id}/files/datapacks", delete(delete_datapack))
         // screenshots
-        .route(
-            "/instance/{id}/files/screenshots",
-            get(list_screenshots),
-        )
+        .route("/instance/{id}/files/screenshots", get(list_screenshots))
         .route(
             "/instance/{id}/files/screenshots/metadata",
             get(screenshots_metadata),
@@ -442,10 +442,7 @@ pub fn router() -> Router<SharedState> {
             "/instance/{id}/files/servers",
             get(list_servers).post(add_server),
         )
-        .route(
-            "/instance/{id}/files/servers",
-            delete(delete_server),
-        )
+        .route("/instance/{id}/files/servers", delete(delete_server))
         .route("/instance/{id}/files/server-ping", get(server_ping))
         .route("/instance/{id}/files/lan-games", get(lan_games))
         // options (stubs; rely on a not-yet-portable per-instance OptionsProvider)
@@ -611,7 +608,9 @@ async fn mods_count(
 ) -> ApiResult<Json<i64>> {
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
-    Ok(Json(count_children(&dir, "jar") + count_children(&dir, "disabled")))
+    Ok(Json(
+        count_children(&dir, "jar") + count_children(&dir, "disabled"),
+    ))
 }
 
 async fn mods_progress(
@@ -864,14 +863,12 @@ async fn check_mod_updates(
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<ModUpdateEntryDto>>> {
     let r = resolve(&id, &state)?;
-    let mods = state
-        .core
-        .local_resource_provider()
-        .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
-    let mut list = mods
-        .get_mod_list_light()
-        .await
-        .map_err(map_core_error)?;
+    let mods = state.core.local_resource_provider().create_mods(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
+    let mut list = mods.get_mod_list_light().await.map_err(map_core_error)?;
     mods.enrich_mod_ids(&mut list).await;
 
     let mut updates = Vec::new();
@@ -1034,11 +1031,15 @@ async fn enable_mod(
 ) -> ApiResult<StatusCode> {
     let name = required_name(q.name)?;
     let r = resolve(&id, &state)?;
-    let path = category_dir(&r, "mods").join(&name).to_string_lossy().into_owned();
-    let mods = state
-        .core
-        .local_resource_provider()
-        .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
+    let path = category_dir(&r, "mods")
+        .join(&name)
+        .to_string_lossy()
+        .into_owned();
+    let mods = state.core.local_resource_provider().create_mods(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     mods.enable_mod(&path);
     Ok(StatusCode::OK)
 }
@@ -1050,11 +1051,15 @@ async fn disable_mod(
 ) -> ApiResult<StatusCode> {
     let name = required_name(q.name)?;
     let r = resolve(&id, &state)?;
-    let path = category_dir(&r, "mods").join(&name).to_string_lossy().into_owned();
-    let mods = state
-        .core
-        .local_resource_provider()
-        .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
+    let path = category_dir(&r, "mods")
+        .join(&name)
+        .to_string_lossy()
+        .into_owned();
+    let mods = state.core.local_resource_provider().create_mods(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     mods.disable_mod(&path);
     Ok(StatusCode::OK)
 }
@@ -1077,10 +1082,11 @@ async fn batch_enable_mods(
 ) -> ApiResult<StatusCode> {
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
-    let mods = state
-        .core
-        .local_resource_provider()
-        .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
+    let mods = state.core.local_resource_provider().create_mods(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();
         mods.enable_mod(&path);
@@ -1095,10 +1101,11 @@ async fn batch_disable_mods(
 ) -> ApiResult<StatusCode> {
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
-    let mods = state
-        .core
-        .local_resource_provider()
-        .create_mods(&r.version, r.isolated, &state.curse_forge_api_key);
+    let mods = state.core.local_resource_provider().create_mods(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();
         mods.disable_mod(&path);
@@ -1181,10 +1188,11 @@ async fn resourcepacks_metadata(
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<ResourcePackMetadataDto>>> {
     let r = resolve(&id, &state)?;
-    let rp = state
-        .core
-        .local_resource_provider()
-        .create_resourcepack(&r.version, r.isolated, &state.curse_forge_api_key);
+    let rp = state.core.local_resource_provider().create_resourcepack(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     let list = rp.get_resource_pack_list().await.map_err(map_core_error)?;
     let result = list
         .iter()
@@ -1227,10 +1235,11 @@ async fn shaderpacks_metadata(
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<ShaderMetadataDto>>> {
     let r = resolve(&id, &state)?;
-    let s = state
-        .core
-        .local_resource_provider()
-        .create_shaders(&r.version, r.isolated, &state.curse_forge_api_key);
+    let s = state.core.local_resource_provider().create_shaders(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     let list = s.get_shader_list().await.map_err(map_core_error)?;
     let result = list
         .iter()
@@ -1272,10 +1281,11 @@ async fn datapacks_metadata(
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<DataPackMetadataDto>>> {
     let r = resolve(&id, &state)?;
-    let dp = state
-        .core
-        .local_resource_provider()
-        .create_data_packs(&r.version, r.isolated, &state.curse_forge_api_key);
+    let dp = state.core.local_resource_provider().create_data_packs(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     let list = dp.get_data_pack_list().await.map_err(map_core_error)?;
     let result = list
         .iter()
@@ -1322,10 +1332,11 @@ async fn screenshots_metadata(
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<ScreenshotMetadataDto>>> {
     let r = resolve(&id, &state)?;
-    let sc = state
-        .core
-        .local_resource_provider()
-        .create_screenshots(&r.version, r.isolated, &state.curse_forge_api_key);
+    let sc = state.core.local_resource_provider().create_screenshots(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     let result: Vec<ScreenshotMetadataDto> = sc
         .get_screenshot_list()
         .into_iter()
@@ -1380,10 +1391,11 @@ async fn saves_metadata(
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<SaveMetadataDto>>> {
     let r = resolve(&id, &state)?;
-    let saves = state
-        .core
-        .local_resource_provider()
-        .create_saves(&r.version, r.isolated, &state.curse_forge_api_key);
+    let saves = state.core.local_resource_provider().create_saves(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     let result: Vec<SaveMetadataDto> = saves
         .get_save_list()
         .into_iter()
@@ -1406,7 +1418,10 @@ async fn copy_save(
     let saves_dir = category_dir(&r, "saves");
     let src = saves_dir.join(&req.name);
     if !src.is_dir() {
-        return Err(ApiError::not_found("SAVE_NOT_FOUND", "Save directory not found"));
+        return Err(ApiError::not_found(
+            "SAVE_NOT_FOUND",
+            "Save directory not found",
+        ));
     }
     copy_dir(&src, &saves_dir.join(&req.new_name));
     Ok(StatusCode::OK)
@@ -1418,10 +1433,11 @@ async fn rename_save(
     Json(req): Json<SaveRenameRequest>,
 ) -> ApiResult<StatusCode> {
     let r = resolve(&id, &state)?;
-    let saves = state
-        .core
-        .local_resource_provider()
-        .create_saves(&r.version, r.isolated, &state.curse_forge_api_key);
+    let saves = state.core.local_resource_provider().create_saves(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     let saves_dir = category_dir(&r, "saves");
     let path = saves_dir.join(&req.old_name).to_string_lossy().into_owned();
     saves.rename_save(&path, &req.new_name);
@@ -1435,10 +1451,11 @@ async fn backup_save(
 ) -> ApiResult<StatusCode> {
     let name = required_name(q.name)?;
     let r = resolve(&id, &state)?;
-    let saves = state
-        .core
-        .local_resource_provider()
-        .create_saves(&r.version, r.isolated, &state.curse_forge_api_key);
+    let saves = state.core.local_resource_provider().create_saves(
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    );
     let saves_dir = category_dir(&r, "saves");
     let path = saves_dir.join(&name).to_string_lossy().into_owned();
     saves.backup_save(&path);
@@ -1519,9 +1536,8 @@ async fn delete_server(
     State(state): State<SharedState>,
     Query(q): Query<IpQuery>,
 ) -> ApiResult<StatusCode> {
-    let ip = q
-        .ip
-        .ok_or_else(|| ApiError::bad_request("MISSING_IP", "ip is required"))?;
+    let ip =
+        q.ip.ok_or_else(|| ApiError::bad_request("MISSING_IP", "ip is required"))?;
     let r = resolve(&id, &state)?;
     let sm = state
         .core
@@ -1650,7 +1666,8 @@ fn not_implemented(scope: &str) -> ApiError {
 /// Map core errors to backend API errors (mirrors the source middleware:
 /// upstream HTTP >=500 -> 502, otherwise -> 500).
 fn map_core_error(e: qomicex_core::error::Error) -> ApiError {
-    let is_upstream = matches!(&e, qomicex_core::error::Error::Http { status: Some(s), .. } if *s >= 500);
+    let is_upstream =
+        matches!(&e, qomicex_core::error::Error::Http { status: Some(s), .. } if *s >= 500);
     if is_upstream {
         ApiError::upstream(e.to_string())
     } else {
@@ -1662,11 +1679,7 @@ fn map_core_error(e: qomicex_core::error::Error) -> ApiError {
 /// FillRemoteIcons: CurseForge by mod id, then Modrinth by project id/slug.
 /// CF 与 MR 反查并行（tokio::join!）。All errors are swallowed so a lookup
 /// failure cannot break the metadata flow.
-async fn fill_remote_icons(
-    client: &reqwest::Client,
-    api_key: &str,
-    result: &mut [ModMetadataDto],
-) {
+async fn fill_remote_icons(client: &reqwest::Client, api_key: &str, result: &mut [ModMetadataDto]) {
     let empty: Vec<usize> = result
         .iter()
         .enumerate()
@@ -1796,8 +1809,3 @@ async fn fill_remote_icons(
         }
     }
 }
-
-
-
-
-

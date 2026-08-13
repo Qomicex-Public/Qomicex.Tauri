@@ -36,13 +36,21 @@ fn ping_client() -> &'static reqwest::Client {
 
 const DOWNLOAD_SOURCES: &[(i32, &str, &str)] = &[
     // 官方源 ping 目标用真实存在的库文件：根路径 HEAD 恒 404，会误判不可用
-    (0, "官方源", "https://libraries.minecraft.net/org/ow2/asm/asm/9.6/asm-9.6.jar"),
+    (
+        0,
+        "官方源",
+        "https://libraries.minecraft.net/org/ow2/asm/asm/9.6/asm-9.6.jar",
+    ),
     (1, "BMCLAPI 镜像", "https://bmclapi2.bangbang93.com"),
 ];
 
 const MOD_SOURCES: &[(i32, &str, &str)] = &[
     (0, "Modrinth 官方", "https://api.modrinth.com/v2/statistics"),
-    (1, "MCIM 镜像", "https://mod.mcimirror.top/statistics?modrinth=true"),
+    (
+        1,
+        "MCIM 镜像",
+        "https://mod.mcimirror.top/statistics?modrinth=true",
+    ),
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -60,7 +68,10 @@ pub fn router() -> Router<SharedState> {
         .route("/settings/open-backgrounds", post(open_backgrounds))
         .route("/settings/backgrounds", get(list_backgrounds))
         .route("/settings/backgrounds/{name}", get(get_background))
-        .route("/settings/download-sources/ping", get(ping_download_sources))
+        .route(
+            "/settings/download-sources/ping",
+            get(ping_download_sources),
+        )
         .route("/settings/mod-sources/ping", get(ping_mod_sources))
         .route(
             "/settings/download-source/auto-select",
@@ -91,8 +102,14 @@ async fn diagnostics_health() -> ApiResult<Json<DiagnosticsHealthResponse>> {
     );
     Ok(Json(DiagnosticsHealthResponse {
         backend: true,
-        modrinth: PingResult { ok: modrinth.0, latency: modrinth.1 },
-        curseforge: PingResult { ok: curseforge.0, latency: curseforge.1 },
+        modrinth: PingResult {
+            ok: modrinth.0,
+            latency: modrinth.1,
+        },
+        curseforge: PingResult {
+            ok: curseforge.0,
+            latency: curseforge.1,
+        },
     }))
 }
 
@@ -103,10 +120,7 @@ async fn diagnostics_trace(State(state): State<SharedState>) -> ApiResult<Json<V
 
 /// POST /api/diagnostics/dump — 将缓冲 dump 到 `{BaseDir}/logs/backend-trace-*.log`，返回路径。
 async fn diagnostics_dump(State(state): State<SharedState>) -> ApiResult<Json<OpenPathResponse>> {
-    let path = state
-        .trace_dump
-        .dump("manual")
-        .map_err(ApiError::from)?;
+    let path = state.trace_dump.dump("manual").map_err(ApiError::from)?;
     Ok(Json(OpenPathResponse {
         path: path.to_string_lossy().into_owned(),
     }))
@@ -114,7 +128,9 @@ async fn diagnostics_dump(State(state): State<SharedState>) -> ApiResult<Json<Op
 
 async fn sysinfo() -> ApiResult<Json<SystemInfoResponse>> {
     let (total, avail) = crate::util::sysinfo::memory();
-    let git_commit = option_env!("QOMICEX_GIT_HASH").unwrap_or("unknown").to_string();
+    let git_commit = option_env!("QOMICEX_GIT_HASH")
+        .unwrap_or("unknown")
+        .to_string();
     Ok(Json(SystemInfoResponse {
         os: crate::util::sysinfo::os_name().to_string(),
         architecture: crate::util::sysinfo::architecture(),
@@ -133,7 +149,8 @@ async fn open_url(Json(body): Json<OpenUrlRequest>) -> ApiResult<StatusCode> {
     if url.is_empty() || !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err(ApiError::bad_request("BAD_REQUEST", "Invalid URL"));
     }
-    open::that_detached(url).map_err(|_| ApiError::bad_request("BAD_REQUEST", "Failed to open URL"))?;
+    open::that_detached(url)
+        .map_err(|_| ApiError::bad_request("BAD_REQUEST", "Failed to open URL"))?;
     Ok(StatusCode::OK)
 }
 
@@ -165,7 +182,10 @@ async fn get_data_dir(State(state): State<SharedState>) -> ApiResult<Json<DataDi
 
 async fn put_data_dir(Json(body): Json<DataDirRequest>) -> ApiResult<Json<DataDirResponse>> {
     if body.path.trim().is_empty() {
-        return Err(ApiError::bad_request("INVALID_PATH", "Data directory path cannot be empty"));
+        return Err(ApiError::bad_request(
+            "INVALID_PATH",
+            "Data directory path cannot be empty",
+        ));
     }
     settings::set_base_dir(&body.path)?;
     Ok(Json(DataDirResponse { path: body.path }))
@@ -208,23 +228,19 @@ async fn list_backgrounds() -> ApiResult<Json<Vec<String>>> {
 async fn get_background(AxumPath(name): AxumPath<String>) -> ApiResult<Response> {
     let path = backgrounds_dir().join(&name);
     if !path.is_file() {
-        return Err(ApiError::not_found("BACKGROUND_NOT_FOUND", "Background image not found"));
+        return Err(ApiError::not_found(
+            "BACKGROUND_NOT_FOUND",
+            "Background image not found",
+        ));
     }
     let bytes = std::fs::read(&path)?;
-    Ok((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "image/png")],
-        bytes,
-    )
-        .into_response())
+    Ok((StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], bytes).into_response())
 }
 
 async fn ping_download_sources() -> ApiResult<Json<Vec<DownloadSourcePing>>> {
     // 并行 ping 全部源（join_all 保序），总耗时 = 最慢单源 ≤ PING_TIMEOUT
-    let pings = futures::future::join_all(
-        DOWNLOAD_SOURCES.iter().map(|(_, _, url)| ping_head(url)),
-    )
-    .await;
+    let pings =
+        futures::future::join_all(DOWNLOAD_SOURCES.iter().map(|(_, _, url)| ping_head(url))).await;
     let mut results = Vec::with_capacity(DOWNLOAD_SOURCES.len());
     for ((id, name, url), (lat, ok)) in DOWNLOAD_SOURCES.iter().zip(pings) {
         results.push(DownloadSourcePing {
@@ -239,10 +255,8 @@ async fn ping_download_sources() -> ApiResult<Json<Vec<DownloadSourcePing>>> {
 }
 
 async fn ping_mod_sources() -> ApiResult<Json<Vec<ModSourcePing>>> {
-    let pings = futures::future::join_all(
-        MOD_SOURCES.iter().map(|(_, _, url)| ping_get_fast(url)),
-    )
-    .await;
+    let pings =
+        futures::future::join_all(MOD_SOURCES.iter().map(|(_, _, url)| ping_get_fast(url))).await;
     let mut results = Vec::with_capacity(MOD_SOURCES.len());
     for ((id, name, url), (ok, lat)) in MOD_SOURCES.iter().zip(pings) {
         results.push(ModSourcePing {
@@ -258,10 +272,8 @@ async fn ping_mod_sources() -> ApiResult<Json<Vec<ModSourcePing>>> {
 }
 
 async fn auto_select_download_source() -> ApiResult<Json<AutoSelectResponse>> {
-    let pings = futures::future::join_all(
-        DOWNLOAD_SOURCES.iter().map(|(_, _, url)| ping_head(url)),
-    )
-    .await;
+    let pings =
+        futures::future::join_all(DOWNLOAD_SOURCES.iter().map(|(_, _, url)| ping_head(url))).await;
     let mut best_id = 0;
     let mut best_latency = i64::MAX;
     for ((id, _, _), (lat, ok)) in DOWNLOAD_SOURCES.iter().zip(pings) {
@@ -273,15 +285,17 @@ async fn auto_select_download_source() -> ApiResult<Json<AutoSelectResponse>> {
     auto_select_update(|s| s.download_source = best_id);
     Ok(Json(AutoSelectResponse {
         id: best_id,
-        latency_ms: if best_latency == i64::MAX { -1 } else { best_latency },
+        latency_ms: if best_latency == i64::MAX {
+            -1
+        } else {
+            best_latency
+        },
     }))
 }
 
 async fn auto_select_mod_source() -> ApiResult<Json<AutoSelectResponse>> {
-    let pings = futures::future::join_all(
-        MOD_SOURCES.iter().map(|(_, _, url)| ping_get_fast(url)),
-    )
-    .await;
+    let pings =
+        futures::future::join_all(MOD_SOURCES.iter().map(|(_, _, url)| ping_get_fast(url))).await;
     let mut best_id = 0;
     let mut best_latency = i64::MAX;
     for ((id, _, _), (ok, lat)) in MOD_SOURCES.iter().zip(pings) {
@@ -293,7 +307,11 @@ async fn auto_select_mod_source() -> ApiResult<Json<AutoSelectResponse>> {
     auto_select_update(|s| s.mod_mirror = best_id);
     Ok(Json(AutoSelectResponse {
         id: best_id,
-        latency_ms: if best_latency == i64::MAX { -1 } else { best_latency },
+        latency_ms: if best_latency == i64::MAX {
+            -1
+        } else {
+            best_latency
+        },
     }))
 }
 
@@ -335,5 +353,3 @@ async fn clear_curseforge_cache(
     let deleted = state.curseforge_fetch.clear_cache();
     Ok(Json(ClearCurseForgeCacheResponse { deleted }))
 }
-
-

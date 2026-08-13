@@ -40,9 +40,12 @@ async fn launch(
     let java_options = JavaOptions {
         java_path: req.java_path,
         max_memory_mb: req.max_memory,
-        extra_jvm_args: req
-            .jvm_args
-            .map(|s| s.split(' ').filter(|t| !t.is_empty()).map(String::from).collect()),
+        extra_jvm_args: req.jvm_args.map(|s| {
+            s.split(' ')
+                .filter(|t| !t.is_empty())
+                .map(String::from)
+                .collect()
+        }),
     };
 
     let auth_options = if req.auth_token.as_deref().is_none_or(|t| t.is_empty()) {
@@ -50,7 +53,11 @@ async fn launch(
     } else {
         Some(AuthOptions {
             mode: AuthMode::Offline,
-            name: Some(req.auth_name.clone().unwrap_or_else(|| "Player".to_string())),
+            name: Some(
+                req.auth_name
+                    .clone()
+                    .unwrap_or_else(|| "Player".to_string()),
+            ),
             uuid: req.auth_uuid.clone(),
             access_token: req.auth_token.clone(),
             ..Default::default()
@@ -94,7 +101,10 @@ async fn kill_process(
         .await
         .map_err(map_core_error)?;
     if !killed {
-        return Err(ApiError::not_found("PROCESS_NOT_FOUND", "Process not found or could not be killed"));
+        return Err(ApiError::not_found(
+            "PROCESS_NOT_FOUND",
+            "Process not found or could not be killed",
+        ));
     }
     Ok(Json(MessageResponse {
         message: format!("Process {pid} killed"),

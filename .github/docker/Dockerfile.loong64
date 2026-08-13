@@ -1,0 +1,37 @@
+# LoongArch64 基础构建镜像（QEMU 交叉构建，供 self-hosted loong64 runner 的 release job 使用）
+# 基镜像来自 loong64 组织官方 GHCR：node 22 + buildpack-deps（curl/git/gcc 等），
+# apt 源为 mirrors.loong64.com 的 Debian trixie loong64 移植。
+FROM ghcr.io/loong64/node:22-trixie
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CARGO_HOME=/root/.cargo \
+    RUSTUP_HOME=/root/.rustup \
+    PATH=/root/.cargo/bin:/usr/local/bin:$PATH
+
+# 安装系统依赖（Tauri + 后端构建 + 打包工具）
+# Debian 无 libappindicator3-dev（trixie 起移除），等价包为 libayatana-appindicator3-dev
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    libgtk-3-dev \
+    libwebkit2gtk-4.1-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    patchelf \
+    rpm \
+    xdg-utils \
+    libglib2.0-dev \
+    protobuf-compiler \
+    libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Rust（stable 工具链，默认 host = loongarch64-unknown-linux-gnu）
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+
+# pnpm 版本与 release 各 job 的 pnpm/action-setup 保持一致（node 22 自带 npm）
+RUN npm install -g pnpm@11
+
+# 设置工作目录
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

@@ -323,7 +323,10 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/upload", post(upload))
         .route("/plugins/{id}/state", put(set_state))
         .route("/plugins/{id}/files/{*path}", get(plugin_file))
-        .route("/plugins/settings/{id}", get(get_settings).post(set_settings))
+        .route(
+            "/plugins/settings/{id}",
+            get(get_settings).post(set_settings),
+        )
         .route("/plugins/cache/{id}", get(get_cache).post(set_cache))
         .route("/plugins/proxy", post(proxy))
         .route("/plugins/wasm", get(list_wasm))
@@ -335,7 +338,10 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/files/{id}/delete", post(file_delete))
         .route("/plugins/download/start", post(download_start))
         .route("/plugins/download/list", get(download_list))
-        .route("/plugins/download/{taskId}/progress", get(download_progress))
+        .route(
+            "/plugins/download/{taskId}/progress",
+            get(download_progress),
+        )
         .route("/plugins/download/{taskId}/cancel", post(download_cancel))
         .route("/plugins/shell/{id}", post(shell))
 }
@@ -350,10 +356,7 @@ async fn list_plugins(State(state): State<SharedState>) -> Json<Vec<PluginInfo>>
 }
 
 /// GET /api/plugins/{id}
-async fn get_plugin(
-    State(state): State<SharedState>,
-    AxumPath(id): AxumPath<String>,
-) -> Response {
+async fn get_plugin(State(state): State<SharedState>, AxumPath(id): AxumPath<String>) -> Response {
     match state.plugin_store.get_plugin(&id) {
         Some(p) => Json(p).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
@@ -381,7 +384,10 @@ async fn install(
 }
 
 /// DELETE /api/plugins/{id}
-async fn delete_plugin(State(state): State<SharedState>, AxumPath(id): AxumPath<String>) -> Response {
+async fn delete_plugin(
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
     state.plugin_store.uninstall(&id);
     StatusCode::NO_CONTENT.into_response()
 }
@@ -398,17 +404,15 @@ async fn upload(
         .map_err(|_| ApiError::bad_request("INVALID_MULTIPART", "Expected multipart form"))?
     {
         if field.name() == Some("plugin") {
-            let bytes = field
-                .bytes()
-                .await
-                .map_err(|_| ApiError::bad_request("INVALID_MULTIPART", "Expected multipart form"))?;
+            let bytes = field.bytes().await.map_err(|_| {
+                ApiError::bad_request("INVALID_MULTIPART", "Expected multipart form")
+            })?;
             plugin_bytes = Some(bytes.to_vec());
             break;
         }
     }
-    let bytes = plugin_bytes.ok_or_else(|| {
-        ApiError::bad_request("NO_PLUGIN_FILE", "No plugin file uploaded")
-    })?;
+    let bytes = plugin_bytes
+        .ok_or_else(|| ApiError::bad_request("NO_PLUGIN_FILE", "No plugin file uploaded"))?;
 
     let plugin = install_from_package(&bytes)?
         .ok_or_else(|| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "Invalid plugin package"))?;
@@ -432,17 +436,21 @@ async fn set_state(
 }
 
 /// GET /api/plugins/{id}/files/{*path} — static plugin assets (no-cache).
-async fn plugin_file(
-    AxumPath((id, path)): AxumPath<(String, String)>,
-) -> ApiResult<Response> {
+async fn plugin_file(AxumPath((id, path)): AxumPath<(String, String)>) -> ApiResult<Response> {
     let plugins_root = settings::plugins_dir();
     let base = plugins_root.join(&id);
     if !base.starts_with(&plugins_root) {
-        return Err(ApiError::not_found("PLUGIN_FILE_NOT_FOUND", "File not found"));
+        return Err(ApiError::not_found(
+            "PLUGIN_FILE_NOT_FOUND",
+            "File not found",
+        ));
     }
     let file_path = resolve_plugin_asset(&base, &path);
     let Some(file_path) = file_path else {
-        return Err(ApiError::not_found("PLUGIN_FILE_NOT_FOUND", "File not found"));
+        return Err(ApiError::not_found(
+            "PLUGIN_FILE_NOT_FOUND",
+            "File not found",
+        ));
     };
     let bytes = tokio::fs::read(&file_path)
         .await
@@ -466,7 +474,11 @@ fn resolve_plugin_asset(base: &std::path::Path, rel: &str) -> Option<PathBuf> {
         return None;
     }
     let rel_path = PathBuf::from(rel);
-    if rel_path.is_absolute() || rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return None;
     }
     let joined = base.join(rel_path);
@@ -528,10 +540,11 @@ async fn set_settings(
     let _ = std::fs::create_dir_all(&dir);
     let settings_file = dir.join("settings.json");
 
-    let mut settings: serde_json::Value = read_json_file(&settings_file).unwrap_or_else(|| serde_json::json!({}));
-    let map = settings
-        .as_object_mut()
-        .ok_or_else(|| ApiError::bad_request("INVALID_SETTINGS_BODY", "settings.json is not an object"))?;
+    let mut settings: serde_json::Value =
+        read_json_file(&settings_file).unwrap_or_else(|| serde_json::json!({}));
+    let map = settings.as_object_mut().ok_or_else(|| {
+        ApiError::bad_request("INVALID_SETTINGS_BODY", "settings.json is not an object")
+    })?;
     map.insert(key, value);
     write_json_file(&settings_file, &settings)?;
     Ok(StatusCode::OK)
@@ -573,10 +586,11 @@ async fn set_cache(
     let _ = std::fs::create_dir_all(&dir);
     let cache_file = dir.join("cache.json");
 
-    let mut cache: serde_json::Value = read_json_file(&cache_file).unwrap_or_else(|| serde_json::json!({}));
-    let map = cache
-        .as_object_mut()
-        .ok_or_else(|| ApiError::bad_request("INVALID_CACHE_BODY", "cache.json is not an object"))?;
+    let mut cache: serde_json::Value =
+        read_json_file(&cache_file).unwrap_or_else(|| serde_json::json!({}));
+    let map = cache.as_object_mut().ok_or_else(|| {
+        ApiError::bad_request("INVALID_CACHE_BODY", "cache.json is not an object")
+    })?;
     let expires = ttl_seconds.map(|t| chrono::Utc::now().timestamp() + t);
     map.insert(
         key,
@@ -598,7 +612,8 @@ async fn get_cache(
         return Err(ApiError::bad_request("CACHE_KEY_REQUIRED", "key 不能为空"));
     }
     let cache_file = settings::plugins_dir().join(&id).join("cache.json");
-    let cache: serde_json::Value = read_json_file(&cache_file).unwrap_or_else(|| serde_json::json!({}));
+    let cache: serde_json::Value =
+        read_json_file(&cache_file).unwrap_or_else(|| serde_json::json!({}));
 
     let mut response = serde_json::json!({ "value": null });
     if let Some(entry) = cache.get(&key) {
@@ -635,14 +650,20 @@ fn write_json_file(path: &std::path::Path, value: &serde_json::Value) -> Result<
 // CORS proxy
 // =====================================================================
 
-async fn proxy(State(state): State<SharedState>, Json(req): Json<CorsProxyRequest>) -> ApiResult<Response> {
+async fn proxy(
+    State(state): State<SharedState>,
+    Json(req): Json<CorsProxyRequest>,
+) -> ApiResult<Response> {
     if req.url.trim().is_empty() {
         return Err(ApiError::bad_request("PROXY_URL_REQUIRED", "url 不能为空"));
     }
     let parsed = url::Url::parse(&req.url)
         .map_err(|_| ApiError::bad_request("PROXY_INVALID_URL", "无效的代理 URL"))?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(ApiError::bad_request("PROXY_SCHEME_NOT_ALLOWED", "仅支持 http/https 协议"));
+        return Err(ApiError::bad_request(
+            "PROXY_SCHEME_NOT_ALLOWED",
+            "仅支持 http/https 协议",
+        ));
     }
     let host = parsed
         .host_str()
@@ -651,10 +672,7 @@ async fn proxy(State(state): State<SharedState>, Json(req): Json<CorsProxyReques
     let port = parsed.port_or_known_default().unwrap_or(80);
     validate_target(&host, port).await?;
 
-    let method_str = req
-        .method
-        .clone()
-        .unwrap_or_else(|| "GET".to_string());
+    let method_str = req.method.clone().unwrap_or_else(|| "GET".to_string());
     let method = reqwest::Method::from_bytes(method_str.to_uppercase().as_bytes())
         .unwrap_or(reqwest::Method::GET);
 
@@ -691,10 +709,13 @@ async fn proxy(State(state): State<SharedState>, Json(req): Json<CorsProxyReques
     let timeout_ms = req.timeout_ms.unwrap_or(15000).clamp(1000, 60000);
     request = request.timeout(Duration::from_millis(timeout_ms as u64));
 
-    let resp = request
-        .send()
-        .await
-        .map_err(|_| ApiError::new(StatusCode::BAD_GATEWAY, "PROXY_UPSTREAM_FAILED", "上游响应中断"))?;
+    let resp = request.send().await.map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "PROXY_UPSTREAM_FAILED",
+            "上游响应中断",
+        )
+    })?;
 
     if req.stream {
         let stream = resp.bytes_stream();
@@ -724,10 +745,13 @@ async fn proxy(State(state): State<SharedState>, Json(req): Json<CorsProxyReques
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let body_bytes = resp
-        .bytes()
-        .await
-        .map_err(|_| ApiError::new(StatusCode::BAD_GATEWAY, "PROXY_UPSTREAM_FAILED", "上游响应中断"))?;
+    let body_bytes = resp.bytes().await.map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "PROXY_UPSTREAM_FAILED",
+            "上游响应中断",
+        )
+    })?;
 
     let is_text = is_text_response(&content_type, &body_bytes);
     let body_out = if is_text {
@@ -739,7 +763,11 @@ async fn proxy(State(state): State<SharedState>, Json(req): Json<CorsProxyReques
     } else {
         None
     };
-    let body_base64 = if is_text { None } else { Some(b64_encode(&body_bytes)) };
+    let body_base64 = if is_text {
+        None
+    } else {
+        Some(b64_encode(&body_bytes))
+    };
 
     Ok(Json(CorsProxyResponse {
         status,
@@ -765,7 +793,10 @@ async fn validate_target(host: &str, port: u16) -> Result<(), ApiError> {
         }
     }
     if !any {
-        return Err(ApiError::bad_request("PROXY_DNS_FAILED", "无法解析目标主机"));
+        return Err(ApiError::bad_request(
+            "PROXY_DNS_FAILED",
+            "无法解析目标主机",
+        ));
     }
     Ok(())
 }
@@ -858,7 +889,10 @@ async fn wasm_info(
 ) -> ApiResult<Response> {
     match state.plugin_gateway.plugin_info(&id).await {
         Some(info) => Ok(Json(info).into_response()),
-        None => Err(ApiError::not_found("WASM_PLUGIN_NOT_FOUND", "WASM plugin not found")),
+        None => Err(ApiError::not_found(
+            "WASM_PLUGIN_NOT_FOUND",
+            "WASM plugin not found",
+        )),
     }
 }
 
@@ -896,8 +930,15 @@ async fn file_read(
     if !normalized.is_file() {
         return Err(ApiError::not_found("FS_FILE_NOT_FOUND", "文件不存在"));
     }
-    if state.plugin_auth.find_grant(&plugin_id, &req.path).is_none() {
-        return Err(ApiError::forbidden("FS_AUTHORIZATION_REQUIRED", "未授权访问该路径"));
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.path)
+        .is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
     }
 
     let bytes = read_file_segment(&normalized, req.start, req.length)?;
@@ -933,8 +974,15 @@ async fn file_write(
 ) -> ApiResult<Json<PluginFileResponse>> {
     let normalized = FileAuthService::normalize_path(&req.path)
         .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效路径"))?;
-    if state.plugin_auth.find_grant(&plugin_id, &req.path).is_none() {
-        return Err(ApiError::forbidden("FS_AUTHORIZATION_REQUIRED", "未授权访问该路径"));
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.path)
+        .is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
     }
     if let Some(parent) = normalized.parent() {
         std::fs::create_dir_all(parent)?;
@@ -983,8 +1031,15 @@ async fn file_delete(
     if !normalized.is_file() {
         return Err(ApiError::not_found("FS_FILE_NOT_FOUND", "文件不存在"));
     }
-    if state.plugin_auth.find_grant(&plugin_id, &req.path).is_none() {
-        return Err(ApiError::forbidden("FS_AUTHORIZATION_REQUIRED", "未授权访问该路径"));
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.path)
+        .is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
     }
     std::fs::remove_file(&normalized)?;
     Ok(Json(PluginFileResponse {
@@ -996,7 +1051,11 @@ async fn file_delete(
     }))
 }
 
-fn read_file_segment(path: &std::path::Path, start: Option<i64>, length: Option<i64>) -> Result<Vec<u8>, ApiError> {
+fn read_file_segment(
+    path: &std::path::Path,
+    start: Option<i64>,
+    length: Option<i64>,
+) -> Result<Vec<u8>, ApiError> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path)?;
     let file_len = f.metadata()?.len() as i64;
@@ -1029,7 +1088,10 @@ async fn download_start(
     Json(req): Json<PluginDownloadStartRequest>,
 ) -> ApiResult<Json<PluginDownloadStartResponse>> {
     if req.url.trim().is_empty() {
-        return Err(ApiError::bad_request("DOWNLOAD_URL_REQUIRED", "url 不能为空"));
+        return Err(ApiError::bad_request(
+            "DOWNLOAD_URL_REQUIRED",
+            "url 不能为空",
+        ));
     }
 
     let (target_dir, file_name) = resolve_download_target(&state, &req)?;
@@ -1096,9 +1158,7 @@ async fn download_start(
     }))
 }
 
-async fn download_progress(
-    AxumPath(task_id): AxumPath<String>,
-) -> Json<serde_json::Value> {
+async fn download_progress(AxumPath(task_id): AxumPath<String>) -> Json<serde_json::Value> {
     let guard = match sessions().lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
@@ -1223,7 +1283,10 @@ async fn download_worker(
     }
 }
 
-async fn extract_zip_into(zip_path: &std::path::Path, out_dir: &std::path::Path) -> std::io::Result<()> {
+async fn extract_zip_into(
+    zip_path: &std::path::Path,
+    out_dir: &std::path::Path,
+) -> std::io::Result<()> {
     let zip_path = zip_path.to_path_buf();
     let out_dir = out_dir.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -1235,7 +1298,10 @@ async fn extract_zip_into(zip_path: &std::path::Path, out_dir: &std::path::Path)
                 continue;
             }
             let rel: PathBuf = PathBuf::from(entry.name());
-            if rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            if rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
                 continue;
             }
             let out_path = out_dir.join(&rel);
@@ -1264,20 +1330,22 @@ fn resolve_download_target(
         let name = req
             .file_name
             .clone()
-            .or_else(|| {
-                full.file_name().map(|s| s.to_string_lossy().into_owned())
-            })
+            .or_else(|| full.file_name().map(|s| s.to_string_lossy().into_owned()))
             .filter(|n| !n.trim().is_empty())
             .ok_or_else(|| {
-                ApiError::bad_request("DOWNLOAD_FILE_NAME_REQUIRED", "无法确定文件名，请提供 fileName")
+                ApiError::bad_request(
+                    "DOWNLOAD_FILE_NAME_REQUIRED",
+                    "无法确定文件名，请提供 fileName",
+                )
             })?;
         return Ok((target_dir, name));
     }
 
     if let Some(instance_id) = req.instance_id.as_deref().filter(|s| !s.trim().is_empty()) {
-        let inst = state.instance.get_by_id(instance_id).ok_or_else(|| {
-            ApiError::not_found("INSTANCE_NOT_FOUND", "实例不存在")
-        })?;
+        let inst = state
+            .instance
+            .get_by_id(instance_id)
+            .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "实例不存在"))?;
         let isolation = inst
             .version_isolation
             .unwrap_or_else(settings::get_global_version_isolation);
@@ -1303,7 +1371,10 @@ fn resolve_download_target(
             .or_else(|| basename_of_url(&req.url))
             .filter(|n| !n.trim().is_empty())
             .ok_or_else(|| {
-                ApiError::bad_request("DOWNLOAD_FILE_NAME_REQUIRED", "无法确定文件名，请提供 fileName")
+                ApiError::bad_request(
+                    "DOWNLOAD_FILE_NAME_REQUIRED",
+                    "无法确定文件名，请提供 fileName",
+                )
             })?;
         return Ok((target_dir, name));
     }
@@ -1332,7 +1403,10 @@ async fn shell(
     Json(req): Json<PluginShellRequest>,
 ) -> ApiResult<Json<PluginShellResponse>> {
     if req.command.trim().is_empty() {
-        return Err(ApiError::bad_request("SHELL_COMMAND_REQUIRED", "command 不能为空"));
+        return Err(ApiError::bad_request(
+            "SHELL_COMMAND_REQUIRED",
+            "command 不能为空",
+        ));
     }
     let timeout_ms = req.timeout_ms.unwrap_or(15000).clamp(1000, 120000);
 
@@ -1352,9 +1426,13 @@ async fn shell(
         .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::null());
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "SHELL_START_FAILED", format!("无法启动 shell: {e}")))?;
+    let mut child = cmd.spawn().map_err(|e| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SHELL_START_FAILED",
+            format!("无法启动 shell: {e}"),
+        )
+    })?;
     let pid = child.id();
 
     let stdout = child.stdout.take().unwrap();
@@ -1468,4 +1546,3 @@ mod tests {
         assert!(!is_private("2606:4700:4700::1111"));
     }
 }
-

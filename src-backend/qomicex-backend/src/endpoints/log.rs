@@ -62,9 +62,7 @@ async fn list_logs(State(state): State<SharedState>) -> ApiResult<Json<Vec<LogEn
             continue;
         }
         let path = e.path();
-        let modified = meta
-            .modified()
-            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         let dt: DateTime<Local> = modified.into();
         entries.push(LogEntry {
             path: path.to_string_lossy().into_owned(),
@@ -170,7 +168,10 @@ async fn export_all(State(state): State<SharedState>) -> ApiResult<Response> {
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "application/zip"),
-            (header::CONTENT_DISPOSITION, "attachment; filename=\"logs.zip\""),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"logs.zip\"",
+            ),
         ],
         zip_bytes,
     )
@@ -221,7 +222,10 @@ async fn open_dir(Json(body): Json<OpenPathRequest>) -> ApiResult<StatusCode> {
         return Err(ApiError::not_found("LOG_NOT_FOUND", "Directory not found"));
     }
     if dir.to_str().is_none() {
-        return Err(ApiError::bad_request("OPEN_FAILED", "Path is not valid UTF-8"));
+        return Err(ApiError::bad_request(
+            "OPEN_FAILED",
+            "Path is not valid UTF-8",
+        ));
     }
     let _ = open::that_detached(&dir);
     Ok(StatusCode::OK)
@@ -284,7 +288,9 @@ fn resolve_log_path(log_dir: &Path, raw: &str) -> Option<PathBuf> {
         std::env::current_dir().ok()?.join(p)
     };
     let full_c = full.canonicalize().ok()?;
-    let log_c = log_dir.canonicalize().unwrap_or_else(|_| log_dir.to_path_buf());
+    let log_c = log_dir
+        .canonicalize()
+        .unwrap_or_else(|_| log_dir.to_path_buf());
     if full_c.starts_with(&log_c) && full_c.is_file() {
         Some(full_c)
     } else {
@@ -369,7 +375,11 @@ fn zip_crc_table() -> &'static [u32; 256] {
             let mut c = i as u32;
             let mut k = 0;
             while k < 8 {
-                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
                 k += 1;
             }
             table[i] = c;

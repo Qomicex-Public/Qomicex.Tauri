@@ -26,8 +26,7 @@ use crate::state::SharedState;
 /// Embedded mcmod.cn data dump (same file the previous C# backend embedded).
 /// Path resolved relative to this source file:
 /// `src-backend/qomicex-backend/src/endpoints/` -> `src-backend/qomicex-backend/Resources/`.
-const EMBEDDED_MCMOD_JSON: &str =
-    include_str!("../../Resources/mcmod_data.json");
+const EMBEDDED_MCMOD_JSON: &str = include_str!("../../Resources/mcmod_data.json");
 
 /// Runtime override path: `{BaseDir}/QML/mcmod_data.json` (checked first).
 const RUNTIME_OVERRIDE_REL: &str = "QML/mcmod_data.json";
@@ -138,10 +137,7 @@ impl McmodData {
 
 /// Build the forward + reverse index for a single `mods[]` entry.
 fn index_entry(data: &mut McmodData, entry: &Value) {
-    let id = entry
-        .get("id")
-        .and_then(Value::as_i64)
-        .unwrap_or(0) as i32;
+    let id = entry.get("id").and_then(Value::as_i64).unwrap_or(0) as i32;
     let cn_name = entry
         .get("cn")
         .and_then(|c| c.get("name"))

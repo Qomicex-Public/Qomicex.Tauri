@@ -1,0 +1,54 @@
+name: Build LoongArch64 Builder Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: '镜像标签（如 v1.0.0 或 latest）'
+        required: true
+        default: 'latest'
+
+env:
+  IMAGE_NAME: qomicex-loong64-builder   # 镜像名称，可自定义
+  DOCKERFILE: .github/docker/Dockerfile.loong64        # Dockerfile 路径
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # 推送 GHCR 所需
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # loong64 不在默认 binfmt 镜像覆盖范围内，用 loong64 官方组织的 binfmt
+      # 注册 loong64 用户态模拟（与 loong64/docker-library README 同款方案）
+      - name: Set up QEMU (loong64)
+        run: docker run --rm --privileged ghcr.io/loong64/binfmt --install all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 将仓库所有者转换为小写，避免 GHCR tag 报错
+      - name: Normalize image owner to lowercase
+        run: echo "IMAGE_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE }}
+          platforms: linux/loong64
+          push: true
+          tags: ghcr.io/${{ env.IMAGE_OWNER_LC }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}
+          cache-from: type=gha,scope=loong64-builder
+          cache-to: type=gha,mode=max,scope=loong64-builder

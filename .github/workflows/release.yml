@@ -45,7 +45,7 @@ on:
       buildPlatform:
         description: '构建平台'
         required: true
-        default: 'linux'
+        default: 'all'
         type: choice
         options:
           - windows
@@ -78,7 +78,7 @@ on:
       windowsArch:
         description: 'Windows 架构（仅 windows/all 时有效）'
         required: false
-        default: 'x64'
+        default: 'both'
         type: choice
         options:
           - both
@@ -87,7 +87,7 @@ on:
       linuxArch:
         description: 'Linux 架构（仅 linux/all 时有效）'
         required: false
-        default: 'x64'
+        default: 'both'
         type: choice
         options:
           - both
@@ -188,9 +188,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - name: Setup connector build
+        id: connector  # Add this ID
         uses: ./.github/actions/setup-connector-build
         with:
           pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            protobuf-compiler \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
       - name: Cargo check
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}
@@ -220,7 +232,11 @@ jobs:
           cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
           cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
       - name: Cargo audit
-        run: cargo install cargo-audit && cargo audit --manifest-path src-backend/qomicex-backend/Cargo.toml
+        run: |
+          # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
+          # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
+          cargo install cargo-audit
+          cd src-backend/qomicex-backend && cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -443,7 +459,7 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils libglib2.0-dev
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
@@ -536,7 +552,7 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils libglib2.0-dev
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
@@ -611,51 +627,52 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'loongarch64'))
     needs: [setup, quality-gate]
-    runs-on: [self-hosted, loongarch64]
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/qomicex-public/qomicex-loong64-builder:latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
-      - uses: dtolnay/rust-toolchain@stable
-        with: { targets: loongarch64-unknown-linux-gnu }
-      - uses: swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
-      - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: pnpm }
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
-      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
-      - name: Setup connector build
-        id: connector
-        uses: ./.github/actions/setup-connector-build
-        with:
-          pat: ${{ secrets.QOMICEX_PAT }}
-      - name: Build Rust backend
+      # 注册 loong64 用户态模拟（与 build-loong64-builder.yml 构建镜像同款方案）
+      - name: Set up QEMU (loong64)
+        run: docker run --rm --privileged ghcr.io/loong64/binfmt --install all
+      # builder 镜像为私有包，需以 GITHUB_TOKEN 登录 GHCR 才能拉取
+      - name: Login to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build in loong64 container
         env:
-          PROTOC: ${{ steps.connector.outputs.protoc-path }}
-          VC_LTL: ""
-          YY_THUNKS: ""
+          VERSION: ${{ needs.setup.outputs.version }}
+          LICENSE_REQUIRED: ${{ needs.setup.outputs.licenseRequired }}
         run: |
-          FEATURES=""
-          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
-          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target loongarch64-unknown-linux-gnu $FEATURES
-      - name: Stage backend binary
-        run: |
-          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
-          mkdir -p src-tauri/binaries
-          mv src-backend/qomicex-backend/target/loongarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @qomicex/plugin-ui build
-      - run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 全部构建在 loong64 容器内完成（QEMU 模拟，耗时较长）：
+          # - protoc 用镜像自带 /usr/bin/protoc（host 侧 setup-connector-build 装的是
+          #   x86_64 二进制，容器内不可执行）；easytier 的 git 认证在容器内重写
+          # - AppImage 无 loong64 的 linuxdeploy 支持，固定 deb,rpm
+          docker run --rm -i --platform linux/loong64 \
+            -v "$PWD:/workspace" -w /workspace \
+            -e PROTOC=/usr/bin/protoc \
+            -e VC_LTL= \
+            -e YY_THUNKS= \
+            -e VERSION="$VERSION" \
+            -e LICENSE_REQUIRED="$LICENSE_REQUIRED" \
+            -e QOMICEX_PAT='${{ secrets.QOMICEX_PAT }}' \
+            -e TAURI_SIGNING_PRIVATE_KEY='${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}' \
+            -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD='${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}' \
+            "$IMAGE" bash -euxo pipefail <<'EOF'
+            set -e
+            git config --global url."https://x-access-token:${QOMICEX_PAT}@github.com/".insteadOf "ssh://git@github.com/"
+            node scripts/bump-version.mjs "$VERSION"
+            FEATURES=""
+            if [ "$LICENSE_REQUIRED" = "true" ]; then FEATURES="--features license-required"; fi
+            cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
+            mkdir -p src-tauri/binaries
+            mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
+            pnpm install --frozen-lockfile
+            pnpm --filter @qomicex/plugin-ui build
+            npm run tauri -- build --bundles deb,rpm
+          EOF
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"

@@ -167,7 +167,10 @@ async fn yggdrasil_meta(
 ) -> ApiResult<Json<YggdrasilMetaResponse>> {
     let server_url = q.server_url.trim();
     if server_url.is_empty() {
-        return Err(ApiError::bad_request("BAD_REQUEST", "serverUrl is required"));
+        return Err(ApiError::bad_request(
+            "BAD_REQUEST",
+            "serverUrl is required",
+        ));
     }
     let name = fetch_server_name(&state.http_client, server_url).await;
     Ok(Json(YggdrasilMetaResponse { server_name: name }))
@@ -207,11 +210,22 @@ fn format_uuid(bytes: &[u8; 16]) -> String {
     let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
     format!(
         "{}{}{}{}-{}{}-{}{}-{}{}-{}{}{}{}{}{}",
-        hex[3], hex[2], hex[1], hex[0],
-        hex[5], hex[4],
-        hex[7], hex[6],
-        hex[8], hex[9],
-        hex[10], hex[11], hex[12], hex[13], hex[14], hex[15],
+        hex[3],
+        hex[2],
+        hex[1],
+        hex[0],
+        hex[5],
+        hex[4],
+        hex[7],
+        hex[6],
+        hex[8],
+        hex[9],
+        hex[10],
+        hex[11],
+        hex[12],
+        hex[13],
+        hex[14],
+        hex[15],
     )
 }
 
@@ -267,10 +281,7 @@ fn offline_uuid_md5(data: &[u8]) -> [u8; 16] {
                 2 => (b ^ c ^ d, (3 * i + 5) % 16),
                 _ => (c ^ (b | !d), (7 * i) % 16),
             };
-            let f = f
-                .wrapping_add(a)
-                .wrapping_add(K[i])
-                .wrapping_add(m[g]);
+            let f = f.wrapping_add(a).wrapping_add(K[i]).wrapping_add(m[g]);
             a = d;
             d = c;
             c = b;

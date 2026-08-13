@@ -51,7 +51,9 @@ pub fn machine_code() -> String {
 }
 
 #[cfg(not(feature = "license-required"))]
-pub fn validate(_http: &reqwest::Client) -> Result<crate::services::license::LicenseMetadata, LicenseError> {
+pub fn validate(
+    _http: &reqwest::Client,
+) -> Result<crate::services::license::LicenseMetadata, LicenseError> {
     Ok(crate::services::license::LicenseMetadata::empty())
 }
 
@@ -64,7 +66,9 @@ pub fn activate(
 }
 
 #[cfg(feature = "license-required")]
-pub fn validate(http: &reqwest::Client) -> Result<crate::services::license::LicenseMetadata, LicenseError> {
+pub fn validate(
+    http: &reqwest::Client,
+) -> Result<crate::services::license::LicenseMetadata, LicenseError> {
     let token = read_license_file();
     if token.trim().is_empty() {
         return Err(LicenseError::NotFound);
@@ -94,7 +98,10 @@ fn read_license_file() -> String {
     if !path.exists() {
         return String::new();
     }
-    std::fs::read_to_string(&path).unwrap_or_default().trim().to_string()
+    std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
 }
 
 #[cfg(feature = "license-required")]
@@ -105,7 +112,8 @@ fn verify_and_validate(
     let machine_code = crypt::get_machine_code();
     let password = license_password(&machine_code);
 
-    let decrypted = crypt::decrypt_from_base64(token, &password).map_err(|_| LicenseError::DecryptFailed)?;
+    let decrypted =
+        crypt::decrypt_from_base64(token, &password).map_err(|_| LicenseError::DecryptFailed)?;
 
     let (payload, signature) = split_payload_and_signature(&decrypted)?;
     let public_key = get_public_key(http)?;
@@ -122,7 +130,9 @@ fn verify_and_validate(
 
 #[cfg(feature = "license-required")]
 fn split_payload_and_signature(decrypted: &str) -> Result<(String, Vec<u8>), LicenseError> {
-    let sep = decrypted.find(SEPARATOR).ok_or(LicenseError::FormatInvalid)?;
+    let sep = decrypted
+        .find(SEPARATOR)
+        .ok_or(LicenseError::FormatInvalid)?;
     let payload = decrypted[..sep].to_string();
     let sig_b64 = &decrypted[sep + SEPARATOR.len()..];
     use base64::Engine as _;
@@ -153,7 +163,9 @@ fn parse_metadata(payload: &str) -> crate::services::license::LicenseMetadata {
 }
 
 #[cfg(feature = "license-required")]
-fn validate_expiry(metadata: &crate::services::license::LicenseMetadata) -> Result<(), LicenseError> {
+fn validate_expiry(
+    metadata: &crate::services::license::LicenseMetadata,
+) -> Result<(), LicenseError> {
     if metadata.is_permanent {
         return Ok(());
     }
@@ -173,10 +185,18 @@ fn validate_expiry(metadata: &crate::services::license::LicenseMetadata) -> Resu
 #[cfg(feature = "license-required")]
 fn verify_ed25519(public_key: &[u8], msg: &[u8], signature: &[u8]) -> Result<(), LicenseError> {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-    let Ok(pubkey) = VerifyingKey::from_bytes(public_key.try_into().map_err(|_| LicenseError::PublicKeyUnavailable)?) else {
+    let Ok(pubkey) = VerifyingKey::from_bytes(
+        public_key
+            .try_into()
+            .map_err(|_| LicenseError::PublicKeyUnavailable)?,
+    ) else {
         return Err(LicenseError::PublicKeyUnavailable);
     };
-    let sig = Signature::from_bytes(signature.try_into().map_err(|_| LicenseError::FormatInvalid)?);
+    let sig = Signature::from_bytes(
+        signature
+            .try_into()
+            .map_err(|_| LicenseError::FormatInvalid)?,
+    );
     pubkey
         .verify(msg, &sig)
         .map_err(|_| LicenseError::FormatInvalid)
@@ -191,7 +211,9 @@ fn get_public_key(http: &reqwest::Client) -> Result<Vec<u8>, LicenseError> {
     const TTL: Duration = Duration::from_secs(3600);
 
     {
-        let guard = CACHE.lock().map_err(|_| LicenseError::PublicKeyUnavailable)?;
+        let guard = CACHE
+            .lock()
+            .map_err(|_| LicenseError::PublicKeyUnavailable)?;
         if let Some((key, at)) = guard.as_ref() {
             if at.elapsed() < TTL {
                 return Ok(key.clone());
@@ -259,9 +281,7 @@ where
 #[cfg(feature = "license-required")]
 fn verify_remote(http: &reqwest::Client, machine_code: &str) -> Result<(), LicenseError> {
     let url = format!("{API_BASE}/api/client/license/check");
-    let out = poll_once(async {
-        http.get(&url).bearer_auth(machine_code).send().await
-    });
+    let out = poll_once(async { http.get(&url).bearer_auth(machine_code).send().await });
     let resp = out.map_err(|_| LicenseError::RemoteCheckFailed)?;
     match resp {
         Ok(r) if r.status().is_success() => Ok(()),
@@ -303,7 +323,11 @@ mod crypt {
             if let Ok(content) = std::fs::read_to_string("/proc/cpuinfo") {
                 for line in content.lines() {
                     if let Some(val) = line.split_once(':') {
-                        if line.trim_start().to_ascii_lowercase().starts_with("model name") {
+                        if line
+                            .trim_start()
+                            .to_ascii_lowercase()
+                            .starts_with("model name")
+                        {
                             return val.1.trim().to_string();
                         }
                     }
@@ -354,10 +378,8 @@ mod crypt {
                             let rest = &line[start + 1..];
                             if let Some(end) = rest.find('"') {
                                 let mac = &rest[..end];
-                                let cleaned: String = mac
-                                    .chars()
-                                    .filter(|c| c.is_ascii_hexdigit())
-                                    .collect();
+                                let cleaned: String =
+                                    mac.chars().filter(|c| c.is_ascii_hexdigit()).collect();
                                 if cleaned.len() >= 12 {
                                     return cleaned;
                                 }
@@ -373,7 +395,11 @@ mod crypt {
             if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
                 for e in entries.flatten() {
                     let flags = std::fs::read_to_string(e.path().join("flags")).unwrap_or_default();
-                    let up = flags.trim().parse::<u32>().map(|f| f & 1 == 1).unwrap_or(false);
+                    let up = flags
+                        .trim()
+                        .parse::<u32>()
+                        .map(|f| f & 1 == 1)
+                        .unwrap_or(false);
                     if !up {
                         continue;
                     }
@@ -493,7 +519,13 @@ mod crypt {
     }
 
     #[cfg(feature = "license-required")]
-    fn aes_gcm_decrypt(enc_key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag: &[u8]) -> Result<String, ()> {
+    fn aes_gcm_decrypt(
+        enc_key: &[u8],
+        nonce: &[u8],
+        aad: &[u8],
+        ciphertext: &[u8],
+        tag: &[u8],
+    ) -> Result<String, ()> {
         use aes_gcm::aead::generic_array::GenericArray;
         use aes_gcm::aead::{AeadInPlace, KeyInit};
         use aes_gcm::{Aes256Gcm, Nonce};

@@ -37,9 +37,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - name: Setup connector build
+        id: connector
         uses: ./.github/actions/setup-connector-build
         with:
           pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            protobuf-compiler \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
       - name: Cargo check
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}
@@ -69,7 +81,11 @@ jobs:
           cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
           cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
       - name: Cargo audit
-        run: cargo install cargo-audit && cargo audit --manifest-path src-backend/qomicex-backend/Cargo.toml
+        run: |
+          # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
+          # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
+          cargo install cargo-audit
+          cd src-backend/qomicex-backend && cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
       - name: Install test dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl
       - name: Run API filter tests

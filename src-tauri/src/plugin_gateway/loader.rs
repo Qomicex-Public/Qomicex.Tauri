@@ -40,7 +40,10 @@ pub struct PluginRuntime {
 impl PluginRuntime {
     pub fn new() -> anyhow::Result<Self> {
         let engine = Engine::default();
-        Ok(Self { engine, plugins: HashMap::new() })
+        Ok(Self {
+            engine,
+            plugins: HashMap::new(),
+        })
     }
 
     pub fn scan_and_load(&mut self) -> anyhow::Result<()> {
@@ -80,7 +83,11 @@ impl PluginRuntime {
 
             let permissions: Vec<String> = manifest["permissions"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
 
             let wasm_bytes = std::fs::read(&wasm_path)?;
@@ -116,7 +123,10 @@ impl PluginRuntime {
         linker.func_wrap(
             "qomicex",
             "log",
-            |mut caller: wasmtime::Caller<'_, PluginData>, level: i32, msg_ptr: i32, msg_len: i32| {
+            |mut caller: wasmtime::Caller<'_, PluginData>,
+             level: i32,
+             msg_ptr: i32,
+             msg_len: i32| {
                 let mem = caller.get_export("memory").and_then(|e| e.into_memory());
                 if let Some(mem) = mem {
                     if msg_ptr >= 0 && msg_len >= 0 {
@@ -152,9 +162,7 @@ impl PluginRuntime {
         linker.func_wrap(
             "qomicex",
             "instance_list",
-            |_caller: wasmtime::Caller<'_, PluginData>, _out_ptr: i32| {
-                Ok(-1)
-            },
+            |_caller: wasmtime::Caller<'_, PluginData>, _out_ptr: i32| Ok(-1),
         )?;
 
         // ---- Host API：db_set ----
@@ -193,7 +201,8 @@ impl PluginRuntime {
              key_ptr: i32,
              key_len: i32,
              out_ptr: i32,
-             out_cap: i32| -> wasmtime::Result<i32> {
+             out_cap: i32|
+             -> wasmtime::Result<i32> {
                 let mem = caller.get_export("memory").and_then(|e| e.into_memory());
                 let db = caller.data().db.clone();
                 let mem = match mem {
@@ -222,7 +231,8 @@ impl PluginRuntime {
             "get_plugin_id",
             |mut caller: wasmtime::Caller<'_, PluginData>,
              out_ptr: i32,
-             out_cap: i32| -> wasmtime::Result<i32> {
+             out_cap: i32|
+             -> wasmtime::Result<i32> {
                 let mem = caller.get_export("memory").and_then(|e| e.into_memory());
                 let pid = caller.data().plugin_id.clone();
                 let mem = match mem {
@@ -268,15 +278,24 @@ impl PluginRuntime {
 
     /// 调用插件导出的函数（如 on_load / on_unload / get_manifest）
     pub fn call_export(&mut self, id: &str, name: &str) -> anyhow::Result<serde_json::Value> {
-        let plugin = self.plugins.get_mut(id).ok_or_else(|| anyhow::anyhow!("plugin not found"))?;
+        let plugin = self
+            .plugins
+            .get_mut(id)
+            .ok_or_else(|| anyhow::anyhow!("plugin not found"))?;
 
         // 尝试 () -> ()
-        if let Ok(f) = plugin.instance.get_typed_func::<(), ()>(&mut plugin.store, name) {
+        if let Ok(f) = plugin
+            .instance
+            .get_typed_func::<(), ()>(&mut plugin.store, name)
+        {
             f.call(&mut plugin.store, ())?;
             return Ok(serde_json::json!({ "ok": true }));
         }
         // 尝试 () -> i32
-        if let Ok(f) = plugin.instance.get_typed_func::<(), i32>(&mut plugin.store, name) {
+        if let Ok(f) = plugin
+            .instance
+            .get_typed_func::<(), i32>(&mut plugin.store, name)
+        {
             let ret = f.call(&mut plugin.store, ())?;
             return Ok(serde_json::json!({ "ok": true, "result": ret }));
         }

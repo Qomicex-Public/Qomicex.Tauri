@@ -70,5 +70,8 @@ fn linux_pretty_name() -> Option<String> {
 pub fn memory() -> (u64, u64) {
     let mut sys = System::new();
     sys.refresh_memory();
-    (sys.total_memory() / (1024 * 1024), sys.available_memory() / (1024 * 1024))
+    (
+        sys.total_memory() / (1024 * 1024),
+        sys.available_memory() / (1024 * 1024),
+    )
 }

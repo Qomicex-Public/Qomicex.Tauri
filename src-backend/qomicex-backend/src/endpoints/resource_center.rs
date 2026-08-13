@@ -381,10 +381,15 @@ async fn search(
             q.page_size.unwrap_or(20),
         )
     } else if src.eq_ignore_ascii_case("curseforge") {
-        let cf = state.core.create_curseforge_source(&state.curse_forge_api_key);
+        let cf = state
+            .core
+            .create_curseforge_source(&state.curse_forge_api_key);
         let cf_class_id = map_cf_class_id(category.as_deref());
         let cf_url_slug = map_cf_url_slug(category.as_deref());
-        let loaders = loader.as_deref().and_then(map_cf_loader).unwrap_or_default();
+        let loaders = loader
+            .as_deref()
+            .and_then(map_cf_loader)
+            .unwrap_or_default();
         let result = cf
             .search(
                 &keyword,
@@ -415,7 +420,11 @@ async fn search(
             q.page_size.unwrap_or(25),
         )
     } else if src.eq_ignore_ascii_case("ftb") {
-        if !category.as_deref().unwrap_or("").eq_ignore_ascii_case("modpack") {
+        if !category
+            .as_deref()
+            .unwrap_or("")
+            .eq_ignore_ascii_case("modpack")
+        {
             return Ok(Json(empty_search(q.page.unwrap_or(1), 20)));
         }
         let ftb = state.core.create_ftb_source();
@@ -490,7 +499,9 @@ async fn detail(
     }
 
     if src.eq_ignore_ascii_case("curseforge") {
-        let cf = state.core.create_curseforge_source(&state.curse_forge_api_key);
+        let cf = state
+            .core
+            .create_curseforge_source(&state.curse_forge_api_key);
         let info = cf
             .get_mod_info(&id)
             .await
@@ -537,9 +548,7 @@ async fn detail(
     if src.eq_ignore_ascii_case("ftb") {
         let ftb_id: i32 = match id.parse() {
             Ok(v) => v,
-            Err(_) => {
-                return Err(ApiError::not_found("NOT_FOUND", "FTB pack not found"))
-            }
+            Err(_) => return Err(ApiError::not_found("NOT_FOUND", "FTB pack not found")),
         };
         let ftb = state.core.create_ftb_source();
         let pack = ftb
@@ -548,9 +557,7 @@ async fn detail(
             .map_err(|e| ApiError::upstream(e.to_string()))?;
         let pack = match pack {
             Some(p) => p,
-            None => {
-                return Err(ApiError::not_found("NOT_FOUND", "FTB pack not found"))
-            }
+            None => return Err(ApiError::not_found("NOT_FOUND", "FTB pack not found")),
         };
         let slug = pack.slug.clone().unwrap_or_else(|| pack.id.to_string());
         return Ok(Json(ResourceDetailDto {
@@ -810,7 +817,9 @@ async fn version_downloads(
     }
 
     if src.eq_ignore_ascii_case("curseforge") {
-        let cf = state.core.create_curseforge_source(&state.curse_forge_api_key);
+        let cf = state
+            .core
+            .create_curseforge_source(&state.curse_forge_api_key);
         let (file_info, url_result) = futures::join!(
             cf.get_file_info(&id, &version_id),
             cf.get_download_url(&id, &version_id)
@@ -873,23 +882,13 @@ async fn ftb_export(
 ) -> ApiResult<Response> {
     let ftb_id: i32 = match project_id.parse() {
         Ok(v) => v,
-        Err(_) => {
-            return Err(ApiError::not_found(
-                "NOT_FOUND",
-                "FTB project not found",
-            ))
-        }
+        Err(_) => return Err(ApiError::not_found("NOT_FOUND", "FTB project not found")),
     };
     // 前端把 versionId 放在 query（source=ftb 分支的 downloads 同样如此），
     // 与 C# 原版 `?versionId=` 一致；无该参数视为找不到版本。
     let ftb_ver_id: i32 = match q.version_id.as_deref().unwrap_or_default().parse() {
         Ok(v) => v,
-        Err(_) => {
-            return Err(ApiError::not_found(
-                "NOT_FOUND",
-                "FTB version not found",
-            ))
-        }
+        Err(_) => return Err(ApiError::not_found("NOT_FOUND", "FTB version not found")),
     };
     let ftb = state.core.create_ftb_source();
     let detail = ftb
@@ -1010,8 +1009,7 @@ async fn translate(
         Ok(v) => v,
         Err(_) => return Ok(Json(empty_translate())),
     };
-    let get =
-        |k: &str| body.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
+    let get = |k: &str| body.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
     Ok(Json(TranslateResponse {
         original: get("original"),
         translated: get("translated"),
@@ -1038,15 +1036,11 @@ async fn translate_text(
 
     // 源：TextProtector.Protect → service.TranslateAsync → Restore；任何失败返回
     // TranslateResponse(null, null, null)（源 catch 语义），不视为 HTTP 错误。
-    let (protected_text, map) =
-        crate::services::translation::protect(req.text.trim());
+    let (protected_text, map) = crate::services::translation::protect(req.text.trim());
     let provider = crate::services::translation::create_provider(&provider_name, bing_api_key);
-    let translated = crate::services::translation::translate(
-        &state.http_client,
-        &provider,
-        &protected_text,
-    )
-    .await;
+    let translated =
+        crate::services::translation::translate(&state.http_client, &provider, &protected_text)
+            .await;
     let translated = translated
         .map(|t| crate::services::translation::restore(&t, &map))
         .filter(|t| !t.is_empty());
@@ -1101,10 +1095,7 @@ fn cf_result_to_item(
             .iter()
             .map(|c| c.slug.clone().unwrap_or_else(|| c.name.clone()))
             .collect(),
-        project_url: format!(
-            "https://www.curseforge.com/minecraft/{url_slug}/{}",
-            r.slug
-        ),
+        project_url: format!("https://www.curseforge.com/minecraft/{url_slug}/{}", r.slug),
         slug: r.slug.clone(),
     })
 }
@@ -1147,10 +1138,7 @@ fn ftb_pack_to_item(
 // =====================================================================
 
 async fn fetch_mr_author(client: &reqwest::Client, team_id: &str) -> String {
-    let url = format!(
-        "https://api.modrinth.com/v3/team/{}/members",
-        team_id
-    );
+    let url = format!("https://api.modrinth.com/v3/team/{}/members", team_id);
     let resp = match client.get(url).send().await {
         Ok(r) if r.status().is_success() => r,
         _ => return String::new(),
@@ -1264,8 +1252,7 @@ async fn cf_versions_raw(
         fetch_service.set_cached(key, all_items.clone());
     }
 
-    let mut dtos: Vec<ResourceVersionDto> =
-        all_items.iter().map(cf_file_to_version_dto).collect();
+    let mut dtos: Vec<ResourceVersionDto> = all_items.iter().map(cf_file_to_version_dto).collect();
 
     apply_cf_filters(&mut dtos, game_version, loader);
     dtos
@@ -1281,9 +1268,7 @@ fn apply_cf_filters(
     }
     if let Some(l) = loader {
         let norm = l.trim().to_lowercase();
-        dtos.retain(|v| {
-            v.loaders.is_empty() || v.loaders.iter().any(|x| x.to_lowercase() == norm)
-        });
+        dtos.retain(|v| v.loaders.is_empty() || v.loaders.iter().any(|x| x.to_lowercase() == norm));
     }
 }
 
@@ -1324,11 +1309,7 @@ fn urlinterval(s: &str) -> String {
         .collect()
 }
 
-async fn cf_get_raw(
-    client: &reqwest::Client,
-    url: &str,
-    api_key: &str,
-) -> Option<Value> {
+async fn cf_get_raw(client: &reqwest::Client, url: &str, api_key: &str) -> Option<Value> {
     let resp = client
         .get(url)
         .header("x-api-key", api_key)
@@ -1455,109 +1436,114 @@ fn resolve_mr_deps<'a>(
     depth: i32,
 ) -> Pin<Box<dyn Future<Output = Vec<ResolvedDependencyDto>> + Send + 'a>> {
     Box::pin(async move {
-    if depth > 5 {
-        return vec![];
-    }
-    if !visited.insert(project_id.to_string()) {
-        return vec![];
-    }
-
-    let mut result = Vec::new();
-
-    let versions = match mr.get_project_version_info(project_id).await {
-        Ok(v) => v,
-        Err(_) => return result,
-    };
-    if versions.is_empty() {
-        return result;
-    }
-
-    // Pick the target version: explicit version id at root, otherwise the
-    // newest matching game version/loader (source uses MaxBy PublishedAt).
-    let best = if let (Some(vid), 0) = (version_id, depth) {
-        versions.iter().find(|v| v.id == vid)
-    } else {
-        versions
-            .iter()
-            .filter(|v| {
-                let gv_ok = game_version
-                    .map(|g| v.game_version_ids.as_ref().map(|x| x.iter().any(|e| e == g)).unwrap_or(false))
-                    .unwrap_or(true);
-                let l_ok = loader
-                    .map(|l| {
-                        v.loaders
-                            .as_ref()
-                            .map(|x| x.is_empty() || x.iter().any(|x| x == l))
-                            .unwrap_or(true)
-                    })
-                    .unwrap_or(true);
-                gv_ok && l_ok
-            })
-            .max_by_key(|v| &v.published_at)
-            .or_else(|| versions.iter().max_by_key(|v| &v.published_at))
-    };
-    let best = match best {
-        Some(b) => b,
-        None => return result,
-    };
-
-    if depth > 0 {
-        let primary_file = best
-            .files
-            .as_ref()
-            .and_then(|fs| fs.iter().find(|f| !f.download_url.is_empty()));
-        if let Some(primary_file) = primary_file {
-            let (name, icon_url, category) = match mr.get_project_info(project_id).await {
-                Ok(proj) => (
-                    proj.name.clone(),
-                    proj.icon_url.clone().unwrap_or_default(),
-                    match proj.project_type.as_deref() {
-                        Some("resourcepack") => "resourcepacks",
-                        Some("shader") => "shaderpacks",
-                        _ => "mods",
-                    }
-                    .to_string(),
-                ),
-                Err(_) => (project_id.to_string(), String::new(), "mods".to_string()),
-            };
-            result.push(ResolvedDependencyDto {
-                project_id: project_id.to_string(),
-                name,
-                icon_url,
-                version_id: best.id.clone(),
-                version_number: best.version_number.clone().unwrap_or_default(),
-                download_url: primary_file.download_url.clone(),
-                file_name: primary_file.filename.clone(),
-                category,
-                source: "modrinth".to_string(),
-                curse_forge_id: None,
-                modrinth_id: Some(project_id.to_string()),
-            });
+        if depth > 5 {
+            return vec![];
         }
-    }
-
-    if let Some(deps) = &best.dependencies_infos {
-        let required: Vec<String> = deps
-            .iter()
-            .filter(|d| d.dependency_type.as_deref() == Some("required"))
-            .filter_map(|d| d.project_id.clone())
-            .collect();
-        for dep_id in required {
-            let sub = resolve_mr_deps(
-                mr,
-                &dep_id,
-                None,
-                game_version,
-                loader,
-                &mut *visited,
-                depth + 1,
-            )
-            .await;
-            result.extend(sub);
+        if !visited.insert(project_id.to_string()) {
+            return vec![];
         }
-    }
 
-    result
+        let mut result = Vec::new();
+
+        let versions = match mr.get_project_version_info(project_id).await {
+            Ok(v) => v,
+            Err(_) => return result,
+        };
+        if versions.is_empty() {
+            return result;
+        }
+
+        // Pick the target version: explicit version id at root, otherwise the
+        // newest matching game version/loader (source uses MaxBy PublishedAt).
+        let best = if let (Some(vid), 0) = (version_id, depth) {
+            versions.iter().find(|v| v.id == vid)
+        } else {
+            versions
+                .iter()
+                .filter(|v| {
+                    let gv_ok = game_version
+                        .map(|g| {
+                            v.game_version_ids
+                                .as_ref()
+                                .map(|x| x.iter().any(|e| e == g))
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(true);
+                    let l_ok = loader
+                        .map(|l| {
+                            v.loaders
+                                .as_ref()
+                                .map(|x| x.is_empty() || x.iter().any(|x| x == l))
+                                .unwrap_or(true)
+                        })
+                        .unwrap_or(true);
+                    gv_ok && l_ok
+                })
+                .max_by_key(|v| &v.published_at)
+                .or_else(|| versions.iter().max_by_key(|v| &v.published_at))
+        };
+        let best = match best {
+            Some(b) => b,
+            None => return result,
+        };
+
+        if depth > 0 {
+            let primary_file = best
+                .files
+                .as_ref()
+                .and_then(|fs| fs.iter().find(|f| !f.download_url.is_empty()));
+            if let Some(primary_file) = primary_file {
+                let (name, icon_url, category) = match mr.get_project_info(project_id).await {
+                    Ok(proj) => (
+                        proj.name.clone(),
+                        proj.icon_url.clone().unwrap_or_default(),
+                        match proj.project_type.as_deref() {
+                            Some("resourcepack") => "resourcepacks",
+                            Some("shader") => "shaderpacks",
+                            _ => "mods",
+                        }
+                        .to_string(),
+                    ),
+                    Err(_) => (project_id.to_string(), String::new(), "mods".to_string()),
+                };
+                result.push(ResolvedDependencyDto {
+                    project_id: project_id.to_string(),
+                    name,
+                    icon_url,
+                    version_id: best.id.clone(),
+                    version_number: best.version_number.clone().unwrap_or_default(),
+                    download_url: primary_file.download_url.clone(),
+                    file_name: primary_file.filename.clone(),
+                    category,
+                    source: "modrinth".to_string(),
+                    curse_forge_id: None,
+                    modrinth_id: Some(project_id.to_string()),
+                });
+            }
+        }
+
+        if let Some(deps) = &best.dependencies_infos {
+            let required: Vec<String> = deps
+                .iter()
+                .filter(|d| d.dependency_type.as_deref() == Some("required"))
+                .filter_map(|d| d.project_id.clone())
+                .collect();
+            for dep_id in required {
+                let sub = resolve_mr_deps(
+                    mr,
+                    &dep_id,
+                    None,
+                    game_version,
+                    loader,
+                    &mut *visited,
+                    depth + 1,
+                )
+                .await;
+                result.extend(sub);
+            }
+        }
+
+        result
     })
 }
 
@@ -1572,160 +1558,156 @@ fn resolve_cf_deps<'a>(
     depth: i32,
 ) -> Pin<Box<dyn Future<Output = Vec<ResolvedDependencyDto>> + Send + 'a>> {
     Box::pin(async move {
-    if depth > 8 {
-        return vec![];
-    }
-    if !visited.insert(mod_id.to_string()) {
-        return vec![];
-    }
+        if depth > 8 {
+            return vec![];
+        }
+        if !visited.insert(mod_id.to_string()) {
+            return vec![];
+        }
 
-    let mut result = Vec::new();
+        let mut result = Vec::new();
 
-    // Root: resolve a pinned file's dependency list only.
-    if let (Some(fid), 0) = (file_id, depth) {
-        let url = format!(
-            "https://api.curseforge.com/v1/mods/{}/files/{}",
-            urlinterval(mod_id),
-            urlinterval(fid)
-        );
-        let body = match cf_get_raw(http, &url, api_key).await {
+        // Root: resolve a pinned file's dependency list only.
+        if let (Some(fid), 0) = (file_id, depth) {
+            let url = format!(
+                "https://api.curseforge.com/v1/mods/{}/files/{}",
+                urlinterval(mod_id),
+                urlinterval(fid)
+            );
+            let body = match cf_get_raw(http, &url, api_key).await {
+                Some(b) => b,
+                None => return result,
+            };
+            let dep_ids = extract_cf_required_deps(body.get("data").map(|d| d.clone()));
+            for dep_id in dep_ids {
+                let sub = resolve_cf_deps(
+                    http,
+                    &dep_id,
+                    None,
+                    game_version,
+                    loader,
+                    api_key,
+                    &mut *visited,
+                    depth + 1,
+                )
+                .await;
+                result.extend(sub);
+            }
+            return result;
+        }
+
+        // Sub-level: fetch mod info + newest matching file, then recurse.
+        let mod_body = match cf_get_raw(
+            http,
+            &format!("https://api.curseforge.com/v1/mods/{}", urlinterval(mod_id)),
+            api_key,
+        )
+        .await
+        {
             Some(b) => b,
             None => return result,
         };
-        let dep_ids = extract_cf_required_deps(body.get("data").map(|d| d.clone()));
-        for dep_id in dep_ids {
-            let sub = resolve_cf_deps(
-                http,
-                &dep_id,
-                None,
-                game_version,
-                loader,
-                api_key,
-                &mut *visited,
-                depth + 1,
-            )
-            .await;
-            result.extend(sub);
-        }
-        return result;
-    }
-
-    // Sub-level: fetch mod info + newest matching file, then recurse.
-    let mod_body = match cf_get_raw(
-        http,
-        &format!(
-            "https://api.curseforge.com/v1/mods/{}",
-            urlinterval(mod_id)
-        ),
-        api_key,
-    )
-    .await
-    {
-        Some(b) => b,
-        None => return result,
-    };
-    let mod_data = mod_body.get("data");
-    let name = mod_data
-        .and_then(|d| d.get("name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or(mod_id)
-        .to_string();
-    let _slug = mod_data
-        .and_then(|d| d.get("slug"))
-        .and_then(|v| v.as_str())
-        .unwrap_or(mod_id)
-        .to_string();
-    let icon = mod_data
-        .and_then(|d| d.get("logo"))
-        .and_then(|l| l.get("url"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let files_body = match cf_get_raw(http, &cf_files_url(mod_id, None, game_version), api_key)
-        .await
-    {
-        Some(b) => b,
-        None => return result,
-    };
-    let files = files_body.get("data").and_then(|d| d.as_array()).cloned();
-    let files = match files {
-        Some(f) if !f.is_empty() => f,
-        _ => return result,
-    };
-
-    // Newest file by fileDate (source sorts desc by DateTime).
-    let best = files.iter().max_by(|a, b| {
-        a.get("fileDate")
+        let mod_data = mod_body.get("data");
+        let name = mod_data
+            .and_then(|d| d.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(mod_id)
+            .to_string();
+        let _slug = mod_data
+            .and_then(|d| d.get("slug"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(mod_id)
+            .to_string();
+        let icon = mod_data
+            .and_then(|d| d.get("logo"))
+            .and_then(|l| l.get("url"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
-            .cmp(b.get("fileDate").and_then(|v| v.as_str()).unwrap_or(""))
-    });
+            .to_string();
 
-    let best = match best {
-        Some(b) => b,
-        None => return result,
-    };
-    let best_file_id = best
-        .get("id")
-        .and_then(|v| v.as_i64())
-        .map(|x| x.to_string())
-        .unwrap_or_default();
-    let best_file_name = best
-        .get("fileName")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let best_display = best
-        .get("displayName")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| best_file_name.clone());
-    let best_download_url = best
-        .get("downloadUrl")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+        let files_body =
+            match cf_get_raw(http, &cf_files_url(mod_id, None, game_version), api_key).await {
+                Some(b) => b,
+                None => return result,
+            };
+        let files = files_body.get("data").and_then(|d| d.as_array()).cloned();
+        let files = match files {
+            Some(f) if !f.is_empty() => f,
+            _ => return result,
+        };
 
-    result.push(ResolvedDependencyDto {
-        project_id: mod_id.to_string(),
-        name,
-        icon_url: icon,
-        version_id: best_file_id.clone(),
-        version_number: best_display,
-        download_url: best_download_url,
-        file_name: best_file_name,
-        category: "mod".to_string(),
-        source: "curseforge".to_string(),
-        curse_forge_id: Some(mod_id.to_string()),
-        modrinth_id: None,
-    });
+        // Newest file by fileDate (source sorts desc by DateTime).
+        let best = files.iter().max_by(|a, b| {
+            a.get("fileDate")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .cmp(b.get("fileDate").and_then(|v| v.as_str()).unwrap_or(""))
+        });
 
-    // Recurse into this best file's own dependencies.
-    let deps_url = format!(
-        "https://api.curseforge.com/v1/mods/{}/files/{}",
-        urlinterval(mod_id),
-        urlinterval(&best_file_id)
-    );
-    if let Some(body) = cf_get_raw(http, &deps_url, api_key).await {
-        let dep_ids = extract_cf_required_deps(body.get("data").map(|d| d.clone()));
-        for dep_id in dep_ids {
-            let sub = resolve_cf_deps(
-                http,
-                &dep_id,
-                None,
-                game_version,
-                loader,
-                api_key,
-                &mut *visited,
-                depth + 1,
-            )
-            .await;
-            result.extend(sub);
+        let best = match best {
+            Some(b) => b,
+            None => return result,
+        };
+        let best_file_id = best
+            .get("id")
+            .and_then(|v| v.as_i64())
+            .map(|x| x.to_string())
+            .unwrap_or_default();
+        let best_file_name = best
+            .get("fileName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let best_display = best
+            .get("displayName")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| best_file_name.clone());
+        let best_download_url = best
+            .get("downloadUrl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        result.push(ResolvedDependencyDto {
+            project_id: mod_id.to_string(),
+            name,
+            icon_url: icon,
+            version_id: best_file_id.clone(),
+            version_number: best_display,
+            download_url: best_download_url,
+            file_name: best_file_name,
+            category: "mod".to_string(),
+            source: "curseforge".to_string(),
+            curse_forge_id: Some(mod_id.to_string()),
+            modrinth_id: None,
+        });
+
+        // Recurse into this best file's own dependencies.
+        let deps_url = format!(
+            "https://api.curseforge.com/v1/mods/{}/files/{}",
+            urlinterval(mod_id),
+            urlinterval(&best_file_id)
+        );
+        if let Some(body) = cf_get_raw(http, &deps_url, api_key).await {
+            let dep_ids = extract_cf_required_deps(body.get("data").map(|d| d.clone()));
+            for dep_id in dep_ids {
+                let sub = resolve_cf_deps(
+                    http,
+                    &dep_id,
+                    None,
+                    game_version,
+                    loader,
+                    api_key,
+                    &mut *visited,
+                    depth + 1,
+                )
+                .await;
+                result.extend(sub);
+            }
         }
-    }
 
-    result
+        result
     })
 }
 
@@ -1741,10 +1723,3 @@ fn extract_cf_required_deps(data: Option<Value>) -> Vec<String> {
         })
         .collect()
 }
-
-
-
-
-
-
-

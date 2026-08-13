@@ -1,4 +1,4 @@
-﻿//! 安装任务跟踪服务（对应源 Services/InstallTracker.cs + InstallState.cs）。
+//! 安装任务跟踪服务（对应源 Services/InstallTracker.cs + InstallState.cs）。
 //!
 //! ⚠️ 范围说明（本批移植决策）：
 //! 源 `InstallTracker.cs` 的 `RunInstallAsync` 是真实下载/安装流水线，高度依赖
@@ -72,7 +72,10 @@ impl InstallStatus {
     }
 
     pub fn is_terminal(&self) -> bool {
-        matches!(self, InstallStatus::Completed | InstallStatus::Failed | InstallStatus::Cancelled)
+        matches!(
+            self,
+            InstallStatus::Completed | InstallStatus::Failed | InstallStatus::Cancelled
+        )
     }
 }
 
@@ -252,7 +255,11 @@ impl InstallTracker {
     /// Rust 侧现阶段仅接收 GameCore，下载会话/Java 运行时后续注入）。
     pub fn new(core: Arc<GameCore>) -> Self {
         let (tx, _) = broadcast::channel(128);
-        Self { states: Mutex::new(HashMap::new()), tx, core }
+        Self {
+            states: Mutex::new(HashMap::new()),
+            tx,
+            core,
+        }
     }
 
     pub fn core(&self) -> &Arc<GameCore> {
@@ -363,7 +370,10 @@ impl InstallTracker {
 
     /// 列出全部任务（含终态）。
     pub fn get_all(&self) -> Vec<InstallProgress> {
-        self.clone_handles().into_iter().map(|h| h.snapshot()).collect()
+        self.clone_handles()
+            .into_iter()
+            .map(|h| h.snapshot())
+            .collect()
     }
 
     pub fn get_handle(&self, instance_id: &str) -> Option<InstallHandle> {
@@ -418,6 +428,8 @@ impl InstallHandle {
 
 impl std::fmt::Debug for InstallTracker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InstallTracker").field("states", &"<map>").finish()
+        f.debug_struct("InstallTracker")
+            .field("states", &"<map>")
+            .finish()
     }
 }

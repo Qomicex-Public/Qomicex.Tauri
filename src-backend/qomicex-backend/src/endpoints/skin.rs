@@ -42,8 +42,7 @@ fn mc_profile_cache() -> &'static Mutex<HashMap<String, (Instant, Value)>> {
 
 /// Default skin bytes: the real Mojang Alex.png (64x32), embedded from
 /// `Resources/Alex.png` (same blob the previous C# backend shipped).
-const DEFAULT_SKIN_LITERAL: &[u8] =
-    include_bytes!("../../Resources/Alex.png");
+const DEFAULT_SKIN_LITERAL: &[u8] = include_bytes!("../../Resources/Alex.png");
 
 /// 皮肤服务（源：Services/SkinService.cs）。pub(crate)：connector.rs 联机头像复用。
 pub(crate) struct SkinService {
@@ -58,7 +57,9 @@ impl SkinService {
     /// Cached default (placeholder) skin bytes (source: GetDefaultSkinBytes).
     fn default_skin_bytes() -> &'static [u8] {
         static DEFAULT_SKIN: OnceLock<Vec<u8>> = OnceLock::new();
-        DEFAULT_SKIN.get_or_init(|| DEFAULT_SKIN_LITERAL.to_vec()).as_slice()
+        DEFAULT_SKIN
+            .get_or_init(|| DEFAULT_SKIN_LITERAL.to_vec())
+            .as_slice()
     }
 
     /// Local skin bytes for a uuid, if one was uploaded (source: GetLocalSkin).
@@ -118,7 +119,11 @@ impl SkinService {
         self.fetch_profile_from_url(&url).await
     }
 
-    async fn fetch_yggdrasil_profile(&self, uuid: &str, server_url: Option<&str>) -> Option<SkinProfile> {
+    async fn fetch_yggdrasil_profile(
+        &self,
+        uuid: &str,
+        server_url: Option<&str>,
+    ) -> Option<SkinProfile> {
         let server = server_url.map(|s| s.trim_end_matches('/')).unwrap_or("");
         if server.is_empty() {
             return None;
@@ -160,17 +165,25 @@ impl SkinService {
             }
             if let Some(textures) = decoded.get("textures") {
                 if let Some(skin) = textures.get("SKIN") {
-                    profile.skin_url = skin.get("url").and_then(Value::as_str).unwrap_or("").to_string();
+                    profile.skin_url = skin
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
                     if let Some(model) = skin
                         .get("metadata")
                         .and_then(|m| m.get("model"))
                         .and_then(Value::as_str)
                     {
-                        profile.model = if model == "slim" { "slim" } else { "classic" }.to_string();
+                        profile.model =
+                            if model == "slim" { "slim" } else { "classic" }.to_string();
                     }
                 }
                 if let Some(cape) = textures.get("CAPE") {
-                    profile.cape_url = cape.get("url").and_then(Value::as_str).map(|s| s.to_string());
+                    profile.cape_url = cape
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string());
                 }
             }
             return Some(profile);
@@ -188,7 +201,12 @@ impl SkinService {
     }
 
     /// Resolve the effective skin bytes: local override -> remote -> default.
-    pub(crate) async fn resolve_skin_bytes(&self, uuid: &str, login: &str, server: Option<&str>) -> Vec<u8> {
+    pub(crate) async fn resolve_skin_bytes(
+        &self,
+        uuid: &str,
+        login: &str,
+        server: Option<&str>,
+    ) -> Vec<u8> {
         if let Some(bytes) = self.get_local_skin(uuid) {
             return bytes;
         }
@@ -220,7 +238,10 @@ impl SkinService {
             .send()
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        let (code, body) = (
+            resp.status().as_u16(),
+            resp.text().await.unwrap_or_default(),
+        );
         check_upload_response(code, &body, "SKIN_UPLOAD_FAILED")
     }
 
@@ -233,7 +254,10 @@ impl SkinService {
             .send()
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        let (code, body) = (
+            resp.status().as_u16(),
+            resp.text().await.unwrap_or_default(),
+        );
         check_upload_response(code, &body, "SKIN_RESET_FAILED")
     }
 
@@ -262,7 +286,10 @@ impl SkinService {
             .send()
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        let (code, body) = (
+            resp.status().as_u16(),
+            resp.text().await.unwrap_or_default(),
+        );
         check_upload_response(code, &body, "SKIN_UPLOAD_FAILED")
     }
 
@@ -280,7 +307,10 @@ impl SkinService {
             .send()
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        let (code, body) = (
+            resp.status().as_u16(),
+            resp.text().await.unwrap_or_default(),
+        );
         check_upload_response(code, &body, "SKIN_RESET_FAILED")
     }
 
@@ -295,7 +325,10 @@ impl SkinService {
             .send()
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        let (code, body) = (
+            resp.status().as_u16(),
+            resp.text().await.unwrap_or_default(),
+        );
         Self::mc_response_or_throw(code, &body)
     }
 
@@ -317,7 +350,10 @@ impl SkinService {
             .send()
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-        let (code, body) = (resp.status().as_u16(), resp.text().await.unwrap_or_default());
+        let (code, body) = (
+            resp.status().as_u16(),
+            resp.text().await.unwrap_or_default(),
+        );
         if body.trim().is_empty() {
             Self::mc_response_or_throw(code, "{}")?;
             return Ok(None);
@@ -383,7 +419,11 @@ impl SkinService {
         let mut capes = Vec::new();
         if let Some(list) = doc.get("capes").and_then(Value::as_array) {
             for c in list {
-                let id = c.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                let id = c
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 if id.is_empty() {
                     continue;
                 }
@@ -459,7 +499,10 @@ pub fn router() -> Router<SharedState> {
         .route("/skin/cape/{uuid}", get(cape))
         .route("/skin/mc-capes/{uuid}", get(mc_capes))
         .route("/skin/mc-cape/{uuid}/{capeId}", get(mc_cape))
-        .route("/skin/mc-capes/{uuid}/{capeId}", put(equip_cape).delete(unequip_cape))
+        .route(
+            "/skin/mc-capes/{uuid}/{capeId}",
+            put(equip_cape).delete(unequip_cape),
+        )
         .route("/skin/save-to", post(save_to))
 }
 
@@ -474,7 +517,10 @@ async fn profile(
     Query(query): Query<SkinQuery>,
 ) -> ApiResult<Json<SkinProfile>> {
     let svc = SkinService::new(state.http_client.clone());
-    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+    let login = query
+        .r#type
+        .clone()
+        .unwrap_or_else(|| "Microsoft".to_string());
     let mut profile = svc
         .fetch_profile(&uuid, &login, query.server.as_deref())
         .await
@@ -496,7 +542,10 @@ async fn texture(
 ) -> ApiResult<Response> {
     let svc = SkinService::new(state.http_client.clone());
     let download = query.download.as_deref() == Some("1");
-    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+    let login = query
+        .r#type
+        .clone()
+        .unwrap_or_else(|| "Microsoft".to_string());
     let bytes = svc
         .resolve_skin_bytes(&uuid, &login, query.server.as_deref())
         .await;
@@ -516,8 +565,13 @@ async fn save_to(
         return Err(ApiError::bad_request("INVALID_PATH", "path is required"));
     }
     let svc = SkinService::new(state.http_client.clone());
-    let login = req.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
-    let bytes = svc.resolve_skin_bytes(&req.uuid, &login, req.server.as_deref()).await;
+    let login = req
+        .r#type
+        .clone()
+        .unwrap_or_else(|| "Microsoft".to_string());
+    let bytes = svc
+        .resolve_skin_bytes(&req.uuid, &login, req.server.as_deref())
+        .await;
     let path = std::path::Path::new(&req.path);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -541,7 +595,10 @@ async fn upload(
     let data = extract_file_field(&body, "file")
         .filter(|d| !d.is_empty())
         .ok_or_else(|| ApiError::bad_request("NO_FILE_UPLOADED", "No file uploaded"))?;
-    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+    let login = query
+        .r#type
+        .clone()
+        .unwrap_or_else(|| "Microsoft".to_string());
     let is_slim = query.model.as_deref() == Some("slim");
     let svc = SkinService::new(state.http_client.clone());
 
@@ -554,7 +611,10 @@ async fn upload(
         "Yggdrasil" | "统一通行证" => {
             let server = query.server.clone().unwrap_or_default();
             if server.trim().is_empty() {
-                return Err(ApiError::bad_request("MISSING_SERVER", "missing server for Yggdrasil upload"));
+                return Err(ApiError::bad_request(
+                    "MISSING_SERVER",
+                    "missing server for Yggdrasil upload",
+                ));
             }
             let token = account_token(&state, &uuid).await?;
             svc.upload_skin_to_ygg(&token, &server, &uuid, &data, is_slim)
@@ -576,7 +636,10 @@ async fn reset_upload(
     AxumPath(uuid): AxumPath<String>,
     Query(query): Query<SkinUploadQuery>,
 ) -> ApiResult<Json<MessageResponse>> {
-    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+    let login = query
+        .r#type
+        .clone()
+        .unwrap_or_else(|| "Microsoft".to_string());
     let svc = SkinService::new(state.http_client.clone());
 
     match login.as_str() {
@@ -587,7 +650,10 @@ async fn reset_upload(
         "Yggdrasil" | "统一通行证" => {
             let server = query.server.clone().unwrap_or_default();
             if server.trim().is_empty() {
-                return Err(ApiError::bad_request("MISSING_SERVER", "missing server for Yggdrasil reset"));
+                return Err(ApiError::bad_request(
+                    "MISSING_SERVER",
+                    "missing server for Yggdrasil reset",
+                ));
             }
             let token = account_token(&state, &uuid).await?;
             svc.reset_skin_ygg(&token, &server, &uuid).await?;
@@ -607,7 +673,10 @@ async fn cape(
     Query(query): Query<SkinQuery>,
 ) -> ApiResult<Response> {
     let svc = SkinService::new(state.http_client.clone());
-    let login = query.r#type.clone().unwrap_or_else(|| "Microsoft".to_string());
+    let login = query
+        .r#type
+        .clone()
+        .unwrap_or_else(|| "Microsoft".to_string());
     let profile = svc
         .fetch_profile(&uuid, &login, query.server.as_deref())
         .await
@@ -681,7 +750,10 @@ async fn mc_token(state: &SharedState, uuid: &str) -> ApiResult<String> {
         .await?
         .ok_or_else(|| ApiError::not_found("ACCOUNT_NOT_FOUND", "account not found"))?;
     if account.login_method != "Microsoft" {
-        return Err(ApiError::bad_request("NOT_MICROSOFT", "not a Microsoft account"));
+        return Err(ApiError::bad_request(
+            "NOT_MICROSOFT",
+            "not a Microsoft account",
+        ));
     }
     if account.access_token.is_empty() {
         return Err(ApiError {
@@ -808,7 +880,9 @@ fn skin_response(bytes: Vec<u8>, download: bool) -> Response {
 
 /// `{BaseDir}/QML/skins` (source: SkinService.SkinDir).
 fn skin_dir() -> std::path::PathBuf {
-    crate::settings::resolve_base_dir().join("QML").join("skins")
+    crate::settings::resolve_base_dir()
+        .join("QML")
+        .join("skins")
 }
 
 /// `{SkinDir}/{uuid-no-dashes}.png` (source: SkinService.SkinPath).
@@ -840,7 +914,10 @@ fn extract_file_field(body: &[u8], field: &str) -> Option<Vec<u8>> {
     let data_start = idx + sep_len;
 
     // Boundary = first line of the body (e.g. "----WebKitFormBoundary...").
-    let first_crlf = body.windows(2).position(|w| w == b"\r\n").unwrap_or(body.len());
+    let first_crlf = body
+        .windows(2)
+        .position(|w| w == b"\r\n")
+        .unwrap_or(body.len());
     let boundary = &body[..first_crlf];
 
     // Part data ends right before a `\r\n--boundary` (part or final marker).

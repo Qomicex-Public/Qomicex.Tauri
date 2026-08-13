@@ -57,7 +57,9 @@ mod tests {
         runtime.scan_and_load().unwrap();
         let port = server::start_gateway(runtime).await.unwrap();
 
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
         let body = r#"{"export":"on_load"}"#;
         let req = format!(
             "POST /plugins/dev.test.wasm/invoke HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
@@ -71,4 +73,3 @@ mod tests {
         assert!(text.contains("\"ok\":true"), "unexpected response: {text}");
     }
 }
-

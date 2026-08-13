@@ -131,12 +131,7 @@ async fn remote(
     State(state): State<SharedState>,
     Query(_q): Query<RemoteQuery>,
 ) -> ApiResult<Json<Vec<ManifestVersionInfo>>> {
-    match state
-        .core
-        .version()
-        .get_available_versions(false)
-        .await
-    {
+    match state.core.version().get_available_versions(false).await {
         Ok(versions) => Ok(Json(versions)),
         Err(_) => Ok(Json(Vec::new())),
     }
@@ -147,7 +142,8 @@ async fn scan(
     Query(q): Query<ScanQuery>,
 ) -> ApiResult<Json<ScanVersionsResponse>> {
     let mut result: Vec<ScannedVersionEntry> = Vec::new();
-    let abs_dir = std::path::absolute(&q.game_dir).unwrap_or_else(|_| Path::new(&q.game_dir).to_path_buf());
+    let abs_dir =
+        std::path::absolute(&q.game_dir).unwrap_or_else(|_| Path::new(&q.game_dir).to_path_buf());
     let versions_dir = abs_dir.join("versions");
 
     tracing::info!(
@@ -229,7 +225,11 @@ async fn scan(
                     game_version,
                     state: "Available".to_string(),
                     state_describe: String::new(),
-                    loaders: if loaders.is_empty() { None } else { Some(loaders) },
+                    loaders: if loaders.is_empty() {
+                        None
+                    } else {
+                        Some(loaders)
+                    },
                 });
             }
         }
@@ -471,28 +471,49 @@ fn detect_loaders(
                 continue;
             }
 
-            if lower.contains("optifine") && parts[1] == "optifine" && !has_loader(&types, "OptiFine") {
-                types.push(ScannedLoaderEntry { r#type: "OptiFine".into(), version: extract_loader_version(parts[2]) });
+            if lower.contains("optifine")
+                && parts[1] == "optifine"
+                && !has_loader(&types, "OptiFine")
+            {
+                types.push(ScannedLoaderEntry {
+                    r#type: "OptiFine".into(),
+                    version: extract_loader_version(parts[2]),
+                });
             }
-            if lower.contains("liteloader") && parts[1] == "liteloader" && !has_loader(&types, "LiteLoader") {
-                types.push(ScannedLoaderEntry { r#type: "LiteLoader".into(), version: extract_loader_version(parts[2]) });
+            if lower.contains("liteloader")
+                && parts[1] == "liteloader"
+                && !has_loader(&types, "LiteLoader")
+            {
+                types.push(ScannedLoaderEntry {
+                    r#type: "LiteLoader".into(),
+                    version: extract_loader_version(parts[2]),
+                });
             }
             if lower.contains("cleanroom")
                 && parts[1].to_lowercase().contains("cleanroom")
                 && !has_loader(&types, "Cleanroom")
             {
-                types.push(ScannedLoaderEntry { r#type: "Cleanroom".into(), version: extract_loader_version(parts[2]) });
+                types.push(ScannedLoaderEntry {
+                    r#type: "Cleanroom".into(),
+                    version: extract_loader_version(parts[2]),
+                });
             }
             // 老版 Forge（≤1.12.2）：`net.minecraftforge:forge:1.12.2-14.23.5.2860`
             if lower.contains("forge") && parts[1] == "forge" && !has_loader(&types, "Forge") {
-                types.push(ScannedLoaderEntry { r#type: "Forge".into(), version: extract_loader_version(parts[2]) });
+                types.push(ScannedLoaderEntry {
+                    r#type: "Forge".into(),
+                    version: extract_loader_version(parts[2]),
+                });
             }
             // 新版 Forge（1.13+）：`net.minecraftforge:fmlloader:1.20.1-47.2.0`
             if lower.contains("minecraftforge")
                 && parts[1] == "fmlloader"
                 && !has_loader(&types, "Forge")
             {
-                types.push(ScannedLoaderEntry { r#type: "Forge".into(), version: extract_loader_version(parts[2]) });
+                types.push(ScannedLoaderEntry {
+                    r#type: "Forge".into(),
+                    version: extract_loader_version(parts[2]),
+                });
             }
             // NeoForge：`net.neoforged:neoforge:{ver}` 库形态（部分版本 JSON 无
             // --fml.neoForgeVersion 参数时靠此识别；mainClass 精确匹配兜底）
@@ -500,13 +521,19 @@ fn detect_loaders(
                 && parts[1] == "neoforge"
                 && !has_loader(&types, "NeoForge")
             {
-                types.push(ScannedLoaderEntry { r#type: "NeoForge".into(), version: extract_loader_version(parts[2]) });
+                types.push(ScannedLoaderEntry {
+                    r#type: "NeoForge".into(),
+                    version: extract_loader_version(parts[2]),
+                });
             }
             if lower.contains("babric")
                 && parts[0].eq_ignore_ascii_case("babric")
                 && !has_loader(&types, "Babric")
             {
-                types.push(ScannedLoaderEntry { r#type: "Babric".into(), version: "Unknown".into() });
+                types.push(ScannedLoaderEntry {
+                    r#type: "Babric".into(),
+                    version: "Unknown".into(),
+                });
             }
             if lower.contains("fabric")
                 && !has_loader(&types, "Babric")
@@ -514,17 +541,26 @@ fn detect_loaders(
             {
                 if parts[0].to_lowercase().contains("legacyfabric") {
                     if !has_loader(&types, "LegacyFabric") {
-                        types.push(ScannedLoaderEntry { r#type: "LegacyFabric".into(), version: parts[2].to_string() });
+                        types.push(ScannedLoaderEntry {
+                            r#type: "LegacyFabric".into(),
+                            version: parts[2].to_string(),
+                        });
                     }
                 } else if !has_loader(&types, "Fabric") {
-                    types.push(ScannedLoaderEntry { r#type: "Fabric".into(), version: parts[2].to_string() });
+                    types.push(ScannedLoaderEntry {
+                        r#type: "Fabric".into(),
+                        version: parts[2].to_string(),
+                    });
                 }
             }
             if lower.contains("quilt")
                 && (parts[1] == "quilt" || parts[1] == "quilt-loader")
                 && !has_loader(&types, "Quilt")
             {
-                types.push(ScannedLoaderEntry { r#type: "Quilt".into(), version: parts[2].to_string() });
+                types.push(ScannedLoaderEntry {
+                    r#type: "Quilt".into(),
+                    version: parts[2].to_string(),
+                });
             }
         }
     }
@@ -539,13 +575,19 @@ fn detect_loaders(
             };
             if prev.as_deref() == Some("--fml.neoForgeVersion") && !s.starts_with("--") {
                 if !has_loader(&types, "NeoForge") {
-                    types.push(ScannedLoaderEntry { r#type: "NeoForge".into(), version: s.to_string() });
+                    types.push(ScannedLoaderEntry {
+                        r#type: "NeoForge".into(),
+                        version: s.to_string(),
+                    });
                 }
                 break;
             }
             if prev.as_deref() == Some("--fml.forgeVersion") && !s.starts_with("--") {
                 if !has_loader(&types, "Forge") {
-                    types.push(ScannedLoaderEntry { r#type: "Forge".into(), version: s.to_string() });
+                    types.push(ScannedLoaderEntry {
+                        r#type: "Forge".into(),
+                        version: s.to_string(),
+                    });
                 }
             }
             prev = Some(s.to_string());
@@ -555,26 +597,46 @@ fn detect_loaders(
     // ── 3. mainClass 精确匹配（对齐 C#：小写精确字符串）──
     let mc = main_class.to_lowercase();
     if mc == "net.minecraft.client.main.main" {
-        return vec![ScannedLoaderEntry { r#type: "Vanilla".into(), version: String::new() }];
+        return vec![ScannedLoaderEntry {
+            r#type: "Vanilla".into(),
+            version: String::new(),
+        }];
     }
     if !has_loader(&types, "Quilt") && mc == "org.quiltmc.loader.impl.launch.knot.knotclient" {
-        types.push(ScannedLoaderEntry { r#type: "Quilt".into(), version: String::new() });
+        types.push(ScannedLoaderEntry {
+            r#type: "Quilt".into(),
+            version: String::new(),
+        });
     }
-    if !has_loader(&types, "NeoForge") && !has_loader(&types, "Forge")
+    if !has_loader(&types, "NeoForge")
+        && !has_loader(&types, "Forge")
         && mc == "cpw.mods.bootstraplauncher.bootstraplauncher"
     {
-        types.push(ScannedLoaderEntry { r#type: "NeoForge".into(), version: String::new() });
+        types.push(ScannedLoaderEntry {
+            r#type: "NeoForge".into(),
+            version: String::new(),
+        });
     }
-    if !has_loader(&types, "Fabric") && !has_loader(&types, "Babric")
+    if !has_loader(&types, "Fabric")
+        && !has_loader(&types, "Babric")
         && mc == "net.fabricmc.loader.impl.launch.knot.knotclient"
     {
-        types.push(ScannedLoaderEntry { r#type: "Fabric".into(), version: String::new() });
+        types.push(ScannedLoaderEntry {
+            r#type: "Fabric".into(),
+            version: String::new(),
+        });
     }
     if !has_loader(&types, "Forge") && mc == "net.minecraftforge.bootstrap.bootstraplauncher" {
-        types.push(ScannedLoaderEntry { r#type: "Forge".into(), version: String::new() });
+        types.push(ScannedLoaderEntry {
+            r#type: "Forge".into(),
+            version: String::new(),
+        });
     }
     if !has_loader(&types, "Cleanroom") && mc == "top.outlands.foundation.boot.foundation" {
-        types.push(ScannedLoaderEntry { r#type: "Cleanroom".into(), version: String::new() });
+        types.push(ScannedLoaderEntry {
+            r#type: "Cleanroom".into(),
+            version: String::new(),
+        });
     }
 
     // ── 4. 老版原版（≤1.12.2）：launchwrapper 且无任何 loader → Vanilla ──
@@ -588,7 +650,10 @@ fn detect_loaders(
         && !has_loader(&types, "Cleanroom")
         && !has_loader(&types, "Babric")
     {
-        return vec![ScannedLoaderEntry { r#type: "Vanilla".into(), version: String::new() }];
+        return vec![ScannedLoaderEntry {
+            r#type: "Vanilla".into(),
+            version: String::new(),
+        }];
     }
 
     // ── 5. 兜底：inheritsFrom 按 id 猜测（Neo 端点级，C# core 无此级）→ 仍空则 Unknown ──
@@ -614,13 +679,19 @@ fn detect_loaders(
                     None
                 };
                 if let Some(g) = guess {
-                    types.push(ScannedLoaderEntry { r#type: g.into(), version: id.to_string() });
+                    types.push(ScannedLoaderEntry {
+                        r#type: g.into(),
+                        version: id.to_string(),
+                    });
                 }
             }
         }
     }
     if types.is_empty() {
-        types.push(ScannedLoaderEntry { r#type: "Unknown".into(), version: "Unknown".into() });
+        types.push(ScannedLoaderEntry {
+            r#type: "Unknown".into(),
+            version: "Unknown".into(),
+        });
     }
 
     types

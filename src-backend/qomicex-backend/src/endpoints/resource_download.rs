@@ -133,7 +133,13 @@ fn ensure_watcher(manager: Arc<DownloadManager>) {
         let mut rx = manager.subscribe();
         loop {
             match rx.recv().await {
-                Ok(DownloadEvent::Progress { id, downloaded, total, speed_bps, .. }) => {
+                Ok(DownloadEvent::Progress {
+                    id,
+                    downloaded,
+                    total,
+                    speed_bps,
+                    ..
+                }) => {
                     let mut reg = task_registry().lock().unwrap();
                     if let Some(s) = reg.get_mut(&id) {
                         s.downloaded = downloaded;
@@ -146,7 +152,11 @@ fn ensure_watcher(manager: Arc<DownloadManager>) {
                 }
                 Ok(DownloadEvent::StateChanged { id, state, detail }) => {
                     let status = status_of(state).to_string();
-                    let error = if state == TaskState::Failed { detail } else { None };
+                    let error = if state == TaskState::Failed {
+                        detail
+                    } else {
+                        None
+                    };
                     if let Some(s) = task_registry().lock().unwrap().get_mut(&id) {
                         s.status = status;
                         s.error = error;

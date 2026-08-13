@@ -174,10 +174,7 @@ async fn offline(
     State(state): State<SharedState>,
     Json(req): Json<AuthRequest>,
 ) -> ApiResult<Json<AuthResponse>> {
-    let name = req
-        .username
-        .clone()
-        .unwrap_or_else(|| "Player".to_string());
+    let name = req.username.clone().unwrap_or_else(|| "Player".to_string());
     let uuid = offline_uuid(&name);
     let access_token = uuid::Uuid::new_v4().to_string();
 
@@ -290,19 +287,30 @@ async fn microsoft_poll(
         .await
         .map_err(map_core_err)?
         .ok_or_else(|| {
-            ApiError::bad_request("NOT_SUPPORTED", "Polling not supported by current auth provider")
+            ApiError::bad_request(
+                "NOT_SUPPORTED",
+                "Polling not supported by current auth provider",
+            )
         })?;
 
     if poll.is_completed {
         if let Some(access_token) = poll.access_token.as_deref() {
             let refresh = poll.refresh_token.as_deref().unwrap_or("");
-            let auth = state.core.auth().complete_login(access_token, refresh).await.map_err(map_core_err)?;
+            let auth = state
+                .core
+                .auth()
+                .complete_login(access_token, refresh)
+                .await
+                .map_err(map_core_err)?;
             return Ok(Json(AuthResponse {
                 success: auth.success,
                 username: auth.username,
                 access_token: auth.access_token,
                 uuid: auth.uuid,
-                user_type: auth.user_type.clone().or_else(|| Some("microsoft".to_string())),
+                user_type: auth
+                    .user_type
+                    .clone()
+                    .or_else(|| Some("microsoft".to_string())),
                 error_message: auth.error_message,
                 refresh_token: auth.refresh_token,
                 device_code: None,
@@ -349,8 +357,12 @@ async fn microsoft_info(
             "This Microsoft account has no linked Minecraft profile",
         ));
     }
-    let body = resp.text().await.map_err(|e| ApiError::upstream(e.to_string()))?;
-    let doc: serde_json::Value = serde_json::from_str(&body).map_err(|e| ApiError::internal(e.to_string()))?;
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| ApiError::upstream(e.to_string()))?;
+    let doc: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| ApiError::internal(e.to_string()))?;
     let uuid = doc.get("id").and_then(|v| v.as_str()).unwrap_or("");
     if uuid.is_empty() {
         return Err(ApiError::bad_request(
@@ -359,7 +371,11 @@ async fn microsoft_info(
         ));
     }
     let mut stored = StoredAccount {
-        name: doc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        name: doc
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         uuid: uuid.to_string(),
         token: req.access_token.clone(),
         access_token: req.access_token,
@@ -369,10 +385,7 @@ async fn microsoft_info(
         is_default: false,
         server_url: None,
     };
-    state
-        .account
-        .save_account(&mut stored)
-        .await?;
+    state.account.save_account(&mut stored).await?;
     Ok(Json(stored))
 }
 
@@ -387,10 +400,16 @@ async fn microsoft_refresh(
         .await?
         .ok_or_else(|| ApiError::not_found("ACCOUNT_NOT_FOUND", "Account not found"))?;
     if account.login_method != "Microsoft" {
-        return Err(ApiError::bad_request("INVALID_ACCOUNT_TYPE", "Not a Microsoft account"));
+        return Err(ApiError::bad_request(
+            "INVALID_ACCOUNT_TYPE",
+            "Not a Microsoft account",
+        ));
     }
     if account.refresh_token.is_empty() {
-        return Err(ApiError::bad_request("MISSING_REFRESH_TOKEN", "Missing refresh token"));
+        return Err(ApiError::bad_request(
+            "MISSING_REFRESH_TOKEN",
+            "Missing refresh token",
+        ));
     }
 
     let result = state
@@ -453,9 +472,11 @@ async fn yggdrasil(
         .await
         .map_err(|e| ApiError::upstream(e.to_string()))?;
     let status = resp.status();
-    let body = resp.text().await.map_err(|e| ApiError::upstream(e.to_string()))?;
-    let doc: serde_json::Value =
-        serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| ApiError::upstream(e.to_string()))?;
+    let doc: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
 
     if !status.is_success() {
         let err_msg = doc
@@ -472,14 +493,30 @@ async fn yggdrasil(
         }));
     }
 
-    let access_token = doc.get("accessToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let client_token = doc.get("clientToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let access_token = doc
+        .get("accessToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let client_token = doc
+        .get("clientToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     let mut profiles = Vec::new();
     if let Some(arr) = doc.get("availableProfiles").and_then(|v| v.as_array()) {
         for p in arr {
-            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let id = p
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = p
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             profiles.push(YggdrasilProfileInfo { id, name });
         }
     }
@@ -544,9 +581,11 @@ async fn tongyi(
         .await
         .map_err(|e| ApiError::upstream(e.to_string()))?;
     let status = resp.status();
-    let body = resp.text().await.map_err(|e| ApiError::upstream(e.to_string()))?;
-    let doc: serde_json::Value =
-        serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| ApiError::upstream(e.to_string()))?;
+    let doc: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
 
     // Unlike the yggdrasil endpoint, tongyi fails the whole request when auth fails.
     if !status.is_success() {
@@ -563,8 +602,16 @@ async fn tongyi(
         return Err(ApiError::bad_request("AUTH_FAILED", err_msg));
     }
 
-    let access_token = doc.get("accessToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let client_token = doc.get("clientToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let access_token = doc
+        .get("accessToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let client_token = doc
+        .get("clientToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let first_profile = doc
         .get("availableProfiles")
         .and_then(|v| v.as_array())
@@ -607,9 +654,17 @@ async fn validate(
 ) -> ApiResult<Json<ValidateResponse>> {
     let token = req.access_token.as_deref().unwrap_or("");
     if token.is_empty() {
-        return Err(ApiError::bad_request("MISSING_PARAMETER", "accessToken is required"));
+        return Err(ApiError::bad_request(
+            "MISSING_PARAMETER",
+            "accessToken is required",
+        ));
     }
-    let valid = state.core.auth().validate(token).await.map_err(map_core_err)?;
+    let valid = state
+        .core
+        .auth()
+        .validate(token)
+        .await
+        .map_err(map_core_err)?;
     Ok(Json(ValidateResponse { valid }))
 }
 
@@ -620,9 +675,17 @@ async fn invalidate(
 ) -> ApiResult<Json<MessageResponse>> {
     let token = req.access_token.as_deref().unwrap_or("");
     if token.is_empty() {
-        return Err(ApiError::bad_request("MISSING_PARAMETER", "accessToken is required"));
+        return Err(ApiError::bad_request(
+            "MISSING_PARAMETER",
+            "accessToken is required",
+        ));
     }
-    state.core.auth().invalidate(token).await.map_err(map_core_err)?;
+    state
+        .core
+        .auth()
+        .invalidate(token)
+        .await
+        .map_err(map_core_err)?;
     Ok(Json(MessageResponse {
         message: "Token invalidated".to_string(),
     }))

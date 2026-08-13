@@ -82,7 +82,10 @@ pub fn router() -> Router<SharedState> {
         .route("/modpack/resolve", post(resolve))
         .route("/modpack/install", post(install))
         .route("/modpack/install-direct", post(install_direct))
-        .route("/modpack/progress/{instanceId}", get(progress).delete(cancel))
+        .route(
+            "/modpack/progress/{instanceId}",
+            get(progress).delete(cancel),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +139,10 @@ async fn progress(
 ) -> ApiResult<Json<InstallProgress>> {
     match modpack_data(&s).tracker.get_state(&instance_id) {
         Some(p) => Ok(Json(p)),
-        None => Err(ApiError::not_found("MODPACK_INSTALL_NOT_FOUND", "Modpack install task not found")),
+        None => Err(ApiError::not_found(
+            "MODPACK_INSTALL_NOT_FOUND",
+            "Modpack install task not found",
+        )),
     }
 }
 
@@ -222,10 +228,7 @@ impl ModpackServiceData {
             name: project.name,
             summary: Some(project.description.clone()),
             author: project.team.clone(),
-            version: version
-                .version_number
-                .clone()
-                .or(Some(version.name)),
+            version: version.version_number.clone().or(Some(version.name)),
             game_version,
             loader: normalize_loader(&loader),
             loader_version: Some(loader_version),
@@ -249,10 +252,7 @@ impl ModpackServiceData {
         version_id: &str,
     ) -> ApiResult<ModpackParseResult> {
         let cf = self.core.create_curseforge_source(&self.curse_api_key);
-        let mod_info = cf
-            .get_mod_info(project_id)
-            .await
-            .map_err(map_core_error)?;
+        let mod_info = cf.get_mod_info(project_id).await.map_err(map_core_error)?;
         let file_info = cf
             .get_file_info(project_id, version_id)
             .await
@@ -262,9 +262,10 @@ impl ModpackServiceData {
             .await
             .map_err(map_core_error)?;
 
-        let file_name = file_info.file_name.clone().unwrap_or_else(|| {
-            format!("{project_id}-{version_id}.jar")
-        });
+        let file_name = file_info
+            .file_name
+            .clone()
+            .unwrap_or_else(|| format!("{project_id}-{version_id}.jar"));
         let files = vec![ModpackFileEntry {
             path: file_name,
             download_url: Some(download_url),
@@ -304,16 +305,18 @@ impl ModpackServiceData {
         let pack_id: i32 = project_id
             .parse()
             .map_err(|_| ApiError::bad_request("MODPACK_SOURCE_INVALID", "Invalid FTB pack id"))?;
-        let pack_version_id: i32 = version_id
-            .parse()
-            .map_err(|_| ApiError::bad_request("MODPACK_SOURCE_INVALID", "Invalid FTB version id"))?;
+        let pack_version_id: i32 = version_id.parse().map_err(|_| {
+            ApiError::bad_request("MODPACK_SOURCE_INVALID", "Invalid FTB version id")
+        })?;
 
         let ftb = self.core.create_ftb_source();
         let version_detail = ftb
             .get_version_detail(pack_id, pack_version_id)
             .await
             .map_err(map_core_error)?
-            .ok_or_else(|| ApiError::bad_request("MODPACK_SOURCE_INVALID", "Cannot fetch FTB version info"))?;
+            .ok_or_else(|| {
+                ApiError::bad_request("MODPACK_SOURCE_INVALID", "Cannot fetch FTB version info")
+            })?;
 
         let mut game_version = String::new();
         let mut loader = String::new();
@@ -459,7 +462,12 @@ impl ModpackServiceData {
                     "Must provide projectId+fileId (online) or path (local)",
                 ));
             }
-            let source = match req.r#type.as_deref().map(str::to_ascii_lowercase).as_deref() {
+            let source = match req
+                .r#type
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
                 Some("mr") | Some("modrinth") => "modrinth",
                 Some("cf") | Some("curseforge") => "curseforge",
                 Some("ftb") => "ftb",
@@ -529,7 +537,10 @@ impl ModpackServiceData {
                 return None;
             }
         };
-        Some(format!("data:{content_type};base64,{}", base64_encode(&bytes)))
+        Some(format!(
+            "data:{content_type};base64,{}",
+            base64_encode(&bytes)
+        ))
     }
 }
 
@@ -556,7 +567,10 @@ fn modpack_target_path(
     rel: &str,
 ) -> PathBuf {
     if version_isolation {
-        Path::new(game_dir).join("versions").join(version_dir_name).join(rel)
+        Path::new(game_dir)
+            .join("versions")
+            .join(version_dir_name)
+            .join(rel)
     } else {
         Path::new(game_dir).join(rel)
     }
@@ -639,7 +653,11 @@ pub(crate) async fn run_modpack_pipeline(
         download_batch(
             handle,
             mgr,
-            vec![(url.to_string(), path.clone(), modpack_headers(url, cf_api_key))],
+            vec![(
+                url.to_string(),
+                path.clone(),
+                modpack_headers(url, cf_api_key),
+            )],
             5.0,
             25.0,
         )
@@ -649,7 +667,8 @@ pub(crate) async fn run_modpack_pipeline(
         handle.set_stage("parsing-modpack");
         handle.set_progress(27.0);
         parsed = Some(if src == "modrinth" {
-            parse_modrinth_index(&path).map_err(|e| format!("解析 modrinth.index.json 失败: {e}"))?
+            parse_modrinth_index(&path)
+                .map_err(|e| format!("解析 modrinth.index.json 失败: {e}"))?
         } else {
             parse_curseforge_manifest(&path).map_err(|e| format!("解析 manifest.json 失败: {e}"))?
         });
@@ -674,7 +693,11 @@ pub(crate) async fn run_modpack_pipeline(
     if game_version.is_empty() {
         return Err("无法确定整合包的游戏版本".to_string());
     }
-    let loader_opt = if loader.is_empty() { None } else { Some(loader.clone()) };
+    let loader_opt = if loader.is_empty() {
+        None
+    } else {
+        Some(loader.clone())
+    };
     let loader_version_opt = if loader_version.is_empty() {
         None
     } else {
@@ -714,7 +737,8 @@ pub(crate) async fn run_modpack_pipeline(
                     if url.is_empty() {
                         return None;
                     }
-                    let dest = modpack_target_path(game_dir, version_dir_name, version_isolation, &f.path);
+                    let dest =
+                        modpack_target_path(game_dir, version_dir_name, version_isolation, &f.path);
                     let headers = modpack_headers(&url, cf_api_key);
                     Some((url, dest, headers))
                 })
@@ -744,10 +768,19 @@ pub(crate) async fn run_modpack_pipeline(
                 if download_url.is_empty() {
                     continue;
                 }
-                let filename = info
-                    .file_name
-                    .unwrap_or_else(|| download_url.rsplit('/').next().unwrap_or("mod.jar").to_string());
-                let dest = modpack_target_path(game_dir, version_dir_name, version_isolation, &format!("mods/{filename}"));
+                let filename = info.file_name.unwrap_or_else(|| {
+                    download_url
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("mod.jar")
+                        .to_string()
+                });
+                let dest = modpack_target_path(
+                    game_dir,
+                    version_dir_name,
+                    version_isolation,
+                    &format!("mods/{filename}"),
+                );
                 let headers = modpack_headers(&download_url, cf_api_key);
                 files.push((download_url, dest, headers));
             }
@@ -760,7 +793,12 @@ pub(crate) async fn run_modpack_pipeline(
         "ftb" => {
             // core FtbModpackInstaller：FTB API 文件清单 + CF 批量查询 mods 链接
             let factory = DefaultInstallerFactory;
-            let inst = factory.create_ftb_modpack(game_dir, version_isolation, http_client.clone(), cf_api_key);
+            let inst = factory.create_ftb_modpack(
+                game_dir,
+                version_isolation,
+                http_client.clone(),
+                cf_api_key,
+            );
             let libs = inst
                 .get_miss_libraries(Some(version_dir_name), project_id, file_id)
                 .await
@@ -855,7 +893,11 @@ fn parse_modrinth_index(zip_path: &Path) -> Result<ParsedModpack, String> {
             if env_client != "required" {
                 continue;
             }
-            let path = f.get("path").and_then(|p| p.as_str()).unwrap_or_default().to_string();
+            let path = f
+                .get("path")
+                .and_then(|p| p.as_str())
+                .unwrap_or_default()
+                .to_string();
             // ⚠️ modrinth.index.json 的 downloads 是字符串数组（直链），非对象数组
             let url = f
                 .get("downloads")
@@ -889,7 +931,11 @@ fn parse_curseforge_manifest(zip_path: &Path) -> Result<ParsedModpack, String> {
     if root.get("manifestType").and_then(|v| v.as_str()) != Some("minecraftModpack") {
         return Err("不是有效的 CurseForge 整合包".to_string());
     }
-    let mc = root.get("minecraft").and_then(|m| m.as_object()).cloned().unwrap_or_default();
+    let mc = root
+        .get("minecraft")
+        .and_then(|m| m.as_object())
+        .cloned()
+        .unwrap_or_default();
     let game_version = mc
         .get("version")
         .and_then(|v| v.as_str())
@@ -898,7 +944,11 @@ fn parse_curseforge_manifest(zip_path: &Path) -> Result<ParsedModpack, String> {
     // modLoaders[].id = "forge-47.1.0" → ("forge", "47.1.0")
     let mut loader = String::new();
     let mut loader_version = String::new();
-    if let Some(ml) = mc.get("modLoaders").and_then(|m| m.as_array()).and_then(|a| a.first()) {
+    if let Some(ml) = mc
+        .get("modLoaders")
+        .and_then(|m| m.as_array())
+        .and_then(|a| a.first())
+    {
         if let Some(id) = ml.get("id").and_then(|v| v.as_str()) {
             if let Some((l, v)) = id.split_once('-') {
                 loader = l.to_string();
@@ -1123,4 +1173,3 @@ pub struct MessageResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version_id: Option<String>,
 }
-
