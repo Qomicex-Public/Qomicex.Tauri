@@ -10,7 +10,7 @@ on:
 
 env:
   IMAGE_NAME: qomicex-loong64-builder   # 镜像名称，可自定义
-  DOCKERFILE: Dockerfile.loong64        # Dockerfile 路径
+  DOCKERFILE: .github/docker/Dockerfile.loong64        # Dockerfile 路径
 
 jobs:
   build-and-push:
