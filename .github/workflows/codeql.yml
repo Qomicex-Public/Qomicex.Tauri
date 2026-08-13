@@ -26,16 +26,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      #  缓存 Cargo 依赖，加快后续构建速度
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4  # 升级到 v4
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: none 
+
+      - name: Build Rust project
+        run: cargo build --release --locked --manifest-path src-backend/Cargo.toml
+
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
