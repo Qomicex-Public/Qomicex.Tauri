@@ -669,7 +669,10 @@ jobs:
             cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
             mkdir -p src-tauri/binaries
             mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
-            pnpm install --frozen-lockfile
+            # trust-lockfile：跳过 pnpm 11 默认 supply-chain 逐包元数据校验
+            # （QEMU 模拟下 node 慢，逐个 fetch 必然超时）；frozen 锁文件+私有仓库可信任
+            pnpm install --frozen-lockfile --config.trust-lockfile=true \
+              --config.fetch-timeout=600000 --config.fetch-retries=5 --config.network-concurrency=4
             pnpm --filter @qomicex/plugin-ui build
             npm run tauri -- build --bundles deb,rpm
           EOF
