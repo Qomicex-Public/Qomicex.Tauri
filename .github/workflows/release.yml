@@ -192,50 +192,59 @@ jobs:
         uses: ./.github/actions/setup-connector-build
         with:
           pat: ${{ secrets.QOMICEX_PAT }}
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libglib2.0-dev
-      - name: Cargo check
-        env:
-          PROTOC: ${{ steps.connector.outputs.protoc-path }}
-          VC_LTL: ""
-          YY_THUNKS: ""
-        run: cargo check --manifest-path src-backend/qomicex-backend/Cargo.toml
-      - name: Cargo test
-        env:
-          PROTOC: ${{ steps.connector.outputs.protoc-path }}
-          VC_LTL: ""
-          YY_THUNKS: ""
-        run: cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml
-      - name: Tauri tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib plugin_gateway
-      - name: Cargo fmt
-        env:
-          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+      - name: Install system dependencies
         run: |
-          cargo fmt --manifest-path src-backend/qomicex-backend/Cargo.toml -- --check
-          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-      - name: Cargo clippy
-        env:
-          PROTOC: ${{ steps.connector.outputs.protoc-path }}
-          VC_LTL: ""
-          YY_THUNKS: ""
-        run: |
-          cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
-          cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
-      - name: Cargo audit
-        run: cargo install cargo-audit && cargo audit --manifest-path src-backend/qomicex-backend/Cargo.toml
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @qomicex/plugin-ui build
-      - run: pnpm run build
-      - run: pnpm audit --audit-level moderate || true
-      - run: pnpm --filter @qomicex/plugin-ui audit --audit-level moderate || true
+          sudo apt-get update
+          sudo apt-get install -y \
+            protobuf-compiler \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+            - name: Cargo check
+              env:
+                PROTOC: ${{ steps.connector.outputs.protoc-path }}
+                VC_LTL: ""
+                YY_THUNKS: ""
+              run: cargo check --manifest-path src-backend/qomicex-backend/Cargo.toml
+            - name: Cargo test
+              env:
+                PROTOC: ${{ steps.connector.outputs.protoc-path }}
+                VC_LTL: ""
+                YY_THUNKS: ""
+              run: cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml
+            - name: Tauri tests
+              run: cargo test --manifest-path src-tauri/Cargo.toml --lib plugin_gateway
+            - name: Cargo fmt
+              env:
+                PROTOC: ${{ steps.connector.outputs.protoc-path }}
+              run: |
+                cargo fmt --manifest-path src-backend/qomicex-backend/Cargo.toml -- --check
+                cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+            - name: Cargo clippy
+              env:
+                PROTOC: ${{ steps.connector.outputs.protoc-path }}
+                VC_LTL: ""
+                YY_THUNKS: ""
+              run: |
+                cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
+                cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
+            - name: Cargo audit
+              run: cargo install cargo-audit && cargo audit --manifest-path src-backend/qomicex-backend/Cargo.toml
+            - uses: pnpm/action-setup@v4
+              with:
+                version: 11
+            - uses: actions/setup-node@v4
+              with:
+                node-version: '22'
+                cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm --filter @qomicex/plugin-ui build
+            - run: pnpm run build
+            - run: pnpm audit --audit-level moderate || true
+            - run: pnpm --filter @qomicex/plugin-ui audit --audit-level moderate || true
 
   windows-x64:
     if: |
