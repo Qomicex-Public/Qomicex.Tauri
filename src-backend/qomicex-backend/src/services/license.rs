@@ -33,7 +33,9 @@ impl LicenseMetadata {
 
 /// `{BaseDir}/QML/license.qmcx`
 pub fn license_file_path() -> PathBuf {
-    settings::resolve_base_dir().join("QML").join("license.qmcx")
+    settings::resolve_base_dir()
+        .join("QML")
+        .join("license.qmcx")
 }
 
 /// `machineCode + "-qomicex-license"`
@@ -55,7 +57,9 @@ pub fn save_license_token(token: &str) -> std::io::Result<()> {
 }
 
 /// Validate a stored license. No-op (Empty) unless `license-required`.
-pub fn validate(http: &reqwest::Client) -> Result<LicenseMetadata, crate::services::license_core::LicenseError> {
+pub fn validate(
+    http: &reqwest::Client,
+) -> Result<LicenseMetadata, crate::services::license_core::LicenseError> {
     license_core::validate(http)
 }
 

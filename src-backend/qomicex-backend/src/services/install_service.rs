@@ -181,9 +181,19 @@ pub async fn run_install_pipeline(
         let matched = loaders
             .iter()
             .find(|l| l.version.eq_ignore_ascii_case(loader_version))
-            .ok_or_else(|| format!("找不到 {} {} 的安装器", loader.as_deref().unwrap_or(""), loader_version))?;
+            .ok_or_else(|| {
+                format!(
+                    "找不到 {} {} 的安装器",
+                    loader.as_deref().unwrap_or(""),
+                    loader_version
+                )
+            })?;
         if matched.url.trim().is_empty() {
-            return Err(format!("{} {} 安装器的下载链接为空，可能是版本列表解析异常", loader.as_deref().unwrap_or(""), loader_version));
+            return Err(format!(
+                "{} {} 安装器的下载链接为空，可能是版本列表解析异常",
+                loader.as_deref().unwrap_or(""),
+                loader_version
+            ));
         }
 
         let temp_dir = game_root.join("temp");
@@ -193,14 +203,7 @@ pub async fn run_install_pipeline(
             loader.as_deref().unwrap_or("loader"),
             loader_version
         ));
-        download_installer_jar(
-            handle,
-            &download_manager,
-            &path,
-            &matched.url,
-            &cf_headers,
-        )
-        .await?;
+        download_installer_jar(handle, &download_manager, &path, &matched.url, &cf_headers).await?;
         installer_path = Some(path);
     }
 
@@ -276,8 +279,7 @@ pub async fn run_install_pipeline(
     } else if !has_loader {
         // === vanilla：写版本 JSON ===
         let version_dir = game_root.join("versions").join(&version_dir_name);
-        std::fs::create_dir_all(&version_dir)
-            .map_err(|e| format!("创建版本目录失败: {e}"))?;
+        std::fs::create_dir_all(&version_dir).map_err(|e| format!("创建版本目录失败: {e}"))?;
         let json_path = version_dir.join(format!("{version_dir_name}.json"));
         std::fs::write(&json_path, &json_content)
             .map_err(|e| format!("写入版本 JSON 失败: {e}"))?;
@@ -338,14 +340,16 @@ pub async fn run_install_pipeline(
         let files: Vec<_> = all_additional_files
             .iter()
             .map(|af| {
-                let dest = game_root
-                    .join(af.relative_path.replace('/', &std::path::MAIN_SEPARATOR.to_string()));
+                let dest = game_root.join(
+                    af.relative_path
+                        .replace('/', &std::path::MAIN_SEPARATOR.to_string()),
+                );
                 let mut headers = Vec::new();
                 if af.source.eq_ignore_ascii_case("modrinth") {
                     headers.push(("User-Agent".to_string(), "QomicexLauncher/1.0".to_string()));
                 }
-                let is_cf = af.source.eq_ignore_ascii_case("curseforge")
-                    || is_cf_domain(&af.identifier);
+                let is_cf =
+                    af.source.eq_ignore_ascii_case("curseforge") || is_cf_domain(&af.identifier);
                 if is_cf {
                     headers.push(("x-api-key".to_string(), curse_forge_api_key.to_string()));
                     headers.push(("User-Agent".to_string(), "QomicexLauncher/1.0".to_string()));
@@ -353,14 +357,7 @@ pub async fn run_install_pipeline(
                 (af.identifier.clone(), dest, headers)
             })
             .collect();
-        download_batch(
-            handle,
-            &download_manager,
-            files,
-            70.0,
-            85.0,
-        )
-        .await?;
+        download_batch(handle, &download_manager, files, 70.0, 85.0).await?;
     } else {
         handle.set_progress(85.0);
     }
@@ -458,7 +455,11 @@ fn absolute_path(game_dir: &str) -> PathBuf {
 }
 
 /// 构建一次性安装 core（对应源 `GameCoreBuilder` 配置）。
-fn build_core(game_root: &Path, mirror: DownloadMirror, http_client: reqwest::Client) -> Arc<GameCore> {
+fn build_core(
+    game_root: &Path,
+    mirror: DownloadMirror,
+    http_client: reqwest::Client,
+) -> Arc<GameCore> {
     let mut builder = GameCoreBuilder::new();
     builder
         .configure(|o| {
@@ -503,7 +504,14 @@ async fn download_installer_jar(
     } else {
         Vec::new()
     };
-    download_batch(handle, mgr, vec![(url.to_string(), path.to_path_buf(), headers)], 4.0, 5.0).await
+    download_batch(
+        handle,
+        mgr,
+        vec![(url.to_string(), path.to_path_buf(), headers)],
+        4.0,
+        5.0,
+    )
+    .await
 }
 
 /// 获取加载器缺失依赖库（源 `GetMissLoaderLibraries` 的参数映射逐字对齐）。
@@ -545,9 +553,11 @@ async fn get_miss_loader_libraries(
                 .ok_or("安装器路径非法")?;
             (Some(p), Some(version_dir_name), None)
         }
-        "fabric" | "legacyfabric" | "quilt" | "babric" => {
-            (Some(loader_version), Some(game_version), Some(&game_dir_str))
-        }
+        "fabric" | "legacyfabric" | "quilt" | "babric" => (
+            Some(loader_version),
+            Some(game_version),
+            Some(&game_dir_str),
+        ),
         _ => (None, None, None),
     };
 
@@ -998,11 +1008,7 @@ pub(crate) async fn download_batch(
                 .and_then(|(id, _)| file_name.get(id).cloned())
                 .unwrap_or_default()
         };
-        let current_speed = task_speed
-            .values()
-            .max()
-            .copied()
-            .unwrap_or(0) as f64;
+        let current_speed = task_speed.values().max().copied().unwrap_or(0) as f64;
 
         handle.update(|f| {
             f.progress = (start_pct + pct_in * (end_pct - start_pct)).clamp(start_pct, end_pct);
@@ -1091,18 +1097,12 @@ async fn poll_task_states(
             continue;
         }
         if let Ok(state) = mgr.state(id).await {
-            if matches!(state, TaskState::Completed | TaskState::Failed | TaskState::Cancelled) {
-                apply_terminal_state(
-                    id,
-                    state,
-                    None,
-                    done_ids,
-                    prog,
-                    task_speed,
-                    _failed,
-                );
+            if matches!(
+                state,
+                TaskState::Completed | TaskState::Failed | TaskState::Cancelled
+            ) {
+                apply_terminal_state(id, state, None, done_ids, prog, task_speed, _failed);
             }
         }
     }
 }
-

@@ -254,7 +254,13 @@ impl PluginStore {
         if !missing.is_empty() {
             let names = missing
                 .iter()
-                .map(|d| format!("{}({})", d.id, d.version.clone().unwrap_or_else(|| "任意".into())))
+                .map(|d| {
+                    format!(
+                        "{}({})",
+                        d.id,
+                        d.version.clone().unwrap_or_else(|| "任意".into())
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(ApiError::bad_request(
@@ -418,7 +424,11 @@ pub fn install_from_package(package_bytes: &[u8]) -> Result<Option<PluginInfo>, 
     };
 
     let target_dir = plugins_dir.join(&manifest.id);
-    let temp_dir = plugins_dir.join(format!(".{}.tmp-{}", manifest.id, uuid::Uuid::new_v4().simple()));
+    let temp_dir = plugins_dir.join(format!(
+        ".{}.tmp-{}",
+        manifest.id,
+        uuid::Uuid::new_v4().simple()
+    ));
     let mut moved = false;
     let result = (|| -> Result<(), ApiError> {
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -431,7 +441,11 @@ pub fn install_from_package(package_bytes: &[u8]) -> Result<Option<PluginInfo>, 
             }
             // Guard against zip-slip: reject entries escaping the temp root.
             let rel: PathBuf = PathBuf::from(entry.name());
-            if !rel.is_relative() || rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            if !rel.is_relative()
+                || rel
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
                 continue;
             }
             let out_path = temp_dir.join(&rel);
@@ -513,14 +527,10 @@ fn now_o() -> String {
 /// Format a `SystemTime` in ISO-8601 UTC (the C# "O" round-trip format).
 fn created_time_o(t: std::time::SystemTime) -> String {
     use chrono::SecondsFormat;
-    let dur = t
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(
-        dur.as_secs() as i64,
-        dur.subsec_nanos(),
-    )
-    .unwrap_or_default();
+    let dur = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let dt =
+        chrono::DateTime::<chrono::Utc>::from_timestamp(dur.as_secs() as i64, dur.subsec_nanos())
+            .unwrap_or_default();
     dt.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
@@ -604,7 +614,9 @@ impl FileAuthService {
         let map = g.get_or_insert_with(|| load_auth_map(&self.auth_file));
         let grants = map.entry(plugin_id.to_string()).or_default();
         let exists = grants.iter().any(|existing| {
-            Self::normalize_path(existing).map(|e| e.to_string_lossy() == normalized).unwrap_or(false)
+            Self::normalize_path(existing)
+                .map(|e| e.to_string_lossy() == normalized)
+                .unwrap_or(false)
         });
         if !exists {
             grants.push(normalized);
@@ -699,7 +711,11 @@ impl PluginGatewayClient {
         };
         json.get("plugins")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 

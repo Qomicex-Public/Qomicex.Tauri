@@ -1,7 +1,8 @@
 use std::io::{BufRead, BufReader};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
-#[cfg(windows)] use std::os::windows::process::CommandExt;
 
 mod dialog_cmd;
 mod plugin_gateway;
@@ -129,7 +130,11 @@ fn spawn_backend(app: &tauri::App) {
     let mut cmd = std::process::Command::new(&exe_path);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    #[cfg(windows)] { const CREATE_NO_WINDOW: u32 = 0x08000000; cmd.creation_flags(CREATE_NO_WINDOW); }
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -155,7 +160,11 @@ fn spawn_backend(app: &tauri::App) {
     }
     let state = app.state::<BackendChild>();
     *state.0.lock().unwrap() = Some(child);
-    eprintln!("[backend] spawned: {} ({} bytes)", exe_path.display(), BACKEND.len());
+    eprintln!(
+        "[backend] spawned: {} ({} bytes)",
+        exe_path.display(),
+        BACKEND.len()
+    );
 }
 
 #[tauri::command]
@@ -178,7 +187,10 @@ pub fn run() {
                 let win = w.clone();
                 let emitter = w.clone();
                 win.on_window_event(move |event| {
-                    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
+                        paths, ..
+                    }) = event
+                    {
                         let _ = emitter.emit("file-drop", paths);
                     }
                 });
@@ -194,10 +206,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            greet,
-            dialog_cmd::pick_dialog
-        ])
+        .invoke_handler(tauri::generate_handler![greet, dialog_cmd::pick_dialog])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

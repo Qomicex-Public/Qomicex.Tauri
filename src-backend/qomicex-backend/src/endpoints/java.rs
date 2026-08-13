@@ -138,10 +138,9 @@ impl JavaRuntimeStore {
     /// 添加自定义运行时（对应 AddCustomAsync）。
     async fn add_custom(&self, path: String) -> ApiResult<JavaRuntimeDto> {
         let normalized = full_path(&path.trim());
-        let runtime = self
-            .validate_path(&normalized)
-            .await
-            .ok_or_else(|| ApiError::not_found("JAVA_RUNTIME_NOT_FOUND", "无法识别该路径下的 Java 运行时"))?;
+        let runtime = self.validate_path(&normalized).await.ok_or_else(|| {
+            ApiError::not_found("JAVA_RUNTIME_NOT_FOUND", "无法识别该路径下的 Java 运行时")
+        })?;
 
         let mut entries = self.load_entries();
         if !entries.iter().any(|e| path_eq(&e.path, &normalized)) {
@@ -282,7 +281,11 @@ struct JavaDownloadService {
 }
 
 impl JavaDownloadService {
-    fn new(core: Arc<GameCore>, store: Arc<JavaRuntimeStore>, manager: Arc<DownloadManager>) -> Arc<Self> {
+    fn new(
+        core: Arc<GameCore>,
+        store: Arc<JavaRuntimeStore>,
+        manager: Arc<DownloadManager>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             core,
             store,
@@ -315,7 +318,10 @@ impl JavaDownloadService {
         }
     }
 
-    async fn start(self: &Arc<Self>, request: JavaDownloadStartRequest) -> ApiResult<JavaDownloadStartResponse> {
+    async fn start(
+        self: &Arc<Self>,
+        request: JavaDownloadStartRequest,
+    ) -> ApiResult<JavaDownloadStartResponse> {
         let host = host_platform();
         if !request.platform.eq_ignore_ascii_case(&host) {
             return Err(ApiError::bad_request(
@@ -388,7 +394,9 @@ impl JavaDownloadService {
         }
 
         self.set_status(task_id, "resolving");
-        let (url, file_name) = resolve_package(&self.core, &request).await.map_err(|e| e.message)?;
+        let (url, file_name) = resolve_package(&self.core, &request)
+            .await
+            .map_err(|e| e.message)?;
         if self.is_cancelled(task_id) {
             return Ok(TaskExit::Cancelled);
         }
@@ -404,12 +412,20 @@ impl JavaDownloadService {
         let archive_path = tmp.join(&file_name);
 
         let mut rx = self.manager.subscribe();
-        let dl_id = self.manager.add(DownloadTask::new(url, archive_path.clone()));
+        let dl_id = self
+            .manager
+            .add(DownloadTask::new(url, archive_path.clone()));
         self.update_task(task_id, |t| t.dl_task_id = Some(dl_id));
 
         loop {
             match rx.recv().await {
-                Ok(DownloadEvent::Progress { id, downloaded, total, speed_bps, .. }) if id == dl_id => {
+                Ok(DownloadEvent::Progress {
+                    id,
+                    downloaded,
+                    total,
+                    speed_bps,
+                    ..
+                }) if id == dl_id => {
                     self.update_task(task_id, |t| {
                         t.progress = if total > 0 {
                             (downloaded as f64 / total as f64) * 100.0
@@ -419,7 +435,8 @@ impl JavaDownloadService {
                         t.speed = speed_bps as f64;
                     });
                 }
-                Ok(DownloadEvent::StateChanged { id, state, detail }) if id == dl_id => match state {
+                Ok(DownloadEvent::StateChanged { id, state, detail }) if id == dl_id => match state
+                {
                     TaskState::Completed => break,
                     TaskState::Failed => return Err(detail.unwrap_or_else(|| "下载失败".into())),
                     TaskState::Cancelled => return Ok(TaskExit::Cancelled),
@@ -452,7 +469,10 @@ impl JavaDownloadService {
         self.set_status(task_id, "registering");
         let java_exe = find_java_executable(Path::new(&target_dir))
             .ok_or_else(|| "解压后未找到 Java 可执行文件".to_string())?;
-        self.store.add_custom(java_exe).await.map_err(|e| e.message)?;
+        self.store
+            .add_custom(java_exe)
+            .await
+            .map_err(|e| e.message)?;
 
         self.update_task(task_id, |t| {
             t.progress = 100.0;
@@ -530,7 +550,12 @@ impl JavaDownloadService {
             .filter(|t| {
                 matches!(
                     t.status.as_str(),
-                    "queued" | "resolving" | "downloading" | "paused" | "extracting" | "registering"
+                    "queued"
+                        | "resolving"
+                        | "downloading"
+                        | "paused"
+                        | "extracting"
+                        | "registering"
                 )
             })
             .map(|t| t.progress_response())
@@ -560,7 +585,11 @@ impl JavaDownloadService {
     fn is_cancelled(&self, task_id: &str) -> bool {
         self.tasks
             .lock()
-            .map(|g| g.get(task_id).map(|t| t.status == "cancelled").unwrap_or(false))
+            .map(|g| {
+                g.get(task_id)
+                    .map(|t| t.status == "cancelled")
+                    .unwrap_or(false)
+            })
             .unwrap_or(false)
     }
 
@@ -613,7 +642,10 @@ impl JavaDownloadTaskState {
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/java/search", get(search))
-        .route("/java/custom", get(get_custom).post(add_custom).delete(remove_custom))
+        .route(
+            "/java/custom",
+            get(get_custom).post(add_custom).delete(remove_custom),
+        )
         .route("/java/list", get(list))
         .route("/java/validate", post(validate))
         .route("/java/requirement", get(requirement))
@@ -631,13 +663,21 @@ pub fn router() -> Router<SharedState> {
 // Handlers
 // ---------------------------------------------------------------------------
 
-async fn search(State(s): State<SharedState>, Query(q): Query<ModeQuery>) -> ApiResult<Json<Vec<JavaRuntimeDto>>> {
+async fn search(
+    State(s): State<SharedState>,
+    Query(q): Query<ModeQuery>,
+) -> ApiResult<Json<Vec<JavaRuntimeDto>>> {
     let mode = parse_search_mode(q.mode.as_deref())?;
     let options = JavaSearchOptions {
         mode,
         ..Default::default()
     };
-    let results = java_data(&s).core.java_provider().search(&options).await.map_err(map_core_error)?;
+    let results = java_data(&s)
+        .core
+        .java_provider()
+        .search(&options)
+        .await
+        .map_err(map_core_error)?;
     // 合并启动器自带的下载目录（C# 原版只有 /list 合并；前端扫描走 /search，
     // 不加则下载安装的 Java 永远不出现在扫描结果，见 javaStore.scanRuntimes）
     let data = java_data(&s);
@@ -670,7 +710,10 @@ async fn remove_custom(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn list(State(s): State<SharedState>, Query(q): Query<ModeQuery>) -> ApiResult<Json<Vec<JavaRuntimeDto>>> {
+async fn list(
+    State(s): State<SharedState>,
+    Query(q): Query<ModeQuery>,
+) -> ApiResult<Json<Vec<JavaRuntimeDto>>> {
     let mode = parse_search_mode(q.mode.as_deref())?;
     Ok(Json(java_data(&s).store.get_merged(mode).await))
 }
@@ -681,10 +724,16 @@ async fn validate(
 ) -> ApiResult<Json<JavaRuntimeDto>> {
     let java_path = full_path(&req.path);
     let Some(java_home) = Path::new(&java_path).parent().and_then(|p| p.parent()) else {
-        return Err(ApiError::not_found("JAVA_RUNTIME_NOT_FOUND", "无法识别该路径下的 Java 运行时"));
+        return Err(ApiError::not_found(
+            "JAVA_RUNTIME_NOT_FOUND",
+            "无法识别该路径下的 Java 运行时",
+        ));
     };
     if java_home.as_os_str().is_empty() {
-        return Err(ApiError::not_found("JAVA_RUNTIME_NOT_FOUND", "无法识别该路径下的 Java 运行时"));
+        return Err(ApiError::not_found(
+            "JAVA_RUNTIME_NOT_FOUND",
+            "无法识别该路径下的 Java 运行时",
+        ));
     }
 
     let options = JavaSearchOptions {
@@ -695,22 +744,33 @@ async fn validate(
         max_results: 20,
         ..Default::default()
     };
-    let results = java_data(&s).core.java_provider().search(&options).await.map_err(map_core_error)?;
+    let results = java_data(&s)
+        .core
+        .java_provider()
+        .search(&options)
+        .await
+        .map_err(map_core_error)?;
     let match_path = full_path(&java_path);
     let runtime = results
         .into_iter()
         .find(|r| path_eq(&full_path(&r.path), &match_path))
-        .ok_or_else(|| ApiError::not_found("JAVA_RUNTIME_NOT_FOUND", "无法识别该路径下的 Java 运行时"))?;
+        .ok_or_else(|| {
+            ApiError::not_found("JAVA_RUNTIME_NOT_FOUND", "无法识别该路径下的 Java 运行时")
+        })?;
     Ok(Json(JavaRuntimeDto::from(runtime)))
 }
 
-async fn requirement(Query(q): Query<RequirementQuery>) -> ApiResult<Json<JavaRequirementResponse>> {
+async fn requirement(
+    Query(q): Query<RequirementQuery>,
+) -> ApiResult<Json<JavaRequirementResponse>> {
     let path = Path::new(&q.game_dir)
         .join("versions")
         .join(&q.version)
         .join(format!("{}.json", q.version));
     let required = get_required_java_version(&path)?;
-    Ok(Json(JavaRequirementResponse { required_major_version: required }))
+    Ok(Json(JavaRequirementResponse {
+        required_major_version: required,
+    }))
 }
 
 async fn recommended(
@@ -721,7 +781,12 @@ async fn recommended(
         mode: JavaSearchMode::Quick,
         ..Default::default()
     };
-    let java_list = java_data(&s).core.java_provider().search(&search_options).await.map_err(map_core_error)?;
+    let java_list = java_data(&s)
+        .core
+        .java_provider()
+        .search(&search_options)
+        .await
+        .map_err(map_core_error)?;
 
     let require_java = minecraft_to_java_version(&req.minecraft_version);
     let metadata = CompleteVersionMetadata {
@@ -752,7 +817,9 @@ async fn recommended(
     Ok(Json(JavaRuntimeDto::from(recommended)))
 }
 
-async fn download_catalog(State(s): State<SharedState>) -> ApiResult<Json<JavaDownloadCatalogResponse>> {
+async fn download_catalog(
+    State(s): State<SharedState>,
+) -> ApiResult<Json<JavaDownloadCatalogResponse>> {
     Ok(Json(java_data(&s).download.get_catalog()))
 }
 
@@ -769,7 +836,10 @@ async fn download_progress(
 ) -> ApiResult<Json<JavaDownloadProgressResponse>> {
     match java_data(&s).download.get_progress(&task_id) {
         Some(p) => Ok(Json(p)),
-        None => Err(ApiError::not_found("JAVA_DOWNLOAD_TASK_NOT_FOUND", "Java 下载任务不存在")),
+        None => Err(ApiError::not_found(
+            "JAVA_DOWNLOAD_TASK_NOT_FOUND",
+            "Java 下载任务不存在",
+        )),
     }
 }
 
@@ -780,7 +850,10 @@ async fn download_cancel(
     if java_data(&s).download.cancel(&task_id).await {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::not_found("JAVA_DOWNLOAD_TASK_NOT_FOUND", "Java 下载任务不存在"))
+        Err(ApiError::not_found(
+            "JAVA_DOWNLOAD_TASK_NOT_FOUND",
+            "Java 下载任务不存在",
+        ))
     }
 }
 
@@ -791,7 +864,10 @@ async fn download_pause(
     if java_data(&s).download.pause(&task_id).await {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::not_found("JAVA_DOWNLOAD_TASK_NOT_FOUND", "Java 下载任务不存在"))
+        Err(ApiError::not_found(
+            "JAVA_DOWNLOAD_TASK_NOT_FOUND",
+            "Java 下载任务不存在",
+        ))
     }
 }
 
@@ -802,11 +878,16 @@ async fn download_resume(
     if java_data(&s).download.resume(&task_id).await {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::not_found("JAVA_DOWNLOAD_TASK_NOT_FOUND", "Java 下载任务不存在"))
+        Err(ApiError::not_found(
+            "JAVA_DOWNLOAD_TASK_NOT_FOUND",
+            "Java 下载任务不存在",
+        ))
     }
 }
 
-async fn download_active(State(s): State<SharedState>) -> ApiResult<Json<Vec<JavaDownloadProgressResponse>>> {
+async fn download_active(
+    State(s): State<SharedState>,
+) -> ApiResult<Json<Vec<JavaDownloadProgressResponse>>> {
     Ok(Json(java_data(&s).download.get_all_active()))
 }
 
@@ -831,7 +912,10 @@ fn parse_search_mode(mode: Option<&str>) -> ApiResult<JavaSearchMode> {
         None => Ok(JavaSearchMode::Quick),
         Some(m) if m.is_empty() || m.eq_ignore_ascii_case("quick") => Ok(JavaSearchMode::Quick),
         Some(m) if m.eq_ignore_ascii_case("deep") => Ok(JavaSearchMode::Deep),
-        _ => Err(ApiError::bad_request("JAVA_SEARCH_MODE_INVALID", "无效的 Java 搜索模式")),
+        _ => Err(ApiError::bad_request(
+            "JAVA_SEARCH_MODE_INVALID",
+            "无效的 Java 搜索模式",
+        )),
     }
 }
 
@@ -881,7 +965,8 @@ fn get_required_java_version(json_path: &Path) -> ApiResult<i32> {
         return Err(ApiError::not_found("VERSION_NOT_FOUND", "版本文件不存在"));
     }
     let content = std::fs::read_to_string(json_path)?;
-    let node: Value = serde_json::from_str(&content).map_err(|e| ApiError::internal(e.to_string()))?;
+    let node: Value =
+        serde_json::from_str(&content).map_err(|e| ApiError::internal(e.to_string()))?;
 
     if let Some(maj) = node
         .get("javaVersion")
@@ -902,7 +987,10 @@ fn get_required_java_version(json_path: &Path) -> ApiResult<i32> {
     Ok(8)
 }
 
-async fn resolve_package(core: &Arc<GameCore>, request: &JavaDownloadStartRequest) -> ApiResult<(String, String)> {
+async fn resolve_package(
+    core: &Arc<GameCore>,
+    request: &JavaDownloadStartRequest,
+) -> ApiResult<(String, String)> {
     let (source, platform, arch, package_type) = match request.vendor.as_str() {
         "temurin" => (
             JavaDownloadSource::Adoptium,
@@ -929,10 +1017,12 @@ async fn resolve_package(core: &Arc<GameCore>, request: &JavaDownloadStartReques
         .get_packages(request.version, platform, arch, package_type, source)
         .await
         .map_err(map_core_error)?;
-    let pkg = packages
-        .into_iter()
-        .next()
-        .ok_or_else(|| ApiError::not_found("JAVA_DOWNLOAD_PACKAGE_NOT_FOUND", "未找到可用的 Java 下载包"))?;
+    let pkg = packages.into_iter().next().ok_or_else(|| {
+        ApiError::not_found(
+            "JAVA_DOWNLOAD_PACKAGE_NOT_FOUND",
+            "未找到可用的 Java 下载包",
+        )
+    })?;
     Ok((pkg.download_url, pkg.file_name))
 }
 
@@ -941,7 +1031,10 @@ fn map_platform(platform: &str) -> ApiResult<JavaPlatform> {
         "windows" => Ok(JavaPlatform::Windows),
         "linux" => Ok(JavaPlatform::Linux),
         "macos" => Ok(JavaPlatform::MacOS),
-        _ => Err(ApiError::bad_request("JAVA_DOWNLOAD_PLATFORM_INVALID", "不支持的操作系统平台")),
+        _ => Err(ApiError::bad_request(
+            "JAVA_DOWNLOAD_PLATFORM_INVALID",
+            "不支持的操作系统平台",
+        )),
     }
 }
 
@@ -949,7 +1042,10 @@ fn map_architecture(arch: &str) -> ApiResult<JavaArchitecture> {
     match arch.to_ascii_lowercase().as_str() {
         "x64" => Ok(JavaArchitecture::X64),
         "arm64" => Ok(JavaArchitecture::Arm64),
-        _ => Err(ApiError::bad_request("JAVA_DOWNLOAD_ARCH_INVALID", "不支持的 CPU 架构")),
+        _ => Err(ApiError::bad_request(
+            "JAVA_DOWNLOAD_ARCH_INVALID",
+            "不支持的 CPU 架构",
+        )),
     }
 }
 
@@ -995,7 +1091,8 @@ fn path_eq(a: &str, b: &str) -> bool {
         // core 的 normalize_path 统一正斜杠（util/platform.rs），后端 full_path
         // 保留反斜杠 → 比较前归一化分隔符，否则 `C:/a` vs `C:\a` 恒不等（手动添加
         // Java / 下载注册均 404 JAVA_RUNTIME_NOT_FOUND）
-        a.replace('\\', "/").eq_ignore_ascii_case(&b.replace('\\', "/"))
+        a.replace('\\', "/")
+            .eq_ignore_ascii_case(&b.replace('\\', "/"))
     } else {
         a == b
     }
@@ -1014,18 +1111,21 @@ fn resolve_java_executable(p: &str) -> Option<String> {
     let java_name: &str = if cfg!(windows) { "java.exe" } else { "java" };
     let mut found = Vec::new();
     collect_files_recursive(path, &mut found);
-    found.into_iter().find(|f| {
-        let name_ok = f
-            .file_name()
-            .map(|n| n.to_string_lossy().as_ref() == java_name)
-            .unwrap_or(false);
-        let in_bin = f
-            .parent()
-            .and_then(|par| par.file_name())
-            .map(|n| n.eq_ignore_ascii_case("bin"))
-            .unwrap_or(false);
-        name_ok && in_bin
-    }).map(|f| f.to_string_lossy().into_owned())
+    found
+        .into_iter()
+        .find(|f| {
+            let name_ok = f
+                .file_name()
+                .map(|n| n.to_string_lossy().as_ref() == java_name)
+                .unwrap_or(false);
+            let in_bin = f
+                .parent()
+                .and_then(|par| par.file_name())
+                .map(|n| n.eq_ignore_ascii_case("bin"))
+                .unwrap_or(false);
+            name_ok && in_bin
+        })
+        .map(|f| f.to_string_lossy().into_owned())
 }
 
 fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -1100,18 +1200,21 @@ fn find_java_executable(root: &Path) -> Option<String> {
     let java_name: &str = if cfg!(windows) { "java.exe" } else { "java" };
     let mut found = Vec::new();
     collect_files_recursive(root, &mut found);
-    found.into_iter().find(|p| {
-        let name_ok = p
-            .file_name()
-            .map(|n| n.to_string_lossy().as_ref() == java_name)
-            .unwrap_or(false);
-        let in_bin = p
-            .parent()
-            .and_then(|par| par.file_name())
-            .map(|n| n.eq_ignore_ascii_case("bin"))
-            .unwrap_or(false);
-        name_ok && in_bin
-    }).map(|p| p.to_string_lossy().into_owned())
+    found
+        .into_iter()
+        .find(|p| {
+            let name_ok = p
+                .file_name()
+                .map(|n| n.to_string_lossy().as_ref() == java_name)
+                .unwrap_or(false);
+            let in_bin = p
+                .parent()
+                .and_then(|par| par.file_name())
+                .map(|n| n.eq_ignore_ascii_case("bin"))
+                .unwrap_or(false);
+            name_ok && in_bin
+        })
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// 全部 Java 下载任务快照（含终态），供 `/progress/stream` 推送
@@ -1120,17 +1223,22 @@ pub(crate) fn active_java_download_snapshots() -> Vec<Value> {
     let Some(state) = JAVA_STATE.get() else {
         return Vec::new();
     };
-    state.download.get_all().into_iter().map(|p| {
-        serde_json::json!({
-            "taskId": p.task_id,
-            "status": p.status,
-            "progress": p.progress,
-            "speed": p.speed,
-            "fileName": p.file_name,
-            "targetDir": p.target_dir,
-            "error": p.error,
+    state
+        .download
+        .get_all()
+        .into_iter()
+        .map(|p| {
+            serde_json::json!({
+                "taskId": p.task_id,
+                "status": p.status,
+                "progress": p.progress,
+                "speed": p.speed,
+                "fileName": p.file_name,
+                "targetDir": p.target_dir,
+                "error": p.error,
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// 下载管线未实现时的错误占位（对应 C# Trace.WriteLine 语义）。

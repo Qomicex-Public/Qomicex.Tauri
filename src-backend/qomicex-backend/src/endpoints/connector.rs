@@ -153,7 +153,9 @@ async fn run_with_connector_timeout<T, F>(
     f: F,
 ) -> Result<T, ApiError>
 where
-    F: FnOnce(CancellationToken) -> Pin<Box<dyn Future<Output = Result<T, ApiError>> + Send>> + Send + 'static,
+    F: FnOnce(CancellationToken) -> Pin<Box<dyn Future<Output = Result<T, ApiError>> + Send>>
+        + Send
+        + 'static,
     T: Send + 'static,
 {
     let op_ct = CancellationToken::new();
@@ -179,8 +181,13 @@ where
 fn connector() -> &'static Arc<ConnectorState> {
     CONNECTOR.get_or_init(|| {
         Arc::new(ConnectorState {
-            client: ScaffoldingClient::new(None, None, Some(format!("QML/{}", crate::state::APP_VERSION)), None)
-                .with_relay_endpoint(RELAY_ENDPOINT),
+            client: ScaffoldingClient::new(
+                None,
+                None,
+                Some(format!("QML/{}", crate::state::APP_VERSION)),
+                None,
+            )
+            .with_relay_endpoint(RELAY_ENDPOINT),
             mode: tokio::sync::Mutex::new(Mode::Idle),
             ct: qomicex_connector::util::CancellationToken::new(),
             game_info: Arc::new(RwLock::new(None)),
@@ -218,26 +225,25 @@ fn custom_protocols() -> Vec<Arc<dyn qomicex_connector::protocols::ProtocolHandl
     let host_center = conn.host_center.clone();
     let host_mods = conn.host_mods.clone();
     vec![
-        Arc::new(DelegateProtocol::new_json(
-            "qml:game_info",
-            move || info.read().unwrap().clone().unwrap_or_default(),
-        )),
+        Arc::new(DelegateProtocol::new_json("qml:game_info", move || {
+            info.read().unwrap().clone().unwrap_or_default()
+        })),
         {
             let icon_map = icon_map.clone();
-            Arc::new(DelegateProtocol::new_json_req::<PlayerIconUpload, PlayerIconMap>(
-                "qml:player_icons",
-                move |upload| {
-                    if !upload.machine_id.is_empty() && !upload.icon_base64.is_empty() {
-                        icon_map
-                            .write()
-                            .unwrap()
-                            .insert(upload.machine_id, upload.icon_base64);
-                    }
-                    PlayerIconMap {
-                        icons: icon_map.read().unwrap().clone(),
-                    }
-                },
-            ))
+            Arc::new(DelegateProtocol::new_json_req::<
+                PlayerIconUpload,
+                PlayerIconMap,
+            >("qml:player_icons", move |upload| {
+                if !upload.machine_id.is_empty() && !upload.icon_base64.is_empty() {
+                    icon_map
+                        .write()
+                        .unwrap()
+                        .insert(upload.machine_id, upload.icon_base64);
+                }
+                PlayerIconMap {
+                    icons: icon_map.read().unwrap().clone(),
+                }
+            }))
         },
         {
             let icon_map = icon_map.clone();
@@ -255,12 +261,11 @@ fn custom_protocols() -> Vec<Arc<dyn qomicex_connector::protocols::ProtocolHandl
                 },
             ))
         },
-        Arc::new(DelegateProtocol::new_json(
-            "qml:game_mods",
-            move || GameModsResponse {
+        Arc::new(DelegateProtocol::new_json("qml:game_mods", move || {
+            GameModsResponse {
                 mods: host_mods.read().unwrap().clone().unwrap_or_default(),
-            },
-        )),
+            }
+        })),
     ]
 }
 
@@ -270,10 +275,11 @@ async fn scan_host_mods(state: &SharedState, instance: &crate::services::instanc
     let isolated = instance
         .version_isolation
         .unwrap_or_else(crate::settings::get_global_version_isolation);
-    let mods = state
-        .core
-        .local_resource_provider()
-        .create_mods(&instance.name, isolated, &state.curse_forge_api_key);
+    let mods = state.core.local_resource_provider().create_mods(
+        &instance.name,
+        isolated,
+        &state.curse_forge_api_key,
+    );
     let entries = match mods.get_mod_list(None).await {
         Ok(list) => list
             .iter()
@@ -310,7 +316,9 @@ async fn self_icon(state: &SharedState) -> String {
         None => (String::new(), "Offline".to_string(), None),
     };
     let svc = SkinService::new(state.http_client.clone());
-    let bytes = svc.resolve_skin_bytes(&uuid, &login, server.as_deref()).await;
+    let bytes = svc
+        .resolve_skin_bytes(&uuid, &login, server.as_deref())
+        .await;
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
@@ -375,10 +383,7 @@ async fn host_port(
     // 自己头像进房间映射（guest 端列表可见）
     let icon = self_icon(&state).await;
     if !icon.is_empty() {
-        conn.icon_map
-            .write()
-            .unwrap()
-            .insert(machine_id(), icon);
+        conn.icon_map.write().unwrap().insert(machine_id(), icon);
     }
     let center = run_with_connector_timeout(
         "CONNECTOR_HOST_TIMEOUT",
@@ -499,7 +504,8 @@ async fn host_instance(
                         source: None,
                     })
                 } else {
-                    let launch_options = build_launch_options(&instance_clone, &java_path, Some(auth_options));
+                    let launch_options =
+                        build_launch_options(&instance_clone, &java_path, Some(auth_options));
                     // core.launch() 内部可能做完整性检查/下载（数分钟），期间写心跳进度
                     let launch_fut = core.launch().launch(launch_options);
                     tokio::pin!(launch_fut);
@@ -564,10 +570,17 @@ async fn host_instance(
                 }
                 let err_str = err.to_string();
                 tracing::error!("联机: 启动游戏失败: {chain}");
-                let _ = std::fs::create_dir_all(std::path::Path::new(&instance_clone.game_dir).join("logs"));
+                let _ = std::fs::create_dir_all(
+                    std::path::Path::new(&instance_clone.game_dir).join("logs"),
+                );
                 let _ = std::fs::write(
                     std::path::Path::new(&instance_clone.game_dir).join("logs/launch-errors.log"),
-                    format!("[{:?}] [{}] {}\n\n", chrono::Utc::now(), starting_id, err_str),
+                    format!(
+                        "[{:?}] [{}] {}\n\n",
+                        chrono::Utc::now(),
+                        starting_id,
+                        err_str
+                    ),
                 );
                 tracker.set_progress(
                     &starting_id,
@@ -630,7 +643,10 @@ async fn host_instance(
                         *mode = Mode::Host(center.clone());
                         *conn.host_center.write().unwrap() = Some(center.clone());
                         *conn.host_instance.write().unwrap() = Some(instance_clone.clone());
-                        tracing::info!("联机: 实例启动后检测到端口 {port}，房间 {}", center.room_code().raw());
+                        tracing::info!(
+                            "联机: 实例启动后检测到端口 {port}，房间 {}",
+                            center.room_code().raw()
+                        );
                     }
                     Err(e) => {
                         tracing::error!("联机: 建房失败: {e}");
@@ -706,9 +722,7 @@ async fn join_room(
             let code = req.code.clone();
             move |ct| {
                 let conn = connector();
-                Box::pin(async move {
-                    join_inner(&conn, &state, &code, ct).await
-                })
+                Box::pin(async move { join_inner(&conn, &state, &code, ct).await })
             }
         },
     )
@@ -730,10 +744,7 @@ async fn join_room(
                 tracing::info!("联机: guest 连接丢失，自动退出房间");
                 reset_connector_state(false).await;
             });
-            Ok(Json(JoinResponse {
-                mc_host,
-                mc_port,
-            }))
+            Ok(Json(JoinResponse { mc_host, mc_port }))
         }
         Err(e) => {
             // 清理本次 join 的残留：join_room 已成功（guest 已托管）但
@@ -867,7 +878,10 @@ async fn status() -> ApiResult<Json<ConnectorStatusResponse>> {
                         }
                     }
                     let icons = conn.icon_map.read().unwrap().clone();
-                    resp.players = players.iter().map(|p| to_frontend_player(p, &icons)).collect();
+                    resp.players = players
+                        .iter()
+                        .map(|p| to_frontend_player(p, &icons))
+                        .collect();
                 }
                 Err(e) => resp.error = Some(e.to_string()),
             }
@@ -963,9 +977,7 @@ async fn match_instances(
         .into_iter()
         .filter(|i| !i.name.is_empty())
         .filter(|i| info.game_version.is_empty() || i.game_version == info.game_version)
-        .filter(|i| {
-            info.loader.as_deref().unwrap_or("").is_empty() || i.loader == info.loader
-        })
+        .filter(|i| info.loader.as_deref().unwrap_or("").is_empty() || i.loader == info.loader)
         .collect();
 
     let room_hashes: HashSet<String> = room_mods
@@ -1306,7 +1318,9 @@ async fn stun_binding_once(server: &str) -> Option<StunMapping> {
 }
 
 async fn stun_binding_once_on(server: &str, local_port: u16) -> Option<StunMapping> {
-    let socket = tokio::net::UdpSocket::bind(("0.0.0.0", local_port)).await.ok()?;
+    let socket = tokio::net::UdpSocket::bind(("0.0.0.0", local_port))
+        .await
+        .ok()?;
     socket.connect(server).await.ok()?;
     // RFC 3489 binding request：type=0x0001, len=0, 12 字节 transaction id
     let mut tx = [0u8; 12];
@@ -1375,10 +1389,12 @@ fn build_launch_options(
         java_options: Some(qomicex_core::models::launch::JavaOptions {
             java_path: java_path.to_string(),
             max_memory_mb: instance.max_memory,
-            extra_jvm_args: instance
-                .jvm_args
-                .clone()
-                .map(|s| s.split(' ').filter(|t| !t.is_empty()).map(String::from).collect()),
+            extra_jvm_args: instance.jvm_args.clone().map(|s| {
+                s.split(' ')
+                    .filter(|t| !t.is_empty())
+                    .map(String::from)
+                    .collect()
+            }),
         }),
         auth_options,
         ..Default::default()

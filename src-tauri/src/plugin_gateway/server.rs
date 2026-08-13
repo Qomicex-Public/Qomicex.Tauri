@@ -1,13 +1,15 @@
-use std::sync::Arc;
-use crate::plugin_gateway::loader::PluginRuntime;
 use crate::plugin_gateway::config;
+use crate::plugin_gateway::loader::PluginRuntime;
+use std::sync::Arc;
 
 pub struct GatewayState {
     pub runtime: tokio::sync::Mutex<PluginRuntime>,
 }
 
 pub async fn start_gateway(runtime: PluginRuntime) -> anyhow::Result<u16> {
-    let state = Arc::new(GatewayState { runtime: tokio::sync::Mutex::new(runtime) });
+    let state = Arc::new(GatewayState {
+        runtime: tokio::sync::Mutex::new(runtime),
+    });
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
@@ -36,15 +38,14 @@ pub async fn start_gateway(runtime: PluginRuntime) -> anyhow::Result<u16> {
     Ok(port)
 }
 
-async fn handle_connection(
-    mut stream: tokio::net::TcpStream,
-    state: Arc<GatewayState>,
-) {
+async fn handle_connection(mut stream: tokio::net::TcpStream, state: Arc<GatewayState>) {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
     let mut reader = BufReader::new(&mut stream);
     let mut request_line = String::new();
-    if reader.read_line(&mut request_line).await.is_err() { return; }
+    if reader.read_line(&mut request_line).await.is_err() {
+        return;
+    }
 
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
@@ -58,9 +59,16 @@ async fn handle_connection(
     let mut content_length: usize = 0;
     loop {
         let mut line = String::new();
-        if reader.read_line(&mut line).await.is_err() { return; }
-        if line.trim().is_empty() { break; }
-        if let Some(len) = line.strip_prefix("Content-Length:").or_else(|| line.strip_prefix("content-length:")) {
+        if reader.read_line(&mut line).await.is_err() {
+            return;
+        }
+        if line.trim().is_empty() {
+            break;
+        }
+        if let Some(len) = line
+            .strip_prefix("Content-Length:")
+            .or_else(|| line.strip_prefix("content-length:"))
+        {
             content_length = len.trim().parse().unwrap_or(0);
         }
     }
@@ -94,7 +102,9 @@ async fn handle_connection(
         }
 
         ("POST", p) if p.starts_with("/plugins/") && p.ends_with("/invoke") => {
-            let id = p.trim_start_matches("/plugins/").trim_end_matches("/invoke");
+            let id = p
+                .trim_start_matches("/plugins/")
+                .trim_end_matches("/invoke");
             let export_name = serde_json::from_str::<serde_json::Value>(&body)
                 .ok()
                 .and_then(|v| v["export"].as_str().map(String::from))
@@ -106,13 +116,9 @@ async fn handle_connection(
             }
         }
 
-        ("GET", "/health") => {
-            json_response(&serde_json::json!({ "status": "ok" }))
-        }
+        ("GET", "/health") => json_response(&serde_json::json!({ "status": "ok" })),
 
-        _ => {
-            json_response(&serde_json::json!({ "error": "not found" }))
-        }
+        _ => json_response(&serde_json::json!({ "error": "not found" })),
     };
 
     let _ = stream.write_all(response.as_bytes()).await;

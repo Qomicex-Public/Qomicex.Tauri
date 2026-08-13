@@ -52,8 +52,8 @@ pub fn protect(text: &str) -> (String, HashMap<String, String>) {
         let tail = &rest[rel..];
         let rest_of_tag = &tail[1..];
         let first = rest_of_tag.chars().next();
-        let is_tag = matches!(first, Some(c) if c.is_ascii_alphabetic())
-            || rest_of_tag.starts_with('/');
+        let is_tag =
+            matches!(first, Some(c) if c.is_ascii_alphabetic()) || rest_of_tag.starts_with('/');
         if is_tag {
             let mut end = 1usize;
             for (i, c) in rest_of_tag.char_indices() {
@@ -143,12 +143,17 @@ fn protect_markdown(
         let abs = search_from + rel;
         if prefix == "[" && abs > 0 && &rest[abs - 1..abs] == "!" {
             // 链接正则 `(?<!!)\[` —— 图片已被保护，跳过已占位的 `![...]`
-            let end = rest[abs..].find(']').map(|e| abs + e + 1).unwrap_or(rest.len());
+            let end = rest[abs..]
+                .find(']')
+                .map(|e| abs + e + 1)
+                .unwrap_or(rest.len());
             search_from = end;
             continue;
         }
         let head = &rest[abs..];
-        let Some(close_idx) = head.find(']') else { break };
+        let Some(close_idx) = head.find(']') else {
+            break;
+        };
         if head[close_idx..].starts_with("](") {
             let Some(paren_end) = head[close_idx + 2..].find(')') else {
                 search_from = abs + close_idx + 1;
@@ -197,7 +202,11 @@ pub async fn translate(
 ///
 /// `langpair=en|zh-CN`；每块最长 `max_chunk` 字符（源 MaxChunkLength=480），按
 /// `.` `!` `?` `\n` 切句（源 SplitText），块间 sleep 1s（源 Task.Delay(1000)）。
-async fn mymemory_translate(http: &reqwest::Client, text: &str, max_chunk: usize) -> Option<String> {
+async fn mymemory_translate(
+    http: &reqwest::Client,
+    text: &str,
+    max_chunk: usize,
+) -> Option<String> {
     if text.trim().is_empty() {
         return None;
     }
@@ -247,9 +256,17 @@ async fn google_translate(http: &reqwest::Client, text: &str) -> Option<String> 
     let body = http.get(&url).send().await.ok()?.text().await.ok()?;
     let doc: Value = serde_json::from_str(&body).ok()?;
     let mut result = String::new();
-    if let Some(segments) = doc.as_array().and_then(|a| a.first()).and_then(Value::as_array) {
+    if let Some(segments) = doc
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(Value::as_array)
+    {
         for seg in segments {
-            if let Some(t) = seg.as_array().and_then(|s| s.first()).and_then(Value::as_str) {
+            if let Some(t) = seg
+                .as_array()
+                .and_then(|s| s.first())
+                .and_then(Value::as_str)
+            {
                 if !t.is_empty() {
                     result.push_str(t);
                 }

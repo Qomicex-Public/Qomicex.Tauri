@@ -5,8 +5,8 @@
 //!   2. 引导文件 `{LocalAppData}/qomicex-launcher/.qomicex-bootstrap` 内容
 //!   3. 默认 `{LocalAppData}/qomicex-launcher`
 
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 const APP_DIR: &str = "qomicex-launcher";
 const BOOTSTRAP_FILE: &str = ".qomicex-bootstrap";
@@ -45,7 +45,10 @@ pub fn set_base_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
     if let Some(parent) = bootstrap.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(bootstrap, path.as_ref().as_os_str().to_string_lossy().as_bytes())
+    std::fs::write(
+        bootstrap,
+        path.as_ref().as_os_str().to_string_lossy().as_bytes(),
+    )
 }
 
 /// 插件目录（对应 AppPaths.PluginsDir）。
@@ -179,7 +182,9 @@ impl SettingsResponse {
 
     /// 导出 CurseForge 拉取服务的配置。取值已按 [`Self::clamp_numeric_ranges`] 的
     /// 区间理解，但这里仍做一次下界保护，避免调用方漏钳。
-    pub fn curseforge_fetch_config(&self) -> crate::services::curseforge_fetch::CurseForgeFetchConfig {
+    pub fn curseforge_fetch_config(
+        &self,
+    ) -> crate::services::curseforge_fetch::CurseForgeFetchConfig {
         crate::services::curseforge_fetch::CurseForgeFetchConfig {
             concurrency: self.curseforge_version_fetch_concurrency.max(1) as usize,
             cache_ttl: std::time::Duration::from_secs(

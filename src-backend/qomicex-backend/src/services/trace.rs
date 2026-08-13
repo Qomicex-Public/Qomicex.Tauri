@@ -270,11 +270,7 @@ fn capture_stderr_unix() {
             .spawn(move || {
                 let mut buf = [0u8; 4096];
                 loop {
-                    let n = libc::read(
-                        read_fd,
-                        buf.as_mut_ptr() as *mut libc::c_void,
-                        buf.len(),
-                    );
+                    let n = libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len());
                     if n <= 0 {
                         break;
                     }
@@ -293,4 +289,3 @@ fn capture_stderr_unix() {
             .ok();
     }
 }
-

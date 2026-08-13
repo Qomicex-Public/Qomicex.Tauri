@@ -136,7 +136,12 @@ fn build_payload(tracker: &InstallTracker) -> ProgressSsePayload {
                 .map(|s| {
                     matches!(
                         s,
-                        "queued" | "resolving" | "downloading" | "paused" | "extracting" | "registering"
+                        "queued"
+                            | "resolving"
+                            | "downloading"
+                            | "paused"
+                            | "extracting"
+                            | "registering"
                     )
                 })
                 .unwrap_or(false)
@@ -160,30 +165,31 @@ fn build_resources() -> Vec<serde_json::Value> {
     // Resource downloads (qomicex-downloader) mirrored in resource_download's
     // registry. Without this the download center shows those tasks as stuck
     // queued (the SSE `resources` array was empty).
-    let mut resources: Vec<serde_json::Value> = crate::endpoints::resource_download::download_snapshots()
-        .into_iter()
-        .map(|(id, s)| {
-            let progress = if s.total > 0 {
-                (s.downloaded as f64 / s.total as f64) * 100.0
-            } else if s.status == "completed" {
-                100.0
-            } else {
-                0.0
-            };
-            serde_json::json!({
-                "sessionId": id.to_string(),
-                "type": "resource",
-                "status": s.status,
-                "stage": s.status,
-                "progress": progress,
-                "speed": s.speed,
-                "currentFile": s.file_name,
-                "error": s.error,
-                "downloadedBytes": s.downloaded,
-                "totalBytes": s.total,
+    let mut resources: Vec<serde_json::Value> =
+        crate::endpoints::resource_download::download_snapshots()
+            .into_iter()
+            .map(|(id, s)| {
+                let progress = if s.total > 0 {
+                    (s.downloaded as f64 / s.total as f64) * 100.0
+                } else if s.status == "completed" {
+                    100.0
+                } else {
+                    0.0
+                };
+                serde_json::json!({
+                    "sessionId": id.to_string(),
+                    "type": "resource",
+                    "status": s.status,
+                    "stage": s.status,
+                    "progress": progress,
+                    "speed": s.speed,
+                    "currentFile": s.file_name,
+                    "error": s.error,
+                    "downloadedBytes": s.downloaded,
+                    "totalBytes": s.total,
+                })
             })
-        })
-        .collect();
+            .collect();
 
     // Plugin-started downloads (plugin session registry) share the same
     // `resources` channel so they appear live in the download center.

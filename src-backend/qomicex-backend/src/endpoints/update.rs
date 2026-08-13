@@ -103,10 +103,7 @@ fn manifest_channel(headers: &HeaderMap) -> &str {
 }
 
 /// Perform the version check (corresponds to UpdateService.CheckAsync).
-async fn check_update(
-    state: &SharedState,
-    current: &str,
-) -> ApiResult<UpdateCheckResponse> {
+async fn check_update(state: &SharedState, current: &str) -> ApiResult<UpdateCheckResponse> {
     let response = state
         .http_client
         .get(format!("{UPSTREAM_BASE}{VERSION_CHECK_PATH}"))

@@ -66,7 +66,8 @@ async fn activate(
         ));
     }
     let meta = license::activate(&token, &state.http_client).map_err(map_license_error)?;
-    license::save_license_token(&token).map_err(|_| ApiError::internal("Failed to save license"))?;
+    license::save_license_token(&token)
+        .map_err(|_| ApiError::internal("Failed to save license"))?;
     Ok(Json(LicenseActivateResponse {
         success: true,
         license_id: Some(meta.license_id),

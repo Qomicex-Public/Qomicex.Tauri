@@ -161,7 +161,9 @@ pub fn router() -> Router<SharedState> {
         )
         .route(
             "/instance/{id}",
-            get(get_instance).put(update_instance).delete(delete_instance),
+            get(get_instance)
+                .put(update_instance)
+                .delete(delete_instance),
         )
         .route("/instance/{id}/launch", post(launch_instance))
         .route("/instance/{id}/launch/progress", get(launch_progress))
@@ -178,9 +180,7 @@ pub fn router() -> Router<SharedState> {
 // =====================================================================
 
 /// GET /instance: list all instances.
-async fn list_instances(
-    State(state): State<SharedState>,
-) -> ApiResult<Json<Vec<GameInstance>>> {
+async fn list_instances(State(state): State<SharedState>) -> ApiResult<Json<Vec<GameInstance>>> {
     Ok(Json(state.instance.get_all()))
 }
 
@@ -319,7 +319,10 @@ async fn list_loaders(
     }
     let loader_type = match q.r#type.as_deref() {
         Some(s) => parse_loader(s).ok_or_else(|| {
-            ApiError::bad_request("INSTANCE_LOADERS_INVALID_TYPE", format!("Invalid loader type: {s}"))
+            ApiError::bad_request(
+                "INSTANCE_LOADERS_INVALID_TYPE",
+                format!("Invalid loader type: {s}"),
+            )
         })?,
         None => ModLoaderType::All,
     };
@@ -365,11 +368,13 @@ async fn launch_instance(
         .get_by_id(&instance_id)
         .ok_or_else(|| instance_not_found(&instance_id))?;
 
-    let req = request.map(|Json(r)| r).unwrap_or_else(|| LaunchInstanceRequest {
-        join_server: None,
-        join_world: None,
-        account_uuid: None,
-    });
+    let req = request
+        .map(|Json(r)| r)
+        .unwrap_or_else(|| LaunchInstanceRequest {
+            join_server: None,
+            join_world: None,
+            account_uuid: None,
+        });
 
     // Resolve auth options from the (default or requested) stored account.
     let account = match &req.account_uuid {
@@ -387,7 +392,9 @@ async fn launch_instance(
     let user_java_path = instance.java_path.clone();
     let max_memory = instance.max_memory;
     let jvm_args = instance.jvm_args.clone();
-    let version_isolation = instance.version_isolation.unwrap_or_else(crate::settings::get_global_version_isolation);
+    let version_isolation = instance
+        .version_isolation
+        .unwrap_or_else(crate::settings::get_global_version_isolation);
     let join_server = req.join_server;
     let join_world = req.join_world;
     let cancel_flag = tracker.get_or_create_cancel(&instance_id);
@@ -473,7 +480,8 @@ async fn launch_instance(
                         .collect();
                     let total = ids.len() as u64;
                     let id_set: std::collections::HashSet<u64> = ids.iter().copied().collect();
-                    let mut done_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+                    let mut done_ids: std::collections::HashSet<u64> =
+                        std::collections::HashSet::new();
                     let mut failed: Option<String> = None;
                     let mut rx = download_manager.subscribe();
 
@@ -482,7 +490,7 @@ async fn launch_instance(
                             for id in &ids {
                                 let _ = download_manager.cancel(*id).await;
                             }
-                    return Err("启动已取消".to_string());
+                            return Err("启动已取消".to_string());
                         }
                         tokio::select! {
                             ev = rx.recv() => match ev {
@@ -547,12 +555,21 @@ async fn launch_instance(
                     extra_jvm_args: jvm_args
                         .as_deref()
                         .filter(|s| !s.trim().is_empty())
-                        .map(|s| s.split(' ').filter(|t| !t.is_empty()).map(String::from).collect()),
+                        .map(|s| {
+                            s.split(' ')
+                                .filter(|t| !t.is_empty())
+                                .map(String::from)
+                                .collect()
+                        }),
                 }),
                 auth_options: Some(auth_options),
                 game_root: Some(game_dir.clone()),
             };
-            let result = core.launch().launch(options).await.map_err(|e| e.to_string())?;
+            let result = core
+                .launch()
+                .launch(options)
+                .await
+                .map_err(|e| e.to_string())?;
             if !result.success {
                 return Err(result.message.unwrap_or_else(|| "启动失败".to_string()));
             }
@@ -793,7 +810,9 @@ fn instance_not_found(id: &str) -> ApiError {
 /// Build core `AuthOptions` from a stored account (source: ResolveAuthOptions).
 /// Microsoft accounts refresh their token via the core auth provider; failures
 /// are swallowed (the stale token is still passed through, matching C# catch{}).
-pub(crate) fn resolve_auth_options(account: Option<crate::services::account::StoredAccount>) -> AuthOptions {
+pub(crate) fn resolve_auth_options(
+    account: Option<crate::services::account::StoredAccount>,
+) -> AuthOptions {
     let Some(account) = account else {
         return AuthOptions::default();
     };
@@ -811,7 +830,11 @@ pub(crate) fn resolve_auth_options(account: Option<crate::services::account::Sto
         mode,
         uuid: Some(account.uuid),
         name: Some(account.name),
-        token: if account.token.is_empty() { None } else { Some(account.token) },
+        token: if account.token.is_empty() {
+            None
+        } else {
+            Some(account.token)
+        },
         access_token: Some(if account.access_token.is_empty() {
             "0".to_string()
         } else {
@@ -951,8 +974,15 @@ fn apply_loader_java_requirement(loader: &str, version_name: &str, required: i32
 fn extract_cleanroom_version(name: &str) -> Option<i32> {
     let idx = name.find("cleanroom")?;
     let rest = &name[idx + "cleanroom".len()..];
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-    let parts: Vec<u32> = digits.split('.').filter_map(|p| p.parse().ok()).take(3).collect();
+    let digits: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let parts: Vec<u32> = digits
+        .split('.')
+        .filter_map(|p| p.parse().ok())
+        .take(3)
+        .collect();
     if parts.is_empty() {
         return None;
     }
@@ -1016,7 +1046,8 @@ fn parse_loader(s: &str) -> Option<ModLoaderType> {
 /// Map core errors to backend API errors (mirrors the source middleware:
 /// upstream HTTP >=500 -> 502, otherwise -> 500).
 fn map_core_error(e: qomicex_core::error::Error) -> ApiError {
-    let is_upstream = matches!(&e, qomicex_core::error::Error::Http { status: Some(s), .. } if *s >= 500);
+    let is_upstream =
+        matches!(&e, qomicex_core::error::Error::Http { status: Some(s), .. } if *s >= 500);
     if is_upstream {
         ApiError::upstream(e.to_string())
     } else {
