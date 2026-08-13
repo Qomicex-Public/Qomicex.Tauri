@@ -133,7 +133,7 @@ struct ConnectorState {
 
 static CONNECTOR: OnceLock<Arc<ConnectorState>> = OnceLock::new();
 
-/// 联机节点服务端点（私人节点，调用方注入；crate 默认仍是官方 nodes.qomicex.top）。
+/// 联机节点服务端点。
 const RELAY_ENDPOINT: &str = "https://api.qomicex.top/api/nodes";
 
 /// 建房/加入房间整体超时：easytier 启动 ≤30s + P2P 打洞重试 ~50s，远超前端
