@@ -81,7 +81,11 @@ jobs:
           cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
           cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
       - name: Cargo audit
-        run: cargo install cargo-audit && cd src-backend/qomicex-backend && cargo audit
+        run: |
+          # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
+          # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
+          cargo install cargo-audit
+          cd src-backend/qomicex-backend && cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
       - name: Install test dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl
       - name: Run API filter tests
