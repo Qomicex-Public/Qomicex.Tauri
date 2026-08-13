@@ -20,53 +20,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: javascript-typescript
-            build-mode: none
-          - language: rust
-            build-mode: manual
+        language: [ 'javascript-typescript', 'rust' ]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.QOMICEX_PAT }}
+          token: ${{ secrets.QOMICEX_PAT || github.token }}
 
-      #  缓存 Cargo 依赖，加快后续构建速度
-      - name: Cache Cargo registry and target
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
+      # CodeQL 2.26+：rust 仅支持 build-mode: none（源码静态提取，无需构建）
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
-
-      # rust 联机（easytier）依赖：protoc + easytier git 依赖 SSH→HTTPS 认证
-      - name: Setup connector build
-        id: connector
-        if: matrix.language == 'rust'
-        uses: ./.github/actions/setup-connector-build
-        with:
-          pat: ${{ secrets.QOMICEX_PAT }}
-
-      # build-mode: manual 下 init 已设置追踪环境变量，此步构建会被 CodeQL 捕获
-      - name: Build Rust project
-        if: matrix.language == 'rust'
-        env:
-          PROTOC: ${{ steps.connector.outputs.protoc-path }}
-          VC_LTL: ""
-          YY_THUNKS: ""
-        run: cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml
+          build-mode: none
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
