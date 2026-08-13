@@ -638,6 +638,9 @@ jobs:
       # 注册 loong64 用户态模拟（与 build-loong64-builder.yml 构建镜像同款方案）
       - name: Set up QEMU (loong64)
         run: docker run --rm --privileged ghcr.io/loong64/binfmt --install all
+      # builder 镜像为私有包，需以 GITHUB_TOKEN 登录 GHCR 才能拉取
+      - name: Login to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Build in loong64 container
         env:
           VERSION: ${{ needs.setup.outputs.version }}
