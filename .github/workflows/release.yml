@@ -193,7 +193,7 @@ jobs:
         with:
           pat: ${{ secrets.QOMICEX_PAT }}
       - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libglib2.0-dev
       - name: Cargo check
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}
@@ -446,7 +446,7 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils libglib2.0-dev
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
@@ -539,7 +539,7 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils libglib2.0-dev
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
@@ -630,7 +630,7 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils libglib2.0-dev
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
