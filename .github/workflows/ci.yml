@@ -22,8 +22,8 @@ jobs:
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: pnpm run build
       - run: pnpm audit --audit-level moderate || true
-
-  backend-check:
+      
+backend-check:
     if: |
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
@@ -37,9 +37,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - name: Setup connector build
+        id: connector
         uses: ./.github/actions/setup-connector-build
         with:
           pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Cargo check
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}
