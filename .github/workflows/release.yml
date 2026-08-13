@@ -650,7 +650,7 @@ jobs:
           # - protoc 用镜像自带 /usr/bin/protoc（host 侧 setup-connector-build 装的是
           #   x86_64 二进制，容器内不可执行）；easytier 的 git 认证在容器内重写
           # - AppImage 无 loong64 的 linuxdeploy 支持，固定 deb,rpm
-          docker run --rm --platform linux/loong64 \
+          docker run --rm -i --platform linux/loong64 \
             -v "$PWD:/workspace" -w /workspace \
             -e PROTOC=/usr/bin/protoc \
             -e VC_LTL= \
