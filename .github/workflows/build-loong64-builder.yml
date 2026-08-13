@@ -38,6 +38,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 将仓库所有者转换为小写，避免 GHCR tag 报错
+      - name: Normalize image owner to lowercase
+        run: echo "IMAGE_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
@@ -45,6 +49,6 @@ jobs:
           file: ${{ env.DOCKERFILE }}
           platforms: linux/loong64
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}
+          tags: ghcr.io/${{ env.IMAGE_OWNER_LC }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}
           cache-from: type=gha,scope=loong64-builder
           cache-to: type=gha,mode=max,scope=loong64-builder
