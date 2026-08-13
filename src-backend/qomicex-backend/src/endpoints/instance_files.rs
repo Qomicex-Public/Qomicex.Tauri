@@ -10,7 +10,6 @@
 //! NOT YET PORTED (501 placeholders):
 //! - Upload/multipart: the C# source file has NO upload routes, so none are
 //!   declared here.
-//! - Options: rely on a per-instance OptionsProvider, left as 501.
 //! - mcmod Chinese-name lookup in mods/metadata: McmodService has no Rust peer
 //!   yet, that enrichment is skipped (see TODO in mods_metadata).
 
@@ -445,11 +444,11 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/files/servers", delete(delete_server))
         .route("/instance/{id}/files/server-ping", get(server_ping))
         .route("/instance/{id}/files/lan-games", get(lan_games))
-        // options (stubs; rely on a not-yet-portable per-instance OptionsProvider)
-        .route("/instance/{id}/files/options", get(options_list_501))
+        // options (per-instance OptionsProvider; see services/options.rs)
+        .route("/instance/{id}/files/options", get(options_list))
         .route(
             "/instance/{id}/files/options/{name}",
-            get(options_get_501).put(options_put_501),
+            get(options_get).put(options_put),
         )
 }
 
@@ -1582,19 +1581,74 @@ async fn lan_games(
 }
 
 // =====================================================================
-// 501 stubs: options
+// Options (per-instance options.txt; source: C# CreateGameSettingsOptions)
 // =====================================================================
 
-async fn options_list_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Options list"))
+/// GET /instance/{id}/files/options — list all game settings.
+async fn options_list(
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+) -> ApiResult<Json<Vec<qomicex_core::models::local::OptionViewItem>>> {
+    let r = resolve(&id, &state)?;
+    let inst = state
+        .instance
+        .get_by_id(&id)
+        .ok_or_else(|| instance_not_found(&id))?;
+    let language = settings::load_settings().language;
+    let items = crate::services::options::list_options(
+        r.game_dir.to_str().unwrap_or_default(),
+        &r.version,
+        r.isolated,
+        &inst.game_version,
+        &language,
+    );
+    Ok(Json(items))
 }
 
-async fn options_get_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Options get by name"))
+/// GET /instance/{id}/files/options/{name} — single option definition.
+async fn options_get(
+    State(state): State<SharedState>,
+    AxumPath((id, name)): AxumPath<(String, String)>,
+) -> ApiResult<Json<qomicex_core::models::local::OptionViewItem>> {
+    let r = resolve(&id, &state)?;
+    let inst = state
+        .instance
+        .get_by_id(&id)
+        .ok_or_else(|| instance_not_found(&id))?;
+    let language = settings::load_settings().language;
+    let item = crate::services::options::get_option(
+        r.game_dir.to_str().unwrap_or_default(),
+        &r.version,
+        r.isolated,
+        &inst.game_version,
+        &language,
+        &name,
+    )
+    .ok_or_else(|| ApiError::not_found("OPTION_NOT_FOUND", format!("Option '{name}' not found")))?;
+    Ok(Json(item))
 }
 
-async fn options_put_501() -> ApiResult<StatusCode> {
-    Err(not_implemented("Options set by name"))
+/// PUT /instance/{id}/files/options/{name} — set an option value.
+async fn options_put(
+    State(state): State<SharedState>,
+    AxumPath((id, name)): AxumPath<(String, String)>,
+    Json(body): Json<OptionsPutBody>,
+) -> ApiResult<StatusCode> {
+    let r = resolve(&id, &state)?;
+    crate::services::options::set_option(
+        r.game_dir.to_str().unwrap_or_default(),
+        &r.version,
+        r.isolated,
+        &name,
+        &body.value,
+    )
+    .map_err(|e| ApiError::internal(format!("写入 options.txt 失败: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct OptionsPutBody {
+    value: String,
 }
 
 // =====================================================================
@@ -1652,15 +1706,6 @@ fn copy_dir(source: &Path, dest: &Path) {
 
 fn instance_not_found(id: &str) -> ApiError {
     ApiError::not_found("INSTANCE_NOT_FOUND", format!("Instance {id} not found"))
-}
-
-fn not_implemented(scope: &str) -> ApiError {
-    ApiError {
-        code: "NOT_IMPLEMENTED".to_string(),
-        message: format!("{scope} is not implemented yet"),
-        detail: None,
-        status: StatusCode::NOT_IMPLEMENTED,
-    }
 }
 
 /// Map core errors to backend API errors (mirrors the source middleware:

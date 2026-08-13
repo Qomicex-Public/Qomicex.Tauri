@@ -530,6 +530,15 @@ async fn launch_instance(
             progress.progress = 30.0;
             tracker.set_progress(&instance_id, progress.clone());
 
+            // Auto-set the game language on first launch (only when options.txt
+            // has no `lang` yet, so in-game language choices are respected).
+            crate::services::options::ensure_lang(
+                &game_dir,
+                &name,
+                version_isolation,
+                &crate::settings::load_settings().language,
+            );
+
             // Determine required Java major version from the version JSON chain.
             // Pick the Java runtime: user-specified path wins, else auto-recommend.
             let selected_java_path = resolve_java_path(&core, &game_dir, &name, &user_java_path)

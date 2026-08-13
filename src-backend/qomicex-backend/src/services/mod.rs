@@ -6,6 +6,7 @@ pub mod instance;
 pub mod launch_tracker;
 pub mod license;
 pub mod license_core;
+pub mod options;
 pub mod plugin;
 pub mod trace;
 pub mod translation;

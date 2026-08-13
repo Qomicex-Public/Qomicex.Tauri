@@ -1844,7 +1844,7 @@ export default function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
-  const { state: debugState } = useDebug()
+  const { state: _debugState } = useDebug()
   const [tab, setTab] = useState<TabId>('overview')
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
@@ -2152,7 +2152,7 @@ export default function InstanceDetailPage() {
       <div className="flex-1 min-h-0 flex gap-4">
         <div className="flex w-44 shrink-0 flex-col">
           <Tabs
-            tabs={TABS.filter(t => t.id !== 'gamesettings' || debugState.showGameSettings).map(t => ({ id: t.id, label: t.label, icon: <FontAwesomeIcon icon={t.icon} className="h-4 w-4" /> }))}
+            tabs={TABS.map(t => ({ id: t.id, label: t.label, icon: <FontAwesomeIcon icon={t.icon} className="h-4 w-4" /> }))}
             activeTab={tab}
             onChange={(id) => setTab(id as typeof tab)}
             orientation="vertical"
