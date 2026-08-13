@@ -13,6 +13,9 @@ src-backend/qomicex-backend/target/
 # Legacy C# backend runtime leftovers (deleted source; dir contains a test
 # artifact with an NTFS-reserved name that cannot be removed via Win32 APIs)
 src-backend/Qomicex.Launcher.Backend.Neo/
+src-backend/Qomicex.Connector.Part.Scaffolding/
+src-backend/Qomicex.Core.AOT/
+src-backend/Qomicex.Downloader.Refactor/
 
 # VS junk
 .vs/
