@@ -627,46 +627,49 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'loongarch64'))
     needs: [setup, quality-gate]
-    runs-on: [self-hosted, loongarch64]
-    # 构建环境使用独立 workflow 构建推送的 LoongArch64 builder 镜像
-    # （含 rustup stable、node 22、pnpm、Tauri 打包依赖），self-hosted runner 需支持 Docker
-    container:
-      image: ghcr.io/qomicex-public/qomicex-loong64-builder:latest
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/qomicex-public/qomicex-loong64-builder:latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
-      - uses: swatinem/rust-cache@v2
-      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
-      - name: Setup connector build
-        id: connector
-        uses: ./.github/actions/setup-connector-build
-        with:
-          pat: ${{ secrets.QOMICEX_PAT }}
-      - name: Build Rust backend
+      # 注册 loong64 用户态模拟（与 build-loong64-builder.yml 构建镜像同款方案）
+      - name: Set up QEMU (loong64)
+        run: docker run --rm --privileged ghcr.io/loong64/binfmt --install all
+      - name: Build in loong64 container
         env:
-          PROTOC: ${{ steps.connector.outputs.protoc-path }}
-          VC_LTL: ""
-          YY_THUNKS: ""
+          VERSION: ${{ needs.setup.outputs.version }}
+          LICENSE_REQUIRED: ${{ needs.setup.outputs.licenseRequired }}
         run: |
-          FEATURES=""
-          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
-          # 容器内 host 即为 loongarch64，无需 --target
-          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
-      - name: Stage backend binary
-        run: |
-          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
-          mkdir -p src-tauri/binaries
-          mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @qomicex/plugin-ui build
-      - run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 全部构建在 loong64 容器内完成（QEMU 模拟，耗时较长）：
+          # - protoc 用镜像自带 /usr/bin/protoc（host 侧 setup-connector-build 装的是
+          #   x86_64 二进制，容器内不可执行）；easytier 的 git 认证在容器内重写
+          # - AppImage 无 loong64 的 linuxdeploy 支持，固定 deb,rpm
+          docker run --rm --platform linux/loong64 \
+            -v "$PWD:/workspace" -w /workspace \
+            -e PROTOC=/usr/bin/protoc \
+            -e VC_LTL= \
+            -e YY_THUNKS= \
+            -e VERSION="$VERSION" \
+            -e LICENSE_REQUIRED="$LICENSE_REQUIRED" \
+            -e QOMICEX_PAT='${{ secrets.QOMICEX_PAT }}' \
+            -e TAURI_SIGNING_PRIVATE_KEY='${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}' \
+            -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD='${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}' \
+            "$IMAGE" bash -euxo pipefail <<'EOF'
+            set -e
+            git config --global url."https://x-access-token:${QOMICEX_PAT}@github.com/".insteadOf "ssh://git@github.com/"
+            node scripts/bump-version.mjs "$VERSION"
+            FEATURES=""
+            if [ "$LICENSE_REQUIRED" = "true" ]; then FEATURES="--features license-required"; fi
+            cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
+            mkdir -p src-tauri/binaries
+            mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
+            pnpm install --frozen-lockfile
+            pnpm --filter @qomicex/plugin-ui build
+            npm run tauri -- build --bundles deb,rpm
+          EOF
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
