@@ -45,7 +45,7 @@ jobs:
           build-mode: none 
 
       - name: Build Rust project
-        run: cargo build --release --locked --manifest-path src-backend/Cargo.toml
+        run: cargo build --release --locked --manifest-path src-backend/qomicex-backend/Cargo.toml
 
 
       - name: Autobuild
