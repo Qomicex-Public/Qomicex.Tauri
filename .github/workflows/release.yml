@@ -45,7 +45,7 @@ on:
       buildPlatform:
         description: '构建平台'
         required: true
-        default: 'linux'
+        default: 'all'
         type: choice
         options:
           - windows
@@ -78,7 +78,7 @@ on:
       windowsArch:
         description: 'Windows 架构（仅 windows/all 时有效）'
         required: false
-        default: 'x64'
+        default: 'both'
         type: choice
         options:
           - both
@@ -87,7 +87,7 @@ on:
       linuxArch:
         description: 'Linux 架构（仅 linux/all 时有效）'
         required: false
-        default: 'x64'
+        default: 'both'
         type: choice
         options:
           - both
@@ -188,9 +188,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - name: Setup connector build
+        id: connector  # Add this ID
         uses: ./.github/actions/setup-connector-build
         with:
           pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Cargo check
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}
