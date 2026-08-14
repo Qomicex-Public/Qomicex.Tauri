@@ -213,12 +213,26 @@ pub async fn run_install_pipeline(
     node["id"] = Value::String(version_dir_name.clone());
     let json_content = node.to_string();
 
+    // ⚠️ 基础文件/主 jar 扫描必须用「原版 id（game_version）」的版本 JSON：
+    // 安装流水线把 id 改写成 version_dir_name 后，get_miss_main_jar 会把 minecraft 客户端
+    // jar 下载到 versions/{version_dir_name}/{version_dir_name}.jar；但 Forge/NeoForge 的
+    // processor {MINECRAFT_JAR} 固定指向 versions/{gameVersion}/{gameVersion}.jar（共享目录，
+    // 见 AGENTS.md 路径系统）。两者不一致 → binarypatcher --clean 找不到原版 jar →
+    // FileNotFoundException → 退出码 1。用原版 id 扫描即可让 jar 落在
+    // versions/{game_version}/{game_version}.jar，与处理器及 launch 一致。
+    let base_json_content = {
+        let mut base_node: Value =
+            serde_json::from_str(&json_content).map_err(|e| format!("解析版本 JSON 失败: {e}"))?;
+        base_node["id"] = Value::String(game_version.clone());
+        base_node.to_string()
+    };
+
     // === Phase 3: 扫描 + 下载 vanilla 基础文件 ===
     handle.set_stage("scanning-base");
     handle.set_progress(5.0);
     let miss_files = install_core
         .locator()
-        .get_miss_files_from_json(&json_content)
+        .get_miss_files_from_json(&base_json_content)
         .await
         .map_err(|e| format!("扫描缺失文件失败: {e}"))?;
     let miss_files: Vec<MissFileInfo> = miss_files
@@ -390,7 +404,7 @@ pub async fn run_install_pipeline(
     handle.set_progress(92.0);
     let miss_jar = install_core
         .locator()
-        .get_miss_main_jar_from_json(&json_content)
+        .get_miss_main_jar_from_json(&base_json_content)
         .await
         .map_err(|e| format!("扫描主 jar 失败: {e}"))?;
     if let Some(jar) = miss_jar {

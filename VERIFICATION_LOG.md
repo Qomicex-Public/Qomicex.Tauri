@@ -181,3 +181,27 @@ Processor执行失败: net.minecraftforge:binarypatcher:1.3.4 原因：… --out
   `output_key_resolves_to_absolute_with_populated_game_dir_not_reparsed`。
 - `cargo build`（core + backend）：通过。
 - 结论: ✅ PASS（processor 路径解析已修复；完整 Forge 安装需联网 + Java 实跑最终确认）
+
+## 修复 8：Forge binarypatcher 退出码 1 —— minecraft 主 jar 未落在处理器期望路径
+修复 7 后 binarypatcher 能运行但仍 `Exit code:1`。
+
+用真实 26.2-65.1.1 安装器 + 真实 vanilla 26.2 client.jar + 真实 client.lzma 实跑验证：
+- binarypatcher（ConsoleTool）在纯路径与 verbatim（`\\?\`）路径下都能成功补丁
+  （载入 1394 patches、输出 jar 存在）；`--clean`/`--apply` 指向不存在文件时
+  `FileNotFoundException` → 退出码 1，与现场一致。
+- 根因：安装流水线 Phase 2 把版本 JSON 的 `id` 改写成 `version_dir_name` 后，Phase 3/5 的
+  `get_miss_main_jar` 用 `meta.id` 把 minecraft 客户端 jar 下载到
+  `versions/{version_dir_name}/{version_dir_name}.jar`；而 Forge/NeoForge processor 的
+  `{MINECRAFT_JAR}` 固定引用 `versions/{gameVersion}/{gameVersion}.jar`（共享目录，AGENTS.md
+  路径系统）。二者不一致 → binarypatcher `--clean` 找不到原版 jar → exit 1。
+
+修复（`src-backend/qomicex-backend/src/services/install_service.rs`）：
+- 保留一份「原版 id（game_version）」的版本 JSON `base_json_content`；
+- Phase 3（vanilla 基础文件扫描）与 Phase 5（主 jar 校验）改用 `base_json_content`，使
+  minecraft 客户端 jar 落在 `versions/{game_version}/{game_version}.jar`，与 Forge/NeoForge
+  处理器及 launch 一致；加载器 metadata 写入仍用版本隔离的 `json_content`（version_dir_name）。
+- vanilla 安装下 version_dir_name==game_version，无行为变化。
+
+复测：
+- `cargo build`（backend）：通过；`cargo test`（core）：全绿（21 lib + 11 + 9）。
+- 结论: ✅ PASS（主 jar 路径已对齐；端到端需用户在 GUI 实测确认）
