@@ -22,9 +22,7 @@ const FALLBACK_LANGUAGE: &str = "en-US";
 /// 选项定义（懒加载，嵌入资源仅解析一次）
 fn definitions() -> &'static Vec<MinecraftOption> {
     static DEFINITIONS: OnceLock<Vec<MinecraftOption>> = OnceLock::new();
-    DEFINITIONS.get_or_init(|| {
-        serde_json::from_str(OPTIONS_JSON).expect("解析 options.json 失败")
-    })
+    DEFINITIONS.get_or_init(|| serde_json::from_str(OPTIONS_JSON).expect("解析 options.json 失败"))
 }
 
 /// 多语言描述（懒加载）：外层语言键 → 内层选项名键 → 描述
@@ -38,7 +36,10 @@ fn descriptions() -> &'static HashMap<String, HashMap<String, String>> {
 /// options.txt 路径：版本隔离 → `{gameDir}/versions/{version}/options.txt`，否则 `{gameDir}/options.txt`
 fn options_path(game_dir: &str, version: &str, isolated: bool) -> PathBuf {
     if isolated {
-        Path::new(game_dir).join("versions").join(version).join("options.txt")
+        Path::new(game_dir)
+            .join("versions")
+            .join(version)
+            .join("options.txt")
     } else {
         Path::new(game_dir).join("options.txt")
     }
@@ -59,7 +60,11 @@ fn load_config(path: &Path) -> Vec<(String, String)> {
         }
         let sep = if line.contains('=') { '=' } else { ':' };
         if let Some((key, value)) = line.split_once(sep) {
-            upsert(&mut config, key.trim().to_string(), value.trim().to_string());
+            upsert(
+                &mut config,
+                key.trim().to_string(),
+                value.trim().to_string(),
+            );
         }
     }
     config
@@ -165,8 +170,9 @@ pub fn list_options(
     game_version: &str,
     language: &str,
 ) -> Vec<OptionViewItem> {
-    let config: HashMap<String, String> =
-        load_config(&options_path(game_dir, version, isolated)).into_iter().collect();
+    let config: HashMap<String, String> = load_config(&options_path(game_dir, version, isolated))
+        .into_iter()
+        .collect();
     definitions()
         .iter()
         .map(|opt| OptionViewItem {
