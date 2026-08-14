@@ -655,7 +655,6 @@ jobs:
             -e PROTOC=/usr/bin/protoc \
             -e VC_LTL= \
             -e YY_THUNKS= \
-            -e npm_config_registry=https://registry.npmmirror.com \
             -e VERSION="$VERSION" \
             -e LICENSE_REQUIRED="$LICENSE_REQUIRED" \
             -e QOMICEX_PAT='${{ secrets.QOMICEX_PAT }}' \
@@ -670,9 +669,7 @@ jobs:
             cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
             mkdir -p src-tauri/binaries
             mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
-            # npmjs CDN 在 QEMU 用户态模拟下大量 tarball fetch failed，
-            # 改用 npmmirror（淘宝镜像）缓解 TLS/连接超时。
-            pnpm config set registry https://registry.npmmirror.com
+            pnpm store prune || true
             pnpm install --frozen-lockfile \
               --fetch-timeout=600000 --fetch-retries=5
             pnpm --filter @qomicex/plugin-ui build
