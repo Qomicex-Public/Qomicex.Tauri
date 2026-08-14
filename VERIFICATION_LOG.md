@@ -205,3 +205,35 @@ Processor执行失败: net.minecraftforge:binarypatcher:1.3.4 原因：… --out
 复测：
 - `cargo build`（backend）：通过；`cargo test`（core）：全绿（21 lib + 11 + 9）。
 - 结论: ✅ PASS（主 jar 路径已对齐；端到端需用户在 GUI 实测确认）
+
+## 修复 9（根因终判）：verbatim `\\?\` 前缀破坏传给 Java 的路径 → binarypatcher 退出码 1
+修复 8 后 binarypatcher 仍 `Exit code:1`，且拿到完整命令：
+```
+-cp "\\?\C:\.minecraft\libraries\net\minecraftforge\...\binarypatcher-1.3.4.jar" ...
+   binarypatcher --clean \\?\C:\.minecraft\versions\26.2\26.2.jar
+                 --output \\?\...\forge\26.2-65.1.1\forge-...client.jar
+                 --apply "\\?\...\forge\26.2-26.2-Forge-65.1.1\client.lzma"
+```
+用真实 26.2-65.1.1 安装器 + 真实 vanilla 26.2 client.jar + client.lzma 做**逐路径对照**复现：
+- verbatim（`\\?\`）路径 → binarypatcher（ConsoleTool/Patcher）`Could not make output folders: \\?C:\…\forge\26.2-65.1.1`（Java 解析 `\\?\C:\…` 丢一个反斜杠）→ 退出码 1，与现场一致；
+- 去除 `\\?\`、用非 verbatim 的 `C:\…` 路径（等价 C# `Path.GetFullPath`）→ 成功补丁、退出码 0、自动建 `--output` 父目录。
+
+语义：`\\?\` 前缀是为超长路径（>260 字符）用的 verbatim 语法，C# 主源不产出它而是用
+`Path.GetFullPath`。Rust `std::fs::canonicalize`（`install_service.rs::absolute_path`）在
+Windows 返回 `\\?\C:\…`，该前缀在 Java/binarypatcher 那边不可识别 → 建 `--output` 目录失败。
+此前修复 6（normalize_separators `/`→`\`）、修复 7（base 状态填充）、修复 8（主 jar 路径）均正确且必要，
+但未剥 verbatim 前缀——这正是与 C# Core 的区别。
+
+修复（`src-backend/qomicex-backend/src/services/install_service.rs`）：
+- `absolute_path` 在 `canonicalize` 后经新增 `strip_verbatim_prefix` 剥掉 `\\?\`（盘符形式
+  `\\?\C:\…`→`C:\…`；UNC `\\?\UNC\…`→`\\…`；其余原样），使 game_dir/libraries/versions/
+  `{MINECRAFT_JAR}`、processor 的 --clean/--apply/--output 及 classpath 全部为非 verbatim `C:\…`。
+- 与 connector.rs 对 launch 用非 verbatim `instance.game_dir` 的既有共识一致。
+
+复测：
+- `cargo build`（backend）：通过。
+- 新增后端单测 `strip_verbatim_prefix_removes_long_path_prefix`（盘符/UNC/已非 verbatim）、
+  `absolute_path_is_non_verbatim`（真实目录 canonicalize 后无 `\\?\` 前缀）——均通过。
+- `cargo test`（core）：全绿。
+- 结论: ✅ PASS（verbatim 前缀已剥；binarypatcher 现走非 verbatim 路径，见真实 binarypatcher
+  exit 0 + 产出 jar 的复测；端到端需 GUI 实测）

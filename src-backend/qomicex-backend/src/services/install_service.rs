@@ -460,12 +460,46 @@ pub async fn run_install_pipeline(
 // =====================================================================
 
 /// 将 game_dir 规范化为绝对路径（源 launch/install 中 `Canonicalize` 逻辑）。
+///
+/// ⚠️ 与 C# Core 的关键差异修复：Windows 上 `std::fs::canonicalize` 返回带 `\\?\`
+/// verbatim 前缀的路径（如 `\\?\C:\...\.minecraft`）。该前缀会：
+/// 1) 让 verbatim 语法下 `/` 不再是路径分隔符 → `std::fs::write` 报 os error 123；
+/// 2) **Java/二进制补丁等外部工具解析 `\\?\C:\…` 时会丢掉一个反斜杠**，导致
+///    binarypatcher 建 `--output` 父目录报 `Could not make output folders` → 退出码 1。
+/// C# 源用 `Path.GetFullPath` 产生**非 verbatim** 的 `C:\…` 绝对路径。此处 canonicalize
+/// 后剥掉 verbatim 前缀，与 C# 行为一致（connector.rs 亦已对 launch 用非 verbatim 的
+/// `instance.game_dir`，共识是非 verbatim 的 game_root 交给 core/外部工具）。
 fn absolute_path(game_dir: &str) -> PathBuf {
     let mut root = PathBuf::from(game_dir);
     if !root.is_absolute() {
         root = std::env::current_dir().unwrap_or_default().join(root);
     }
-    root.canonicalize().unwrap_or(root)
+    strip_verbatim_prefix(root.canonicalize().unwrap_or(root))
+}
+
+/// Windows：剥掉 `std::fs::canonicalize` 产生的 `\\?\` verbatim 前缀，还原为 C# 的
+/// `Path.GetFullPath` 语义（`C:\…`）。本地盘符形式 `\\?\C:\…` → `C:\…`；UNC verbatim
+/// `\\?\UNC\server\share\…` → `\\server\share\…`；其余（如 `\\?\pipe\…`）原样返回。
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    const LONG_PREFIX: &str = r"\\?\";
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(LONG_PREFIX) {
+        if let Some(unc) = rest.strip_prefix("UNC\\") {
+            PathBuf::from(format!(r"\\{unc}"))
+        } else if rest.len() >= 2 && rest.as_bytes()[1] == b':' {
+            PathBuf::from(rest.to_string())
+        } else {
+            path
+        }
+    } else {
+        path
+    }
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
 }
 
 /// 构建一次性安装 core（对应源 `GameCoreBuilder` 配置）。
@@ -1118,5 +1152,46 @@ async fn poll_task_states(
                 apply_terminal_state(id, state, None, done_ids, prog, task_speed, _failed);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn strip_verbatim_prefix_removes_long_path_prefix() {
+        // canonicalize 在 Windows 上产出 `\\?\C:\…`；binarypatcher/Java 解析 `\\?\C:\…`
+        // 会丢一个反斜杠，导致 --output 建目录失败 → 退出码 1。剥前缀后应为非 verbatim 盘符路径。
+        let p = strip_verbatim_prefix(PathBuf::from(r"\\?\C:\Games\.minecraft"));
+        assert_eq!(p, PathBuf::from(r"C:\Games\.minecraft"), "got {p:?}");
+        // 深路径 / libraries 组合
+        let p2 = strip_verbatim_prefix(PathBuf::from(
+            r"\\?\C:\Games\.minecraft\libraries\net\minecraftforge\forge\26.2-65.1.1",
+        ));
+        assert_eq!(
+            p2,
+            PathBuf::from(r"C:\Games\.minecraft\libraries\net\minecraftforge\forge\26.2-65.1.1"),
+            "got {p2:?}"
+        );
+        // UNC verbatim → `\\server\share`
+        let p3 = strip_verbatim_prefix(PathBuf::from(r"\\?\UNC\srv\share\mc"));
+        assert_eq!(p3, PathBuf::from(r"\\srv\share\mc"), "got {p3:?}");
+        // 已是非 verbatim → 原样
+        let p4 = strip_verbatim_prefix(PathBuf::from(r"C:\Games"));
+        assert_eq!(p4, PathBuf::from(r"C:\Games"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn absolute_path_is_non_verbatim() {
+        // 真实目录 canonicalize 后剥前缀：不应再有 `\\?\` 前缀
+        let p = absolute_path(&std::env::current_dir().unwrap().to_string_lossy());
+        let s = p.to_string_lossy().to_string();
+        assert!(
+            !s.starts_with(r"\\?\"),
+            "absolute_path 不应返回 verbatim 路径: {s}"
+        );
     }
 }
