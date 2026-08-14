@@ -73,3 +73,25 @@ TraceWriter → trace 缓冲 → 前端把 ESC 序列渲染为错误符号。并
   （`2026-08-14T11:02:11.061585Z  INFO qomicex_connector::easytier::manager: 启动 EasyTier 实例: ...`），
   中文正常。
 - 结论: ✅ PASS
+
+## 修复 4：guest 对未协商协议不再发包（其他启动器兼容）
+房主用其他启动器（`c:protocols` 只返回标准协议，不含 qml: 扩展）时，guest 端仍对
+`qml:player_icons` / `qml:game_info` / `qml:game_mods` / `qml:player_leave` 持续发包
+（status 每 2s 轮询两次），浪费带宽并产生错误日志。
+
+根因：`ScaffoldingGuest::send_json` / `send_json_req` 不检查 `c:protocols` 协商结果
+（`negotiated`），调用方（connector.rs 6 处 qml: 调用点）也不检查。
+
+修复（qomicex-connector-rust，库层检查，用户指定方案）：
+- `error.rs`：新增 `ScaffoldingError::ProtocolNotNegotiated(String)`
+- `scaffolding_guest.rs`：`send_json`/`send_json_req` 开头调用新增的 `ensure_negotiated(key)`
+  —— key 不在协商结果中则**不发包**，直接返回 `ProtocolNotNegotiated`（兼容模式降级）；
+  新增 5 个单元测试（3 个 ensure_negotiated + 2 个 send_json 短路验证）
+- backend 调用点无需改动：现有 `match Err` / `let _ =` 已安静降级，标准协议走 `send` 不受影响
+
+复测：
+- `cargo test -p qomicex-connector`：**42 passed**（原 37 + 新 5），含
+  `ensure_negotiated_rejects_unnegotiated_key`（房主仅标准协议时 4 个 qml: 协议全拒、
+  标准协议仍可用）与 `send_json_short_circuits_unnegotiated_key`（未协商 key 不触达 TCP）
+- `cargo build`（backend）：通过
+- 结论: ✅ PASS（未协商的 qml: 协议在发送前短路，不再发包；标准协议不受影响）
