@@ -267,3 +267,54 @@ Windows 返回 `\\?\C:\…`，该前缀在 Java/binarypatcher 那边不可识别
 - **覆盖范围**：NeoForge 与 Forge 的 processors 走同一 `run_processor → run_install_process`
   （修复点），java 处理器一并修好；launch 与 OptiFine 本就逐参传递、不受影响。
 - 结论: ✅ PASS（java 处理器正确切词调用；与 C# `ProcessStartInfo.Arguments` 语义对齐；Forge/NeoForge 共用）
+
+---
+
+# 复测记录：资源中心模组中文名（JEI）
+
+## 复测时间
+2026-08-14
+
+## 背景
+- 现象：模组管理页可正常显示 JEI 中文名（`mcmodId=459`），但**资源中心（CurseForge 源）不显示中文名**。
+- 根因：资源中心前端用资源 `title` 调 `/mcmod/lookup` / `/mcmod/batch` 做**精确匹配**。
+  CurseForge 的资源标题是 `Just Enough Items (JEI)`，normalize 后为 `justenoughitemsjei`，
+  而 mcmod 离线索引仅含 `jei` / `justenoughitems` 两个键（来自 slug 与中文名括号里的英文）→ 精确命中失败 → 返回 null。
+  模组管理页用的是 jar 内 `mcmod.info` 的 `name="Just Enough Items"`，可精确命中，故正常。
+  （历史 `McmodService.Lookup` 曾有 substring/词级 fallback，因产生错误匹配被 `fe965dc` 移除，故本次**不恢复**模糊匹配。）
+
+## 修复内容
+1. 后端 `src-backend/qomicex-backend/src/endpoints/mcmod.rs`
+   - `lookup` / `lookup_with_id` 改为经 `resolve_with`：先精确匹配；未命中时**剥离末尾 `(…)` 后缀后再次精确匹配**
+     （`strip_one_trailing_paren`），`"Just Enough Items (JEI)"` → `"Just Enough Items"`。不引入 substring / 词级模糊匹配。
+2. 前端 `src/pages/ResourceCenter.tsx`
+   - 新增 `loadCnNames(items)`：按 title 批查，title 未命中时用 `item.slug` 兜底，统一按 title 展示。
+3. 前端 `src/pages/ResourceDetail.tsx`
+   - 新增 `resolveCnName(title, slug)`：title 未命中时退回 `slug`。
+
+## 复测命令 / 操作
+构建并启动后端（`cargo build` + 启动 `qomicex-backend.exe`，`/api/health` 通过后）调用：
+- `GET /api/mcmod/lookup?name=Just Enough Items (JEI)`
+- `GET /api/mcmod/lookup?name=jei`
+- `POST /api/mcmod/batch`
+- `GET /api/resources/search?source=curseforge&category=mod&keyword=jei`
+- `GET /api/resources/238222?source=curseforge&category=mod`
+
+## 实际输出
+```
+GET /mcmod/lookup?name=Just Enough Items (JEI)  -> {"cnName":"JEI物品管理器 (Just Enough Items)"}
+GET /mcmod/lookup?name=jei                      -> {"cnName":"JEI物品管理器 (Just Enough Items)"}
+POST /mcmod/batch ["Just Enough Items (JEI)","jei","Just Enough Items"]
+  -> {..., "Just Enough Items (JEI)":"JEI物品管理器 (Just Enough Items)", ...}
+GET /resources/search curseforge jei  -> title="Just Enough Items (JEI)"  slug="jei"  id=238222
+GET /resources/238222                 -> title="Just Enough Items (JEI)"  slug="jei"
+  -> lookup(title) => JEI物品管理器 (Just Enough Items)
+  -> lookup(slug)  => JEI物品管理器 (Just Enough Items)
+```
+
+## 预期输出
+资源中心对 CurseForge JEI（title=`Just Enough Items (JEI)`, slug=`jei`）显示中文名 `JEI物品管理器 (Just Enough Items)`。
+
+## 结论
+✅ PASS — 原始场景（资源中心 CurseForge JEI）现可通过后端括号剥离 fallback 及前端 slug 兜底两条路径正确解析中文名。
+构建通过：`cargo build`（无 error）、`npx tsc --noEmit`（无 error）。

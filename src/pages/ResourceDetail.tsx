@@ -40,6 +40,17 @@ import { loadSettings } from '../api/settings.ts'
 import ModpackInstallDialog from '../components/ModpackInstallDialog.tsx'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 
+/**
+ * 解析一个资源的中文名：优先用标题精确匹配（CurseForge 标题常带括号后缀，
+ * 后端 lookup 已对末尾括号后缀做剥离 fallback），标题未命中时退回用 slug。
+ */
+async function resolveCnName(title: string, slug?: string): Promise<string | null> {
+  const cn = await lookupChineseName(title)
+  if (cn) return cn
+  if (slug && slug.trim()) return lookupChineseName(slug)
+  return null
+}
+
 
 function formatDownloads(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -274,13 +285,13 @@ export default function ResourceDetailPage() {
         if (cached) {
           setDetail(cached); setLoading(false)
           // 缓存命中时立即查中文名：网络请求失败/慢时标题也不缺翻译
-          if (category === 'mod') lookupChineseName(cached.title).then(setCnName)
+          if (category === 'mod') resolveCnName(cached.title, cached.slug).then(setCnName)
         }
         const resourceDetail = await getResourceDetail(id, source, category)
         if (cancelled) return
         setDetail(resourceDetail)
         cacheSet(cacheKey, resourceDetail)
-        if (category === 'mod') lookupChineseName(resourceDetail.title).then(setCnName)
+        if (category === 'mod') resolveCnName(resourceDetail.title, resourceDetail.slug).then(setCnName)
         setLoading(false)
       } catch (e) {
         if (cancelled) return

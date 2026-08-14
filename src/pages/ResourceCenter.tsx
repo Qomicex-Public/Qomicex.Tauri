@@ -115,6 +115,25 @@ function buildDetailUrl(item: ResourceItem, category: string, keyword: string, s
   return `/resource-center/${encodeURIComponent(item.id)}?${params.toString()}`
 }
 
+/**
+ * 解析一批资源的中文名。先用资源标题做 mcmod 精确匹配；标题未命中（如
+ * CurseForge 常带括号后缀 "Just Enough Items (JEI)"）时退回用 slug 匹配，
+ * 结果统一按 title 归并后给卡片展示。
+ */
+async function loadCnNames(items: ResourceItem[]): Promise<Record<string, string | null>> {
+  const byTitle = await batchLookupChineseNames(items.map(i => i.title))
+  const missed = items.filter(i => !byTitle[i.title] && i.slug && i.slug.trim())
+  let bySlug: Record<string, string | null> = {}
+  if (missed.length > 0) {
+    bySlug = await batchLookupChineseNames(missed.map(i => i.slug))
+  }
+  const out: Record<string, string | null> = {}
+  for (const item of items) {
+    out[item.title] = byTitle[item.title] ?? bySlug[item.slug] ?? null
+  }
+  return out
+}
+
 function ResourceCard({
   item, category, keyword, sort, gameVersion, loader, instanceId, onInstall, cnName,
 }: {
@@ -242,7 +261,8 @@ export default function ResourceCenter() {
       setPage(pageNum)
       setLoading(false)
       setInitialLoading(false)
-      batchLookupChineseNames(cached.items.map(i => i.title)).then(m => category === 'mod' ? setCnNames(prev => ({ ...prev, ...m })) : setCnNames({}))
+      if (category === 'mod') loadCnNames(cached.items).then(setCnNames)
+      else setCnNames({})
       return
     }
     if (!append) setIsReplacing(true)
@@ -263,7 +283,8 @@ export default function ResourceCenter() {
       setItems((prev) => append ? [...prev, ...pageItems] : pageItems)
       setTotal(res.total)
       setPage(pageNum)
-      batchLookupChineseNames(res.items.map(i => i.title)).then(m => category === 'mod' ? setCnNames(prev => ({ ...prev, ...m })) : setCnNames({}))
+      if (category === 'mod') loadCnNames(pageItems).then(setCnNames)
+      else setCnNames({})
     } catch (e) {
       const msg = e instanceof Error ? e.message : '搜索失败'
       if (msg.includes('404') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {

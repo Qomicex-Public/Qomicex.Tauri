@@ -66,20 +66,12 @@ impl McmodData {
     }
 
     fn lookup(&self, en_name: &str) -> Option<String> {
-        let key = normalize_en(en_name);
-        if key.is_empty() {
-            return None;
-        }
-        self.forward.get(&key).map(|(cn, _id)| cn.clone())
+        resolve_with(&self.forward, en_name).map(|(cn, _id)| cn)
     }
 
     /// 英文名 → (中文名, mcmod.cn id)（对应 C# BatchLookupWithIds；enrich 接线用）。
     pub(crate) fn lookup_with_id(&self, en_name: &str) -> Option<(String, i32)> {
-        let key = normalize_en(en_name);
-        if key.is_empty() {
-            return None;
-        }
-        self.forward.get(&key).cloned()
+        resolve_with(&self.forward, en_name)
     }
 
     /// Reverse resolution of a Chinese keyword to an English slug term.
@@ -133,6 +125,49 @@ impl McmodData {
 
         best.map(|e| e.search_term.as_str())
     }
+}
+
+/// Resolve an English name against the forward index with an exact-match-first
+/// strategy. On a miss it strips trailing parenthesized disambiguator groups and
+/// retries (e.g. CurseForge title "Just Enough Items (JEI)" -> "Just Enough
+/// Items"). This is a precise fallback — it never does substring/word matching,
+/// which is what `McmodService.Lookup`'s removed fuzzy layers (fe965dc) did.
+fn resolve_with(forward: &HashMap<String, (String, i32)>, en_name: &str) -> Option<(String, i32)> {
+    let mut candidate = en_name.trim();
+    loop {
+        let key = normalize_en(candidate);
+        if !key.is_empty() {
+            if let Some(v) = forward.get(&key) {
+                return Some(v.clone());
+            }
+        }
+        match strip_one_trailing_paren(candidate) {
+            Some(stripped) if stripped != candidate => candidate = stripped,
+            _ => return None,
+        }
+    }
+}
+
+/// Strip a single trailing parenthesized disambiguator group, e.g.
+/// `"Just Enough Items (JEI)"` -> `"Just Enough Items"`. Returns `None` when the
+/// input has no `( ... )` suffix or stripping would leave an empty base name.
+/// Symmetric with how the index builds keys from a cn name's `(English)` segment.
+fn strip_one_trailing_paren(s: &str) -> Option<&str> {
+    let trimmed = s.trim_end();
+    if !trimmed.ends_with(')') {
+        return None;
+    }
+    let close = trimmed.len() - 1;
+    let open = trimmed[..close].rfind('(')?;
+    let inner = trimmed[open + 1..close].trim();
+    if inner.is_empty() {
+        return None;
+    }
+    let before = trimmed[..open].trim_end();
+    if before.is_empty() {
+        return None;
+    }
+    Some(before)
 }
 
 /// Build the forward + reverse index for a single `mods[]` entry.
