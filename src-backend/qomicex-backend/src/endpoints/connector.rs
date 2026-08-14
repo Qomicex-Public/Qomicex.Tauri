@@ -1023,9 +1023,12 @@ async fn match_instances(
                     let isolated = inst
                         .version_isolation
                         .unwrap_or_else(crate::settings::get_global_version_isolation);
-                    let mods = core
-                        .local_resource_provider()
-                        .create_mods(&abs_game_dir(&inst.game_dir), &inst.name, isolated, &api_key);
+                    let mods = core.local_resource_provider().create_mods(
+                        &abs_game_dir(&inst.game_dir),
+                        &inst.name,
+                        isolated,
+                        &api_key,
+                    );
                     let hashes: HashSet<String> = match mods.get_mod_list_light().await {
                         Ok(list) => list
                             .iter()
