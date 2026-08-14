@@ -95,3 +95,26 @@ TraceWriter → trace 缓冲 → 前端把 ESC 序列渲染为错误符号。并
   标准协议仍可用）与 `send_json_short_circuits_unnegotiated_key`（未协商 key 不触达 TCP）
 - `cargo build`（backend）：通过
 - 结论: ✅ PASS（未协商的 qml: 协议在发送前短路，不再发包；标准协议不受影响）
+
+## 修复 5：联机 vendor 的 Qomicex Launcher 版本恒为 1.0.0
+房主/房客玩家列表的 vendor 显示 `Qomicex Launcher 1.0.0(...)`，与前端 `__APP_VERSION__`
+（package.json 0.1.1）不一致且发布后不跟随版本号。
+
+根因：`state.rs` 的 `APP_VERSION` 硬编码 `"1.0.0"`；`release.yml` 的
+`scripts/bump-version.mjs` 只更新 package.json / src-tauri/Cargo.toml / tauri.conf.json，
+**不更新 src-backend/qomicex-backend/Cargo.toml**，后端无编译期版本注入。
+
+修复（用户确认方案：CARGO_PKG_VERSION + 同步 bump）：
+- `state.rs`：`APP_VERSION` 改用 `env!("CARGO_PKG_VERSION")`（编译期注入，对齐 C#
+  `AssemblyInformationalVersion`）；开发期 = backend Cargo.toml version（0.1.0）
+- `scripts/bump-version.mjs`：增加同步更新 `src-backend/qomicex-backend/Cargo.toml`，
+  release.yml 构建 backend 前调用，使发布包 vendor 版本与 package.json 一致
+
+复测：
+- `cargo build`（backend）：通过
+- 建房后 status 房主 vendor = `Qomicex Launcher 0.1.0(Qomicex Connector 2.0) /
+  Easytier v2.6.4 for QML`（非 1.0.0）✅
+- `node scripts/bump-version.mjs 9.9.9-test` 干跑：4 处版本文件全部同步更新
+  （package.json / src-tauri/Cargo.toml / tauri.conf.json / backend Cargo.toml），
+  干跑后已 git checkout 恢复原值
+- 结论: ✅ PASS

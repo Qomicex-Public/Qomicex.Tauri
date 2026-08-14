@@ -26,8 +26,14 @@ use crate::settings::SettingsResponse;
 
 pub const DEFAULT_PORT: u16 = 5000;
 
-/// 启动器版本（联机节点服务 UA 等共用，如 `QML/1.0.0`）。
-pub const APP_VERSION: &str = "1.0.0";
+/// 启动器版本（联机节点服务 UA、vendor 等共用，如 `QML/1.0.0`）。
+///
+/// 取后端 crate 的 `Cargo.toml` 版本（`env!("CARGO_PKG_VERSION")`，编译期注入）：
+/// - 开发期 = `src-backend/qomicex-backend/Cargo.toml` 的 version（当前 0.1.0）；
+/// - 发布构建 = `release.yml` 先执行 `scripts/bump-version.mjs <VERSION>` 同步更新该
+///   Cargo.toml 的 version，再编译 backend，故 `CARGO_PKG_VERSION` 自动跟随发布版本。
+///   对应 C# 旧版 `AssemblyInformationalVersion`（构建时程序集版本）。
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct AppState {
     /// 游戏核心（复用 qomicex-core-rust）。

@@ -10,7 +10,8 @@ const ROOT = resolve(__dirname, "..");
 
 function usage() {
   console.log("Usage: node scripts/bump-version.mjs <new-version>");
-  console.log("  Updates version in: package.json, Cargo.toml, tauri.conf.json");
+  console.log("  Updates version in: package.json, src-tauri/Cargo.toml, tauri.conf.json,");
+  console.log("  src-backend/qomicex-backend/Cargo.toml");
   console.log("  (Directory.Build.props derives its version from package.json)");
   process.exit(1);
 }
@@ -35,6 +36,15 @@ const tauriConfPath = resolve(ROOT, "src-tauri/tauri.conf.json");
 const tauriConf = JSON.parse(readFileSync(tauriConfPath, "utf-8"));
 tauriConf.version = newVersion;
 writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2) + "\n");
+
+// 4. src-backend/qomicex-backend/Cargo.toml
+// 后端 `state::APP_VERSION` 用 `env!("CARGO_PKG_VERSION")`（编译期注入），
+// vendor/UA 里的启动器版本跟随此值。release.yml 在构建 backend 前调用本脚本，
+// 同步更新后端 crate 版本，保证发布包的 vendor 版本与 package.json 一致。
+const backendCargoPath = resolve(ROOT, "src-backend/qomicex-backend/Cargo.toml");
+let backendCargo = readFileSync(backendCargoPath, "utf-8");
+backendCargo = backendCargo.replace(/^(version\s*=\s*)"[^"]*"/m, `$1"${newVersion}"`);
+writeFileSync(backendCargoPath, backendCargo);
 
 // Directory.Build.props derives its version from package.json automatically
 // (and strips any pre-release suffix for AssemblyVersion/FileVersion), so it
