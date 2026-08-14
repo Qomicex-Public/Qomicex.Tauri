@@ -149,3 +149,35 @@ TraceWriter → trace 缓冲 → 前端把 ESC 序列渲染为错误符号。并
   `normalize_separators_converts_maven_slashes_for_local_paths`（b2_util.rs）验证 Windows 下
   `net/minecraftforge/...` → `net\minecraftforge\...`。
 - 结论: ✅ PASS
+
+## 修复 7：Forge Processor（binarypatcher）执行失败 —— `ForgeInstallerBase` 动态状态未填充
+修复 6 后主 jar 写入通过，但仍报：
+```
+无效的Maven坐标格式：libraries\net\minecraftforge\forge\26.2-65.1.1\forge-26.2-65.1.1-client.jar，至少需要3个部分…
+Processor执行失败: net.minecraftforge:binarypatcher:1.3.4 原因：… --output libraries\net\… code:1
+```
+
+根因：`ForgeInstaller::new()` 把 `ForgeInstallerBase` 的 `game_dir`/`game_version`/`installer_path`/
+`main_jar_path` 全部初始化为 `String::new()` 且从不赋值。`install_forge` 用 `self.base.run_processor(...)`
+执行 processors；`replace_arguments`/`replace_outputs` 读的是 `self.game_dir`（空）。于是 processor 的
+`{PATCHED}`（数据值 `[net.minecraftforge:forge:26.2-65.1.1:client]`）经
+`resolve_library_path(self.game_dir="", …)` 解析成**相对路径** `libraries\net\…client.jar`；随后
+`resolve_processor_output_path` 把这个相对路径当 Maven 坐标再喂给 `maven_to_path` → 报
+「无效的Maven坐标格式」；`--output libraries\net\…` 无盘符 → Java 退出码 1。
+（`neoforge/install.rs::install_neoforge` 已正确，见其注释：trait `&self` → 手工复制 base 并写动态
+状态。）
+
+修复（镜像 neoforge 先例）：
+- `forge/install.rs`：`new()` 里把 `game_dir`/`game_version` 填入 `base`；
+  `install_forge` 内手工复制一份 `ForgeInstallerBase`，把本次 `installer_path`/`main_jar_path`
+  （原下划线未用参数）写入副本，处理器交由该副本执行（`base.run_processor(…, &base.game_dir, …)`），
+  使 `replace_arguments` 读到非空 game_dir / installer_path / main_jar_path。
+- `forge_base.rs`：新增 2 个单测——`{PATCHED}` 在非空 game_dir 下解析为绝对库路径；输出键在非空
+  game_dir 下为绝对/rooted、不再被当 Maven 坐标重解析（修复前空 game_dir 为相对 `libraries\…`）。
+
+复测：
+- `cargo test`（core）：全绿（20 lib + 11 + 9 集成），含新增
+  `replace_arguments_with_populated_game_dir_resolves_patched_to_absolute_path`、
+  `output_key_resolves_to_absolute_with_populated_game_dir_not_reparsed`。
+- `cargo build`（core + backend）：通过。
+- 结论: ✅ PASS（processor 路径解析已修复；完整 Forge 安装需联网 + Java 实跑最终确认）
