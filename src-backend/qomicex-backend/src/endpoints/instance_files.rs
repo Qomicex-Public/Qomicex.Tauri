@@ -1498,14 +1498,11 @@ async fn list_servers(
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<OldServerEntryDto>>> {
     let r = resolve(&id, &state)?;
-    let sm = state
-        .core
-        .local_resource_provider()
-        .create_server_manager(
-            r.game_dir.to_str().unwrap_or_default(),
-            &r.version,
-            r.isolated,
-        );
+    let sm = state.core.local_resource_provider().create_server_manager(
+        r.game_dir.to_str().unwrap_or_default(),
+        &r.version,
+        r.isolated,
+    );
     let result: Vec<OldServerEntryDto> = sm
         .load_server_list()
         .into_iter()
@@ -1533,14 +1530,11 @@ async fn add_server(
         .ip
         .ok_or_else(|| ApiError::bad_request("MISSING_IP", "ip is required"))?;
     let r = resolve(&id, &state)?;
-    let sm = state
-        .core
-        .local_resource_provider()
-        .create_server_manager(
-            r.game_dir.to_str().unwrap_or_default(),
-            &r.version,
-            r.isolated,
-        );
+    let sm = state.core.local_resource_provider().create_server_manager(
+        r.game_dir.to_str().unwrap_or_default(),
+        &r.version,
+        r.isolated,
+    );
     sm.add_or_update_server(&qomicex_core::models::local::ServerEntry {
         name,
         address: ip,
@@ -1559,14 +1553,11 @@ async fn delete_server(
     let ip =
         q.ip.ok_or_else(|| ApiError::bad_request("MISSING_IP", "ip is required"))?;
     let r = resolve(&id, &state)?;
-    let sm = state
-        .core
-        .local_resource_provider()
-        .create_server_manager(
-            r.game_dir.to_str().unwrap_or_default(),
-            &r.version,
-            r.isolated,
-        );
+    let sm = state.core.local_resource_provider().create_server_manager(
+        r.game_dir.to_str().unwrap_or_default(),
+        &r.version,
+        r.isolated,
+    );
     sm.remove_server(&ip);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1583,14 +1574,11 @@ async fn server_ping(
         .address
         .ok_or_else(|| ApiError::bad_request("MISSING_ADDRESS", "address is required"))?;
     let r = resolve(&id, &state)?;
-    let sm = state
-        .core
-        .local_resource_provider()
-        .create_server_manager(
-            r.game_dir.to_str().unwrap_or_default(),
-            &r.version,
-            r.isolated,
-        );
+    let sm = state.core.local_resource_provider().create_server_manager(
+        r.game_dir.to_str().unwrap_or_default(),
+        &r.version,
+        r.isolated,
+    );
     Ok(Json(sm.get_server_state_by_address_async(&address).await))
 }
 
@@ -1600,14 +1588,11 @@ async fn lan_games(
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<qomicex_core::models::local::LanServerEntry>>> {
     let r = resolve(&id, &state)?;
-    let sm = state
-        .core
-        .local_resource_provider()
-        .create_server_manager(
-            r.game_dir.to_str().unwrap_or_default(),
-            &r.version,
-            r.isolated,
-        );
+    let sm = state.core.local_resource_provider().create_server_manager(
+        r.game_dir.to_str().unwrap_or_default(),
+        &r.version,
+        r.isolated,
+    );
     Ok(Json(
         sm.discover_lan_servers(std::time::Duration::from_secs(5)),
     ))
