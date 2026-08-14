@@ -773,7 +773,7 @@ jobs:
           df -h
       - name: Create DMG
         run: |
-          APP="src-tauri/target/release/bundle/macos/qomicex-launcher.app"
+          APP="src-tauri/target/release/bundle/macos/Qomicex Launcher.app"
           DMG_DIR="src-tauri/target/release/bundle/dmg"
           STAGING=$(mktemp -d)
           mkdir -p "$DMG_DIR"
@@ -885,7 +885,7 @@ jobs:
           df -h
       - name: Create DMG
         run: |
-          APP="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/qomicex-launcher.app"
+          APP="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Qomicex Launcher.app"
           DMG_DIR="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg"
           STAGING=$(mktemp -d)
           mkdir -p "$DMG_DIR"
