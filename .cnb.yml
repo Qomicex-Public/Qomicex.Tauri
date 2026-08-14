@@ -1,0 +1,39 @@
+main:
+  push:
+    - services:
+        - docker
+      imports:
+        - https://cnb.cool/Qomicex-Public/Qomicex.Tauri/-/blob/main/cnb-env.yml
+      stages:
+        - name: setup-qemu-loong64
+          script: |
+            docker run --rm --privileged ghcr.io/loong64/binfmt --install all
+        - name: login-ghcr
+          script: |
+            echo "$GITHUB_TOKEN" | docker login ghcr.io -u qomicex-public --password-stdin
+        - name: build-loong64-container
+          script: |
+            docker run --rm -i \
+              --platform linux/loong64 \
+              --security-opt seccomp=unconfined \
+              -v "$PWD:/workspace" -w /workspace \
+              -e GITHUB_TOKEN="$GITHUB_TOKEN" \
+              -e VERSION="${VERSION:-0.1.0-alpha20260814.0}" \
+              ghcr.io/qomicex-public/qomicex-loong64-builder:latest \
+              bash -euxo pipefail <<'EOF'
+            set -e
+            git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+            node scripts/bump-version.mjs "$VERSION"
+            cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml
+            mkdir -p src-tauri/binaries
+            mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
+            pnpm install --frozen-lockfile
+            pnpm --filter @qomicex/plugin-ui build
+            npm run tauri -- build --bundles deb,rpm
+            echo "=== Build artifacts ==="
+            find src-tauri/target/release/bundle -type f
+            EOF
+        - name: list-artifacts
+          script: |
+            echo "=== Bundle dir contents ==="
+            find src-tauri/target/release/bundle -type f 2>/dev/null || true
