@@ -44,9 +44,9 @@ struct ScannedVersionEntry {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ScannedLoaderEntry {
-    r#type: String,
-    version: String,
+pub(crate) struct ScannedLoaderEntry {
+    pub(crate) r#type: String,
+    pub(crate) version: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -327,7 +327,8 @@ fn from_jar_game_version(_jar_path: &Path) -> Option<String> {
 }
 
 /// 6 级回退游戏版本探测：JAR → clientVersion → minecraftVersion → inheritsFrom → arguments → regex。
-fn resolve_game_version(
+/// pub(crate)：connector.rs host_port 从进程 --gameDir/--version 读版本 JSON 时复用。
+pub(crate) fn resolve_game_version(
     root: &serde_json::Value,
     id: &str,
     inherits_from: Option<&str>,
@@ -450,7 +451,8 @@ fn has_loader(types: &[ScannedLoaderEntry], r#type: &str) -> bool {
 /// - mainClass 精确匹配（Vanilla / Quilt / NeoForge / Fabric / Forge / Cleanroom）
 /// - `net.minecraft.launchwrapper.Launch`（无其他 loader 时）→ Vanilla
 /// - 兜底：inheritsFrom 按 id 猜测 → 仍空则 Unknown
-fn detect_loaders(
+/// pub(crate)：connector.rs host_port 复用。
+pub(crate) fn detect_loaders(
     root: &serde_json::Value,
     main_class: &str,
     id: &str,

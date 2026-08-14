@@ -290,13 +290,47 @@ async fn scan_host_mods(state: &SharedState, instance: &crate::services::instanc
     let isolated = instance
         .version_isolation
         .unwrap_or_else(crate::settings::get_global_version_isolation);
-    let mods = state.core.local_resource_provider().create_mods(
-        &abs_game_dir(&instance.game_dir),
+    let entries = scan_mods_to_entries(
+        &state.core,
+        &state.curse_forge_api_key,
+        &instance.game_dir,
         &instance.name,
         isolated,
+    )
+    .await;
+    *connector().host_mods.write().unwrap() = Some(entries);
+}
+
+/// host_port 建房：以进程解析的 `--gameDir`（最终游戏目录）扫描 mods。
+/// gameDir 已是最终目录（隔离时 = `{root}/versions/{version}`，否则 = `{root}`），
+/// 故 version_segmented 传 false，mods 目录 = `{gameDir}/mods`。
+async fn scan_host_mods_from_game_dir(state: &SharedState, game_dir: &str, version_name: &str) {
+    let entries = scan_mods_to_entries(
+        &state.core,
         &state.curse_forge_api_key,
+        game_dir,
+        version_name,
+        false,
+    )
+    .await;
+    *connector().host_mods.write().unwrap() = Some(entries);
+}
+
+/// 共享扫描管线：create_mods → get_mod_list → GameModEntry 映射。
+async fn scan_mods_to_entries(
+    core: &qomicex_core::core::GameCore,
+    api_key: &str,
+    game_dir: &str,
+    version: &str,
+    version_segmented: bool,
+) -> Vec<GameModEntry> {
+    let mods = core.local_resource_provider().create_mods(
+        &abs_game_dir(game_dir),
+        version,
+        version_segmented,
+        api_key,
     );
-    let entries = match mods.get_mod_list(None).await {
+    match mods.get_mod_list(None).await {
         Ok(list) => list
             .iter()
             .map(|m| GameModEntry {
@@ -320,8 +354,70 @@ async fn scan_host_mods(state: &SharedState, instance: &crate::services::instanc
             tracing::warn!("扫描房主 mods 失败: {e}");
             Vec::new()
         }
-    };
-    *connector().host_mods.write().unwrap() = Some(entries);
+    }
+}
+
+/// host_port 建房：读 `{root}/versions/{version}/{version}.json` 解析房主版本信息
+/// （game_version 6 级回退 + loader 探测，复用 version.rs 的解析逻辑）。
+/// 读不到/解析失败返回 None（调用方回退 --version 原值）。
+fn read_host_game_info(root: &str, version: &str) -> Option<ConnectorGameInfo> {
+    use crate::endpoints::version::{detect_loaders, resolve_game_version, ScannedLoaderEntry};
+
+    let json_path = std::path::Path::new(root)
+        .join("versions")
+        .join(version)
+        .join(format!("{version}.json"));
+    let text = std::fs::read_to_string(&json_path).ok()?;
+    let root_val: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let id = root_val
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| version.to_string());
+    let inherits_from = root_val
+        .get("inheritsFrom")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let mc_version = root_val
+        .get("minecraftVersion")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let client_version = root_val
+        .get("clientVersion")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let main_class = root_val
+        .get("mainClass")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let version_dir = json_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+
+    let game_version = resolve_game_version(
+        &root_val,
+        &id,
+        inherits_from.as_deref(),
+        client_version.as_deref(),
+        mc_version.as_deref(),
+        &version_dir,
+    );
+    let loaders = detect_loaders(&root_val, &main_class, &id, inherits_from.as_deref());
+    // 首个非 Vanilla/Unknown 的 loader 作为 loader/loader_version（对齐实例语义：
+    // 原版/未知版本 loader 留空）
+    let (loader, loader_version) = loaders
+        .iter()
+        .find(|l: &&ScannedLoaderEntry| l.r#type != "Vanilla" && l.r#type != "Unknown")
+        .map(|l| (Some(l.r#type.clone()), Some(l.version.clone())))
+        .unwrap_or((None, None));
+
+    Some(ConnectorGameInfo {
+        game_version,
+        loader,
+        loader_version,
+    })
 }
 
 /// 解析本机头像（默认账号的皮肤 → base64；无账号/解析失败 → 空串）。
@@ -431,15 +527,51 @@ async fn host_port(
     if !icon.is_empty() {
         conn.icon_map.write().unwrap().insert(machine_id(), icon);
     }
-    // 房主版本信息：进程 --version（对齐 C# GameVersion = proc.GameVersionArg ?? "unknown"）
-    *conn.game_info.write().unwrap() = Some(ConnectorGameInfo {
+    // 房主版本信息：优先从进程解析的 --gameDir/--version 读版本 JSON 生成
+    // game_info（gameVersion 6 级回退 + loader 探测）；读不到则回退 --version 原值。
+    let mut game_info = ConnectorGameInfo {
         game_version: proc_info
             .as_ref()
             .and_then(|p| p.game_version.clone())
             .unwrap_or_else(|| "unknown".to_string()),
         loader: None,
         loader_version: None,
-    });
+    };
+    if let (Some(root), Some(version)) = (
+        proc_info.as_ref().and_then(|p| p.game_root.as_deref()),
+        proc_info.as_ref().and_then(|p| p.game_version.as_deref()),
+    ) {
+        if let Some(info) = read_host_game_info(root, version) {
+            tracing::info!(
+                "联机: host_port 版本 JSON → game_version={} loader={:?} loader_version={:?}",
+                info.game_version,
+                info.loader,
+                info.loader_version
+            );
+            game_info = info;
+        } else {
+            tracing::warn!(
+                "联机: host_port 读取版本 JSON 失败（root={root} version={version}），回退 --version 原值"
+            );
+        }
+    }
+    *conn.game_info.write().unwrap() = Some(game_info);
+    // host_port 建房无实例上下文：mods 扫描留空（guest 端拿空列表）
+    *conn.host_instance.write().unwrap() = None;
+    // 有 --gameDir 时后台扫描该实例 mods（qml:game_mods 协议惰性读取，不阻塞建房）
+    if let (Some(game_dir), Some(version)) = (
+        proc_info.as_ref().and_then(|p| p.game_dir.as_deref()),
+        proc_info.as_ref().and_then(|p| p.game_version.as_deref()),
+    ) {
+        let scan_state = state.clone();
+        let scan_game_dir = game_dir.to_string();
+        let scan_version = version.to_string();
+        tokio::spawn(async move {
+            scan_host_mods_from_game_dir(&scan_state, &scan_game_dir, &scan_version).await;
+        });
+    } else {
+        *conn.host_mods.write().unwrap() = Some(Vec::new());
+    }
     let center = run_with_connector_timeout(
         "CONNECTOR_HOST_TIMEOUT",
         "建房超时，请检查网络后重试",
@@ -465,9 +597,9 @@ async fn host_port(
     .await?;
     *conn.mode.lock().await = Mode::Host(center.clone());
     *conn.host_center.write().unwrap() = Some(center.clone());
-    // host_port 建房无实例上下文：mods 扫描留空（guest 端拿空列表）
+    // host_port 建房无实例上下文：host_instance 留空（mods 由上方 --gameDir 分支
+    // 后台扫描写入 host_mods，未解析到 gameDir 时已置空列表）
     *conn.host_instance.write().unwrap() = None;
-    *conn.host_mods.write().unwrap() = Some(Vec::new());
     Ok(Json(HostPortResponse {
         room_code: center.room_code().raw().to_string(),
     }))
@@ -1378,7 +1510,12 @@ struct GameProcessInfo {
     player_name: String,
     uuid: String,
     is_microsoft: bool,
+    /// `--version` 参数值（版本目录名，如 `1.20.1-Forge-47.1.0`）
     game_version: Option<String>,
+    /// `--gameDir` 参数值（最终游戏目录：版本隔离时是 `.minecraft/versions/{version}`，否则 `.minecraft`）
+    game_dir: Option<String>,
+    /// 从 `-cp`（classpath）中 `libraries` 段推导的 `.minecraft` 根目录
+    game_root: Option<String>,
 }
 
 /// 端口 → PID → Java 启动参数解析（对应 C# `GameProcessInspector.Inspect`）。
@@ -1394,12 +1531,73 @@ async fn inspect_game_process(port: u16) -> Option<GameProcessInfo> {
     let is_microsoft =
         user_type.eq_ignore_ascii_case("microsoft") || user_type.eq_ignore_ascii_case("msa");
     let game_version = get_arg_value(&args, "--version");
+    // `--gameDir`：最终游戏目录（版本隔离时 = `{root}/versions/{version_name}`，否则 = `{root}`）
+    let game_dir = get_arg_value(&args, "--gameDir");
+    // `.minecraft` 根：优先从 --gameDir 推导（含 `versions/{ver}` 尾段则剥掉后两段）；
+    // 缺失时用 classpath 的 `libraries` 段兜底。
+    let game_root = game_dir
+        .as_deref()
+        .and_then(derive_game_root_from_game_dir)
+        .or_else(|| {
+            get_arg_value(&args, "-cp")
+                .or_else(|| get_arg_value(&args, "-classpath"))
+                .as_deref()
+                .and_then(derive_game_root_from_classpath)
+        });
     Some(GameProcessInfo {
         player_name,
         uuid,
         is_microsoft,
         game_version,
+        game_dir,
+        game_root,
     })
+}
+
+/// 从 `--gameDir` 推导 `.minecraft` 根目录：版本隔离时 gameDir =
+/// `{root}/versions/{version_name}`（剥掉最后两段得 root），否则 gameDir = `{root}`。
+fn derive_game_root_from_game_dir(game_dir: &str) -> Option<String> {
+    let trimmed = game_dir.trim().trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        return None;
+    }
+    // 若以 `versions/{x}` 结尾（隔离模式）→ 取 versions 之前的部分
+    if let Some(idx) = trimmed.rfind("versions") {
+        // 校验 `versions` 是独立路径段（前有分隔符）
+        let before = &trimmed[..idx];
+        let is_segment =
+            idx == 0 || trimmed.as_bytes()[idx - 1] == b'/' || trimmed.as_bytes()[idx - 1] == b'\\';
+        if is_segment {
+            let root = before.trim_end_matches(['/', '\\']);
+            if !root.is_empty() {
+                return Some(root.to_string());
+            }
+        }
+    }
+    Some(trimmed.to_string())
+}
+
+/// 从 Java classpath 中推导 `.minecraft` 根目录（对应 C# 无此级；host_port 需要
+/// 版本 JSON / mods 扫描的 gameDir 时使用）。classpath 条目通常含 `libraries` 段，
+/// 取首个匹配条目的 `libraries` 前缀作为游戏根目录。
+fn derive_game_root_from_classpath(cp: &str) -> Option<String> {
+    // classpath 分隔符：Windows `;`，Unix `:`
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    for entry in cp.split(sep) {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        // 找 `libraries` 段（如 `C:\...\.minecraft\libraries\...` 或 `/home/x/.minecraft/libraries/...`）
+        let Some(idx) = entry.find("libraries") else {
+            continue;
+        };
+        let prefix = entry[..idx].trim_end_matches(['/', '\\']);
+        if !prefix.is_empty() {
+            return Some(prefix.to_string());
+        }
+    }
+    None
 }
 
 /// 端口 → PID（复用 `tcp_listen_table`；对应 C# `FindPidByPort`）。
