@@ -3,7 +3,7 @@ main:
     - services:
         - docker
       imports:
-        - https://cnb.cool/Qomicex-Public/Qomicex.Tauri/-/blob/main/cnb-env.yml
+        - https://cnb.cool/Qomicex-Public/cnb-env.yml/-/blob/main/cnb-env.yml
       stages:
         - name: setup-qemu-loong64
           script: |
