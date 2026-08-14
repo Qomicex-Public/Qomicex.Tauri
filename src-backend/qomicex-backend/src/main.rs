@@ -20,6 +20,11 @@ fn init_tracing() {
         .unwrap_or_else(|_| EnvFilter::new("info,tower_http=debug"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
+        // ⚠️ 强制关闭 ANSI 转义码：tracing-subscriber 的 `ansi` feature 会被
+        // easytier→kcp-sys 传递启用（`cfg!(feature = "ansi")` 全局求值），导致 fmt
+        // 默认向 TraceWriter 输出 `\x1b[32m` 等颜色码，实时日志（/diagnostics/trace）
+        // 在前端渲染为错误符号。即使 feature 已启用，`with_ansi(false)` 仍强制禁用。
+        .with_ansi(false)
         .with_writer(crate::services::trace::TraceWriter::default())
         .init();
 }

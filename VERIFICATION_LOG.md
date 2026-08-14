@@ -54,3 +54,22 @@ Rust 重写后缺失 C# `GameProcessInspector`（端口→PID→Java 启动参�
 - 预期输出: game_version 从版本 JSON 解析（inheritsFrom），loader 由 fmlloader/mainClass 探测，
   mods 目录 = `{--gameDir}/mods`（隔离/非隔离均正确）
 - 结论: ✅ PASS（两场景均符合预期；解析失败回退路径见代码，未阻断建房）
+
+## 修复 3：调试页实时日志 ANSI 转义码乱码
+设置→调试页的实时日志（`/diagnostics/trace`）显示"全是错误符号"（如 `\u001b[2m`、`\u001b[32m`）。
+
+根因：tracing-subscriber 的 `ansi` feature 被 **easytier→kcp-sys→nu-ansi-term** 传递启用
+（`cfg!(feature = "ansi")` 编译期全局求值），backend `init_tracing()` 的 `fmt()` 默认
+`is_ansi = true` → 所有 tracing 事件（含 easytier_core 日志）被包上 ANSI 颜色/样式码写入
+TraceWriter → trace 缓冲 → 前端把 ESC 序列渲染为错误符号。并非编码（GBK/UTF-8）问题，
+前端 `res.text()` 与 TraceWriter 本身均无编码缺陷。
+
+`src-backend/qomicex-backend/src/main.rs`：`init_tracing()` 增加 `.with_ansi(false)`，
+强制禁用 ANSI（即使 feature 已启用）。
+
+复测（模拟 Java 进程监听 25565 → host/port 建房触发 easytier 实例启动，共 462 条 trace）：
+- 修复前样本：`\u001b[2m2026-08-14T10:47:53.404172Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1mdo_handshake_as_client\u001b[1m{...}`
+- 修复后：462 条 trace 中 **0 条含 ANSI ESC**，363 条 easytier_core 日志干净可读
+  （`2026-08-14T11:02:11.061585Z  INFO qomicex_connector::easytier::manager: 启动 EasyTier 实例: ...`），
+  中文正常。
+- 结论: ✅ PASS
