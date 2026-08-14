@@ -237,3 +237,31 @@ Windows 返回 `\\?\C:\…`，该前缀在 Java/binarypatcher 那边不可识别
 - `cargo test`（core）：全绿。
 - 结论: ✅ PASS（verbatim 前缀已剥；binarypatcher 现走非 verbatim 路径，见真实 binarypatcher
   exit 0 + 产出 jar 的复测；端到端需 GUI 实测）
+
+## 修复 10（终极根因）：Windows 下 `run_install_process` 把整条命令当单个参数传给 java → JVM 无法启动
+仍失败，且用**真实后端跑全新安装**（gameDir 用全新空目录 `C:\.minecraft-fresh2`，同用户操作）100%
+复现 `binarypatcher … Exit code:1`。DEBUG 日志证明处理器运行时 client.lzma 与 minecraft jar 均存在
+（`minecraft_exists=true lzma_exists=true`）——**不是缺文件**。用探针精确复现差异：
+- 把整条命令 `-cp "C:\…classpath…" net.minecraftforge.binarypatcher.ConsoleTool --clean … --apply …`
+  作为**单个参数**传给 java（= Rust `Command::arg(arguments)`）→ java 报
+  `Unrecognized option: -cp "…" …` / `Could not create the Java Virtual Machine` → 退出码 1；
+- 按 Windows 命令行规则**切词后逐参数**传（= C# `ProcessStartInfo.Arguments` → CreateProcess 解析）→
+  binarypatcher 退出码 0、产出补丁 jar。
+
+根因/与 C# Core 的区别：C# `Process.Start(fileName, arguments)` 把 `arguments` 当作**命令行字符串**
+交给 Win32 `CreateProcess` 按 Windows 规则切词；Rust `std::process::Command::arg(arguments)` 只会把
+整个字符串当**单个字面参数**（不做命令行切词）。于是 java 收到一整段 `-cp "…" main …`，被判为
+`Unrecognized option`。此前 installertools 等因 `sides=server` 被 `ShouldRunProcessor` 跳过、没真正
+调 java，所以最先真正调 java 的 binarypatcher 暴露此问题。
+
+修复（`qomicex-core-rust/src/services/installers/installer.rs`）：
+- `run_install_process`：Windows 下对非 `cmd.exe` 程序（如 java.exe）改用新增
+  `split_windows_args`（微软 `CommandLineToArgvW` 规则：空白切词、`"` 分组、`\\`/`\"` 转义）切词后
+  逐参数 `.arg()` 传递；cmd.exe 与 /bin/bash -c 分支不变（那些本就该移交 shell 解析）。
+
+复测：
+- `cargo test`（core）：全绿（23 lib + 11 + 9），含新增
+  `split_windows_args_parses_quoted_arguments`、`split_windows_args_handles_backslash_quote_escape`。
+- 探针：同一 binarypatcher 命令，单参传 java → JVM 无法启动；tokenize+逐参传 → exit 0 + 产出 jar。
+- 真实后端全新安装到结尾不再卡在 binarypatcher（曾 100% 复现）。端到端 GUI 最终确认。
+- 结论: ✅ PASS（java 处理器正确切词调用；C# 语义对齐）
