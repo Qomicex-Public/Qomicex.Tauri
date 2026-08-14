@@ -655,6 +655,7 @@ jobs:
             -e PROTOC=/usr/bin/protoc \
             -e VC_LTL= \
             -e YY_THUNKS= \
+            -e NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
             -e VERSION="$VERSION" \
             -e LICENSE_REQUIRED="$LICENSE_REQUIRED" \
             -e QOMICEX_PAT='${{ secrets.QOMICEX_PAT }}' \
@@ -669,8 +670,8 @@ jobs:
             cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
             mkdir -p src-tauri/binaries
             mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
-            # pnpm 11.1.2 无 pacquet wasm / lockfile 重校验问题，
-            # QEMU 慢速下加大 fetch 超时与重试。
+            # npmjs CDN 在 QEMU 用户态模拟下大量 tarball fetch failed，
+            # 改用 npmmirror（淘宝镜像）缓解 TLS/连接超时。
             pnpm install --frozen-lockfile \
               --fetch-timeout=600000 --fetch-retries=5
             pnpm --filter @qomicex/plugin-ui build
