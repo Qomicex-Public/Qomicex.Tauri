@@ -118,3 +118,34 @@ TraceWriter → trace 缓冲 → 前端把 ESC 序列渲染为错误符号。并
   （package.json / src-tauri/Cargo.toml / tauri.conf.json / backend Cargo.toml），
   干跑后已 git checkout 恢复原值
 - 结论: ✅ PASS
+
+## 修复 6：Forge/NeoForge 安装「写出主 jar 失败」os error 123
+安装 Forge 1.12.2-14.23.5.2864 等加载器报：
+`安装 Forge 失败: download failed: 写出主jar 失败: \?(D:\Test\,minecraftlibraries\net/minecraftforge/...jar`。
+
+根因（已用 Rust 探针复现）：安装流水线 `install_service.rs::absolute_path` 对 `game_dir` 调
+`std::fs::canonicalize()`，Windows 上返回 verbatim 路径 `\\?\D:\Test\.minecraft`；各安装器用
+`path_combine(game_dir,"libraries") + maven_path` 拼接，而 `maven_to_path` 保留 `/`
+（如 `libraries\net/minecraftforge/...jar`）。verbatim（`\\?\`）路径下 `/` 非路径分隔符，
+`std::fs::write` / 下载落盘报 **ERROR_INVALID_NAME (os error 123)**。`create_dir_all` 对父目录
+尚能通过，故报错恰好落在 write 上。项目已有同类先例：`install_service.rs::normalize_sep`、
+`process.rs:475`（verbatim 前缀 `/`→`\`）。
+
+修复（集中式，与既有先例一致），`qomicex-core-rust`：
+- `util/file_helper.rs`：新增 `normalize_separators(path)`——Windows 上把 `/` 换成 `\`
+  （verbatim 规避），非 Windows 无操作；仅用于本地文件系统路径，不可用于 URL。
+- `services/installers/installer.rs::download_file_async`：落盘前归一化 `destination_path`
+  （覆盖 Forge/NeoForge/Fabric/Quilt/Cleanroom 等全部经下载的 Maven 库路径）。
+- `services/installers/forge/install.rs`：3 处直接写主 jar/库路径
+  （install_forge、install_legacy_forge 的 `jar_full_path`、get_miss_forge_libraries 的 `lib_path`）
+  统一归一化。
+- `services/installers/cleanroom.rs`：核心 Jar 直接写路径归一化。
+
+复测：
+- Rust 探针：未归一化 verbatim+`/` 路径 `std::fs::write` → `os error 123`（复现原 bug）；
+  normalize 后路径 → write OK、文件存在（os error 123 消除）。
+- `cargo build`（core + backend）：通过。
+- `cargo test`（core）：全部通过；新增单测
+  `normalize_separators_converts_maven_slashes_for_local_paths`（b2_util.rs）验证 Windows 下
+  `net/minecraftforge/...` → `net\minecraftforge\...`。
+- 结论: ✅ PASS
