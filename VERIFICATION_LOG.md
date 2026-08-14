@@ -260,8 +260,10 @@ Windows 返回 `\\?\C:\…`，该前缀在 Java/binarypatcher 那边不可识别
   逐参数 `.arg()` 传递；cmd.exe 与 /bin/bash -c 分支不变（那些本就该移交 shell 解析）。
 
 复测：
-- `cargo test`（core）：全绿（23 lib + 11 + 9），含新增
-  `split_windows_args_parses_quoted_arguments`、`split_windows_args_handles_backslash_quote_escape`。
+- `cargo test`（core）：全绿（23 lib + 11 + 9），launch 既有 `split_command_line_*` 单测覆盖切词；
+  installer 复用该函数（移除复制的实现，避免两套规则漂移）。
 - 探针：同一 binarypatcher 命令，单参传 java → JVM 无法启动；tokenize+逐参传 → exit 0 + 产出 jar。
 - 真实后端全新安装到结尾不再卡在 binarypatcher（曾 100% 复现）。端到端 GUI 最终确认。
-- 结论: ✅ PASS（java 处理器正确切词调用；C# 语义对齐）
+- **覆盖范围**：NeoForge 与 Forge 的 processors 走同一 `run_processor → run_install_process`
+  （修复点），java 处理器一并修好；launch 与 OptiFine 本就逐参传递、不受影响。
+- 结论: ✅ PASS（java 处理器正确切词调用；与 C# `ProcessStartInfo.Arguments` 语义对齐；Forge/NeoForge 共用）
