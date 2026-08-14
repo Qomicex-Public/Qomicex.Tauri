@@ -32,7 +32,7 @@ function toAssetUrl(src: string, fileUrl: (p: string) => string): string {
 }
 
 function convertScriptSrcs(html: string, fileUrl: (p: string) => string): string {
-  return html.replace(/(<script[^>]+src=")([^"]+)("[^>]*><\/script>)/g, (_, pre, src, post) => pre + toAssetUrl(src, fileUrl) + post)
+  return html.replace(/(<script\b[^>]*\bsrc\s*=\s*)(["'])([^"']+)\2([^>]*>\s*<\/script\b[^>]*>)/gi, (_, pre, quote, src, post) => pre + quote + toAssetUrl(src, fileUrl) + quote + post)
 }
 
 function convertCssLinks(html: string, fileUrl: (p: string) => string): string {
