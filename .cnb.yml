@@ -17,11 +17,13 @@ $:
               --platform linux/loong64 \
               --security-opt seccomp=unconfined \
               -v "$PWD:/workspace" -w /workspace \
+              -e PROTOC=/usr/bin/protoc \
               -e GITHUB_TOKEN="$GITHUB_TOKEN" \
               -e VERSION="${VERSION:-0.1.0-alpha20260814.0}" \
               ghcr.io/qomicex-public/qomicex-loong64-builder:latest \
               bash -euxo pipefail <<'EOF'
             set -e
+            which protoc && protoc --version
             git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
             node scripts/bump-version.mjs "$VERSION"
             cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml
