@@ -298,6 +298,7 @@ async fn refresh_mods_cache(
 ) -> ApiResult<Vec<ModMetadataDto>> {
     let r = resolve(instance_id, state)?;
     let mods = state.core.local_resource_provider().create_mods(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -863,6 +864,7 @@ async fn check_mod_updates(
 ) -> ApiResult<Json<Vec<ModUpdateEntryDto>>> {
     let r = resolve(&id, &state)?;
     let mods = state.core.local_resource_provider().create_mods(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1035,6 +1037,7 @@ async fn enable_mod(
         .to_string_lossy()
         .into_owned();
     let mods = state.core.local_resource_provider().create_mods(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1055,6 +1058,7 @@ async fn disable_mod(
         .to_string_lossy()
         .into_owned();
     let mods = state.core.local_resource_provider().create_mods(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1082,6 +1086,7 @@ async fn batch_enable_mods(
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
     let mods = state.core.local_resource_provider().create_mods(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1101,6 +1106,7 @@ async fn batch_disable_mods(
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
     let mods = state.core.local_resource_provider().create_mods(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1188,6 +1194,7 @@ async fn resourcepacks_metadata(
 ) -> ApiResult<Json<Vec<ResourcePackMetadataDto>>> {
     let r = resolve(&id, &state)?;
     let rp = state.core.local_resource_provider().create_resourcepack(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1235,6 +1242,7 @@ async fn shaderpacks_metadata(
 ) -> ApiResult<Json<Vec<ShaderMetadataDto>>> {
     let r = resolve(&id, &state)?;
     let s = state.core.local_resource_provider().create_shaders(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1281,6 +1289,7 @@ async fn datapacks_metadata(
 ) -> ApiResult<Json<Vec<DataPackMetadataDto>>> {
     let r = resolve(&id, &state)?;
     let dp = state.core.local_resource_provider().create_data_packs(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1332,6 +1341,7 @@ async fn screenshots_metadata(
 ) -> ApiResult<Json<Vec<ScreenshotMetadataDto>>> {
     let r = resolve(&id, &state)?;
     let sc = state.core.local_resource_provider().create_screenshots(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1391,6 +1401,7 @@ async fn saves_metadata(
 ) -> ApiResult<Json<Vec<SaveMetadataDto>>> {
     let r = resolve(&id, &state)?;
     let saves = state.core.local_resource_provider().create_saves(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1433,6 +1444,7 @@ async fn rename_save(
 ) -> ApiResult<StatusCode> {
     let r = resolve(&id, &state)?;
     let saves = state.core.local_resource_provider().create_saves(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1451,6 +1463,7 @@ async fn backup_save(
     let name = required_name(q.name)?;
     let r = resolve(&id, &state)?;
     let saves = state.core.local_resource_provider().create_saves(
+        r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
@@ -1488,7 +1501,11 @@ async fn list_servers(
     let sm = state
         .core
         .local_resource_provider()
-        .create_server_manager(&r.version, r.isolated);
+        .create_server_manager(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+        );
     let result: Vec<OldServerEntryDto> = sm
         .load_server_list()
         .into_iter()
@@ -1519,7 +1536,11 @@ async fn add_server(
     let sm = state
         .core
         .local_resource_provider()
-        .create_server_manager(&r.version, r.isolated);
+        .create_server_manager(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+        );
     sm.add_or_update_server(&qomicex_core::models::local::ServerEntry {
         name,
         address: ip,
@@ -1541,7 +1562,11 @@ async fn delete_server(
     let sm = state
         .core
         .local_resource_provider()
-        .create_server_manager(&r.version, r.isolated);
+        .create_server_manager(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+        );
     sm.remove_server(&ip);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1561,7 +1586,11 @@ async fn server_ping(
     let sm = state
         .core
         .local_resource_provider()
-        .create_server_manager(&r.version, r.isolated);
+        .create_server_manager(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+        );
     Ok(Json(sm.get_server_state_by_address_async(&address).await))
 }
 
@@ -1574,7 +1603,11 @@ async fn lan_games(
     let sm = state
         .core
         .local_resource_provider()
-        .create_server_manager(&r.version, r.isolated);
+        .create_server_manager(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+        );
     Ok(Json(
         sm.discover_lan_servers(std::time::Duration::from_secs(5)),
     ))

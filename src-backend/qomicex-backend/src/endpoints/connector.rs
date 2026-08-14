@@ -269,6 +269,21 @@ fn custom_protocols() -> Vec<Arc<dyn qomicex_connector::protocols::ProtocolHandl
     ]
 }
 
+/// 实例 game_dir 绝对化（与 instance_files::resolve 的 to_absolute 语义一致：
+/// 语法级绝对化，不跟随符号链接，容忍目标不存在）。
+fn abs_game_dir(game_dir: &str) -> String {
+    let path = std::path::Path::new(game_dir);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    }
+    .to_string_lossy()
+    .into_owned()
+}
+
 /// 扫描实例 mods 目录（sha1 + Modrinth/CurseForge 反查），映射为 [`GameModEntry`]，
 /// 写入 `connector().host_mods` 缓存（qml:game_mods 协议惰性读取）。
 async fn scan_host_mods(state: &SharedState, instance: &crate::services::instance::GameInstance) {
@@ -276,6 +291,7 @@ async fn scan_host_mods(state: &SharedState, instance: &crate::services::instanc
         .version_isolation
         .unwrap_or_else(crate::settings::get_global_version_isolation);
     let mods = state.core.local_resource_provider().create_mods(
+        &abs_game_dir(&instance.game_dir),
         &instance.name,
         isolated,
         &state.curse_forge_api_key,
@@ -1009,7 +1025,7 @@ async fn match_instances(
                         .unwrap_or_else(crate::settings::get_global_version_isolation);
                     let mods = core
                         .local_resource_provider()
-                        .create_mods(&inst.name, isolated, &api_key);
+                        .create_mods(&abs_game_dir(&inst.game_dir), &inst.name, isolated, &api_key);
                     let hashes: HashSet<String> = match mods.get_mod_list_light().await {
                         Ok(list) => list
                             .iter()
