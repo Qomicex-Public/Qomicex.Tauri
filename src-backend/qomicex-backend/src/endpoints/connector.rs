@@ -396,11 +396,50 @@ async fn host_port(
             ));
         }
     }
-    // 自己头像进房间映射（guest 端列表可见）
-    let icon = self_icon(&state).await;
+    // 从端口反查 Java 进程启动参数，解析房主身份（对齐 C# GameProcessInspector）：
+    // 端口 → PID → 命令行 → --username/--name、--uuid、--userType、--version
+    let proc_info = inspect_game_process(req.port).await;
+    if let Some(p) = &proc_info {
+        tracing::info!(
+            "联机: host_port 端口 {} → 进程解析玩家 {} uuid={} microsoft={}",
+            req.port,
+            p.player_name,
+            p.uuid,
+            p.is_microsoft
+        );
+    } else {
+        tracing::warn!(
+            "联机: host_port 端口 {} 未解析到游戏进程，回退默认账号",
+            req.port
+        );
+    }
+    // 房主玩家名：进程解析优先，失败回退默认账号/Player
+    let fallback_name = player_name(&state).await;
+    let host_name = proc_info
+        .as_ref()
+        .map(|p| p.player_name.clone())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| fallback_name);
+    // 房主头像：默认账号优先，无账号用进程 uuid + userType
+    let default_account = state.account.get_default().await.ok().flatten();
+    let icon = resolve_host_icon(
+        &state.http_client,
+        default_account.as_ref(),
+        proc_info.as_ref(),
+    )
+    .await;
     if !icon.is_empty() {
         conn.icon_map.write().unwrap().insert(machine_id(), icon);
     }
+    // 房主版本信息：进程 --version（对齐 C# GameVersion = proc.GameVersionArg ?? "unknown"）
+    *conn.game_info.write().unwrap() = Some(ConnectorGameInfo {
+        game_version: proc_info
+            .as_ref()
+            .and_then(|p| p.game_version.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        loader: None,
+        loader_version: None,
+    });
     let center = run_with_connector_timeout(
         "CONNECTOR_HOST_TIMEOUT",
         "建房超时，请检查网络后重试",
@@ -410,7 +449,7 @@ async fn host_port(
                 Box::pin(async move {
                     conn.client
                         .create_room(
-                            player_name(&state).await,
+                            host_name,
                             machine_id(),
                             vendor_string(),
                             req.port,
@@ -464,8 +503,10 @@ async fn host_instance(
     });
 
     // 后台：启动实例 → 轮询扫描端口（最长 60s）→ 建房
-    // 头像与 mods 扫描在 spawn 前启动（后台任务无 SharedState）
-    let host_icon = self_icon(&state).await;
+    // 头像与 mods 扫描在 spawn 前启动（后台任务无 SharedState，携带所需资源）
+    let host_http = state.http_client.clone();
+    // 默认账号（头像回退用；无账号时建房后由进程解析 uuid/userType 决定）
+    let host_account = state.account.get_default().await.ok().flatten();
     let host_machine_id = machine_id();
     // 异步扫描实例 mods（core 管线：sha1 + MR/CF 反查），完成后写 host_mods 缓存
     {
@@ -636,6 +677,35 @@ async fn host_instance(
         *conn.starting_instance.write().unwrap() = None;
         match created {
             Some(port) => {
+                // 端口 → PID → Java 启动参数解析房主身份（对齐 C# RunHostByInstanceAsync 的 Inspect）
+                let proc_info = inspect_game_process(port).await;
+                if let Some(p) = &proc_info {
+                    tracing::info!(
+                        "联机: host_instance 端口 {port} → 进程解析玩家 {} uuid={} microsoft={}",
+                        p.player_name,
+                        p.uuid,
+                        p.is_microsoft
+                    );
+                } else {
+                    tracing::warn!(
+                        "联机: host_instance 端口 {port} 未解析到游戏进程，回退默认账号"
+                    );
+                }
+                // 房主玩家名：进程解析优先，失败回退默认账号/Player
+                let host_name = proc_info
+                    .as_ref()
+                    .map(|p| p.player_name.clone())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| {
+                        host_account
+                            .as_ref()
+                            .map(|a| a.name.clone())
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| "Player".to_string())
+                    });
+                // 房主头像：默认账号优先，无账号用进程 uuid + userType
+                let host_icon =
+                    resolve_host_icon(&host_http, host_account.as_ref(), proc_info.as_ref()).await;
                 // 自己头像进房间映射（guest 端列表可见）
                 if !host_icon.is_empty() {
                     conn.icon_map
@@ -646,7 +716,7 @@ async fn host_instance(
                 match conn
                     .client
                     .create_room(
-                        player_name_plain(),
+                        host_name,
                         machine_id(),
                         vendor_string(),
                         port,
@@ -1298,6 +1368,106 @@ async fn tcp_listen_table() -> Vec<(u16, i32)> {
     }
 }
 
+// =====================================================================
+// 游戏进程身份解析（对应 C# `GameProcessInspector`）
+// =====================================================================
+
+/// 端口对应 Java 进程解析出的玩家信息（对应 C# `GameProcessInfo`）。
+#[derive(Debug, Clone)]
+struct GameProcessInfo {
+    player_name: String,
+    uuid: String,
+    is_microsoft: bool,
+    game_version: Option<String>,
+}
+
+/// 端口 → PID → Java 启动参数解析（对应 C# `GameProcessInspector.Inspect`）。
+/// 任一环节失败返回 None（调用方回退默认账号/Player）。
+async fn inspect_game_process(port: u16) -> Option<GameProcessInfo> {
+    let pid = find_pid_by_port(port).await?;
+    let args = process_cmd_args(pid)?;
+    // C#：先 --username，回退 --name
+    let player_name =
+        get_arg_value(&args, "--username").or_else(|| get_arg_value(&args, "--name"))?;
+    let uuid = get_arg_value(&args, "--uuid").unwrap_or_default();
+    let user_type = get_arg_value(&args, "--userType").unwrap_or_default();
+    let is_microsoft =
+        user_type.eq_ignore_ascii_case("microsoft") || user_type.eq_ignore_ascii_case("msa");
+    let game_version = get_arg_value(&args, "--version");
+    Some(GameProcessInfo {
+        player_name,
+        uuid,
+        is_microsoft,
+        game_version,
+    })
+}
+
+/// 端口 → PID（复用 `tcp_listen_table`；对应 C# `FindPidByPort`）。
+async fn find_pid_by_port(port: u16) -> Option<i32> {
+    tcp_listen_table()
+        .await
+        .into_iter()
+        .find(|(p, _)| *p == port)
+        .map(|(_, pid)| pid)
+}
+
+/// PID → 命令行参数数组（sysinfo 跨平台：Windows 经 NtQueryInformationProcess +
+/// CommandLineToArgvW 分词，Linux 读 /proc/{pid}/cmdline，macOS 经 sysctl；
+/// 对应 C# `GetCommandLine` + `Tokenize`）。
+fn process_cmd_args(pid: i32) -> Option<Vec<String>> {
+    use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
+    let mut sys = System::new();
+    let syspid = Pid::from_u32(pid as u32);
+    if !sys.refresh_process_specifics(
+        syspid,
+        ProcessRefreshKind::new().with_cmd(UpdateKind::Always),
+    ) {
+        return None;
+    }
+    let cmd = sys.process(syspid)?.cmd();
+    if cmd.is_empty() {
+        None
+    } else {
+        Some(cmd.to_vec())
+    }
+}
+
+/// 取 `--key value` 形式参数的值（对应 C# `GetArgValue`）。
+fn get_arg_value(args: &[String], key: &str) -> Option<String> {
+    let idx = args.iter().position(|a| a == key)?;
+    args.get(idx + 1).cloned()
+}
+
+/// 房主头像：默认账号优先；无账号时用进程解析的 uuid + userType（对应 C#
+/// `ResolveHostIconAsync`：有账号用账号 UUID，否则用 proc.Uuid + proc.IsMicrosoft）。
+async fn resolve_host_icon(
+    http: &reqwest::Client,
+    account: Option<&crate::services::account::StoredAccount>,
+    proc: Option<&GameProcessInfo>,
+) -> String {
+    let (uuid, login, server) = match account {
+        Some(a) => (a.uuid.clone(), a.login_method.clone(), a.server_url.clone()),
+        None => match proc {
+            Some(p) => (
+                p.uuid.clone(),
+                if p.is_microsoft {
+                    "Microsoft".to_string()
+                } else {
+                    "Offline".to_string()
+                },
+                None,
+            ),
+            None => return String::new(),
+        },
+    };
+    let svc = SkinService::new(http.clone());
+    let bytes = svc
+        .resolve_skin_bytes(&uuid, &login, server.as_deref())
+        .await;
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
 /// STUN NAT 类型检测：对同一本地端口发起两次 binding 请求，
 /// 映射端口一致 → cone，变化 → symmetric，无响应 → blocked。
 async fn stun_detect_nat() -> Option<NatTypeResult> {
@@ -1418,11 +1588,6 @@ fn build_launch_options(
         auth_options,
         ..Default::default()
     }
-}
-
-/// host/instance 后台任务无 SharedState 时的玩家名（默认值）。
-fn player_name_plain() -> String {
-    "Player".to_string()
 }
 
 fn map_connector_error(e: qomicex_connector::error::ScaffoldingError) -> ApiError {
