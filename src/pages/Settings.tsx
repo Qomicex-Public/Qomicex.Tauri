@@ -962,6 +962,20 @@ export default function Settings() {
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="space-y-2">
+                  <Label>{t('settings.appearance.language')}</Label>
+                  <Select
+                    value={settings.language}
+                    onChange={(v) => {
+                      update('language', v)
+                      setLanguage(v as Lang)
+                    }}
+                    className="w-48"
+                  >
+                    <SelectOption value="zh-CN">简体中文</SelectOption>
+                    <SelectOption value="en">English</SelectOption>
+                  </Select>
+                </div>
+                <div className="space-y-2">
                   <Label>{t('settings.launcher.dataDir')}</Label>
                   <div className="flex items-center gap-2">
                     <Input value={settings.dataDir} readOnly className="font-mono text-xs" />
@@ -1580,21 +1594,6 @@ export default function Settings() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-5">
-                  <div className="space-y-2">
-                    <Label>{t('settings.appearance.language')}</Label>
-                    <Select
-                      value={settings.language}
-                      onChange={(v) => {
-                        update('language', v)
-                        setLanguage(v as Lang)
-                      }}
-                      className="w-48"
-                    >
-                      <SelectOption value="zh-CN">简体中文</SelectOption>
-                      <SelectOption value="en">English</SelectOption>
-                    </Select>
-                  </div>
-
                   <div className="space-y-2">
                     <Label>{t('settings.appearance.theme')}</Label>
                     <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
