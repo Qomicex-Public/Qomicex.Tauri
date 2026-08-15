@@ -144,12 +144,17 @@ export function getLanGames(instanceId: string): Promise<LanGameEntry[]> {
   return get<LanGameEntry[]>(`/instance/${instanceId}/files/lan-games`)
 }
 
-export function checkModUpdates(instanceId: string): Promise<ModUpdateEntry[]> {
+export function getModUpdatesCache(instanceId: string): Promise<{ updates: ModUpdateEntry[]; stale: boolean }> {
+  return get<{ updates: ModUpdateEntry[]; stale: boolean }>(`/instance/${instanceId}/files/mods/update-cache`)
+}
+
+export function checkModUpdates(instanceId: string, force = false): Promise<ModUpdateEntry[]> {
   // CurseForge fingerprints 批量反查可达 30-50s，用 120s 信号绕过全局 15s 超时
   // （失败由调用方静默处理，同 enrichMods 模式）
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 120_000)
-  return get<ModUpdateEntry[]>(`/instance/${instanceId}/files/mods/check-updates`, { signal: controller.signal })
+  return get<{ updates: ModUpdateEntry[]; refreshed: boolean }>(`/instance/${instanceId}/files/mods/check-updates${force ? '?force=1' : ''}`, { signal: controller.signal })
+    .then(r => r.updates)
     .finally(() => clearTimeout(timer))
 }
 
@@ -157,6 +162,6 @@ export function batchUpdateMods(instanceId: string, updates: ModUpdateEntry[]): 
   // 批量下载替换多个 mod 耗时随数量增长，用 180s 信号绕过全局 15s 超时
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 180_000)
-  return post<void>(`/instance/${instanceId}/files/mods/batch-update`, { updates }, { signal: controller.signal })
+  return post<void>(`/instance/${instanceId}/files/mods/batch-update`, updates, { signal: controller.signal })
     .finally(() => clearTimeout(timer))
 }
