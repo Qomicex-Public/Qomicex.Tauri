@@ -122,7 +122,7 @@ function createRegistry(hostWindow: AnyWindow, isHost: boolean): PluginRegistryA
 
 // 主窗口：安装真实注册表 + 消息路由
 if (window === window.top) {
-  if (!(win as any).__pluginSources) (win as any).__pluginSources = {}
+  if (!(win as any).__pluginSources) (win as any).__pluginSources = Object.create(null)
 
   const host = createRegistry(win, true)
   win.__pluginRegistry = host
@@ -133,7 +133,7 @@ if (window === window.top) {
     const sources = (win as any).__pluginSources as Record<string, Record<string, Window>>
 
     if (msg.type === '__plugin_registry_register') {
-      if (!sources[msg.pluginId]) sources[msg.pluginId] = {}
+      if (!sources[msg.pluginId]) sources[msg.pluginId] = Object.create(null)
       sources[msg.pluginId][msg.method] = e.source as Window
     } else if (msg.type === '__plugin_registry_unregister') {
       delete sources[msg.pluginId]
