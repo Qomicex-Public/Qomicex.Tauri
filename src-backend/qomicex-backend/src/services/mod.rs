@@ -3,6 +3,7 @@ pub mod curseforge_fetch;
 pub mod install_service;
 pub mod install_tracker;
 pub mod instance;
+pub mod instance_group;
 pub mod launch_tracker;
 pub mod license;
 pub mod license_core;

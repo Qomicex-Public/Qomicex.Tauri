@@ -26,6 +26,7 @@ use crate::endpoints::loader::LoaderVersionInfo;
 use crate::error::{ApiError, ApiResult};
 use crate::services::install_service::InstallRequestData;
 use crate::services::instance::GameInstance;
+use crate::services::instance_group::InstanceGroup;
 use crate::services::launch_tracker::LaunchProgress;
 use crate::state::SharedState;
 
@@ -71,6 +72,8 @@ struct UpdateInstanceRequest {
     is_hidden: Option<bool>,
     #[serde(default)]
     version_isolation: Option<bool>,
+    #[serde(default)]
+    custom_group_ids: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -173,6 +176,12 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/install/pause", post(install_pause))
         .route("/instance/{id}/install/resume", post(install_resume))
         .route("/instance/{id}/install/cancel", post(install_cancel))
+        // 实例自定义分组
+        .route("/instance-groups", get(list_groups).post(create_group))
+        .route(
+            "/instance-groups/{id}",
+            put(update_group).delete(delete_group),
+        )
 }
 
 // =====================================================================
@@ -285,6 +294,9 @@ async fn update_instance(
     if let Some(v) = req.version_isolation {
         existing.version_isolation = Some(v);
     }
+    if let Some(v) = req.custom_group_ids {
+        existing.custom_group_ids = v;
+    }
     let updated = state
         .instance
         .update(&id, existing)
@@ -303,6 +315,98 @@ async fn delete_instance(
     Ok(Json(MessageResponse {
         message: format!("Instance {id} deleted"),
     }))
+}
+
+/// GET /api/instance-groups: list custom instance groups.
+async fn list_groups(State(state): State<SharedState>) -> ApiResult<Json<Vec<InstanceGroup>>> {
+    Ok(Json(state.instance_groups.get_all()))
+}
+
+/// POST /api/instance-groups: create a custom group.
+async fn create_group(
+    State(state): State<SharedState>,
+    Json(req): Json<GroupUpsertRequest>,
+) -> ApiResult<Json<InstanceGroup>> {
+    let name = req.name.trim().to_string();
+    if name.is_empty() {
+        return Err(ApiError::bad_request(
+            "GROUP_NAME_EMPTY",
+            "Group name cannot be empty",
+        ));
+    }
+    state
+        .instance_groups
+        .create(name, req.color.unwrap_or_else(default_group_color))
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "GROUP_NAME_EXISTS",
+                "A group with this name already exists",
+            )
+        })
+        .map(Json)
+}
+
+/// PUT /api/instance-groups/{id}: rename / recolor a custom group.
+async fn update_group(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Json(req): Json<GroupUpsertRequest>,
+) -> ApiResult<Json<InstanceGroup>> {
+    let name = req.name.trim().to_string();
+    if name.is_empty() {
+        return Err(ApiError::bad_request(
+            "GROUP_NAME_EMPTY",
+            "Group name cannot be empty",
+        ));
+    }
+    let color = req.color.unwrap_or_else(default_group_color);
+    state
+        .instance_groups
+        .update(&id, name, color)
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "GROUP_NAME_EXISTS",
+                "A group with this name already exists",
+            )
+        })
+        .map(Json)
+}
+
+/// DELETE /api/instance-groups/{id}: delete a group and remove it from all instances.
+async fn delete_group(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<MessageResponse>> {
+    if state.instance_groups.delete(&id).is_none() {
+        return Err(ApiError::not_found(
+            "GROUP_NOT_FOUND",
+            "Instance group not found",
+        ));
+    }
+    // 清理所有实例对该分组的引用
+    for inst in state.instance.get_all() {
+        if inst.custom_group_ids.iter().any(|g| g == &id) {
+            let mut updated = inst.clone();
+            updated.custom_group_ids.retain(|g| g != &id);
+            let _ = state.instance.update(&inst.id, updated);
+        }
+    }
+    Ok(Json(MessageResponse {
+        message: format!("Group {id} deleted"),
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GroupUpsertRequest {
+    name: String,
+    #[serde(default)]
+    color: Option<String>,
+}
+
+/// 默认分组颜色（无指定时使用），取青色。
+fn default_group_color() -> String {
+    "#22d3ee".to_string()
 }
 
 /// GET /instance/loaders: enumerate mod loaders for a game version.

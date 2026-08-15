@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList} from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup} from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Separator } from '../components/ui'
@@ -17,7 +17,8 @@ import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { useMessageBox } from '../components/ui'
-import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting } from '../api/instance.ts'
+import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups } from '../api/instance.ts'
+import type { InstanceGroup } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
@@ -1951,6 +1952,7 @@ export default function InstanceDetailPage() {
   const [gameSettingsRefresh, setGameSettingsRefresh] = useState(0)
   const [detailRefreshKey, setDetailRefreshKey] = useState(0)
   const [selectedAccountUuid, setSelectedAccountUuid] = useState<string | null>(null)
+  const [groups, setGroups] = useState<InstanceGroup[]>([])
 
   const refreshDetail = useCallback(() => {
     cacheInvalidate('api-instance-')
@@ -1990,6 +1992,7 @@ export default function InstanceDetailPage() {
         setSysInfo(sys)
         setIsDefault(def?.id === id)
         setMemoryMode(sys ? 'auto' : 'custom')
+        getInstanceGroups().then(setGroups).catch(() => {})
       } catch { if (!cancelled) navigate('/instances') }
       if (!cancelled) setLoading(false)
       loadCustomRuntimes().catch(() => {})
@@ -2032,6 +2035,17 @@ export default function InstanceDetailPage() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => doSave(formToSave), 800)
   }, [doSave])
+
+  const handleToggleGroup = useCallback(async (groupId: string) => {
+    if (!id || !instance) return
+    const cur = instance.customGroupIds ?? []
+    const next = cur.includes(groupId) ? cur.filter(g => g !== groupId) : [...cur, groupId]
+    try {
+      const updated = await updateInstance(id, { customGroupIds: next })
+      setInstance(updated)
+      cacheSet(`api-instance-${id}`, updated)
+    } catch {}
+  }, [id, instance])
 
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
@@ -2325,6 +2339,37 @@ export default function InstanceDetailPage() {
                       <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />{t('instanceDetail.overview.deleteInstance')}
                     </Button>
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-5 space-y-3">
+                  <h3 className="text-sm font-medium flex items-center gap-2">
+                    <FontAwesomeIcon icon={faLayerGroup} className="h-3.5 w-3.5 text-muted-foreground" />
+                    {t('instances.groups')}
+                  </h3>
+                  {groups.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">{t('instances.noGroups')}</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {groups.map((g) => {
+                        const active = (instance?.customGroupIds ?? []).includes(g.id)
+                        return (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => handleToggleGroup(g.id)}
+                            className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors', active ? 'border-primary text-primary' : 'border-border text-muted-foreground hover:border-muted-foreground/40')}
+                          >
+                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: g.color }} />
+                            {g.name}
+                            {active && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">{t('instances.groupsHint')}</p>
                 </CardContent>
               </Card>
             </div>

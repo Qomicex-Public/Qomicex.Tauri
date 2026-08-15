@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar, faBug, faGhost, faWrench, faLayerGroup } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar, faBug, faGhost, faWrench, faLayerGroup, faFolderPlus, faPencil } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { invoke } from '@tauri-apps/api/core'
@@ -16,7 +16,8 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance } from '../api/instance.ts'
+import { createInstance, startInstall, getInstances, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
+import type { InstanceGroup } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui'
 import { Tabs } from '../components/ui'
@@ -160,6 +161,11 @@ export default function Instances() {
   const [remoteViewMode, setRemoteViewMode] = useState<'grid' | 'list'>('grid')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [filterType, setFilterType] = useState('all')
+  const [groups, setGroups] = useState<InstanceGroup[]>([])
+  const [groupFilter, setGroupFilter] = useState<string | null>(null)
+  const [groupsDirty, setGroupsDirty] = useState(0)
+  const [manageGroupsOpen, setManageGroupsOpen] = useState(false)
+  const [assignGroupVersion, setAssignGroupVersion] = useState<ScannedVersion | null>(null)
   const [form, setForm] = useState({ name: '', gameVersion: '', loader: '', loaderVersion: '' })
   const [selectedAddons, setSelectedAddons] = useState<string[]>([])
   const [loaderVersions, setLoaderVersions] = useState<LoaderVersionInfo[]>([])
@@ -218,6 +224,10 @@ export default function Instances() {
     }
     init()
   }, [instanceRefreshKey])
+
+  useEffect(() => {
+    getInstanceGroups().then(setGroups).catch(() => {})
+  }, [groupsDirty])
 
   useEffect(() => { if (currentDir) doScan(currentDir) }, [currentDir, doScan])
 
@@ -537,11 +547,19 @@ export default function Instances() {
     { key: 'broken', icon: faBug },
   ]
 
-  const filtered = useMemo(() => scannedLocal
-    .filter((v, i, arr) => arr.findIndex(x => x.name === v.name) === i)
-    .filter((v) => !search || v.name.toLowerCase().includes(search.toLowerCase()))
-    .filter((v) => filterType === 'all' || getVersionType(v) === filterType),
-    [scannedLocal, search, filterType, getVersionType])
+  const filtered = useMemo(() => {
+    let list = scannedLocal
+      .filter((v, i, arr) => arr.findIndex(x => x.name === v.name) === i)
+      .filter((v) => !search || v.name.toLowerCase().includes(search.toLowerCase()))
+      .filter((v) => filterType === 'all' || getVersionType(v) === filterType)
+    if (groupFilter) {
+      list = list.filter((v) => {
+        const inst = getInstanceForVersion(v)
+        return inst?.customGroupIds?.includes(groupFilter) ?? false
+      })
+    }
+    return list
+  }, [scannedLocal, search, filterType, groupFilter, getVersionType, getInstanceForVersion])
 
   const filteredRemote = useMemo(() => remoteVersions
     .filter((v) => remoteCategory === 'all' || v.type === remoteCategory)
@@ -844,6 +862,44 @@ export default function Instances() {
     setSettingsTab('basic')
   }
 
+  const GROUP_COLORS = ['#22d3ee', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#3b82f6', '#ec4899', '#84cc16']
+
+  async function handleCreateGroup(name: string, color: string) {
+    if (!name.trim()) return
+    try {
+      await createInstanceGroup(name.trim(), color)
+      setGroupsDirty(d => d + 1)
+    } catch {}
+  }
+
+  async function handleRenameGroup(id: string, name: string, color: string) {
+    if (!name.trim()) return
+    try {
+      await updateInstanceGroup(id, name.trim(), color)
+      setGroupsDirty(d => d + 1)
+    } catch {}
+  }
+
+  async function handleDeleteGroup(id: string) {
+    try {
+      await deleteInstanceGroup(id)
+      if (groupFilter === id) setGroupFilter(null)
+      setGroupsDirty(d => d + 1)
+      refreshInstances()
+    } catch {}
+  }
+
+  async function handleAssignGroup(v: ScannedVersion, groupId: string) {
+    const inst = getInstanceForVersion(v)
+    if (!inst) return
+    const cur = inst.customGroupIds ?? []
+    const next = cur.includes(groupId) ? cur.filter(g => g !== groupId) : [...cur, groupId]
+    try {
+      const updated = await updateInstance(inst.id, { customGroupIds: next } as Partial<CreateInstanceRequest>)
+      setBackedInstances(prev => prev.map(i => i.id === updated.id ? { ...i, customGroupIds: updated.customGroupIds } : i))
+    } catch {}
+  }
+
   return (
       <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
         <PageHeader title={t('instances.title')} subtitle={t('instances.subtitle', { count: scannedLocal.length })}
@@ -1043,12 +1099,29 @@ export default function Instances() {
         </button>
       </div>
 
-      <Tabs
-        tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: t(`instances.loaderFilter.${o.key}`), icon: <FontAwesomeIcon icon={o.icon} className="h-3 w-3" /> }))}
-        activeTab={filterType}
-        onChange={setFilterType}
-        className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
-      />
+      <div className="flex items-center gap-2">
+        <Tabs
+          tabs={[
+            ...FILTER_OPTIONS.map(o => ({ id: o.key, label: t(`instances.loaderFilter.${o.key}`), icon: <FontAwesomeIcon icon={o.icon} className="h-3 w-3" /> })),
+            ...groups.map(g => ({ id: `group:${g.id}`, label: g.name, icon: <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: g.color }} /> })),
+          ]}
+          activeTab={groupFilter ? `group:${groupFilter}` : filterType}
+          onChange={(id) => {
+            if (id.startsWith('group:')) {
+              setGroupFilter(id.slice(6))
+            } else {
+              setGroupFilter(null)
+              setFilterType(id)
+            }
+          }}
+          className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
+        />
+        <Tooltip content={t('instances.manageGroups')}>
+          <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={() => setManageGroupsOpen(true)}>
+            <FontAwesomeIcon icon={faFolderPlus} className="h-3.5 w-3.5" />
+          </Button>
+        </Tooltip>
+      </div>
 
       {!currentDir ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
@@ -1127,6 +1200,9 @@ export default function Instances() {
                     <Tooltip content={t('instances.settings')}>
                       <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openVersionSettings(v) }}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
+                    <Tooltip content={t('instances.groups')}>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); setAssignGroupVersion(v) }}><FontAwesomeIcon icon={faLayerGroup} className="h-3.5 w-3.5" /></Button>
+                    </Tooltip>
                     {(() => { const inst = getInstanceForVersion(v); return (
                       <Tooltip content={inst && defaultInstanceId === inst.id ? t('instances.unpin') : t('instances.pinToHome')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); handleToggleDefault(v) }}>
@@ -1184,6 +1260,9 @@ export default function Instances() {
                   <Tooltip content={t('instances.settings')}>
                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openVersionSettings(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                   </Tooltip>
+                  <Tooltip content={t('instances.groups')}>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setAssignGroupVersion(v)}><FontAwesomeIcon icon={faLayerGroup} className="h-3.5 w-3.5" /></Button>
+                  </Tooltip>
                   {(() => { const inst = getInstanceForVersion(v); return (
                     <Tooltip content={inst && defaultInstanceId === inst.id ? t('instances.unpin') : t('instances.pinToHome')}>
                       <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleToggleDefault(v)}>
@@ -1226,6 +1305,150 @@ export default function Instances() {
         gameDir={loadSettings().gameDir || currentDir}
         versionIsolation={loadSettings().versionIsolation !== false}
       />
+      <ManageGroupsDialog
+        open={manageGroupsOpen}
+        groups={groups}
+        colors={GROUP_COLORS}
+        onClose={() => setManageGroupsOpen(false)}
+        onCreate={handleCreateGroup}
+        onRename={handleRenameGroup}
+        onDelete={handleDeleteGroup}
+      />
+      <AssignGroupDialog
+        version={assignGroupVersion}
+        groups={groups}
+        instance={assignGroupVersion ? getInstanceForVersion(assignGroupVersion) : undefined}
+        onClose={() => setAssignGroupVersion(null)}
+        onToggle={handleAssignGroup}
+      />
       </PageShell>
     )
   }
+
+/** 管理自定义分组弹窗：创建 / 重命名 / 改色 / 删除 */
+function ManageGroupsDialog({ open, groups, colors, onClose, onCreate, onRename, onDelete }: {
+  open: boolean
+  groups: InstanceGroup[]
+  colors: string[]
+  onClose: () => void
+  onCreate: (name: string, color: string) => void
+  onRename: (id: string, name: string, color: string) => void
+  onDelete: (id: string) => void
+}) {
+  const { t } = useI18n()
+  const [name, setName] = useState('')
+  const [color, setColor] = useState(colors[0] ?? '#22d3ee')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editColor, setEditColor] = useState('')
+
+  useEffect(() => {
+    if (open) { setName(''); setColor(colors[0] ?? '#22d3ee'); setEditingId(null) }
+  }, [open, colors])
+
+  function startEdit(g: InstanceGroup) {
+    setEditingId(g.id)
+    setEditName(g.name)
+    setEditColor(g.color)
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle><FontAwesomeIcon icon={faLayerGroup} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instances.manageGroups')}</DialogTitle>
+      </DialogHeader>
+      <DialogBody className="space-y-4">
+        {/* 新建 */}
+        <div className="space-y-2 rounded-lg border p-3">
+          <div className="flex items-center gap-2">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('instances.groupNamePlaceholder')} className="flex-1" />
+            <div className="flex items-center gap-1">
+              {colors.slice(0, 4).map(c => (
+                <button key={c} type="button" onClick={() => setColor(c)} className={cn('h-5 w-5 rounded-full border-2 transition-transform', color === c ? 'scale-110 border-primary' : 'border-transparent hover:scale-110')} style={{ backgroundColor: c }} />
+              ))}
+            </div>
+            <Button size="sm" disabled={!name.trim()} onClick={() => { onCreate(name, color); setName('') }}>{t('common.create')}</Button>
+          </div>
+        </div>
+
+        {/* 列表 */}
+        <div className="space-y-2">
+          {groups.length === 0 ? (
+            <p className="py-6 text-center text-xs text-muted-foreground">{t('instances.noGroups')}</p>
+          ) : groups.map((g) => (
+            <div key={g.id} className="flex items-center gap-2 rounded-lg border px-3 py-2">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: g.color }} />
+              {editingId === g.id ? (
+                <>
+                  <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-8 flex-1 text-sm" autoFocus />
+                  <div className="flex items-center gap-1">
+                    {colors.slice(0, 4).map(c => (
+                      <button key={c} type="button" onClick={() => setEditColor(c)} className={cn('h-4 w-4 rounded-full border-2', editColor === c ? 'border-primary' : 'border-transparent')} style={{ backgroundColor: c }} />
+                    ))}
+                  </div>
+                  <Button size="sm" variant="default" onClick={() => { onRename(g.id, editName, editColor); setEditingId(null) }}><FontAwesomeIcon icon={faCheck} className="h-3 w-3" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>{t('common.cancel')}</Button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 truncate text-sm">{g.name}</span>
+                  <Tooltip content={t('common.edit')}>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEdit(g)}><FontAwesomeIcon icon={faPencil} className="h-3 w-3" /></Button>
+                  </Tooltip>
+                  <Tooltip content={t('common.delete')}>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => onDelete(g.id)}><FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" /></Button>
+                  </Tooltip>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </DialogBody>
+    </Dialog>
+  )
+}
+
+/** 快捷分配分组弹窗：实例可加入多个自定义分组 */
+function AssignGroupDialog({ version, groups, instance, onClose, onToggle }: {
+  version: ScannedVersion | null
+  groups: InstanceGroup[]
+  instance: GameInstance | undefined
+  onClose: () => void
+  onToggle: (v: ScannedVersion, groupId: string) => void
+}) {
+  const { t } = useI18n()
+  const selected = new Set(instance?.customGroupIds ?? [])
+
+  return (
+    <Dialog open={!!version} onClose={onClose}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle><FontAwesomeIcon icon={faLayerGroup} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instances.groups')}</DialogTitle>
+      </DialogHeader>
+      <DialogBody className="space-y-3">
+        <p className="truncate text-sm font-medium">{version?.name}</p>
+        {groups.length === 0 ? (
+          <p className="py-4 text-center text-xs text-muted-foreground">{t('instances.noGroups')}</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {groups.map((g) => {
+              const active = selected.has(g.id)
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => version && onToggle(version, g.id)}
+                  className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors', active ? 'border-primary text-primary' : 'border-border text-muted-foreground hover:border-muted-foreground/40')}
+                >
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: g.color }} />
+                  {g.name}
+                  {active && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground">{t('instances.groupsHint')}</p>
+      </DialogBody>
+    </Dialog>
+  )
+}

@@ -55,6 +55,9 @@ pub struct GameInstance {
     // 对应 C# [JsonIgnore(WhenWritingNull)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_game_dir: Option<String>,
+    /// 所属自定义分组 id 列表（多对多，引用 groups.json）。
+    #[serde(default)]
+    pub custom_group_ids: Vec<String>,
 }
 
 impl Default for GameInstance {
@@ -85,6 +88,7 @@ impl Default for GameInstance {
             modpack_summary: None,
             skip_integrity_check: false,
             resolved_game_dir: None,
+            custom_group_ids: Vec::new(),
         }
     }
 }

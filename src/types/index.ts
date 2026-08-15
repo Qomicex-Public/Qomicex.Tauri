@@ -237,6 +237,8 @@ export interface GameInstance {
   modpackSummary: string | null
   skipIntegrityCheck?: boolean
   resolvedGameDir: string | null
+  /** 所属自定义分组 id 列表（多对多） */
+  customGroupIds?: string[]
 }
 
 export interface CreateInstanceRequest {
@@ -259,6 +261,8 @@ export interface CreateInstanceRequest {
   modpackVersion?: string
   modpackAuthor?: string
   modpackSummary?: string
+  /** 所属自定义分组 id 列表（多对多） */
+  customGroupIds?: string[]
 }
 
 export interface LaunchResult {

@@ -33,6 +33,30 @@ export async function deleteInstance(id: string): Promise<void> {
   await del(`/instance/${id}`)
 }
 
+// --- 实例自定义分组 ---
+
+export interface InstanceGroup {
+  id: string
+  name: string
+  color: string
+}
+
+export function getInstanceGroups(): Promise<InstanceGroup[]> {
+  return get<InstanceGroup[]>('/instance-groups')
+}
+
+export function createInstanceGroup(name: string, color: string): Promise<InstanceGroup> {
+  return post<InstanceGroup>('/instance-groups', { name, color })
+}
+
+export function updateInstanceGroup(id: string, name: string, color: string): Promise<InstanceGroup> {
+  return put<InstanceGroup>(`/instance-groups/${id}`, { name, color })
+}
+
+export function deleteInstanceGroup(id: string): Promise<void> {
+  return del<void>(`/instance-groups/${id}`)
+}
+
 export interface LaunchInstanceOptions {
   joinServer?: string
   joinWorld?: string

@@ -404,6 +404,34 @@ Yggdrasil 认证登录。
 
 **响应：** `{ "message": "Instance xxx deleted" }` 或 `404`
 
+### GET `/api/instance-groups`
+
+实例自定义分组列表。
+
+**响应：** `[{ "id": "4a7b375a-d72", "name": "建筑服", "color": "#22c55e" }]`
+
+### POST `/api/instance-groups`
+
+创建自定义分组。
+
+**请求体：** `{ "name": "建筑服", "color": "#22c55e" }`（name 空/重名 → 400）
+
+**响应：** `InstanceGroup`
+
+### PUT `/api/instance-groups/{id}`
+
+重命名 / 改色自定义分组。
+
+**请求体：** `{ "name": "新名称", "color": "#3b82f6" }`（与其他分组重名 → 400）
+
+**响应：** `InstanceGroup`
+
+### DELETE `/api/instance-groups/{id}`
+
+删除自定义分组，并清理所有实例对该分组的引用（`customGroupIds`）。
+
+**响应：** `{ "message": "Group xxx deleted" }` 或 `404`
+
 ### POST `/api/instance/{id}/launch`
 
 启动实例（异步）。
