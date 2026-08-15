@@ -1,0 +1,70 @@
+name: "🔧 优化建议 | Improvement Suggestion"
+description: "提交一个优化建议（性能 / 稳定性 / UI-UX / 易用性）| Suggest an improvement (performance / stability / UI-UX / usability)"
+labels: ["improvement", "needs-triage"]
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: "优化类型 | Optimization Type"
+      description: "本次优化属于哪一类？| Which category does this improvement fall into?"
+      options:
+        - "性能 | Performance"
+        - "稳定性 | Stability"
+        - "UI / UX"
+        - "易用性 | Usability"
+        - "其他 | Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: "现状与痛点 | Current State & Pain Point"
+      description: "当前行为是什么？问题在哪里？| What is the current behavior and what is the problem?"
+      placeholder: "当前卡顿/不便/体验不佳的场景 | Current scenario that is slow / inconvenient / poor UX"
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested
+    attributes:
+      label: "优化建议 | Suggested Improvement"
+      description: "你希望如何改进？| How would you like it improved?"
+      placeholder: "期望的优化方式 / 新的交互流程 | Expected approach / new interaction flow"
+    validations:
+      required: true
+
+  - type: textarea
+    id: benefit
+    attributes:
+      label: "预期收益 | Expected Benefit"
+      description: "可量化的收益，如性能提升幅度 | Quantifiable benefit, e.g. performance gain"
+      placeholder: "例如：加载时间从 5s 降至 2s | e.g. load time reduced from 5s to 2s"
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "影响范围 | Affected Area"
+      description: "该优化涉及哪些模块？| Which modules would this improvement touch?"
+      placeholder: |
+        前端 UI | Frontend UI: ...
+        后端 API | Backend API: ...
+        联机 | Connector/Online: ...
+        其他 | Other: ...
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "✅ 提交前确认 | Checklist"
+      description: "请确保以下事项 | Please ensure the following"
+      options:
+        - label: "我已搜索过已有 Issue，没有发现重复 | I have searched existing issues and found no duplicates"
+          required: true
+        - label: "我已说明现状、痛点和期望的优化方式 | I have described the current state, pain point, and suggested improvement"
+          required: false
+        - label: "我已提供可量化的预期收益（如适用）| I have provided a quantifiable expected benefit (if applicable)"
+          required: false
+        - label: |
+            我已认真阅读并确认上述内容，勾选此框即表示我同意维护者有权无条件关闭此 Issue。
+            | I have carefully read and confirmed the above. By checking this box, I agree that maintainers may close this issue unconditionally.
+          required: false

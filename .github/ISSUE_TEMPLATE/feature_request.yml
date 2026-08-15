@@ -1,0 +1,75 @@
+name: "✨ 新功能建议 | Feature Request"
+description: "建议一个新功能 | Suggest a new feature"
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: "功能描述 | Feature Summary"
+      description: "请清晰描述你希望添加的功能 | Please clearly describe the feature you want"
+      placeholder: "我希望 QML 能够... | I would like QML to be able to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: "💡 使用场景与动机 | Motivation & Use Case"
+      description: "为什么需要这个功能？在什么场景下使用？| Why is this feature needed? In what scenario would you use it?"
+      placeholder: |
+        场景 | Scenario: ...
+        痛点 | Pain point: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "期望行为 | Expected Behavior"
+      description: "你希望功能如何工作？| How do you expect the feature to work?"
+      placeholder: "期望的交互流程 / 输出结果 | Expected interaction flow / output"
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "备选方案 | Alternatives"
+      description: "是否考虑过其他实现方式？| Have you considered other approaches?"
+      placeholder: "当前的临时解决办法 / 其他方案 | Current workaround / other approaches"
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "影响范围 | Affected Area"
+      description: "该功能涉及哪些模块？| Which modules would this feature touch?"
+      placeholder: |
+        前端 UI | Frontend UI: ...
+        后端 API | Backend API: ...
+        插件系统 | Plugin system: ...
+        联机 | Connector/Online: ...
+        其他 | Other: ...
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "验收标准 | Acceptance Criteria"
+      description: "如何判断该功能已实现完成？| How to verify the feature is complete?"
+      placeholder: |
+        - [ ] 可以... | - [ ] Can...
+        - [ ] 不影响现有... | - [ ] Does not break existing...
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "✅ 提交前确认 | Checklist"
+      description: "请确保以下事项 | Please ensure the following"
+      options:
+        - label: "我已搜索过已有 Issue，没有发现重复 | I have searched existing issues and found no duplicates"
+          required: true
+        - label: "我已描述清楚使用场景与动机 | I have clearly described the use case and motivation"
+          required: false
+        - label: "我已提供可衡量的验收标准 | I have provided measurable acceptance criteria"
+          required: false
+        - label: |
+            我已认真阅读并确认上述内容，勾选此框即表示我同意维护者有权无条件关闭此 Issue。
+            | I have carefully read and confirmed the above. By checking this box, I agree that maintainers may close this issue unconditionally.
+          required: false
