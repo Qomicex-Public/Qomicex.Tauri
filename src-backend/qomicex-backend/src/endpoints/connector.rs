@@ -1303,10 +1303,7 @@ async fn match_instances(
     let missing_hashes: Vec<String> = room_mods
         .iter()
         .map(|m| m.hash.clone())
-        .filter(|h| {
-            !h.is_empty()
-                && best.map_or(true, |r| !r.local_hashes.contains(h))
-        })
+        .filter(|h| !h.is_empty() && best.map_or(true, |r| !r.local_hashes.contains(h)))
         .collect();
     Ok(Json(MatchInstancesResponse {
         mods: room_mods,
