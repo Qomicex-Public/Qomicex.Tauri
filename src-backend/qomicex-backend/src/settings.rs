@@ -96,6 +96,10 @@ pub struct SettingsResponse {
     pub window_corners: bool,
     pub curseforge_version_fetch_concurrency: i32,
     pub curseforge_version_cache_ttl_seconds: i32,
+    /// 是否已完成首次启动初始化向导。`Some(false)` = 新安装待初始化；
+    /// 老配置文件缺失该字段时在 [`load_settings`] 中视为已初始化（`Some(true)`），
+    /// 避免老用户升级后被迫重走向导。
+    pub initialized: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +157,7 @@ impl Default for SettingsResponse {
             window_corners: true,
             curseforge_version_fetch_concurrency: 10,
             curseforge_version_cache_ttl_seconds: 300,
+            initialized: Some(false),
         }
     }
 }
@@ -202,6 +207,11 @@ pub fn load_settings() -> SettingsResponse {
             if let Ok(mut parsed) = serde_json::from_str::<SettingsResponse>(&content) {
                 // 磁盘上的值可能被手改成越界数值，读入即钳位。
                 parsed.clamp_numeric_ranges();
+                // 老版本 settings.json 没有 initialized 字段（None）：视为已完成初始化，
+                // 避免升级后被迫重走首次启动向导。仅全新安装（文件不存在 → Default）为 false。
+                if parsed.initialized.is_none() {
+                    parsed.initialized = Some(true);
+                }
                 return parsed;
             }
         }

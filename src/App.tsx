@@ -18,7 +18,7 @@ import { MessageBoxProvider, useMessageBox } from './components/ui'
 import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
 import useCloseGuard from './hooks/useCloseGuard.ts'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
-import { loadSettings, onSettingsChange, type AppSettings } from './api/settings.ts'
+import { loadSettings, onSettingsChange, getSettings, isSettingsLoaded, DEFAULT_SETTINGS, type AppSettings } from './api/settings.ts'
 import { I18nProvider, useI18n } from './i18n/index.tsx'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
@@ -30,6 +30,7 @@ import type { Update } from '@tauri-apps/plugin-updater'
 
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
 import { SplashScreen } from './components/SplashScreen.tsx'
+import { InitialSetupWizard } from './components/InitialSetupWizard.tsx'
 import { usePluginStore } from './stores/pluginStore.ts'
 import { activatePlugin, deactivatePlugin, sortByDependencies } from './plugins/plugin-loader.tsx'
 import './plugins/plugin-registry.ts'
@@ -60,6 +61,9 @@ function AppContent() {
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
   const autoCheckDone = useRef(false)
   const { loadPlugins } = usePluginStore()
+  const [showWizard, setShowWizard] = useState(false)
+  const [settingsReady, setSettingsReady] = useState(false)
+  const [wizardSettings, setWizardSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
 
   useEffect(() => {
     let cancelled = false
@@ -81,7 +85,22 @@ function AppContent() {
   }, [])
 
   useEffect(() => {
-    if (backendState !== 'ready' || javaChecked.current) return
+    if (backendState !== 'ready') return
+    const onSettings = (s: AppSettings) => {
+      setSettingsReady(true)
+      if (s.initialized !== true) {
+        setWizardSettings(s)
+        setShowWizard(true)
+      }
+    }
+    // settings 可能在挂载前已加载完成
+    if (isSettingsLoaded()) onSettings(getSettings())
+    const unsub = onSettingsChange(onSettings)
+    return unsub
+  }, [backendState])
+
+  useEffect(() => {
+    if (backendState !== 'ready' || !settingsReady || javaChecked.current || showWizard) return
     javaChecked.current = true
     ;(async () => {
       try {
@@ -92,7 +111,7 @@ function AppContent() {
         }
       } catch {}
     })()
-  }, [backendState, alert])
+  }, [backendState, settingsReady, showWizard, alert])
 
   useEffect(() => {
     if (backendState !== 'ready' || autoCheckDone.current) return
@@ -184,6 +203,11 @@ function AppContent() {
         </ErrorBoundary>
       </BrowserRouter>
       <SplashScreen state={backendState} onRetry={() => window.location.reload()} />
+      <InitialSetupWizard
+        open={showWizard && backendState === 'ready'}
+        settings={wizardSettings}
+        onComplete={() => setShowWizard(false)}
+      />
       <LaunchProgressDialog />
       <OverlayStoreBridge />
       <PluginOverlayManager />

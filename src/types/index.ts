@@ -15,6 +15,8 @@ export interface JavaRuntime {
   path: string
   version: string
   versionID: number
+  /** 后端实际序列化字段名（majorVersion）；versionID 为旧类型，运行时空值 */
+  majorVersion?: number
   type: string
   arch: string
   state: string

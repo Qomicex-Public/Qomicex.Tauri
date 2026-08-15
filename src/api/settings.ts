@@ -48,6 +48,8 @@ export interface AppSettings {
   windowCorners: boolean
   curseforgeVersionFetchConcurrency: number
   curseforgeVersionCacheTtlSeconds: number
+  /** 是否已完成首次启动初始化向导；false/缺失 = 显示向导 */
+  initialized?: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -86,6 +88,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   windowCorners: true,
   curseforgeVersionFetchConcurrency: 10,
   curseforgeVersionCacheTtlSeconds: 300,
+  initialized: false,
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }
