@@ -210,7 +210,7 @@ Qomicex 访客（Guest）加入房间时，对中心端（Host）依序执行：
   ```
 - **响应体**：单个 JSON **布尔**值 `true`。
 - 行为：房主根据 `machineId` 移除房间内该玩家的记录与其头像。
-- **注意**：它不是踢人控制；踢人仅房主侧 `/connector/kick` 可用（三层强制断开），非 QML/SCF 客户端不受该协议约束。
+- **注意**：它不是踢人控制；踢人仅房主侧 `/connector/kick` 可用。**2026-08-14 修订**：踢人不再是"三层强制断开"，现为「断开 + 已踢黑名单」——解析 guest 的 easytier peer（已上报 id / hostname / SCF 源虚拟 IP 反查）并 `disconnect_peer`；被踢 guest 再发 `c:player_ping` 会被拒绝入列（响应状态 255，不刷新心跳 → 15s 兜底剔除）并重复断开。非 QML/SCF 客户端同样受此约束。
 
 ### 5.4 `qml:game_mods`（房主 mods 列表）
 

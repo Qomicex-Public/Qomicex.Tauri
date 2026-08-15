@@ -1365,8 +1365,11 @@ async fn leave(State(state): State<SharedState>) -> ApiResult<Json<StatusMessage
 
 /// POST /connector/kick — 房主手动踢出指定 guest。
 ///
-/// 三层断开：① easytier 关闭该玩家全部连接（非 QML SCF 客户端仅此手段）；
-/// ② 断开其 Scaffolding TCP（QML guest 心跳失败后整体退出）；③ 玩家列表移除。
+/// 断开流程（`ScaffoldingCenter::kick_player`）：① 解析 guest 的 easytier peer 并物理断开
+/// （优先已上报 easytier_id，否则按 hostname `scaffolding-mc-guest-{machine_id前8位}` 或
+/// SCF TCP 源虚拟 IP 反查；非 QML SCF 客户端不受 `qml:player_leave` 协议控制，仅此手段）；
+/// ② 记入已踢黑名单（被踢 guest 再发 c:player_ping 拒绝入列 + 重复断开 + 状态 255 不刷新心跳）；
+/// ③ 断开其 Scaffolding TCP（QML guest 心跳失败后整体退出）；④ 玩家列表移除。
 async fn kick_player(Json(req): Json<KickRequest>) -> ApiResult<Json<StatusMessageResponse>> {
     let conn = connector();
     let mode = conn.mode.lock().await;

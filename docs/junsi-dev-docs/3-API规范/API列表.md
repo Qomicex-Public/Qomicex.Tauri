@@ -1827,6 +1827,17 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 **状态响应**：`ConnectorPlayer` 增加 `machineId` 字段（踢出按钮按 machineId 调用）。
 
+### 2026-08-14 修订 —— 踢人语义升级（非 QML guest 可踢除）
+
+> 取代上文「踢出语义（三层断开）」：`ScaffoldingCenter::kick_player` 现为**断开 + 黑名单**四步：
+
+1. **easytier peer 解析 + 物理断开**：优先已上报 `easytier_id`；未上报（不支持 `c:player_easytier_id` 的第三方 guest）时按 hostname `scaffolding-mc-guest-{machine_id前8位}`（Qomicex 系约定）或 SCF TCP 源虚拟 IP（`TcpServer::machine_source_ip` → `get_nodes()` 反查）定位 peer 后 `disconnect_peer`。解析失败打 warn（可见性），不再静默跳过。
+2. **已踢黑名单**：machine_id 记入 `kicked` 集合（含解析到的 peer id）。被踢 guest 再发 `c:player_ping` → 拒绝入列 + 响应状态 255（不刷新心跳 → 15s 心跳超时兜底剔除）+ 重复断开 SCF TCP 与 easytier。
+3. **Scaffolding TCP**：`ClientRegistry::disconnect_machine` 按 machine_id 定向断开（找不到连接打 warn）。
+4. **玩家列表**：`remove_player` 移除 + 头像映射清理。
+
+**残余限制**：easytier fork 无控制面 deny，被踢 guest 的 easytier 连接仍会自动重连（黑名单在 SCF 层拦截其重新入列并重复断开 peer）；彻底封禁需给 fork 加控制面 deny（待办）。上游实现：`qomicex-connector-rust`（踢人黑名单 + peer 反查）。
+
 ## 2026-08-13 修订：Servers 端点已实现（不再 501）
 
 上方 "### Servers" 一节标注的 "501 stub：servers/lan-games/server-ping 全部返回 501" 已失效，现全部由 Rust 后端真实实现（`src-backend/qomicex-backend/src/endpoints/instance_files.rs`，C# MapServerEndpoints → Rust 迁移）：
