@@ -1705,26 +1705,36 @@ async fn resolve_host_icon(
 
 /// STUN NAT 类型检测：对同一本地端口发起两次 binding 请求，
 /// 映射端口一致 → cone，变化 → symmetric，无响应 → blocked。
+/// 服务器按 (host, 可尝试的 UDP 端口列表) 遍历；3478/udp 被防火墙挡时
+/// 降级到 53/udp（DNS 端口通常放行，对应 turn.cloudflare.com 备选端口，
+/// 腾讯/谷歌仅 3478）。TCP 80 备选不用于 UDP 检测。
 async fn stun_detect_nat() -> Option<NatTypeResult> {
-    const STUN_SERVERS: &[&str] = &["stun.qq.com:3478", "stun.l.google.com:19302"];
+    const STUN_SERVERS: &[(&str, &[u16])] = &[
+        ("stun.qq.com", &[3478]),
+        ("stun.l.google.com", &[3478]),
+        ("turn.cloudflare.com", &[3478, 53]),
+    ];
     // ⚠️ 修复：单服务器失败不再 `?` 短路返回 None，遍历全部服务器直到有响应
     // （原实现 stun.qq.com 无响应即返回 None → NAT 类型恒为 unknown）
-    for server in STUN_SERVERS {
-        let Some(mapped1) = stun_binding_once(server).await else {
-            continue;
-        };
-        // 用同一本地端口第二次请求
-        let Some(mapped2) = stun_binding_once_on(server, mapped1.local_port).await else {
-            continue;
-        };
-        let r#type = if mapped1.mapped_port == mapped2.mapped_port {
-            "cone"
-        } else {
-            "symmetric"
-        };
-        return Some(NatTypeResult {
-            r#type: r#type.to_string(),
-        });
+    for (host, ports) in STUN_SERVERS {
+        for port in *ports {
+            let server = format!("{host}:{port}");
+            let Some(mapped1) = stun_binding_once(&server).await else {
+                continue;
+            };
+            // 用同一本地端口 + 同一服务器端口第二次请求
+            let Some(mapped2) = stun_binding_once_on(&server, mapped1.local_port).await else {
+                continue;
+            };
+            let r#type = if mapped1.mapped_port == mapped2.mapped_port {
+                "cone"
+            } else {
+                "symmetric"
+            };
+            return Some(NatTypeResult {
+                r#type: r#type.to_string(),
+            });
+        }
     }
     // 所有服务器均无响应 → blocked
     Some(NatTypeResult {

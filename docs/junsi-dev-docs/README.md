@@ -1,6 +1,6 @@
 # 项目文档索引
 
-最后更新：2026-08-15 16:47
+最后更新：2026-08-15 20:30
 
 ## 1-决策记录
 
@@ -19,6 +19,7 @@
 - [ADR-012：check-updates 更新判定：Modrinth game_versions 序列化修复 + CurseForge latest_files 客户端过滤](1-决策记录/ADR-012-check-updates-更新判定-Modrinth-game_versions-序列化修复---CurseForge-latest_files-客户端过滤.md)
 - [ADR-013：check-updates loader 兼容回退：非标准加载器（Cleanroom/LiteLoader）按 Forge 兼容处理](1-决策记录/ADR-013-check-updates-loader-兼容回退-非标准加载器-Cleanroom-LiteLoader-按-Forge-兼容处理.md)
 - [ADR-014：模组更新流程改造：下载中心编排 + 缓存失效修复](1-决策记录/ADR-014-模组更新流程改造-下载中心编排---缓存失效修复.md)
+- [ADR-015：NAT 检测 STUN 服务器支持多端口降级](1-决策记录/ADR-015-NAT-检测-STUN-服务器支持多端口降级.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 
 ## 2-架构设计
