@@ -35,7 +35,7 @@
 
 > 启动器后端已用 Rust (axum) 完整重写，核心库与下载器也已迁移为 Rust 子模块（`qomicex-core-rust` / `qomicex-downloader-rust`），不再依赖 .NET SDK。
 
-## 小Tips - 读音
+## ℹ️ 小Tips - 读音
 Qomicex
 /kˈɑːmaɪsˌɛks/
 ≈ q·om·ic·ex
@@ -52,7 +52,7 @@ Qomicex
 
 
 > 您也可以通过下方的状态徽章快速查看支持情况：
-### 支持
+### 🚀 支持
 ![Windows](https://img.shields.io/badge/Windows-10%2B-blue?logo=windows)
 ![macOS](https://img.shields.io/badge/macOS-10.15%2B-black?logo=apple)
 ![Linux](https://img.shields.io/badge/Linux-Ubuntu%2020.04%2B-yellow?logo=linux)
@@ -60,6 +60,10 @@ Qomicex
 
 ---
 
-## 许可证
+## 📄 许可证
 
 [GPLv3](LICENSE)
+
+## ❤️ 贡献者
+
+[![](https://contrib.rocks/image?repo=Qomicex-Public/Qomicex.Tauri)](https://github.com/Qomicex-Public/Qomicex.Tauri/graphs/contributors)
