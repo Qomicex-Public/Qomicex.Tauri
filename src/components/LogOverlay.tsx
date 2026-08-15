@@ -1,10 +1,26 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBug, faXmark, faChevronDown, faChevronUp } from '@fortawesome/free-solid-svg-icons'
+import { faBug, faXmark, faChevronDown, faChevronUp, faCopy } from '@fortawesome/free-solid-svg-icons'
 import { get } from '../api/client.ts'
+import { cn } from '../lib/utils.ts'
 import { useI18n } from '../i18n/index.tsx'
 
 const MAX_VISIBLE = 50
+
+/** 从日志行推断级别（与 DebugTab/LogTab 一致）。 */
+function inferLevel(line: string): 'ERROR' | 'WARN' | 'DEBUG' | 'INFO' {
+  if (/\bERROR\b/.test(line) || /\[(?:frontend|downloader):error\]/i.test(line)) return 'ERROR'
+  if (/\bWARN\b/.test(line) || /\[(?:frontend|downloader):warn\]/i.test(line)) return 'WARN'
+  if (/\bDEBUG\b/.test(line) || /\[(?:frontend|downloader):debug\]/i.test(line)) return 'DEBUG'
+  return 'INFO'
+}
+
+const LEVEL_COLOR: Record<string, string> = {
+  ERROR: 'text-red-400',
+  WARN: 'text-yellow-500/90',
+  INFO: 'text-foreground/80',
+  DEBUG: 'text-muted-foreground/70',
+}
 
 export default function LogOverlay() {
   const { t } = useI18n()
@@ -33,6 +49,13 @@ export default function LogOverlay() {
       containerRef.current.scrollTop = containerRef.current.scrollHeight
     }
   }, [logs, collapsed])
+
+  const handleCopy = async () => {
+    if (logs.length === 0) return
+    try {
+      await navigator.clipboard.writeText(logs.join('\n'))
+    } catch { /* 忽略 */ }
+  }
 
   if (collapsed) {
     return (
@@ -63,6 +86,9 @@ export default function LogOverlay() {
             {t('tools.logs.debugLogsCount', { count: logs.length })}
           </span>
           <div className="flex items-center gap-1">
+            <button onClick={handleCopy} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="复制">
+              <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />
+            </button>
             <button onClick={() => setLogs([])} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
               <FontAwesomeIcon icon={faXmark} className="h-3 w-3" />
             </button>
@@ -73,13 +99,13 @@ export default function LogOverlay() {
         </div>
         <div
           ref={containerRef}
-          className="h-48 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed"
+          className="log-selectable h-48 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed"
         >
           {logs.length === 0 ? (
             <span className="text-muted-foreground">{t('tools.logs.none')}</span>
           ) : (
             logs.slice(-MAX_VISIBLE).map((line, i) => (
-              <div key={i} className="text-foreground/70 whitespace-pre-wrap border-b border-border/30 py-0.5 last:border-0">{line}</div>
+              <div key={i} className={cn('whitespace-pre-wrap border-b border-border/30 py-0.5 last:border-0', LEVEL_COLOR[inferLevel(line)])}>{line}</div>
             ))
           )}
         </div>

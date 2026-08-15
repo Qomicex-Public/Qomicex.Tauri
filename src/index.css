@@ -2,14 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
-*, *::before, *::after {
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-user-drag: none;
-}
-input, textarea, [contenteditable] {
-  user-select: auto;
-  -webkit-user-select: auto;
+@layer base {
+  *, *::before, *::after {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+  }
+  input, textarea, [contenteditable] {
+    user-select: auto;
+    -webkit-user-select: auto;
+  }
 }
 
 @layer base {
@@ -327,4 +329,13 @@ input, textarea, [contenteditable] {
   .pop-out {
     animation: popIn 200ms ease-in reverse both;
   }
+}
+
+/* 日志容器：允许像编辑框一样框选复制。
+   未分层规则优先于 @layer base 的 `* { user-select: none }`，
+   !important 确保覆盖子行 div 的继承 none。 */
+.log-selectable,
+.log-selectable * {
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }

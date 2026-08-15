@@ -32,6 +32,14 @@ function formatDate(iso: string): string {
   })
 }
 
+/** 从日志行推断级别（tracing 的 " INFO "/" ERROR " 与 [frontend:level]/[downloader:Level]）。 */
+function inferLevel(line: string): 'ERROR' | 'WARN' | 'DEBUG' | 'INFO' {
+  if (/\bERROR\b/.test(line) || /\[(?:frontend|downloader):error\]/i.test(line) || /\[(?:frontend|downloader):Error\]/.test(line)) return 'ERROR'
+  if (/\bWARN\b/.test(line) || /\[(?:frontend|downloader):warn\]/i.test(line) || /\[(?:frontend|downloader):Warn\]/.test(line)) return 'WARN'
+  if (/\bDEBUG\b/.test(line) || /\[(?:frontend|downloader):debug\]/i.test(line) || /\[(?:frontend|downloader):Debug\]/.test(line)) return 'DEBUG'
+  return 'INFO'
+}
+
 export default function LogTab() {
   const { notify, confirm: msgConfirm } = useMessageBox()
   const { t } = useI18n()
@@ -141,12 +149,7 @@ export default function LogTab() {
     const lines = preview.content.split('\n')
     const search = previewSearch.trim().toLowerCase()
     return lines
-      .map((raw) => {
-        const lvl = raw.includes(' ERROR ') || / ERROR /.test(raw) ? 'ERROR'
-          : raw.includes(' WARN ') || / WARN /.test(raw) ? 'WARN'
-          : 'INFO'
-        return { raw, lvl }
-      })
+      .map((raw) => ({ raw, lvl: inferLevel(raw) }))
       .filter((l) => {
         if (previewLevel !== 'all' && l.lvl !== previewLevel) return false
         if (search && !l.raw.toLowerCase().includes(search)) return false
@@ -314,7 +317,7 @@ export default function LogTab() {
               </div>
               <div
                 ref={previewRef}
-                className={cn('overflow-y-auto bg-muted/20 p-3 font-mono text-xs leading-relaxed', previewExpanded ? 'h-96' : 'h-64')}
+                className={cn('log-selectable overflow-y-auto bg-muted/20 p-3 font-mono text-xs leading-relaxed', previewExpanded ? 'h-96' : 'h-64')}
               >
                 {previewLoading ? (
                   <div className="flex items-center gap-2 text-muted-foreground">
@@ -331,6 +334,7 @@ export default function LogTab() {
                         'whitespace-pre-wrap break-all',
                         l.lvl === 'ERROR' && 'text-red-400',
                         l.lvl === 'WARN' && 'text-yellow-500/90',
+                        l.lvl === 'DEBUG' && 'text-muted-foreground/70',
                         l.lvl === 'INFO' && 'text-foreground/80'
                       )}
                     >

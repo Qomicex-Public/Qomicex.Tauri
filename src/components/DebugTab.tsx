@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faDownload, faTrashCan, faBug, faCircleCheck, faCircleXmark, faServer } from '@fortawesome/free-solid-svg-icons'
+import { faRotate, faDownload, faTrashCan, faBug, faCircleCheck, faCircleXmark, faServer, faCopy } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardHeader, CardTitle, CardContent } from './ui'
 import { Button } from './ui'
 import { Checkbox } from './ui'
@@ -12,6 +12,21 @@ import type { SystemInfo } from '../types/index.ts'
 import { useMessageBox } from './ui'
 import { clearAllTasks } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
+
+/** 从日志行推断级别（支持 tracing 的 " INFO "/" ERROR " 与 [frontend:level]/[downloader:Level]）。 */
+function inferLevel(line: string): 'ERROR' | 'WARN' | 'DEBUG' | 'INFO' {
+  if (/\bERROR\b/.test(line) || /\[(?:frontend|downloader):error\]/i.test(line) || /\[(?:frontend|downloader):Error\]/.test(line)) return 'ERROR'
+  if (/\bWARN\b/.test(line) || /\[(?:frontend|downloader):warn\]/i.test(line) || /\[(?:frontend|downloader):Warn\]/.test(line)) return 'WARN'
+  if (/\bDEBUG\b/.test(line) || /\[(?:frontend|downloader):debug\]/i.test(line) || /\[(?:frontend|downloader):Debug\]/.test(line)) return 'DEBUG'
+  return 'INFO'
+}
+
+const LEVEL_COLOR: Record<string, string> = {
+  ERROR: 'text-red-400',
+  WARN: 'text-yellow-500/90',
+  INFO: 'text-foreground/80',
+  DEBUG: 'text-muted-foreground/70',
+}
 
 function LogCard() {
   const [logs, setLogs] = useState<string[]>([])
@@ -57,6 +72,14 @@ function LogCard() {
     } catch { console.warn('Failed to dump logs') }
   }
 
+  const handleCopy = async () => {
+    if (logs.length === 0) return
+    try {
+      await navigator.clipboard.writeText(logs.join('\n'))
+      notify(t('common.copied'), 'success')
+    } catch { /* 剪贴板不可用时忽略 */ }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -73,6 +96,9 @@ function LogCard() {
           <Button size="sm" variant="outline" onClick={handleExport} disabled={logs.length === 0} className="gap-1">
             <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('tools.debug.exportLogs')}
           </Button>
+          <Button size="sm" variant="outline" onClick={handleCopy} disabled={logs.length === 0} className="gap-1">
+            <FontAwesomeIcon icon={faCopy} className="h-4 w-4" />{t('common.copy')}
+          </Button>
           <Button size="sm" variant="outline" onClick={handleDump} className="gap-1">
             <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('tools.debug.triggerDump')}
           </Button>
@@ -86,12 +112,14 @@ function LogCard() {
                 setAutoScroll(scrollTop + clientHeight >= scrollHeight - 20)
               }
             }}
-            className="h-80 overflow-y-auto bg-muted/30 p-3 font-mono text-xs leading-relaxed"
+            className="log-selectable h-80 overflow-y-auto bg-muted/30 p-3 font-mono text-xs leading-relaxed"
           >
             {logs.length === 0 ? (
               <span className="text-muted-foreground">{t('tools.debug.noLogs')}</span>
             ) : (
-              logs.map((line, i) => <div key={i} className="text-foreground/80 whitespace-pre-wrap">{line}</div>)
+              logs.map((line, i) => (
+                <div key={i} className={cn('whitespace-pre-wrap', LEVEL_COLOR[inferLevel(line)])}>{line}</div>
+              ))
             )}
           </div>
         </div>
