@@ -509,6 +509,9 @@ Yggdrasil 认证登录。
 | POST | `/mods/batch-enable` | 批量启用 `["a.jar","b.jar"]` |
 | POST | `/mods/batch-disable` | 批量禁用 |
 | POST | `/mods/batch-delete` | 批量删除 |
+| GET | `/mods/check-updates?force=0\|1` | 模组更新检查（批次哈希匹配，独立 6h 缓存；`force=1` 强制联网，返回 `{updates, refreshed}`） |
+| GET | `/mods/update-cache` | 只读读取更新检查缓存 `{updates, stale}`（前端列表加载后据此决定是否联网检查） |
+| DELETE | `/mods/update-cache` | 删除该实例的更新检查磁盘缓存（更新成功后调用，避免下次自动检查返回过期条目） |
 
 ### Resourcepacks
 

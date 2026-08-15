@@ -24,6 +24,8 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use qomicex_core::models::expansion::curseforge::mod_loader_type;
+
 use crate::error::{ApiError, ApiResult};
 use crate::settings;
 use crate::state::SharedState;
@@ -292,6 +294,57 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+// =====================================================================
+// Mods update-check disk cache (6h TTL) — 独立于 mods-cache。
+// 结构见 ModUpdateEntryDto；check-updates 缓存命中直接返回，不联网。
+// =====================================================================
+
+const UPDATE_CACHE_TTL_SECS: i64 = 6 * 3600;
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCacheEntry {
+    fetched_at: i64,
+    updates: Vec<ModUpdateEntryDto>,
+}
+
+fn update_cache_path(data_dir: &PathBuf, instance_id: &str) -> PathBuf {
+    data_dir
+        .join("QML")
+        .join("mods-update-cache")
+        .join(format!("{instance_id}-updates.json"))
+}
+
+fn read_update_cache(data_dir: &PathBuf, instance_id: &str) -> Option<UpdateCacheEntry> {
+    let path = update_cache_path(data_dir, instance_id);
+    let bytes = std::fs::read(path).ok()?;
+    let cache: UpdateCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    let now = now_secs();
+    if now - cache.fetched_at < UPDATE_CACHE_TTL_SECS {
+        Some(cache)
+    } else {
+        None
+    }
+}
+
+fn read_update_cache_stale(data_dir: &PathBuf, instance_id: &str) -> Option<UpdateCacheEntry> {
+    let path = update_cache_path(data_dir, instance_id);
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn write_update_cache(data_dir: &PathBuf, instance_id: &str, updates: Vec<ModUpdateEntryDto>) {
+    let path = update_cache_path(data_dir, instance_id);
+    let _ = std::fs::create_dir_all(path.parent().unwrap());
+    let cache = UpdateCacheEntry {
+        fetched_at: now_secs(),
+        updates,
+    };
+    if let Ok(json) = serde_json::to_vec(&cache) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
 async fn refresh_mods_cache(
     state: &SharedState,
     instance_id: &str,
@@ -378,6 +431,10 @@ pub fn router() -> Router<SharedState> {
             post(batch_delete_mods),
         )
         .route("/instance/{id}/files/mods", delete(delete_mod))
+        .route(
+            "/instance/{id}/files/mods/update-cache",
+            get(mods_update_cache).delete(mods_update_cache_invalidate),
+        )
         .route(
             "/instance/{id}/files/mods/check-updates",
             get(check_mod_updates),
@@ -748,41 +805,25 @@ struct ModUpdateEntryDto {
     new_file_name: String,
 }
 
-/// 简易版本比较（按数值段比较，同 services/plugin.rs version_compare）。
-fn version_compare(a: &str, b: &str) -> i32 {
-    let pa = version_parse(a);
-    let pb = version_parse(b);
-    let len = pa.len().max(pb.len());
-    for i in 0..len {
-        let va = pa.get(i).copied().unwrap_or(0);
-        let vb = pb.get(i).copied().unwrap_or(0);
-        if va != vb {
-            return if va < vb { -1 } else { 1 };
-        }
-    }
-    0
+/// check-updates 响应：更新列表 + 本次是否真实联网（缓存命中时 refreshed=false）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModUpdatesResponse {
+    updates: Vec<ModUpdateEntryDto>,
+    refreshed: bool,
 }
 
-fn version_parse(version: &str) -> Vec<i32> {
-    let cleaned = version
-        .trim()
-        .split('-')
-        .next()
-        .unwrap_or("")
-        .split('+')
-        .next()
-        .unwrap_or("");
-    let mut nums = Vec::new();
-    for seg in cleaned.split('.') {
-        match seg.parse::<i32>() {
-            Ok(n) => nums.push(n),
-            Err(_) => break,
-        }
-    }
-    if nums.is_empty() {
-        nums.push(0);
-    }
-    nums
+/// update-cache 响应：最近一次结果 + 是否过期（缓存缺失或超过 6h → stale=true）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModUpdatesCacheResponse {
+    updates: Vec<ModUpdateEntryDto>,
+    stale: bool,
+}
+
+#[derive(Deserialize)]
+struct CheckUpdatesQuery {
+    force: Option<i32>,
 }
 
 /// enrich 结果条目：按 file_name 合并到前端 mod 列表（两段式第二步）。
@@ -857,172 +898,265 @@ fn entries_to_enrich(entries: Vec<ModMetadataDto>) -> Vec<ModEnrichDto> {
         .collect()
 }
 
-/// GET /instance/{id}/files/mods/check-updates — 检查模组更新（补全前端 ModUpdateDialog 缺失路由）。
+/// GET /instance/{id}/files/mods/update-cache — 只读最近一次更新检查结果 + 是否过期。
+/// 列表加载后的自动检查用它判断是否需联网（stale）；缓存命中时直接取 updates 标记。
+async fn mods_update_cache(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<ModUpdatesCacheResponse>> {
+    if let Some(entry) = read_update_cache_stale(&state.data_dir, &id) {
+        let stale = now_secs() - entry.fetched_at >= UPDATE_CACHE_TTL_SECS;
+        Ok(Json(ModUpdatesCacheResponse {
+            updates: entry.updates,
+            stale,
+        }))
+    } else {
+        Ok(Json(ModUpdatesCacheResponse {
+            updates: Vec::new(),
+            stale: true,
+        }))
+    }
+}
+
+/// DELETE /instance/{id}/files/mods/update-cache — 删除该实例的更新检查磁盘缓存。
+/// 模组更新成功（新文件已替换旧文件）后调用，避免下次自动检查返回过期的更新条目。
+async fn mods_update_cache_invalidate(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<StatusCode> {
+    let path = update_cache_path(&state.data_dir, &id);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(StatusCode::NO_CONTENT),
+        Err(_) => Ok(StatusCode::NO_CONTENT),
+    }
+}
+
+/// GET /instance/{id}/files/mods/check-updates?force=0|1 — 检查模组更新。
+///
+/// 批次哈希匹配：Modrinth SHA1 两步（`version_files` → 当前版本，
+/// `version_files/update` → 匹配加载器/游戏版本的最新版本）；CurseForge 指纹 →
+/// 命中 file + latestFiles。判定规则（每个本地文件）：updateFile.Available 为真 &&
+/// 新版本发布时间晚于本地文件 && 新版本文件哈希 ≠ 本地文件哈希。
+/// 结果写入独立 update 缓存（6h TTL）。force=1 绕过缓存强制联网；
+/// force=0 缓存命中（<6h）直接返回 refreshed=false。
 async fn check_mod_updates(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
-) -> ApiResult<Json<Vec<ModUpdateEntryDto>>> {
-    let r = resolve(&id, &state)?;
+    Query(q): Query<CheckUpdatesQuery>,
+) -> ApiResult<Json<ModUpdatesResponse>> {
+    let force = q.force.unwrap_or(0) != 0;
+    if !force {
+        if let Some(entry) = read_update_cache(&state.data_dir, &id) {
+            return Ok(Json(ModUpdatesResponse {
+                updates: entry.updates,
+                refreshed: false,
+            }));
+        }
+    }
+    let updates = refresh_mod_updates(&state, &id).await?;
+    write_update_cache(&state.data_dir, &id, updates.clone());
+    Ok(Json(ModUpdatesResponse {
+        updates,
+        refreshed: true,
+    }))
+}
+
+/// 联网执行更新检查（light 扫描 + Modrinth/CurseForge 批次反查），返回结果列表。
+async fn refresh_mod_updates(
+    state: &SharedState,
+    instance_id: &str,
+) -> ApiResult<Vec<ModUpdateEntryDto>> {
+    let r = resolve(instance_id, state)?;
+    let inst = state
+        .instance
+        .get_by_id(instance_id)
+        .ok_or_else(|| instance_not_found(instance_id))?;
+    let game_version = inst.game_version.clone();
+    let loader = inst.loader.clone().unwrap_or_default();
+
     let mods = state.core.local_resource_provider().create_mods(
         r.game_dir.to_str().unwrap_or_default(),
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
     );
-    let mut list = mods.get_mod_list_light().await.map_err(map_core_error)?;
-    mods.enrich_mod_ids(&mut list).await;
+    let list = mods.get_mod_list_light().await.map_err(map_core_error)?;
 
-    let mut updates = Vec::new();
-    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
-    let client = state.http_client.clone();
-    let api_key = state.curse_forge_api_key.clone();
+    let mut updates: Vec<ModUpdateEntryDto> = Vec::new();
 
-    let mut handles = Vec::new();
-    for info in list.iter() {
-        if info.modrinth_id.is_empty() && info.curse_forge_id == 0 {
-            continue;
-        }
-        let info = info.clone();
-        let client = client.clone();
-        let api_key = api_key.clone();
-        let permit = sem.clone().acquire_owned().await;
-        handles.push(tokio::spawn(async move {
-            let _permit = permit;
-            if !info.modrinth_id.is_empty() {
-                check_modrinth_update(&client, &info).await
-            } else if info.curse_forge_id != 0 {
-                check_curseforge_update(&client, &info, &api_key).await
-            } else {
-                None
-            }
-        }));
-    }
-
-    for handle in handles {
-        if let Ok(Some(update)) = handle.await {
-            updates.push(update);
-        }
-    }
-
-    Ok(Json(updates))
-}
-
-async fn check_modrinth_update(
-    client: &reqwest::Client,
-    info: &qomicex_core::models::expansion::local::ModInfo,
-) -> Option<ModUpdateEntryDto> {
-    let url = format!(
-        "https://api.modrinth.com/v2/project/{}/version",
-        urlencode(&info.modrinth_id)
-    );
-    let resp = client.get(&url).send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let versions: Vec<serde_json::Value> = resp.json().await.ok()?;
-    let mut latest: Option<&serde_json::Value> = None;
-    for v in &versions {
-        let gv = v.get("game_versions").and_then(|g| g.as_array())?;
-        // 简化：取首个版本（最新发布）
-        latest = Some(v);
-        break;
-    }
-    let latest = latest?;
-    let latest_version = latest
-        .get("version_number")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if latest_version.is_empty() || version_compare(latest_version, &info.version) <= 0 {
-        return None;
-    }
-    let download_url = latest
-        .get("files")
-        .and_then(|f| f.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|f| f.get("url"))
-        .and_then(|u| u.as_str())
-        .unwrap_or("");
-    let new_file_name = latest
-        .get("files")
-        .and_then(|f| f.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|f| f.get("filename"))
-        .and_then(|u| u.as_str())
-        .unwrap_or_default()
-        .to_string();
-    Some(ModUpdateEntryDto {
-        file_name: Path::new(&info.file_path)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        name: info.name.clone(),
-        current_version: info.version.clone(),
-        latest_version: latest_version.to_string(),
-        project_id: info.modrinth_id.clone(),
-        source: "modrinth".to_string(),
-        download_url: download_url.to_string(),
-        new_file_name,
-    })
-}
-
-async fn check_curseforge_update(
-    client: &reqwest::Client,
-    info: &qomicex_core::models::expansion::local::ModInfo,
-    api_key: &str,
-) -> Option<ModUpdateEntryDto> {
-    let url = format!(
-        "https://api.curseforge.com/v1/mods/{}/files?pageSize=1",
-        info.curse_forge_id
-    );
-    let resp = client
-        .get(&url)
-        .header("x-api-key", api_key)
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let json: serde_json::Value = resp.json().await.ok()?;
-    let files = json.get("data").and_then(|d| d.as_array())?;
-    let latest = files.first()?;
-    let latest_version = latest
-        .get("displayName")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if latest_version.is_empty() || version_compare(latest_version, &info.version) <= 0 {
-        return None;
-    }
-    let download_url = latest
-        .get("downloadUrl")
-        .and_then(|u| u.as_str())
-        .unwrap_or("");
-    Some(ModUpdateEntryDto {
-        file_name: Path::new(&info.file_path)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        name: info.name.clone(),
-        current_version: info.version.clone(),
-        latest_version: latest_version.to_string(),
-        project_id: info.curse_forge_id.to_string(),
-        source: "curseforge".to_string(),
-        download_url: download_url.to_string(),
-        new_file_name: latest_version.to_string(),
-    })
-}
-
-fn urlencode(s: &str) -> String {
-    s.as_bytes()
+    // ── Modrinth 严格两步（批次）──
+    let mr = state.core.create_modrinth_source();
+    let sha1s: Vec<String> = list
         .iter()
-        .map(|&b| {
-            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-                (b as char).to_string()
-            } else {
-                format!("%{:02X}", b)
+        .filter(|m| !m.sha1_hash.is_empty())
+        .map(|m| m.sha1_hash.clone())
+        .collect();
+    let loaders: Vec<String> = if loader.is_empty() {
+        Vec::new()
+    } else {
+        vec![loader.to_lowercase()]
+    };
+    let game_versions: Vec<String> = if game_version.is_empty() {
+        Vec::new()
+    } else {
+        vec![game_version.clone()]
+    };
+    let (cur_map, latest_map_res) = tokio::join!(
+        mr.get_project_versions_from_hashes_dict(&sha1s),
+        mr.get_latest_versions_from_hashes(&sha1s, &loaders, &game_versions),
+    );
+    // 兼容性回退：实例 loader（如 Cleanroom/LiteLoader）不是 Modrinth 已知加载器，
+    // 严格按 loader 过滤可能一个都不匹配；对漏掉的哈希改用「任意 loader + 同游戏版本」重查，
+    // 使 Forge 系 mod（如 JEI）仍能检出更新。
+    let mut latest_map = match latest_map_res {
+        Ok(m) => m,
+        Err(_) => HashMap::new(),
+    };
+    if !loaders.is_empty() {
+        let missed: Vec<String> = sha1s
+            .iter()
+            .filter(|h| !latest_map.contains_key(*h))
+            .cloned()
+            .collect();
+        if !missed.is_empty() {
+            if let Ok(extra) = mr
+                .get_latest_versions_from_hashes(&missed, &[], &game_versions)
+                .await
+            {
+                latest_map.extend(extra);
             }
-        })
-        .collect()
+        }
+    }
+    if let Ok(cur_map) = cur_map {
+        for info in list.iter().filter(|m| !m.sha1_hash.is_empty()) {
+            let Some(cur) = cur_map.get(&info.sha1_hash) else {
+                continue;
+            };
+            let Some(latest) = latest_map.get(&info.sha1_hash) else {
+                continue;
+            };
+            // updateFile.Available：最新版本至少有一个文件
+            let latest_file = latest
+                .files
+                .as_ref()
+                .and_then(|f| f.iter().find(|f| f.is_primary).or_else(|| f.first()));
+            let Some(latest_file) = latest_file else {
+                continue;
+            };
+            // 发布时间晚于本地版本
+            if latest.published_at <= cur.published_at {
+                continue;
+            }
+            // 哈希不同
+            let latest_sha1 = latest_file
+                .hashes
+                .as_ref()
+                .and_then(|h| h.sha1.clone())
+                .unwrap_or_default();
+            if latest_sha1.is_empty() || latest_sha1 == info.sha1_hash {
+                continue;
+            }
+            let latest_version = latest.version_number.clone().unwrap_or_default();
+            if latest_version.is_empty() {
+                continue;
+            }
+            updates.push(ModUpdateEntryDto {
+                file_name: file_name_of(&info.file_path),
+                name: info.name.clone(),
+                current_version: info.version.clone(),
+                latest_version,
+                project_id: cur.project_id.clone(),
+                source: "modrinth".to_string(),
+                download_url: latest_file.download_url.clone(),
+                new_file_name: latest_file.filename.clone(),
+            });
+        }
+    }
+
+    // ── CurseForge 指纹批次 ──
+    if !state.curse_forge_api_key.is_empty() {
+        let cf = state
+            .core
+            .create_curseforge_source(&state.curse_forge_api_key);
+        let cf_hashes: Vec<i64> = list
+            .iter()
+            .filter(|m| m.cf_hash != 0)
+            .map(|m| m.cf_hash)
+            .collect();
+        if let Ok(matches) = cf.get_fingerprint_matches(&cf_hashes).await {
+            for m in matches {
+                let Some(info) = list.iter().find(|i| i.cf_hash == m.fingerprint) else {
+                    continue;
+                };
+                let Some(cur) = m.file.as_ref() else {
+                    continue;
+                };
+                // updateFile = latestFiles 中匹配实例游戏版本/加载器、最新发布且 Available 的候选
+                // （CF 指纹接口的 latestFiles 不随 gameVersion/modLoader 参数过滤，需在此自行过滤）
+                let latest = m
+                    .latest_files
+                    .iter()
+                    .filter(|f| f.is_available)
+                    .filter(|f| f.game_versions.iter().any(|g| g == &game_version))
+                    .filter(|f| {
+                        // 实例 loader 非已知 CF 加载器（如 Cleanroom）时视为 Forge 兼容，不按加载器过滤
+                        let is_known_loader = mod_loader_type::ALL
+                            .iter()
+                            .any(|l| l.eq_ignore_ascii_case(&loader));
+                        let declared: Vec<&str> = f
+                            .game_versions
+                            .iter()
+                            .map(|s| s.as_str())
+                            .filter(|g| mod_loader_type::ALL.contains(g))
+                            .collect();
+                        !is_known_loader
+                            || declared.is_empty()
+                            || declared.iter().any(|g| g.eq_ignore_ascii_case(&loader))
+                    })
+                    .max_by(|a, b| a.file_date.cmp(&b.file_date));
+                let Some(latest) = latest else {
+                    continue;
+                };
+                let latest_date = latest.file_date.clone().unwrap_or_default();
+                let cur_date = cur.file_date.clone().unwrap_or_default();
+                // 发布时间晚于本地文件
+                if latest_date.is_empty() || cur_date.is_empty() || latest_date <= cur_date {
+                    continue;
+                }
+                // 哈希不同（algo 1 = SHA1）
+                let latest_sha1 = latest
+                    .hashes
+                    .iter()
+                    .find(|h| h.algo == 1)
+                    .map(|h| h.value.clone())
+                    .unwrap_or_default();
+                if latest_sha1.is_empty() || latest_sha1 == info.sha1_hash {
+                    continue;
+                }
+                let latest_version = latest
+                    .display_name
+                    .clone()
+                    .or_else(|| latest.file_name.clone())
+                    .unwrap_or_default();
+                if latest_version.is_empty() {
+                    continue;
+                }
+                updates.push(ModUpdateEntryDto {
+                    file_name: file_name_of(&info.file_path),
+                    name: info.name.clone(),
+                    current_version: info.version.clone(),
+                    latest_version,
+                    project_id: cur.mod_id.to_string(),
+                    source: "curseforge".to_string(),
+                    download_url: latest.download_url.clone().unwrap_or_default(),
+                    new_file_name: latest.file_name.clone().unwrap_or_default(),
+                });
+            }
+        }
+    }
+
+    Ok(updates)
 }
 
 async fn enable_mod(

@@ -10,8 +10,10 @@ import { Button } from './ui'
 import { cn } from '../lib/utils.ts'
 import { MinecraftText } from './MinecraftText.tsx'
 import { enableMod, disableMod, deleteMod } from '../api/instance-files.ts'
+import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import type { ModMetadata } from '../types/index.ts'
+import { useMessageBox } from './ui'
+import type { ModMetadata, ModUpdateEntry } from '../types/index.ts'
 
 interface ModCardProps {
   mod: ModMetadata
@@ -23,14 +25,18 @@ interface ModCardProps {
   onChangeVersion: (mod: ModMetadata) => void
   selected?: boolean
   onSelect?: (fileName: string, shiftKey: boolean, ctrlKey: boolean) => void
-  hasUpdate?: boolean
+  update?: ModUpdateEntry
+  /** 单个模组更新完成后回调（用于移除更新标记） */
+  onUpdated?: (fileName: string) => void
 }
 
 export default function ModCard({
   mod, instanceId, gameVersion, loader, onRefresh, onToggle, onChangeVersion,
-  selected, onSelect, hasUpdate,
+  selected, onSelect, update, onUpdated,
 }: ModCardProps) {
   const navigate = useNavigate()
+  const { notify } = useMessageBox()
+  const hasUpdate = !!update
   const [toggling, setToggling] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -88,13 +94,28 @@ export default function ModCard({
     if (loader) params.set('loader', loader.toLowerCase())
     if (instanceId) params.set('instanceId', instanceId)
     const id = mod.curseForgeId?.toString() ?? mod.modrinthId ?? ''
+    const iconUrl = mod.iconUrl || (mod.iconBase64 ? `data:image/png;base64,${mod.iconBase64}` : '')
     contextItems.push({
       label: '查看详情',
-      onClick: () => navigate(`/resource-center/${encodeURIComponent(id)}?${params.toString()}&expandBody=1`),
+      onClick: () => navigate(`/resource-center/${encodeURIComponent(id)}?${params.toString()}&expandBody=1`, { state: { iconUrl } }),
     })
   }
   contextItems.push(
     { label: '更换版本', onClick: () => onChangeVersion(mod) },
+    {
+      label: '更新',
+      disabled: !update,
+      onClick: async () => {
+        if (!update) return
+        try {
+          const result = await updateModsViaDownloadCenter(instanceId, [update], () => notify('已加入下载列表', 'success'))
+          onUpdated?.(update.fileName)
+          onRefresh()
+          if (result.failed === 0) notify(`已更新「${mod.name}」`, 'success')
+          else notify(`更新「${mod.name}」失败`, 'error')
+        } catch { notify('更新失败', 'error') }
+      },
+    },
     { label: '删除', onClick: () => setConfirmDelete(true), danger: true },
   )
 
@@ -128,10 +149,12 @@ export default function ModCard({
               <div className="flex items-center gap-2">
                 <h3 className="truncate text-sm font-semibold text-foreground">
                   {mod.chineseName ? <>{mod.chineseName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {mod.name}</span></> : mod.name}
-                  {hasUpdate && (
-                    <span className="ml-2 inline-block h-2 w-2 rounded-full bg-blue-500 align-middle" />
-                  )}
                 </h3>
+                {hasUpdate && (
+                  <Tooltip content={update ? `可更新至 ${update.latestVersion}` : ''}>
+                    <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-blue-500" />
+                  </Tooltip>
+                )}
               </div>
               <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                 <span>{mod.version || '未知版本'}</span>
