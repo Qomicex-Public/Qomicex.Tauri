@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useI18n } from '../i18n/index.tsx'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowUpRightFromSquare, faDownload, faMagnifyingGlass, faRotate, faTag, faUser, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { Input } from '../components/ui'
@@ -46,12 +47,12 @@ function cacheKey(category: string, keyword: string, sort: string, source: strin
 }
 
 const CATEGORIES = [
-  { key: 'mod', label: '模组' },
-  { key: 'modpack', label: '整合包' },
-  { key: 'shader', label: '光影' },
-  { key: 'resourcepack', label: '材质包' },
-  { key: 'datapack', label: '数据包' },
-  { key: 'save', label: '存档' },
+  { key: 'mod' },
+  { key: 'modpack' },
+  { key: 'shader' },
+  { key: 'resourcepack' },
+  { key: 'datapack' },
+  { key: 'save' },
 ]
 
 const SOURCES = [
@@ -70,25 +71,25 @@ const LOADERS = [
   { key: 'liteloader', label: 'LiteLoader' },
 ]
 
-const SORT_OPTIONS: Record<string, { key: string; label: string }[]> = {
+const SORT_OPTIONS: Record<string, { key: string }[]> = {
   modrinth: [
-    { key: 'relevance', label: '相关度' },
-    { key: 'downloads', label: '下载量' },
-    { key: 'updated', label: '更新时间' },
-    { key: 'newest', label: '最新发布' },
+    { key: 'relevance' },
+    { key: 'downloads' },
+    { key: 'updated' },
+    { key: 'newest' },
   ],
   curseforge: [
-    { key: 'downloads', label: '下载量' },
-    { key: 'updated', label: '更新时间' },
-    { key: 'name', label: '名称' },
-    { key: 'newest', label: '最新发布' },
+    { key: 'downloads' },
+    { key: 'updated' },
+    { key: 'name' },
+    { key: 'newest' },
   ],
   ftb: [
-    { key: 'relevance', label: '推荐' },
-    { key: 'downloads', label: '安装量' },
-    { key: 'updated', label: '更新时间' },
-    { key: 'name', label: '名称' },
-    { key: 'newest', label: '最新发布' },
+    { key: 'relevance' },
+    { key: 'downloads' },
+    { key: 'updated' },
+    { key: 'name' },
+    { key: 'newest' },
   ],
 }
 
@@ -147,6 +148,7 @@ function ResourceCard({
   onInstall: (item: ResourceItem) => void
   cnName?: string | null
 }) {
+  const { t } = useI18n()
   return (
     <Card className="group overflow-hidden border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5">
       <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start">
@@ -170,7 +172,7 @@ function ResourceCard({
             <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1">
                 <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
-                {item.author || '未知作者'}
+                {item.author || t('resource.unknownAuthor')}
               </span>
               <span className="inline-flex items-center gap-1">
                 <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
@@ -189,16 +191,16 @@ function ResourceCard({
         <div className="flex flex-row gap-2 sm:min-w-[148px] sm:flex-col sm:items-stretch sm:self-stretch">
           <Button className="flex-1 sm:w-full" onClick={() => onInstall(item)}>
             <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-            安装
+            {t('resource.install')}
           </Button>
           <Button asChild variant="outline" className="flex-1 sm:w-full">
-            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>查看详情</Link>
+            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>{t('resource.viewDetail')}</Link>
           </Button>
           {item.projectUrl && (
             <Button asChild variant="ghost" className="px-3 sm:w-full">
               <a href={item.projectUrl} target="_blank" rel="noopener noreferrer">
                 <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3 w-3" />
-                原站
+                {t('resource.originalSite')}
               </a>
             </Button>
           )}
@@ -210,6 +212,7 @@ function ResourceCard({
 
 export default function ResourceCenter() {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const [category, setCategory] = useState(() => savedSnapshot?.category ?? searchParams.get('category') ?? 'mod')
   const [source, setSource] = useState(() => {
@@ -286,9 +289,9 @@ export default function ResourceCenter() {
       if (category === 'mod') loadCnNames(pageItems).then(setCnNames)
       else setCnNames({})
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '搜索失败'
+      const msg = e instanceof Error ? e.message : t('resource.searchFailed')
       if (msg.includes('404') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-        setError('无法连接到后端服务，请确保后端已启动')
+        setError(t('resource.backendUnreachable'))
       } else {
         setError(msg)
       }
@@ -362,46 +365,49 @@ export default function ResourceCenter() {
   const clearLoader = () => setLoader('')
 
   const currentSortOptions = SORT_OPTIONS[source] ?? SORT_OPTIONS.modrinth
-  const activeCategoryLabel = useMemo(() => CATEGORIES.find((item) => item.key === category)?.label ?? category, [category])
+  const activeCategoryLabel = useMemo(() => {
+    const found = CATEGORIES.find((item) => item.key === category)
+    return found ? t(`resource.categories.${found.key}`) : category
+  }, [category, t])
 
   return (
     <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
-      <PageHeader title="资源中心" />
+      <PageHeader title={t('resource.title')} />
 
       <Card className="border-border/60 bg-muted/20 p-4">
         <div className="space-y-4">
           <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
             <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源源</p>
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.sourceLabel')}</p>
               <Tabs tabs={SOURCES.map(s => ({ id: s.key, label: s.label }))} activeTab={source} onChange={handleSourceChange} />
             </div>
             <div className="space-y-2 xl:ml-auto">
-              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">资源分类</p>
-              <Tabs tabs={CATEGORIES.map(c => ({ id: c.key, label: c.label, disabled: (source === 'ftb' && c.key !== 'modpack') || (source !== 'curseforge' && c.key === 'save') }))} activeTab={category} onChange={handleCategoryChange} />
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.categoryLabel')}</p>
+              <Tabs tabs={CATEGORIES.map(c => ({ id: c.key, label: t(`resource.categories.${c.key}`), disabled: (source === 'ftb' && c.key !== 'modpack') || (source !== 'curseforge' && c.key === 'save') }))} activeTab={category} onChange={handleCategoryChange} />
             </div>
           </div>
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_110px]">
             <div className="relative">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
-              <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={`搜索${activeCategoryLabel}...`} className="h-10 rounded-xl border-border/60 bg-background pl-9" />
+              <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={t('resource.searchPlaceholder', { category: activeCategoryLabel })} className="h-10 rounded-xl border-border/60 bg-background pl-9" />
             </div>
             <Select value={sort} onChange={setSort} className="h-10">
               {currentSortOptions.map((item) => (
-                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+                <SelectOption key={item.key} value={item.key}>{t(`resource.sort.${item.key}`)}</SelectOption>
               ))}
             </Select>
             <Button onClick={handleSearch} className="h-10 rounded-xl">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="h-3.5 w-3.5" />
-              搜索
+              {t('resource.search')}
             </Button>
           </div>
 
           <div className="flex flex-wrap items-start gap-4">
             <div className="space-y-1">
-              <p className="text-[11px] font-medium text-muted-foreground">游戏版本</p>
+              <p className="text-[11px] font-medium text-muted-foreground">{t('resource.gameVersionLabel')}</p>
               <div className="flex items-center gap-1">
-                <Combobox value={gameVersion} onChange={setGameVersion} options={GAME_VERSIONS.map((v) => ({ value: v, label: v }))} placeholder="全部版本" className="w-[150px]" />
+                <Combobox value={gameVersion} onChange={setGameVersion} options={GAME_VERSIONS.map((v) => ({ value: v, label: v }))} placeholder={t('resource.allVersions')} className="w-[150px]" />
                 {gameVersion && (
                   <button onClick={clearVersion} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
                     <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
@@ -410,9 +416,9 @@ export default function ResourceCenter() {
               </div>
             </div>
             <div className="space-y-1">
-              <p className="text-[11px] font-medium text-muted-foreground">加载器</p>
+              <p className="text-[11px] font-medium text-muted-foreground">{t('resource.loaderLabel')}</p>
               <div className="flex items-center gap-1">
-                <Select value={loader} onChange={(v) => setLoader(v.toLowerCase())} className="h-9 min-w-[120px]" placeholder="全部加载器">
+                <Select value={loader} onChange={(v) => setLoader(v.toLowerCase())} className="h-9 min-w-[120px]" placeholder={t('resource.allLoaders')}>
                   {LOADERS.map((l) => (
                     <SelectOption key={l.key} value={l.key}>{l.label}</SelectOption>
                   ))}
@@ -448,11 +454,11 @@ export default function ResourceCenter() {
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
             <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 text-destructive/60" />
           </div>
-          <p className="text-sm font-medium text-foreground/80">搜索失败</p>
+          <p className="text-sm font-medium text-foreground/80">{t('resource.searchFailed')}</p>
           <p className="mt-1 text-xs text-muted-foreground/60">{error}</p>
           <Button size="sm" variant="outline" onClick={() => doSearch(1, false)} className="mt-4">
             <FontAwesomeIcon icon={faRotate} className="mr-1.5 h-3 w-3" />
-            重试
+            {t('resource.retry')}
           </Button>
         </div>
       ) : items.length === 0 ? (
@@ -460,8 +466,8 @@ export default function ResourceCenter() {
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
             <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 opacity-40" />
           </div>
-          <p className="text-sm font-medium text-foreground/80">未找到相关资源</p>
-          <p className="mt-1 text-xs text-muted-foreground/60">尝试更换关键词、资源源或分类</p>
+          <p className="text-sm font-medium text-foreground/80">{t('resource.notFound')}</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">{t('resource.notFoundHint')}</p>
         </div>
       ) : (
         <>
@@ -475,11 +481,11 @@ export default function ResourceCenter() {
             items.length < total ? (
               <div className="mt-5 flex justify-center">
                 <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
-                  {loading ? <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />加载中...</> : <>加载更多（{items.length}/{total}）</>}
+                  {loading ? <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />{t('resource.loading')}</> : <>{t('resource.loadMore', { current: items.length, total })}</>}
                 </Button>
               </div>
             ) : (
-              <p className="mt-5 text-center text-xs text-muted-foreground/50">已显示全部 {total} 个结果</p>
+              <p className="mt-5 text-center text-xs text-muted-foreground/50">{t('resource.allShown', { count: total })}</p>
             )
           )}
         </>

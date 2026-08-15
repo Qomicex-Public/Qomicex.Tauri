@@ -45,6 +45,7 @@ import DataPackCard from '../components/DataPackCard.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { MinecraftText } from '../components/MinecraftText.tsx'
+import { useI18n } from '../i18n/index.tsx'
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -57,16 +58,16 @@ const LOADER_COLORS: Record<string, string> = {
 }
 
 const TABS = [
-  { id: 'overview', label: '概况', icon: faInfoCircle },
-  { id: 'settings', label: '设置', icon: faSliders },
-  { id: 'gamesettings', label: '游戏设置', icon: faGamepad },
-  { id: 'saves', label: '存档', icon: faSave },
-  { id: 'screenshots', label: '截图', icon: faCamera },
-  { id: 'mods', label: 'Mod', icon: faCube },
-  { id: 'resourcepacks', label: '资源包', icon: faBox },
-  { id: 'shaderpacks', label: '光影包', icon: faSun },
-  { id: 'datapacks', label: '数据包', icon: faDatabase },
-  { id: 'servers', label: '服务器', icon: faServer },
+  { id: 'overview', icon: faInfoCircle },
+  { id: 'settings', icon: faSliders },
+  { id: 'gamesettings', icon: faGamepad },
+  { id: 'saves', icon: faSave },
+  { id: 'screenshots', icon: faCamera },
+  { id: 'mods', icon: faCube },
+  { id: 'resourcepacks', icon: faBox },
+  { id: 'shaderpacks', icon: faSun },
+  { id: 'datapacks', icon: faDatabase },
+  { id: 'servers', icon: faServer },
 ] as const
 
 function isQuickPlaySupported(gameVersion: string | undefined | null): boolean {
@@ -78,22 +79,22 @@ function isQuickPlaySupported(gameVersion: string | undefined | null): boolean {
 
 type TabId = typeof TABS[number]['id']
 
-function formatPlayTime(minutes: number): string {
-  if (minutes < 60) return `${minutes} 分钟`
+function formatPlayTime(minutes: number, t: (k: string, p?: Record<string, string | number>) => string): string {
+  if (minutes < 60) return t('instanceDetail.time.minutes', { count: minutes })
   const hours = Math.floor(minutes / 60)
   const mins = minutes % 60
-  return mins > 0 ? `${hours} 小时 ${mins} 分钟` : `${hours} 小时`
+  return mins > 0 ? t('instanceDetail.time.hoursMinutes', { hours, minutes: mins }) : t('instanceDetail.time.hours', { count: hours })
 }
 
-function formatDate(iso: string | null): string {
-  if (!iso) return '从未'
+function formatDate(iso: string | null, t: (k: string, p?: Record<string, string | number>) => string, lang: string): string {
+  if (!iso) return t('instanceDetail.time.never')
   const d = new Date(iso)
   const now = new Date()
   const diff = now.getTime() - d.getTime()
-  if (diff < 60000) return '刚刚'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`
-  return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
+  if (diff < 60000) return t('instanceDetail.time.justNow')
+  if (diff < 3600000) return t('instanceDetail.time.minutesAgo', { count: Math.floor(diff / 60000) })
+  if (diff < 86400000) return t('instanceDetail.time.hoursAgo', { count: Math.floor(diff / 3600000) })
+  return d.toLocaleDateString(lang === 'zh-CN' ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
 }
 
 function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
@@ -104,19 +105,21 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   onCancel: () => void
   loading?: boolean
 }) {
+  const { t } = useI18n()
   return (
     <Dialog open={open} onClose={onCancel}>
       <DialogHeader onClose={onCancel}><DialogTitle>{title}</DialogTitle></DialogHeader>
       <DialogBody><p className="text-sm text-muted-foreground">{message}</p></DialogBody>
       <DialogFooter>
-        <Button variant="outline" size="sm" onClick={onCancel}>取消</Button>
-        <Button size="sm" variant="destructive" onClick={onConfirm} disabled={loading}>{loading ? '删除中...' : '删除'}</Button>
+        <Button variant="outline" size="sm" onClick={onCancel}>{t('instanceDetail.confirm.cancel')}</Button>
+        <Button size="sm" variant="destructive" onClick={onConfirm} disabled={loading}>{loading ? t('instanceDetail.confirm.deleting') : t('instanceDetail.confirm.delete')}</Button>
       </DialogFooter>
     </Dialog>
   )
 }
 
 function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQuickJoinWorld, gameVersion }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void; onQuickJoinWorld: (name: string) => void; gameVersion: string | undefined }) {
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [saves, setSaves] = useState<SaveMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -178,28 +181,28 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faSave} className="mr-2 h-4 w-4 text-muted-foreground" />存档
+            <FontAwesomeIcon icon={faSave} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.saves')}
             {saves.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({saves.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索存档..." className="h-8 pl-8 text-xs" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.saves.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
           <div className="flex items-center gap-1.5">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
           </div>
         </div>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...
+            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? '无匹配存档' : '暂无存档'}
+            {search ? t('instanceDetail.saves.noMatch') : t('instanceDetail.saves.empty')}
           </div>
         ) : (
           <div className="flex flex-col gap-2">
@@ -216,20 +219,20 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-          删除 {selected.size}
+          {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
-          <DialogTitle>批量删除存档</DialogTitle>
+          <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.saves.type') })}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个存档吗？将被移至回收站。</p>
+          <p className="text-sm text-muted-foreground">{t('instanceDetail.batchDeleteConfirm', { count: selected.size, type: t('instanceDetail.saves.type') })}</p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>{t('instanceDetail.confirm.cancel')}</Button>
           <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
-            {batchDeleting ? '删除中...' : '删除'}
+            {batchDeleting ? t('instanceDetail.confirm.deleting') : t('instanceDetail.confirm.delete')}
           </Button>
         </DialogFooter>
       </Dialog>
@@ -238,6 +241,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
 }
 
 function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [screenshots, setScreenshots] = useState<ScreenshotMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -299,18 +303,18 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faCamera} className="mr-2 h-4 w-4 text-muted-foreground" />截图
+            <FontAwesomeIcon icon={faCamera} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.screenshots')}
             {screenshots.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({screenshots.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索截图..." className="h-8 pl-8 text-xs" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.screenshots.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
           <div className="flex items-center gap-1.5">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
           </div>
         </div>
@@ -328,7 +332,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? '无匹配截图' : '暂无截图'}
+            {search ? t('instanceDetail.screenshots.noMatch') : t('instanceDetail.screenshots.empty')}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -345,20 +349,20 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-          删除 {selected.size}
+          {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
-          <DialogTitle>批量删除截图</DialogTitle>
+          <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.screenshots.type') })}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个截图吗？将被移至回收站。</p>
+          <p className="text-sm text-muted-foreground">{t('instanceDetail.batchDeleteConfirm', { count: selected.size, type: t('instanceDetail.screenshots.type') })}</p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>{t('instanceDetail.confirm.cancel')}</Button>
           <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
-            {batchDeleting ? '删除中...' : '删除'}
+            {batchDeleting ? t('instanceDetail.confirm.deleting') : t('instanceDetail.confirm.delete')}
           </Button>
         </DialogFooter>
       </Dialog>
@@ -376,6 +380,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 }) {
   const navigate = useNavigate()
   const { notify } = useMessageBox()
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [mods, setMods] = useState<ModMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -392,19 +397,19 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [sortBy, setSortBy] = useState('name-asc')
 
   const FILTER_OPTIONS = [
-    { key: 'all', label: '全部', icon: faList },
-    { key: 'active', label: '启用', icon: faCheck },
-    { key: 'disabled', label: '禁用', icon: faBan },
-    { key: 'updatable', label: '可更新', icon: faArrowUp },
-    { key: 'duplicate', label: '重复', icon: faClone },
+    { key: 'all', label: t('instanceDetail.mods.filterAll'), icon: faList },
+    { key: 'active', label: t('instanceDetail.mods.enable'), icon: faCheck },
+    { key: 'disabled', label: t('instanceDetail.mods.disable'), icon: faBan },
+    { key: 'updatable', label: t('instanceDetail.mods.updatable'), icon: faArrowUp },
+    { key: 'duplicate', label: t('instanceDetail.mods.duplicate'), icon: faClone },
   ]
   const SORT_OPTIONS = [
-    { key: 'name-asc', label: '名称 A-Z' },
-    { key: 'name-desc', label: '名称 Z-A' },
-    { key: 'time-desc', label: '最新优先' },
-    { key: 'time-asc', label: '最早优先' },
-    { key: 'size-desc', label: '最大优先' },
-    { key: 'size-asc', label: '最小优先' },
+    { key: 'name-asc', label: t('instanceDetail.mods.sortNameAsc') },
+    { key: 'name-desc', label: t('instanceDetail.mods.sortNameDesc') },
+    { key: 'time-desc', label: t('instanceDetail.mods.sortTimeDesc') },
+    { key: 'time-asc', label: t('instanceDetail.mods.sortTimeAsc') },
+    { key: 'size-desc', label: t('instanceDetail.mods.sortSizeDesc') },
+    { key: 'size-asc', label: t('instanceDetail.mods.sortSizeAsc') },
   ]
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -506,13 +511,13 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         const cache = await getModUpdatesCache(instanceId)
         setUpdates(cache.updates)
         if (!cache.stale) return
-        notify('正在检查模组更新…', 'info')
+        notify(t('instanceDetail.mods.checkingUpdates'), 'info')
         const updates = await checkModUpdates(instanceId)
         setUpdates(updates)
-        if (updates.length) notify(`发现 ${updates.length} 个模组可更新`, 'success')
+        if (updates.length) notify(t('instanceDetail.mods.foundUpdates', { count: updates.length }), 'success')
       } catch { /* 检查失败静默 */ }
     })()
-  }, [loading, mods.length, instanceId, refreshKey, notify])
+  }, [loading, mods.length, instanceId, refreshKey, notify, t])
 
   const filtered = useMemo(() => {
     let result = [...mods]
@@ -590,7 +595,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       const result = await updateModsViaDownloadCenter(
         instanceId,
         toUpdate,
-        (n) => notify(`已加入下载列表 ${n} 个任务`, 'success')
+        (n) => notify(t('instanceDetail.mods.addedToDownload', { count: n }), 'success')
       )
       await loadMods()
       setSelected(new Set())
@@ -599,12 +604,12 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         ? `：${result.failedFileNames.join('、')}`
         : ''
       notify(
-        result.failed === 0 ? `已更新 ${result.success} 个模组` : `完成 ${result.success} 个，失败 ${result.failed} 个${failNames}`,
+        result.failed === 0 ? t('instanceDetail.mods.updatedCount', { count: result.success }) : t('instanceDetail.mods.updateResult', { success: result.success, failed: result.failed, failures: failNames }),
         result.failed === 0 ? 'success' : 'error'
       )
-    } catch { notify('更新模组失败', 'error') }
+    } catch { notify(t('instanceDetail.mods.updateFailed'), 'error') }
     setUpdatingMods(false)
-  }, [updates, selected, instanceId, notify, loadMods])
+  }, [updates, selected, instanceId, notify, t, loadMods])
 
   const updateTargets = updates.filter(u => selected.has(u.fileName))
 
@@ -631,8 +636,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               <FontAwesomeIcon icon={faCube} className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="text-sm font-medium">Mod 管理</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">该实例不可使用 Mod，需要使用 Forge、Fabric 等加载器</p>
+              <h3 className="text-sm font-medium">{t('instanceDetail.mods.management')}</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">{t('instanceDetail.mods.noModsHint')}</p>
             </div>
           </div>
         </CardContent>
@@ -652,15 +657,15 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
                 <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索 Mod..." className="h-8 pl-8 text-xs" />
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.mods.search')} className="h-8 pl-8 text-xs" />
               </div>
             </div>
             <div className="flex items-center gap-1.5">
               <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+                <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
               </Button>
               <Button size="sm" variant="outline" onClick={() => setUpdateDialogOpen(true)} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />检查更新
+                <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.mods.checkUpdates')}
               </Button>
               <Button size="sm" onClick={() => {
                 const p = new URLSearchParams({ category: 'mod', source: 'modrinth' })
@@ -669,7 +674,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                 if (instanceId) p.set('instanceId', instanceId)
                 navigate(`/resource-center?${p.toString()}`)
               }} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装 Mod
+                <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.mods.install')}
               </Button>
             </div>
           </div>
@@ -691,7 +696,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
           {enriching && (
             <div className="mb-3 flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
               <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin text-primary" />
-              正在获取远程信息（Modrinth/CurseForge 匹配 id、图标、中文名）...
+              {t('instanceDetail.mods.fetchingRemoteInfo')}
             </div>
           )}
 
@@ -702,7 +707,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <div className="flex items-center gap-2">
                       <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-                      正在读取 Mod 信息
+                      {t('instanceDetail.mods.readingMods')}
                     </div>
                     <span className="tabular-nums">{Math.round(loadProgress.current / loadProgress.total * 100)}%</span>
                   </div>
@@ -729,11 +734,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             </div>
           ) : loadError ? (
             <div className="py-8 text-center text-sm text-destructive">
-              加载 Mod 列表失败：{loadError}
+              {t('instanceDetail.mods.loadFailed', { error: loadError })}
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
-              {search ? '无匹配 Mod' : '暂无 Mod'}
+              {search ? t('instanceDetail.mods.noMatch') : t('instanceDetail.mods.empty')}
             </div>
           ) : (
             <DragSelectArea onSelect={handleDragSelect}>
@@ -766,35 +771,33 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(m => m.fileName)))}
       >
-        <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'enable' })}>启用</Button>
-        <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'disable' })}>禁用</Button>
+        <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'enable' })}>{t('instanceDetail.mods.enable')}</Button>
+        <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'disable' })}>{t('instanceDetail.mods.disable')}</Button>
         <Button variant="ghost" size="sm" onClick={handleUpdateSelected} disabled={updatingMods || updateTargets.length === 0} className="gap-1.5">
           {updatingMods ? <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin" /> : <FontAwesomeIcon icon={faArrowUp} className="h-3.5 w-3.5" />}
-          更新模组
+          {t('instanceDetail.mods.updateMods')}
         </Button>
         <Button variant="destructive" size="sm" onClick={() => setBatchConfirm({ type: 'delete' })}>
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-          删除 {selected.size}
+          {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </BatchToolbar>
       <Dialog open={batchConfirm !== null} onClose={() => setBatchConfirm(null)}>
         <DialogHeader onClose={() => setBatchConfirm(null)}>
           <DialogTitle>
-            {batchConfirm?.type === 'enable' ? '批量启用' : batchConfirm?.type === 'disable' ? '批量禁用' : '批量删除'}
+            {batchConfirm?.type === 'enable' ? t('instanceDetail.mods.batchEnable') : batchConfirm?.type === 'disable' ? t('instanceDetail.mods.batchDisable') : t('instanceDetail.mods.batchDelete')}
           </DialogTitle>
         </DialogHeader>
         <DialogBody>
           <p className="text-sm text-muted-foreground">
-            确定要
-            {batchConfirm?.type === 'enable' ? '启用' : batchConfirm?.type === 'disable' ? '禁用' : '删除'}
-            {selected.size} 个 Mod 吗？
-            {batchConfirm?.type === 'delete' ? '将被移至回收站。' : ''}
+            {t('instanceDetail.mods.batchConfirm', { action: batchConfirm?.type === 'enable' ? t('instanceDetail.mods.enable') : batchConfirm?.type === 'disable' ? t('instanceDetail.mods.disable') : t('instanceDetail.confirm.delete'), count: selected.size })}
+            {batchConfirm?.type === 'delete' ? t('instanceDetail.mods.moveToRecycleBin') : ''}
           </p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setBatchConfirm(null)}>取消</Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchConfirm(null)}>{t('instanceDetail.confirm.cancel')}</Button>
           <Button size="sm" variant={batchConfirm?.type === 'delete' ? 'destructive' : 'default'} onClick={handleBatchAction} disabled={batchProcessing}>
-            {batchProcessing ? '处理中...' : '确定'}
+            {batchProcessing ? t('instanceDetail.mods.processing') : t('instanceDetail.confirm.confirm')}
           </Button>
         </DialogFooter>
       </Dialog>
@@ -821,6 +824,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 
 function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<ResourcePackMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -841,7 +845,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
     try { const data = await getResourcePacksMetadata(instanceId); setPacks(data); cacheSet(cacheKey, data) }
     catch (e) {
       setPacks([])
-      notify(`加载资源包失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+      notify(t('instanceDetail.resourcepacks.loadFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
     }
     setLoading(false)
   }, [instanceId, notify])
@@ -905,18 +909,18 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faBox} className="mr-2 h-4 w-4 text-muted-foreground" />资源包
+            <FontAwesomeIcon icon={faBox} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.resourcepacks')}
             {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索资源包..." className="h-8 pl-8 text-xs" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.resourcepacks.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
           <div className="flex items-center gap-1.5">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => {
               const p = new URLSearchParams({ category: 'resourcepack', source: 'modrinth' })
@@ -925,7 +929,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
               if (instanceId) p.set('instanceId', instanceId)
               navigate(`/resource-center?${p.toString()}`)
             }} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装资源包
+              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.resourcepacks.install')}
             </Button>
           </div>
         </div>
@@ -944,7 +948,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? '无匹配资源包' : '暂无资源包'}
+            {search ? t('instanceDetail.resourcepacks.noMatch') : t('instanceDetail.resourcepacks.empty')}
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
@@ -965,20 +969,20 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-          删除 {selected.size}
+          {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
-          <DialogTitle>批量删除资源包</DialogTitle>
+          <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.resourcepacks.type') })}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个资源包吗？将被移至回收站。</p>
+          <p className="text-sm text-muted-foreground">{t('instanceDetail.batchDeleteConfirm', { count: selected.size, type: t('instanceDetail.resourcepacks.type') })}</p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>{t('instanceDetail.confirm.cancel')}</Button>
           <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
-            {batchDeleting ? '删除中...' : '删除'}
+            {batchDeleting ? t('instanceDetail.confirm.deleting') : t('instanceDetail.confirm.delete')}
           </Button>
         </DialogFooter>
       </Dialog>
@@ -988,6 +992,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
 
 function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [shaders, setShaders] = useState<ShaderMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -1008,7 +1013,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
     try { const data = await getShadersMetadata(instanceId); setShaders(data); cacheSet(cacheKey, data) }
     catch (e) {
       setShaders([])
-      notify(`加载光影包失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+      notify(t('instanceDetail.shaderpacks.loadFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
     }
     setLoading(false)
   }, [instanceId, notify])
@@ -1072,18 +1077,18 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faSun} className="mr-2 h-4 w-4 text-muted-foreground" />光影包
+            <FontAwesomeIcon icon={faSun} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.shaderpacks')}
             {shaders.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({shaders.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索光影包..." className="h-8 pl-8 text-xs" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.shaderpacks.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
           <div className="flex items-center gap-1.5">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => {
               const p = new URLSearchParams({ category: 'shader', source: 'modrinth' })
@@ -1092,7 +1097,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
               if (instanceId) p.set('instanceId', instanceId)
               navigate(`/resource-center?${p.toString()}`)
             }} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装光影包
+              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.shaderpacks.install')}
             </Button>
           </div>
         </div>
@@ -1111,7 +1116,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? '无匹配光影包' : '暂无光影包'}
+            {search ? t('instanceDetail.shaderpacks.noMatch') : t('instanceDetail.shaderpacks.empty')}
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
@@ -1132,20 +1137,20 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-          删除 {selected.size}
+          {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
-          <DialogTitle>批量删除光影包</DialogTitle>
+          <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.shaderpacks.type') })}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个光影包吗？将被移至回收站。</p>
+          <p className="text-sm text-muted-foreground">{t('instanceDetail.batchDeleteConfirm', { count: selected.size, type: t('instanceDetail.shaderpacks.type') })}</p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>{t('instanceDetail.confirm.cancel')}</Button>
           <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
-            {batchDeleting ? '删除中...' : '删除'}
+            {batchDeleting ? t('instanceDetail.confirm.deleting') : t('instanceDetail.confirm.delete')}
           </Button>
         </DialogFooter>
       </Dialog>
@@ -1155,6 +1160,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
 
 function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<DataPackMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -1235,18 +1241,18 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
       <CardContent className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faDatabase} className="mr-2 h-4 w-4 text-muted-foreground" />数据包
+            <FontAwesomeIcon icon={faDatabase} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.datapacks')}
             {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索数据包..." className="h-8 pl-8 text-xs" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.datapacks.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
           <div className="flex items-center gap-1.5">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开文件夹
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => {
               const p = new URLSearchParams({ category: 'datapack', source: 'modrinth' })
@@ -1255,7 +1261,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
               if (instanceId) p.set('instanceId', instanceId)
               navigate(`/resource-center?${p.toString()}`)
             }} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />安装数据包
+              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.datapacks.install')}
             </Button>
           </div>
         </div>
@@ -1274,7 +1280,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? '无匹配数据包' : '暂无数据包'}
+            {search ? t('instanceDetail.datapacks.noMatch') : t('instanceDetail.datapacks.empty')}
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
@@ -1295,20 +1301,20 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-          删除 {selected.size}
+          {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </BatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
-          <DialogTitle>批量删除数据包</DialogTitle>
+          <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.datapacks.type') })}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <p className="text-sm text-muted-foreground">确定要删除选中的 {selected.size} 个数据包吗？将被移至回收站。</p>
+          <p className="text-sm text-muted-foreground">{t('instanceDetail.batchDeleteConfirm', { count: selected.size, type: t('instanceDetail.datapacks.type') })}</p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>{t('instanceDetail.confirm.cancel')}</Button>
           <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
-            {batchDeleting ? '删除中...' : '删除'}
+            {batchDeleting ? t('instanceDetail.confirm.deleting') : t('instanceDetail.confirm.delete')}
           </Button>
         </DialogFooter>
       </Dialog>
@@ -1317,6 +1323,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
 }
 
 function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoinServer }: { instanceId: string; refreshKey: number; onRefresh: () => void; onQuickJoinServer: (ip: string) => void }) {
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [servers, setServers] = useState<ServerEntry[]>([])
   const [lanGames, setLanGames] = useState<LanGameEntry[]>([])
@@ -1347,9 +1354,9 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
     catch (e) {
       setServers([])
       setLoading(false)
-      notify(`加载服务器列表失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+      notify(t('instanceDetail.servers.loadFailed') + ': ' + (e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError')), 'error')
     }
-  }, [instanceId, notify])
+  }, [instanceId, notify, t])
 
   useEffect(() => { load() }, [load, refreshKey])
 
@@ -1374,25 +1381,25 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
     setConfirmIp(null)
     try {
       await deleteServer(instanceId, ip)
-      notify('已删除服务器', 'success')
+      notify(t('instanceDetail.servers.deleted'), 'success')
       load()
     } catch (e) {
-      notify(`删除失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+      notify(t('instanceDetail.servers.deleteFailed') + ': ' + (e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError')), 'error')
     }
-  }, [instanceId, load, notify])
+  }, [instanceId, load, notify, t])
 
   const handleAdd = useCallback(async () => {
     if (!addName || !addIp) return
     setAdding(true)
     try {
       await addServer(instanceId, addName, addIp)
-      notify(editServer ? `已更新「${addName}」` : `已添加「${addName}」`, 'success')
+      notify(editServer ? t('instanceDetail.servers.updated', { name: addName }) : t('instanceDetail.servers.added', { name: addName }), 'success')
       load(); setShowAdd(false); setAddName(''); setAddIp(''); setEditServer(null)
     } catch (e) {
-      notify(`操作失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+      notify(t('instanceDetail.servers.opFailed') + ': ' + (e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError')), 'error')
     }
     setAdding(false)
-  }, [instanceId, addName, addIp, load, notify, editServer])
+  }, [instanceId, addName, addIp, load, notify, t, editServer])
 
   const handleEdit = useCallback((s: ServerEntry) => {
     setEditServer(s)
@@ -1404,21 +1411,21 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
   const handleCopyIp = useCallback(async (ip: string) => {
     try {
       await navigator.clipboard.writeText(ip)
-      notify('已复制 IP 地址', 'success')
+      notify(t('instanceDetail.servers.copiedIp'), 'success')
     } catch {
-      notify('复制失败', 'error')
+      notify(t('instanceDetail.servers.copyFailed'), 'error')
     }
-  }, [notify])
+  }, [notify, t])
 
   const handlePing = useCallback(async (address: string) => {
     try {
       const state = await pingServer(instanceId, address)
       setPingStates(p => ({ ...p, [address]: state }))
-      notify(state.isOnline ? `测速完成: ${state.ping}ms` : `${address} 离线`, state.isOnline ? 'success' : 'warning')
+      notify(state.isOnline ? t('instanceDetail.servers.pingDone', { ping: state.ping }) : t('instanceDetail.servers.addressOffline', { address }), state.isOnline ? 'success' : 'warning')
     } catch (e) {
-      notify('测速失败', 'error')
+      notify(t('instanceDetail.servers.pingFailed'), 'error')
     }
-  }, [instanceId, notify])
+  }, [instanceId, notify, t])
 
   return (
     <>
@@ -1426,17 +1433,17 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
         <CardContent className="p-5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h3 className="text-sm font-medium shrink-0">
-              <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />服务器
+              <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.servers')}
               {servers.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({servers.length})</span>}
             </h3>
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
                 <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索服务器..." className="h-8 pl-8 text-xs" />
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.servers.search')} className="h-8 pl-8 text-xs" />
               </div>
             </div>
             <div className="flex items-center gap-1.5">
-              <Tooltip content="全部测速">
+              <Tooltip content={t('instanceDetail.servers.pingAll')}>
                 <Button size="sm" variant="ghost" onClick={() => {
                   servers.forEach(s => handlePing(s.ip))
                 }} className="h-7 w-7 px-0">
@@ -1444,7 +1451,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                 </Button>
               </Tooltip>
               <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />添加服务器
+                <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />{t('instanceDetail.servers.addServer')}
               </Button>
             </div>
           </div>
@@ -1467,18 +1474,18 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
-              {search ? '无匹配服务器' : '暂无服务器'}
+              {search ? t('instanceDetail.servers.noMatch') : t('instanceDetail.servers.empty')}
             </div>
           ) : (
             <div className="space-y-2">
               {filtered.map((s, i) => {
                 const ps = pingStates[s.ip]
                 const contextItems: ContextMenuItem[] = [
-                  { label: '编辑', onClick: () => handleEdit(s) },
-                  { label: '测速', onClick: () => handlePing(s.ip) },
-                  { label: '复制 IP', onClick: () => handleCopyIp(s.ip) },
-                  { label: '快速加入', onClick: () => onQuickJoinServer(s.ip) },
-                  { label: '删除', onClick: () => setConfirmIp(s.ip), danger: true },
+                  { label: t('instanceDetail.servers.edit'), onClick: () => handleEdit(s) },
+                  { label: t('instanceDetail.servers.ping'), onClick: () => handlePing(s.ip) },
+                  { label: t('instanceDetail.servers.copyIp'), onClick: () => handleCopyIp(s.ip) },
+                  { label: t('instanceDetail.servers.quickJoin'), onClick: () => onQuickJoinServer(s.ip) },
+                  { label: t('instanceDetail.servers.delete'), onClick: () => setConfirmIp(s.ip), danger: true },
                 ]
                 return (
                   <ContextMenu key={i} items={contextItems}>
@@ -1497,12 +1504,12 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                             {ps ? (
                               <span className={`inline-flex items-center gap-1 text-xs font-medium ${ps.isOnline ? 'text-green-500' : 'text-red-500'}`}>
                                 <span className={`inline-block w-2 h-2 rounded-full ${ps.isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
-                                {ps.isOnline ? `${ps.ping}ms` : '离线'}
+                                {ps.isOnline ? `${ps.ping}ms` : t('instanceDetail.servers.offline')}
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
                                 <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/40 animate-pulse" />
-                                测速中...
+                                {t('instanceDetail.servers.pinging')}
                               </span>
                             )}
                           </div>
@@ -1522,22 +1529,22 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                           )}
                         </div>
                         <div className="flex items-center gap-0.5 shrink-0">
-                          <Tooltip content="编辑">
+                          <Tooltip content={t('instanceDetail.servers.edit')}>
                             <button onClick={() => handleEdit(s)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
                               <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
-                          <Tooltip content="复制 IP">
+                          <Tooltip content={t('instanceDetail.servers.copyIp')}>
                             <button onClick={() => handleCopyIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
                               <FontAwesomeIcon icon={faClipboard} className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
-                          <Tooltip content="快速加入">
+                          <Tooltip content={t('instanceDetail.servers.quickJoin')}>
                             <button onClick={() => onQuickJoinServer(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
                               <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
-                          <Tooltip content="删除">
+                          <Tooltip content={t('instanceDetail.servers.delete')}>
                             <button onClick={() => setConfirmIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
                               <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
                             </button>
@@ -1555,7 +1562,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
               <Separator className="my-3" />
               <div className="mb-2 flex items-center gap-2">
                 <FontAwesomeIcon icon={faWifi} className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground">局域网游戏 ({lanGames.length})</span>
+                <span className="text-xs font-medium text-muted-foreground">{t('instanceDetail.servers.lanGames', { count: lanGames.length })}</span>
               </div>
               <div className="space-y-2">
                 {lanGames.map((g, i) => (
@@ -1565,7 +1572,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                         <FontAwesomeIcon icon={faWifi} className="h-5 w-5" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <h3 className="font-semibold text-sm">{g.worldName || '局域网游戏'}</h3>
+                        <h3 className="font-semibold text-sm">{g.worldName || t('instanceDetail.servers.lanGame')}</h3>
                         <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                           <span>{g.ip}:{g.port}</span>
                           {g.gameVersion !== 'Unknown' && <><span className="text-border">·</span><span>{g.gameVersion}</span></>}
@@ -1577,7 +1584,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                         )}
                       </div>
                       <Button size="sm" onClick={() => onQuickJoinServer(`${g.ip}:${g.port}`)} className="shrink-0 gap-1.5 h-7 text-xs">
-                        <FontAwesomeIcon icon={faPlay} className="h-3 w-3" />加入
+                        <FontAwesomeIcon icon={faPlay} className="h-3 w-3" />{t('instanceDetail.servers.join')}
                       </Button>
                     </CardContent>
                   </Card>
@@ -1587,22 +1594,22 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
           )}
         </CardContent>
       </Card>
-      <ConfirmDialog open={confirmIp !== null} title="删除服务器" message={`确定要删除服务器「${confirmIp}」吗？`} onConfirm={() => confirmIp && handleDelete(confirmIp)} onCancel={() => setConfirmIp(null)} />
+      <ConfirmDialog open={confirmIp !== null} title="删除服务器" message={t('instanceDetail.servers.deleteConfirm', { ip: confirmIp ?? '' })} onConfirm={() => confirmIp && handleDelete(confirmIp)} onCancel={() => setConfirmIp(null)} />
       <Dialog open={showAdd} onClose={() => { setShowAdd(false); setEditServer(null) }}>
-        <DialogHeader onClose={() => { setShowAdd(false); setEditServer(null) }}><DialogTitle>{editServer ? '编辑服务器' : '添加服务器'}</DialogTitle></DialogHeader>
+        <DialogHeader onClose={() => { setShowAdd(false); setEditServer(null) }}><DialogTitle>{editServer ? t('instanceDetail.servers.editTitle') : t('instanceDetail.servers.addTitle')}</DialogTitle></DialogHeader>
         <DialogBody className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">服务器名称</Label>
+            <Label className="text-xs">{t('instanceDetail.servers.name')}</Label>
             <Input value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="My Server" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">服务器地址</Label>
+            <Label className="text-xs">{t('instanceDetail.servers.address')}</Label>
             <Input value={addIp} onChange={(e) => setAddIp(e.target.value)} placeholder="example.com:25565" />
           </div>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => { setShowAdd(false); setEditServer(null) }}>取消</Button>
-          <Button size="sm" onClick={handleAdd} disabled={adding || !addName || !addIp}>{adding ? (editServer ? '更新中...' : '添加中...') : (editServer ? '保存' : '添加')}</Button>
+          <Button variant="outline" size="sm" onClick={() => { setShowAdd(false); setEditServer(null) }}>{t('instanceDetail.confirm.cancel')}</Button>
+          <Button size="sm" onClick={handleAdd} disabled={adding || !addName || !addIp}>{adding ? (editServer ? t('instanceDetail.servers.updating') : t('instanceDetail.servers.adding')) : (editServer ? t('instanceDetail.servers.save') : t('instanceDetail.servers.add'))}</Button>
         </DialogFooter>
       </Dialog>
     </>
@@ -1710,6 +1717,7 @@ function mapJSCodeToMinecraft(code: string): string | null {
 }
 
 function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [settings, setSettings] = useState<GameSettingDto[]>([])
   const [loading, setLoading] = useState(true)
@@ -1792,13 +1800,13 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
       <CardContent className="p-5 overflow-hidden">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faGamepad} className="mr-2 h-4 w-4 text-muted-foreground" />游戏设置
+            <FontAwesomeIcon icon={faGamepad} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.gamesettings')}
             {!loading && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({settings.length})</span>}
           </h3>
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索设置项..." className="h-8 pl-8 text-xs" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.gamesettings.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
         </div>
@@ -1816,7 +1824,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? '无匹配设置项' : '暂无游戏设置'}
+            {search ? t('instanceDetail.gamesettings.noMatch') : t('instanceDetail.gamesettings.empty')}
           </div>
         ) : (
           <div className="space-y-1 overflow-hidden">
@@ -1850,7 +1858,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
                             : 'border-input bg-background hover:bg-accent hover:text-accent-foreground'
                         )}
                       >
-                        {listeningKey === s.name ? '按下按键...' : formatKeyDisplay(s.currentValue)}
+                        {listeningKey === s.name ? t('instanceDetail.gamesettings.pressKey') : formatKeyDisplay(s.currentValue)}
                       </button>
                     )}
                     {!keybind && s.valueKind === 'Enum' && enumOpts.length > 0 && (
@@ -1903,6 +1911,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
 export default function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { t, lang } = useI18n()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
   const { state: _debugState } = useDebug()
   const [tab, setTab] = useState<TabId>('overview')
@@ -2043,9 +2052,9 @@ export default function InstanceDetailPage() {
         setShowMicrosoftReauth(true)
         return
       }
-      showLaunchError('启动失败', e instanceof Error ? e.message : String(e))
+      showLaunchError(t('instanceDetail.launch.launchFailed'), e instanceof Error ? e.message : String(e))
     }
-  }, [id, instance?.name, needsAccount, resolveAccountCheck, ctxLaunchInstance, selectedAccountUuid])
+  }, [id, instance?.name, needsAccount, resolveAccountCheck, ctxLaunchInstance, selectedAccountUuid, t])
 
   const handleQuickLaunch = useCallback(async (options: { joinServer?: string; joinWorld?: string }) => {
     if (!id) return
@@ -2055,7 +2064,7 @@ export default function InstanceDetailPage() {
     }
     const running = runningInstances.some(r => r.instanceId === id)
     if (running) {
-      const ok = await confirm('当前实例正在运行中，是否启动新实例？', '实例运行中')
+      const ok = await confirm(t('instanceDetail.launch.instanceRunningConfirm'), t('instanceDetail.launch.instanceRunningTitle'))
       if (!ok) return
     }
     try {
@@ -2067,9 +2076,9 @@ export default function InstanceDetailPage() {
         setShowMicrosoftReauth(true)
         return
       }
-      showLaunchError('启动失败', e instanceof Error ? e.message : String(e))
+      showLaunchError(t('instanceDetail.launch.launchFailed'), e instanceof Error ? e.message : String(e))
     }
-  }, [id, instance?.name, instance?.javaPath, instance?.gameVersion, instance?.gameDir, needsAccount, resolveAccountCheck, ctxLaunchInstance, runningInstances, confirm, showLaunchError])
+  }, [id, instance?.name, instance?.javaPath, instance?.gameVersion, instance?.gameDir, needsAccount, resolveAccountCheck, ctxLaunchInstance, runningInstances, confirm, showLaunchError, t])
 
   const handleVerifyResources = useCallback(async () => {
     if (!id) return
@@ -2158,7 +2167,7 @@ export default function InstanceDetailPage() {
     return (
       <div className="flex h-full items-center justify-center p-8">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载实例...
+          <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('instanceDetail.launch.loadingInstance')}
         </div>
       </div>
     )
@@ -2168,9 +2177,9 @@ export default function InstanceDetailPage() {
     return (
       <div className="p-8">
         <Button variant="ghost" onClick={() => navigate('/instances')} className="gap-2">
-          <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />返回实例列表
+          <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />{t('instanceDetail.launch.backToList')}
         </Button>
-        <p className="mt-4 text-sm text-muted-foreground text-center">实例不存在</p>
+        <p className="mt-4 text-sm text-muted-foreground text-center">{t('instanceDetail.launch.instanceNotFound')}</p>
       </div>
     )
   }
@@ -2190,15 +2199,15 @@ export default function InstanceDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Tooltip content="刷新">
+          <Tooltip content={t('instanceDetail.overview.refresh')}>
             <Button variant="outline" size="icon" onClick={refreshDetail}>
               <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', loading && 'animate-spin')} />
             </Button>
           </Tooltip>
           <Button onClick={handleLaunch} className="gap-2">
-            <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />启动
+            <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />{t('instanceDetail.overview.launch')}
           </Button>
-          <Tooltip content={isDefault ? '取消固定' : '固定到主页'}>
+          <Tooltip content={isDefault ? t('instanceDetail.overview.unpin') : t('instanceDetail.overview.pin')}>
             <Button variant="outline" size="icon" onClick={toggleDefault}>
               <FontAwesomeIcon icon={faStar} className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />
             </Button>
@@ -2212,7 +2221,7 @@ export default function InstanceDetailPage() {
       <div className="flex-1 min-h-0 flex gap-4">
         <div className="flex w-44 shrink-0 flex-col">
           <Tabs
-            tabs={TABS.map(t => ({ id: t.id, label: t.label, icon: <FontAwesomeIcon icon={t.icon} className="h-4 w-4" /> }))}
+            tabs={TABS.map(tab => ({ id: tab.id, label: t(`instanceDetail.tabs.${tab.id}`), icon: <FontAwesomeIcon icon={tab.icon} className="h-4 w-4" /> }))}
             activeTab={tab}
             onChange={(id) => setTab(id as typeof tab)}
             orientation="vertical"
@@ -2226,24 +2235,24 @@ export default function InstanceDetailPage() {
                 <CardContent className="p-5 space-y-4">
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
-                      <p className="text-xs text-muted-foreground">游戏版本</p>
+                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.gameVersion')}</p>
                       <p className="font-medium">{instance.gameVersion}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">加载器</p>
+                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.loader')}</p>
                       {instance.loader ? (
                         <span className={cn('inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium mt-0.5', LOADER_COLORS[instance.loader.toLowerCase()] ?? 'bg-muted text-muted-foreground border-border')}>
                           {instance.loader} {instance.loaderVersion}
                         </span>
-                      ) : <p className="font-medium text-muted-foreground">纯净原版</p>}
+                      ) : <p className="font-medium text-muted-foreground">{t('instanceDetail.overview.pureVanilla')}</p>}
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">最后游玩</p>
-                      <p className="font-medium">{formatDate(instance.lastPlayed)}</p>
+                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.lastPlayed')}</p>
+                      <p className="font-medium">{formatDate(instance.lastPlayed, t, lang)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">累计游玩</p>
-                      <p className="font-medium">{formatPlayTime(instance.playTime)}</p>
+                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.totalPlayTime')}</p>
+                      <p className="font-medium">{formatPlayTime(instance.playTime, t)}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -2252,28 +2261,28 @@ export default function InstanceDetailPage() {
               {instance.modpackName && (
                 <Card>
                   <CardContent className="p-5 space-y-3">
-                    <h3 className="text-sm font-medium">整合包信息</h3>
+                    <h3 className="text-sm font-medium">{t('instanceDetail.overview.modpackInfo')}</h3>
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
-                        <p className="text-xs text-muted-foreground">整合包名称</p>
+                        <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.modpackName')}</p>
                         <p className="font-medium">{instance.modpackName}</p>
                       </div>
                       {instance.modpackVersion && (
                         <div>
-                          <p className="text-xs text-muted-foreground">版本</p>
+                          <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.version')}</p>
                           <p className="font-medium">{instance.modpackVersion}</p>
                         </div>
                       )}
                       {instance.modpackAuthor && (
                         <div>
-                          <p className="text-xs text-muted-foreground">作者</p>
+                          <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.author')}</p>
                           <p className="font-medium">{instance.modpackAuthor}</p>
                         </div>
                       )}
                     </div>
                     {instance.modpackSummary && (
                       <div className="pt-1">
-                        <p className="text-xs text-muted-foreground mb-1">简介</p>
+                        <p className="text-xs text-muted-foreground mb-1">{t('instanceDetail.overview.summary')}</p>
                         <div className="text-sm text-muted-foreground prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: instance.modpackSummary }} />
                       </div>
                     )}
@@ -2283,36 +2292,36 @@ export default function InstanceDetailPage() {
 
               <Card>
                 <CardContent className="p-5 space-y-3">
-                  <h3 className="text-sm font-medium">快速操作</h3>
+                  <h3 className="text-sm font-medium">{t('instanceDetail.overview.quickActions')}</h3>
                   <div className="flex flex-wrap gap-2 items-center">
                     <Select
                       value={selectedAccountUuid ?? ''}
                       onChange={(v) => setSelectedAccountUuid(v || null)}
-                      placeholder="默认账户"
+                      placeholder={t('instanceDetail.overview.defaultAccount')}
                       className="min-w-[120px]"
                     >
-                      <SelectOption value="">默认账户</SelectOption>
+                      <SelectOption value="">{t('instanceDetail.overview.defaultAccount')}</SelectOption>
                       {accounts.map((a) => (
                         <SelectOption key={a.uuid} value={a.uuid}>{a.name}</SelectOption>
                       ))}
                     </Select>
                     <Button size="sm" onClick={handleLaunch} className="gap-2">
-                      <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />启动游戏
+                      <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />{t('instanceDetail.overview.launchGame')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setTab('settings')} className="gap-2">
-                      <FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" />实例设置
+                      <FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" />{t('instanceDetail.overview.instanceSettings')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing} className="gap-2">
-                      <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', verifying && 'animate-spin')} />检查资源完整性
+                      <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', verifying && 'animate-spin')} />{t('instanceDetail.overview.verifyIntegrity')}
                     </Button>
                     {repairing && (
-                      <span className="self-center text-xs text-muted-foreground">正在补全 {repairProgress}%</span>
+                      <span className="self-center text-xs text-muted-foreground">{t('instanceDetail.overview.repairing', { progress: repairProgress })}</span>
                     )}
                     <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch(() => {})}>
-                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开游戏目录
+                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.overview.openGameDir')}
                     </Button>
                     <Button size="sm" variant="outline" className="gap-2 text-destructive hover:text-destructive" onClick={handleDelete}>
-                      <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />删除实例
+                      <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />{t('instanceDetail.overview.deleteInstance')}
                     </Button>
                   </div>
                 </CardContent>
@@ -2324,12 +2333,12 @@ export default function InstanceDetailPage() {
             <Card>
               <CardContent className="p-5 space-y-5">
                 <div className="space-y-2">
-                  <Label>实例名称</Label>
+                  <Label>{t('instanceDetail.settingsTab.instanceName')}</Label>
                   <Input value={form.name} onChange={(e) => update('name', e.target.value)} />
                 </div>
 
                 <div className="space-y-2">
-                  <Label>实例图标</Label>
+                  <Label>{t('instanceDetail.settingsTab.instanceIcon')}</Label>
                   <div className="grid grid-cols-8 gap-2">
                     {ICON_NAMES.map((name) => (
                       <button
@@ -2349,14 +2358,14 @@ export default function InstanceDetailPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>游戏版本</Label>
+                  <Label>{t('instanceDetail.settingsTab.gameVersion')}</Label>
                   <Input value={form.gameVersion} disabled className="text-muted-foreground" />
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Java 运行时</Label>
+                  <Label>{t('instanceDetail.settingsTab.javaRuntime')}</Label>
                   <Select value={form.javaPath ?? ''} onChange={(v) => update('javaPath', v || null)}>
-                    <SelectOption value="">自动选择</SelectOption>
+                    <SelectOption value="">{t('instanceDetail.settingsTab.autoSelect')}</SelectOption>
                     {runtimes.filter((j) => j.state === 'Valid').map((j, i) => (
                       <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                     ))}
@@ -2364,43 +2373,43 @@ export default function InstanceDetailPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>资源完整性</Label>
+                  <Label>{t('instanceDetail.settingsTab.integrity')}</Label>
                   <div className="flex items-center gap-2">
                     <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing}>
                       <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', verifying && 'animate-spin')} />
-                      检查资源完整性
+                      {t('instanceDetail.settingsTab.checkIntegrity')}
                     </Button>
                     {repairing && (
-                      <span className="text-sm text-muted-foreground">正在补全 {repairProgress}%</span>
+                      <span className="text-sm text-muted-foreground">{t('instanceDetail.settingsTab.repairing', { progress: repairProgress })}</span>
                     )}
                   </div>
                   {verifyResult && !verifyResult.complete && (
                     <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-                      <p className="text-sm font-medium text-destructive">缺失 {verifyResult.missingFiles.length} 个文件</p>
+                      <p className="text-sm font-medium text-destructive">{t('instanceDetail.settingsTab.missingFiles', { count: verifyResult.missingFiles.length })}</p>
                       <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
                         {verifyResult.missingFiles.map((f, i) => (
                           <li key={i} className="truncate" title={f.url}>{f.name} — {f.url}</li>
                         ))}
                       </ul>
-                      <p className="mt-2 text-xs text-muted-foreground">正在自动补全...</p>
+                      <p className="mt-2 text-xs text-muted-foreground">{t('instanceDetail.settingsTab.autoRepairing')}</p>
                     </div>
                   )}
                   {verifyResult && verifyResult.complete && (
-                    <p className="text-xs text-muted-foreground">资源完整</p>
+                    <p className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.integrityOk')}</p>
                   )}
                 </div>
 
                 <div className="space-y-2">
-                  <Label>版本隔离</Label>
+                  <Label>{t('instanceDetail.settingsTab.versionIsolation')}</Label>
                   <Select
                     value={form.versionIsolation == null ? 'global' : form.versionIsolation ? 'on' : 'off'}
                     onChange={(v) => update('versionIsolation', v === 'global' ? null : v === 'on')}
                   >
-                    <SelectOption value="global">跟随全局设置</SelectOption>
-                    <SelectOption value="on">开启</SelectOption>
-                    <SelectOption value="off">关闭</SelectOption>
+                    <SelectOption value="global">{t('instanceDetail.settingsTab.followGlobal')}</SelectOption>
+                    <SelectOption value="on">{t('instanceDetail.settingsTab.on')}</SelectOption>
+                    <SelectOption value="off">{t('instanceDetail.settingsTab.off')}</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">每个版本使用独立的 mods/config/saves 目录</p>
+                  <p className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.isolationDesc')}</p>
                 </div>
 
                 <label className="flex items-center gap-3 cursor-pointer">
@@ -2409,22 +2418,22 @@ export default function InstanceDetailPage() {
                     onCheckedChange={(c) => update('skipIntegrityCheck', c === true)}
                   />
                   <div>
-                    <div className="text-sm font-medium">跳过资源完整性检查</div>
-                    <div className="text-xs text-muted-foreground">启动时跳过文件完整性检查，可能因缺少文件导致游戏崩溃</div>
+                    <div className="text-sm font-medium">{t('instanceDetail.settingsTab.skipIntegrity')}</div>
+                    <div className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.skipIntegrityDesc')}</div>
                   </div>
                 </label>
 
                 <div className="space-y-2">
-                  <Label>内存分配</Label>
+                  <Label>{t('instanceDetail.settingsTab.memoryAllocation')}</Label>
                   <div className="flex items-center gap-2">
                     <button onClick={() => {
                       setMemoryMode('auto')
                       if (sysInfo) update('maxMemory', Math.max(512, Math.floor(sysInfo.availableMemory * 0.7)))
                     }} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                      <FontAwesomeIcon icon={faRobot} className="mr-1.5 h-3.5 w-3.5" />自动
+                      <FontAwesomeIcon icon={faRobot} className="mr-1.5 h-3.5 w-3.5" />{t('instanceDetail.settingsTab.auto')}
                     </button>
                     <button onClick={() => setMemoryMode('custom')} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                      <FontAwesomeIcon icon={faSliders} className="mr-1.5 h-3.5 w-3.5" />自定义
+                      <FontAwesomeIcon icon={faSliders} className="mr-1.5 h-3.5 w-3.5" />{t('instanceDetail.settingsTab.custom')}
                     </button>
                   </div>
 
@@ -2458,10 +2467,10 @@ export default function InstanceDetailPage() {
                           <div className="bg-primary transition-all" style={{ width: `${gamePct}%` }} />
                         </div>
                         <div className="flex justify-between text-[11px] text-muted-foreground">
-                          <span>总内存 {(totalMb / 1024).toFixed(1)} GiB</span>
-                          <span>已使用 {(usedMb / 1024).toFixed(1)} GiB</span>
-                          <span>游戏分配 {(gameMb / 1024).toFixed(1)} GiB</span>
-                          <span>剩余 {((availMb - gameMb) / 1024).toFixed(1)} GiB</span>
+                          <span>{t('instanceDetail.settingsTab.totalMem', { size: (totalMb / 1024).toFixed(1) })}</span>
+                          <span>{t('instanceDetail.settingsTab.usedMem', { size: (usedMb / 1024).toFixed(1) })}</span>
+                          <span>{t('instanceDetail.settingsTab.gameAlloc', { size: (gameMb / 1024).toFixed(1) })}</span>
+                          <span>{t('instanceDetail.settingsTab.remainingMem', { size: ((availMb - gameMb) / 1024).toFixed(1) })}</span>
                         </div>
                       </div>
                     )
@@ -2469,7 +2478,7 @@ export default function InstanceDetailPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>JVM 参数</Label>
+                  <Label>{t('instanceDetail.settingsTab.jvmArgs')}</Label>
                   <textarea
                     value={form.jvmArgs ?? ''}
                     onChange={(e) => update('jvmArgs', e.target.value)}
@@ -2480,14 +2489,14 @@ export default function InstanceDetailPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>关联账号</Label>
+                  <Label>{t('instanceDetail.settingsTab.linkedAccount')}</Label>
                   <Select value={form.accountUuid ?? ''} onChange={(v) => {
                     const acc = accounts.find((a) => a.uuid === v)
                     update('accountUuid', v || null)
                     update('accountName', acc?.name || null)
                     update('accessToken', acc?.accessToken || null)
                   }}>
-                    <SelectOption value="">未关联</SelectOption>
+                    <SelectOption value="">{t('instanceDetail.settingsTab.unlinked')}</SelectOption>
                     {accounts.map((a) => (
                       <SelectOption key={a.uuid} value={a.uuid}>{a.name}</SelectOption>
                     ))}
@@ -2496,7 +2505,7 @@ export default function InstanceDetailPage() {
 
                 {saving && (
                   <div className="flex justify-end pt-2">
-                    <span className="text-xs text-muted-foreground">保存中...</span>
+                    <span className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.saving')}</span>
                   </div>
                 )}
               </CardContent>
@@ -2532,7 +2541,7 @@ export default function InstanceDetailPage() {
           navigate('/accounts')
         }}
       />
-      <ConfirmDialog open={deleteConfirmOpen} title="删除实例" message={`确定要删除实例「${instance?.name ?? ''}」吗？其版本文件夹将被永久删除。`} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
+      <ConfirmDialog open={deleteConfirmOpen} title={t('instanceDetail.overview.deleteInstance')} message={t('instanceDetail.launch.deleteInstanceConfirm', { name: instance?.name ?? '' })} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
     </PageShell>
   )
 }

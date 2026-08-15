@@ -16,6 +16,7 @@ import * as connectorApi from '../api/connector.ts'
 import type { MatchInstancesResponse } from '../api/connector.ts'
 import { getInstances, getLaunchProgress } from '../api/instance.ts'
 import { useRunning } from '../contexts/RunningContext.tsx'
+import { useI18n } from '../i18n/index.tsx'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
 import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult, LaunchProgress } from '../types/index.ts'
 
@@ -35,6 +36,7 @@ function fmtErr(e: unknown): string {
 const skinHeadCache = new Map<string, string>()
 
 function PlayerRow({ p, onKick }: { p: ConnectorPlayer; onKick?: () => void }) {
+  const { t } = useI18n()
   const [headUrl, setHeadUrl] = useState<string | null>(() => skinHeadCache.get(p.name) ?? null)
 
   useEffect(() => {
@@ -67,12 +69,12 @@ function PlayerRow({ p, onKick }: { p: ConnectorPlayer; onKick?: () => void }) {
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">
           {p.name}
-          {p.kind === 'host' && <span className="ml-2 text-xs text-primary">房主</span>}
+          {p.kind === 'host' && <span className="ml-2 text-xs text-primary">{t('connect.hostBadge')}</span>}
         </div>
         <div className="truncate text-xs text-muted-foreground">{p.vendor}</div>
       </div>
       {onKick && (
-        <Tooltip content="踢出">
+        <Tooltip content={t('connect.kick')}>
           <Button size="sm" variant="ghost" onClick={onKick} className="h-8 w-8 shrink-0 text-destructive hover:text-destructive">
             <FontAwesomeIcon icon={faUserSlash} />
           </Button>
@@ -83,10 +85,11 @@ function PlayerRow({ p, onKick }: { p: ConnectorPlayer; onKick?: () => void }) {
 }
 
 function PlayerList({ players, onKick }: { players: ConnectorPlayer[]; onKick?: (p: ConnectorPlayer) => void }) {
-  if (players.length === 0) return <p className="text-sm text-muted-foreground">暂无玩家</p>
+  const { t } = useI18n()
+  if (players.length === 0) return <p className="text-sm text-muted-foreground">{t('connect.noPlayers')}</p>
   return (
     <div className="space-y-2">
-      <Label>玩家列表 ({players.length})</Label>
+      <Label>{t('connect.playerList', { count: players.length })}</Label>
       {players.map((p, i) => <PlayerRow key={p.machineId || p.name + i} p={p} onKick={onKick && p.kind !== 'host' ? () => onKick(p) : undefined} />)}
     </div>
   )
@@ -105,6 +108,7 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
   players: ConnectorPlayer[]
   loading: boolean
 }) {
+  const { t } = useI18n()
   const mods = data?.mods ?? []
   const instances = data?.instances ?? []
   const missingSet = new Set<string>(data?.missingHashes ?? [])
@@ -118,9 +122,9 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
     <>
     <Tabs
       tabs={[
-        { id: 'players', label: `玩家列表 (${players.length})` },
-        { id: 'mods', label: `房主 Mods${mods.length > 0 ? ` (${mods.length})` : ''}` },
-        { id: 'instances', label: `匹配实例 (${instances.length})` },
+        { id: 'players', label: t('connect.playerList', { count: players.length }) },
+        { id: 'mods', label: `${t('connect.hostMods')}${mods.length > 0 ? ` (${mods.length})` : ''}` },
+        { id: 'instances', label: t('connect.matchInstances', { count: instances.length }) },
       ]}
       activeTab={roomTab}
       onChange={(id) => setRoomTab(id as 'players' | 'mods' | 'instances')}
@@ -132,19 +136,17 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
     <TabContent activeTab={roomTab} tabId="mods" className="space-y-3">
       {loading && !data ? (
         <p className="flex items-center gap-2 pt-2 text-xs text-muted-foreground">
-          <FontAwesomeIcon icon={faSpinner} spin /> 正在扫描本地实例与房主 mods 比对...
+          <FontAwesomeIcon icon={faSpinner} spin /> {t('connect.scanningMatch')}
         </p>
       ) : mods.length === 0 ? (
-        <p className="pt-2 text-xs text-muted-foreground">房主未发布 mods 列表（或扫描中）</p>
+        <p className="pt-2 text-xs text-muted-foreground">{t('connect.noHostMods')}</p>
       ) : (
         <>
           {(noHostInfo || referenceInstance) && (
             <p className="pt-1 text-xs text-muted-foreground">
               {referenceInstance
-                ? `标"缺失"的 mod 未含于实例 ${referenceInstance}${
-                    missingCount > 0 ? `，共 ${missingCount} 个` : ''
-                  }（覆盖房主 mods 最多的本地实例）`
-                : '房主未提供版本信息，无法判定哪些 mod 缺失'}
+                ? t('connect.missingModsDesc', { instance: referenceInstance, countSuffix: missingCount > 0 ? t('connect.missingModsCountSuffix', { count: missingCount }) : '' })
+                : t('connect.noVersionInfo')}
             </p>
           )}
           <ul className="max-h-40 space-y-0.5 overflow-y-auto rounded border border-border/50 p-2 text-xs">
@@ -155,8 +157,8 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
                 <li key={m.hash + i} className="flex items-center gap-2">
                   <span className={`min-w-0 flex-1 truncate ${missing ? 'text-destructive' : ''}`}>{m.name || m.hash.slice(0, 12)}</span>
                   {missing && (
-                    <Tooltip content="该 mod 在最佳匹配实例（覆盖房主 mods 最多者）中缺失">
-                      <span className="shrink-0 rounded-full border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">缺失</span>
+                    <Tooltip content={t('connect.missingTooltip')}>
+                      <span className="shrink-0 rounded-full border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">{t('connect.missing')}</span>
                     </Tooltip>
                   )}
                   {badge && (
@@ -173,31 +175,31 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
     <TabContent activeTab={roomTab} tabId="instances" className="space-y-3 pt-2">
       {loading && !data ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <FontAwesomeIcon icon={faSpinner} spin /> 正在扫描本地实例...
+          <FontAwesomeIcon icon={faSpinner} spin /> {t('connect.scanningLocal')}
         </p>
       ) : (
         <>
       {noHostInfo && (
-        <p className="text-xs text-muted-foreground">房主未提供版本信息，无法匹配本地实例</p>
+        <p className="text-xs text-muted-foreground">{t('connect.noVersionForMatch')}</p>
       )}
       {!noHostInfo && instances.length === 0 && mods.length > 0 && (
-        <p className="text-xs text-muted-foreground">没有与房主游戏版本/loader 相同的本地实例</p>
+        <p className="text-xs text-muted-foreground">{t('connect.noMatchingInstance')}</p>
       )}
       {matched.length > 0 && (
         <div className="space-y-1.5">
-          <Label>一致实例（{matched.length}）</Label>
+          <Label>{t('connect.matchedInstances', { count: matched.length })}</Label>
           {matched.map(inst => (
             <div key={inst.instanceId} className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{inst.name}</div>
                 <div className="text-xs text-muted-foreground">
                   {inst.gameVersion}{inst.loader ? ` · ${inst.loader} ${inst.loaderVersion ?? ''}` : ''}
-                  <span className="ml-2 text-emerald-600 dark:text-emerald-400">mods 一致 ({inst.modCount})</span>
+                  <span className="ml-2 text-emerald-600 dark:text-emerald-400">{t('connect.modsConsistent', { count: inst.modCount })}</span>
                 </div>
               </div>
               <Button size="sm" onClick={() => onLaunch(inst.instanceId)} disabled={launching !== null}>
                 {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
-                快捷启动
+                {t('connect.quickLaunch')}
               </Button>
             </div>
           ))}
@@ -205,29 +207,29 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
       )}
       {unmatched.length > 0 && (
         <div className="space-y-1">
-          <Label>不一致实例（{unmatched.length}）可忽略差异启动</Label>
+          <Label>{t('connect.unmatchedInstances', { count: unmatched.length })}</Label>
           {unmatched.map(inst => (
             <div key={inst.instanceId} className="flex items-center gap-2 rounded border border-border/50 px-3 py-1.5 text-sm">
               <div className="min-w-0 flex-1">
                 <div className="truncate">{inst.name}</div>
-                <div className="text-xs text-muted-foreground">mods 不一致 ({inst.modCount})</div>
+                <div className="text-xs text-muted-foreground">{t('connect.modsInconsistent', { count: inst.modCount })}</div>
               </div>
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => onLaunch(inst.instanceId)}
                 disabled={launching !== null}
-                title="忽略 mod 差异，直接以此为本地实例加入房间"
+                title={t('connect.forceLaunchTitle')}
               >
                 {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
-                忽略差异强制启动
+                {t('connect.forceLaunch')}
               </Button>
             </div>
           ))}
         </div>
       )}
       {!noHostInfo && instances.length === 0 && mods.length === 0 && (
-        <p className="text-xs text-muted-foreground">暂无可用本地实例</p>
+        <p className="text-xs text-muted-foreground">{t('connect.noLocalInstance')}</p>
       )}
         </>
       )}
@@ -237,6 +239,7 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
 }
 
 export default function Connect() {
+  const { t } = useI18n()
   const { error: msgError } = useMessageBox()
   const { launchInstance, watchInstance } = useRunning()
   const [status, setStatus] = useState<ConnectorStatus>({
@@ -329,7 +332,7 @@ export default function Connect() {
         const p = await getLaunchProgress(id)
         if (p.stage === 'failed' || p.stage === 'crashed') {
           setLaunchProgress(null)
-          setHostError(p.error || (p.stage === 'crashed' ? '游戏异常退出' : '启动失败'))
+          setHostError(p.error || (p.stage === 'crashed' ? t('connect.gameCrashed') : t('connect.launchFailed')))
           if (lpTimer.current) clearInterval(lpTimer.current)
         } else if (p.stage === 'completed') {
           setLaunchProgress(null)
@@ -365,7 +368,7 @@ export default function Connect() {
 
   const handleHostPort = async () => {
     const p = parseInt(port, 10)
-    if (!p || p < 1 || p > 65535) { msgError('请输入有效端口 (1-65535)'); return }
+    if (!p || p < 1 || p > 65535) { msgError(t('connect.invalidPort')); return }
     setBusy(true)
     try { await connectorApi.hostByPort(p); await refreshStatus() }
     catch (e) { msgError(fmtErr(e)) }
@@ -373,7 +376,7 @@ export default function Connect() {
   }
 
   const handleHostInstance = async () => {
-    if (!selectedInstance) { msgError('请选择一个实例'); return }
+    if (!selectedInstance) { msgError(t('connect.selectInstanceFirst')); return }
     const inst = instances.find(i => i.id === selectedInstance)
     setHostError(null)
     setLaunchProgress(null)
@@ -390,7 +393,7 @@ export default function Connect() {
   }
 
   const handleJoin = async () => {
-    if (!code.trim()) { msgError('请输入房间码'); return }
+    if (!code.trim()) { msgError(t('connect.enterRoomCode')); return }
     setBusy(true)
     try { await connectorApi.joinRoom(code.trim()); await refreshStatus() }
     catch (e) { msgError(fmtErr(e)) }
@@ -417,7 +420,7 @@ export default function Connect() {
 
   // 快捷启动匹配实例：启动并自动加入房间（joinServer = 本机转发端口）
   const handleQuickLaunch = async (instanceId: string) => {
-    if (!status.mcPort) { msgError('房间尚未就绪'); return }
+    if (!status.mcPort) { msgError(t('connect.roomNotReady')); return }
     setLaunchingMatch(instanceId)
     try {
       const inst = matchData?.instances.find(i => i.instanceId === instanceId)
@@ -433,22 +436,22 @@ export default function Connect() {
     setNatTypeBusy(true)
     setNatType(null)
     try { setNatType(await connectorApi.getNatType()) }
-    catch { msgError('NAT 类型检测失败') }
+    catch { msgError(t('connect.natCheckFailed')) }
     finally { setNatTypeBusy(false) }
   }
 
   const natTypeBadge = (() => {
     if (!natType) return null
-    const cfg: Record<string, { label: string; tooltip: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-      cone: { label: '完全锥形', tooltip: 'UDP: 宽松  TCP: 中等', variant: 'default' },
-      symmetric: { label: '严格对称', tooltip: 'UDP: 严格  TCP: 严格', variant: 'destructive' },
-      blocked: { label: '不可穿透', tooltip: 'UDP: 阻断  TCP: 阻断', variant: 'destructive' },
-      unknown: { label: '不确定', tooltip: 'NAT 类型未知', variant: 'secondary' },
+    const cfg: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
+      cone: { variant: 'default' },
+      symmetric: { variant: 'destructive' },
+      blocked: { variant: 'destructive' },
+      unknown: { variant: 'secondary' },
     }
-    const c = cfg[natType.type] ?? { label: natType.type, tooltip: natType.type, variant: 'secondary' as const }
+    const c = cfg[natType.type] ?? { variant: 'secondary' as const }
     return (
-      <Tooltip content={c.tooltip}>
-        <Badge variant={c.variant}>{c.label}</Badge>
+      <Tooltip content={t(`connect.natTypes.${natType.type}.tooltip`)}>
+        <Badge variant={c.variant}>{t(`connect.natTypes.${natType.type}.label`)}</Badge>
       </Tooltip>
     )
   })()
@@ -460,12 +463,12 @@ export default function Connect() {
 
   return (
     <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
-      <PageHeader title="联机" subtitle="创建或加入联机房间" actions={
+      <PageHeader title={t('connect.title')} subtitle={t('connect.subtitle')} actions={
         <div className="flex items-center gap-2">
           {natTypeBadge}
           <Button variant="outline" size="sm" onClick={testNatType} disabled={natTypeBusy}>
             {natTypeBusy ? <FontAwesomeIcon icon={faSpinner} spin className="mr-1" /> : <FontAwesomeIcon icon={faWifi} className="mr-1" />}
-            NAT 检测
+            {t('connect.natCheck')}
           </Button>
         </div>
       } />
@@ -474,16 +477,16 @@ export default function Connect() {
         <Card className="space-y-2 border p-4">
           {easyTier.status === 'failed' ? (
             <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-destructive">EasyTier 下载失败：{easyTier.error}</p>
+              <p className="text-sm text-destructive">{t('connect.easyTierDownloadFailed', { error: easyTier.error ?? '' })}</p>
               <Button size="sm" variant="outline" onClick={async () => {
                 try { setEasyTier(await connectorApi.downloadEasyTier()) } catch (e) { msgError(fmtErr(e)) }
-              }}>重试</Button>
+              }}>{t('connect.retry')}</Button>
             </div>
           ) : (
             <>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <FontAwesomeIcon icon={faSpinner} spin />
-                <span>{easyTier.status === 'resolving' ? '正在测速选择最快下载源…' : easyTier.status === 'extracting' ? '正在解压 EasyTier…' : '正在下载 EasyTier 联机组件…'}</span>
+                <span>{t(`connect.easyTierStatus.${easyTier.status}`)}</span>
                 <span className="ml-auto text-xs">{Math.round(easyTier.progress)}% {fmtSpeed(easyTier.speed)}</span>
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -498,8 +501,8 @@ export default function Connect() {
         <>
           <Tabs
             tabs={[
-              { id: 'create', label: '创建房间', icon: <FontAwesomeIcon icon={faDoorOpen} className="h-4 w-4" /> },
-              { id: 'join', label: '加入房间', icon: <FontAwesomeIcon icon={faRightToBracket} className="h-4 w-4" /> },
+              { id: 'create', label: t('connect.tabCreate'), icon: <FontAwesomeIcon icon={faDoorOpen} className="h-4 w-4" /> },
+              { id: 'join', label: t('connect.tabJoin'), icon: <FontAwesomeIcon icon={faRightToBracket} className="h-4 w-4" /> },
             ]}
             activeTab={tab}
             onChange={(id) => setTab(id as 'create' | 'join')}
@@ -508,22 +511,22 @@ export default function Connect() {
           <TabContent activeTab={tab} tabId="create">
             {hostSubMode === 'instance' && (
             <Card className="space-y-4 border p-5">
-              <h2 className="text-lg font-semibold">启动实例并创建房间</h2>
-              <Label>选择实例</Label>
+              <h2 className="text-lg font-semibold">{t('connect.createTitle')}</h2>
+              <Label>{t('connect.selectInstance')}</Label>
               <Select value={selectedInstance} onChange={setSelectedInstance}>
-                <SelectOption value="">请选择...</SelectOption>
+                <SelectOption value="">{t('connect.pleaseSelect')}</SelectOption>
                 {instances.map((i) => <SelectOption key={i.id} value={i.id}>{i.name}</SelectOption>)}
               </Select>
               <Button onClick={handleHostInstance} disabled={busy || !etReady} className="w-full">
                 {busy ? <FontAwesomeIcon icon={faSpinner} spin className="mr-2" /> : null}
-                {busy ? '正在启动…' : <><FontAwesomeIcon icon={faPlay} className="mr-2" />启动并创建房间</>}
+                {busy ? t('connect.starting') : <><FontAwesomeIcon icon={faPlay} className="mr-2" />{t('connect.startAndCreate')}</>}
               </Button>
               <p className="text-xs text-muted-foreground">
-                启动后请在游戏内点击"对局域网开放"，将自动探测端口。
+                {t('connect.openLanHint')}
               </p>
               <div className="text-center">
                 <button className="text-xs text-primary hover:underline" onClick={() => setHostSubMode('scan')}>
-                  已手动启动实例？点击这里
+                  {t('connect.manualStarted')}
                 </button>
               </div>
             </Card>
@@ -535,14 +538,14 @@ export default function Connect() {
                 <button onClick={() => setHostSubMode('instance')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
                   <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
                 </button>
-                <h2 className="text-lg font-semibold">扫描本地端口</h2>
+                <h2 className="text-lg font-semibold">{t('connect.scanPortTitle')}</h2>
               </div>
               
               {scanning && detectedPort === null && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <FontAwesomeIcon icon={faSpinner} spin />
-                    <span>正在扫描 Java 进程端口…</span>
+                    <span>{t('connect.scanningPorts')}</span>
                   </div>
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                     <div className="h-full w-full origin-left animate-pulse rounded-full bg-primary" />
@@ -554,18 +557,18 @@ export default function Connect() {
                 <div className="rounded-lg border border-border/50 bg-primary/5 p-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm text-muted-foreground">检测到端口</p>
+                      <p className="text-sm text-muted-foreground">{t('connect.portDetected')}</p>
                       <p className="text-2xl font-bold">{detectedPort}</p>
                     </div>
                     <Button onClick={handleHostPort} disabled={busy || !etReady}>
-                      {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : '创建房间'}
+                      {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : t('connect.createRoom')}
                     </Button>
                   </div>
                 </div>
               )}
 
               <div className="space-y-2">
-                  <Label>或者手动输入端口</Label>
+                  <Label>{t('connect.manualPort')}</Label>
                   <div className="flex gap-2">
                     <div className="flex items-center gap-2">
                       <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setPort(String(Math.max(1, (parseInt(port) || 0) - 1)))} disabled={!port || parseInt(port) <= 1}>
@@ -577,7 +580,7 @@ export default function Connect() {
                       </Button>
                     </div>
                     <Button onClick={handleHostPort} disabled={busy || !etReady} variant="outline">
-                      {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : '创建房间'}
+                      {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : t('connect.createRoom')}
                     </Button>
                   </div>
                 </div>
@@ -587,11 +590,11 @@ export default function Connect() {
 
           <TabContent activeTab={tab} tabId="join">
             <Card className="space-y-4 border p-5">
-              <h2 className="text-lg font-semibold">加入房间</h2>
-              <Label>房间码</Label>
+              <h2 className="text-lg font-semibold">{t('connect.joinTitle')}</h2>
+              <Label>{t('connect.roomCode')}</Label>
               <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="U/XXXX-XXXX-XXXX-XXXX" />
               <Button onClick={handleJoin} disabled={busy || !etReady} className="w-full">
-                {busy ? <><FontAwesomeIcon icon={faSpinner} spin className="mr-2" />正在加入…</> : <><FontAwesomeIcon icon={faRightToBracket} className="mr-2" />加入房间</>}
+                {busy ? <><FontAwesomeIcon icon={faSpinner} spin className="mr-2" />{t('connect.joining')}</> : <><FontAwesomeIcon icon={faRightToBracket} className="mr-2" />{t('connect.joinRoom')}</>}
               </Button>
             </Card>
           </TabContent>
@@ -601,17 +604,17 @@ export default function Connect() {
       {(isStarting || hostError) && (
         hostError ? (
           <Card className="space-y-4 border p-5">
-            <h2 className="text-lg font-semibold text-destructive">启动失败</h2>
+            <h2 className="text-lg font-semibold text-destructive">{t('connect.launchFailed')}</h2>
             <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{hostError}</p>
-            <Button onClick={() => setHostError(null)} className="w-full">知道了</Button>
+            <Button onClick={() => setHostError(null)} className="w-full">{t('connect.gotIt')}</Button>
           </Card>
         ) : (
           <Card className="space-y-4 border p-5">
-            <h2 className="text-lg font-semibold">启动实例并创建房间</h2>
+            <h2 className="text-lg font-semibold">{t('connect.createTitle')}</h2>
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <FontAwesomeIcon icon={faSpinner} spin />
-                <span>{launchProgress ? launchProgress.message : '正在启动...'}</span>
+                <span>{launchProgress ? launchProgress.message : t('connect.starting')}</span>
               </div>
               {launchProgress && (
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -619,7 +622,7 @@ export default function Connect() {
                 </div>
               )}
               <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-                <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />取消
+                <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />{t('connect.cancel')}
               </Button>
             </div>
           </Card>
@@ -628,10 +631,10 @@ export default function Connect() {
 
       {isHost && (
         <Card className="space-y-4 border p-5">
-          <h2 className="text-lg font-semibold">创建房间</h2>
+          <h2 className="text-lg font-semibold">{t('connect.createRoom')}</h2>
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">房间码</span>
+              <span className="text-sm text-muted-foreground">{t('connect.roomCode')}</span>
               <code className="rounded bg-muted px-2 py-1 text-sm">{status.roomCode}</code>
               <Button size="sm" variant="ghost" onClick={() => status.roomCode && copy(status.roomCode)}>
                 <FontAwesomeIcon icon={faCopy} />
@@ -639,7 +642,7 @@ export default function Connect() {
             </div>
             <PlayerList players={status.players} onKick={(p) => { if (p.kind !== 'host' && !kickBusy) handleKick(p) }} />
             <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />关闭房间
+              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />{t('connect.closeRoom')}
             </Button>
           </div>
         </Card>
@@ -647,10 +650,10 @@ export default function Connect() {
 
       {isGuest && (
         <Card className="space-y-4 border p-5">
-          <h2 className="text-lg font-semibold">加入房间</h2>
+          <h2 className="text-lg font-semibold">{t('connect.joinTitle')}</h2>
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">服务器地址</span>
+              <span className="text-sm text-muted-foreground">{t('connect.serverAddress')}</span>
               <code className="rounded bg-muted px-2 py-1 text-sm">{status.mcHost}:{status.mcPort}</code>
               <Button size="sm" variant="ghost" onClick={() => copy(`${status.mcHost}:${status.mcPort}`)}>
                 <FontAwesomeIcon icon={faCopy} />
@@ -658,13 +661,13 @@ export default function Connect() {
             </div>
             {status.gameInfo && (
               <p className="text-xs text-muted-foreground">
-                房主版本：{status.gameInfo.gameVersion}
+                {t('connect.hostVersion', { version: status.gameInfo.gameVersion })}
                 {status.gameInfo.loader ? ` · ${status.gameInfo.loader} ${status.gameInfo.loaderVersion ?? ''}` : ''}
               </p>
             )}
             <RoomModsCard data={matchData} onLaunch={handleQuickLaunch} launching={launchingMatch} hostVersion={status.gameInfo?.gameVersion ?? ''} players={status.players} loading={matchLoading} />
             <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />退出房间
+              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />{t('connect.leaveRoom')}
             </Button>
           </div>
         </Card>

@@ -21,33 +21,12 @@ import { Tooltip } from '../components/ui'
 import * as accountApi from '../api/account.ts'
 import type { MicrosoftOAuthResponse, Account, YggdrasilProfileInfo } from '../types/index.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { useI18n } from '../i18n/index.tsx'
 
 function fmtErr(e: unknown): string {
   if (e instanceof ApiError) return e.displayMessage
   if (e instanceof Error) return e.message
   return String(e)
-}
-
-function fmtOAuthError(code: string): string {
-  switch (code) {
-    case 'access_denied': return '你在浏览器中取消或拒绝了授权'
-    case 'expired_token': return '验证码已过期，请重新登录'
-    case 'invalid_grant': return '授权无效，请重新登录'
-    default: return `登录失败：${code}`
-  }
-}
-
-function getAccountLabel(loginMethod: string, serverUrl?: string | null): string {
-  if (loginMethod === 'Microsoft') return 'Microsoft'
-  if (loginMethod === 'Offline') return '离线'
-  if (loginMethod === 'Yggdrasil') {
-    const cached = accountApi.getCachedMeta(serverUrl)
-    return cached ? `第三方/${cached}` : '第三方'
-  }
-  if (loginMethod === '统一通行证') {
-    return serverUrl || '统一通行证'
-  }
-  return loginMethod
 }
 
 function getAccountIcon(loginMethod: string): { icon: typeof faUser; color: string } {
@@ -60,7 +39,31 @@ type MicrosoftStep = 'idle' | 'fetching-oauth' | 'waiting-auth' | 'fetching-info
 
 export default function Accounts() {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const { error: msgError, confirm: msgConfirm } = useMessageBox()
+
+  function fmtOAuthError(code: string): string {
+    switch (code) {
+      case 'access_denied': return t('accounts.loginErrors.accessDenied')
+      case 'expired_token': return t('accounts.loginErrors.expiredToken')
+      case 'invalid_grant': return t('accounts.loginErrors.invalidGrant')
+      default: return t('accounts.loginErrors.loginFailed', { code })
+    }
+  }
+
+  function getAccountLabel(loginMethod: string, serverUrl?: string | null): string {
+    if (loginMethod === 'Microsoft') return 'Microsoft'
+    if (loginMethod === 'Offline') return t('accounts.methodLabel.offline')
+    if (loginMethod === 'Yggdrasil') {
+      const cached = accountApi.getCachedMeta(serverUrl)
+      return cached ? t('accounts.methodLabel.thirdPartyWith', { server: cached }) : t('accounts.methodLabel.thirdParty')
+    }
+    if (loginMethod === '统一通行证') {
+      return serverUrl || t('accounts.methodLabel.unified')
+    }
+    return loginMethod
+  }
+
   const [accounts, setAccounts] = useState<Account[]>([])
   const [addOpen, setAddOpen] = useState(false)
   const [addTab, setAddTab] = useState<'microsoft' | 'offline' | 'yggdrasil' | 'tongyi'>('microsoft')
@@ -81,7 +84,7 @@ export default function Accounts() {
         getAccountLabel(a.loginMethod, a.serverUrl).toLowerCase().includes(q) ||
         (a.serverUrl || '').toLowerCase().includes(q)
     })
-  }, [accounts, search, filterType])
+  }, [accounts, search, filterType, t])
 
   const [oauthData, setOauthData] = useState<MicrosoftOAuthResponse | null>(null)
   const [microsoftStep, setMicrosoftStep] = useState<MicrosoftStep>('idle')
@@ -146,7 +149,7 @@ export default function Accounts() {
 
   useEffect(() => {
     accountApi.checkAccountsLost().then(async lost => {
-      if (lost) await msgError('账户数据文件已损坏或机器码变更，文件已被删除，请重新添加账户。')
+      if (lost) await msgError(t('accounts.dataCorrupted'))
     })
   }, [])
 
@@ -182,17 +185,17 @@ export default function Accounts() {
 
   async function handleOAuth() {
     setMicrosoftStep('fetching-oauth')
-    setMicrosoftMsg('正在获取登录信息...')
+    setMicrosoftMsg(t('accounts.microsoft.gettingInfo'))
     try {
       const data = await accountApi.microsoftOAuth()
       setOauthData(data)
-      setMicrosoftMsg('正在打开浏览器...')
+      setMicrosoftMsg(t('accounts.microsoft.openingBrowser'))
 
       try { await navigator.clipboard.writeText(data.userCode) } catch { /* clipboard not available */ }
       try { await openUrl(data.verificationUri) } catch { window.open(data.verificationUri, '_blank') }
 
       setMicrosoftStep('waiting-auth')
-      setMicrosoftMsg(`验证码已复制到剪贴板，请在浏览器中登录 Microsoft 账号\n验证码: ${data.userCode}`)
+      setMicrosoftMsg(t('accounts.microsoft.codeCopied', { code: data.userCode }))
 
       const intervalMs = Math.max((data.interval || 5) * 1000, 3000)
       const deadline = Date.now() + (data.expiresIn || 900) * 1000
@@ -203,7 +206,7 @@ export default function Accounts() {
         if (Date.now() > deadline) {
           stopPolling()
           setMicrosoftStep('error')
-          setMicrosoftMsg('登录超时，请重新登录')
+          setMicrosoftMsg(t('accounts.microsoft.loginTimeout'))
           return
         }
         try {
@@ -217,12 +220,12 @@ export default function Accounts() {
           }
           if (result.accessToken) {
             setMicrosoftStep('fetching-info')
-            setMicrosoftMsg('正在获取账户信息...')
+            setMicrosoftMsg(t('accounts.microsoft.gettingAccount'))
             try {
               await accountApi.microsoftUserInfo(result.accessToken as string, (result.refreshToken as string) ?? '')
               await refresh()
               setMicrosoftStep('done')
-              setMicrosoftMsg('登录成功')
+              setMicrosoftMsg(t('accounts.microsoft.loginSuccess'))
               setTimeout(() => { setAddOpen(false); setOauthData(null); setMicrosoftStep('idle') }, 1500)
             } catch (e: unknown) {
               setMicrosoftStep('error')
@@ -269,7 +272,7 @@ export default function Accounts() {
     try {
       const result = await accountApi.yggdrasilGetProfiles(yggEmail, yggPwd, yggServer)
       if (!result.success || !result.profiles?.length) {
-        await msgError(result.errorMessage || '未获取到可用角色')
+        await msgError(result.errorMessage || t('accounts.microsoft.noRole'))
         return
       }
       setYggProfiles(result.profiles)
@@ -326,7 +329,7 @@ export default function Accounts() {
   }
 
   async function handleDelete(uuid: string) {
-    const ok = await msgConfirm('确定要删除此账户吗？', '删除账户')
+    const ok = await msgConfirm(t('accounts.deleteConfirm'), t('accounts.deleteTitle'))
     if (!ok) return
     try {
       await accountApi.deleteAccount(uuid)
@@ -354,7 +357,7 @@ export default function Accounts() {
 
   async function handleBatchDelete() {
     if (selected.size === 0) return
-    const ok = await msgConfirm(`确定要删除选中的 ${selected.size} 个账户吗？`, '批量删除')
+    const ok = await msgConfirm(t('accounts.batchDeleteConfirm', { count: selected.size }), t('accounts.batchDeleteTitle'))
     if (!ok) return
     setLoading(true)
     try {
@@ -386,18 +389,18 @@ export default function Accounts() {
     <>
     <PageShell>
       <div className="shrink-0 space-y-4 px-8 pt-8">
-        <PageHeader title="账户管理"
+        <PageHeader title={t('accounts.title')}
           actions={
             <>
-              <Tooltip content="刷新">
+              <Tooltip content={t('accounts.refresh')}>
                 <button onClick={forceRefresh} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
                   <FontAwesomeIcon icon={loading ? faSpinner : faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
                 </button>
               </Tooltip>
-              <Tooltip content="添加账户">
+              <Tooltip content={t('accounts.addAccount')}>
                 <button onClick={startAdd} className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
                   <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
-                  <span className="text-sm">添加</span>
+                  <span className="text-sm">{t('accounts.add')}</span>
                 </button>
               </Tooltip>
             </>
@@ -406,14 +409,14 @@ export default function Accounts() {
 
         <div className="flex items-center gap-2">
           <Select value={filterType} onChange={(v) => setFilterType(v as typeof filterType)} className="w-28">
-            <SelectOption value="all">全部筛选</SelectOption>
-            <SelectOption value="name">名称</SelectOption>
-            <SelectOption value="loginMethod">登录方式</SelectOption>
-            <SelectOption value="server">服务器</SelectOption>
+            <SelectOption value="all">{t('accounts.filterAll')}</SelectOption>
+            <SelectOption value="name">{t('accounts.filterName')}</SelectOption>
+            <SelectOption value="loginMethod">{t('accounts.filterLoginMethod')}</SelectOption>
+            <SelectOption value="server">{t('accounts.filterServer')}</SelectOption>
           </Select>
           <div className="relative flex-1">
             <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索账户..." className="h-9 pl-9" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('accounts.searchPlaceholder')} className="h-9 pl-9" />
           </div>
         </div>
       </div>
@@ -423,7 +426,7 @@ export default function Accounts() {
           {filteredAccounts.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
               <FontAwesomeIcon icon={faUser} className="h-10 w-10 opacity-30" />
-              <p className="text-sm">{search ? '无匹配账户' : '暂无账户'}</p>
+              <p className="text-sm">{search ? t('accounts.noMatch') : t('accounts.noAccounts')}</p>
             </div>
           ) : filteredAccounts.map((acc, index) => {
             const icon = getAccountIcon(acc.loginMethod)
@@ -467,7 +470,7 @@ export default function Accounts() {
                       <FontAwesomeIcon icon={faStar} className="h-3 w-3 text-amber-400" />
                     </span>
                   ) : (
-                    <Tooltip content="设为默认">
+                    <Tooltip content={t('accounts.setDefault')}>
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleSetDefault(acc.uuid) }}
@@ -499,13 +502,13 @@ export default function Accounts() {
     >
       <Button variant="destructive" size="sm" onClick={handleBatchDelete} disabled={loading}>
         <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-        删除 {selected.size}
+        {t('accounts.deleteSelected', { count: selected.size })}
       </Button>
     </BatchToolbar>
 
     <Dialog open={addOpen} onClose={() => setAddOpen(false)} className="max-w-md" closeOnBackdrop={false}>
         <DialogHeader onClose={() => setAddOpen(false)}>
-          <DialogTitle>添加账户</DialogTitle>
+          <DialogTitle>{t('accounts.addTitle')}</DialogTitle>
         </DialogHeader>
         <DialogBody>
           <div className="mb-4 flex flex-wrap gap-1 rounded-lg bg-muted p-1">
@@ -523,9 +526,9 @@ export default function Accounts() {
                 {tab === 'yggdrasil' && <FontAwesomeIcon icon={faKeycdn} className="h-3 w-3" />}
                 {tab === 'tongyi' && <FontAwesomeIcon icon={faCloud} className="h-3 w-3" />}
                 {tab === 'microsoft' && 'Microsoft'}
-                {tab === 'offline' && '离线'}
+                {tab === 'offline' && t('accounts.tabOffline')}
                 {tab === 'yggdrasil' && 'Yggdrasil'}
-                {tab === 'tongyi' && '统一通'}
+                {tab === 'tongyi' && t('accounts.tabUnified')}
               </button>
             ))}
           </div>
@@ -535,7 +538,7 @@ export default function Accounts() {
               {microsoftStep === 'idle' && (
                 <Button className="w-full" onClick={handleOAuth}>
                   <FontAwesomeIcon icon={faRightToBracket} className="h-4 w-4" />
-                  Microsoft OAuth 登录
+                  {t('accounts.unified.oauthLogin')}
                 </Button>
               )}
 
@@ -543,29 +546,29 @@ export default function Accounts() {
                 <div className="space-y-3 rounded-lg border bg-background p-4">
                   <div className="flex items-center gap-2 text-sm">
                     <StatusDot step="fetching-oauth" active={microsoftStep} />
-                    <span className={microsoftStep === 'fetching-oauth' ? 'text-foreground' : 'text-muted-foreground'}>获取登录信息</span>
+                    <span className={microsoftStep === 'fetching-oauth' ? 'text-foreground' : 'text-muted-foreground'}>{t('accounts.microsoft.stepFetching')}</span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <StatusDot step="waiting-auth" active={microsoftStep} />
-                    <span className={microsoftStep === 'waiting-auth' ? 'text-foreground' : 'text-muted-foreground'}>等待授权</span>
+                    <span className={microsoftStep === 'waiting-auth' ? 'text-foreground' : 'text-muted-foreground'}>{t('accounts.microsoft.stepWaiting')}</span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <StatusDot step="fetching-info" active={microsoftStep} />
-                    <span className={microsoftStep === 'fetching-info' ? 'text-foreground' : 'text-muted-foreground'}>获取账户信息</span>
+                    <span className={microsoftStep === 'fetching-info' ? 'text-foreground' : 'text-muted-foreground'}>{t('accounts.microsoft.stepFetchingInfo')}</span>
                   </div>
 
                   {microsoftStep === 'waiting-auth' && (
                     <div className="mt-3 space-y-2 rounded-md bg-muted p-3">
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />
-                        验证码已复制
+                        {t('accounts.microsoft.codeCopiedShort')}
                       </div>
                       <code className="block rounded bg-background px-3 py-2 text-center text-lg font-bold tracking-widest text-primary">
                         {oauthData?.userCode}
                       </code>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3" />
-                        浏览器已自动打开
+                        {t('accounts.microsoft.browserOpened')}
                       </div>
                     </div>
                   )}
@@ -580,7 +583,7 @@ export default function Accounts() {
 
                   {(microsoftStep === 'error' || microsoftStep === 'done') && (
                     <Button variant="outline" size="sm" onClick={() => { setMicrosoftStep('idle'); setMicrosoftMsg(''); setOauthData(null) }}>
-                      重新登录
+                      {t('accounts.microsoft.relogin')}
                     </Button>
                   )}
                 </div>
@@ -591,16 +594,16 @@ export default function Accounts() {
           {addTab === 'offline' && (
             <div key="offline" className="animate-in slide-up space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="offline-name">玩家名称</Label>
-                <Input id="offline-name" value={offlineName} onChange={(e) => setOfflineName(e.target.value)} placeholder="输入离线模式用户名" />
+                <Label htmlFor="offline-name">{t('accounts.offline.playerName')}</Label>
+                <Input id="offline-name" value={offlineName} onChange={(e) => setOfflineName(e.target.value)} placeholder={t('accounts.offline.playerNamePlaceholder')} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="offline-uuid">UUID（可选，留空自动生成）</Label>
-                <Input id="offline-uuid" value={offlineUuid} onChange={(e) => setOfflineUuid(e.target.value)} placeholder="例如: 069a79f4-44e9-4726-a5be-fca90e38aaf5" />
+                <Label htmlFor="offline-uuid">{t('accounts.offline.uuid')}</Label>
+                <Input id="offline-uuid" value={offlineUuid} onChange={(e) => setOfflineUuid(e.target.value)} placeholder={t('accounts.offline.uuidPlaceholder')} />
               </div>
               <Button className="w-full" onClick={handleOfflineAdd} disabled={!offlineName.trim()}>
                 <FontAwesomeIcon icon={faPlus} className="h-4 w-4" />
-                添加离线账户
+                {t('accounts.offline.add')}
               </Button>
             </div>
           )}
@@ -610,7 +613,7 @@ export default function Accounts() {
               {yggStep === 'form' && (
                 <>
                   <div className="space-y-2">
-                    <Label>预设服务器</Label>
+                    <Label>{t('accounts.ygg.presetServer')}</Label>
                     <div className="flex flex-wrap gap-2">
                       {[
                         { label: 'LittleSkin', url: 'https://littleskin.cn/api/yggdrasil' },
@@ -630,26 +633,26 @@ export default function Accounts() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="ygg-email">邮箱</Label>
+                    <Label htmlFor="ygg-email">{t('accounts.ygg.email')}</Label>
                     <Input id="ygg-email" value={yggEmail} onChange={(e) => setYggEmail(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="ygg-pwd">密码</Label>
+                    <Label htmlFor="ygg-pwd">{t('accounts.ygg.password')}</Label>
                     <Input id="ygg-pwd" type="password" value={yggPwd} onChange={(e) => setYggPwd(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="ygg-server">自定义服务器地址</Label>
+                    <Label htmlFor="ygg-server">{t('accounts.ygg.customServerAddr')}</Label>
                     <Input id="ygg-server" value={yggServer} onChange={(e) => setYggServer(e.target.value)} placeholder="https://example.com/api/yggdrasil" />
                   </div>
                   <Button className="w-full" onClick={handleYggdrasilLogin} disabled={loading}>
                     <FontAwesomeIcon icon={faFingerprint} className="h-4 w-4" />
-                    {loading ? '登录中...' : '登录'}
+                    {loading ? t('accounts.ygg.loginLoading') : t('accounts.ygg.login')}
                   </Button>
                 </>
               )}
               {yggStep === 'profiles' && (
                 <div className="space-y-3">
-                  <p className="text-sm text-muted-foreground">选择要登录的角色：</p>
+                  <p className="text-sm text-muted-foreground">{t('accounts.ygg.chooseRole')}</p>
                   <div className="max-h-60 space-y-1 overflow-y-auto rounded-lg border bg-background p-2">
                     {yggProfiles.map((p) => (
                       <button
@@ -673,11 +676,11 @@ export default function Accounts() {
                   </div>
                   <div className="flex gap-2">
                     <Button variant="secondary" className="flex-1" onClick={() => { setYggStep('form'); setYggProfiles([]) }}>
-                      返回
+                      {t('accounts.ygg.back')}
                     </Button>
                     <Button className="flex-1" onClick={handleYggdrasilConfirm} disabled={yggSelected.size === 0 || loading}>
                       <FontAwesomeIcon icon={faCheck} className="h-4 w-4" />
-                      {loading ? '保存中...' : `确认 (${yggSelected.size})`}
+                      {loading ? t('accounts.ygg.saving') : t('accounts.ygg.confirmCount', { count: yggSelected.size })}
                     </Button>
                   </div>
                 </div>
@@ -688,23 +691,23 @@ export default function Accounts() {
           {addTab === 'tongyi' && (
             <div key="tongyi" className="animate-in slide-up space-y-4">
               <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                统一通行证是部分 Minecraft 服务器使用的认证系统，需要输入服务器 ID。
+                {t('accounts.unified.desc')}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="ty-sid">服务器 ID</Label>
-                <Input id="ty-sid" value={tyServerId} onChange={(e) => setTyServerId(e.target.value)} placeholder="例如: lilu" />
+                <Label htmlFor="ty-sid">{t('accounts.unified.serverId')}</Label>
+                <Input id="ty-sid" value={tyServerId} onChange={(e) => setTyServerId(e.target.value)} placeholder={t('accounts.unified.serverIdPlaceholder')} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="ty-email">邮箱</Label>
+                <Label htmlFor="ty-email">{t('accounts.unified.email')}</Label>
                 <Input id="ty-email" value={tyEmail} onChange={(e) => setTyEmail(e.target.value)} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="ty-pwd">密码</Label>
+                <Label htmlFor="ty-pwd">{t('accounts.unified.password')}</Label>
                 <Input id="ty-pwd" type="password" value={tyPwd} onChange={(e) => setTyPwd(e.target.value)} />
               </div>
               <Button className="w-full" onClick={handleTongyiLogin} disabled={loading}>
                 <FontAwesomeIcon icon={faCloud} className="h-4 w-4" />
-                {loading ? '登录中...' : '登录'}
+                {loading ? t('accounts.unified.loginLoading') : t('accounts.unified.login')}
               </Button>
             </div>
           )}

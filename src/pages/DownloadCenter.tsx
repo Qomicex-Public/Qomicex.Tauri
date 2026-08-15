@@ -13,6 +13,7 @@ import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '
 import { cancelResourceDownload, getResourceDownloadProgress } from '../api/resource-download.ts'
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
+import { useI18n } from '../i18n/index.tsx'
 
 import type { DownloadTask } from '../types/index.ts'
 import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
@@ -58,40 +59,41 @@ const STALE_FILE_RECHECK_MS = 2000
 const STALE_FILE_MAX_CHECKS = 10
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  queued: { label: '排队中', color: 'text-muted-foreground bg-muted border-border' },
-  downloading: { label: '下载中', color: 'text-blue-400 bg-blue-500/10 border-blue-500/25' },
-  paused: { label: '已暂停', color: 'text-amber-400 bg-amber-500/10 border-amber-500/25' },
-  completed: { label: '已完成', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25' },
-  failed: { label: '失败', color: 'text-red-400 bg-red-500/10 border-red-500/25' },
-  cancelled: { label: '已取消', color: 'text-gray-400 bg-gray-500/10 border-gray-500/25' },
+  queued: { label: 'queued', color: 'text-muted-foreground bg-muted border-border' },
+  downloading: { label: 'downloading', color: 'text-blue-400 bg-blue-500/10 border-blue-500/25' },
+  paused: { label: 'paused', color: 'text-amber-400 bg-amber-500/10 border-amber-500/25' },
+  completed: { label: 'completed', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25' },
+  failed: { label: 'failed', color: 'text-red-400 bg-red-500/10 border-red-500/25' },
+  cancelled: { label: 'cancelled', color: 'text-gray-400 bg-gray-500/10 border-gray-500/25' },
 }
 
 const STAGE_LABELS: Record<string, string> = {
-  'queued': '排队中',
-  'downloading-json': '下载版本 JSON',
-  'downloading': '下载游戏文件',
-  'downloading-libraries': '下载支持库',
-  'downloading-assets': '下载资源文件',
-  'downloading-mainjar': '下载主文件',
-  'downloading-loader': '下载加载器',
-  'downloading-loader-libs': '下载加载器库',
-  'installing-loader': '安装加载器',
-  'downloading-addons': '下载附加内容',
-  'downloading-modpack': '下载整合包',
-  'parsing-modpack': '解析整合包',
-  'modpack-files': '下载整合包文件',
-  'modpack-overrides': '解压覆盖文件',
+  'queued': 'queued',
+  'downloading-json': 'downloading-json',
+  'downloading': 'downloading',
+  'downloading-libraries': 'downloading-libraries',
+  'downloading-assets': 'downloading-assets',
+  'downloading-mainjar': 'downloading-mainjar',
+  'downloading-loader': 'downloading-loader',
+  'downloading-loader-libs': 'downloading-loader-libs',
+  'installing-loader': 'installing-loader',
+  'downloading-addons': 'downloading-addons',
+  'downloading-modpack': 'downloading-modpack',
+  'parsing-modpack': 'parsing-modpack',
+  'modpack-files': 'modpack-files',
+  'modpack-overrides': 'modpack-overrides',
 }
 
 const FILTER_TABS: Tab[] = [
-  { id: 'all', label: '全部' },
-  { id: 'downloading', label: '下载中' },
-  { id: 'paused', label: '已暂停' },
-  { id: 'completed', label: '已完成' },
-  { id: 'failed', label: '失败' },
+  { id: 'all', label: 'all' },
+  { id: 'downloading', label: 'downloading' },
+  { id: 'paused', label: 'paused' },
+  { id: 'completed', label: 'completed' },
+  { id: 'failed', label: 'failed' },
 ]
 
 export default function DownloadCenter() {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [tasks, setTasks] = useState<DownloadTask[]>(() => getTasks())
   const [filter, setFilter] = useState<FilterMode>('all')
@@ -151,9 +153,9 @@ export default function DownloadCenter() {
           checkedStaleJavaIds.current.add(task.taskId)
           getJavaDownloadProgress(task.taskId).then(p => {
             if (!p) {
-              updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
+              updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskExpired') })
             } else if (p.status === 'failed') {
-              updateTask(task.id, { status: 'failed', error: p.error || '下载失败' })
+              updateTask(task.id, { status: 'failed', error: p.error || t('downloads.errors.downloadFailed') })
             } else if (p.status === 'cancelled') {
               updateTask(task.id, { status: 'cancelled' })
             } else if (p.status === 'completed') {
@@ -161,7 +163,7 @@ export default function DownloadCenter() {
               refreshCustomRuntimes()
             }
           }).catch(() => {
-            updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })
+            updateTask(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
           })
         }
         continue
@@ -190,19 +192,19 @@ export default function DownloadCenter() {
           const attempts = prev?.attempts ?? 0
           const sinceLast = Date.now() - (prev?.lastAt ?? 0)
           if (attempts >= STALE_FILE_MAX_CHECKS) {
-            updateTask(task.id, { status: 'failed', error: '任务状态无法确认（后端未报告该会话）' })
+            updateTask(task.id, { status: 'failed', error: t('downloads.errors.statusUnknown') })
           } else if (sinceLast >= STALE_FILE_RECHECK_MS) {
             staleFileChecks.current.set(task.taskId, { attempts: attempts + 1, lastAt: Date.now() })
             getResourceDownloadProgress(task.taskId).then(p => {
               if (!p || p.status === 'not_found') {
-                updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
+                updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskExpired') })
               } else if (p.status === 'completed') {
                 updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
               } else if (p.status === 'failed' || p.status === 'cancelled') {
                 updateTask(task.id, { status: p.status, error: p.error || undefined })
               }
             }).catch(() => {
-              updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })
+              updateTask(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
             })
           }
         }
@@ -245,7 +247,7 @@ export default function DownloadCenter() {
                   }).catch(() => {})
                 }, 5000)
               } else {
-                updateTask(task.id, { status: 'failed', error: '任务已过期（后端已重启）' })
+                updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskExpired') })
               }
             } else if (p.status === 'completed') {
               // 任务已完成后才被 SSE 剔除（get_all_active 不含 completed），
@@ -255,7 +257,7 @@ export default function DownloadCenter() {
               updateTask(task.id, { status: p.status, error: p.error || undefined })
             }
           }).catch(() => {
-            updateTask(task.id, { status: 'failed', error: '无法连接后端验证任务状态' })
+            updateTask(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
           })
         }
       }
@@ -290,6 +292,8 @@ export default function DownloadCenter() {
     prevJavaIds.current = currentJavaIds
   }, [sseData])
 
+  const filterTabs = useMemo(() => FILTER_TABS.map((tab) => ({ ...tab, label: t(`downloads.filter.${tab.id}`) })), [t])
+
   const filtered = useMemo(() => tasks.filter((t) => {
     if (filter === 'all') return true
     return t.status === filter
@@ -297,30 +301,30 @@ export default function DownloadCenter() {
 
   return (
     <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
-      <PageHeader title="下载中心" subtitle={`${tasks.length} 个任务`} actions={
+      <PageHeader title={t('downloads.title')} subtitle={t('downloads.subtitle', { count: tasks.length })} actions={
         <Button variant="outline" size="sm" onClick={() => {
           import('../stores/downloadStore.ts').then(m => {
             m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued').forEach(t => m.removeTask(t.id))
           })
         }} className="gap-1.5">
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />清除已完成/失败
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />{t('downloads.clearFinished')}
         </Button>
       } />
 
       <div className="flex items-center gap-2">
-        <Tabs tabs={FILTER_TABS} activeTab={filter} onChange={(id) => setFilter(id as FilterMode)} className="flex-1 min-w-0" />
+        <Tabs tabs={filterTabs} activeTab={filter} onChange={(id) => setFilter(id as FilterMode)} className="flex-1 min-w-0" />
         <span className="shrink-0 text-xs text-muted-foreground">
-          {filter === 'all' ? tasks.length : filtered.length} 个任务
+          {t('downloads.taskCount', { count: filter === 'all' ? tasks.length : filtered.length })}
         </span>
       </div>
 
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-24 text-center">
           <FontAwesomeIcon icon={faDownload} className="mb-3 h-10 w-10 text-muted-foreground/30" />
-          <p className="text-sm font-medium text-muted-foreground">暂无下载任务</p>
-          <p className="mt-1 text-xs text-muted-foreground/70">在"实例"页面选择版本并开始下载，任务将显示在此处</p>
+          <p className="text-sm font-medium text-muted-foreground">{t('downloads.empty')}</p>
+          <p className="mt-1 text-xs text-muted-foreground/70">{t('downloads.emptyHint')}</p>
           <Button variant="outline" size="sm" onClick={() => navigate('/instances')} className="mt-4 gap-1.5">
-            <FontAwesomeIcon icon={faArrowRight} className="h-3 w-3" />前往实例
+            <FontAwesomeIcon icon={faArrowRight} className="h-3 w-3" />{t('downloads.goToInstances')}
           </Button>
         </div>
       ) : (
@@ -353,15 +357,15 @@ export default function DownloadCenter() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-medium">{task.name}</span>
                         <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', cfg.color)}>
-                          {cfg.label}
+                          {t(`downloads.status.${task.status}`)}
                         </span>
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground/70">
                         {task.gameVersion && <span>{task.type === 'java' ? 'Java' : 'Minecraft'} {task.gameVersion}</span>}
                         {task.loader && <span>{task.loader}{task.loaderVersion ? ` ${task.loaderVersion}` : ''}</span>}
-                        {task.addons && task.addons.length > 0 && <span>+ {task.addons.length} 个附加</span>}
-                        <span>创建于 {formatDate(task.createdAt)}</span>
-                        {task.completedAt && <span>完成于 {formatDate(task.completedAt)}</span>}
+                        {task.addons && task.addons.length > 0 && <span>{t('downloads.addonsCount', { count: task.addons.length })}</span>}
+                        <span>{t('downloads.createdAt', { date: formatDate(task.createdAt) })}</span>
+                        {task.completedAt && <span>{t('downloads.completedAt', { date: formatDate(task.completedAt) })}</span>}
                       </div>
                     </div>
                   </div>
@@ -369,19 +373,19 @@ export default function DownloadCenter() {
                     {isActive && task.type === 'java' && task.status !== 'queued' && (
                       <>
                         {task.status === 'paused' ? (
-                          <Tooltip content="继续">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => task.taskId && resumeJavaDownload(task.taskId).catch(() => updateTask(task.id, { status: 'failed', error: '任务已失效' }))}>
+                          <Tooltip content={t('downloads.resume')}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => task.taskId && resumeJavaDownload(task.taskId).catch(() => updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskInvalid') }))}>
                               <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                         ) : (
-                          <Tooltip content="暂停">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-amber-400" onClick={() => task.taskId && pauseJavaDownload(task.taskId).catch(() => updateTask(task.id, { status: 'failed', error: '任务已失效' }))}>
+                          <Tooltip content={t('downloads.pause')}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-amber-400" onClick={() => task.taskId && pauseJavaDownload(task.taskId).catch(() => updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskInvalid') }))}>
                               <FontAwesomeIcon icon={faPause} className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                         )}
-                        <Tooltip content="取消">
+                        <Tooltip content={t('downloads.cancel')}>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
                             if (task.type === 'java' && task.taskId) {
                               cancelJavaDownload(task.taskId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
@@ -401,7 +405,7 @@ export default function DownloadCenter() {
                       </>
                     )}
                     {isActive && task.type === 'file' && task.status !== 'queued' && (
-                      <Tooltip content="取消">
+                      <Tooltip content={t('downloads.cancel')}>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
                           if (task.taskId) {
                             cancelResourceDownload(task.taskId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
@@ -416,19 +420,19 @@ export default function DownloadCenter() {
                     {isActive && task.type !== 'file' && task.type !== 'java' && task.status !== 'queued' && (
                       <>
                         {task.status === 'paused' ? (
-                          <Tooltip content="继续">
+                          <Tooltip content={t('downloads.resume')}>
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => task.instanceId && resumeInstall(task.instanceId)}>
                               <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                         ) : (
-                          <Tooltip content="暂停">
+                          <Tooltip content={t('downloads.pause')}>
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-amber-400" onClick={() => task.instanceId && pauseInstall(task.instanceId)}>
                               <FontAwesomeIcon icon={faPause} className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                         )}
-                        <Tooltip content="取消">
+                        <Tooltip content={t('downloads.cancel')}>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
                             if (task.type === 'java' && task.taskId) {
                               cancelJavaDownload(task.taskId).then(() => removeTask(task.id))
@@ -448,14 +452,14 @@ export default function DownloadCenter() {
                       </>
                     )}
                     {task.status === 'failed' && (
-                      <Tooltip content="重试">
+                      <Tooltip content={t('downloads.retry')}>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => removeTask(task.id)}>
                           <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
                     )}
                     {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'queued') && (
-                      <Tooltip content="移除">
+                      <Tooltip content={t('downloads.remove')}>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => removeTask(task.id)}>
                           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
                         </Button>
@@ -476,24 +480,24 @@ export default function DownloadCenter() {
                   </div>
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground/60">
                     <span className="min-w-0 truncate">
-                      {task.status === 'completed' ? '下载完成' :
-                       task.status === 'failed' ? (task.error ? `失败: ${task.error}` : '下载失败') :
-                       task.status === 'paused' ? `已暂停 ${task.progress}%` :
-                       task.status === 'queued' ? '等待中' :
+                      {task.status === 'completed' ? t('downloads.statusText.done') :
+                       task.status === 'failed' ? (task.error ? t('downloads.statusText.failedWith', { error: task.error }) : t('downloads.statusText.failed')) :
+                       task.status === 'paused' ? t('downloads.statusText.pausedProgress', { progress: task.progress }) :
+                       task.status === 'queued' ? t('downloads.statusText.waiting') :
                        // "连接中" only while nothing is known yet — a large file can sit at
                        // a rounded 0% with bytes already flowing.
                          (task.progress > 0 || (task.downloadedBytes ?? 0) > 0 || (task.totalBytes ?? 0) > 0) ? (
                           <>
-                            {task.stage && STAGE_LABELS[task.stage] ? STAGE_LABELS[task.stage] : '下载中'} ({Math.round((task.currentFileProgress ?? 0) > 0 ? (task.currentFileProgress ?? 0) : task.progress)}%)
+                            {task.stage && STAGE_LABELS[task.stage] ? t(`downloads.stage.${task.stage}`) : t('downloads.statusText.downloading')} ({Math.round((task.currentFileProgress ?? 0) > 0 ? (task.currentFileProgress ?? 0) : task.progress)}%)
                             {task.currentFile && <span className="ml-1.5 opacity-70">· {task.currentFile}</span>}
                           </>
                         ) : (
-                         <span>连接中…</span>
+                         <span>{t('downloads.statusText.connecting')}</span>
                        )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2 ml-2">
                       {task.totalFiles !== undefined && task.totalFiles > 0 && task.stage && (
-                        <span>{task.completedFiles ?? 0}/{task.totalFiles} 文件</span>
+                        <span>{t('downloads.filesCount', { done: task.completedFiles ?? 0, total: task.totalFiles })}</span>
                       )}
                       {task.totalBytes !== undefined && task.totalBytes > 0 && (
                         <span className="tabular-nums">{formatBytes(task.downloadedBytes)} / {formatBytes(task.totalBytes)}</span>

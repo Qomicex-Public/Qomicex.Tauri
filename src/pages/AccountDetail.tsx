@@ -13,12 +13,14 @@ import { useMessageBox } from '../components/ui'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui'
 import { PageShell } from '../components/PageShell.tsx'
 import { capeDisplayName } from '../lib/cape-names.ts'
+import { useI18n } from '../i18n/index.tsx'
 import type { Account, SkinProfile, McCape } from '../types/index.ts'
 
 export default function AccountDetail() {
   const { uuid } = useParams<{ uuid: string }>()
   const navigate = useNavigate()
   const { confirm: msgConfirm, notify } = useMessageBox()
+  const { t } = useI18n()
   const [account, setAccount] = useState<Account | null>(null)
   const [profile, setProfile] = useState<SkinProfile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -105,14 +107,14 @@ export default function AccountDetail() {
     try {
       if (cape.state === 'ACTIVE') {
         await unequipMcCape(uuid, cape.id)
-        notify('披风已卸下', 'success')
+        notify(t('accountDetail.capeUnequipped'), 'success')
       } else {
         await equipMcCape(uuid, cape.id)
-        notify('披风已装备', 'success')
+        notify(t('accountDetail.capeEquipped'), 'success')
       }
       await loadMcCapes()
     } catch {
-      notify('披风切换失败，请重新登录后重试', 'error')
+      notify(t('accountDetail.capeSwitchFailed'), 'error')
     } finally {
       setCapeBusy(false)
     }
@@ -139,21 +141,21 @@ export default function AccountDetail() {
     setModelDialogOpen(false)
     try {
       await uploadSkin(uuid, pendingFile, account?.loginMethod ?? 'Microsoft', account?.serverUrl, model)
-      notify('皮肤上传成功', 'success')
+      notify(t('accountDetail.skinUploaded'), 'success')
       handleSkinRefresh()
-    } catch { notify('皮肤上传失败', 'error') }
+    } catch { notify(t('accountDetail.skinUploadFailed'), 'error') }
     setPendingFile(null)
   }
 
   async function handleSkinReset() {
     if (!uuid) return
-    const ok = await msgConfirm('确定要重置为默认皮肤吗？')
+    const ok = await msgConfirm(t('accountDetail.resetSkinConfirm'))
     if (!ok) return
     try {
       await resetSkin(uuid, account?.loginMethod ?? 'Microsoft', account?.serverUrl)
-      notify('皮肤已重置', 'success')
+      notify(t('accountDetail.skinReset'), 'success')
       handleSkinRefresh()
-    } catch { notify('皮肤重置失败', 'error') }
+    } catch { notify(t('accountDetail.skinResetFailed'), 'error') }
   }
 
   async function handleSkinDownload() {
@@ -163,7 +165,7 @@ export default function AccountDetail() {
       const dest = await save({ defaultPath: `${account?.name ?? uuid}.png`, filters: [{ name: 'PNG', extensions: ['png'] }] })
       if (!dest) return
       await saveSkinTo(uuid, dest, account?.loginMethod ?? 'Microsoft', account?.serverUrl)
-      notify(`皮肤已保存到 ${dest}`, 'success')
+      notify(t('accountDetail.skinSavedTo', { dest }), 'success')
       return
     } catch { /* not in Tauri — fall back to browser download */ }
     try {
@@ -178,20 +180,20 @@ export default function AccountDetail() {
       a.click()
       document.body.removeChild(a)
       setTimeout(() => URL.revokeObjectURL(url), 1000)
-      notify('皮肤已下载', 'success')
-    } catch { notify('皮肤下载失败', 'error') }
+      notify(t('accountDetail.skinDownloaded'), 'success')
+    } catch { notify(t('accountDetail.skinDownloadFailed'), 'error') }
   }
 
   async function handleDelete() {
     if (!uuid) return
-    const ok = await msgConfirm('确定要删除此账户吗？')
+    const ok = await msgConfirm(t('accountDetail.deleteAccountConfirm'))
     if (!ok) return
     await deleteAccount(uuid)
     navigate('/accounts')
   }
 
   if (loading || !account) {
-    return <div className="flex flex-1 h-full items-center justify-center overflow-y-auto text-muted-foreground">加载中...</div>
+    return <div className="flex flex-1 h-full items-center justify-center overflow-y-auto text-muted-foreground">{t('accountDetail.loading')}</div>
   }
 
   return (
@@ -212,17 +214,17 @@ export default function AccountDetail() {
                   <div className={`h-3.5 w-7 rounded-full p-0.5 transition-colors ${showNameTag ? 'bg-primary' : 'bg-input'}`}>
                     <div className={`h-2.5 w-2.5 rounded-full bg-background transition-transform ${showNameTag ? 'translate-x-3' : ''}`} />
                   </div>
-                  显示名称标签
+                  {t('accountDetail.showNameTag')}
                 </button>
                 <button onClick={() => setShowCape(v => !v)} disabled={!capeUrl} className={`flex items-center gap-2 text-xs ${showCape && capeUrl ? 'text-primary' : 'text-muted-foreground'} ${!capeUrl ? 'opacity-40' : ''}`}>
                   <div className={`h-3.5 w-7 rounded-full p-0.5 transition-colors ${showCape && capeUrl ? 'bg-primary' : 'bg-input'}`}>
                     <div className={`h-2.5 w-2.5 rounded-full bg-background transition-transform ${showCape && capeUrl ? 'translate-x-3' : ''}`} />
                   </div>
-                   显示披风
+                  {t('accountDetail.showCape')}
                 </button>
                 <Button variant="ghost" size="sm" onClick={handleSkinDownload} className="text-xs">
                   <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />
-                  下载皮肤
+                  {t('accountDetail.downloadSkin')}
                 </Button>
 
               </div>
@@ -231,10 +233,10 @@ export default function AccountDetail() {
 
         <div className="space-y-4 lg:col-span-2">
           <div className="rounded-xl border bg-card p-5">
-            <h2 className="mb-3 text-sm font-semibold">账户信息</h2>
+            <h2 className="mb-3 text-sm font-semibold">{t('accountDetail.accountInfo')}</h2>
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="text-muted-foreground">名称</dt>
+                <dt className="text-muted-foreground">{t('accountDetail.name')}</dt>
                 <dd>{account.name}</dd>
               </div>
               <div className="flex justify-between">
@@ -242,30 +244,30 @@ export default function AccountDetail() {
                 <dd className="font-mono text-xs">{account.uuid}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-muted-foreground">类型</dt>
+                <dt className="text-muted-foreground">{t('accountDetail.type')}</dt>
                 <dd>{account.loginMethod}</dd>
               </div>
               {account.serverUrl && (
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">验证服务器</dt>
+                  <dt className="text-muted-foreground">{t('accountDetail.authServer')}</dt>
                   <dd className="text-xs">{account.serverUrl}</dd>
                 </div>
               )}
               {profile && (
                 <>
                   <div className="flex justify-between">
-                    <dt className="text-muted-foreground">皮肤模型</dt>
-                    <dd>{profile.model === 'slim' ? '纤细 (Slim)' : '经典 (Classic)'}</dd>
+                    <dt className="text-muted-foreground">{t('accountDetail.skinModel')}</dt>
+                    <dd>{profile.model === 'slim' ? t('accountDetail.slim') : t('accountDetail.classic')}</dd>
                   </div>
                   {account.loginMethod === 'Microsoft' ? (
                     <div className="flex justify-between">
-                      <dt className="text-muted-foreground">披风</dt>
-                      <dd>{activeCape ? capeDisplayName(activeCape.id, activeCape.alias) : '无'}</dd>
+                      <dt className="text-muted-foreground">{t('accountDetail.cape')}</dt>
+                      <dd>{activeCape ? capeDisplayName(activeCape.id, activeCape.alias) : t('accountDetail.none')}</dd>
                     </div>
                   ) : profile.capeUrl ? (
                     <div className="flex justify-between">
-                      <dt className="text-muted-foreground">披风</dt>
-                      <dd>有</dd>
+                      <dt className="text-muted-foreground">{t('accountDetail.cape')}</dt>
+                      <dd>{t('accountDetail.hasSkin')}</dd>
                     </div>
                   ) : null}
                 </>
@@ -275,44 +277,44 @@ export default function AccountDetail() {
 
           <div className="flex gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={handleSkinRefresh}>
-              <FontAwesomeIcon icon={faRotate} className="mr-1 h-3 w-3" /> 刷新皮肤
+              <FontAwesomeIcon icon={faRotate} className="mr-1 h-3 w-3" /> {t('accountDetail.refreshSkin')}
             </Button>
             {account.loginMethod === 'Microsoft' ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => setCapeDialogOpen(true)}>
-                  <FontAwesomeIcon icon={faShirt} className="mr-1 h-3 w-3" /> 切换披风
+                  <FontAwesomeIcon icon={faShirt} className="mr-1 h-3 w-3" /> {t('accountDetail.switchCape')}
                 </Button>
                 <input ref={fileRef} type="file" accept="image/png" className="hidden" onChange={handleSkinUpload} />
                 <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-                  <FontAwesomeIcon icon={faUpload} className="mr-1 h-3 w-3" /> 上传皮肤
+                  <FontAwesomeIcon icon={faUpload} className="mr-1 h-3 w-3" /> {t('accountDetail.uploadSkin')}
                 </Button>
                 <Dialog open={modelDialogOpen} onClose={() => setModelDialogOpen(false)} className="max-w-sm">
                   <DialogHeader onClose={() => setModelDialogOpen(false)}>
-                    <DialogTitle>选择手臂模型</DialogTitle>
+                    <DialogTitle>{t('accountDetail.chooseArmModel')}</DialogTitle>
                   </DialogHeader>
                   <DialogBody>
                     {pendingFile && (
-                      <img src={URL.createObjectURL(pendingFile)} alt="皮肤预览" className="mx-auto h-28 w-28 object-contain rounded-md border" />
+                      <img src={URL.createObjectURL(pendingFile)} alt={t('accountDetail.skinPreview')} className="mx-auto h-28 w-28 object-contain rounded-md border" />
                     )}
                     <div className="mt-4 grid grid-cols-2 gap-3">
-                      <Button variant="outline" onClick={() => confirmUploadSkin('classic')}>经典手臂</Button>
-                      <Button variant="outline" onClick={() => confirmUploadSkin('slim')}>纤细手臂</Button>
+                      <Button variant="outline" onClick={() => confirmUploadSkin('classic')}>{t('accountDetail.classicArm')}</Button>
+                      <Button variant="outline" onClick={() => confirmUploadSkin('slim')}>{t('accountDetail.slimArm')}</Button>
                     </div>
                   </DialogBody>
                 </Dialog>
                 {profile?.skinSource === 'local' && (
                   <Button variant="outline" size="sm" onClick={handleSkinReset}>
-                    <FontAwesomeIcon icon={faUndo} className="mr-1 h-3 w-3" /> 重置皮肤
+                    <FontAwesomeIcon icon={faUndo} className="mr-1 h-3 w-3" /> {t('accountDetail.resetSkin')}
                   </Button>
                 )}
               </>
             ) : account.serverUrl ? (
               <Button variant="outline" size="sm" onClick={() => { const url = new URL(account.serverUrl!).origin; openUrl(url).catch(() => window.open(url, '_blank')) }}>
-                <FontAwesomeIcon icon={faGlobe} className="mr-1 h-3 w-3" /> 前往皮肤站
+                <FontAwesomeIcon icon={faGlobe} className="mr-1 h-3 w-3" /> {t('accountDetail.goToSkinSite')}
               </Button>
             ) : null}
             <Button variant="destructive" size="sm" onClick={handleDelete}>
-              <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> 删除账户
+              <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> {t('accountDetail.deleteAccount')}
             </Button>
           </div>
         </div>
