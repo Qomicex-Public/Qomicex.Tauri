@@ -13,4 +13,12 @@ export default {
   javaIncompatible: '当前选择的 Java {current} 不满足 Minecraft {game} 的需求（需要 Java {required}），是否继续启动？',
   launchCancelled: '已取消启动',
   gameStopped: '已停止游戏',
+  timeSeconds: '{count}秒',
+  timeMinutes: '{count}分{sec}秒',
+  timeHours: '{hours}小时{mins}分',
+  instancesRunning: '{count} 个实例正在运行',
+  noRunningGame: '暂无运行中的游戏',
+  goToInstances: '前往实例管理',
+  title: '运行中的游戏',
+  runningFor: '已运行 {time}',
 } as const

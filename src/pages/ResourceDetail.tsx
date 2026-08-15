@@ -39,6 +39,7 @@ import { save } from '@tauri-apps/plugin-dialog'
 import { loadSettings } from '../api/settings.ts'
 import ModpackInstallDialog from '../components/ModpackInstallDialog.tsx'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
+import { useI18n } from '../i18n/index.tsx'
 
 /**
  * 解析一个资源的中文名：优先用标题精确匹配（CurseForge 标题常带括号后缀，
@@ -92,6 +93,7 @@ function DependenciesCard({ resourceId, source, versions, gameVersion, loader }:
   loader: string
 }) {
   const [deps, setDeps] = useState<ResolvedDependency[] | null>(null)
+  const { t } = useI18n()
   const latest = versions[0]
   const latestId = latest?.id
   const latestNumber = latest?.versionNumber
@@ -115,16 +117,16 @@ function DependenciesCard({ resourceId, source, versions, gameVersion, loader }:
     <Card>
       <CardContent className="space-y-3 p-6">
         <div className="flex items-baseline justify-between">
-          <h3 className="text-lg font-semibold">前置模组</h3>
-          <span className="text-[11px] text-muted-foreground/60">基于 {latestNumber} 解析</span>
+          <h3 className="text-lg font-semibold">{t('resourceDetail.prereqMods')}</h3>
+          <span className="text-[11px] text-muted-foreground/60">{t('resourceDetail.basedOn', { version: latestNumber ?? '' })}</span>
         </div>
         {deps === null ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-            正在解析前置模组...
+            {t('resourceDetail.parsingPrereq')}
           </div>
         ) : deps.length === 0 ? (
-          <p className="text-xs text-muted-foreground">此版本没有前置模组</p>
+          <p className="text-xs text-muted-foreground">{t('resourceDetail.noPrereq')}</p>
         ) : (
           <div className="grid gap-1.5">
             {deps.map(d => (
@@ -157,6 +159,7 @@ export default function ResourceDetailPage() {
   const location = useLocation()
   const navIconUrl = (location.state as { iconUrl?: string } | null)?.iconUrl
   const { notify } = useMessageBox()
+  const { t } = useI18n()
   const source = searchParams.get('source') ?? 'modrinth'
   const category = searchParams.get('category') ?? 'mod'
   const keyword = searchParams.get('keyword') ?? ''
@@ -236,11 +239,11 @@ export default function ResourceDetailPage() {
         icon: detail?.iconUrl,
         createdAt: new Date().toISOString(),
       })
-      notify('已加入下载列表', 'success')
+      notify(t('resourceDetail.addedToDownload'), 'success')
     } catch {
-      notify('下载失败', 'error')
+      notify(t('resourceDetail.downloadFailed'), 'error')
     }
-  }, [source, resourceId, category, instance, detail, notify])
+  }, [source, resourceId, category, instance, detail, notify, t])
 
   const handleFtbExportJson = useCallback(async (versionId: string, versionName: string) => {
     const exportUrl = `${API_BASE}/api/resources/ftb/${resourceId}/export?versionId=${encodeURIComponent(versionId)}`
@@ -261,11 +264,11 @@ export default function ResourceDetailPage() {
         icon: detail?.iconUrl,
         createdAt: new Date().toISOString(),
       })
-      notify('已加入下载列表', 'success')
+      notify(t('resourceDetail.addedToDownload'), 'success')
     } catch {
-      notify('导出失败', 'error')
+      notify(t('resourceDetail.exportFailed'), 'error')
     }
-  }, [resourceId, detail, notify])
+  }, [resourceId, detail, notify, t])
 
   // Effect A: load detail only — show page ASAP, versions load independently
   useEffect(() => {
@@ -295,7 +298,7 @@ export default function ResourceDetailPage() {
         setLoading(false)
       } catch (e) {
         if (cancelled) return
-        setError(e instanceof Error ? e.message : '加载资源详情失败')
+        setError(e instanceof Error ? e.message : t('resourceDetail.loadDetailFailed'))
         setLoading(false)
       }
     }
@@ -353,7 +356,7 @@ export default function ResourceDetailPage() {
               if (p.done) {
                 return getCurseForgeVersionFetchResult(taskId)
               }
-              if (Date.now() > pollDeadline) throw new Error('加载版本列表超时')
+              if (Date.now() > pollDeadline) throw new Error(t('resourceDetail.loadVersionsTimeout'))
             }
           }
           versionList = await poll()
@@ -362,7 +365,7 @@ export default function ResourceDetailPage() {
           cacheSet(cacheKey, versionList)
         } catch (e) {
           if (cancelled) return
-          setVersionsError(e instanceof Error ? e.message : '加载版本列表失败')
+          setVersionsError(e instanceof Error ? e.message : t('resourceDetail.loadVersionsFailed'))
         }
         setVersionFetchProgress(null)
         if (!cancelled) setLoadingVersions(false)
@@ -374,7 +377,7 @@ export default function ResourceDetailPage() {
           cacheSet(cacheKey, versionList)
         } catch (e) {
           if (cancelled) return
-          setVersionsError(e instanceof Error ? e.message : '加载版本列表失败')
+          setVersionsError(e instanceof Error ? e.message : t('resourceDetail.loadVersionsFailed'))
         }
         if (!cancelled) setLoadingVersions(false)
       }
@@ -457,12 +460,12 @@ export default function ResourceDetailPage() {
               <Link to={`/resource-center?${backQuery.toString()}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
                 <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
               </Link>
-              <span className="ml-2">资源详情</span>
+              <span className="ml-2">{t('resourceDetail.title')}</span>
             </>
           }
           actions={
             <div className="flex items-center gap-2">
-              <Tooltip content="刷新">
+              <Tooltip content={t('resourceDetail.refresh')}>
                 <Button variant="outline" size="sm" onClick={refreshDetail}>
                   <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
                 </Button>
@@ -471,7 +474,7 @@ export default function ResourceDetailPage() {
                 <Button asChild variant="outline" size="sm">
                   <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
                     <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3.5 w-3.5" />
-                    原始页面
+                    {t('resourceDetail.originalPage')}
                   </a>
                 </Button>
               ) : null}
@@ -532,8 +535,8 @@ export default function ResourceDetailPage() {
       ) : error || !detail ? (
         <Card className="p-8">
           <div className="space-y-2 text-center">
-            <p className="text-sm font-medium text-foreground">加载失败</p>
-            <p className="text-xs text-muted-foreground">{error ?? '资源不存在'}</p>
+            <p className="text-sm font-medium text-foreground">{t('resourceDetail.loadFailed')}</p>
+            <p className="text-xs text-muted-foreground">{error ?? t('resourceDetail.notFound')}</p>
           </div>
         </Card>
       ) : (
@@ -556,9 +559,9 @@ export default function ResourceDetailPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-2xl font-semibold leading-tight">{cnName ? <>{cnName}<span className="ml-1.5 text-sm font-normal text-muted-foreground/60">| {detail.title}</span></> : detail.title}</h2>
                       <Badge variant="secondary">{getSourceLabel(detail.source)}</Badge>
-                      {detail.latestVersion && <Badge variant="outline">最新 {detail.latestVersion}</Badge>}
+                      {detail.latestVersion && <Badge variant="outline">{t('resourceDetail.latest', { version: detail.latestVersion })}</Badge>}
                     </div>
-                    <MinecraftText text={detail.description || '暂无简介'} className="text-sm leading-7 text-muted-foreground" />
+                    <MinecraftText text={detail.description || t('resourceDetail.noDescription')} className="text-sm leading-7 text-muted-foreground" />
                     {detail.source !== 'ftb' && (
                       <div className="space-y-2">
                         <button
@@ -579,11 +582,11 @@ export default function ResourceDetailPage() {
                           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                         >
                           <FontAwesomeIcon icon={faLanguage} className="h-3 w-3" />
-                          {translating ? '翻译中...' : translation ? '收起翻译' : '翻译简介'}
+                          {translating ? t('resourceDetail.translating') : translation ? t('resourceDetail.collapseTranslation') : t('resourceDetail.translateDescription')}
                         </button>
                         {translation && (
                           <div className="rounded-lg border border-border/60 bg-muted/20 p-3 text-sm leading-7 text-foreground">
-                            <span className="mr-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">译</span>
+                            <span className="mr-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">{t('resourceDetail.translatedMark')}</span>
                             {translation.translated}
                           </div>
                         )}
@@ -594,7 +597,7 @@ export default function ResourceDetailPage() {
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5">
                       <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
-                      {detail.author || '未知作者'}
+                      {detail.author || t('resourceDetail.unknownAuthor')}
                     </span>
                     <span className="inline-flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5">
                       <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
@@ -604,7 +607,7 @@ export default function ResourceDetailPage() {
 
                   {detail.categories.length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-sm font-medium text-foreground">分类标签</p>
+                      <p className="text-sm font-medium text-foreground">{t('resourceDetail.categoryTags')}</p>
                       <div className="flex flex-wrap gap-2">
                         {detail.categories.map((item) => (
                           <Badge key={item} variant="outline" className="gap-1 rounded-full px-3 py-1">
@@ -624,7 +627,7 @@ export default function ResourceDetailPage() {
             <Card>
               <CardContent className="space-y-4 p-6">
                 <div className="space-y-1 flex items-center justify-between">
-                  <h3 className="text-lg font-semibold">详细介绍</h3>
+                  <h3 className="text-lg font-semibold">{t('resourceDetail.detailedIntro')}</h3>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={async () => {
@@ -646,10 +649,10 @@ export default function ResourceDetailPage() {
                       className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                     >
                       <FontAwesomeIcon icon={faLanguage} className="h-3 w-3" />
-                      {translatingBody ? '翻译中...' : bodyTranslation ? '显示原文' : '翻译详细介绍'}
+                      {translatingBody ? t('resourceDetail.translating') : bodyTranslation ? t('resourceDetail.showOriginal') : t('resourceDetail.translateBody')}
                     </button>
                     <button onClick={() => setBodyCollapsed(!bodyCollapsed)} className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-                      {bodyCollapsed ? '展开' : '收起'}
+                      {bodyCollapsed ? t('resourceDetail.expand') : t('resourceDetail.collapse')}
                       <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 transition-transform', !bodyCollapsed && 'rotate-180')} />
                     </button>
                   </div>
@@ -665,7 +668,7 @@ export default function ResourceDetailPage() {
                   ) : (
                     <article className="prose prose-invert prose-sm max-w-none prose-headings:mt-5 prose-headings:mb-3 prose-headings:font-semibold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-p:my-3 prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-3 prose-ol:pl-5 prose-li:my-1.5 prose-strong:text-foreground prose-code:rounded prose-code:bg-background prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-pre:rounded-xl prose-pre:border prose-pre:border-border/60 prose-pre:bg-background prose-a:text-primary hover:prose-a:text-primary/80 prose-img:rounded-xl prose-img:border prose-img:border-border/60 prose-img:shadow-sm prose-hr:border-border/60 prose-blockquote:border-l-primary prose-blockquote:text-muted-foreground break-words">
                       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                        {detail.body?.trim() || detail.description || '暂无更多介绍'}
+                        {detail.body?.trim() || detail.description || t('resourceDetail.noMoreContent')}
                       </ReactMarkdown>
                     </article>
                   )}
@@ -687,24 +690,24 @@ export default function ResourceDetailPage() {
             <Card>
               <CardContent className="space-y-4 p-6">
                 <div className="space-y-1">
-                  <h3 className="text-lg font-semibold">选择版本安装</h3>
+                  <h3 className="text-lg font-semibold">{t('resourceDetail.selectVersionInstall')}</h3>
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <span className="text-xs text-muted-foreground">游戏版本</span>
+                    <span className="text-xs text-muted-foreground">{t('resourceDetail.gameVersion')}</span>
                     <Select value={selectedGameVersion} onChange={setSelectedGameVersion}>
                       {gameVersionOptions.map((option) => (
-                        <SelectOption key={option} value={option}>{option === 'all' ? '全部版本' : option}</SelectOption>
+                        <SelectOption key={option} value={option}>{option === 'all' ? t('resourceDetail.allVersions') : option}</SelectOption>
                       ))}
                     </Select>
                   </div>
 
                   <div className="space-y-1.5">
-                    <span className="text-xs text-muted-foreground">加载器</span>
+                    <span className="text-xs text-muted-foreground">{t('resourceDetail.loader')}</span>
                     <Select value={selectedLoader} onChange={setSelectedLoader}>
                       {loaderOptions.map((option) => (
-                        <SelectOption key={option} value={option}>{option === 'all' ? '全部加载器' : option}</SelectOption>
+                        <SelectOption key={option} value={option}>{option === 'all' ? t('resourceDetail.allLoaders') : option}</SelectOption>
                       ))}
                     </Select>
                   </div>
@@ -716,7 +719,7 @@ export default function ResourceDetailPage() {
                       {versionFetchProgress && (
                         <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
                           <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-                          正在获取版本列表
+                          {t('resourceDetail.fetchingVersions')}
                           <span className="font-medium text-foreground/80">
                             {versionFetchProgress.loaded} / {versionFetchProgress.total}
                           </span>
@@ -746,13 +749,13 @@ export default function ResourceDetailPage() {
                   ) : (
                     <>
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>共 {versions.length} 个版本</span>
-                        <span>筛选后 {filteredVersions.length} 个</span>
+                        <span>{t('resourceDetail.versionCount', { count: versions.length })}</span>
+                        <span>{t('resourceDetail.filteredCount', { count: filteredVersions.length })}</span>
                       </div>
 
                       {filteredVersions.length === 0 ? (
                         <div className="rounded-xl border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
-                          当前筛选条件下没有可用版本
+                          {t('resourceDetail.noVersionUnderFilter')}
                         </div>
                       ) : (
                         <>
@@ -789,9 +792,9 @@ export default function ResourceDetailPage() {
                                     }}
                                   >
                                     <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                                    安装
+                                    {t('resourceDetail.install')}
                                   </Button>
-                                  <Tooltip content="另存为">
+                                  <Tooltip content={t('resourceDetail.saveAs')}>
                                     {source === 'ftb' ? (
                                       <Button
                                         size="sm"
@@ -819,7 +822,7 @@ export default function ResourceDetailPage() {
                                     onClick={() => handleDownload(version.id, downloadsByVersion[version.id][0].url, downloadsByVersion[version.id][0].fileName)}
                                   >
                                     <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                                    安装
+                                    {t('resourceDetail.install')}
                                   </Button>
                                 ) : (
                                   <Button
@@ -829,7 +832,7 @@ export default function ResourceDetailPage() {
                                     onClick={() => handleLoadDownloads(version.id)}
                                   >
                                     <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                                    {loadingDownloadsFor === version.id ? '加载中...' : '获取下载'}
+                                    {loadingDownloadsFor === version.id ? t('resourceDetail.loading') : t('resourceDetail.getDownload')}
                                   </Button>
                                 )
                               ) : version.downloads?.[0]?.url ? (
@@ -839,9 +842,9 @@ export default function ResourceDetailPage() {
                                     onClick={() => setInstallVersion(version)}
                                   >
                                     <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                                    安装
+                                    {t('resourceDetail.install')}
                                   </Button>
-                                  <Tooltip content="另存为">
+                                  <Tooltip content={t('resourceDetail.saveAs')}>
                                     <Button
                                       size="sm"
                                       variant="outline"
@@ -858,7 +861,7 @@ export default function ResourceDetailPage() {
                                   disabled
                                 >
                                   <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                                  暂无下载
+                                  {t('resourceDetail.noDownload')}
                                 </Button>
                               )}
                             </div>
@@ -870,7 +873,7 @@ export default function ResourceDetailPage() {
                             className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 p-3 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
                           >
                             <FontAwesomeIcon icon={faChevronDown} className="h-3 w-3" />
-                            加载更多 ({filteredVersions.length - visibleCount} 个)
+                            {t('resourceDetail.loadMore', { count: filteredVersions.length - visibleCount })}
                           </button>
                         )}
                         </>

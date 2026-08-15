@@ -68,8 +68,8 @@ const CATEGORIES = [
 ] as const
 
 const DOWNLOAD_SOURCES = [
-  { value: 0, label: '官方源' },
-  { value: 1, label: 'BMCLAPI 镜像' },
+  { value: 0 },
+  { value: 1 },
 ]
 
 function saveSettings(settings: AppSettings) {
@@ -99,9 +99,10 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [licenseCopied, setLicenseCopied] = useState(false)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [legalDialogOpen, setLegalDialogOpen] = useState(false)
+  const { t } = useI18n()
 
   const isPreRelease = /-/.test(APP_INFO.version)
-  const versionType = isPreRelease ? '测试版' : '稳定版'
+  const versionType = isPreRelease ? t('settings.about.beta') : t('settings.about.stable')
 
   useEffect(() => {
     if (licenseStatus?.valid && licenseStatus?.channel === 'alpha') {
@@ -142,7 +143,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
         <CardHeader>
           <CardTitle>
             <FontAwesomeIcon icon={faInfoCircle} className="mr-2 h-4 w-4 text-muted-foreground" />
-            关于 {APP_INFO.name}
+            {t('settings.about.aboutApp', { name: APP_INFO.name })}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -151,16 +152,16 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             <div className="flex-1 min-w-0">
               <div className="text-lg font-semibold">{APP_INFO.name}</div>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">版本 {APP_INFO.version}</span>
+                <span className="text-sm text-muted-foreground">{t('common.version')} {APP_INFO.version}</span>
                 <span className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted">{versionType}</span>
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
               <Button size="sm" variant="ghost" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faBug} className="h-3 w-3" />反馈
+                <FontAwesomeIcon icon={faBug} className="h-3 w-3" />{t('settings.about.feedback')}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => openUrl(REPOSITORY_URL).catch(() => window.open(REPOSITORY_URL, '_blank'))} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />查看仓库
+                <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />{t('settings.about.viewRepository')}
               </Button>
             </div>
           </div>
@@ -170,15 +171,15 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* Version Info */}
       <Card>
-        <CardHeader><CardTitle>版本信息</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t('settings.about.versionInfo')}</CardTitle></CardHeader>
         <CardContent>
           <div className="rounded-lg bg-background p-4 text-sm">
             <div className="grid grid-cols-2 gap-3">
-              <div><div className="text-xs text-muted-foreground">应用版本</div><div className="mt-0.5 flex items-center gap-2 font-medium">{APP_INFO.version}<span className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted">{versionType}</span></div></div>
-              <div><div className="text-xs text-muted-foreground">版本哈希</div><div className="mt-0.5 font-medium text-xs font-mono">{sysInfo?.gitCommit && sysInfo.gitCommit !== 'unknown' ? sysInfo.gitCommit : __GIT_SHA__}</div></div>
-              <div><div className="text-xs text-muted-foreground">操作系统</div><div className="mt-0.5 font-medium">{sysInfo?.osDisplayName || (sysInfo ? `${sysInfo.osName} ${sysInfo.osVersion}` : '加载中...')}</div></div>
-              <div><div className="text-xs text-muted-foreground">系统架构</div><div className="mt-0.5 font-medium">{sysInfo?.architecture ?? '加载中...'}</div></div>
-              <div><div className="text-xs text-muted-foreground">内存</div><div className="mt-0.5 font-medium">{sysInfo ? `${(sysInfo.memory / 1024).toFixed(1)} GB` : '加载中...'}</div></div>
+              <div><div className="text-xs text-muted-foreground">{t('settings.about.appVersion')}</div><div className="mt-0.5 flex items-center gap-2 font-medium">{APP_INFO.version}<span className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted">{versionType}</span></div></div>
+              <div><div className="text-xs text-muted-foreground">{t('settings.about.versionHash')}</div><div className="mt-0.5 font-medium text-xs font-mono">{sysInfo?.gitCommit && sysInfo.gitCommit !== 'unknown' ? sysInfo.gitCommit : __GIT_SHA__}</div></div>
+              <div><div className="text-xs text-muted-foreground">{t('settings.about.os')}</div><div className="mt-0.5 font-medium">{sysInfo?.osDisplayName || (sysInfo ? `${sysInfo.osName} ${sysInfo.osVersion}` : t('common.loading'))}</div></div>
+              <div><div className="text-xs text-muted-foreground">{t('settings.about.architecture')}</div><div className="mt-0.5 font-medium">{sysInfo?.architecture ?? t('common.loading')}</div></div>
+              <div><div className="text-xs text-muted-foreground">{t('settings.about.memory')}</div><div className="mt-0.5 font-medium">{sysInfo ? `${(sysInfo.memory / 1024).toFixed(1)} GB` : t('common.loading')}</div></div>
             </div>
           </div>
         </CardContent>
@@ -188,18 +189,18 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       <Card>
         <CardHeader><CardTitle>
           <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-muted-foreground" />
-          许可证
+          {t('settings.about.license')}
         </CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
             {licenseStatus.valid ? (
               <Badge variant="default" className="gap-1">
                 <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />
-                已激活
+                {t('settings.about.licenseActivated')}
               </Badge>
             ) : (
               <Badge variant="destructive" className="gap-1">
-                {licenseStatus.error === 'LICENSE_NOT_FOUND' ? '未激活' : '无效'}
+                {licenseStatus.error === 'LICENSE_NOT_FOUND' ? t('settings.about.licenseNotActivated') : t('settings.about.licenseInvalid')}
               </Badge>
             )}
             {licenseStatus.licenseId && (
@@ -208,24 +209,24 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
           </div>
           <div className="rounded-lg bg-muted p-3 text-sm space-y-1.5">
             <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">频道</span>
+              <span className="text-muted-foreground">{t('settings.about.channel')}</span>
               <span>{licenseStatus.channel || '-'}</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">到期</span>
-              <span>{licenseStatus.isPermanent ? '永久有效' : (licenseStatus.expireAt || '-')}</span>
+              <span className="text-muted-foreground">{t('settings.about.expiry')}</span>
+              <span>{licenseStatus.isPermanent ? t('settings.about.permanent') : (licenseStatus.expireAt || '-')}</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">机器码</span>
+              <span className="text-muted-foreground">{t('settings.about.machineCode')}</span>
               <span className="font-mono text-[10px] max-w-[200px] truncate select-all">{licenseStatus.machineCode || '-'}</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={onOpenLicenseDialog} className="gap-1.5">
               <FontAwesomeIcon icon={faKey} className="h-3 w-3" />
-              {licenseStatus.valid ? '更换许可证' : '激活许可证'}
+              {licenseStatus.valid ? t('settings.about.changeLicense') : t('settings.about.activateLicense')}
             </Button>
-            <Tooltip content={licenseCopied ? '已复制' : '复制机器码'}>
+            <Tooltip content={licenseCopied ? t('common.copied') : t('settings.about.copyMachineCode')}>
               <Button
                 size="sm"
                 variant="ghost"
@@ -249,7 +250,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       <Card>
         <CardHeader><CardTitle>
           <FontAwesomeIcon icon={faArrowUp} className="mr-2 h-4 w-4 text-muted-foreground" />
-          更新
+          {t('settings.about.update')}
         </CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
@@ -258,24 +259,24 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                 <SelectOption value="alpha">Alpha</SelectOption>
               ) : (
                 <>
-                  <SelectOption value="stable">稳定版</SelectOption>
-                  <SelectOption value="beta">测试版</SelectOption>
+                  <SelectOption value="stable">{t('settings.about.stable')}</SelectOption>
+                  <SelectOption value="beta">{t('settings.about.beta')}</SelectOption>
                 </>
               )}
             </Select>
             <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
               <FontAwesomeIcon icon={updateState === 'checking' ? faRotate : faArrowUp} className={cn('mr-1 h-3 w-3', updateState === 'checking' && 'animate-spin')} />
-              {updateState === 'checking' ? '检查中...' : '检查更新'}
+              {updateState === 'checking' ? t('settings.about.checking') : t('settings.about.checkUpdate')}
             </Button>
             {updateState === 'uptodate' && (
               <span className="flex items-center gap-1 text-sm text-muted-foreground">
                 <FontAwesomeIcon icon={faCircleCheck} className="h-3.5 w-3.5 text-primary" />
-                已是最新版本
+                {t('settings.about.upToDate')}
               </span>
             )}
             {updateState === 'error' && (
               <Tooltip content={updateError}>
-                <span className="text-sm text-destructive cursor-help">检查更新失败</span>
+                <span className="text-sm text-destructive cursor-help">{t('settings.about.checkUpdateFailed')}</span>
               </Tooltip>
             )}
           </div>
@@ -291,7 +292,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* Contributors */}
       <Card>
-        <CardHeader><CardTitle>开发者</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t('settings.about.developers')}</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-3">
             {CONTRIBUTORS.map((c) => (
@@ -318,7 +319,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* Services Credits */}
       <Card>
-        <CardHeader><CardTitle><FontAwesomeIcon icon={faHeart} className="mr-2 h-4 w-4 text-destructive" />鸣谢</CardTitle></CardHeader>
+        <CardHeader><CardTitle><FontAwesomeIcon icon={faHeart} className="mr-2 h-4 w-4 text-destructive" />{t('settings.about.acknowledgements')}</CardTitle></CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {SERVICES.map((svc) => (
@@ -345,7 +346,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* Reference Projects */}
       <Card>
-        <CardHeader><CardTitle>参考项目</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t('settings.about.referenceProjects')}</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-2">
             {REFERENCE_PROJECTS.map((proj) => (
@@ -368,7 +369,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* Backend Dependencies */}
       <Card>
-        <CardHeader><CardTitle>后端依赖</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t('settings.about.backendDependencies')}</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-1">
             {Object.entries(BACKEND_DEPENDENCIES).map(([category, deps]) => (
@@ -413,7 +414,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* Frontend Dependencies */}
       <Card>
-        <CardHeader><CardTitle>前端依赖</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t('settings.about.frontendDependencies')}</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-1">
             {Object.entries(DEPENDENCIES).map(([category, deps]) => (
@@ -454,15 +455,15 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* License */}
       <Card>
-        <CardHeader><CardTitle>开源协议</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t('settings.about.openSourceLicense')}</CardTitle></CardHeader>
         <CardContent>
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium">{LICENSE.name}</div>
-              <div className="text-xs text-muted-foreground">本程序基于 {LICENSE.name} 开源协议发布</div>
+              <div className="text-xs text-muted-foreground">{t('settings.about.licenseNotice', { name: LICENSE.name })}</div>
             </div>
             <Button size="sm" variant="outline" onClick={() => openUrl(LICENSE.url).catch(() => window.open(LICENSE.url, '_blank'))} className="gap-1.5 h-8 text-xs">
-              <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3" />查看协议
+              <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3" />{t('settings.about.viewLicense')}
             </Button>
           </div>
         </CardContent>
@@ -470,7 +471,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* 版权与隐私 */}
       <Card>
-        <CardHeader><CardTitle><FontAwesomeIcon icon={faScaleBalanced} className="mr-2 h-4 w-4 text-muted-foreground" />版权与隐私</CardTitle></CardHeader>
+        <CardHeader><CardTitle><FontAwesomeIcon icon={faScaleBalanced} className="mr-2 h-4 w-4 text-muted-foreground" />{t('settings.about.copyrightPrivacy')}</CardTitle></CardHeader>
         <CardContent className="space-y-1">
           <button
             onClick={() => setLegalDialogOpen(true)}
@@ -478,8 +479,8 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
           >
             <FontAwesomeIcon icon={faFileLines} className="h-4 w-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
-              <div className="font-medium">版权声明</div>
-              <div className="truncate text-xs text-muted-foreground">查看本软件的版权归属与开源许可信息</div>
+              <div className="font-medium">{t('settings.about.copyrightStatement')}</div>
+              <div className="truncate text-xs text-muted-foreground">{t('settings.about.copyrightStatementDesc')}</div>
             </div>
             <FontAwesomeIcon icon={faChevronRight} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
           </button>
@@ -489,7 +490,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
           >
             <FontAwesomeIcon icon={faFileContract} className="h-4 w-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
-              <div className="font-medium">用户协议</div>
+              <div className="font-medium">{t('settings.about.userAgreement')}</div>
               <div className="truncate text-xs text-muted-foreground">qomicex.top/legal/user-agreement</div>
             </div>
             <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
@@ -500,10 +501,10 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
           >
             <FontAwesomeIcon icon={faShieldHalved} className="h-4 w-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
-              <div className="font-medium">隐私政策</div>
-              <div className="truncate text-xs text-muted-foreground">即将上线</div>
+              <div className="font-medium">{t('settings.about.privacyPolicy')}</div>
+              <div className="truncate text-xs text-muted-foreground">{t('common.comingSoon')}</div>
             </div>
-            <Badge variant="secondary" className="h-5 shrink-0 text-[10px]">即将上线</Badge>
+            <Badge variant="secondary" className="h-5 shrink-0 text-[10px]">{t('common.comingSoon')}</Badge>
           </button>
         </CardContent>
       </Card>
@@ -529,7 +530,7 @@ export default function Settings() {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [runtimes, setRuntimesState] = useState<JavaRuntime[]>(() => getRuntimes())
   const [scanning, setScanning] = useState<'idle' | 'quick' | 'deep'>('idle')
-  const [javaStatus, setJavaStatus] = useState('就绪')
+  const [javaStatus, setJavaStatus] = useState(() => t('settings.java.ready'))
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [addPath, setAddPath] = useState('')
   const [adding, setAdding] = useState(false)
@@ -593,25 +594,25 @@ export default function Settings() {
     try {
       await apiSetPluginState(id, active ? 'active' : 'disabled')
       await loadPlugins()
-      setPluginsMsg('更改已生效')
+      setPluginsMsg(t('settings.plugins.changesApplied'))
       setTimeout(() => setPluginsMsg(null), 3000)
     } catch {
-      setPluginsMsg('保存失败')
+      setPluginsMsg(t('settings.plugins.saveFailed'))
     }
-  }, [loadPlugins])
+  }, [loadPlugins, t])
 
   const handlePluginUninstall = useCallback(async (id: string) => {
-    if (!(await msgConfirm('确定卸载此插件？'))) return
+    if (!(await msgConfirm(t('settings.plugins.uninstallConfirm')))) return
     deactivatePlugin(id)
     try {
       const res = await fetch(`${API_BASE}/plugins/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Uninstall failed')
-      setPluginsMsg('插件已卸载')
+      setPluginsMsg(t('settings.plugins.uninstalled'))
       await loadPlugins()
     } catch {
-      setPluginsMsg('卸载失败')
+      setPluginsMsg(t('settings.plugins.uninstallFailed'))
     }
-  }, [loadPlugins, msgConfirm])
+  }, [loadPlugins, msgConfirm, t])
 
   const handlePluginInstall = () => {
     const input = document.createElement('input')
@@ -626,12 +627,12 @@ export default function Settings() {
       try {
         const res = await fetch(`${API_BASE}/plugins/upload`, { method: 'POST', body: form })
         if (!res.ok) throw new Error(`Upload failed (${res.status})`)
-        setPluginsMsg('插件安装成功')
+        setPluginsMsg(t('settings.plugins.installSuccess'))
         setPluginDetail(null)
         await loadPlugins()
-        notify('插件安装成功', 'success')
+        notify(t('settings.plugins.installSuccess'), 'success')
       } catch (e) {
-        notify('安装失败: ' + (e instanceof Error ? e.message : 'Unknown'), 'error')
+        notify(t('settings.plugins.installFailed', { message: e instanceof Error ? e.message : 'Unknown' }), 'error')
       } finally {
         setPluginInstalling(false)
       }
@@ -654,7 +655,7 @@ export default function Settings() {
     const next = { ...settings, [key]: value }
     setSettings(next)
     saveSettings(next)
-    notify('设置已保存', 'success')
+    notify(t('settings.saved'), 'success')
   }
 
   const validCount = runtimes.filter((j) => j.state === 'Valid').length
@@ -705,22 +706,22 @@ export default function Settings() {
 
   const handleScan = useCallback(async (mode: 'quick' | 'deep') => {
     setScanning(mode)
-    setJavaStatus(mode === 'quick' ? '正在快速扫描...' : '正在深度扫描...')
+    setJavaStatus(mode === 'quick' ? t('settings.java.scanningQuick') : t('settings.java.scanningDeep'))
     try {
       const prev = getRuntimes()
       const result = await scanRuntimes(mode)
       const newCount = prev.length === 0 ? result.length : result.filter((r) => !prev.some((m) => m.path === r.path)).length
-      setJavaStatus(newCount > 0 ? `扫描完成，发现 ${newCount} 个新版` : '扫描完成，无新版')
+      setJavaStatus(newCount > 0 ? t('settings.java.scanDoneFound', { count: newCount }) : t('settings.java.scanDoneNone'))
     } catch (e) {
-      setJavaStatus('扫描失败')
+      setJavaStatus(t('settings.java.scanFailed'))
       console.error(e)
     } finally {
       setScanning('idle')
     }
-  }, [])
+  }, [t])
 
   function handleRefresh() {
-    setJavaStatus('正在刷新...')
+    setJavaStatus(t('settings.java.refreshing'))
     handleScan('quick')
   }
 
@@ -782,7 +783,7 @@ export default function Settings() {
     try {
       const selected = await invoke<string | null>('pick_dialog', {
         options: {
-          title: '选择 Java 可执行文件',
+          title: t('settings.java.pickJavaExecutable'),
           filters: navigator.platform?.includes('Win')
             ? [{ name: 'Java', extensions: ['exe'] }]
             : undefined,
@@ -798,11 +799,11 @@ export default function Settings() {
     try {
       const result = await addCustomJavaRuntime(addPath)
       addRuntime(result)
-      setJavaStatus(`已添加 ${result.name} ${result.version}`)
+      setJavaStatus(t('settings.java.added', { name: result.name, version: result.version }))
       setAddDialogOpen(false)
     } catch (e: unknown) {
-      setJavaStatus(e instanceof ApiError ? e.displayMessage : '无法识别该路径下的 Java 运行时')
-      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '无法识别该路径下的 Java 运行时')
+      setJavaStatus(e instanceof ApiError ? e.displayMessage : t('settings.java.unrecognizedPath'))
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.java.unrecognizedPath'))
     } finally {
       setAdding(false)
     }
@@ -822,7 +823,7 @@ export default function Settings() {
       }
       setDownloadDialogOpen(true)
     } catch (e: unknown) {
-      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '加载 Java 下载目录失败')
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.java.loadCatalogFailed'))
     } finally {
       setDownloadLoading(false)
     }
@@ -850,9 +851,9 @@ export default function Settings() {
       }
       addTask(dlTask)
       setDownloadDialogOpen(false)
-      setJavaStatus(`已加入下载中心: ${dlTask.name}`)
+      setJavaStatus(t('settings.java.addedToDownload', { name: dlTask.name }))
     } catch (e: unknown) {
-      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '启动 Java 下载失败')
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.java.downloadFailed'))
     } finally {
       setStartDownloadLoading(false)
     }
@@ -872,9 +873,9 @@ export default function Settings() {
     setClearingCache(true)
     try {
       const { deleted } = await clearCache()
-      notify(`已清理缓存，删除 ${deleted} 个文件`, 'success')
+      notify(t('settings.launcher.cacheCleared', { count: deleted }), 'success')
     } catch (e) {
-      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '清理缓存失败')
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.cacheClearFailed'))
     } finally {
       setClearingCache(false)
     }
@@ -884,9 +885,9 @@ export default function Settings() {
     setClearingCurseForgeCache(true)
     try {
       await clearCurseForgeCache()
-      notify('CurseForge 版本缓存已清除', 'success')
+      notify(t('settings.launcher.curseforgeCacheCleared'), 'success')
     } catch (e) {
-      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : '清除 CurseForge 缓存失败')
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.curseforgeCacheClearFailed'))
     } finally {
       setClearingCurseForgeCache(false)
     }
@@ -894,7 +895,7 @@ export default function Settings() {
 
   async function handleDelete(path: string) {
     const name = runtimes.find((j) => j.path === path)?.name || ''
-    const ok = await msgConfirm(`确定要删除 "${name}" 吗？`, '删除 Java')
+    const ok = await msgConfirm(t('settings.java.deleteConfirm', { name }), t('settings.java.deleteTitle'))
     if (!ok) return
     setRemovingPath(path)
     try {
@@ -903,9 +904,9 @@ export default function Settings() {
       if (settings.defaultJavaPath === path) {
         update('defaultJavaPath', '')
       }
-      setJavaStatus(`已删除 ${name}`)
+      setJavaStatus(t('settings.java.deleted', { name }))
     } catch {
-      setJavaStatus('删除失败')
+      setJavaStatus(t('settings.java.deleteFailed'))
     } finally {
       setRemovingPath(null)
     }
@@ -932,12 +933,12 @@ export default function Settings() {
               <CardHeader>
                 <CardTitle>
                   <FontAwesomeIcon icon={faRocket} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  启动器设置
+                  {t('settings.launcher.title')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="space-y-2">
-                  <Label>数据目录</Label>
+                  <Label>{t('settings.launcher.dataDir')}</Label>
                   <div className="flex items-center gap-2">
                     <Input value={settings.dataDir} readOnly className="font-mono text-xs" />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={async () => {
@@ -947,20 +948,20 @@ export default function Settings() {
                         try {
                           const newPath = await setDataDir(result)
                           update('dataDir', newPath)
-                          notify('数据目录已更改，重启启动器后生效', 'success')
+                          notify(t('settings.launcher.dataDirChanged'), 'success')
                         } catch {
-                          notify('设置失败', 'error')
+                          notify(t('settings.launcher.saveFailed'), 'error')
                         }
                       }
                     }}>
                       <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">启动器数据存储位置，更改后需重启启动器生效</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.dataDirDesc')}</p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="downloadThreads">下载线程数</Label>
+                  <Label htmlFor="downloadThreads">{t('settings.launcher.downloadThreads')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadThreads', Math.max(1, settings.downloadThreads - 1))} disabled={settings.downloadThreads <= 1}>
                       <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
@@ -978,11 +979,11 @@ export default function Settings() {
                       <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">同时下载的文件数量（1-512），数值越大下载越快但占用带宽越多</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadThreadsDesc')}</p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="fileChunkThreads">分片线程数</Label>
+                  <Label htmlFor="fileChunkThreads">{t('settings.launcher.fileChunkThreads')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('fileChunkThreads', Math.max(0, settings.fileChunkThreads - 1))} disabled={settings.fileChunkThreads <= 0}>
                       <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
@@ -1000,11 +1001,11 @@ export default function Settings() {
                       <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">单文件分片下载线程数（0=自动，最大 16），数值越大单文件下载越快</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.fileChunkThreadsDesc')}</p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="maxConnectionsPerServer">最大连接数</Label>
+                  <Label htmlFor="maxConnectionsPerServer">{t('settings.launcher.maxConnections')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('maxConnectionsPerServer', Math.max(8, settings.maxConnectionsPerServer - 8))} disabled={settings.maxConnectionsPerServer <= 8}>
                       <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
@@ -1023,7 +1024,7 @@ export default function Settings() {
                       <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">每个服务器的最大连接数（8-256），重启后生效</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.maxConnectionsDesc')}</p>
                 </div>
 
                 <label className="flex items-center gap-3 cursor-pointer">
@@ -1032,8 +1033,8 @@ export default function Settings() {
                     onCheckedChange={(c) => update('versionIsolation', c === true)}
                   />
                   <div>
-                    <div className="text-sm font-medium">版本隔离</div>
-                    <div className="text-xs text-muted-foreground">每个版本使用独立的 mods/config/saves 目录，推荐保持开启</div>
+                    <div className="text-sm font-medium">{t('settings.launcher.versionIsolation')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.launcher.versionIsolationDesc')}</div>
                   </div>
                 </label>
 
@@ -1043,13 +1044,13 @@ export default function Settings() {
                     onCheckedChange={(c) => update('closeAfterLaunch', c === true)}
                   />
                   <div>
-                    <div className="text-sm font-medium">启动游戏后关闭启动器</div>
-                    <div className="text-xs text-muted-foreground">游戏启动后自动关闭本启动器</div>
+                    <div className="text-sm font-medium">{t('settings.launcher.closeAfterLaunch')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.launcher.closeAfterLaunchDesc')}</div>
                   </div>
                 </label>
 
                 <div className="space-y-2">
-                  <Label>下载源</Label>
+                  <Label>{t('settings.launcher.downloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {DOWNLOAD_SOURCES.map((s) => {
                       const ping = sourcePings.find(p => p.id === s.value)
@@ -1071,7 +1072,7 @@ export default function Settings() {
                               : 'border-border hover:border-muted-foreground/30'
                           )}
                         >
-                          {s.label}
+                          {t(`settings.launcher.downloadSourceName.${s.value}`)}
                           {pingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!pingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
@@ -1084,7 +1085,7 @@ export default function Settings() {
                         </button>
                       )
                     })}
-                    <Tooltip content="刷新延迟">
+                    <Tooltip content={t('settings.launcher.refreshLatency')}>
                       <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshPings} disabled={pingLoading}>
                         <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', pingLoading && 'animate-spin')} />
                       </Button>
@@ -1097,18 +1098,18 @@ export default function Settings() {
                     />
                     <div className="flex items-center gap-1.5">
                       <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
-                      <span className="text-sm font-medium">自动选择最快下载源</span>
+                      <span className="text-sm font-medium">{t('settings.launcher.autoSelectDownloadSource')}</span>
                     </div>
                   </label>
-                  <p className="text-xs text-muted-foreground">启动时和每次安装前自动检测并选择延迟最低的下载源</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectDownloadSourceDesc')}</p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>资源下载源</Label>
+                  <Label>{t('settings.launcher.modSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {[
-                      { value: 0, label: 'Modrinth/CurseForge 官方' },
-                      { value: 1, label: 'MCIM 镜像' },
+                      { value: 0 },
+                      { value: 1 },
                     ].map((s) => {
                       const ping = modPings.find(p => p.id === s.value)
                       const showLatency = ping && ping.latency >= 0
@@ -1129,7 +1130,7 @@ export default function Settings() {
                               : 'border-border hover:border-muted-foreground/30'
                           )}
                         >
-                          {s.label}
+                          {t(`settings.launcher.modSourceName.${s.value}`)}
                           {modPingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!modPingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
@@ -1142,7 +1143,7 @@ export default function Settings() {
                         </button>
                       )
                     })}
-                    <Tooltip content="刷新延迟">
+                    <Tooltip content={t('settings.launcher.refreshLatency')}>
                       <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshModPings} disabled={modPingLoading}>
                         <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', modPingLoading && 'animate-spin')} />
                       </Button>
@@ -1155,24 +1156,24 @@ export default function Settings() {
                     />
                     <div className="flex items-center gap-1.5">
                       <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
-                      <span className="text-sm font-medium">自动选择最快资源下载源</span>
+                      <span className="text-sm font-medium">{t('settings.launcher.autoSelectModSource')}</span>
                     </div>
                   </label>
-                  <p className="text-xs text-muted-foreground">自动检测 Modrinth/CurseForge API 镜像并选择延迟最低的</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectModSourceDesc')}</p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>翻译接口</Label>
+                  <Label>{t('settings.launcher.translationProvider')}</Label>
                   <Select
                     value={settings.translationProvider}
                     onChange={(v) => update('translationProvider', v)}
                     className="w-48"
                   >
-                    <SelectOption value="mymemory">MyMemory (默认)</SelectOption>
-                    <SelectOption value="google">Google Translate (需梯子)</SelectOption>
+                    <SelectOption value="mymemory">{t('settings.launcher.translationDefault')}</SelectOption>
+                    <SelectOption value="google">{t('settings.launcher.translationGoogle')}</SelectOption>
                     <SelectOption value="bing">Bing Translator</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">选择翻译资源详细介绍和简介时使用的翻译服务</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.translationProviderDesc')}</p>
                   {settings.translationProvider === 'bing' && (
                     <div className="mt-3">
                       <Label htmlFor="bingApiKey">Bing API Key</Label>
@@ -1181,18 +1182,18 @@ export default function Settings() {
                         type="password"
                         value={settings.bingApiKey || ''}
                         onChange={(e) => update('bingApiKey', e.target.value)}
-                        placeholder="输入 Azure Translator API Key"
+                        placeholder={t('settings.launcher.bingApiKeyPlaceholder')}
                         className="mt-1 max-w-sm"
                       />
                       <p className="text-xs text-muted-foreground mt-1">
-                        在 Azure Portal 创建 Translator 资源获取 Key，区域需设为 global
+                        {t('settings.launcher.bingApiKeyDesc')}
                       </p>
                     </div>
                   )}
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="downloadTimeout">下载超时 (秒)</Label>
+                  <Label htmlFor="downloadTimeout">{t('settings.launcher.downloadTimeout')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.max(0, settings.downloadTimeout - 5))} disabled={settings.downloadTimeout <= 0}>
                       <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
@@ -1210,23 +1211,23 @@ export default function Settings() {
                       <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">单个文件下载无响应超过此时间则自动重试（0=不超时，1-120 秒）</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadTimeoutDesc')}</p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>日志等级</Label>
+                  <Label>{t('settings.launcher.logLevelLabel')}</Label>
                   <Select
                     value={settings.logLevel}
                     onChange={(v) => update('logLevel', v)}
                     className="w-48"
                   >
-                    <SelectOption value="error">错误</SelectOption>
-                    <SelectOption value="warn">警告</SelectOption>
-                    <SelectOption value="info">信息</SelectOption>
-                    <SelectOption value="debug">调试</SelectOption>
-                    <SelectOption value="trace">跟踪</SelectOption>
+                    <SelectOption value="error">{t('settings.launcher.logLevel.error')}</SelectOption>
+                    <SelectOption value="warn">{t('settings.launcher.logLevel.warn')}</SelectOption>
+                    <SelectOption value="info">{t('settings.launcher.logLevel.info')}</SelectOption>
+                    <SelectOption value="debug">{t('settings.launcher.logLevel.debug')}</SelectOption>
+                    <SelectOption value="trace">{t('settings.launcher.logLevel.trace')}</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">控制控制台和日志文件的输出详细程度，信息等级为默认</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.logLevelDesc')}</p>
                 </div>
               </CardContent>
             </Card>
@@ -1235,23 +1236,23 @@ export default function Settings() {
               <CardHeader>
                 <CardTitle>
                   <FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  存储与缓存
+                  {t('settings.launcher.storageCache')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between gap-4">
                   <div className="space-y-1">
-                    <Label>版本列表缓存</Label>
-                    <p className="text-xs text-muted-foreground">清理 Forge 版本列表的 HTML 缓存文件</p>
+                    <Label>{t('settings.launcher.versionListCache')}</Label>
+                    <p className="text-xs text-muted-foreground">{t('settings.launcher.versionListCacheDesc')}</p>
                   </div>
                   <Button size="sm" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
                     <FontAwesomeIcon icon={clearingCache ? faRotate : faTrashCan} className={cn('h-4 w-4', clearingCache && 'animate-spin')} />
-                    清理缓存
+                    {t('settings.launcher.clearCache')}
                   </Button>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="curseforgeVersionFetchConcurrency">CurseForge 版本列表并发数</Label>
+                  <Label htmlFor="curseforgeVersionFetchConcurrency">{t('settings.launcher.curseforgeConcurrency')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionFetchConcurrency', Math.max(1, Math.min(20, settings.curseforgeVersionFetchConcurrency - 1)))} disabled={settings.curseforgeVersionFetchConcurrency <= 1}>
                       <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
@@ -1269,11 +1270,11 @@ export default function Settings() {
                       <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">同时拉取的页面数量（1-20），数值越大版本列表加载越快</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeConcurrencyDesc')}</p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="curseforgeVersionCacheTtlSeconds">CurseForge 版本列表缓存有效期（秒）</Label>
+                  <Label htmlFor="curseforgeVersionCacheTtlSeconds">{t('settings.launcher.curseforgeTtl')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionCacheTtlSeconds', Math.max(0, settings.curseforgeVersionCacheTtlSeconds - 10))} disabled={settings.curseforgeVersionCacheTtlSeconds <= 0}>
                       <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
@@ -1291,17 +1292,17 @@ export default function Settings() {
                       <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">0 = 永久缓存（直到重启或手动清除），默认 300 秒（5 分钟）</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeTtlDesc')}</p>
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
                   <div className="space-y-1">
-                    <Label>CurseForge 版本缓存</Label>
-                    <p className="text-xs text-muted-foreground">清除 CurseForge 版本列表的内存缓存</p>
+                    <Label>{t('settings.launcher.curseforgeCache')}</Label>
+                    <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeCacheDesc')}</p>
                   </div>
                   <Button size="sm" variant="outline" onClick={handleClearCurseForgeCache} disabled={clearingCurseForgeCache}>
                     <FontAwesomeIcon icon={clearingCurseForgeCache ? faRotate : faTrashCan} className={cn('h-4 w-4', clearingCurseForgeCache && 'animate-spin')} />
-                    清除 CurseForge 版本缓存
+                    {t('settings.launcher.clearCurseforgeCache')}
                   </Button>
                 </div>
               </CardContent>
@@ -1316,33 +1317,33 @@ export default function Settings() {
                   <div>
                     <CardTitle>
                       <FontAwesomeIcon icon={faCoffee} className="mr-2 h-4 w-4 text-muted-foreground" />
-                      Java 运行时
+                      {t('settings.java.title')}
                     </CardTitle>
                   </div>
                   <div className="flex items-center gap-3 text-sm">
-                    <span className="text-muted-foreground">已检测 <span className="font-medium text-foreground">{runtimes.length}</span></span>
-                    <span className="text-muted-foreground">可用 <span className="font-medium text-primary">{validCount}</span></span>
+                    <span className="text-muted-foreground">{t('settings.java.detected')} <span className="font-medium text-foreground">{runtimes.length}</span></span>
+                    <span className="text-muted-foreground">{t('settings.java.available')} <span className="font-medium text-primary">{validCount}</span></span>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" onClick={() => handleScan('quick')} disabled={scanning !== 'idle'}>
                       <FontAwesomeIcon icon={scanning === 'quick' ? faRotate : faMagnifyingGlass} className={cn('h-4 w-4', scanning === 'quick' && 'animate-spin')} />
-                      快速扫描
+                      {t('settings.java.quickScan')}
                     </Button>
                     <Button size="sm" variant="secondary" onClick={() => handleScan('deep')} disabled={scanning !== 'idle'}>
                       <FontAwesomeIcon icon={scanning === 'deep' ? faRotate : faBolt} className={cn('h-4 w-4', scanning === 'deep' && 'animate-spin')} />
-                      深度扫描
+                      {t('settings.java.deepScan')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={handleManualAdd} disabled={scanning !== 'idle'}>
                       <FontAwesomeIcon icon={faPlus} className="h-4 w-4" />
-                      手动添加
+                      {t('settings.java.manualAdd')}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={handleOpenJavaDownload} disabled={downloadLoading}>
                       <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />
-                      下载 Java
+                      {t('settings.java.downloadJava')}
                     </Button>
-                    <Tooltip content="刷新列表">
+                    <Tooltip content={t('settings.java.refreshList')}>
                       <Button size="sm" variant="ghost" onClick={handleRefresh} disabled={scanning !== 'idle'}>
                         <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', scanning !== 'idle' && 'animate-spin')} />
                       </Button>
@@ -1352,7 +1353,7 @@ export default function Settings() {
                   {scanning !== 'idle' && (
                     <div className="flex items-center gap-3 rounded-lg bg-muted px-4 py-3">
                       <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin text-primary" />
-                      <span className="text-sm text-muted-foreground">正在扫描 Java 运行时...</span>
+                      <span className="text-sm text-muted-foreground">{t('settings.java.scanningRuntime')}</span>
                     </div>
                   )}
 
@@ -1362,12 +1363,12 @@ export default function Settings() {
                         <FontAwesomeIcon icon={faCoffee} className="h-7 w-7 text-muted-foreground" />
                       </div>
                       <div>
-                        <p className="text-sm font-medium text-foreground">尚未检测到 Java 运行时</p>
-                        <p className="mt-1 text-xs text-muted-foreground">点击"快速扫描"自动检测系统中的 Java，或手动添加</p>
+                        <p className="text-sm font-medium text-foreground">{t('settings.java.noRuntimeDetected')}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{t('settings.java.noRuntimeHint')}</p>
                       </div>
                       <Button size="sm" onClick={() => handleScan('quick')}>
                         <FontAwesomeIcon icon={faMagnifyingGlass} className="h-4 w-4" />
-                        开始扫描
+                        {t('settings.java.startScan')}
                       </Button>
                     </div>
                   )}
@@ -1387,17 +1388,17 @@ export default function Settings() {
                             <div className="flex items-center gap-2 min-w-0">
                               <Tooltip content={j.name}><span className="min-w-0 truncate text-sm font-medium">{j.name}</span></Tooltip>
                               <Badge variant="outline" className="h-5 px-1.5 text-[10px]">{j.type}</Badge>
-                              {j.discoveredBy === 'Custom' && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">手动添加</Badge>}
+                              {j.discoveredBy === 'Custom' && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{t('settings.java.manualAdd')}</Badge>}
                               {j.state === 'Valid' ? (
-                                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">可用</span>
+                                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">{t('settings.java.usable')}</span>
                               ) : (
-                                <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">不可用</span>
+                                <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">{t('settings.java.unusable')}</span>
                               )}
                             </div>
                             <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
                               <span className="flex items-center gap-1">
                                 <FontAwesomeIcon icon={faTag} className="h-3 w-3" />
-                                版本 {j.version}
+                                {t('common.version')} {j.version}
                               </span>
                               <span className="flex items-center gap-1">
                                 <FontAwesomeIcon icon={faDesktop} className="h-3 w-3" />
@@ -1411,13 +1412,13 @@ export default function Settings() {
                           </div>
 
                           <div className="flex shrink-0 items-center gap-0.5">
-                            <Tooltip content="打开文件夹">
+                            <Tooltip content={t('settings.java.openFolder')}>
                               <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleOpenFolder(j.path)}>
                                 <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
                             {j.discoveredBy === 'Custom' && (
-                              <Tooltip content="删除">
+                              <Tooltip content={t('common.delete')}>
                                 <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive/70 hover:text-destructive" onClick={() => handleDelete(j.path)} disabled={removingPath === j.path}>
                                   <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
                                 </Button>
@@ -1433,7 +1434,7 @@ export default function Settings() {
                     <FontAwesomeIcon icon={faInfoCircle} className="h-3.5 w-3.5 text-primary" />
                     <span>{javaStatus}</span>
                     <span className="ml-auto">
-                      {runtimes.length > 0 && `${validCount} / ${runtimes.length} 可用`}
+                      {runtimes.length > 0 && t('settings.java.availableCount', { valid: validCount, total: runtimes.length })}
                     </span>
                   </div>
                 </CardContent>
@@ -1441,36 +1442,36 @@ export default function Settings() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>默认配置</CardTitle>
+                  <CardTitle>{t('settings.java.defaultConfig')}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-5">
                   <div className="space-y-2">
-                    <Label>默认 Java 运行时</Label>
+                    <Label>{t('settings.java.defaultRuntime')}</Label>
                     <Select value={settings.defaultJavaPath} onChange={(v) => update('defaultJavaPath', v)}>
-                      <SelectOption value="">自动选择</SelectOption>
+                      <SelectOption value="">{t('settings.java.autoSelect')}</SelectOption>
                       {runtimes.filter((j) => j.state === 'Valid').map((j, i) => (
                         <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                       ))}
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      推荐使用自动选择，启动器会为每个游戏版本自动匹配最佳 Java 运行时
+                      {t('settings.java.defaultRuntimeDesc')}
                     </p>
                   </div>
 
                   <div className="space-y-2">
-                    <Label>内存分配</Label>
+                    <Label>{t('settings.java.memoryAllocation')}</Label>
                     <div className="flex items-center gap-2">
                       <button onClick={() => {
                         const next = { ...settings, memoryMode: 'auto' as const }
                         if (sysInfo) next.defaultMaxMemory = Math.max(512, Math.floor(sysInfo.availableMemory * 0.7))
                         setSettings(next)
                         saveSettings(next)
-                        notify('设置已保存', 'success')
+                        notify(t('settings.saved'), 'success')
                       }} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                        <FontAwesomeIcon icon={faRobot} className="mr-1.5 h-3.5 w-3.5" />自动
+                        <FontAwesomeIcon icon={faRobot} className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryAuto')}
                       </button>
                       <button onClick={() => update('memoryMode', 'custom')} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                        <FontAwesomeIcon icon={faSliders} className="mr-1.5 h-3.5 w-3.5" />自定义
+                        <FontAwesomeIcon icon={faSliders} className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryCustom')}
                       </button>
                     </div>
 
@@ -1507,10 +1508,10 @@ export default function Settings() {
                                 <div className="bg-primary transition-all" style={{ width: `${gamePct}%` }} />
                               </div>
                               <div className="flex justify-between text-[11px] text-muted-foreground">
-                                <span>总内存 {(totalMb / 1024).toFixed(1)} GiB</span>
-                                <span>已使用 {(usedMb / 1024).toFixed(1)} GiB</span>
-                                <span>游戏分配 {(gameMb / 1024).toFixed(1)} GiB</span>
-                                <span>剩余 {((availMb - gameMb) / 1024).toFixed(1)} GiB</span>
+                                <span>{t('settings.java.totalMemory', { value: (totalMb / 1024).toFixed(1) })}</span>
+                                <span>{t('settings.java.usedMemory', { value: (usedMb / 1024).toFixed(1) })}</span>
+                                <span>{t('settings.java.gameMemory', { value: (gameMb / 1024).toFixed(1) })}</span>
+                                <span>{t('settings.java.remainingMemory', { value: ((availMb - gameMb) / 1024).toFixed(1) })}</span>
                               </div>
                             </div>
                           )
@@ -1536,9 +1537,9 @@ export default function Settings() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="jvmArgs">额外 JVM 参数</Label>
+                    <Label htmlFor="jvmArgs">{t('settings.java.jvmArgs')}</Label>
                     <Input id="jvmArgs" value={settings.jvmArgs} onChange={(e) => update('jvmArgs', e.target.value)} placeholder="-XX:+UseG1GC -Dfml.ignoreInvalidMinecraftCertificates=true" />
-                    <p className="text-xs text-muted-foreground">启动 Minecraft 时附加的 JVM 参数</p>
+                    <p className="text-xs text-muted-foreground">{t('settings.java.jvmArgsDesc')}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -1551,7 +1552,7 @@ export default function Settings() {
                 <CardHeader>
                   <CardTitle>
                     <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    界面
+                    {t('settings.appearance.title')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-5">
@@ -1631,7 +1632,7 @@ export default function Settings() {
                 <CardHeader>
                   <CardTitle>
                     <FontAwesomeIcon icon={faDesktop} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    圆角
+                    {t('settings.appearance.cornerRadius')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -1641,8 +1642,8 @@ export default function Settings() {
                       onCheckedChange={(c) => update('windowCorners', c === true)}
                     />
                     <div>
-                      <div className="text-sm font-medium">窗口圆角</div>
-                      <div className="text-xs text-muted-foreground">仅在不使用系统框架时生效</div>
+                      <div className="text-sm font-medium">{t('settings.appearance.windowCorners')}</div>
+                      <div className="text-xs text-muted-foreground">{t('settings.appearance.windowCornersDesc')}</div>
                     </div>
                   </label>
                   <Separator />
@@ -1660,9 +1661,9 @@ export default function Settings() {
                       <span className="w-10 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.cornerRadius}px</span>
                     </div>
                     <div className="flex justify-between text-[11px] text-muted-foreground">
-                      <span>直角</span>
-                      <span>默认（8px）</span>
-                      <span>大圆角</span>
+                      <span>{t('settings.appearance.cornerSharp')}</span>
+                      <span>{t('settings.appearance.cornerDefault')}</span>
+                      <span>{t('settings.appearance.cornerLarge')}</span>
                     </div>
 
                   </div>
@@ -1673,20 +1674,20 @@ export default function Settings() {
                 <CardHeader>
                   <CardTitle>
                     <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    背景
+                    {t('settings.appearance.background')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label>背景图片</Label>
+                      <Label>{t('settings.appearance.backgroundImage')}</Label>
                       <Button variant="ghost" size="sm" onClick={() => get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})}>
                         <FontAwesomeIcon icon={faRotate} className="h-3 w-3" />
                       </Button>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {backgrounds.length === 0 ? (
-                        <p className="w-full text-xs text-muted-foreground">暂无背景图片</p>
+                        <p className="w-full text-xs text-muted-foreground">{t('settings.appearance.noBackgrounds')}</p>
                       ) : (
                         backgrounds.map((name) => (
                           <button
@@ -1695,7 +1696,7 @@ export default function Settings() {
                               const next = { ...settings, backgroundImage: name, backgroundRandom: false }
                               setSettings(next)
                               saveSettings(next)
-                              notify('设置已保存', 'success')
+                              notify(t('settings.saved'), 'success')
                             }}
                             className={cn(
                               'group relative h-16 w-28 overflow-hidden rounded-lg border-2 transition-colors',
@@ -1718,9 +1719,9 @@ export default function Settings() {
                     </div>
                     <div className="flex items-center gap-2 pt-0.5">
                       <Button variant="outline" size="sm" onClick={handleOpenBackgrounds}>
-                        <FontAwesomeIcon icon={faFolderOpen} className="mr-1 h-3 w-3" /> 打开文件夹
+                        <FontAwesomeIcon icon={faFolderOpen} className="mr-1 h-3 w-3" /> {t('settings.appearance.openFolder')}
                       </Button>
-                      <p className="text-xs text-muted-foreground">放入图片即可出现在上方列表中</p>
+                      <p className="text-xs text-muted-foreground">{t('settings.appearance.backgroundsHint')}</p>
                     </div>
                   </div>
 
@@ -1733,8 +1734,8 @@ export default function Settings() {
                       }}
                     />
                     <div>
-                      <div className="text-sm font-medium">每次启动随机挑选</div>
-                      <div className="text-xs text-muted-foreground">从背景文件夹中随机选择一张图片</div>
+                      <div className="text-sm font-medium">{t('settings.appearance.backgroundRandom')}</div>
+                      <div className="text-xs text-muted-foreground">{t('settings.appearance.backgroundRandomDesc')}</div>
                     </div>
                   </label>
 
@@ -1742,30 +1743,30 @@ export default function Settings() {
                     <>
                       {!settings.backgroundRandom && (
                         <Button variant="ghost" size="sm" onClick={() => update('backgroundImage', '')}>
-                          <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> 清除背景
+                          <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> {t('settings.appearance.clearBackground')}
                         </Button>
                       )}
                       <div className="grid grid-cols-2 gap-4 pt-1">
                         <div className="space-y-1.5">
                           <div className="flex items-center justify-between">
-                            <Label>不透明度</Label>
+                            <Label>{t('settings.appearance.opacity')}</Label>
                             <span className="text-xs tabular-nums text-muted-foreground">{settings.bgOverlayOpacity}%</span>
                           </div>
                           <input type="range" min={0} max={100} value={settings.bgOverlayOpacity} onChange={(e) => update('bgOverlayOpacity', parseInt(e.target.value))} className="w-full" />
                           <div className="flex justify-between text-[11px] text-muted-foreground">
-                            <span>透明</span>
-                            <span>不透明</span>
+                            <span>{t('settings.appearance.transparent')}</span>
+                            <span>{t('settings.appearance.opaque')}</span>
                           </div>
                         </div>
                         <div className="space-y-1.5">
                           <div className="flex items-center justify-between">
-                            <Label>模糊</Label>
+                            <Label>{t('settings.appearance.blur')}</Label>
                             <span className="text-xs tabular-nums text-muted-foreground">{settings.bgBlur}px</span>
                           </div>
                           <input type="range" min={0} max={20} step={0.5} value={settings.bgBlur} onChange={(e) => update('bgBlur', parseFloat(e.target.value))} className="w-full" />
                           <div className="flex justify-between text-[11px] text-muted-foreground">
-                            <span>清晰</span>
-                            <span>模糊</span>
+                            <span>{t('settings.appearance.sharp')}</span>
+                            <span>{t('settings.appearance.blur')}</span>
                           </div>
                         </div>
                       </div>
@@ -1778,7 +1779,7 @@ export default function Settings() {
                 <CardHeader>
                   <CardTitle>
                     <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    水印
+                    {t('settings.appearance.watermark')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -1788,16 +1789,16 @@ export default function Settings() {
                       onCheckedChange={(c) => update('watermarkEnabled', c === true)}
                     />
                     <div>
-                      <div className="text-sm font-medium">显示主页水印文字</div>
-                      <div className="text-xs text-muted-foreground">在主页中央显示可自定义的文字</div>
+                      <div className="text-sm font-medium">{t('settings.appearance.watermarkEnabled')}</div>
+                      <div className="text-xs text-muted-foreground">{t('settings.appearance.watermarkEnabledDesc')}</div>
                     </div>
                   </label>
                   {settings.watermarkEnabled && (
                     <div className="space-y-2 pl-7">
-                      <Label htmlFor="watermarkText">水印内容</Label>
+                      <Label htmlFor="watermarkText">{t('settings.appearance.watermarkText')}</Label>
                       <Input id="watermarkText" value={settings.watermarkText} onChange={(e) => update('watermarkText', e.target.value)} placeholder="Qomicex" />
-                      <Label htmlFor="watermarkSubtext">副标题</Label>
-                      <Input id="watermarkSubtext" value={settings.watermarkSubtext} onChange={(e) => update('watermarkSubtext', e.target.value)} placeholder="启动器" />
+                      <Label htmlFor="watermarkSubtext">{t('settings.appearance.watermarkSubtext')}</Label>
+                      <Input id="watermarkSubtext" value={settings.watermarkSubtext} onChange={(e) => update('watermarkSubtext', e.target.value)} placeholder={t('settings.appearance.watermarkSubtextPlaceholder')} />
                     </div>
                   )}
                 </CardContent>
@@ -1812,22 +1813,22 @@ export default function Settings() {
                 <CardHeader>
                   <CardTitle>
                     <FontAwesomeIcon icon={faPuzzlePiece} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    插件管理
+                    {t('settings.plugins.title')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="mb-4 flex flex-wrap items-center gap-2">
-                    <span className="text-sm text-muted-foreground">{plugins.length} 个已安装</span>
+                    <span className="text-sm text-muted-foreground">{t('settings.plugins.installedCount', { count: plugins.length })}</span>
                     <div className="ml-auto flex items-center gap-2">
                       <Input
                         value={pluginQuery}
                         onChange={(e) => setPluginQuery(e.target.value)}
-                        placeholder="搜索插件..."
+                        placeholder={t('settings.plugins.searchPlaceholder')}
                         className="h-8 w-52"
                       />
-                      <Button onClick={handlePluginRefresh} size="sm" variant="outline" disabled={loading}>刷新</Button>
+                      <Button onClick={handlePluginRefresh} size="sm" variant="outline" disabled={loading}>{t('common.refresh')}</Button>
                       <Button onClick={handlePluginInstall} size="sm" disabled={pluginInstalling}>
-                        {pluginInstalling ? '安装中...' : '安装插件'}
+                        {pluginInstalling ? t('settings.plugins.installing') : t('settings.plugins.install')}
                       </Button>
                     </div>
                   </div>
@@ -1835,10 +1836,10 @@ export default function Settings() {
                     <div className="rounded bg-primary/10 text-primary px-4 py-2 text-sm mb-4">{pluginsMsg}</div>
                   )}
                   {loading ? (
-                    <p className="text-muted-foreground">加载中...</p>
+                    <p className="text-muted-foreground">{t('common.loading')}</p>
                   ) : plugins.length === 0 ? (
                     <div className="flex items-center justify-center min-h-[200px]">
-                      <p className="text-muted-foreground">尚未安装任何插件</p>
+                      <p className="text-muted-foreground">{t('settings.plugins.noneInstalled')}</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1850,7 +1851,7 @@ export default function Settings() {
                     </div>
                   )}
                   {plugins.length > 0 && plugins.filter(p => p.manifest.name.toLowerCase().includes(pluginQuery.trim().toLowerCase())).length === 0 && (
-                    <p className="text-muted-foreground text-sm text-center py-6">无匹配的插件</p>
+                    <p className="text-muted-foreground text-sm text-center py-6">{t('settings.plugins.noMatch')}</p>
                   )}
                 </CardContent>
               </Card>
@@ -1862,43 +1863,43 @@ export default function Settings() {
 
           <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)}>
             <DialogHeader onClose={() => setAddDialogOpen(false)}>
-              <DialogTitle>手动添加 Java</DialogTitle>
+              <DialogTitle>{t('settings.java.manualAddTitle')}</DialogTitle>
             </DialogHeader>
             <DialogBody className="space-y-3">
               <div className="space-y-1.5">
-                <Label>Java 可执行文件路径</Label>
+                <Label>{t('settings.java.executablePath')}</Label>
                 <div className="flex gap-2">
                   <Input value={addPath} onChange={(e) => setAddPath(e.target.value)} placeholder={navigator.platform?.includes('Win') ? 'C:\\Program Files\\Java\\jdk-17\\bin\\java.exe' : '/usr/lib/jvm/java-17-openjdk/bin/java'} className="flex-1" />
-                  <Button variant="outline" onClick={handleBrowseJava}>浏览</Button>
+                  <Button variant="outline" onClick={handleBrowseJava}>{t('settings.java.browse')}</Button>
                 </div>
-                <p className="text-xs text-muted-foreground">选择或输入 Java 可执行文件的完整路径</p>
+                <p className="text-xs text-muted-foreground">{t('settings.java.executablePathDesc')}</p>
               </div>
             </DialogBody>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => setAddDialogOpen(false)}>取消</Button>
+              <Button variant="ghost" onClick={() => setAddDialogOpen(false)}>{t('common.cancel')}</Button>
               <Button onClick={confirmAddJava} disabled={!addPath || adding}>
-                {adding ? '验证中...' : '添加'}
+                {adding ? t('settings.java.verifying') : t('settings.java.add')}
               </Button>
             </DialogFooter>
           </Dialog>
 
           <Dialog open={downloadDialogOpen} onClose={() => setDownloadDialogOpen(false)}>
             <DialogHeader onClose={() => setDownloadDialogOpen(false)}>
-              <DialogTitle>下载 Java</DialogTitle>
+              <DialogTitle>{t('settings.java.downloadJava')}</DialogTitle>
             </DialogHeader>
             <DialogBody className="space-y-4">
               <div className="space-y-2">
-                <Label>发行版</Label>
+                <Label>{t('settings.java.distribution')}</Label>
                 <Select value={downloadVendor} onChange={setDownloadVendor}>
                   {downloadVendors.map((vendor) => (
                     <SelectOption key={vendor.id} value={vendor.id}>
-                      {vendor.name}{vendor.isRecommended ? ' (推荐)' : ''}
+                      {vendor.name}{vendor.isRecommended ? ` ${t('settings.java.recommended')}` : ''}
                     </SelectOption>
                   ))}
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Java 主版本</Label>
+                <Label>{t('settings.java.mainVersion')}</Label>
                 <Select value={downloadVersion} onChange={setDownloadVersion}>
                   {(selectedVendor?.versions ?? []).map((version) => (
                     <SelectOption key={version} value={String(version)}>{version}</SelectOption>
@@ -1906,7 +1907,7 @@ export default function Settings() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>平台</Label>
+                <Label>{t('settings.java.platform')}</Label>
                 <Select value={downloadPlatform} onChange={setDownloadPlatform}>
                   {(selectedVendor?.platforms ?? []).map((platform) => (
                     <SelectOption key={platform} value={platform}>{platform}</SelectOption>
@@ -1914,7 +1915,7 @@ export default function Settings() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>架构</Label>
+                <Label>{t('settings.java.architecture')}</Label>
                 <Select value={downloadArch} onChange={setDownloadArch}>
                   {(selectedVendor?.architectures ?? []).map((arch) => (
                     <SelectOption key={arch} value={arch}>{arch}</SelectOption>
@@ -1922,13 +1923,13 @@ export default function Settings() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>目标目录</Label>
+                <Label>{t('settings.java.targetDir')}</Label>
                 <Input value="QML/Runtime/Java" disabled />
               </div>
             </DialogBody>
             <DialogFooter>
               <Button onClick={handleStartJavaDownload} disabled={!selectedVendor || startDownloadLoading}>
-                {startDownloadLoading ? <><FontAwesomeIcon icon={faSpinner} className="h-4 w-4 animate-spin mr-2" />解析中...</> : '开始下载'}
+                {startDownloadLoading ? <><FontAwesomeIcon icon={faSpinner} className="h-4 w-4 animate-spin mr-2" />{t('settings.java.resolving')}</> : t('settings.java.startDownload')}
               </Button>
             </DialogFooter>
           </Dialog>
@@ -1960,7 +1961,7 @@ export default function Settings() {
                   <Separator />
                   {pluginDetail.manifest.permissions.length > 0 && (
                     <div className="space-y-1">
-                      <p className="text-sm text-muted-foreground">权限 ({pluginDetail.manifest.permissions.length})</p>
+                      <p className="text-sm text-muted-foreground">{t('settings.plugins.permissions', { count: pluginDetail.manifest.permissions.length })}</p>
                       {pluginDetail.manifest.permissions.map(p => {
                         const info = PERMISSION_CATALOG[p]
                         const colors: Record<string, string> = {
@@ -1981,7 +1982,7 @@ export default function Settings() {
                   )}
                   {pluginDetail.manifest.contributes?.menuItems && pluginDetail.manifest.contributes.menuItems.length > 0 && (
                     <div className="space-y-1">
-                      <p className="text-sm text-muted-foreground">扩展点</p>
+                      <p className="text-sm text-muted-foreground">{t('settings.plugins.contributes')}</p>
                       {pluginDetail.manifest.contributes.menuItems.map(item => (
                         <div key={item.path} className="flex items-center gap-2 text-sm">
                           <PluginIcon icon={resolvePluginAssetUrl(pluginDetail.manifest.id, item.icon ?? '')} fallback="" />
@@ -1995,7 +1996,7 @@ export default function Settings() {
               )}
             </DialogBody>
             <DialogFooter>
-              <Button variant="secondary" onClick={() => setPluginDetail(null)}>关闭</Button>
+              <Button variant="secondary" onClick={() => setPluginDetail(null)}>{t('common.close')}</Button>
             </DialogFooter>
           </Dialog>
         </div>

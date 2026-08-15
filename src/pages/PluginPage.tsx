@@ -2,6 +2,7 @@ import { useParams } from 'react-router-dom'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { getInstance } from '../plugins/sandbox.ts'
 import { useLayoutEffect, useRef } from 'react'
+import { useI18n } from '../i18n/index.tsx'
 
 function activateInlineScripts(container: HTMLElement) {
   const origGetElementById = document.getElementById.bind(document)
@@ -35,6 +36,7 @@ export default function PluginPage() {
   const { pluginId } = useParams<{ pluginId: string }>()
   const plugin = usePluginStore(s => s.plugins.find(p => p.manifest.id === pluginId))
   const containerRef = useRef<HTMLDivElement>(null)
+  const { t } = useI18n()
 
   useLayoutEffect(() => {
     if (!pluginId) return
@@ -73,7 +75,7 @@ export default function PluginPage() {
   if (!plugin) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-muted-foreground">插件未找到</p>
+        <p className="text-muted-foreground">{t('plugins.notFound')}</p>
       </div>
     )
   }
@@ -86,7 +88,7 @@ export default function PluginPage() {
           <span className="text-xs text-muted-foreground">v{plugin.manifest.version}</span>
         </div>
         <div className="flex flex-1 items-center justify-center">
-          <p className="text-muted-foreground">插件未激活</p>
+          <p className="text-muted-foreground">{t('plugins.notActivated')}</p>
         </div>
       </div>
     )

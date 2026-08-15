@@ -13,4 +13,12 @@ export default {
   javaIncompatible: 'Selected Java {current} does not meet the requirement of Minecraft {game} (requires Java {required}). Continue launching?',
   launchCancelled: 'Launch cancelled',
   gameStopped: 'Game stopped',
+  timeSeconds: '{count}s',
+  timeMinutes: '{count}m {sec}s',
+  timeHours: '{hours}h {mins}m',
+  instancesRunning: '{count} instance(s) running',
+  noRunningGame: 'No running games',
+  goToInstances: 'Go to instances',
+  title: 'Running Games',
+  runningFor: 'Running for {time}',
 } as const

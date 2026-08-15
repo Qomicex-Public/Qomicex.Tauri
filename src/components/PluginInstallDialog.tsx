@@ -2,6 +2,7 @@ import type { PluginManifest } from '../plugins/types.ts'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
 import { Dialog, DialogHeader, DialogBody, DialogFooter, DialogTitle, DialogDescription } from './ui'
 import { Button } from './ui'
+import { useI18n } from '../i18n/index.tsx'
 
 interface PluginInstallDialogProps {
   open: boolean
@@ -11,6 +12,7 @@ interface PluginInstallDialogProps {
 }
 
 export function PluginInstallDialog({ open, manifest, onConfirm, onCancel }: PluginInstallDialogProps) {
+  const { t } = useI18n()
   if (!manifest) return null
 
   const dangerPerms = manifest.permissions.filter(p => PERMISSION_CATALOG[p]?.risk === 'danger')
@@ -20,7 +22,7 @@ export function PluginInstallDialog({ open, manifest, onConfirm, onCancel }: Plu
   return (
     <Dialog open={open} onClose={onCancel}>
       <DialogHeader onClose={onCancel}>
-        <DialogTitle>安装插件</DialogTitle>
+        <DialogTitle>{t('plugins.installTitle')}</DialogTitle>
         <DialogDescription>
           {manifest.name} v{manifest.version}
         </DialogDescription>
@@ -29,12 +31,12 @@ export function PluginInstallDialog({ open, manifest, onConfirm, onCancel }: Plu
       <DialogBody>
         <div className="space-y-4 py-4">
           <p className="text-sm text-muted-foreground">
-            此插件申请以下权限：
+            {t('plugins.permissionsRequest')}
           </p>
 
           {dangerPerms.length > 0 && (
             <div className="space-y-1">
-              <p className="text-xs font-medium text-red-400">高危权限</p>
+              <p className="text-xs font-medium text-red-400">{t('plugins.highRisk')}</p>
               {dangerPerms.map(p => (
                 <p key={p} className="text-sm text-red-400">⚠ {PERMISSION_CATALOG[p]?.label ?? p}</p>
               ))}
@@ -43,7 +45,7 @@ export function PluginInstallDialog({ open, manifest, onConfirm, onCancel }: Plu
 
           {warningPerms.length > 0 && (
             <div className="space-y-1">
-              <p className="text-xs font-medium text-yellow-400">需注意</p>
+              <p className="text-xs font-medium text-yellow-400">{t('plugins.caution')}</p>
               {warningPerms.map(p => (
                 <p key={p} className="text-sm text-yellow-400">• {PERMISSION_CATALOG[p]?.label ?? p}</p>
               ))}
@@ -52,7 +54,7 @@ export function PluginInstallDialog({ open, manifest, onConfirm, onCancel }: Plu
 
           {normalPerms.length > 0 && (
             <div className="space-y-1">
-              <p className="text-xs font-medium text-muted-foreground">普通</p>
+              <p className="text-xs font-medium text-muted-foreground">{t('plugins.normal')}</p>
               {normalPerms.map(p => (
                 <p key={p} className="text-sm text-muted-foreground">• {PERMISSION_CATALOG[p]?.label ?? p}</p>
               ))}
@@ -62,8 +64,8 @@ export function PluginInstallDialog({ open, manifest, onConfirm, onCancel }: Plu
       </DialogBody>
 
       <DialogFooter>
-        <Button variant="outline" onClick={onCancel}>取消</Button>
-        <Button onClick={onConfirm}>确认安装</Button>
+        <Button variant="outline" onClick={onCancel}>{t('plugins.cancel')}</Button>
+        <Button onClick={onConfirm}>{t('plugins.confirmInstall')}</Button>
       </DialogFooter>
     </Dialog>
   )
