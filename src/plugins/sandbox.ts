@@ -364,6 +364,17 @@ window.addEventListener('message', (e) => {
 const streamAborters = new Map<string, AbortController>()
 
 async function handleApiCall(callId: string, method: string, args: unknown[], pluginId: string, source: Window) {
+  if (
+    typeof method !== 'string' ||
+    !Object.prototype.hasOwnProperty.call(METHOD_PERMISSIONS, method)
+  ) {
+    source.postMessage({
+      type: '__plugin_api_response',
+      id: callId,
+      error: `Unsupported API method: ${String(method)}`,
+    }, '*')
+    return
+  }
   if (method === 'proxyFetchStream') {
     const req = args[0] as any
     const controller = new AbortController()

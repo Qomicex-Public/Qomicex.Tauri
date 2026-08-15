@@ -33,7 +33,11 @@ function createRegistry(hostWindow: AnyWindow, isHost: boolean): PluginRegistryA
   }
 
   function callLocal(pluginId: string, method: string, args: unknown[]): Promise<unknown> {
-    const fn = localExports[pluginId]?.[method]
+    const methods = localExports[pluginId]
+    if (!methods || !Object.prototype.hasOwnProperty.call(methods, method)) {
+      return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
+    }
+    const fn = methods[method]
     if (typeof fn !== 'function')
       return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
     return Promise.resolve(fn(...args))
