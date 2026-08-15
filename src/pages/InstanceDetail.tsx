@@ -15,7 +15,7 @@ import { BatchToolbar } from '../components/ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
-import { updateModsViaDownloadCenter, refreshModsAfterUpdate } from '../lib/updateMods.ts'
+import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { useMessageBox } from '../components/ui'
 import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
@@ -592,12 +592,14 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         toUpdate,
         (n) => notify(`已加入下载列表 ${n} 个任务`, 'success')
       )
-      refreshModsAfterUpdate(instanceId)
       await loadMods()
       setSelected(new Set())
       setUpdates(prev => prev.filter(u => !result.succeededFileNames.includes(u.fileName)))
+      const failNames = result.failedFileNames.length > 0 && result.failedFileNames.length <= 3
+        ? `：${result.failedFileNames.join('、')}`
+        : ''
       notify(
-        result.failed === 0 ? `已更新 ${result.success} 个模组` : `完成 ${result.success} 个，失败 ${result.failed} 个`,
+        result.failed === 0 ? `已更新 ${result.success} 个模组` : `完成 ${result.success} 个，失败 ${result.failed} 个${failNames}`,
         result.failed === 0 ? 'success' : 'error'
       )
     } catch { notify('更新模组失败', 'error') }

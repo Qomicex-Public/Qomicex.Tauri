@@ -56,10 +56,13 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
         toUpdate,
         (n) => notify(`已加入下载列表 ${n} 个任务`, 'success')
       )
+      const failNames = result.failedFileNames.length > 0 && result.failedFileNames.length <= 3
+        ? `：${result.failedFileNames.join('、')}`
+        : ''
       if (result.failed === 0) {
         notify(`已更新 ${result.success} 个模组`, 'success')
       } else {
-        notify(`完成 ${result.success} 个，失败 ${result.failed} 个`, 'error')
+        notify(`完成 ${result.success} 个，失败 ${result.failed} 个${failNames}`, 'error')
       }
       onDone()
       onClose()

@@ -148,6 +148,10 @@ export function getModUpdatesCache(instanceId: string): Promise<{ updates: ModUp
   return get<{ updates: ModUpdateEntry[]; stale: boolean }>(`/instance/${instanceId}/files/mods/update-cache`)
 }
 
+export function invalidateModUpdatesCache(instanceId: string): Promise<void> {
+  return del(`/instance/${instanceId}/files/mods/update-cache`)
+}
+
 export function checkModUpdates(instanceId: string, force = false): Promise<ModUpdateEntry[]> {
   // CurseForge fingerprints 批量反查可达 30-50s，用 120s 信号绕过全局 15s 超时
   // （失败由调用方静默处理，同 enrichMods 模式）

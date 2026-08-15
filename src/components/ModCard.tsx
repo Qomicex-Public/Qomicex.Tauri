@@ -10,7 +10,7 @@ import { Button } from './ui'
 import { cn } from '../lib/utils.ts'
 import { MinecraftText } from './MinecraftText.tsx'
 import { enableMod, disableMod, deleteMod } from '../api/instance-files.ts'
-import { updateModsViaDownloadCenter, refreshModsAfterUpdate } from '../lib/updateMods.ts'
+import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useMessageBox } from './ui'
 import type { ModMetadata, ModUpdateEntry } from '../types/index.ts'
@@ -109,7 +109,6 @@ export default function ModCard({
         if (!update) return
         try {
           const result = await updateModsViaDownloadCenter(instanceId, [update], () => notify('已加入下载列表', 'success'))
-          refreshModsAfterUpdate(instanceId)
           onUpdated?.(update.fileName)
           onRefresh()
           if (result.failed === 0) notify(`已更新「${mod.name}」`, 'success')

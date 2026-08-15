@@ -433,7 +433,7 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/files/mods", delete(delete_mod))
         .route(
             "/instance/{id}/files/mods/update-cache",
-            get(mods_update_cache),
+            get(mods_update_cache).delete(mods_update_cache_invalidate),
         )
         .route(
             "/instance/{id}/files/mods/check-updates",
@@ -915,6 +915,20 @@ async fn mods_update_cache(
             updates: Vec::new(),
             stale: true,
         }))
+    }
+}
+
+/// DELETE /instance/{id}/files/mods/update-cache — 删除该实例的更新检查磁盘缓存。
+/// 模组更新成功（新文件已替换旧文件）后调用，避免下次自动检查返回过期的更新条目。
+async fn mods_update_cache_invalidate(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<StatusCode> {
+    let path = update_cache_path(&state.data_dir, &id);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(StatusCode::NO_CONTENT),
+        Err(_) => Ok(StatusCode::NO_CONTENT),
     }
 }
 

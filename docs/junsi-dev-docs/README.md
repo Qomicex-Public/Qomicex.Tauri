@@ -15,7 +15,6 @@
 - [ADR-008：服务器管理端点移植（CSAOT-legacy C# → Rust core + axum）](1-决策记录/ADR-008-服务器管理端点移植-CSAOT-legacy-C----Rust-core---axum-.md)
 - [ADR-009：Windows ARM64 联机 FakeTCP 仅依赖 npcap，WinDivert 不支持 aarch64](1-决策记录/ADR-009-Windows-ARM64-联机-FakeTCP-仅依赖-npcap-WinDivert-不支持-aarch64.md)
 - [ADR-010：Puppeteer 自动化组件素材采集方案](1-决策记录/ADR-010-Puppeteer-自动化组件素材采集方案.md)
-- [ADR-010: Puppeteer 自动化组件素材采集方案](1-决策记录/ADR-010-Puppeteer自动化组件素材采集方案.md)
 - [ADR-011：模组更新检查改造：批次哈希匹配 + 独立 6h 缓存 + 自动检查](1-决策记录/ADR-011-模组更新检查改造-批次哈希匹配---独立-6h-缓存---自动检查.md)
 - [ADR-012：check-updates 更新判定：Modrinth game_versions 序列化修复 + CurseForge latest_files 客户端过滤](1-决策记录/ADR-012-check-updates-更新判定-Modrinth-game_versions-序列化修复---CurseForge-latest_files-客户端过滤.md)
 - [ADR-013：check-updates loader 兼容回退：非标准加载器（Cleanroom/LiteLoader）按 Forge 兼容处理](1-决策记录/ADR-013-check-updates-loader-兼容回退-非标准加载器-Cleanroom-LiteLoader-按-Forge-兼容处理.md)
