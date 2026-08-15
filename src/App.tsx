@@ -278,9 +278,18 @@ function App() {
         void getCurrentWindow().setTheme(theme)
       } catch { /* 非 Tauri 环境忽略 */ }
     }
+    function applyFont(family: string | undefined) {
+      const root = document.documentElement
+      if (family && family.trim()) {
+        root.style.setProperty('--app-font', `'${family.replace(/['"]/g, '')}', sans-serif`)
+      } else {
+        root.style.removeProperty('--app-font')
+      }
+    }
     loadSettings().then(s => {
       setConsoleLevel(s.logLevel ?? 'info')
       setTheme(s.theme ?? 'dark')
+      applyFont(s.fontFamily)
     })
     const unsub = onSettingsChange((s: AppSettings) => {
       const enabled = s.animationsEnabled !== false
@@ -293,6 +302,7 @@ function App() {
       window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
       setConsoleLevel(s.logLevel ?? 'info')
       setTheme(s.theme ?? 'dark')
+      applyFont(s.fontFamily)
     })
     return unsub
   }, [])

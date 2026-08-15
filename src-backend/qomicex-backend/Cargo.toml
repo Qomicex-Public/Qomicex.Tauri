@@ -38,6 +38,7 @@ uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sysinfo = "0.30"
+fontdb = "0.20"
 thiserror = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "5"

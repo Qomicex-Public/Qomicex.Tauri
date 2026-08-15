@@ -50,7 +50,7 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache, clearCurseForgeCache, setDataDir } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache, clearCurseForgeCache, setDataDir, getSystemFonts } from '../api/settings.ts'
 import { setPluginState as apiSetPluginState } from '../api/plugins.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
@@ -573,6 +573,7 @@ export default function Settings() {
   const autoScanRef = useRef(false)
   const loadedRef = useRef(false)
   const [backgrounds, setBackgrounds] = useState<string[]>([])
+  const [fontList, setFontList] = useState<string[]>([])
   const [sourcePings, setSourcePings] = useState<DownloadSourcePing[]>([])
   const [pingLoading, setPingLoading] = useState(false)
   const [modPings, setModPings] = useState<ModSourcePing[]>([])
@@ -591,6 +592,7 @@ export default function Settings() {
       pingModSources().then(setModPings).catch(() => {})
     }).catch(() => {})
     get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})
+    getSystemFonts().then(setFontList).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -1689,6 +1691,53 @@ export default function Settings() {
                       <span>{t('settings.appearance.cornerLarge')}</span>
                     </div>
 
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    {t('settings.appearance.font')}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>{t('settings.appearance.fontFamily')}</Label>
+                    <Select
+                      value={settings.fontFamily || ''}
+                      onChange={(v) => update('fontFamily', v || '')}
+                      placeholder={t('settings.appearance.fontDefault')}
+                      className="w-full max-w-sm"
+                    >
+                      {fontList.length === 0 ? (
+                        <SelectOption value="" disabled>{t('common.loading')}</SelectOption>
+                      ) : (
+                        fontList.map((f) => (
+                          <SelectOption key={f} value={f}>{f}</SelectOption>
+                        ))
+                      )}
+                    </Select>
+                    <p className="text-xs text-muted-foreground">{t('settings.appearance.fontDesc')}</p>
+                  </div>
+
+                  {/* 字体预览 */}
+                  <div
+                    className="rounded-lg border px-4 py-3"
+                    style={{ fontFamily: settings.fontFamily ? `'${settings.fontFamily.replace(/['"]/g, '')}', sans-serif` : undefined }}
+                  >
+                    <div className="text-sm font-medium">{t('settings.appearance.fontPreviewTitle')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.appearance.fontPreviewText')}</div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {settings.fontFamily && (
+                      <Button variant="outline" size="sm" onClick={() => update('fontFamily', '')} className="gap-1">
+                        <FontAwesomeIcon icon={faRotate} className="h-3 w-3" />
+                        {t('settings.appearance.fontReset')}
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>

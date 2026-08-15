@@ -96,6 +96,8 @@ pub struct SettingsResponse {
     pub window_corners: bool,
     pub curseforge_version_fetch_concurrency: i32,
     pub curseforge_version_cache_ttl_seconds: i32,
+    /// 全局 UI 自定义字体家族名；None/空 = 系统默认字体。
+    pub font_family: Option<String>,
     /// 是否已完成首次启动初始化向导。`Some(false)` = 新安装待初始化；
     /// 老配置文件缺失该字段时在 [`load_settings`] 中视为已初始化（`Some(true)`），
     /// 避免老用户升级后被迫重走向导。
@@ -157,6 +159,7 @@ impl Default for SettingsResponse {
             window_corners: true,
             curseforge_version_fetch_concurrency: 10,
             curseforge_version_cache_ttl_seconds: 300,
+            font_family: None,
             initialized: Some(false),
         }
     }

@@ -68,6 +68,7 @@ pub fn router() -> Router<SharedState> {
         .route("/settings/open-backgrounds", post(open_backgrounds))
         .route("/settings/backgrounds", get(list_backgrounds))
         .route("/settings/backgrounds/{name}", get(get_background))
+        .route("/settings/fonts", get(list_system_fonts))
         .route(
             "/settings/download-sources/ping",
             get(ping_download_sources),
@@ -323,6 +324,27 @@ fn auto_select_update(f: impl FnOnce(&mut SettingsResponse)) {
 
 fn backgrounds_dir() -> std::path::PathBuf {
     settings::resolve_base_dir().join("QML").join("backgrounds")
+}
+
+/// 系统字体列表缓存（fontdb 首次扫描系统字体目录较慢，进程内缓存一次）。
+fn system_fonts() -> &'static Vec<String> {
+    static FONTS: OnceLock<Vec<String>> = OnceLock::new();
+    FONTS.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        let mut families: Vec<String> = db
+            .faces()
+            .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
+            .collect();
+        families.sort();
+        families.dedup();
+        families
+    })
+}
+
+/// GET /api/settings/fonts — 系统已安装字体家族名（去重、排序），供外观设置选择。
+async fn list_system_fonts() -> ApiResult<Json<Vec<String>>> {
+    Ok(Json(system_fonts().clone()))
 }
 
 async fn ping_head(url: &str) -> (i64, bool) {

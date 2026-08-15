@@ -48,6 +48,8 @@ export interface AppSettings {
   windowCorners: boolean
   curseforgeVersionFetchConcurrency: number
   curseforgeVersionCacheTtlSeconds: number
+  /** 全局 UI 自定义字体家族名；空/缺失 = 系统默认字体 */
+  fontFamily?: string
   /** 是否已完成首次启动初始化向导；false/缺失 = 显示向导 */
   initialized?: boolean
 }
@@ -88,6 +90,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   windowCorners: true,
   curseforgeVersionFetchConcurrency: 10,
   curseforgeVersionCacheTtlSeconds: 300,
+  fontFamily: '',
   initialized: false,
 }
 
@@ -178,6 +181,15 @@ export async function getDataDir(): Promise<string> {
     return path
   } catch {
     return DEFAULT_SETTINGS.dataDir
+  }
+}
+
+/** 系统已安装字体家族名列表（去重、排序），供外观设置选择。 */
+export async function getSystemFonts(): Promise<string[]> {
+  try {
+    return await get<string[]>('/settings/fonts')
+  } catch {
+    return []
   }
 }
 
