@@ -670,7 +670,9 @@ jobs:
             mkdir -p src-tauri/binaries
             mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
             pnpm store prune || true
-            pnpm install --frozen-lockfile \
+            # ponytail: QEMU 用户态模拟下 pnpm tarball 完整性校验异常（Wanted==Got 仍报错），
+            # 用非 frozen 模式接受 registry 当前 integrity；仅 QEMU 交叉构建路径使用
+            pnpm install --no-frozen-lockfile \
               --fetch-timeout=600000 --fetch-retries=5
             pnpm --filter @qomicex/plugin-ui build
             npm run tauri -- build --bundles deb,rpm
