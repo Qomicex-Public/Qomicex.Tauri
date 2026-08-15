@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
@@ -51,7 +51,8 @@ import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache, clearCurseForgeCache, setDataDir } from '../api/settings.ts'
 import { setPluginState as apiSetPluginState } from '../api/plugins.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
-import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS } from '../constants/credits.ts'
+import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
+import { LegalDialog } from '../components/LegalDialog.tsx'
 
 const CATEGORIES = [
   { id: 'launcher', label: '启动器', icon: faRocket },
@@ -95,6 +96,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [licenseCopied, setLicenseCopied] = useState(false)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
+  const [legalDialogOpen, setLegalDialogOpen] = useState(false)
 
   const isPreRelease = /-/.test(APP_INFO.version)
   const versionType = isPreRelease ? '测试版' : '稳定版'
@@ -463,6 +465,48 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
           </div>
         </CardContent>
       </Card>
+
+      {/* 版权与隐私 */}
+      <Card>
+        <CardHeader><CardTitle><FontAwesomeIcon icon={faScaleBalanced} className="mr-2 h-4 w-4 text-muted-foreground" />版权与隐私</CardTitle></CardHeader>
+        <CardContent className="space-y-1">
+          <button
+            onClick={() => setLegalDialogOpen(true)}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
+          >
+            <FontAwesomeIcon icon={faFileLines} className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">版权声明</div>
+              <div className="truncate text-xs text-muted-foreground">查看本软件的版权归属与开源许可信息</div>
+            </div>
+            <FontAwesomeIcon icon={faChevronRight} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+          </button>
+          <button
+            onClick={() => openUrl(USER_AGREEMENT_URL).catch(() => window.open(USER_AGREEMENT_URL, '_blank'))}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
+          >
+            <FontAwesomeIcon icon={faFileContract} className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">用户协议</div>
+              <div className="truncate text-xs text-muted-foreground">qomicex.top/legal/user-agreement</div>
+            </div>
+            <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+          </button>
+          <button
+            disabled
+            className="flex w-full cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm opacity-50"
+          >
+            <FontAwesomeIcon icon={faShieldHalved} className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">隐私政策</div>
+              <div className="truncate text-xs text-muted-foreground">即将上线</div>
+            </div>
+            <Badge variant="secondary" className="h-5 shrink-0 text-[10px]">即将上线</Badge>
+          </button>
+        </CardContent>
+      </Card>
+
+      <LegalDialog open={legalDialogOpen} onClose={() => setLegalDialogOpen(false)} />
     </div>
   )
 }

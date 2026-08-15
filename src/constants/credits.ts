@@ -97,6 +97,19 @@ export const LICENSE: LicenseInfo = {
 
 export const REPOSITORY_URL = 'https://github.com/lenmei233/Qomicex.Tauri'
 
+export const USER_AGREEMENT_URL = 'https://www.qomicex.top/legal/user-agreement'
+
+export const COPYRIGHT_NOTICE = {
+  title: '版权声明',
+  content: `**Qomicex Launcher** 由 **Qomicex 团队** 开发并维护，版权归 Qomicex 团队所有。
+
+- 本软件基于 **GPL-3.0 License** 开源协议发布，您可以在遵守该协议的前提下自由使用、复制、修改与分发。
+- 本软件与 **Mojang Studios / Microsoft** 及其旗下产品不存在任何从属、合作或背书关系。
+- **Minecraft** 及相关名称、标识、版权均归 **Mojang Studios / Microsoft** 所有。
+- 本软件不包含 Minecraft 游戏本体；游戏资源版权归其各自所有者所有。
+- 使用本软件即表示您已阅读并同意《用户协议》与《隐私政策》。`,
+}
+
 export interface ReferenceProject {
   name: string
   url: string
