@@ -19,6 +19,13 @@ import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
 
+function getSafeIconDataUrl(icon?: string): string | null {
+  if (!icon) return null
+  const trimmed = icon.trim()
+  const safeDataImagePattern = /^data:image\/(?:png|jpeg|jpg|gif|webp|bmp|x-icon|vnd\.microsoft\.icon);base64,[a-z0-9+/=\s]+$/i
+  return safeDataImagePattern.test(trimmed) ? trimmed : null
+}
+
 function cn(...classes: (string | boolean | undefined | null)[]): string {
   return classes.filter(Boolean).join(' ')
 }
@@ -321,6 +328,7 @@ export default function DownloadCenter() {
           {filtered.map((task) => {
             const cfg = STATUS_CONFIG[task.status]
             const isActive = task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'
+            const safeIcon = getSafeIconDataUrl(task.icon)
             return (
               <div key={task.id} className="group rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
                 <div className="flex items-start justify-between gap-4">
@@ -329,8 +337,8 @@ export default function DownloadCenter() {
                       'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg',
                       task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : 'bg-primary/10'
                     )}>
-                      {task.icon?.startsWith('data:image/') ? (
-                        <img src={task.icon} alt="" className="h-full w-full object-cover" />
+                      {safeIcon ? (
+                        <img src={safeIcon} alt="" className="h-full w-full object-cover" />
                       ) : (
                         <FontAwesomeIcon
                             icon={task.type === 'java' ? faCoffee : task.type === 'resource' ? faBox : task.type === 'repair' ? faHammer : task.type === 'batch' ? faDownload : faCube}
