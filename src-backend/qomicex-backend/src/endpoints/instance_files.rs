@@ -1076,7 +1076,9 @@ async fn refresh_mod_updates(
 
     // ── CurseForge 指纹批次 ──
     if !state.curse_forge_api_key.is_empty() {
-        let cf = state.core.create_curseforge_source(&state.curse_forge_api_key);
+        let cf = state
+            .core
+            .create_curseforge_source(&state.curse_forge_api_key);
         let cf_hashes: Vec<i64> = list
             .iter()
             .filter(|m| m.cf_hash != 0)
