@@ -1,7 +1,7 @@
 //! 系统信息采集（对应源 SystemEndpoints 的 SysInfo 辅助 + SystemMemoryHelper）。
 //!
-//! ⚠️ 技术债：Windows 版本号（build/major）与发行版名（Windows 10/11 细分）当前为
-//! 近似值；精确解析需引入平台 API（winreg / uname），留待后续批次对齐。
+//! 系统显示名：Windows/macOS 经 sysinfo 读平台注册表/系统版本（Windows 自动区分
+//! 10/11），Linux 读 os-release 的 PRETTY_NAME。
 
 use sysinfo::System;
 
@@ -41,12 +41,15 @@ pub fn os_version_id() -> String {
 }
 
 pub fn os_display_name() -> String {
-    if os_name() == "linux" {
-        if let Some(name) = linux_pretty_name() {
-            return name;
-        }
+    match os_name() {
+        // Linux：os-release 的 PRETTY_NAME（如 "Ubuntu 24.04.1 LTS"）比 sysinfo 的
+        // "Linux <version> <name>" 更友好，保留现有逻辑。
+        "linux" => linux_pretty_name().unwrap_or_else(os_description),
+        // Windows/macOS：sysinfo 读注册表 ProductName（自动把 "Windows 10" 前缀映射为
+        // Windows 11）返回如 "Windows 11 Pro"；macOS 返回 "MacOS 14.5 Sonoma"。
+        "windows" | "osx" => System::long_os_version().unwrap_or_else(os_description),
+        _ => os_description(),
     }
-    os_description()
 }
 
 fn linux_pretty_name() -> Option<String> {
@@ -74,4 +77,18 @@ pub fn memory() -> (u64, u64) {
         sys.total_memory() / (1024 * 1024),
         sys.available_memory() / (1024 * 1024),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_name_is_friendly() {
+        let name = os_display_name();
+        assert!(!name.is_empty());
+        // Windows 上不应再裸显示环境变量 OS 的原始值（Windows_NT）
+        #[cfg(target_os = "windows")]
+        assert_ne!(name, "Windows_NT");
+    }
 }

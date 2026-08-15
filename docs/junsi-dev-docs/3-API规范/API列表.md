@@ -1244,17 +1244,20 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 ### GET `/api/system/info`
 
-系统信息。
+系统信息。`osDisplayName` 为友好的操作系统显示名：
+- Windows：读注册表 `ProductName`（sysinfo 自动把 "Windows 10 " 前缀映射为 Windows 11），如 `Windows 11 Pro`
+- macOS：`MacOS <版本> <代号>`，如 `MacOS 14.5 Sonoma`
+- Linux：`/etc/os-release` 的 `PRETTY_NAME`，如 `Ubuntu 24.04.1 LTS`
 
 **响应：** `SystemInfoResponse`
 ```json
 {
   "os": "windows",
-  "architecture": "X64",
-  "osName": "Microsoft Windows 11 24H2+",
-  "osVersion": "Microsoft Windows NT 10.0.26100.0",
-  "osVersionId": "10",
-  "osDisplayName": "Windows 11 24H2+",
+  "architecture": "x86_64",
+  "osName": "Windows_NT",
+  "osVersion": "Windows NT",
+  "osVersionId": "unknown",
+  "osDisplayName": "Windows 11 Pro",
   "gitCommit": "abc123",
   "memory": 17179869184,
   "availableMemory": 8589934592
@@ -1791,3 +1794,51 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 实现基于 core 的 `LocalResourcesFactory::create_server_manager(version, version_specific)`（qomicex-core-rust 6278009 / ADR-007）。Options 系列端点仍为 501 stub（依赖尚未移植的 per-instance OptionsProvider）。
 
+
+
+### 2026-08-15 更新
+### GET `/api/system/info`
+
+系统信息。`osDisplayName` 为友好的操作系统显示名：
+- Windows：读注册表 `ProductName`（sysinfo 自动把 "Windows 10 " 前缀映射为 Windows 11），如 `Windows 11 Pro`
+- macOS：`MacOS <版本> <代号>`，如 `MacOS 14.5 Sonoma`
+- Linux：`/etc/os-release` 的 `PRETTY_NAME`，如 `Ubuntu 24.04.1 LTS`
+
+**响应：** `SystemInfoResponse`
+```json
+{
+  "os": "windows",
+  "architecture": "x86_64",
+  "osName": "Windows_NT",
+  "osVersion": "Windows NT",
+  "osVersionId": "unknown",
+  "osDisplayName": "Windows 11 Pro",
+  "gitCommit": "abc123",
+  "memory": 17179869184,
+  "availableMemory": 8589934592
+}
+```
+
+
+### 2026-08-15 更新
+### GET `/api/system/info`
+
+系统信息。`osDisplayName` 为友好的操作系统显示名：
+- Windows：读注册表 `ProductName`（sysinfo 自动把 "Windows 10 " 前缀映射为 Windows 11），如 `Windows 11 Pro`
+- macOS：`MacOS <版本> <代号>`，如 `MacOS 14.5 Sonoma`
+- Linux：`/etc/os-release` 的 `PRETTY_NAME`，如 `Ubuntu 24.04.1 LTS`
+
+**响应：** `SystemInfoResponse`
+```json
+{
+  "os": "windows",
+  "architecture": "x86_64",
+  "osName": "Windows_NT",
+  "osVersion": "Windows NT",
+  "osVersionId": "unknown",
+  "osDisplayName": "Windows 11 Pro",
+  "gitCommit": "abc123",
+  "memory": 17179869184,
+  "availableMemory": 8589934592
+}
+```
