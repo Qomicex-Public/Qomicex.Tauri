@@ -17,7 +17,9 @@ Backend binds `127.0.0.1:5000` by default; `QOMICEX_PORT` env overrides the port
 
 External Rust crates are git submodules at the repo root: `qomicex-core-rust/` (core lib), `qomicex-downloader-rust/` (downloader) and `qomicex-connector-rust/` (联机/SCF 协议, 依赖 EasyTier4QML fork).
 
-Submodules (recursive checkout): `qomicex-core-rust/`, `qomicex-downloader-rust/`, `qomicex-connector-rust/`.
+`qomicex-tauri-i18n/` 也是 repo root 的 submodule：前端 i18n 多语言资源仓库（`src/zh-CN/` + `src/en/` TS 模块 + 类型）。启动器 `src/i18n/` 仅保留 Provider/错误映射/类型 re-export，全部语言资源经 `../../qomicex-tauri-i18n/src/index.ts` 导入。**编辑翻译必须改 submodule 内文件**（并在 i18n 仓库单独提交推送），不要在 `src/i18n/` 下建 zh-CN/en 目录。改完 submodule 需 `git submodule update --remote` 拉取最新。
+
+Submodules (recursive checkout): `qomicex-core-rust/`, `qomicex-downloader-rust/`, `qomicex-connector-rust/`, `qomicex-tauri-i18n/`.
 
 Legacy code (pre-Neo / pre-Rust) is preserved on the `legacy` branch.
 

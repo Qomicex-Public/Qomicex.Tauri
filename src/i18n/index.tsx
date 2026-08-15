@@ -1,15 +1,12 @@
 // 轻量 i18n：I18nProvider + useI18n。零依赖，TS 强类型 key。
-// 语言持久化：localStorage('qomicex-language') 即时生效；与后端 settings.language 双向同步。
+// 语言资源由 submodule qomicex-tauri-i18n 提供；语言持久化：localStorage('qomicex-language') 即时生效，与后端 settings.language 双向同步。
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
 import type { ReactNode } from 'react'
-import zhCN from './zh-CN/index'
-import en from './en/index'
+import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
 import type { Lang, DeepKeys, TranslationSchema } from './types'
 import { onSettingsChange } from '../api/settings.ts'
 import { setApiErrorTranslator } from '../api/client.ts'
 import { translateApiError } from './errors.ts'
-
-const RESOURCES: Record<Lang, TranslationSchema> = { 'zh-CN': zhCN, en }
 
 export const LANGS: { value: Lang; label: string }[] = [
   { value: 'zh-CN', label: '简体中文' },

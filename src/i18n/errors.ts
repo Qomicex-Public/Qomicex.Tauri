@@ -1,7 +1,6 @@
 // 后端错误码 → 翻译 key 映射（前端统一映射，后端零改动）
 import type { ApiError } from '../api/client.ts'
-import zhCN from './zh-CN/index'
-import en from './en/index'
+import { zhCN, en } from '../../qomicex-tauri-i18n/src/index.ts'
 import type { Lang } from './types'
 
 const CODE_TO_KEY: Record<string, string> = {

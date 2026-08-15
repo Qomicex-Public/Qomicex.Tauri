@@ -7,3 +7,6 @@
 [submodule "qomicex-connector-rust"]
 	path = qomicex-connector-rust
 	url = git@github.com:Qomicex-Public/qomicex-connector-rust.git
+[submodule "qomicex-tauri-i18n"]
+	path = qomicex-tauri-i18n
+	url = git@github.com:Qomicex-Public/Qomicex.Tauri.i18n.git
