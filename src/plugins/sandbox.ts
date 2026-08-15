@@ -364,12 +364,9 @@ window.addEventListener('message', (e) => {
 const streamAborters = new Map<string, AbortController>()
 
 async function handleApiCall(callId: string, method: string, args: unknown[], pluginId: string, source: Window) {
-  const pluginApi = (window as any).__PLUGIN_API__ as Record<string, unknown> | undefined
   if (
     typeof method !== 'string' ||
-    !pluginApi ||
-    !Object.prototype.hasOwnProperty.call(pluginApi, method) ||
-    typeof pluginApi[method] !== 'function'
+    !Object.prototype.hasOwnProperty.call(METHOD_PERMISSIONS, method)
   ) {
     source.postMessage({
       type: '__plugin_api_response',
