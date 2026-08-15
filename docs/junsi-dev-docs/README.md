@@ -1,5 +1,6 @@
 # 项目文档索引
-最后更新：2026-08-13 19:17
+
+最后更新：2026-08-15 16:47
 
 ## 1-决策记录
 
@@ -13,6 +14,12 @@
 - [ADR-007：LocalResourcesFactory.create_server_manager 工厂方法（ServerManager 移植）](1-决策记录/ADR-007-LocalResourcesFactory-create_server_manager-工厂方法-ServerManager-移植-.md)
 - [ADR-008：服务器管理端点移植（CSAOT-legacy C# → Rust core + axum）](1-决策记录/ADR-008-服务器管理端点移植-CSAOT-legacy-C----Rust-core---axum-.md)
 - [ADR-009：Windows ARM64 联机 FakeTCP 仅依赖 npcap，WinDivert 不支持 aarch64](1-决策记录/ADR-009-Windows-ARM64-联机-FakeTCP-仅依赖-npcap-WinDivert-不支持-aarch64.md)
+- [ADR-010：Puppeteer 自动化组件素材采集方案](1-决策记录/ADR-010-Puppeteer-自动化组件素材采集方案.md)
+- [ADR-010: Puppeteer 自动化组件素材采集方案](1-决策记录/ADR-010-Puppeteer自动化组件素材采集方案.md)
+- [ADR-011：模组更新检查改造：批次哈希匹配 + 独立 6h 缓存 + 自动检查](1-决策记录/ADR-011-模组更新检查改造-批次哈希匹配---独立-6h-缓存---自动检查.md)
+- [ADR-012：check-updates 更新判定：Modrinth game_versions 序列化修复 + CurseForge latest_files 客户端过滤](1-决策记录/ADR-012-check-updates-更新判定-Modrinth-game_versions-序列化修复---CurseForge-latest_files-客户端过滤.md)
+- [ADR-013：check-updates loader 兼容回退：非标准加载器（Cleanroom/LiteLoader）按 Forge 兼容处理](1-决策记录/ADR-013-check-updates-loader-兼容回退-非标准加载器-Cleanroom-LiteLoader-按-Forge-兼容处理.md)
+- [ADR-014：模组更新流程改造：下载中心编排 + 缓存失效修复](1-决策记录/ADR-014-模组更新流程改造-下载中心编排---缓存失效修复.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 
 ## 2-架构设计
@@ -47,12 +54,6 @@
 - [Rust 编码规范](4-编码规范/Rust-规范.md)
 - [TypeScript 编码规范](4-编码规范/TypeScript-规范.md)
 
-## 5-数据库设计
-
-*表结构、ER 图*
-
-（暂无文档）
-
 ## 6-UI/组件设计
 
 *UI 控件、组件设计规范*
@@ -75,8 +76,3 @@
 - [构建与部署](8-部署运维/构建部署.md)
 - [环境配置说明](8-部署运维/环境配置说明.md)
 
-## 9-系统要求
-
-*功能需求、非功能需求*
-
-（暂无文档）
