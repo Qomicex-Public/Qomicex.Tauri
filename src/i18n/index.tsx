@@ -22,8 +22,8 @@ export type TranslationKey = DeepKeys<TranslationSchema>
 
 interface I18nContextValue {
   lang: Lang
-  /** 取翻译；{name} 形式占位符可用 params 替换 */
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string
+  /** 取翻译；{name} 形式占位符可用 params 替换。字面量 key 编译期校验，动态 key 也允许。 */
+  t: (key: TranslationKey | (string & {}), params?: Record<string, string | number>) => string
   setLanguage: (lang: Lang) => void
 }
 
@@ -59,7 +59,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     return () => setApiErrorTranslator(null)
   }, [lang])
 
-  const t = useCallback((key: TranslationKey, params?: Record<string, string | number>) => {
+  const t = useCallback((key: TranslationKey | (string & {}), params?: Record<string, string | number>) => {
     const dict = RESOURCES[lang] as unknown as Record<string, unknown>
     let val: unknown = dict
     for (const part of String(key).split('.')) {

@@ -20,9 +20,11 @@ import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import { AnnouncementCard } from '../components/AnnouncementCard.tsx'
+import { useI18n } from '../i18n/index.tsx'
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const { t, lang } = useI18n()
   useMessageBox()
   const { launchInstance, showLaunchError } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
@@ -107,7 +109,7 @@ export default function Dashboard() {
         setShowMicrosoftReauth(true)
         return
       }
-      showLaunchError('启动失败', e instanceof Error ? e.message : String(e))
+      showLaunchError(t('running.launchFailedTitle'), e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -128,7 +130,7 @@ export default function Dashboard() {
         {/* Account widget */}
         <div className="relative z-50">
           <div className="rounded-xl border border-border/30 bg-card/70 p-4 backdrop-blur-md">
-            <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">账户</p>
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">{t('dashboard.account')}</p>
             <div ref={accountRef} className="flex items-center gap-3">
               {defaultAccount ? (
                 <AccountAvatar account={defaultAccount} className="h-9 w-9 shrink-0" />
@@ -138,8 +140,8 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{defaultAccount ? defaultAccount.name : '未设置默认账户'}</p>
-                <p className="text-[10px] text-muted-foreground/60">{defaultAccount ? '默认账户' : '在设置中添加'}</p>
+                <p className="truncate text-sm font-medium">{defaultAccount ? defaultAccount.name : t('dashboard.noDefaultAccount')}</p>
+                <p className="text-[10px] text-muted-foreground/60">{defaultAccount ? t('dashboard.defaultAccount') : t('dashboard.addInSettings')}</p>
               </div>
               <Button variant="ghost" size="sm" onClick={openAccountDropdown} className="h-6 w-6 shrink-0 p-0">
                 <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 transition-transform duration-200', accountsOpen && 'rotate-180')} />
@@ -170,7 +172,7 @@ export default function Dashboard() {
                   className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-muted-foreground hover:bg-accent transition-colors"
                 >
                   <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
-                  管理账户
+                  {t('dashboard.manageAccounts')}
                 </button>
               </div>
             </div>
@@ -198,30 +200,30 @@ export default function Dashboard() {
               <p className="mt-0.5 text-xs text-muted-foreground/70">
                 {defaultInstance.gameVersion}
                 {defaultInstance.loader && ` · ${defaultInstance.loader} ${defaultInstance.loaderVersion}`}
-                {defaultInstance.lastPlayed && ` · 上次游玩 ${new Date(defaultInstance.lastPlayed).toLocaleDateString('zh-CN')}`}
+                {defaultInstance.lastPlayed && ` · ${t('dashboard.lastPlayed', { date: new Date(defaultInstance.lastPlayed).toLocaleDateString(lang === 'zh-CN' ? 'zh-CN' : 'en-US') })}`}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="hidden text-right md:block">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">状态</p>
-              <p className="text-sm text-muted-foreground">准备就绪</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">{t('dashboard.status')}</p>
+              <p className="text-sm text-muted-foreground">{t('dashboard.ready')}</p>
             </div>
             <Button
               onClick={handleLaunch}
               className="flex h-14 items-center gap-3 rounded-xl px-10 text-lg font-bold tracking-widest transition-all hover:brightness-110 active:scale-95"
             >
               <FontAwesomeIcon icon={faPlay} className="h-5 w-5" />
-              启动
+              {t('dashboard.launch')}
             </Button>
           </div>
         </div>
       ) : (
         <div className="mt-auto flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border/40 bg-card/30 px-6 py-8 text-center backdrop-blur-md">
           <FontAwesomeIcon icon={faCube} className="h-6 w-6 text-muted-foreground/30" />
-          <p className="text-sm text-muted-foreground">尚未固定实例</p>
+          <p className="text-sm text-muted-foreground">{t('dashboard.noPinnedInstance')}</p>
           <Button variant="outline" size="sm" onClick={() => navigate('/instances')} className="mt-1">
-            前往实例管理
+            {t('dashboard.goToInstances')}
           </Button>
         </div>
       )}

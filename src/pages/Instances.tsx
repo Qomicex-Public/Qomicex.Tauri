@@ -6,6 +6,7 @@ import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpe
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from '../i18n/index.tsx'
 
 import { Button } from '../components/ui'
 import { Input } from '../components/ui'
@@ -49,23 +50,23 @@ const LOADER_COLORS: Record<string, string> = {
   Vanilla: 'text-muted-foreground bg-muted border-border',
 }
 
-const TYPE_LABEL: Record<string, string> = { release: '正式版', snapshot: '快照', old_beta: '远古测试版', old_alpha: '远古阿尔法', april_fools: '愚人节版' }
+const TYPE_LABEL: Record<string, string> = { release: 'instances.type.release', snapshot: 'instances.type.snapshot', old_beta: 'instances.type.old_beta', old_alpha: 'instances.type.old_alpha', april_fools: 'instances.type.april_fools' }
 const TYPE_ORDER: Record<string, number> = { release: 0, snapshot: 1, april_fools: 1.5, old_beta: 2, old_alpha: 3 }
 const REMOTE_VERSION_CATEGORIES = [
-  { key: 'all', label: '全部' },
-  { key: 'release', label: '正式版' },
-  { key: 'snapshot', label: '快照' },
-  { key: 'april_fools', label: '愚人节版' },
-  { key: 'old_beta', label: '远古测试版' },
-  { key: 'old_alpha', label: '远古阿尔法' },
+  { key: 'all' },
+  { key: 'release' },
+  { key: 'snapshot' },
+  { key: 'april_fools' },
+  { key: 'old_beta' },
+  { key: 'old_alpha' },
 ]
 
 const REMOTE_SORT_OPTIONS = [
-  { key: 'recommended', label: '推荐排序' },
-  { key: 'newest', label: '最新优先' },
-  { key: 'oldest', label: '最早优先' },
-  { key: 'name-asc', label: '名称 A-Z' },
-  { key: 'name-desc', label: '名称 Z-A' },
+  { key: 'recommended' },
+  { key: 'newest' },
+  { key: 'oldest' },
+  { key: 'name-asc' },
+  { key: 'name-desc' },
 ]
 
 function cn(...classes: (string | boolean | undefined | null)[]): string { return classes.filter(Boolean).join(' ') }
@@ -115,6 +116,7 @@ type PageStep = 'list' | 'select-version' | 'configure'
 
 export default function Instances() {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const { alert: msgAlert, prompt: msgPrompt } = useMessageBox()
   const { launchInstance: ctxLaunchInstance } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
@@ -261,7 +263,7 @@ export default function Instances() {
 
   async function handlePickDir() {
     try {
-      const dir = await invoke<string | null>('pick_dialog', { options: { directory: true, title: '选择游戏目录' } })
+      const dir = await invoke<string | null>('pick_dialog', { options: { directory: true, title: t('instances.pickGameDirTitle') } })
       if (dir) {
         const path = dir as string
         setCurrentDir(path)
@@ -275,7 +277,7 @@ export default function Instances() {
         setDirPopover(false)
       }
     } catch {
-      const dir = await msgPrompt('请输入游戏目录路径:', '选择目录')
+      const dir = await msgPrompt(t('instances.enterDirPath'), t('instances.chooseDir'))
       if (dir) {
         setCurrentDir(dir)
         saveSettings({ gameDir: dir })
@@ -301,7 +303,7 @@ export default function Instances() {
   }
 
   async function addDirManually() {
-    const dir = await msgPrompt('请输入游戏目录路径:', '添加目录')
+    const dir = await msgPrompt(t('instances.enterDirPath'), t('instances.addDir'))
     if (dir) {
       setManagedDirs((prev) => {
         if (prev.some((d) => d.path === dir)) return prev
@@ -330,7 +332,7 @@ export default function Instances() {
   async function handleDownload() {
     if (!form.gameVersion || !form.name.trim()) return
     if (!currentDir) {
-      await msgAlert('请先选择一个游戏目录，再开始下载。')
+      await msgAlert(t('instances.selectDirFirst'))
       return
     }
 
@@ -340,14 +342,14 @@ export default function Instances() {
       if (loaderVersions.length > 0) {
         resolvedVersion = loaderVersions[0].version
       } else {
-        await msgAlert(`未获取到 ${form.loader} 的可用版本列表，无法下载。请检查网络或稍后重试。`)
+        await msgAlert(t('instances.noLoaderVersions', { loader: form.loader }))
         return
       }
     }
 
     // 后端按 loaderVersion 精确匹配（大小写不敏感）；空串会导致找不到任何安装器。
     if (form.loader && !resolvedVersion?.trim()) {
-      await msgAlert(`请选择 ${form.loader} 的具体版本后再下载。`)
+      await msgAlert(t('instances.selectLoaderVersion', { loader: form.loader }))
       return
     }
 
@@ -403,7 +405,7 @@ export default function Instances() {
       if (currentDir) await doScan(currentDir)
       navigate('/downloads')
     } catch (e) {
-      await msgAlert(`创建失败: ${e instanceof Error ? e.message : String(e)}`)
+      await msgAlert(t('instances.createFailed', { error: e instanceof Error ? e.message : String(e) }))
     }
   }
 
@@ -426,7 +428,7 @@ export default function Instances() {
         })
         setBackedInstances((prev) => [...prev, inst!])
       } catch (e) {
-        await msgAlert(`创建实例失败: ${e instanceof Error ? e.message : String(e)}`)
+        await msgAlert(t('instances.createInstanceFailed', { error: e instanceof Error ? e.message : String(e) }))
         return
       }
     }
@@ -439,7 +441,7 @@ export default function Instances() {
     try {
       const result = await ctxLaunchInstance(inst!.id, inst!.name, { path: inst!.javaPath, gameVersion: inst!.gameVersion, gameDir: inst!.gameDir })
       if (!result.success) {
-        await msgAlert(`启动失败: ${result.error}\n${result.detail || ''}`)
+        await msgAlert(t('instances.launchFailedDetail', { error: result.error || '', detail: result.detail || '' }))
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -448,7 +450,7 @@ export default function Instances() {
         setShowMicrosoftReauth(true)
         return
       }
-      await msgAlert(`启动失败: ${e instanceof Error ? e.message : String(e)}`)
+      await msgAlert(t('instances.launchFailed', { error: e instanceof Error ? e.message : String(e) }))
     }
   }
 
@@ -476,7 +478,7 @@ export default function Instances() {
       setBackedInstances((prev) => [...prev, created])
       navigate(`/instances/${created.id}`)
     } catch (e) {
-      await msgAlert(`创建实例失败: ${e instanceof Error ? e.message : String(e)}`)
+      await msgAlert(t('instances.createInstanceFailed', { error: e instanceof Error ? e.message : String(e) }))
     }
   }
 
@@ -527,12 +529,12 @@ export default function Instances() {
   }, [versionTypeMap])
 
   const FILTER_OPTIONS = [
-    { key: 'all', label: '全部', icon: faLayerGroup },
-    { key: 'modded', label: '模组', icon: faWrench },
-    { key: 'vanilla', label: '原版', icon: faCube },
-    { key: 'snapshot', label: '快照', icon: faGhost },
-    { key: 'april_fools', label: '愚人节', icon: faStar },
-    { key: 'broken', label: '错误', icon: faBug },
+    { key: 'all', icon: faLayerGroup },
+    { key: 'modded', icon: faWrench },
+    { key: 'vanilla', icon: faCube },
+    { key: 'snapshot', icon: faGhost },
+    { key: 'april_fools', icon: faStar },
+    { key: 'broken', icon: faBug },
   ]
 
   const filtered = useMemo(() => scannedLocal
@@ -572,23 +574,23 @@ export default function Instances() {
           <button onClick={() => setStep('list')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
           </button>
-          <h2 className="text-lg font-semibold">下载新版本</h2>
+          <h2 className="text-lg font-semibold">{t('instances.downloadTitle')}</h2>
         </div>
         <div className="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-4">
           <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">分类</p>
-            <Tabs tabs={REMOTE_VERSION_CATEGORIES.map(c => ({ id: c.key, label: c.label }))} activeTab={remoteCategory} onChange={setRemoteCategory} />
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('instances.categoryLabel')}</p>
+            <Tabs tabs={REMOTE_VERSION_CATEGORIES.map(c => ({ id: c.key, label: t(`instances.category.${c.key}`) }))} activeTab={remoteCategory} onChange={setRemoteCategory} />
           </div>
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_112px]">
             <div className="relative">
               <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="搜索版本..." value={versionSearch} onChange={(e) => setVersionSearch(e.target.value)} className="pl-9" />
+              <Input placeholder={t('instances.searchPlaceholder')} value={versionSearch} onChange={(e) => setVersionSearch(e.target.value)} className="pl-9" />
             </div>
 
             <Select value={remoteSort} onChange={setRemoteSort}>
               {REMOTE_SORT_OPTIONS.map((item) => (
-                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+                <SelectOption key={item.key} value={item.key}>{t(`instances.sort.${item.key}`)}</SelectOption>
               ))}
             </Select>
 
@@ -598,16 +600,16 @@ export default function Instances() {
           </div>
 
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>共 {remoteVersions.length} 个远程版本</span>
-            <span>筛选后 {sortedRemote.length} 个</span>
+            <span>{t('instances.remoteCount', { count: remoteVersions.length })}</span>
+            <span>{t('instances.filteredCount', { count: sortedRemote.length })}</span>
           </div>
         </div>
 
         {sortedRemote.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-20 text-center text-muted-foreground">
             <FontAwesomeIcon icon={faCube} className="mb-3 h-8 w-8 opacity-30" />
-            <p className="text-sm font-medium">没有匹配的远程版本</p>
-            <p className="mt-1 text-xs text-muted-foreground/70">试试调整分类、排序或搜索关键词</p>
+            <p className="text-sm font-medium">{t('instances.noRemoteMatch')}</p>
+            <p className="mt-1 text-xs text-muted-foreground/70">{t('instances.noRemoteMatchHint')}</p>
           </div>
         ) : remoteViewMode === 'grid' ? (
           <div className="grid max-h-[520px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
@@ -618,7 +620,7 @@ export default function Instances() {
                   <span className="truncate text-sm font-medium">{v.id}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{TYPE_LABEL[v.type] || v.type}</span>
+                  <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{t(TYPE_LABEL[v.type] ?? v.type)}</span>
                 </div>
                 <span className="text-[10px] text-muted-foreground/60"><FontAwesomeIcon icon={faCalendar} className="mr-0.5 h-2.5 w-2.5" />{formatDate(v.releaseTime)}</span>
               </button>
@@ -634,14 +636,14 @@ export default function Instances() {
                       <FontAwesomeIcon icon={faCube} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       <span className="text-sm font-medium text-foreground">{v.id}</span>
                     </div>
-                    <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{TYPE_LABEL[v.type] || v.type}</span>
+                    <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{t(TYPE_LABEL[v.type] ?? v.type)}</span>
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground/70">
                     <FontAwesomeIcon icon={faCalendar} className="mr-1 h-2.5 w-2.5" />
-                    发布日期 {formatDate(v.releaseTime)}
+                    {t('instances.releaseDate', { date: formatDate(v.releaseTime) })}
                   </div>
                 </div>
-                <Button size="sm" className="shrink-0">选择</Button>
+                <Button size="sm" className="shrink-0">{t('instances.select')}</Button>
               </button>
             ))}
           </div>
@@ -658,19 +660,19 @@ export default function Instances() {
             <button onClick={() => { setStep('select-version'); setLoaderVersions([]) }} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
           </button>
-          <h2 className="text-lg font-semibold">配置下载</h2>
+          <h2 className="text-lg font-semibold">{t('instances.configTitle')}</h2>
         </div>
         <Card>
           <CardContent className="space-y-5 p-6">
             <div className="space-y-2">
-              <Label htmlFor="iname">实例名称</Label>
+              <Label htmlFor="iname">{t('instances.instanceName')}</Label>
               <div className="relative">
                 <FontAwesomeIcon icon={faPen} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input id="iname" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} className="pl-9" placeholder="输入实例名称..." />
+                <Input id="iname" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} className="pl-9" placeholder={t('instances.instanceNamePlaceholder')} />
               </div>
             </div>
             <div className="space-y-2">
-              <Label>游戏版本</Label>
+              <Label>{t('instances.gameVersion')}</Label>
               <div className="flex h-9 items-center gap-2 rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
                 <FontAwesomeIcon icon={faCube} className="h-3.5 w-3.5 shrink-0" />
                 <span className="font-medium text-foreground">{form.gameVersion}</span>
@@ -680,14 +682,14 @@ export default function Instances() {
               </div>
             </div>
           <div className="anim-stagger space-y-3">
-              <Label>模组加载器</Label>
+              <Label>{t('instances.loader')}</Label>
               <div className="grid grid-cols-[1fr_1fr] gap-3">
                 <Select
                   value={form.loader}
                   onChange={(v) => { setForm((p) => ({ ...p, loader: v, loaderVersion: '' })); setSelectedAddons([]) }}
-                  placeholder="选择加载器"
+                  placeholder={t('instances.loaderPlaceholder')}
                 >
-                  <SelectOption value="">无（纯净原版）</SelectOption>
+                  <SelectOption value="">{t('instances.noneVanilla')}</SelectOption>
                   <SelectOption value="Forge">Forge</SelectOption>
                   <SelectOption value="Fabric">Fabric</SelectOption>
                   <SelectOption value="NeoForge">NeoForge</SelectOption>
@@ -701,42 +703,42 @@ export default function Instances() {
                   <Select
                     value={form.loaderVersion || '__latest__'}
                     onChange={(v) => setForm((p) => ({ ...p, loaderVersion: v === '__latest__' ? '' : v }))}
-                    placeholder="选择版本"
+                    placeholder={t('instances.versionPlaceholder')}
                   >
                     {loadingVersions ? (
-                      <SelectOption value="__latest__" disabled>加载中...</SelectOption>
+                      <SelectOption value="__latest__" disabled>{t('instances.loadingVersions')}</SelectOption>
                     ) : loaderVersions.length === 0 ? (
-                      <SelectOption value="__latest__" disabled>暂无版本数据</SelectOption>
+                      <SelectOption value="__latest__" disabled>{t('instances.noVersionData')}</SelectOption>
                     ) : (
                       <>
-                        <SelectOption value="__latest__">最新版 {loaderVersions[0].version} (推荐)</SelectOption>
+                        <SelectOption value="__latest__">{t('instances.latestRecommended', { version: loaderVersions[0].version })}</SelectOption>
                         <SelectDivider />
                         {loaderVersions.map((lv) => (
-                          <SelectOption key={lv.version} value={lv.version}>{lv.version}{lv.isRecommended ? ' (推荐)' : ''}</SelectOption>
+                          <SelectOption key={lv.version} value={lv.version}>{lv.version}{lv.isRecommended ? t('instances.recommended') : ''}</SelectOption>
                         ))}
                       </>
                     )}
                   </Select>
                 ) : (
-                  <div className="flex h-9 items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">先选择加载器</div>
+                  <div className="flex h-9 items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">{t('instances.selectLoaderFirst')}</div>
                 )}
               </div>
               {form.loader && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', LOADER_COLORS[form.loader] || '')}>{form.loader}</span>
-                  <span>{form.loaderVersion || `最新版 ${loaderVersions.length > 0 ? loaderVersions[0].version : '...'}`}</span>
+                  <span>{form.loaderVersion || t('instances.latestVersion', { version: loaderVersions.length > 0 ? loaderVersions[0].version : '...' })}</span>
                 </div>
               )}
             </div>
             {form.loader && (loadingAddons || loaderAddons.length > 0) && (
               <div className="space-y-2.5">
                 <div className="flex items-center gap-2">
-                  <Label>附加内容 <span className="text-xs font-normal text-muted-foreground">(可选)</span></Label>
-                  {loadingAddons && <span className="text-xs text-muted-foreground animate-pulse">加载中...</span>}
+                  <Label>{t('instances.addons')} <span className="text-xs font-normal text-muted-foreground">{t('instances.optional')}</span></Label>
+                  {loadingAddons && <span className="text-xs text-muted-foreground animate-pulse">{t('common.loading')}</span>}
                 </div>
                 <div className="space-y-2">
                   {loadingAddons ? (
-                    <div className="flex h-10 items-center rounded-lg border border-dashed border-border/60 px-3 text-xs text-muted-foreground/50">正在获取附加内容...</div>
+                    <div className="flex h-10 items-center rounded-lg border border-dashed border-border/60 px-3 text-xs text-muted-foreground/50">{t('instances.fetchingAddons')}</div>
                   ) : (
                     loaderAddons.map((addon) => {
                     const checked = selectedAddons.includes(addon.id)
@@ -767,7 +769,7 @@ export default function Instances() {
                           <div className="flex items-center gap-1.5">
                             <span className="text-sm font-medium">{addon.label}</span>
                             {addon.recommended && (
-                              <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">推荐</span>
+                              <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">{t('instances.recommended')}</span>
                             )}
                           </div>
                           <p className="mt-0.5 text-xs text-muted-foreground/70">{addon.description}</p>
@@ -781,16 +783,16 @@ export default function Instances() {
             <div className="flex items-center justify-between gap-4 rounded-lg border border-border/40 bg-muted/10 p-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
-                <span>仅下载游戏文件，运行内存和 Java 等配置可在创建后调整</span>
+                <span>{t('instances.onlyGameFiles')}</span>
               </div>
             </div>
             <div className="flex items-center justify-end gap-3">
               {form.loader && !loadingVersions && loaderVersions.length === 0 && (
-                <span className="text-xs text-destructive/80">暂无可用加载器版本，无法下载</span>
+                <span className="text-xs text-destructive/80">{t('instances.noLoaderAvailable')}</span>
               )}
-              <Button variant="secondary" onClick={() => setStep('list')}>取消</Button>
+              <Button variant="secondary" onClick={() => setStep('list')}>{t('instances.cancel')}</Button>
               <Button onClick={handleDownload} disabled={!form.gameVersion || !form.name.trim() || loadingVersions || (!!form.loader && !loadingVersions && loaderVersions.length === 0)}>
-                <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />开始下载
+                <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('instances.startDownload')}
               </Button>
             </div>
           </CardContent>
@@ -817,7 +819,7 @@ export default function Instances() {
 
     const task: DownloadTask = {
       id: `repair-${instance.id}-${Date.now()}`,
-      name: `补全 ${settingsVersion.name}`,
+      name: t('instances.repairName', { name: settingsVersion.name }),
       type: 'repair',
       gameVersion: settingsVersion.gameVersion,
       status: 'queued',
@@ -844,9 +846,9 @@ export default function Instances() {
 
   return (
       <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
-        <PageHeader title="游戏实例" subtitle={`${scannedLocal.length} 个版本`}
+        <PageHeader title={t('instances.title')} subtitle={t('instances.subtitle', { count: scannedLocal.length })}
           actions={
-            <Tooltip content="刷新">
+            <Tooltip content={t('instances.refresh')}>
               <button onClick={refreshInstances} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
                 <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
               </button>
@@ -858,18 +860,18 @@ export default function Instances() {
 
       <Dialog open={dirManager} onClose={() => setDirManager(false)} className="w-[600px]">
         <DialogHeader onClose={() => setDirManager(false)}>
-          <DialogTitle>目录管理</DialogTitle>
+          <DialogTitle>{t('instances.dirManagerTitle')}</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-2">
           {managedDirs.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-8">
               <FontAwesomeIcon icon={faFolder} className="h-10 w-10 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">暂无目录</p>
-              <p className="text-xs text-muted-foreground/60">点击下方按钮添加一个游戏目录</p>
+              <p className="text-sm text-muted-foreground">{t('instances.noDir')}</p>
+              <p className="text-xs text-muted-foreground/60">{t('instances.noDirHint')}</p>
             </div>
           ) : (
             <div className="space-y-1">
-              <p className="px-1 text-xs text-muted-foreground">共 {managedDirs.length} 个目录，勾选标记当前使用的目录</p>
+              <p className="px-1 text-xs text-muted-foreground">{t('instances.dirCount', { count: managedDirs.length })}</p>
               {managedDirs.map((d) => (
                 <div key={d.path} className={cn('flex items-center gap-2 rounded-lg border p-3 transition-colors', currentDir === d.path && 'border-primary/40 bg-primary/5')}>
                   <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-md', currentDir === d.path ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
@@ -879,12 +881,12 @@ export default function Instances() {
                     <Input value={d.name} onChange={(e) => { setManagedDirs((prev) => { const next = prev.map((dd) => dd.path === d.path ? { ...dd, name: e.target.value } : dd); saveDirs(next); return next }) }} className="h-7 text-sm" />
                     <div className="mt-0.5 truncate text-xs text-muted-foreground">{d.path}</div>
                   </div>
-                  <Tooltip content="打开目录">
+                  <Tooltip content={t('instances.openDir')}>
                     <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => openFolder(d.path).catch(() => {})}>
                       <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
                     </Button>
                   </Tooltip>
-                  <Tooltip content="移除">
+                  <Tooltip content={t('instances.remove')}>
                     <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => removeDir(d.path)}>
                       <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
                     </Button>
@@ -895,44 +897,44 @@ export default function Instances() {
           )}
         </DialogBody>
         <DialogFooter>
-          <Button variant="secondary" onClick={addDirManually} className="gap-1.5"><FontAwesomeIcon icon={faPlus} className="h-4 w-4" />手动添加</Button>
-          <Button onClick={() => { handlePickDir(); setDirManager(false) }} className="gap-1.5"><FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />浏览添加</Button>
+          <Button variant="secondary" onClick={addDirManually} className="gap-1.5"><FontAwesomeIcon icon={faPlus} className="h-4 w-4" />{t('instances.manualAdd')}</Button>
+          <Button onClick={() => { handlePickDir(); setDirManager(false) }} className="gap-1.5"><FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />{t('instances.browseAdd')}</Button>
         </DialogFooter>
       </Dialog>
 
       <Dialog open={!!settingsVersion} onClose={handleCloseSettings} className="w-[560px]">
         <DialogHeader onClose={handleCloseSettings}>
-          <DialogTitle>{settingsVersion?.name || '实例设置'}</DialogTitle>
+          <DialogTitle>{settingsVersion?.name || t('instances.instanceSettings')}</DialogTitle>
         </DialogHeader>
         <DialogBody className="p-0">
           <div className="flex border-b border-border">
             <button
               onClick={() => setSettingsTab('basic')}
               className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'basic' ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-            >基本信息</button>
+            >{t('instances.basicInfo')}</button>
             <button
               onClick={() => setSettingsTab('repair')}
               className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'repair' ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-            >补全文件</button>
+            >{t('instances.repairFiles')}</button>
           </div>
           <div className="p-6">
             {settingsTab === 'basic' && settingsVersion && (
               <div className="space-y-4">
                 <div>
-                  <Label className="text-xs text-muted-foreground">版本名称</Label>
+                  <Label className="text-xs text-muted-foreground">{t('instances.versionName')}</Label>
                   <p className="mt-0.5 text-sm font-medium">{settingsVersion.name}</p>
                 </div>
                 <div>
-                  <Label className="text-xs text-muted-foreground">游戏版本</Label>
+                  <Label className="text-xs text-muted-foreground">{t('instances.gameVersion')}</Label>
                   <p className="mt-0.5 text-sm font-medium">{settingsVersion.gameVersion}</p>
                 </div>
                 <div>
-                  <Label className="text-xs text-muted-foreground">游戏目录</Label>
+                  <Label className="text-xs text-muted-foreground">{t('instances.gameDir')}</Label>
                   <p className="mt-0.5 text-sm text-muted-foreground break-all">{currentDir}</p>
                 </div>
                 {settingsVersion.loaders && settingsVersion.loaders.length > 0 && (
                   <div>
-                    <Label className="text-xs text-muted-foreground">加载器</Label>
+                    <Label className="text-xs text-muted-foreground">{t('instances.loader')}</Label>
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       {settingsVersion.loaders.map((l) => (
                         <span key={l.type} className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${LOADER_COLORS[l.type] || 'text-muted-foreground bg-muted border-border'}`}>{l.type} {l.version}</span>
@@ -944,31 +946,31 @@ export default function Instances() {
             )}
             {settingsTab === 'repair' && settingsVersion && (() => {
               const instance = getInstanceForVersion(settingsVersion)
-              if (!instance) return <p className="py-8 text-center text-sm text-muted-foreground">此版本尚未在启动器中创建，无法补全文件。</p>
+              if (!instance) return <p className="py-8 text-center text-sm text-muted-foreground">{t('instances.notCreatedYet')}</p>
               const existingTask = getTasks().find((t) => t.instanceId === instance.id && t.type === 'repair')
               const hasActive = existingTask && (existingTask.status === 'queued' || existingTask.status === 'downloading' || existingTask.status === 'paused')
               const isDone = existingTask?.status === 'completed'
               const isFailed = existingTask?.status === 'failed'
               return (
                 <div className="space-y-4">
-                  <p className="text-sm text-muted-foreground">扫描并下载此实例缺失的 Minecraft 游戏文件（libraries、assets、client.jar）。</p>
+                  <p className="text-sm text-muted-foreground">{t('instances.repairDesc')}</p>
                   {(repairAdded || hasActive) ? (
                     <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-primary">
-                      <FontAwesomeIcon icon={faDownload} className="mr-1.5 h-4 w-4" />已加入下载任务
-                      <button onClick={() => navigate('/downloads')} className="ml-2 text-xs underline hover:text-primary/80">前往下载中心查看</button>
+                      <FontAwesomeIcon icon={faDownload} className="mr-1.5 h-4 w-4" />{t('instances.addedToDownload')}
+                      <button onClick={() => navigate('/downloads')} className="ml-2 text-xs underline hover:text-primary/80">{t('instances.goToDownloadCenter')}</button>
                     </div>
                   ) : isDone ? (
                     <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-400">
-                      <FontAwesomeIcon icon={faCheck} className="mr-1.5 h-4 w-4" />补全已完成
+                      <FontAwesomeIcon icon={faCheck} className="mr-1.5 h-4 w-4" />{t('instances.repairCompleted')}
                     </div>
                   ) : isFailed ? (
                     <div className="space-y-2">
-                      <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{existingTask.error || '补全失败'}</div>
-                      <Button variant="outline" size="sm" onClick={handleRepairStart}>重试</Button>
+                      <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{existingTask.error || t('instances.repairFailed')}</div>
+                      <Button variant="outline" size="sm" onClick={handleRepairStart}>{t('instances.retry')}</Button>
                     </div>
                   ) : (
                     <Button onClick={handleRepairStart} className="gap-2">
-                      <FontAwesomeIcon icon={faHammer} className="h-4 w-4" />开始补全文件
+                      <FontAwesomeIcon icon={faHammer} className="h-4 w-4" />{t('instances.startRepair')}
                     </Button>
                   )}
                 </div>
@@ -989,17 +991,17 @@ export default function Instances() {
               )}
             >
               <FontAwesomeIcon icon={faFolder} className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="max-w-[140px] truncate">{currentDir ? dirName(currentDir) : '选择游戏目录'}</span>
+              <span className="max-w-[140px] truncate">{currentDir ? dirName(currentDir) : t('instances.selectGameDir')}</span>
               <FontAwesomeIcon icon={faChevronDown} className={cn('h-2.5 w-2.5 text-muted-foreground transition-transform', dirPopover && 'rotate-180')} />
             </button>
             {dirPopover && (
               <div className="absolute left-0 top-full z-50 mt-1 w-96 rounded-xl border bg-popover p-2 shadow-xl">
                 <div className="mb-1 flex items-center justify-between px-2 py-1">
-                  <span className="text-xs font-medium text-muted-foreground">已保存的目录</span>
-                  <button onClick={() => setDirManager(true)} className="text-xs text-muted-foreground hover:text-foreground">管理</button>
+                  <span className="text-xs font-medium text-muted-foreground">{t('instances.savedDirs')}</span>
+                  <button onClick={() => setDirManager(true)} className="text-xs text-muted-foreground hover:text-foreground">{t('instances.manage')}</button>
                 </div>
                 {managedDirs.length === 0 ? (
-                  <div className="px-3 py-4 text-center text-sm text-muted-foreground">暂无目录，可在管理中添加</div>
+                  <div className="px-3 py-4 text-center text-sm text-muted-foreground">{t('instances.noDirInManager')}</div>
                 ) : (
                   <div className="max-h-56 space-y-0.5 overflow-y-auto">
                     {managedDirs.map((d) => (
@@ -1019,18 +1021,18 @@ export default function Instances() {
               </div>
             )}
           </div>
-          {scanning && <span className="text-xs text-muted-foreground animate-pulse">扫描中...</span>}
+          {scanning && <span className="text-xs text-muted-foreground animate-pulse">{t('instances.scanning')}</span>}
         </div>
         <div className="relative max-w-sm flex-1">
           <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="搜索版本..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          <Input placeholder={t('instances.searchPlaceholder')} value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
         <Button onClick={gotoNewInstance}>
-          <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />下载新版本
+          <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('instances.downloadTitle')}
         </Button>
-        <Button variant="outline" onClick={() => setImportOpen(true)}><FontAwesomeIcon icon={faFileImport} className="h-4 w-4" />导入</Button>
+        <Button variant="outline" onClick={() => setImportOpen(true)}><FontAwesomeIcon icon={faFileImport} className="h-4 w-4" />{t('instances.import')}</Button>
         {currentDir && (
-          <Tooltip content="打开游戏目录">
+          <Tooltip content={t('instances.openGameDir')}>
             <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '')}/versions`).catch(() => {})}>
               <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
             </Button>
@@ -1042,7 +1044,7 @@ export default function Instances() {
       </div>
 
       <Tabs
-        tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <FontAwesomeIcon icon={o.icon} className="h-3 w-3" /> }))}
+        tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: t(`instances.loaderFilter.${o.key}`), icon: <FontAwesomeIcon icon={o.icon} className="h-3 w-3" /> }))}
         activeTab={filterType}
         onChange={setFilterType}
         className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
@@ -1051,10 +1053,10 @@ export default function Instances() {
       {!currentDir ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
           <FontAwesomeIcon icon={faFolder} className="h-12 w-12 opacity-20" />
-          <p className="text-sm font-medium">请选择 Minecraft 游戏目录</p>
-          <p className="text-xs text-muted-foreground/70">选择一个包含 versions 文件夹的 .minecraft 目录</p>
+          <p className="text-sm font-medium">{t('instances.selectMcDir')}</p>
+          <p className="text-xs text-muted-foreground/70">{t('instances.selectMcDirHint')}</p>
           <Button variant="outline" onClick={handlePickDir} className="mt-2 gap-2">
-            <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />浏览并选择
+            <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />{t('instances.browseAndSelect')}
           </Button>
         </div>
       ) : null}
@@ -1089,8 +1091,8 @@ export default function Instances() {
       ) : scannedLocal.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
           <FontAwesomeIcon icon={faCube} className="h-10 w-10 opacity-30" />
-          <p className="text-sm">{search ? '没有匹配的版本' : '该目录下未检测到任何 Minecraft 版本'}</p>
-          <p className="text-xs text-muted-foreground/70">请确认目录下存在 versions/ 文件夹</p>
+          <p className="text-sm">{search ? t('instances.noMatch') : t('instances.noVersionDetected')}</p>
+          <p className="text-xs text-muted-foreground/70">{t('instances.needVersionsFolder')}</p>
         </div>
       ) : (
         <div className="space-y-6">
@@ -1112,27 +1114,27 @@ export default function Instances() {
                 <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/70">
                   <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
                     <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
-                    {v.state === 'Available' ? '可用' : '不可用'}
+                    {v.state === 'Available' ? t('instances.available') : t('instances.unavailable')}
                   </span>
                 </div>
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
-                    <Tooltip content="启动">
+                    <Tooltip content={t('instances.launch')}>
                     <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={(e) => { e.stopPropagation(); handleLaunch(v) }}>
                       <FontAwesomeIcon icon={faPlay} className="h-5 w-5" />
                     </Button>
                   </Tooltip>
                   <div className="flex items-center gap-1">
-                    <Tooltip content="设置">
+                    <Tooltip content={t('instances.settings')}>
                       <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openVersionSettings(v) }}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                     {(() => { const inst = getInstanceForVersion(v); return (
-                      <Tooltip content={inst && defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
+                      <Tooltip content={inst && defaultInstanceId === inst.id ? t('instances.unpin') : t('instances.pinToHome')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); handleToggleDefault(v) }}>
                           <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', inst && defaultInstanceId === inst.id && 'text-yellow-400')} />
                         </Button>
                       </Tooltip>
                     )})()}
-                    <Tooltip content="打开文件夹">
+                    <Tooltip content={t('instances.openFolder')}>
                       <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {}) }}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
@@ -1157,7 +1159,7 @@ export default function Instances() {
                     )}
                     <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
                       <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
-                    {v.state === 'Available' ? '可用' : '不可用'}
+                    {v.state === 'Available' ? t('instances.available') : t('instances.unavailable')}
                     </span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
@@ -1174,22 +1176,22 @@ export default function Instances() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                  <Tooltip content="启动">
+                  <Tooltip content={t('instances.launch')}>
                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLaunch(v)}>
                       <FontAwesomeIcon icon={faPlay} className="h-4 w-4" />
                     </Button>
                   </Tooltip>
-                  <Tooltip content="设置">
+                  <Tooltip content={t('instances.settings')}>
                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openVersionSettings(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
                   </Tooltip>
                   {(() => { const inst = getInstanceForVersion(v); return (
-                    <Tooltip content={inst && defaultInstanceId === inst.id ? '取消固定' : '固定到主页'}>
+                    <Tooltip content={inst && defaultInstanceId === inst.id ? t('instances.unpin') : t('instances.pinToHome')}>
                       <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleToggleDefault(v)}>
                         <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', inst && defaultInstanceId === inst.id && 'text-yellow-400')} />
                       </Button>
                     </Tooltip>
                   )})()}
-                   <Tooltip content="打开文件夹">
+                   <Tooltip content={t('instances.openFolder')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
                    </Tooltip>
                 </div>
