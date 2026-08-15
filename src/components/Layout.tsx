@@ -11,6 +11,7 @@ import LogOverlay from './LogOverlay.tsx'
 import FpsOverlay from './FpsOverlay.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { PluginEventBridge } from './PluginEventBridge.tsx'
+import { useI18n } from '../i18n/index.tsx'
 
 function DebugEffects() {
   const { state, unlock } = useDebug()
@@ -78,6 +79,7 @@ export default function Layout() {
   const randomBgRef = useRef('')
   const prevBgRef = useRef({ image: '', random: false })
   const { confirm: msgConfirm } = useMessageBox()
+  const { t } = useI18n()
 
   async function resolveBg(s = getSettings()) {
     let filename = s.backgroundImage || randomBgRef.current || ''
@@ -119,7 +121,7 @@ export default function Layout() {
         if (url.protocol === 'http:' || url.protocol === 'https:') {
           if (url.origin !== window.location.origin) {
             e.preventDefault()
-            msgConfirm(`即将打开外部链接：\n${url.href}\n\n是否继续？`).then(ok => {
+            msgConfirm(t('layout.externalLinkConfirm', { url: url.href })).then(ok => {
               if (ok) openUrl(url.href).catch(() => window.open(url.href, '_blank'))
             })
           }
@@ -128,7 +130,7 @@ export default function Layout() {
     }
     document.addEventListener('click', handleClick)
     return () => document.removeEventListener('click', handleClick)
-  }, [msgConfirm])
+  }, [msgConfirm, t])
 
   const isLinux = useMemo(() => navigator.userAgent.includes('Linux'), [])
   const isMacos = useMemo(() => navigator.userAgent.includes('Mac'), [])

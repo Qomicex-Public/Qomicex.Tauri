@@ -19,6 +19,7 @@ import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
 import useCloseGuard from './hooks/useCloseGuard.ts'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
 import { loadSettings, onSettingsChange, type AppSettings } from './api/settings.ts'
+import { I18nProvider } from './i18n/index.tsx'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
@@ -288,13 +289,15 @@ function App() {
   }, [])
 
   return (
-    <RunningProvider>
-      <MessageBoxProvider>
-        <ErrorBoundary>
-          <AppContent />
-        </ErrorBoundary>
-      </MessageBoxProvider>
-    </RunningProvider>
+    <I18nProvider>
+      <RunningProvider>
+        <MessageBoxProvider>
+          <ErrorBoundary>
+            <AppContent />
+          </ErrorBoundary>
+        </MessageBoxProvider>
+      </RunningProvider>
+    </I18nProvider>
   )
 }
 

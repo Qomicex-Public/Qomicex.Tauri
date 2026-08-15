@@ -33,6 +33,8 @@ import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui'
+import { useI18n } from '../i18n/index.tsx'
+import type { Lang } from '../i18n/types.ts'
 import { cn } from '../lib/utils.ts'
 import type { SystemInfo, JavaDownloadVendorInfo, DownloadTask } from '../types/index.ts'
 import {
@@ -63,7 +65,7 @@ const CATEGORIES = [
   { id: 'logs', label: '日志', icon: faFileLines },
   { id: 'about', label: '关于', icon: faInfoCircle },
   { id: 'debug', label: '调试', icon: faBug },
-]
+] as const
 
 const DOWNLOAD_SOURCES = [
   { value: 0, label: '官方源' },
@@ -513,6 +515,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
 export default function Settings() {
   const { error: msgError, confirm: msgConfirm, notify } = useMessageBox()
+  const { t, setLanguage } = useI18n()
   const [clearingCache, setClearingCache] = useState(false)
   const [clearingCurseForgeCache, setClearingCurseForgeCache] = useState(false)
   const { state: debugState } = useDebug()
@@ -910,12 +913,12 @@ export default function Settings() {
 
   return (
     <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
-      <PageHeader title="设置" />
+      <PageHeader title={t('layout.sidebar.settings')} />
 
       <div className="flex gap-4">
         <div className="sticky top-0 self-start flex w-48 shrink-0 flex-col">
           <Tabs
-            tabs={CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map(cat => ({ id: cat.id, label: cat.label, icon: <FontAwesomeIcon icon={cat.icon} className="h-4 w-4" /> }))}
+            tabs={CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map(cat => ({ id: cat.id, label: t(`settings.category.${cat.id}`), icon: <FontAwesomeIcon icon={cat.icon} className="h-4 w-4" /> }))}
             activeTab={category}
             onChange={(id) => setCategory(id)}
             orientation="vertical"
@@ -1553,31 +1556,38 @@ export default function Settings() {
                 </CardHeader>
                 <CardContent className="space-y-5">
                   <div className="space-y-2">
-                    <Label>界面语言</Label>
-                    <Select value={settings.language} onChange={(v) => update('language', v)} className="w-48">
+                    <Label>{t('settings.appearance.language')}</Label>
+                    <Select
+                      value={settings.language}
+                      onChange={(v) => {
+                        update('language', v)
+                        setLanguage(v as Lang)
+                      }}
+                      className="w-48"
+                    >
                       <SelectOption value="zh-CN">简体中文</SelectOption>
                       <SelectOption value="en">English</SelectOption>
                     </Select>
                   </div>
 
                   <div className="space-y-2">
-                    <Label>主题</Label>
+                    <Label>{t('settings.appearance.theme')}</Label>
                     <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
-                      <SelectOption value="dark">深色</SelectOption>
-                      <SelectOption value="light">亮色</SelectOption>
+                      <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>
+                      <SelectOption value="light">{t('settings.appearance.light')}</SelectOption>
                     </Select>
                   </div>
 
                   <div className="space-y-3">
-                    <Label>页面动画</Label>
+                    <Label>{t('settings.appearance.animations')}</Label>
                     <label className="flex items-center gap-3 cursor-pointer">
                       <Checkbox
                         checked={settings.animationsEnabled}
                         onCheckedChange={(c) => update('animationsEnabled', c === true)}
                       />
                       <div>
-                        <div className="text-sm font-medium">启用页面动画</div>
-                        <div className="text-xs text-muted-foreground">开启后页面切换、弹窗等带有过渡动画效果</div>
+                        <div className="text-sm font-medium">{t('settings.appearance.animations')}</div>
+                        <div className="text-xs text-muted-foreground">{t('settings.appearance.animationsDesc')}</div>
                       </div>
                     </label>
                     {settings.animationsEnabled && (
@@ -1595,24 +1605,24 @@ export default function Settings() {
                           <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.animationSpeed}x</span>
                         </div>
                         <div className="flex justify-between text-[11px] text-muted-foreground">
-                          <span>慢</span>
-                          <span>正常</span>
-                          <span>快</span>
+                          <span>{t('settings.appearance.slow')}</span>
+                          <span>{t('settings.appearance.normal')}</span>
+                          <span>{t('settings.appearance.fast')}</span>
                         </div>
                       </div>
                     )}
                   </div>
 
                   <div className="space-y-2 pt-3 border-t border-border/50">
-                    <Label>帧率上限</Label>
+                    <Label>{t('settings.appearance.maxFrameRate')}</Label>
                     <Select value={String(settings.maxFrameRate)} onChange={(v) => update('maxFrameRate', Number(v))} className="w-48">
-                      <SelectOption value="0">不限</SelectOption>
+                      <SelectOption value="0">{t('settings.appearance.maxFrameRateUnlimited')}</SelectOption>
                       <SelectOption value="30">30 FPS</SelectOption>
                       <SelectOption value="60">60 FPS</SelectOption>
                       <SelectOption value="120">120 FPS</SelectOption>
                       <SelectOption value="144">144 FPS</SelectOption>
                     </Select>
-                    <p className="text-xs text-muted-foreground">限制启动器界面的渲染帧率，降低资源占用。设为不限则使用显示器的原始刷新率。</p>
+                    <p className="text-xs text-muted-foreground">{t('settings.appearance.maxFrameRateDesc')}</p>
                   </div>
                 </CardContent>
               </Card>

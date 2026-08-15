@@ -13,6 +13,18 @@ export interface ApiErrorResponse {
   status: number
 }
 
+/**
+ * 错误码翻译钩子：i18n 初始化时注册，按当前语言把后端错误码映射为本地化消息。
+ * 返回 null 表示未命中（调用方回退后端 message）。
+ */
+export type ApiErrorTranslator = (e: ApiError) => string | null
+
+let apiErrorTranslator: ApiErrorTranslator | null = null
+
+export function setApiErrorTranslator(fn: ApiErrorTranslator | null) {
+  apiErrorTranslator = fn
+}
+
 /** 前端可抛出的结构化 API 错误 */
 export class ApiError extends Error {
   readonly code: string
@@ -31,8 +43,10 @@ export class ApiError extends Error {
     this.timestamp = response.timestamp
   }
 
-  /** 用户可看的完整描述 */
+  /** 用户可看的完整描述（优先走 i18n 错误码翻译，未命中回退后端消息） */
   get displayMessage(): string {
+    const translated = apiErrorTranslator?.(this)
+    if (translated) return translated
     return this.detail ? `${this.message}（${this.detail}）` : this.message
   }
 }

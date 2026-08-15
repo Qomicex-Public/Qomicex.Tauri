@@ -1,18 +1,27 @@
 import { NavLink } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad, faNetworkWired } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui'
 import { useRunning } from '../contexts/RunningContext.tsx'
+import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
 import { PluginSidebarItems } from './PluginSidebarItems.tsx'
 
-const links: { to: string; label: string; icon: React.ReactNode; end?: boolean }[] = [
-  { to: '/', label: '首页', icon: <FontAwesomeIcon icon={faHouse} className="h-5 w-5" />, end: true },
-  { to: '/instances', label: '实例', icon: <FontAwesomeIcon icon={faCube} className="h-5 w-5" /> },
-  { to: '/downloads', label: '下载', icon: <FontAwesomeIcon icon={faDownload} className="h-5 w-5" /> },
-  { to: '/accounts', label: '账户', icon: <FontAwesomeIcon icon={faUser} className="h-5 w-5" /> },
-  { to: '/resource-center', label: '资源中心', icon: <FontAwesomeIcon icon={faCompass} className="h-5 w-5" /> },
-  { to: '/connect', label: '联机', icon: <FontAwesomeIcon icon={faNetworkWired} className="h-5 w-5" />, end: true },
+interface NavLinkDef {
+  to: string
+  key: 'home' | 'instances' | 'downloads' | 'accounts' | 'resourceCenter' | 'connect'
+  icon: ReactNode
+  end?: boolean
+}
+
+const NAV_LINKS: readonly NavLinkDef[] = [
+  { to: '/', key: 'home', icon: <FontAwesomeIcon icon={faHouse} className="h-5 w-5" />, end: true },
+  { to: '/instances', key: 'instances', icon: <FontAwesomeIcon icon={faCube} className="h-5 w-5" /> },
+  { to: '/downloads', key: 'downloads', icon: <FontAwesomeIcon icon={faDownload} className="h-5 w-5" /> },
+  { to: '/accounts', key: 'accounts', icon: <FontAwesomeIcon icon={faUser} className="h-5 w-5" /> },
+  { to: '/resource-center', key: 'resourceCenter', icon: <FontAwesomeIcon icon={faCompass} className="h-5 w-5" /> },
+  { to: '/connect', key: 'connect', icon: <FontAwesomeIcon icon={faNetworkWired} className="h-5 w-5" />, end: true },
 ]
 
 export function NavItem({ to, label, icon, end }: { to: string; label: string; icon: React.ReactNode; end?: boolean }) {
@@ -84,7 +93,9 @@ function BottomNavItem({ to, label, icon, showPingDot }: { to: string; label: st
 
 export default function Sidebar() {
   const { runningInstances } = useRunning()
+  const { t } = useI18n()
   const hasRunning = runningInstances.length > 0
+  const links = NAV_LINKS.map(l => ({ ...l, label: t(`layout.sidebar.${l.key}`) }))
 
   return (
     <nav className="flex w-16 flex-col items-center border-r border-border/50 bg-card/80 backdrop-blur-xl shadow-xl shadow-black/20">
@@ -101,8 +112,8 @@ export default function Sidebar() {
         <PluginSidebarItems />
       </ul>
       <div className="flex w-full flex-col items-center border-t border-border px-2 py-2 pb-4 gap-1">
-        <BottomNavItem to="/running" label="运行中" icon={faGamepad} showPingDot={hasRunning} />
-        <BottomNavItem to="/settings" label="设置" icon={faGear} />
+        <BottomNavItem to="/running" label={t('layout.sidebar.running')} icon={faGamepad} showPingDot={hasRunning} />
+        <BottomNavItem to="/settings" label={t('layout.sidebar.settings')} icon={faGear} />
       </div>
     </nav>
   )

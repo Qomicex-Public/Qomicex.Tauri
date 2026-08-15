@@ -6,6 +6,7 @@ import { getJavaRequirement } from '../api/java.ts'
 import { analyzeCrash } from '../api/crashDiagnostics.ts'
 import { getRuntimes } from '../stores/javaStore.ts'
 import { useMessageBox } from '../components/ui'
+import { useI18n } from '../i18n/index.tsx'
 import type { LaunchResult, LaunchProgress, CrashDialogState } from '../types/index.ts'
 
 export interface RunningInstance {
@@ -46,6 +47,10 @@ export function useRunning(): RunningContextValue {
 
 export function RunningProvider({ children }: { children: ReactNode }) {
   const { confirm } = useMessageBox()
+  const { t } = useI18n()
+  // tRef：保持 useCallback 依赖稳定（t 随语言变化，但回调内始终取最新翻译）
+  const tRef = useRef(t)
+  tRef.current = t
   const [runningInstances, setRunningInstances] = useState<RunningInstance[]>([])
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null)
@@ -86,10 +91,10 @@ export function RunningProvider({ children }: { children: ReactNode }) {
           clearInstancePoll(id)
           setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
           setLaunchingInstanceId(null)
-          notifyRef.current?.('游戏已崩溃', 'error')
+          notifyRef.current?.(tRef.current('running.gameCrashed'), 'error')
           // Auto-trigger crash analysis dialog
-          const crashTitle = p.stage === 'crashed' ? '游戏崩溃' : '启动失败'
-          const crashMessage = p.error || (p.stage === 'crashed' ? `游戏异常退出 (代码: ${p.exitCode ?? '?'})` : '启动过程中出现错误')
+          const crashTitle = p.stage === 'crashed' ? tRef.current('running.gameCrashTitle') : tRef.current('running.launchFailedTitle')
+          const crashMessage = p.error || (p.stage === 'crashed' ? tRef.current('running.gameExitedAbnormally', { code: p.exitCode ?? '?' }) : tRef.current('running.launchError'))
           setCrashDialogState({
             instanceId: id,
             title: crashTitle,
@@ -104,19 +109,19 @@ export function RunningProvider({ children }: { children: ReactNode }) {
               setCrashDialogState(prev => prev ? { ...prev, analysis: res.analysis, mcloGsUrl: res.mcloGsUrl, qrCodeBase64: res.qrCodeBase64, loading: false } : null)
             })
             .catch(() => {
-              setCrashDialogState(prev => prev ? { ...prev, loading: false, error: '分析服务暂不可用' } : null)
+              setCrashDialogState(prev => prev ? { ...prev, loading: false, error: tRef.current('running.analysisUnavailable') } : null)
             })
         } else if (p.stage === 'completed') {
           setLaunchProgress(null)
           clearInstancePoll(id)
           setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
           setLaunchingInstanceId(null)
-          notifyRef.current?.('游戏已退出', 'info')
+          notifyRef.current?.(tRef.current('running.gameExited'), 'info')
         } else if (p.stage === 'running') {
           setLaunchProgress(null)
           setRunningInstances(prev => {
             if (prev.some(r => r.instanceId === id)) return prev
-            notifyRef.current?.('游戏已启动', 'success')
+            notifyRef.current?.(tRef.current('running.gameStarted'), 'success')
             return [...prev, { instanceId: id, name, startedAt: Date.now(), stage: 'running', processId: p.processId }]
           })
           pollRefs.current.set(id, window.setTimeout(poll, 5000))
@@ -142,7 +147,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   const launchInstance = useCallback(async (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions): Promise<LaunchResult> => {
     launchingIdRef.current = id
     setLaunchingInstanceId(id)
-    setLaunchProgress({ stage: 'starting', message: '准备启动...', progress: 0, isRunning: false })
+    setLaunchProgress({ stage: 'starting', message: tRef.current('running.preparingLaunch'), progress: 0, isRunning: false })
 
     if (javaInfo?.path && javaInfo.gameVersion && javaInfo.gameDir) {
       try {
@@ -150,8 +155,12 @@ export function RunningProvider({ children }: { children: ReactNode }) {
         const rt = getRuntimes().find(r => r.path === javaInfo.path)
         if (rt && rt.versionID < req.requiredMajorVersion) {
           const ok = await confirm(
-            `当前选择的 Java ${rt.versionID} 不满足 Minecraft ${javaInfo.gameVersion} 的需求（需要 Java ${req.requiredMajorVersion}），是否继续启动？`,
-            'Java 版本不兼容'
+            tRef.current('running.javaIncompatible', {
+              current: rt.versionID,
+              game: javaInfo.gameVersion,
+              required: req.requiredMajorVersion,
+            }),
+            tRef.current('running.javaIncompatibleTitle')
           )
           if (!ok) {
             setLaunchProgress(null)
@@ -173,7 +182,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       launchingIdRef.current = null
       setCrashDialogState({
         instanceId: id,
-        title: '启动失败',
+        title: tRef.current('running.launchFailedTitle'),
         message: e instanceof Error ? e.message : String(e),
         detail: null,
         crashReport: null,
@@ -188,8 +197,8 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       launchingIdRef.current = null
       setCrashDialogState({
         instanceId: id,
-        title: '启动失败',
-        message: result.error || '未知错误',
+        title: tRef.current('running.launchFailedTitle'),
+        message: result.error || tRef.current('common.unknown'),
         detail: result.detail || null,
         crashReport: null,
         args: result.arguments || null,
@@ -213,14 +222,14 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     if (targetId) {
       try { await apiCancelLaunch(targetId) } catch {}
     }
-    notifyRef.current?.('已取消启动', 'info')
+    notifyRef.current?.(tRef.current('running.launchCancelled'), 'info')
   }, [clearInstancePoll])
 
   const killInstance = useCallback(async (id: string) => {
     try { await apiCancelLaunch(id) } catch {}
     clearInstancePoll(id)
     setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
-    notifyRef.current?.('已停止游戏', 'info')
+    notifyRef.current?.(tRef.current('running.gameStopped'), 'info')
   }, [clearInstancePoll])
 
   useEffect(() => () => {
