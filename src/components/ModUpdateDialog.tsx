@@ -3,7 +3,8 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faRotate } from '@fortawesome/free-solid-svg-icons'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
-import { checkModUpdates, batchUpdateMods } from '../api/instance-files.ts'
+import { checkModUpdates } from '../api/instance-files.ts'
+import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { useMessageBox } from './ui'
 import type { ModUpdateEntry } from '../types/index.ts'
 
@@ -26,7 +27,7 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
     if (!open) return
     setLoading(true)
     setUpdating(false)
-    checkModUpdates(instanceId)
+    checkModUpdates(instanceId, true)
       .then(list => {
         setUpdates(list)
         setSelected(new Set(list.map(u => u.fileName)))
@@ -50,8 +51,16 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
     if (toUpdate.length === 0) return
     setUpdating(true)
     try {
-      await batchUpdateMods(instanceId, toUpdate)
-      notify(`已更新 ${toUpdate.length} 个模组`, 'success')
+      const result = await updateModsViaDownloadCenter(
+        instanceId,
+        toUpdate,
+        (n) => notify(`已加入下载列表 ${n} 个任务`, 'success')
+      )
+      if (result.failed === 0) {
+        notify(`已更新 ${result.success} 个模组`, 'success')
+      } else {
+        notify(`完成 ${result.success} 个，失败 ${result.failed} 个`, 'error')
+      }
       onDone()
       onClose()
     } catch { notify('批量更新失败', 'error') }

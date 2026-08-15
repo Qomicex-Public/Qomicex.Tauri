@@ -15,6 +15,7 @@ import { BatchToolbar } from '../components/ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
+import { updateModsViaDownloadCenter, refreshModsAfterUpdate } from '../lib/updateMods.ts'
 import { useMessageBox } from '../components/ui'
 import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
@@ -22,7 +23,7 @@ import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscrib
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto } from '../types/index.ts'
-import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata } from '../api/instance-files.ts'
+import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -34,7 +35,7 @@ import { PageShell } from '../components/PageShell.tsx'
 import ModCard from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
 import ModUpdateDialog from '../components/ModUpdateDialog.tsx'
-import type { ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata } from '../types/index.ts'
+import type { ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata, ModUpdateEntry } from '../types/index.ts'
 import ResourcePackCard from '../components/ResourcePackCard.tsx'
 import DragSelectArea from '../components/DragSelectArea.tsx'
 import ShaderCard from '../components/ShaderCard.tsx'
@@ -374,6 +375,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   onRefresh: () => void
 }) {
   const navigate = useNavigate()
+  const { notify } = useMessageBox()
   const [search, setSearch] = useState('')
   const [mods, setMods] = useState<ModMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -381,7 +383,10 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [loadProgress, setLoadProgress] = useState<{ current: number; total: number } | null>(null)
   const [versionDialogMod, setVersionDialogMod] = useState<ModMetadata | null>(null)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
-  const [updateFileNames, setUpdateFileNames] = useState<Set<string>>(new Set())
+  const [updates, setUpdates] = useState<ModUpdateEntry[]>([])
+  // 蓝点标记 / updatable 筛选 / ModCard 右键更新，均由 updates 派生
+  const updateFileNames = useMemo(() => new Set(updates.map(u => u.fileName)), [updates])
+  const updateMap = useMemo(() => new Map(updates.map(u => [u.fileName, u])), [updates])
 
   const [filterType, setFilterType] = useState('all')
   const [sortBy, setSortBy] = useState('name-asc')
@@ -405,6 +410,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchConfirm, setBatchConfirm] = useState<{ type: 'enable' | 'disable' | 'delete' } | null>(null)
   const [batchProcessing, setBatchProcessing] = useState(false)
+  const [updatingMods, setUpdatingMods] = useState(false)
   /** 远程信息反查（enrich）进行中：列表顶部显示加载提示 */
   const [enriching, setEnriching] = useState(false)
 
@@ -486,6 +492,28 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     loadMods()
   }, [loadMods, refreshKey])
 
+  // 列表加载后自动检查模组更新（受独立 6h 缓存门控）：
+  // update-cache 读取最近一次结果并标记；仅当缓存缺失/过期时才联网检查。
+  // 按钮打开 ModUpdateDialog 走 force=true（强制联网），不受本处门控影响。
+  const updateCheckRanRef = useRef('')
+  useEffect(() => {
+    if (loading || mods.length === 0) return
+    const key = `${instanceId}-${refreshKey}`
+    if (updateCheckRanRef.current === key) return
+    updateCheckRanRef.current = key
+    void (async () => {
+      try {
+        const cache = await getModUpdatesCache(instanceId)
+        setUpdates(cache.updates)
+        if (!cache.stale) return
+        notify('正在检查模组更新…', 'info')
+        const updates = await checkModUpdates(instanceId)
+        setUpdates(updates)
+        if (updates.length) notify(`发现 ${updates.length} 个模组可更新`, 'success')
+      } catch { /* 检查失败静默 */ }
+    })()
+  }, [loading, mods.length, instanceId, refreshKey, notify])
+
   const filtered = useMemo(() => {
     let result = [...mods]
     const q = search.toLowerCase()
@@ -552,6 +580,31 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     setBatchProcessing(false)
     setBatchConfirm(null)
   }, [batchConfirm, selected, instanceId, loadMods])
+
+  // 悬浮工具条「更新模组」：仅更新当前选中且存在 update 条目的模组
+  const handleUpdateSelected = useCallback(async () => {
+    const toUpdate = updates.filter(u => selected.has(u.fileName))
+    if (toUpdate.length === 0) return
+    setUpdatingMods(true)
+    try {
+      const result = await updateModsViaDownloadCenter(
+        instanceId,
+        toUpdate,
+        (n) => notify(`已加入下载列表 ${n} 个任务`, 'success')
+      )
+      refreshModsAfterUpdate(instanceId)
+      await loadMods()
+      setSelected(new Set())
+      setUpdates(prev => prev.filter(u => !result.succeededFileNames.includes(u.fileName)))
+      notify(
+        result.failed === 0 ? `已更新 ${result.success} 个模组` : `完成 ${result.success} 个，失败 ${result.failed} 个`,
+        result.failed === 0 ? 'success' : 'error'
+      )
+    } catch { notify('更新模组失败', 'error') }
+    setUpdatingMods(false)
+  }, [updates, selected, instanceId, notify, loadMods])
+
+  const updateTargets = updates.filter(u => selected.has(u.fileName))
 
   // 拖动框选：Shift 追加，普通替换（DragSelectArea 回调）
   const handleDragSelect = useCallback((names: string[], mode: 'replace' | 'add') => {
@@ -695,7 +748,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                       onChangeVersion={setVersionDialogMod}
                       selected={selected.has(mod.fileName)}
                       onSelect={(fileName, shift, ctrl) => toggleSelect(fileName, shift, ctrl)}
-                      hasUpdate={updateFileNames.has(mod.fileName)}
+                      update={updateMap.get(mod.fileName)}
+                      onUpdated={(fn) => setUpdates(prev => prev.filter(u => u.fileName !== fn))}
                     />
                   </div>
                 ))}
@@ -712,6 +766,10 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       >
         <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'enable' })}>启用</Button>
         <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'disable' })}>禁用</Button>
+        <Button variant="ghost" size="sm" onClick={handleUpdateSelected} disabled={updatingMods || updateTargets.length === 0} className="gap-1.5">
+          {updatingMods ? <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin" /> : <FontAwesomeIcon icon={faArrowUp} className="h-3.5 w-3.5" />}
+          更新模组
+        </Button>
         <Button variant="destructive" size="sm" onClick={() => setBatchConfirm({ type: 'delete' })}>
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
           删除 {selected.size}
@@ -752,8 +810,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         open={updateDialogOpen}
         onClose={() => setUpdateDialogOpen(false)}
         instanceId={instanceId}
-        onDone={() => { setUpdateFileNames(new Set()); loadMods() }}
-        onUpdatesFound={(list) => setUpdateFileNames(new Set(list.map(u => u.fileName)))}
+        onDone={() => { setUpdates([]); loadMods() }}
+        onUpdatesFound={(list) => setUpdates(list)}
       />
     </>
   )
@@ -2159,7 +2217,7 @@ export default function InstanceDetailPage() {
           />
         </div>
 
-        <div className="flex-1 min-w-0 overflow-y-auto scroll-fade-mask">
+        <div className="flex-1 min-w-0 overflow-y-auto scroll-fade-mask relative" style={{ transform: 'translateZ(0)' }}>
           <TabContent activeTab={tab} tabId="overview">
             <div className="space-y-4">
               <Card>
