@@ -595,7 +595,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       const result = await updateModsViaDownloadCenter(
         instanceId,
         toUpdate,
-        (n) => notify(t('instanceDetail.mods.addedToDownload', { count: n }), 'success')
+        (n) => notify(t('instanceDetail.mods.addedToDownload', { count: n }), 'success'),
+        t
       )
       await loadMods()
       setSelected(new Set())
