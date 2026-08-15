@@ -187,6 +187,13 @@ export interface ConnectorPlayer {
   machineId: string
 }
 
+/** 已踢玩家申请重新加入（房主弹窗三选：允许/拒绝/拒绝且不再提示）。 */
+export interface KickReviewRequest {
+  machineId: string
+  name: string
+  vendor: string
+}
+
 export interface ConnectorGameInfo {
   gameVersion: string
   loader: string | null
@@ -200,6 +207,7 @@ export interface ConnectorStatus {
   mcPort: number | null
   gameInfo: ConnectorGameInfo | null
   players: ConnectorPlayer[]
+  pendingKickReviews: KickReviewRequest[]
   error: string | null
 }
 

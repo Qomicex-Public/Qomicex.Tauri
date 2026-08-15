@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus, faWifi, faArrowLeft, faUserSlash } from '@fortawesome/free-solid-svg-icons'
-import { Tabs, TabContent, Tooltip } from '../components/ui'
+import { Tabs, TabContent, Tooltip, Dialog, DialogHeader, DialogTitle, DialogDescription } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { Card } from '../components/ui'
@@ -18,7 +18,7 @@ import { getInstances, getLaunchProgress } from '../api/instance.ts'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
-import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult, LaunchProgress } from '../types/index.ts'
+import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult, LaunchProgress, KickReviewRequest } from '../types/index.ts'
 
 function fmtSpeed(bytesPerSec: number): string {
   if (bytesPerSec <= 0) return ''
@@ -243,7 +243,7 @@ export default function Connect() {
   const { error: msgError } = useMessageBox()
   const { launchInstance, watchInstance } = useRunning()
   const [status, setStatus] = useState<ConnectorStatus>({
-    mode: 'idle', roomCode: null, mcHost: null, mcPort: null, gameInfo: null, players: [], error: null,
+    mode: 'idle', roomCode: null, mcHost: null, mcPort: null, gameInfo: null, players: [], pendingKickReviews: [], error: null,
   })
   const [port, setPort] = useState('')
   const [code, setCode] = useState('')
@@ -416,6 +416,28 @@ export default function Connect() {
     try { await connectorApi.kickPlayer(p.machineId); await refreshStatus() }
     catch (e) { msgError(fmtErr(e)) }
     finally { setKickBusy(false) }
+  }
+
+  // 已踢玩家重连审核：status.pendingKickReviews 列表驱动，一次弹一个；
+  // 当前项被决定（从列表消失）后自动推进到下一个或关闭。
+  const [reviewTarget, setReviewTarget] = useState<KickReviewRequest | null>(null)
+  const [reviewBusy, setReviewBusy] = useState(false)
+  useEffect(() => {
+    if (!reviewTarget) {
+      if (status.pendingKickReviews.length > 0) setReviewTarget(status.pendingKickReviews[0])
+      return
+    }
+    const stillPending = status.pendingKickReviews.some(r => r.machineId === reviewTarget.machineId)
+    if (!stillPending) setReviewTarget(status.pendingKickReviews[0] ?? null)
+  }, [status.pendingKickReviews, reviewTarget])
+
+  const decideReview = async (action: 'allow' | 'reject' | 'reject_silent') => {
+    const target = reviewTarget
+    if (!target || reviewBusy) return
+    setReviewBusy(true)
+    try { await connectorApi.decideKickReview(target.machineId, action); await refreshStatus() }
+    catch (e) { msgError(fmtErr(e)) }
+    finally { setReviewBusy(false) }
   }
 
   // 快捷启动匹配实例：启动并自动加入房间（joinServer = 本机转发端口）
@@ -672,6 +694,25 @@ export default function Connect() {
           </div>
         </Card>
       )}
+
+      {/* 已踢玩家申请重新加入 → 房主三选（关闭弹窗 = 拒绝） */}
+      <Dialog open={!!reviewTarget} onClose={() => decideReview('reject')}>
+        {reviewTarget && (
+          <>
+            <DialogHeader onClose={() => decideReview('reject')}>
+              <DialogTitle>{t('connect.kickReviewTitle')}</DialogTitle>
+            </DialogHeader>
+            <div className="p-6">
+              <DialogDescription>{t('connect.kickReviewBody', { name: reviewTarget.name })}</DialogDescription>
+              <div className="mt-6 flex flex-wrap justify-end gap-2">
+                <Button variant="default" disabled={reviewBusy} onClick={() => decideReview('allow')}>{t('connect.kickReviewAllow')}</Button>
+                <Button variant="secondary" disabled={reviewBusy} onClick={() => decideReview('reject')}>{t('connect.kickReviewReject')}</Button>
+                <Button variant="outline" disabled={reviewBusy} onClick={() => decideReview('reject_silent')}>{t('connect.kickReviewRejectSilent')}</Button>
+              </div>
+            </div>
+          </>
+        )}
+      </Dialog>
     </PageShell>
   )
 }

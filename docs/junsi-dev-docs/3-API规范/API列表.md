@@ -1838,6 +1838,18 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 **残余限制**：easytier fork 无控制面 deny，被踢 guest 的 easytier 连接仍会自动重连（黑名单在 SCF 层拦截其重新入列并重复断开 peer）；彻底封禁需给 fork 加控制面 deny（待办）。上游实现：`qomicex-connector-rust`（踢人黑名单 + peer 反查）。
 
+### 2026-08-16 修订 —— 重连审核弹窗（允许/拒绝/拒绝且不再提示）
+
+> 取代上文第 2 步「被踢 guest 再发 c:player_ping → 拒绝入列 + 状态 255」的**一律拒绝**语义：被踢玩家重连时，房主可人工放行（防误踢）。
+
+- **GET `/connector/status`** 响应新增 `pendingKickReviews: [{ machineId, name, vendor }]`（仅 host 模式；`ScaffoldingCenter::pending_kick_reviews`）。
+- **POST `/connector/kick/review`** `{ "machineId": "...", "action": "allow" | "reject" | "reject_silent" }`（仅房主）：
+  - `allow`：从已踢黑名单移除 → 下一次 `c:player_ping` 正常入列；
+  - `reject`：维持踢出，断开其等待中的 SCF TCP + easytier，下次重连可再次询问；
+  - `reject_silent`：同 reject 并置 `prompt_disabled` → 后续重连静默拒绝（响应 255），不再弹窗。
+- **被踢重连状态机**：首次 re-ping → 置 `pending`（记录玩家名/厂商），响应**状态 0** 保持 SCF TCP 连接（不刷新入列逻辑，玩家不入列），easytier 持续断开（数据面封禁）；重复 ping 不重复弹窗。弹窗关闭（Esc/遮罩/X）= `reject`。
+- 前端：`Connect.tsx` 轮询 status 发现 `pendingKickReviews` 非空 → Dialog 三选，逐条处理。
+
 ## 2026-08-13 修订：Servers 端点已实现（不再 501）
 
 上方 "### Servers" 一节标注的 "501 stub：servers/lan-games/server-ping 全部返回 501" 已失效，现全部由 Rust 后端真实实现（`src-backend/qomicex-backend/src/endpoints/instance_files.rs`，C# MapServerEndpoints → Rust 迁移）：

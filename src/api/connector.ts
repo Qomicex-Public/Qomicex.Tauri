@@ -51,6 +51,10 @@ export function kickPlayer(machineId: string): Promise<{ status: string }> {
   return post('/connector/kick', { machineId })
 }
 
+export function decideKickReview(machineId: string, action: 'allow' | 'reject' | 'reject_silent'): Promise<{ status: string }> {
+  return post('/connector/kick/review', { machineId, action })
+}
+
 export interface GameModEntry {
   source: string
   id: string

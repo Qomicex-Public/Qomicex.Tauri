@@ -19,7 +19,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use qomicex_connector::center::scaffolding_center::ScaffoldingCenter;
+use qomicex_connector::center::scaffolding_center::{KickReviewAction, ScaffoldingCenter};
 use qomicex_connector::client::ScaffoldingClient;
 use qomicex_connector::guest::scaffolding_guest::ScaffoldingGuest;
 use qomicex_connector::models::player::PlayerKind;
@@ -464,6 +464,7 @@ pub fn router() -> Router<SharedState> {
         .route("/connector/match-instances", get(match_instances))
         .route("/connector/leave", post(leave))
         .route("/connector/kick", post(kick_player))
+        .route("/connector/kick/review", post(decide_kick_review))
         .route("/connector/easytier/status", get(easytier_status))
         .route("/connector/easytier/download", post(easytier_download))
         .route("/connector/scan-ports", get(scan_ports))
@@ -1043,6 +1044,7 @@ async fn status() -> ApiResult<Json<ConnectorStatusResponse>> {
         mc_port: None,
         game_info: conn.game_info.read().unwrap().clone(),
         players: Vec::new(),
+        pending_kick_reviews: Vec::new(),
         error: None,
     };
     let icons = conn.icon_map.read().unwrap().clone();
@@ -1058,6 +1060,16 @@ async fn status() -> ApiResult<Json<ConnectorStatusResponse>> {
                 .get_players()
                 .iter()
                 .map(|p| to_frontend_player(p, &icons))
+                .collect();
+            resp.pending_kick_reviews = center
+                .pending_kick_reviews()
+                .await
+                .into_iter()
+                .map(|r| KickReviewResponse {
+                    machine_id: r.machine_id,
+                    name: r.name,
+                    vendor: r.vendor,
+                })
                 .collect();
         }
         Mode::Guest(guest) => {
@@ -1397,6 +1409,35 @@ async fn kick_player(Json(req): Json<KickRequest>) -> ApiResult<Json<StatusMessa
     conn.icon_map.write().unwrap().remove(&req.machine_id);
     Ok(Json(StatusMessageResponse {
         status: "kicked".to_string(),
+    }))
+}
+
+/// POST /connector/kick/review — 房主决定已踢玩家的重连请求（弹窗三选）。
+///
+/// action: `allow`（允许重新加入）| `reject`（拒绝）| `reject_silent`（拒绝且不再提示）。
+async fn decide_kick_review(Json(req): Json<KickReviewRequest>) -> ApiResult<Json<StatusMessageResponse>> {
+    let conn = connector();
+    let mode = conn.mode.lock().await;
+    let Mode::Host(center) = &*mode else {
+        return Err(ApiError::bad_request(
+            "CONNECTOR_NOT_HOST",
+            "仅房主可审核重连请求",
+        ));
+    };
+    let action = match req.action.as_str() {
+        "allow" => KickReviewAction::Allow,
+        "reject" => KickReviewAction::Reject,
+        "reject_silent" => KickReviewAction::RejectSilent,
+        _ => {
+            return Err(ApiError::bad_request(
+                "CONNECTOR_KICK_REVIEW_INVALID_ACTION",
+                "无效的审核动作（allow/reject/reject_silent）",
+            ))
+        }
+    };
+    center.decide_kick_review(&req.machine_id, action).await;
+    Ok(Json(StatusMessageResponse {
+        status: "ok".to_string(),
     }))
 }
 
@@ -1879,6 +1920,22 @@ pub struct KickRequest {
     pub machine_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KickReviewRequest {
+    pub machine_id: String,
+    /// `allow` | `reject` | `reject_silent`
+    pub action: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KickReviewResponse {
+    pub machine_id: String,
+    pub name: String,
+    pub vendor: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JoinResponse {
@@ -1905,6 +1962,8 @@ pub struct ConnectorStatusResponse {
     pub mc_port: Option<u16>,
     pub game_info: Option<ConnectorGameInfo>,
     pub players: Vec<ConnectorPlayer>,
+    /// 待房主审核的重连请求（已踢玩家申请重新加入）。
+    pub pending_kick_reviews: Vec<KickReviewResponse>,
     pub error: Option<String>,
 }
 
