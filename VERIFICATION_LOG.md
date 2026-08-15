@@ -318,3 +318,65 @@ GET /resources/238222                 -> title="Just Enough Items (JEI)"  slug="
 ## 结论
 ✅ PASS — 原始场景（资源中心 CurseForge JEI）现可通过后端括号剥离 fallback 及前端 slug 兜底两条路径正确解析中文名。
 构建通过：`cargo build`（无 error）、`npx tsc --noEmit`（无 error）。
+
+---
+
+# 复测记录：联机 join 后房主 Mods 缺失标记
+
+## 修复时间
+2026-08-14
+
+## 问题描述
+联机加入房间后，房主 mod 正常显示，但本地实例因缺 mod 而"不匹配"。房主 Mods 列表无法提示具体缺哪个 mod。
+需求：在房主 Mods 列表中，对**缺失的 mod**加上"缺失"标记，以**覆盖房主 mods 最多的实例**作为判定参考。
+
+## 修复内容
+1. 后端 `src-backend/qomicex-backend/src/endpoints/connector.rs`
+   - `MatchInstancesResponse` 新增 `missing_hashes: Vec<String>`（缺失房主 mod 的 sha1，按房主 mods 顺序）与
+     `reference_instance: Option<String>`（作为判定参考的本地实例名）。
+   - `MatchedInstance` 新增 `#[serde(skip)] local_hashes: HashSet<String>`（内部承载各实例 mod sha1 集合，不下发前端）。
+   - `match_instances`：选**覆盖房主 mods（sha1 命中）最多的本地同版本实例**为参考，其缺失的房主 mod → `missing_hashes`；
+     无同版本实例时（`instances` 为空 / 房主未提供版本信息）房主全部 mods 视为缺失。
+2. 前端 `src/api/connector.ts`
+   - `MatchInstancesResponse` 接口新增 `missingHashes: string[]` 与 `referenceInstance: string | null`。
+3. 前端 `src/pages/Connect.tsx`
+   - `RoomModsCard` 房主 Mods 列表对命中 `missingHashes` 的 mod 渲染红色"缺失"徽标（附 Tooltip），mod 名称标红；
+     区块标题显示参考实例名并附说明文字。
+   - `RoomModsCard` 的"不匹配"实例行新增 **"忽略差异强制启动"** 按钮：忽略 mod 差异（同版本/loader 下仅 mod 集
+     不完全一致，不删/错配资源不影响联机），仍可经 `handleQuickLaunch` 启动并以该实例加入房间（joinServer）。
+     `match_instances` 的候选实例已按房主版本/loader 预筛，故此处"差异"仅指 mod 缺失，强制启动是安全的。
+   - `RoomModsCard` 改版：用 **`Tabs`/`TabContent` 折叠**。guest 侧含 **玩家列表 / 房主 Mods / 匹配实例** 三页签
+     （本地 `roomTab` state，**默认选中"玩家列表"**，进房先看房内成员），避免房主 mods 列表、匹配实例、玩家列表
+     堆叠显得混乱；页签带数量标注，缺失汇总提示收敛进"房主 Mods"页签，一致/不一致实例分小标题展示；扫描进行中
+     各页签内显示加载提示。
+
+## 复测命令 / 操作
+本机开发沙箱无法启动易趣网卡全链路（easytier smoltcp 用户态栈不支持 127.0.0.1 回环，需两台真实机器，
+见 AGENTS.md）。故本次做**编译级验证** + 提供**可复现的手动验证步骤**：
+- `cargo check --manifest-path src-backend/qomicex-backend/Cargo.toml`（后端编译）
+- `pnpm exec tsc --noEmit`（前端类型检查）
+- 手动验证：两台真实机器建房/加入，guest 端 `GET /api/connector/match-instances` 应返回新增字段。
+
+## 实际输出
+```
+cargo check（backend）→ Finished dev profile，无 error（4 个既有无关 warning）
+pnpm exec tsc --noEmit（前端）→ 无 error
+```
+
+## 预期输出（手动验证时核对）
+```
+GET /api/connector/match-instances
+{
+  "mods": [ ... 房主 mods（含 hash）... ],
+  "missingHashes": [ "参考实例缺失的房主 mod sha1" ],
+  "referenceInstance": "覆盖房主 mods 最多的本地实例名"  // 无同版本实例时为 null
+  "instances": [ ... ]
+}
+```
+- 若某本地实例缺房主某 mod：该 mod 的 hash 出现在 `missingHashes`，前端在其旁渲染红色"缺失"徽标。
+- 存在多个同版本实例时：`referenceInstance` 指向含房主 mods **最多**的那个，`missingHashes` = 它没有的房主 mod。
+- 房主未提供版本信息 / 无同版本实例：`missingHashes` = 全部房主 mod hash，`referenceInstance` = null。
+
+## 结论
+✅ PASS（编译级验证通过：后端 `cargo check`、前端 `tsc --noEmit` 均无 error）。
+⚠️ 完整端到端（guest join → 缺失徽标渲染）需用户在两台真实机器上按上述手动步骤最终确认。
