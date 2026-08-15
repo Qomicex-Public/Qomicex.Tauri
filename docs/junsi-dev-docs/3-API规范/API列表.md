@@ -1818,7 +1818,7 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 **响应：** `{ "status": "kicked" }`
 
-**踢出语义（三层断开，`ScaffoldingCenter::kick_player`）：**
+**踢出语义（三层断开，`services::kick::KickManager`，经 connector 拓展接口实现）：**
 1. **easytier**：`disconnect_peer(easytier_id)` 关闭该玩家全部虚拟网络连接（非 QML SCF 客户端不受 Scaffolding 协议控制，仅此手段；对方若持续在线可能自动重连——fork 无控制面 deny）
 2. **Scaffolding TCP**：`ClientRegistry::disconnect_machine` 按 machine_id 定向取消连接令牌（QML guest 心跳失败后整体退出）
 3. **玩家列表**：`remove_player` 移除 + 头像映射清理
@@ -1829,7 +1829,7 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 ### 2026-08-14 修订 —— 踢人语义升级（非 QML guest 可踢除）
 
-> 取代上文「踢出语义（三层断开）」：`ScaffoldingCenter::kick_player` 现为**断开 + 黑名单**四步：
+> 取代上文「踢出语义（三层断开）」：`services::kick::KickManager` 现为**断开 + 黑名单**四步（**实现位于调用方 backend**，connector 仅提供拓展接口 `set_player_ping_handler` / 能力方法）：
 
 1. **easytier peer 解析 + 物理断开**：优先已上报 `easytier_id`；未上报（不支持 `c:player_easytier_id` 的第三方 guest）时按 hostname `scaffolding-mc-guest-{machine_id前8位}`（Qomicex 系约定）或 SCF TCP 源虚拟 IP（`TcpServer::machine_source_ip` → `get_nodes()` 反查）定位 peer 后 `disconnect_peer`。解析失败打 warn（可见性），不再静默跳过。
 2. **已踢黑名单**：machine_id 记入 `kicked` 集合（含解析到的 peer id）。被踢 guest 再发 `c:player_ping` → 拒绝入列 + 响应状态 255（不刷新心跳 → 15s 心跳超时兜底剔除）+ 重复断开 SCF TCP 与 easytier。
@@ -1842,7 +1842,7 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 > 取代上文第 2 步「被踢 guest 再发 c:player_ping → 拒绝入列 + 状态 255」的**一律拒绝**语义：被踢玩家重连时，房主可人工放行（防误踢）。
 
-- **GET `/connector/status`** 响应新增 `pendingKickReviews: [{ machineId, name, vendor }]`（仅 host 模式；`ScaffoldingCenter::pending_kick_reviews`）。
+- **GET `/connector/status`** 响应新增 `pendingKickReviews: [{ machineId, name, vendor }]`（仅 host 模式；`services::kick::KickManager::pending_reviews`）。
 - **POST `/connector/kick/review`** `{ "machineId": "...", "action": "allow" | "reject" | "reject_silent" }`（仅房主）：
   - `allow`：从已踢黑名单移除 → 下一次 `c:player_ping` 正常入列；
   - `reject`：维持踢出，断开其等待中的 SCF TCP + easytier，下次重连可再次询问；

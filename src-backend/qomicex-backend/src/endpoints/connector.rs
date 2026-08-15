@@ -19,7 +19,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use qomicex_connector::center::scaffolding_center::{KickReviewAction, ScaffoldingCenter};
+use qomicex_connector::center::scaffolding_center::ScaffoldingCenter;
 use qomicex_connector::client::ScaffoldingClient;
 use qomicex_connector::guest::scaffolding_guest::ScaffoldingGuest;
 use qomicex_connector::models::player::PlayerKind;
@@ -113,6 +113,8 @@ struct ConnectorState {
     /// 当前 host 房间的 center 句柄（qml:player_leave 协议同步移除玩家用，
     /// std RwLock 使协议闭包免 tokio 锁阻塞）。
     host_center: Arc<RwLock<Option<Arc<ScaffoldingCenter>>>>,
+    /// 房主踢人 + 重连审核管理器（host 建房时创建，退出房间时清空）。
+    kick: Arc<RwLock<Option<Arc<crate::services::kick::KickManager>>>>,
     /// 房间内头像映射（machine_id → base64；host 本地 + guest 经 qml:player_icons 上传）
     icon_map: Arc<RwLock<HashMap<String, String>>>,
     /// guest 上次看到的玩家数（变化时重新 exchange 拉新玩家头像；对应 C# `_lastGuestPlayerCount`）
@@ -192,6 +194,7 @@ fn connector() -> &'static Arc<ConnectorState> {
             ct: qomicex_connector::util::CancellationToken::new(),
             game_info: Arc::new(RwLock::new(None)),
             host_center: Arc::new(RwLock::new(None)),
+            kick: Arc::new(RwLock::new(None)),
             icon_map: Arc::new(RwLock::new(HashMap::new())),
             last_guest_player_count: std::sync::Mutex::new(-1),
             host_instance: Arc::new(RwLock::new(None)),
@@ -573,12 +576,17 @@ async fn host_port(
     } else {
         *conn.host_mods.write().unwrap() = Some(Vec::new());
     }
+    // 踢人/重连审核管理器：player_ping 钩子须在 create_room 前注入（start 构建协议时读取），
+    // 联机中心建房完成后经 set_center 回填。
+    let kick = Arc::new(crate::services::kick::KickManager::new());
+    let ping_handler = kick.ping_handler();
     let center = run_with_connector_timeout(
         "CONNECTOR_HOST_TIMEOUT",
         "建房超时，请检查网络后重试",
         {
             let conn = connector();
             move |ct| {
+                let ping_handler = ping_handler.clone();
                 Box::pin(async move {
                     conn.client
                         .create_room(
@@ -588,6 +596,7 @@ async fn host_port(
                             req.port,
                             ct,
                             custom_protocols(),
+                            Some(ping_handler),
                         )
                         .await
                         .map_err(map_connector_error)
@@ -596,8 +605,10 @@ async fn host_port(
         },
     )
     .await?;
+    kick.set_center(center.clone());
     *conn.mode.lock().await = Mode::Host(center.clone());
     *conn.host_center.write().unwrap() = Some(center.clone());
+    *conn.kick.write().unwrap() = Some(kick);
     // host_port 建房无实例上下文：host_instance 留空（mods 由上方 --gameDir 分支
     // 后台扫描写入 host_mods，未解析到 gameDir 时已置空列表）
     *conn.host_instance.write().unwrap() = None;
@@ -846,6 +857,9 @@ async fn host_instance(
                         .unwrap()
                         .insert(host_machine_id, host_icon);
                 }
+                // 踢人/重连审核管理器（player_ping 钩子须在 create_room 前注入）
+                let kick = Arc::new(crate::services::kick::KickManager::new());
+                let ping_handler = kick.ping_handler();
                 match conn
                     .client
                     .create_room(
@@ -855,12 +869,15 @@ async fn host_instance(
                         port,
                         conn.ct.clone(),
                         custom_protocols(),
+                        Some(ping_handler),
                     )
                     .await
                 {
                     Ok(center) => {
+                        kick.set_center(center.clone());
                         *mode = Mode::Host(center.clone());
                         *conn.host_center.write().unwrap() = Some(center.clone());
+                        *conn.kick.write().unwrap() = Some(kick);
                         *conn.host_instance.write().unwrap() = Some(instance_clone.clone());
                         tracing::info!(
                             "联机: 实例启动后检测到端口 {port}，房间 {}",
@@ -1061,16 +1078,19 @@ async fn status() -> ApiResult<Json<ConnectorStatusResponse>> {
                 .iter()
                 .map(|p| to_frontend_player(p, &icons))
                 .collect();
-            resp.pending_kick_reviews = center
-                .pending_kick_reviews()
-                .await
-                .into_iter()
-                .map(|r| KickReviewResponse {
-                    machine_id: r.machine_id,
-                    name: r.name,
-                    vendor: r.vendor,
-                })
-                .collect();
+            let kick = conn.kick.read().unwrap().clone();
+            if let Some(kick) = kick.as_ref() {
+                resp.pending_kick_reviews = kick
+                    .pending_reviews()
+                    .await
+                    .into_iter()
+                    .map(|r| KickReviewResponse {
+                        machine_id: r.machine_id,
+                        name: r.name,
+                        vendor: r.vendor,
+                    })
+                    .collect();
+            }
         }
         Mode::Guest(guest) => {
             resp.mode = "guest".to_string();
@@ -1349,6 +1369,7 @@ async fn reset_connector_state(notify_leave: bool) {
     *conn.game_info.write().unwrap() = None;
     *conn.starting_instance.write().unwrap() = None;
     *conn.host_center.write().unwrap() = None;
+    *conn.kick.write().unwrap() = None;
     conn.icon_map.write().unwrap().clear();
     *conn.last_guest_player_count.lock().unwrap() = -1;
     *conn.host_instance.write().unwrap() = None;
@@ -1377,11 +1398,11 @@ async fn leave(State(state): State<SharedState>) -> ApiResult<Json<StatusMessage
 
 /// POST /connector/kick — 房主手动踢出指定 guest。
 ///
-/// 断开流程（`ScaffoldingCenter::kick_player`）：① 解析 guest 的 easytier peer 并物理断开
-/// （优先已上报 easytier_id，否则按 hostname `scaffolding-mc-guest-{machine_id前8位}` 或
-/// SCF TCP 源虚拟 IP 反查；非 QML SCF 客户端不受 `qml:player_leave` 协议控制，仅此手段）；
-/// ② 记入已踢黑名单（被踢 guest 再发 c:player_ping 拒绝入列 + 重复断开 + 状态 255 不刷新心跳）；
-/// ③ 断开其 Scaffolding TCP（QML guest 心跳失败后整体退出）；④ 玩家列表移除。
+/// 实现位于调用方 `services::kick::KickManager`（connector 仅提供拓展接口）：
+/// ① 解析 guest 的 easytier peer 并物理断开（优先已上报 easytier_id，否则按 hostname
+/// `scaffolding-mc-guest-{machine_id前8位}` 或 SCF TCP 源虚拟 IP 反查；非 QML SCF 客户端
+/// 不受 `qml:player_leave` 协议控制，仅此手段）；② 记入已踢黑名单（重连进入审核状态机）；
+/// ③ 断开其 Scaffolding TCP；④ 玩家列表移除。
 async fn kick_player(Json(req): Json<KickRequest>) -> ApiResult<Json<StatusMessageResponse>> {
     let conn = connector();
     let mode = conn.mode.lock().await;
@@ -1391,6 +1412,12 @@ async fn kick_player(Json(req): Json<KickRequest>) -> ApiResult<Json<StatusMessa
             "仅房主可踢出玩家",
         ));
     };
+    let kick = conn
+        .kick
+        .read()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| ApiError::internal("踢人管理器未就绪"))?;
     // 权威自踢校验：以 center 玩家列表里 kind==Host 的 machine_id 为准
     // （比机器码重算更可靠——machine_code 依赖 getmac 首个有效 MAC，
     // VPN 网卡顺序变化时可能漂移导致自踢校验失效、房主断开自己的 easytier）。
@@ -1405,7 +1432,7 @@ async fn kick_player(Json(req): Json<KickRequest>) -> ApiResult<Json<StatusMessa
             "不能踢出房主自己",
         ));
     }
-    center.kick_player(&req.machine_id).await;
+    kick.kick(&req.machine_id).await;
     conn.icon_map.write().unwrap().remove(&req.machine_id);
     Ok(Json(StatusMessageResponse {
         status: "kicked".to_string(),
@@ -1418,16 +1445,22 @@ async fn kick_player(Json(req): Json<KickRequest>) -> ApiResult<Json<StatusMessa
 async fn decide_kick_review(Json(req): Json<KickReviewRequest>) -> ApiResult<Json<StatusMessageResponse>> {
     let conn = connector();
     let mode = conn.mode.lock().await;
-    let Mode::Host(center) = &*mode else {
+    let Mode::Host(_) = &*mode else {
         return Err(ApiError::bad_request(
             "CONNECTOR_NOT_HOST",
             "仅房主可审核重连请求",
         ));
     };
+    let kick = conn
+        .kick
+        .read()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| ApiError::internal("踢人管理器未就绪"))?;
     let action = match req.action.as_str() {
-        "allow" => KickReviewAction::Allow,
-        "reject" => KickReviewAction::Reject,
-        "reject_silent" => KickReviewAction::RejectSilent,
+        "allow" => crate::services::kick::ReviewAction::Allow,
+        "reject" => crate::services::kick::ReviewAction::Reject,
+        "reject_silent" => crate::services::kick::ReviewAction::RejectSilent,
         _ => {
             return Err(ApiError::bad_request(
                 "CONNECTOR_KICK_REVIEW_INVALID_ACTION",
@@ -1435,7 +1468,7 @@ async fn decide_kick_review(Json(req): Json<KickReviewRequest>) -> ApiResult<Jso
             ))
         }
     };
-    center.decide_kick_review(&req.machine_id, action).await;
+    kick.decide_review(&req.machine_id, action).await;
     Ok(Json(StatusMessageResponse {
         status: "ok".to_string(),
     }))
