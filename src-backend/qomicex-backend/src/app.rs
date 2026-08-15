@@ -2,10 +2,12 @@
 
 use std::sync::Arc;
 
+use axum::http::Request;
 use axum::routing::get;
 use axum::Router;
 use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
+use tracing::Level;
 
 use crate::endpoints;
 use crate::state::AppState;
@@ -45,7 +47,44 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // unregistered /api/* routes are blocked without CORS headers).
         .fallback(crate::middleware::not_found::handler)
         .layer(cors)
-        .layer(TraceLayer::new_for_http())
+        // 请求日志：正常请求（<400）静默；>=400 记录 ERROR（method/uri/status/latency）。
+        // 用闭包实现 OnResponse（tower-http 支持 FnOnce(&Response, Duration, &Span)），
+        // 避免 tower_http 默认在 DEBUG 级为每个请求打两条日志淹没业务日志。
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
+                .on_response(
+                    |response: &axum::http::Response<axum::body::Body>,
+                     latency: std::time::Duration,
+                     span: &tracing::Span| {
+                        let status = response.status();
+                        if status.as_u16() >= 400 {
+                            // span 的 debug 输出即 `request{method=GET uri=/api/...}`，
+                            // 事件落在 span 上下文内，fmt 会附加字段
+                            tracing::event!(
+                                parent: span,
+                                Level::ERROR,
+                                "request failed: status={} latency={}ms",
+                                status.as_u16(),
+                                latency.as_millis()
+                            );
+                        }
+                    },
+                )
+                // 连接级错误（无响应）也记录 ERROR
+                .on_failure(
+                    |error_class: tower_http::classify::ServerErrorsFailureClass,
+                     latency: std::time::Duration,
+                     span: &tracing::Span| {
+                        tracing::event!(
+                            parent: span,
+                            Level::ERROR,
+                            "request failed: {error_class:?} latency={}ms",
+                            latency.as_millis()
+                        );
+                    },
+                ),
+        )
         .with_state(state);
 
     app

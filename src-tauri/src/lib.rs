@@ -4,6 +4,8 @@ use std::os::windows::process::CommandExt;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
+#[macro_use]
+mod logger;
 mod dialog_cmd;
 mod plugin_gateway;
 
@@ -71,7 +73,7 @@ fn extract_backend() -> Option<std::path::PathBuf> {
             extract_sidecar_dlls(&base);
             return Some(primary);
         }
-        Err(e) => eprintln!("[backend] write to {} failed: {e}", primary.display()),
+        Err(e) => tauri_log!("backend", "write to {} failed: {e}", primary.display()),
     }
 
     // Fallback: unique per-process file if the primary path is not writable.
@@ -82,7 +84,7 @@ fn extract_backend() -> Option<std::path::PathBuf> {
             Some(unique)
         }
         Err(e) => {
-            eprintln!("[backend] write to {} failed: {e}", unique.display());
+            tauri_log!("backend", "write to {} failed: {e}", unique.display());
             None
         }
     }
@@ -93,12 +95,12 @@ fn extract_backend() -> Option<std::path::PathBuf> {
 fn extract_sidecar_dlls(base: &std::path::Path) {
     if !PACKET_DLL.is_empty() {
         if let Err(e) = std::fs::write(base.join("Packet.dll"), PACKET_DLL) {
-            eprintln!("[backend] write Packet.dll failed: {e}");
+            tauri_log!("backend", "write Packet.dll failed: {e}");
         }
     }
     if !WINTUN_DLL.is_empty() {
         if let Err(e) = std::fs::write(base.join("wintun.dll"), WINTUN_DLL) {
-            eprintln!("[backend] write wintun.dll failed: {e}");
+            tauri_log!("backend", "write wintun.dll failed: {e}");
         }
     }
 }
@@ -108,17 +110,17 @@ fn extract_sidecar_dlls(_base: &std::path::Path) {}
 
 fn spawn_backend(app: &tauri::App) {
     if std::env::var("QOMICEX_LAUNCHER_MANAGED").is_ok() {
-        eprintln!("[backend] launcher-managed, skipping spawn");
+        tauri_log!("backend", "launcher-managed, skipping spawn");
         return;
     }
     if BACKEND.len() < 1024 {
-        eprintln!("[backend] placeholder ({} bytes), skipping", BACKEND.len());
+        tauri_log!("backend", "placeholder ({} bytes), skipping", BACKEND.len());
         return;
     }
     let exe_path = match extract_backend() {
         Some(p) => p,
         None => {
-            eprintln!("[backend] failed to extract backend to a writable location");
+            tauri_log!("backend", "failed to extract backend to a writable location");
             return;
         }
     };
@@ -138,30 +140,31 @@ fn spawn_backend(app: &tauri::App) {
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[backend] spawn failed: {e}");
+            tauri_log!("backend", "spawn failed: {e}");
             let _ = std::fs::remove_file(&exe_path);
             return;
         }
     };
-    let tag = BACKEND_EXE;
+    let _tag = BACKEND_EXE;
     if let Some(out) = child.stdout.take() {
         std::thread::spawn(move || {
             for line in BufReader::new(out).lines().map_while(Result::ok) {
-                eprintln!("[{tag} out] {line}");
+                tauri_log!("backend:out", "{line}");
             }
         });
     }
     if let Some(err) = child.stderr.take() {
         std::thread::spawn(move || {
             for line in BufReader::new(err).lines().map_while(Result::ok) {
-                eprintln!("[{tag} err] {line}");
+                tauri_log!("backend:err", "{line}");
             }
         });
     }
     let state = app.state::<BackendChild>();
     *state.0.lock().unwrap() = Some(child);
-    eprintln!(
-        "[backend] spawned: {} ({} bytes)",
+    tauri_log!(
+        "backend",
+        "spawned: {} ({} bytes)",
         exe_path.display(),
         BACKEND.len()
     );
@@ -200,8 +203,8 @@ pub fn run() {
             let _ = runtime.scan_and_load();
             tauri::async_runtime::spawn(async move {
                 match plugin_gateway::server::start_gateway(runtime).await {
-                    Ok(port) => eprintln!("[gateway] ready on 127.0.0.1:{port}"),
-                    Err(e) => eprintln!("[gateway] start failed: {e}"),
+                    Ok(port) => tauri_log!("gateway", "ready on 127.0.0.1:{port}"),
+                    Err(e) => tauri_log!("gateway", "start failed: {e}"),
                 }
             });
             Ok(())
@@ -219,7 +222,7 @@ pub fn run() {
             if let Some(mut child) = child {
                 let _ = child.kill();
                 let _ = child.wait();
-                eprintln!("[backend] killed");
+                tauri_log!("backend", "killed");
             }
         }
     });

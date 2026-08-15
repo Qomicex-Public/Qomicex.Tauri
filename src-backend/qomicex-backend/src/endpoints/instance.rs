@@ -692,6 +692,7 @@ async fn launch_instance(
 
         match result {
             Ok((pid, _msg)) => {
+                tracing::info!(instance = %instance_id, pid, "launch: game started");
                 tracker.track(&instance_id, pid);
                 tracker.set_progress(
                     &instance_id,
@@ -706,6 +707,7 @@ async fn launch_instance(
                 );
             }
             Err(err) => {
+                tracing::error!(instance = %instance_id, error = %err, "launch: failed");
                 let _ = std::fs::create_dir_all(std::path::Path::new(&game_dir).join("logs"));
                 let _ = std::fs::write(
                     std::path::Path::new(&game_dir).join("logs/launch-errors.log"),

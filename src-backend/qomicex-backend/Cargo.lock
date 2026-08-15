@@ -3708,6 +3708,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-log",
  "tracing-subscriber",
  "url",
  "urlencoding",

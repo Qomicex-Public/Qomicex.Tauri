@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFileLines, faDownload, faTrashCan, faRotate,
-  faEye, faFolderOpen, faInfoCircle,
+  faEye, faFolderOpen, faInfoCircle, faMagnifyingGlass,
+  faChevronDown, faChevronRight, faXmark,
 } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardHeader, CardTitle, CardContent } from './ui'
 import { Button } from './ui'
@@ -11,9 +12,9 @@ import { Tooltip } from './ui'
 import { cn } from '../lib/utils.ts'
 import { useMessageBox } from './ui'
 import {
-  listLogs, getExportUrl, getExportAllUrl, exportLogTo, exportAllLogsTo, deleteLog, openLog, openLogDir,
+  listLogs, getExportUrl, getExportAllUrl, exportLogTo, exportAllLogsTo, deleteLog, openLog, openLogDir, getLogContent,
 } from '../api/logs.ts'
-import type { LogEntry } from '../api/logs.ts'
+import type { LogEntry, LogContent } from '../api/logs.ts'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useI18n } from '../i18n/index.tsx'
 
@@ -37,6 +38,27 @@ export default function LogTab() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: LogEntry } | null>(null)
+  const [preview, setPreview] = useState<LogContent | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewSearch, setPreviewSearch] = useState('')
+  const [previewLevel, setPreviewLevel] = useState<'all' | 'ERROR' | 'WARN' | 'INFO'>('all')
+  const [previewExpanded, setPreviewExpanded] = useState(false)
+  const previewRef = useRef<HTMLDivElement>(null)
+
+  const openPreview = useCallback(async (entry: LogEntry) => {
+    setPreviewLoading(true)
+    setPreviewSearch('')
+    setPreviewLevel('all')
+    setPreviewExpanded(false)
+    try {
+      setPreview(await getLogContent(entry.path))
+    } catch {
+      setPreview(null)
+      notify(t('tools.logs.loadFailed'), 'error')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }, [notify, t])
 
   const fetchLogs = useCallback(async () => {
     setLoading(true)
@@ -113,6 +135,43 @@ export default function LogTab() {
 
   const currentSessionCount = logs.filter(e => e.isCurrentSession).length
 
+  // 日志查看器：解析行（级别提取）+ 过滤 + 高亮
+  const previewLines = useMemo(() => {
+    if (!preview) return []
+    const lines = preview.content.split('\n')
+    const search = previewSearch.trim().toLowerCase()
+    return lines
+      .map((raw) => {
+        const lvl = raw.includes(' ERROR ') || / ERROR /.test(raw) ? 'ERROR'
+          : raw.includes(' WARN ') || / WARN /.test(raw) ? 'WARN'
+          : 'INFO'
+        return { raw, lvl }
+      })
+      .filter((l) => {
+        if (previewLevel !== 'all' && l.lvl !== previewLevel) return false
+        if (search && !l.raw.toLowerCase().includes(search)) return false
+        return true
+      })
+  }, [preview, previewSearch, previewLevel])
+
+  // 高亮搜索词（切分 raw，命中段标色）
+  function renderLine(raw: string, key: number) {
+    const search = previewSearch.trim()
+    if (!search) return raw
+    const lower = raw.toLowerCase()
+    const q = search.toLowerCase()
+    const parts: React.ReactNode[] = []
+    let i = 0
+    let idx = 0
+    while ((idx = lower.indexOf(q, i)) >= 0) {
+      if (idx > i) parts.push(raw.slice(i, idx))
+      parts.push(<mark key={`${key}-${idx}`} className="rounded bg-yellow-400/30 px-0.5 text-foreground">{raw.slice(idx, idx + q.length)}</mark>)
+      i = idx + q.length
+    }
+    if (i < raw.length) parts.push(raw.slice(i))
+    return parts.length ? parts : raw
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -158,6 +217,7 @@ export default function LogTab() {
                 <div key={`${entry.path}-${i}`}>
                   <div
                     onContextMenu={(e) => handleContextMenu(e, entry)}
+                    onClick={() => openPreview(entry)}
                     className="flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors cursor-pointer hover:border-muted-foreground/30 border-border bg-background"
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -208,6 +268,77 @@ export default function LogTab() {
                 {currentSessionCount > 0 && ` · ${t('tools.logs.currentSessionSuffix', { count: currentSessionCount })}`}
               </span>
               <span className="ml-auto">{t('tools.logs.fileCountSuffix', { count: logs.length })}</span>
+            </div>
+          )}
+
+          {/* 日志内容查看器：点文件行预览 */}
+          {preview && (
+            <div className="overflow-hidden rounded-lg border">
+              <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-2">
+                <button
+                  onClick={() => setPreviewExpanded(!previewExpanded)}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-foreground hover:text-primary"
+                >
+                  <FontAwesomeIcon icon={previewExpanded ? faChevronDown : faChevronRight} className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{preview.path.split(/[/\\]/).pop()}</span>
+                  {preview.truncated && (
+                    <Badge variant="secondary" className="shrink-0 h-4 px-1.5 text-[9px]">{t('tools.logs.truncated')}</Badge>
+                  )}
+                </button>
+                <div className="flex items-center gap-1.5">
+                  <div className="relative">
+                    <FontAwesomeIcon icon={faMagnifyingGlass} className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      value={previewSearch}
+                      onChange={(e) => setPreviewSearch(e.target.value)}
+                      placeholder={t('tools.logs.searchPlaceholder')}
+                      className="h-7 w-40 rounded-md border bg-background pl-7 pr-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </div>
+                  <select
+                    value={previewLevel}
+                    onChange={(e) => setPreviewLevel(e.target.value as typeof previewLevel)}
+                    className="h-7 rounded-md border bg-background px-1.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="all">{t('tools.logs.levelAll')}</option>
+                    <option value="ERROR">{t('tools.logs.levelError')}</option>
+                    <option value="WARN">{t('tools.logs.levelWarn')}</option>
+                    <option value="INFO">{t('tools.logs.levelInfo')}</option>
+                  </select>
+                  <Tooltip content={t('common.close')}>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setPreview(null)}>
+                      <FontAwesomeIcon icon={faXmark} className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
+                </div>
+              </div>
+              <div
+                ref={previewRef}
+                className={cn('overflow-y-auto bg-muted/20 p-3 font-mono text-xs leading-relaxed', previewExpanded ? 'h-96' : 'h-64')}
+              >
+                {previewLoading ? (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin" />
+                    {t('common.loading')}
+                  </div>
+                ) : previewLines.length === 0 ? (
+                  <div className="text-muted-foreground">{t('tools.logs.noMatch')}</div>
+                ) : (
+                  previewLines.map((l, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        'whitespace-pre-wrap break-all',
+                        l.lvl === 'ERROR' && 'text-red-400',
+                        l.lvl === 'WARN' && 'text-yellow-500/90',
+                        l.lvl === 'INFO' && 'text-foreground/80'
+                      )}
+                    >
+                      {renderLine(l.raw, i)}
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
         </CardContent>

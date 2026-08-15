@@ -14,10 +14,10 @@ use state::{AppState, DEFAULT_PORT};
 
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
-    // 默认放行 tower_http 的请求日志（Debug 级），实时日志可见前后端通信；
-    // RUST_LOG 环境变量可覆盖。
+    // 默认只开 info 级业务日志；tower_http 请求日志已由 TraceLayer 按 >=400 过滤，
+    // 不再全局放行 debug（避免每请求两条 DEBUG 噪音）。RUST_LOG 环境变量可覆盖。
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,tower_http=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         // ⚠️ 强制关闭 ANSI 转义码：tracing-subscriber 的 `ansi` feature 会被
@@ -25,8 +25,14 @@ fn init_tracing() {
         // 默认向 TraceWriter 输出 `\x1b[32m` 等颜色码，实时日志（/diagnostics/trace）
         // 在前端渲染为错误符号。即使 feature 已启用，`with_ansi(false)` 仍强制禁用。
         .with_ansi(false)
+        // 简洁格式：`[2026-08-15 20:14:01.815] [INFO] [module] message`
+        // 去掉 span 上下文（request{method=...}）与长 target，日志行可读、便于提取。
+        .with_target(false)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE)
         .with_writer(crate::services::trace::TraceWriter::default())
         .init();
+    // 桥接 `log` crate 事件 → tracing：connector 的 log::info/warn/error! 自动进日志体系。
+    tracing_log::LogTracer::init().ok();
 }
 
 #[tokio::main]
@@ -42,11 +48,11 @@ async fn main() {
         }
     }
 
-    // 先构建 state（内部注册全局 trace 缓冲），再初始化 tracing 与 stderr 捕获，
+    // 先构建 state（内部注册全局 trace 缓冲），再初始化 tracing 与 stdout/stderr 捕获，
     // 保证日志写入有目标可落。
     let state = AppState::build();
     init_tracing();
-    crate::services::trace::start_stderr_capture();
+    crate::services::trace::start_io_capture();
 
     let port = std::env::var("QOMICEX_PORT")
         .ok()

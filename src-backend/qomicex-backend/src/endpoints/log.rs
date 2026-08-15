@@ -240,6 +240,49 @@ pub fn router() -> Router<SharedState> {
         .route("/logs/export-all", get(export_all))
         .route("/logs/open", post(open))
         .route("/logs/open-dir", post(open_dir))
+        .route("/logs/content", get(log_content))
+        .route("/logs/frontend", post(frontend_log))
+}
+
+/// POST /api/logs/frontend — 前端 console 日志上报（构建版无控制台时仍可查看）。
+/// body: `{ "level": "warn", "message": "..." }`，写入 trace 缓冲 + 落盘文件。
+async fn frontend_log(
+    Json(body): Json<FrontendLogRequest>,
+) -> ApiResult<StatusCode> {
+    let level = body.level.unwrap_or_else(|| "log".to_string());
+    let message = body.message.unwrap_or_default();
+    // 消息可含换行（多行 console），逐行写入便于查看器按行过滤
+    for l in message.lines() {
+        crate::services::trace::trace_append(format!("[frontend:{level}] {l}"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET /api/logs/content?path=<path> — 读取日志文件内容（前端查看器用）。
+/// 安全约束与 export 一致：只允许 logs 目录内的文件；超大文件截断尾部。
+async fn log_content(
+    State(state): State<SharedState>,
+    Query(q): Query<PathQuery>,
+) -> ApiResult<Json<LogContentResponse>> {
+    let log_dir = state.data_dir.join("logs");
+    let resolved = resolve_log_path(&log_dir, &q.path).ok_or_else(|| {
+        ApiError::not_found("LOG_NOT_FOUND", "Log file not found")
+    })?;
+
+    const MAX_CONTENT_BYTES: u64 = 2 * 1024 * 1024; // 前端查看器上限 2MB
+    let bytes = std::fs::read(&resolved)?;
+    let truncated = bytes.len() as u64 > MAX_CONTENT_BYTES;
+    let content = if truncated {
+        String::from_utf8_lossy(&bytes[bytes.len() - MAX_CONTENT_BYTES as usize..]).into_owned()
+    } else {
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+
+    Ok(Json(LogContentResponse {
+        path: resolved.to_string_lossy().into_owned(),
+        content,
+        truncated,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +316,23 @@ struct LogEntry {
     size: i64,
     last_modified: String,
     is_current_session: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FrontendLogRequest {
+    #[serde(default)]
+    level: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LogContentResponse {
+    path: String,
+    content: String,
+    truncated: bool,
 }
 
 /// Mirrors C# `ResolveLogPath`: only existing files rooted inside the logs dir

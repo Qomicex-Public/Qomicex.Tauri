@@ -19,6 +19,7 @@ import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
 import useCloseGuard from './hooks/useCloseGuard.ts'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
 import { loadSettings, onSettingsChange, getSettings, isSettingsLoaded, DEFAULT_SETTINGS, type AppSettings } from './api/settings.ts'
+import { reportFrontendLog } from './api/logs.ts'
 import { I18nProvider, useI18n } from './i18n/index.tsx'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
@@ -253,12 +254,39 @@ const _console = {
 function setConsoleLevel(level: string) {
   const idx = LOG_LEVELS.indexOf(level as typeof LOG_LEVELS[number])
   if (idx < 0) return
-  const shouldLog = (minIdx: number) => idx >= minIdx
-  console.log = shouldLog(2) ? _console.log : () => {}
-  console.warn = shouldLog(3) ? _console.warn : () => {}
-  // console.error is never suppressed
-  console.debug = shouldLog(1) ? _console.debug : () => {}
-  console.trace = shouldLog(0) ? _console.trace : () => {}
+  // LOG_LEVELS 由低到高：trace(0) debug(1) info(2) warn(3) error(4)。
+  // tracing 语义：EnvFilter "info" 显示 >= info 级别（info/warn/error），
+  // 设置级别越高显示越少。shouldLog(lvlIdx) = lvlIdx >= idx。
+  const shouldLog = (lvlIdx: number) => lvlIdx >= idx
+
+  // 包装 console 方法：按 logLevel 决定是否显示，同时上报后端日志体系
+  // （构建版 Tauri 无控制台，前端日志靠 POST /logs/frontend 落盘可查）。
+  function wrap(method: 'log' | 'warn' | 'error' | 'debug' | 'trace', enabled: boolean) {
+    const orig = _console[method]
+    return (...args: unknown[]) => {
+      if (enabled) {
+        orig(...args)
+        reportFrontendLog(method, args.map(fmtConsoleArg).join(' '))
+      }
+    }
+  }
+
+  // console 方法级别映射：trace=0 debug=1 log=2(info) warn=3 error=4
+  console.log = wrap('log', shouldLog(2))
+  console.warn = wrap('warn', shouldLog(3))
+  // console.error is never suppressed（始终显示 + 上报）
+  console.error = wrap('error', true)
+  console.debug = wrap('debug', shouldLog(1))
+  console.trace = wrap('trace', shouldLog(0))
+}
+
+/** 把 console 参数转成可读字符串（对象序列化，Error 取 stack/message）。 */
+function fmtConsoleArg(arg: unknown): string {
+  if (arg instanceof Error) return arg.stack || arg.message || String(arg)
+  if (typeof arg === 'object' && arg !== null) {
+    try { return JSON.stringify(arg) } catch { return String(arg) }
+  }
+  return String(arg)
 }
 
 const savedTheme = localStorage.getItem('qomicex-theme')

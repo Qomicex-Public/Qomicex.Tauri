@@ -99,8 +99,8 @@ impl PluginRuntime {
                 wasm_bytes,
                 db.clone(),
             ) {
-                Ok(_) => eprintln!("[plugin] loaded WASM plugin: {}", id),
-                Err(e) => eprintln!("[plugin] failed to load {}: {e}", id),
+                Ok(_) => tauri_log!("plugin", "loaded WASM plugin: {}", id),
+                Err(e) => tauri_log!("plugin", "failed to load {}: {e}", id),
             }
         }
         Ok(())
@@ -133,7 +133,7 @@ impl PluginRuntime {
                         let mut buf = vec![0u8; msg_len as usize];
                         if mem.read(&mut caller, msg_ptr as usize, &mut buf).is_ok() {
                             let msg = String::from_utf8_lossy(&buf).to_string();
-                            eprintln!("[plugin:{level}] {}", msg);
+                            tauri_log!("plugin:log", "{msg}");
                         }
                     }
                 }

@@ -284,9 +284,12 @@ impl InstallTracker {
         )));
         {
             let mut guard = self.states.lock().unwrap_or_else(|p| p.into_inner());
-            guard.insert(instance_id, handle.clone());
+            guard.insert(instance_id.clone(), handle.clone());
         }
         handle.broadcast();
+
+        let kind_owned = kind.to_string();
+        let id_owned = instance_id.clone();
 
         tokio::spawn(async move {
             let outcome = runner(handle.clone()).await;
@@ -295,18 +298,25 @@ impl InstallTracker {
                     f.set_status(InstallStatus::Cancelled);
                     f.error = Some("安装已取消".to_string());
                 });
+                tracing::warn!(instance = %id_owned, kind = %kind_owned, "install: cancelled");
             } else {
                 match outcome {
-                    Ok(()) => handle.update(|f| {
-                        f.set_status(InstallStatus::Completed);
-                        f.stage = InstallStatus::Completed.as_str().to_string();
-                        f.progress = 100.0;
-                        f.current_file.clear();
-                    }),
-                    Err(msg) => handle.update(|f| {
-                        f.set_status(InstallStatus::Failed);
-                        f.error = Some(msg);
-                    }),
+                    Ok(()) => {
+                        handle.update(|f| {
+                            f.set_status(InstallStatus::Completed);
+                            f.stage = InstallStatus::Completed.as_str().to_string();
+                            f.progress = 100.0;
+                            f.current_file.clear();
+                        });
+                        tracing::info!(instance = %id_owned, kind = %kind_owned, "install: completed");
+                    }
+                    Err(msg) => {
+                        handle.update(|f| {
+                            f.set_status(InstallStatus::Failed);
+                            f.error = Some(msg.clone());
+                        });
+                        tracing::error!(instance = %id_owned, kind = %kind_owned, error = %msg, "install: failed");
+                    }
                 }
             }
         });

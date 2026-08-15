@@ -30,4 +30,5 @@ wasmtime = "26"
 wasmtime-wasi = "26"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 

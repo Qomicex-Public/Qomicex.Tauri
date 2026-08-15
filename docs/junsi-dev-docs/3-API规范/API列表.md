@@ -843,6 +843,25 @@ Yggdrasil 认证登录。
 { "path": "..." }
 ```
 
+### GET `/api/logs/content?path={path}`
+
+读取日志文件内容（前端查看器用）。只允许 logs 目录内文件；超大文件截断尾部 2MB。
+
+**响应：**
+```json
+{ "path": "...", "content": "...", "truncated": false }
+```
+
+### POST `/api/logs/frontend`
+
+前端 console 日志上报（构建版 Tauri 无控制台时仍可查看/落盘）。
+
+```json
+{ "level": "warn", "message": "..." }
+```
+
+写入 trace 缓冲 + `qomicex-backend.log`（前缀 `[frontend:level]`），返回 204。
+
 ---
 
 ## 12. 中文名 Mcmod

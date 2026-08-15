@@ -21,7 +21,7 @@ use crate::services::instance::InstanceService;
 use crate::services::instance_group::InstanceGroupService;
 use crate::services::launch_tracker::LaunchTracker;
 use crate::services::plugin::{FileAuthService, PluginGatewayClient, PluginStore};
-use crate::services::trace::{LogLevelManager, TraceBufferStore, TraceDumpService};
+use crate::services::trace::{init_file_log, LogLevelManager, TraceBufferStore, TraceDumpService, FileLog};
 use crate::settings;
 use crate::settings::SettingsResponse;
 
@@ -133,6 +133,25 @@ impl AppState {
 
         // 下载管理器（对应 DownloadSessionManagerBuilder 的核心参数）。
         let download_manager = Arc::new(DownloadManager::new(DownloadOptions::default(), 64));
+        // 下载器日志事件（重试/看门狗/降级等）转发进日志体系：
+        // qomicex-downloader 不直接输出，事件只发给订阅者；这里全局订阅一次，
+        // DownloadEvent::Log 按级别写入 trace 缓冲 + 落盘。
+        {
+            let dm = download_manager.clone();
+            tokio::spawn(async move {
+                let mut rx = dm.subscribe();
+                loop {
+                    match rx.recv().await {
+                        Ok(qomicex_downloader::DownloadEvent::Log { level, message }) => {
+                            let line = format!("[downloader:{level:?}] {message}");
+                            crate::services::trace::trace_append(line);
+                        }
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
 
         // 插件 proxy 客户端（对应命名 HttpClient "PluginProxy"）。
         let proxy_client = reqwest::Client::builder()
@@ -149,6 +168,8 @@ impl AppState {
         let trace_buffer = Arc::new(TraceBufferStore::default());
         // 注册为全局 trace 缓冲：实时日志（TraceWriter / stderr 捕获）写入此处
         crate::services::trace::init_global_trace(trace_buffer.clone());
+        // 文件日志：trace 行持续落盘（崩溃/重启后日志仍在）
+        init_file_log(Arc::new(FileLog::new()));
         let trace_dump = Arc::new(TraceDumpService::new(trace_buffer.clone()));
 
         // 启动时套用已保存的日志级别（对应 Program.cs 中 levelManager.SetLevel）。

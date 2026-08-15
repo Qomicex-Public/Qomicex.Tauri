@@ -19,7 +19,7 @@ pub async fn start_gateway(runtime: PluginRuntime) -> anyhow::Result<u16> {
         let _ = std::fs::create_dir_all(parent);
     }
     std::fs::write(&port_path, port.to_string())?;
-    eprintln!("[gateway] listening on 127.0.0.1:{port}");
+    tauri_log!("gateway", "listening on 127.0.0.1:{port}");
 
     tokio::spawn(async move {
         let state = state.clone();
