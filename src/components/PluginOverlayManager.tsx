@@ -89,7 +89,11 @@ document.addEventListener('DOMContentLoaded',()=>{
 function overlayHtml(inner: string, pluginId: string) {
   const styles: string[] = []
   let body = inner
-  body = body.replace(/<style[\s\S]*?<\/style>/gi, m => { styles.push(m); return '' })
+  let prevBody: string
+  do {
+    prevBody = body
+    body = body.replace(/<style[\s\S]*?<\/style>/gi, m => { styles.push(m); return '' })
+  } while (body !== prevBody)
   body = body.replace(/<link[^>]+rel=["']stylesheet["'][^>]*>/gi, m => { styles.push(m); return '' })
   body = body
     .replace(/<!DOCTYPE[^>]*>/i, '')
