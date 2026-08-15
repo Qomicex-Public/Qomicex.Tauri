@@ -258,4 +258,15 @@ export default {
     quickJoin: 'Quick Join',
     lastPlayed: 'Last played: {date}',
   },
+  // Copyright notice dialog
+  legal: {
+    title: 'Copyright Notice',
+    content: `**Qomicex Launcher** is developed and maintained by the **Qomicex team**, and its copyright belongs to the Qomicex team.
+
+- This software is released under the **GPL-3.0 License**; you may freely use, copy, modify and redistribute it under that license.
+- This software has no affiliation, partnership or endorsement with **Mojang Studios / Microsoft** or their products.
+- **Minecraft** and related names, logos and copyrights belong to **Mojang Studios / Microsoft**.
+- This software does not include the Minecraft game itself; game resources belong to their respective owners.
+- By using this software you agree to the *User Agreement* and the *Privacy Policy*.`,
+  },
 } as const
