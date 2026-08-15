@@ -97,30 +97,68 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   curseforge: { label: 'CurseForge', cls: 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/30' },
 }
 
-function RoomModsCard({ data, onLaunch, launching, hostVersion }: {
+function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading }: {
   data: MatchInstancesResponse | null
   onLaunch: (instanceId: string) => void
   launching: string | null
   hostVersion: string
+  players: ConnectorPlayer[]
+  loading: boolean
 }) {
   const mods = data?.mods ?? []
   const instances = data?.instances ?? []
+  const missingSet = new Set<string>(data?.missingHashes ?? [])
+  const referenceInstance = data?.referenceInstance ?? null
   const matched = instances.filter(i => i.matched)
   const unmatched = instances.filter(i => !i.matched)
   const noHostInfo = !hostVersion
+  const missingCount = mods.filter(m => missingSet.has(m.hash)).length
+  const [roomTab, setRoomTab] = useState<'players' | 'mods' | 'instances'>('players')
   return (
-    <div className="space-y-3">
-      <div>
-        <Label>房主 Mods ({mods.length})</Label>
-        {mods.length === 0 ? (
-          <p className="text-xs text-muted-foreground">房主未发布 mods 列表（或扫描中）</p>
-        ) : (
-          <ul className="mt-1 max-h-40 space-y-0.5 overflow-y-auto rounded border border-border/50 p-2 text-xs">
+    <>
+    <Tabs
+      tabs={[
+        { id: 'players', label: `玩家列表 (${players.length})` },
+        { id: 'mods', label: `房主 Mods${mods.length > 0 ? ` (${mods.length})` : ''}` },
+        { id: 'instances', label: `匹配实例 (${instances.length})` },
+      ]}
+      activeTab={roomTab}
+      onChange={(id) => setRoomTab(id as 'players' | 'mods' | 'instances')}
+      className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
+    />
+    <TabContent activeTab={roomTab} tabId="players" className="space-y-3 pt-2">
+      <PlayerList players={players} />
+    </TabContent>
+    <TabContent activeTab={roomTab} tabId="mods" className="space-y-3">
+      {loading && !data ? (
+        <p className="flex items-center gap-2 pt-2 text-xs text-muted-foreground">
+          <FontAwesomeIcon icon={faSpinner} spin /> 正在扫描本地实例与房主 mods 比对...
+        </p>
+      ) : mods.length === 0 ? (
+        <p className="pt-2 text-xs text-muted-foreground">房主未发布 mods 列表（或扫描中）</p>
+      ) : (
+        <>
+          {(noHostInfo || referenceInstance) && (
+            <p className="pt-1 text-xs text-muted-foreground">
+              {referenceInstance
+                ? `标"缺失"的 mod 未含于实例 ${referenceInstance}${
+                    missingCount > 0 ? `，共 ${missingCount} 个` : ''
+                  }（覆盖房主 mods 最多的本地实例）`
+                : '房主未提供版本信息，无法判定哪些 mod 缺失'}
+            </p>
+          )}
+          <ul className="max-h-40 space-y-0.5 overflow-y-auto rounded border border-border/50 p-2 text-xs">
             {mods.map((m, i) => {
               const badge = SOURCE_BADGE[m.source]
+              const missing = missingSet.has(m.hash)
               return (
                 <li key={m.hash + i} className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate">{m.name || m.hash.slice(0, 12)}</span>
+                  <span className={`min-w-0 flex-1 truncate ${missing ? 'text-destructive' : ''}`}>{m.name || m.hash.slice(0, 12)}</span>
+                  {missing && (
+                    <Tooltip content="该 mod 在最佳匹配实例（覆盖房主 mods 最多者）中缺失">
+                      <span className="shrink-0 rounded-full border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">缺失</span>
+                    </Tooltip>
+                  )}
                   {badge && (
                     <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${badge.cls}`}>{badge.label}</span>
                   )}
@@ -129,47 +167,72 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion }: {
               )
             })}
           </ul>
-        )}
-      </div>
-      <div>
-        <Label>匹配实例（{noHostInfo ? '房主未提供版本信息' : mods.length === 0 ? '房主未发布 mods' : `本地 ${instances.length} 个同版本实例`}）</Label>
-        {noHostInfo && (
-          <p className="text-xs text-muted-foreground">房主未提供版本信息，无法匹配本地实例</p>
-        )}
-        {instances.length === 0 && mods.length > 0 && (
-          <p className="text-xs text-muted-foreground">没有与房主游戏版本/loader 相同的本地实例</p>
-        )}
-        {matched.length > 0 && (
-          <div className="mt-1 space-y-1.5">
-            {matched.map(inst => (
-              <div key={inst.instanceId} className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{inst.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {inst.gameVersion}{inst.loader ? ` · ${inst.loader} ${inst.loaderVersion ?? ''}` : ''}
-                    <span className="ml-2 text-emerald-600 dark:text-emerald-400">mods 一致 ({inst.modCount})</span>
-                  </div>
+        </>
+      )}
+    </TabContent>
+    <TabContent activeTab={roomTab} tabId="instances" className="space-y-3 pt-2">
+      {loading && !data ? (
+        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+          <FontAwesomeIcon icon={faSpinner} spin /> 正在扫描本地实例...
+        </p>
+      ) : (
+        <>
+      {noHostInfo && (
+        <p className="text-xs text-muted-foreground">房主未提供版本信息，无法匹配本地实例</p>
+      )}
+      {!noHostInfo && instances.length === 0 && mods.length > 0 && (
+        <p className="text-xs text-muted-foreground">没有与房主游戏版本/loader 相同的本地实例</p>
+      )}
+      {matched.length > 0 && (
+        <div className="space-y-1.5">
+          <Label>一致实例（{matched.length}）</Label>
+          {matched.map(inst => (
+            <div key={inst.instanceId} className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{inst.name}</div>
+                <div className="text-xs text-muted-foreground">
+                  {inst.gameVersion}{inst.loader ? ` · ${inst.loader} ${inst.loaderVersion ?? ''}` : ''}
+                  <span className="ml-2 text-emerald-600 dark:text-emerald-400">mods 一致 ({inst.modCount})</span>
                 </div>
-                <Button size="sm" onClick={() => onLaunch(inst.instanceId)} disabled={launching !== null}>
-                  {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
-                  快捷启动
-                </Button>
               </div>
-            ))}
-          </div>
-        )}
-        {unmatched.length > 0 && (
-          <div className="mt-1 space-y-1">
-            {unmatched.map(inst => (
-              <div key={inst.instanceId} className="flex items-center gap-2 rounded border border-border/50 px-3 py-1.5 text-sm">
-                <span className="min-w-0 flex-1 truncate">{inst.name}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">mods 不一致 ({inst.modCount})</span>
+              <Button size="sm" onClick={() => onLaunch(inst.instanceId)} disabled={launching !== null}>
+                {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
+                快捷启动
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {unmatched.length > 0 && (
+        <div className="space-y-1">
+          <Label>不一致实例（{unmatched.length}）可忽略差异启动</Label>
+          {unmatched.map(inst => (
+            <div key={inst.instanceId} className="flex items-center gap-2 rounded border border-border/50 px-3 py-1.5 text-sm">
+              <div className="min-w-0 flex-1">
+                <div className="truncate">{inst.name}</div>
+                <div className="text-xs text-muted-foreground">mods 不一致 ({inst.modCount})</div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onLaunch(inst.instanceId)}
+                disabled={launching !== null}
+                title="忽略 mod 差异，直接以此为本地实例加入房间"
+              >
+                {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
+                忽略差异强制启动
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {!noHostInfo && instances.length === 0 && mods.length === 0 && (
+        <p className="text-xs text-muted-foreground">暂无可用本地实例</p>
+      )}
+        </>
+      )}
+    </TabContent>
+    </>
   )
 }
 
@@ -599,14 +662,7 @@ export default function Connect() {
                 {status.gameInfo.loader ? ` · ${status.gameInfo.loader} ${status.gameInfo.loaderVersion ?? ''}` : ''}
               </p>
             )}
-            <PlayerList players={status.players} />
-            {matchLoading && !matchData ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <FontAwesomeIcon icon={faSpinner} spin /> 正在扫描本地实例与房主 mods 比对...
-              </div>
-            ) : (
-              <RoomModsCard data={matchData} onLaunch={handleQuickLaunch} launching={launchingMatch} hostVersion={status.gameInfo?.gameVersion ?? ''} />
-            )}
+            <RoomModsCard data={matchData} onLaunch={handleQuickLaunch} launching={launchingMatch} hostVersion={status.gameInfo?.gameVersion ?? ''} players={status.players} loading={matchLoading} />
             <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
               <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />退出房间
             </Button>

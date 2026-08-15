@@ -1130,6 +1130,9 @@ pub struct MatchedInstance {
     pub matched: bool,
     /// 本地实例 mods 数量（比对用）
     pub mod_count: usize,
+    /// 内部：本地实例的 mods sha1 集合（serde 跳过，仅用于 best-matching 实例缺失比对，不分发给前端）
+    #[serde(skip)]
+    pub local_hashes: HashSet<String>,
 }
 
 /// GET /connector/match-instances 响应：房主 mods + 本地匹配实例列表。
@@ -1138,6 +1141,12 @@ pub struct MatchedInstance {
 pub struct MatchInstancesResponse {
     /// 房主 mods（qml:game_mods 拉取结果；房主不支持时为空列表）
     pub mods: Vec<GameModEntry>,
+    /// 本地"最佳匹配"实例缺失的房主 mod 的 sha1（按房主 mods 原有顺序）。
+    /// 参考实例 = 覆盖房主 mods（sha1 命中）最多的本地同版本实例；无同版本实例时全部视为缺失。
+    /// 前端据此给房主 Mods 列表加"缺失"标记。
+    pub missing_hashes: Vec<String>,
+    /// 作为缺失判定参考的本地实例（best-matching）名称；无同版本实例时为 None。
+    pub reference_instance: Option<String>,
     /// 按房主版本/loader 筛选并比对后的本地实例
     pub instances: Vec<MatchedInstance>,
 }
@@ -1183,8 +1192,16 @@ async fn match_instances(
     // 房主无版本信息（host_port 手动建房 / 不支持 qml:game_info）：无法筛选，
     // 返回空列表避免列出全部实例误导（前端提示房主未提供版本信息）。
     if info.game_version.is_empty() {
+        // 房主无版本信息：无参考实例，房主全部 mods 均视为缺失。
+        let missing_hashes = room_mods
+            .iter()
+            .map(|m| m.hash.clone())
+            .filter(|h| !h.is_empty())
+            .collect();
         return Ok(Json(MatchInstancesResponse {
             mods: room_mods,
+            missing_hashes,
+            reference_instance: None,
             instances: Vec::new(),
         }));
     }
@@ -1264,6 +1281,7 @@ async fn match_instances(
                 loader_version: inst.loader_version,
                 matched,
                 mod_count: local_hashes.len(),
+                local_hashes,
             }
         })
     });
@@ -1273,8 +1291,27 @@ async fn match_instances(
             results.push(item);
         }
     }
+    // 以"覆盖房主 mods（sha1 命中）最多的本地实例"作为参考，计算其缺失的房主 mod。
+    // 无同版本实例时（results 为空）房主全部 mods 视为缺失。
+    let best: Option<&MatchedInstance> = results.iter().max_by_key(|r| {
+        r.local_hashes
+            .iter()
+            .filter(|h| room_hashes.contains(*h))
+            .count()
+    });
+    let reference_instance = best.map(|r| r.name.clone());
+    let missing_hashes: Vec<String> = room_mods
+        .iter()
+        .map(|m| m.hash.clone())
+        .filter(|h| {
+            !h.is_empty()
+                && best.map_or(true, |r| !r.local_hashes.contains(h))
+        })
+        .collect();
     Ok(Json(MatchInstancesResponse {
         mods: room_mods,
+        missing_hashes,
+        reference_instance,
         instances: results,
     }))
 }

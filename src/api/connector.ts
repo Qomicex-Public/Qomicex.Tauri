@@ -70,6 +70,10 @@ export interface MatchedInstance {
 
 export interface MatchInstancesResponse {
   mods: GameModEntry[]
+  /** 参考实例缺失的房主 mod 的 sha1（按房主 mods 顺序）；用于给房主 Mods 列表加"缺失"标记 */
+  missingHashes: string[]
+  /** 作为缺失判定参考的本地实例（覆盖房主 mods 最多）名称；无同版本实例时为 null */
+  referenceInstance: string | null
   instances: MatchedInstance[]
 }
 
