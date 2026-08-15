@@ -10,6 +10,7 @@ import { ApiError } from '../api/client.ts'
 import { openFolder } from '../api/settings.ts'
 import { Button } from './ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
+import { useI18n } from '../i18n/index.tsx'
 import type { ShaderMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 
@@ -26,6 +27,7 @@ interface Props {
 }
 
 export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, loader, onDelete, compact, selected, onSelect }: Props) {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -36,10 +38,10 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
     try {
       const { deleteShaderPack } = await import('../api/instance-files.ts')
       await deleteShaderPack(instanceId, shader.fileName)
-      notify(`已删除「${shader.name}」`, 'success')
+      notify(t('dialogs.common.deleted', { name: shader.name }), 'success')
       onDelete(shader.fileName)
     } catch (e) {
-      notify(`删除失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+      notify(t('dialogs.common.deleteFailed', { error: e instanceof ApiError ? e.displayMessage : t('dialogs.common.unknownError') }), 'error')
       setDeleting(false)
     }
   }, [instanceId, shader.fileName, shader.name, onDelete, notify])
@@ -47,8 +49,8 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
   const contextItems: ContextMenuItem[] = []
 
   contextItems.push({
-    label: '打开文件夹',
-    onClick: () => openFolder(gameDir + '/shaderpacks').catch(() => notify('打开失败', 'error')),
+    label: t('dialogs.common.openFolder'),
+    onClick: () => openFolder(gameDir + '/shaderpacks').catch(() => notify(t('dialogs.common.openFailed'), 'error')),
   })
 
   if (shader.curseForgeId || shader.modrinthId) {
@@ -60,13 +62,13 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
     if (instanceId) params.set('instanceId', instanceId)
     const id = shader.curseForgeId?.toString() ?? shader.modrinthId ?? ''
     contextItems.push({
-      label: '查看详情',
+      label: t('dialogs.common.viewDetail'),
       onClick: () => navigate(`/resource-center/${encodeURIComponent(id)}?${params.toString()}&expandBody=1`),
     })
   }
 
   contextItems.push({
-    label: '删除',
+    label: t('common.delete'),
     onClick: () => setConfirmOpen(true),
     danger: true,
   })
@@ -111,15 +113,15 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
     </ContextMenu>
     <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
       <DialogHeader onClose={() => setConfirmOpen(false)}>
-        <DialogTitle>删除光影包</DialogTitle>
+        <DialogTitle>{t('dialogs.confirmDelete.titleShader')}</DialogTitle>
       </DialogHeader>
       <DialogBody>
-        <p className="text-sm text-muted-foreground">确定要删除光影包「{shader.name}」吗？将被移至回收站。</p>
+        <p className="text-sm text-muted-foreground">{t('dialogs.confirmDelete.bodyShader', { name: shader.name })}</p>
       </DialogBody>
       <DialogFooter>
-        <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>取消</Button>
+        <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>{t('common.cancel')}</Button>
         <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
-          {deleting ? '删除中...' : '删除'}
+          {deleting ? t('dialogs.common.deleting') : t('common.delete')}
         </Button>
       </DialogFooter>
     </Dialog>

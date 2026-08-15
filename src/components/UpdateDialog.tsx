@@ -7,6 +7,7 @@ import { Button } from './ui'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowUp, faRotate, faDownload, faCheckCircle } from '@fortawesome/free-solid-svg-icons'
 import { cn } from '../lib/utils.ts'
+import { useI18n } from '../i18n/index.tsx'
 
 interface Props {
   open: boolean
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export default function UpdateDialog({ open, update, onClose }: Props) {
+  const { t } = useI18n()
   const [state, setState] = useState<'idle' | 'downloading' | 'installing' | 'error' | 'done'>('idle')
   const [progress, setProgress] = useState(0)
 
@@ -44,34 +46,34 @@ export default function UpdateDialog({ open, update, onClose }: Props) {
       <DialogHeader onClose={onClose}>
         <DialogTitle>
           <FontAwesomeIcon icon={faArrowUp} className="mr-2 h-4 w-4 text-muted-foreground" />
-          发现新版本 {update.version}
+          {t('dialogs.update.foundNew', { version: update.version })}
         </DialogTitle>
       </DialogHeader>
       <DialogBody>
         <div className="max-h-56 overflow-y-auto rounded-lg bg-background p-3 text-sm leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
-          <Markdown>{update.body || '暂无更新说明'}</Markdown>
+          <Markdown>{update.body || t('dialogs.update.noNotes')}</Markdown>
         </div>
       </DialogBody>
       <DialogFooter className="gap-2">
-        {state === 'error' && <span className="text-xs text-destructive">下载失败</span>}
+        {state === 'error' && <span className="text-xs text-destructive">{t('dialogs.update.downloadFailed')}</span>}
         {state === 'done' && (
           <span className="flex items-center gap-1 text-xs text-primary">
             <FontAwesomeIcon icon={faCheckCircle} className="h-3 w-3" />
-            更新完成
+            {t('dialogs.update.done')}
           </span>
         )}
         {state === 'downloading' && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-            <span>下载中 {progress}%</span>
+            <span>{t('dialogs.update.downloading', { progress })}</span>
           </div>
         )}
         {state === 'idle' && (
-          <Button variant="outline" size="sm" onClick={onClose}>下次再说</Button>
+          <Button variant="outline" size="sm" onClick={onClose}>{t('dialogs.update.later')}</Button>
         )}
         <Button size="sm" onClick={handleDownload} disabled={state === 'downloading' || state === 'installing'}>
           <FontAwesomeIcon icon={state === 'downloading' ? faRotate : faDownload} className={cn('mr-1 h-3 w-3', state === 'downloading' && 'animate-spin')} />
-          {state === 'installing' ? '安装中...' : state === 'downloading' ? '下载中...' : '立即更新'}
+          {state === 'installing' ? t('dialogs.update.installing') : state === 'downloading' ? t('dialogs.update.downloadingAction') : t('dialogs.update.updateNow')}
         </Button>
       </DialogFooter>
     </Dialog>

@@ -6,6 +6,7 @@ import { Button } from './ui'
 import { cn } from '../lib/utils.ts'
 import { getResourceVersions } from '../api/resource.ts'
 import { changeModVersion } from '../api/instance-files.ts'
+import { useI18n } from '../i18n/index.tsx'
 import type { ModMetadata, ResourceVersion } from '../types/index.ts'
 
 interface VersionPickerDialogProps {
@@ -21,6 +22,7 @@ interface VersionPickerDialogProps {
 export default function VersionPickerDialog({
   open, onClose, mod, instanceId, gameVersion, loader, onDone,
 }: VersionPickerDialogProps) {
+  const { t } = useI18n()
   const [versions, setVersions] = useState<ResourceVersion[]>([])
   const [loading, setLoading] = useState(false)
   const [installing, setInstalling] = useState<string | null>(null)
@@ -60,15 +62,15 @@ export default function VersionPickerDialog({
   return (
     <Dialog open={open} onClose={onClose}>
       <DialogHeader onClose={onClose}>
-        <DialogTitle>更换版本 — {mod?.name}</DialogTitle>
+        <DialogTitle>{t('dialogs.versionPicker.title', { name: mod?.name ?? '' })}</DialogTitle>
       </DialogHeader>
       <DialogBody>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载版本列表...
+            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('dialogs.versionPicker.loadingVersions')}
           </div>
         ) : versions.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">没有可用的版本</div>
+          <div className="py-8 text-center text-sm text-muted-foreground">{t('dialogs.versionPicker.noVersions')}</div>
         ) : (
           <div className="max-h-80 space-y-1 overflow-y-auto">
             {versions.map((v) => (
@@ -89,9 +91,9 @@ export default function VersionPickerDialog({
                   disabled={installing !== null}
                 >
                   {installing === v.id ? (
-                    <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />更换中...</>
+                    <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />{t('dialogs.versionPicker.switching')}</>
                   ) : (
-                    <><FontAwesomeIcon icon={faArrowRightArrowLeft} className="h-3 w-3" />更换</>
+                    <><FontAwesomeIcon icon={faArrowRightArrowLeft} className="h-3 w-3" />{t('dialogs.versionPicker.switch')}</>
                   )}
                 </Button>
               </div>
@@ -100,7 +102,7 @@ export default function VersionPickerDialog({
         )}
       </DialogBody>
       <DialogFooter>
-        <Button variant="outline" size="sm" onClick={onClose} disabled={installing !== null}>取消</Button>
+        <Button variant="outline" size="sm" onClick={onClose} disabled={installing !== null}>{t('common.cancel')}</Button>
       </DialogFooter>
     </Dialog>
   )

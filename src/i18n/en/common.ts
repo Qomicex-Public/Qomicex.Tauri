@@ -41,4 +41,6 @@ export default {
   action: 'Action',
   detail: 'Details',
   optional: 'Optional',
+  javaRuntimeRequired: 'Launching Minecraft requires a Java runtime.\n\nYou can install Java quickly via Settings → Java → Download Java, or add an existing Java path manually.',
+  javaRuntimeRequiredTitle: 'No Java runtime detected',
 } as const

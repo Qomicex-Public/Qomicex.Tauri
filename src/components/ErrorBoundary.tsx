@@ -1,4 +1,5 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react'
+import { useI18n } from '../i18n/index.tsx'
 
 interface Props {
   children: ReactNode
@@ -8,6 +9,24 @@ interface Props {
 interface State {
   hasError: boolean
   error: Error | null
+}
+
+function FallbackView({ error, onRetry }: { error: Error | null; onRetry: () => void }) {
+  const { t } = useI18n()
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8">
+      <p className="text-destructive font-medium">{t('tools.errors.pageRenderError')}</p>
+      <p className="max-w-md text-center text-sm text-muted-foreground">
+        {error?.message}
+      </p>
+      <button
+        onClick={onRetry}
+        className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90"
+      >
+        {t('common.retry')}
+      </button>
+    </div>
+  )
 }
 
 export default class ErrorBoundary extends Component<Props, State> {
@@ -28,18 +47,10 @@ export default class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       if (this.props.fallback) return this.props.fallback
       return (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8">
-          <p className="text-destructive font-medium">页面渲染异常</p>
-          <p className="max-w-md text-center text-sm text-muted-foreground">
-            {this.state.error?.message}
-          </p>
-          <button
-            onClick={() => this.setState({ hasError: false, error: null })}
-            className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90"
-          >
-            重试
-          </button>
-        </div>
+        <FallbackView
+          error={this.state.error}
+          onRetry={() => this.setState({ hasError: false, error: null })}
+        />
       )
     }
     return this.props.children

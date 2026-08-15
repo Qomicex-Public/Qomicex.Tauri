@@ -4,6 +4,7 @@ import { faTrashCan, faExpand } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui'
 import { Button } from './ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
+import { useI18n } from '../i18n/index.tsx'
 import type { ScreenshotMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export default function ScreenshotCard({ screenshot, instanceId, onRefresh, selected, onSelect }: Props) {
+  const { t } = useI18n()
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [preview, setPreview] = useState(false)
@@ -45,7 +47,7 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh, sele
         </div>
         <div className={cn('absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200 z-10', selected ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0')} />
         <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Tooltip content="删除">
+          <Tooltip content={t('common.delete')}>
             <button onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">
               <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
             </button>
@@ -64,15 +66,15 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh, sele
 
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
         <DialogHeader onClose={() => setConfirmOpen(false)}>
-          <DialogTitle>删除截图</DialogTitle>
+          <DialogTitle>{t('dialogs.confirmDelete.titleScreenshot')}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <p className="text-sm text-muted-foreground">确定要删除截图「{screenshot.fileName}」吗？将被移至回收站。</p>
+          <p className="text-sm text-muted-foreground">{t('dialogs.confirmDelete.bodyScreenshot', { name: screenshot.fileName })}</p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>取消</Button>
+          <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>{t('common.cancel')}</Button>
           <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
-            {deleting ? '删除中...' : '删除'}
+            {deleting ? t('dialogs.common.deleting') : t('common.delete')}
           </Button>
         </DialogFooter>
       </Dialog>

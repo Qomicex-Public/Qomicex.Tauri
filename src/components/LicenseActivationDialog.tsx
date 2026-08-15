@@ -9,6 +9,7 @@ import type { LicenseStatus } from '../api/license.ts'
 import { faKey, faShieldHalved, faCopy, faCheck, faRightFromBracket } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { exit } from '@tauri-apps/plugin-process'
+import { useI18n } from '../i18n/index.tsx'
 
 interface Props {
   open: boolean
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export default function LicenseActivationDialog({ open, onActivated, onClose }: Props) {
+  const { t } = useI18n()
   const [token, setToken] = useState('')
   const [machineCode, setMachineCode] = useState('')
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null)
@@ -31,7 +33,7 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
       fetchLicenseStatus().then(s => {
         setMachineCode(s.machineCode || '')
         setLicenseStatus(s)
-      }).catch(() => setMachineCode('加载失败'))
+      }).catch(() => setMachineCode(t('dialogs.license.loadFailed')))
     }
   }, [open])
 
@@ -44,10 +46,10 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
       if (res.success) {
         onActivated?.()
       } else {
-        setError(res.error || '激活失败')
+        setError(res.error || t('dialogs.license.activateFailed'))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : '激活失败')
+      setError(e instanceof Error ? e.message : t('dialogs.license.activateFailed'))
     } finally {
       setLoading(false)
     }
@@ -58,7 +60,7 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
       <DialogHeader onClose={onClose}>
         <DialogTitle>
           <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-muted-foreground" />
-          激活许可证
+          {t('dialogs.license.title')}
         </DialogTitle>
       </DialogHeader>
       <DialogBody className="space-y-4">
@@ -66,11 +68,11 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
           <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-primary">
             <FontAwesomeIcon icon={faKey} className="h-4 w-4 shrink-0" />
             <div>
-              <div className="font-medium">许可证已激活</div>
+              <div className="font-medium">{t('dialogs.license.active')}</div>
               {licenseStatus.licenseId && (
                 <div className="text-xs text-muted-foreground">
-                  ID: {licenseStatus.licenseId}
-                  {licenseStatus.expireAt && ` · 过期: ${licenseStatus.isPermanent ? '永久' : licenseStatus.expireAt}`}
+                  {t('dialogs.license.id', { licenseId: licenseStatus.licenseId })}
+                  {licenseStatus.expireAt && ` · ${t('dialogs.license.expireAt', { date: licenseStatus.isPermanent ? t('dialogs.license.permanent') : licenseStatus.expireAt })}`}
                 </div>
               )}
             </div>
@@ -78,8 +80,8 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
         )}
         <div className="rounded-lg bg-muted p-3 text-sm">
           <div className="flex items-center justify-between">
-            <div className="text-xs text-muted-foreground">本机机器码</div>
-            <Tooltip content={copied ? '已复制' : '复制机器码'}>
+            <div className="text-xs text-muted-foreground">{t('dialogs.license.machineCode')}</div>
+            <Tooltip content={copied ? t('common.copied') : t('dialogs.license.copyMachineCode')}>
               <Button
                 variant="ghost"
                 size="sm"
@@ -95,32 +97,32 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
               </Button>
             </Tooltip>
           </div>
-          <div className="mt-1 font-mono text-xs break-all select-all">{machineCode || '加载中...'}</div>
+          <div className="mt-1 font-mono text-xs break-all select-all">{machineCode || t('common.loading')}</div>
         </div>
         <div className="space-y-2">
-          <Label>许可证 Token</Label>
+          <Label>{t('dialogs.license.tokenLabel')}</Label>
           <Input
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder="粘贴管理员提供的许可证 Token..."
+            placeholder={t('dialogs.license.tokenPlaceholder')}
             className="font-mono text-sm"
           />
-          <p className="text-xs text-muted-foreground">联系管理员获取新许可证 Token。输入后点击激活按钮进行验证。</p>
+          <p className="text-xs text-muted-foreground">{t('dialogs.license.tokenHint')}</p>
         </div>
         {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       </DialogBody>
       <DialogFooter>
         {onClose && (
-          <Button variant="ghost" onClick={onClose}>关闭</Button>
+          <Button variant="ghost" onClick={onClose}>{t('common.close')}</Button>
         )}
         {!onClose && (
           <Button variant="ghost" onClick={() => exit(0)} className="gap-1.5 text-muted-foreground">
             <FontAwesomeIcon icon={faRightFromBracket} className="h-3 w-3" />
-            退出启动器
+            {t('dialogs.license.exitLauncher')}
           </Button>
         )}
         <Button onClick={handleActivate} disabled={!token.trim() || loading}>
-          {loading ? '验证中...' : '激活'}
+          {loading ? t('dialogs.license.verifying') : t('dialogs.license.activate')}
         </Button>
       </DialogFooter>
     </Dialog>

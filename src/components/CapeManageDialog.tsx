@@ -1,5 +1,6 @@
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from './ui'
 import { capeDisplayName } from '../lib/cape-names.ts'
+import { useI18n } from '../i18n/index.tsx'
 import type { McCape } from '../types/index.ts'
 
 interface Props {
@@ -13,15 +14,16 @@ interface Props {
 
 /** 披风管理弹窗（图库式网格：方形缩略图 + 名称 + 选中高亮）。 */
 export function CapeManageDialog({ open, onClose, mcCapes, capeImages, capeBusy, onToggle }: Props) {
+  const { t } = useI18n()
   return (
     <Dialog open={open} onClose={onClose} className="max-w-lg">
       <DialogHeader onClose={onClose}>
-        <DialogTitle>切换披风</DialogTitle>
+        <DialogTitle>{t('dialogs.cape.title')}</DialogTitle>
       </DialogHeader>
       <DialogBody>
         {mcCapes.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted-foreground">
-            {capeBusy ? '加载中...' : '该账户暂无可用披风'}
+            {capeBusy ? t('common.loading') : t('dialogs.cape.noCapes')}
           </p>
         ) : (
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
@@ -43,7 +45,7 @@ export function CapeManageDialog({ open, onClose, mcCapes, capeImages, capeBusy,
                       />
                     ) : (
                       <span className="text-[10px] text-muted-foreground">
-                        加载中
+                        {t('dialogs.cape.loadingShort')}
                       </span>
                     )}
                   </div>
@@ -52,12 +54,12 @@ export function CapeManageDialog({ open, onClose, mcCapes, capeImages, capeBusy,
                   </span>
                   {active && (
                     <span className="absolute right-1.5 top-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">
-                      使用中
+                      {t('dialogs.cape.inUse')}
                     </span>
                   )}
                   {!active && (
                     <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-xs font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
-                      点击装备
+                      {t('dialogs.cape.clickToEquip')}
                     </span>
                   )}
                 </button>

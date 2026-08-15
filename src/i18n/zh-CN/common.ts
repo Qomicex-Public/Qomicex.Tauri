@@ -41,4 +41,6 @@ export default {
   action: '操作',
   detail: '详情',
   optional: '可选',
+  javaRuntimeRequired: '启动 Minecraft 需要 Java 运行时环境。\n\n你可以使用「设置 → Java → 下载 Java」功能快速安装，或手动添加已安装的 Java 路径。',
+  javaRuntimeRequiredTitle: '未检测到 Java 运行时',
 } as const

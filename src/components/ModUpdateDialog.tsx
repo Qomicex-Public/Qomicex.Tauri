@@ -6,6 +6,7 @@ import { Button } from './ui'
 import { checkModUpdates } from '../api/instance-files.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { useMessageBox } from './ui'
+import { useI18n } from '../i18n/index.tsx'
 import type { ModUpdateEntry } from '../types/index.ts'
 
 interface ModUpdateDialogProps {
@@ -17,6 +18,7 @@ interface ModUpdateDialogProps {
 }
 
 export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onUpdatesFound }: ModUpdateDialogProps) {
+  const { t } = useI18n()
   const { notify } = useMessageBox()
   const [updates, setUpdates] = useState<ModUpdateEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -33,7 +35,7 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
         setSelected(new Set(list.map(u => u.fileName)))
         onUpdatesFound?.(list)
       })
-      .catch(() => notify('检查更新失败', 'error'))
+      .catch(() => notify(t('dialogs.modUpdate.checkFailed'), 'error'))
       .finally(() => setLoading(false))
   }, [open, instanceId, notify])
 
@@ -54,26 +56,27 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
       const result = await updateModsViaDownloadCenter(
         instanceId,
         toUpdate,
-        (n) => notify(`已加入下载列表 ${n} 个任务`, 'success')
+        (n) => notify(t('dialogs.modUpdate.addedToDownloadList', { count: n }), 'success'),
+        t
       )
       const failNames = result.failedFileNames.length > 0 && result.failedFileNames.length <= 3
         ? `：${result.failedFileNames.join('、')}`
         : ''
       if (result.failed === 0) {
-        notify(`已更新 ${result.success} 个模组`, 'success')
+        notify(t('dialogs.modUpdate.updatedCount', { count: result.success }), 'success')
       } else {
-        notify(`完成 ${result.success} 个，失败 ${result.failed} 个${failNames}`, 'error')
+        notify(t('dialogs.modUpdate.completedWithFailed', { success: result.success, failed: result.failed, failNames }), 'error')
       }
       onDone()
       onClose()
-    } catch { notify('批量更新失败', 'error') }
+    } catch { notify(t('dialogs.modUpdate.batchFailed'), 'error') }
     setUpdating(false)
   }, [updates, selected, instanceId, notify, onDone, onClose])
 
   return (
     <Dialog open={open} onClose={onClose}>
       <DialogHeader onClose={onClose}>
-        <DialogTitle>检查模组更新</DialogTitle>
+        <DialogTitle>{t('dialogs.modUpdate.title')}</DialogTitle>
       </DialogHeader>
       <DialogBody>
         {loading ? (
@@ -81,7 +84,7 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
             <FontAwesomeIcon icon={faRotate} className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         ) : updates.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">所有模组已是最新版本</p>
+          <p className="py-4 text-center text-sm text-muted-foreground">{t('dialogs.modUpdate.allUpToDate')}</p>
         ) : (
           <div className="max-h-80 space-y-1 overflow-y-auto">
             {updates.map(u => (
@@ -107,12 +110,12 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
         )}
       </DialogBody>
       <DialogFooter>
-        <Button variant="ghost" onClick={onClose}>取消</Button>
+        <Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
         <Button
           onClick={handleUpdate}
           disabled={loading || updating || selected.size === 0}
         >
-          {updating ? '更新中...' : `更新 ${selected.size} 个模组`}
+          {updating ? t('dialogs.modUpdate.updating') : t('dialogs.modUpdate.updateCount', { count: selected.size })}
         </Button>
       </DialogFooter>
     </Dialog>

@@ -8,23 +8,14 @@ import { parseModpackFile, startModpackInstall, getInstallProgress } from '../ap
 import type { ModpackParseResult, InstallProgressResponse } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
 import { addTask } from '../stores/downloadStore.ts'
+import { useI18n } from '../i18n/index.tsx'
 
-const STAGE_LABELS: Record<string, string> = {
-  'queued': '排队中',
-  'downloading-json': '下载版本 JSON',
-  'downloading': '下载游戏文件',
-  'downloading-libraries': '下载支持库',
-  'downloading-assets': '下载资源文件',
-  'downloading-mainjar': '下载主文件',
-  'downloading-loader': '下载加载器',
-  'downloading-loader-libs': '下载加载器库',
-  'installing-loader': '安装加载器',
-  'downloading-addons': '下载附加内容',
-  'downloading-modpack': '下载整合包',
-  'parsing-modpack': '解析整合包',
-  'modpack-files': '下载整合包文件',
-  'modpack-overrides': '解压覆盖文件',
-}
+const STAGE_KEYS: readonly string[] = [
+  'queued', 'downloading-json', 'downloading', 'downloading-libraries',
+  'downloading-assets', 'downloading-mainjar', 'downloading-loader',
+  'downloading-loader-libs', 'installing-loader', 'downloading-addons',
+  'downloading-modpack', 'parsing-modpack', 'modpack-files', 'modpack-overrides',
+]
 
 interface Props {
   open: boolean
@@ -34,6 +25,7 @@ interface Props {
 }
 
 export default function ImportDialog({ open, onClose, gameDir, versionIsolation }: Props) {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -77,7 +69,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
       setInstanceName(result.name)
       setStep('preview')
     } catch (e: any) {
-      setError(e.message || '解析失败')
+      setError(e.message || t('dialogs.import.parseFailed'))
       setStep('select')
     }
   }
@@ -117,7 +109,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
       })
       setInstallingInstanceId(instanceId)
     } catch (e: any) {
-      setError(e.message || '安装失败')
+      setError(e.message || t('dialogs.import.installFailed'))
       setStep('preview')
     }
   }
@@ -138,7 +130,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   return (
     <Dialog open={open} onClose={() => { reset(); onClose() }}>
       <DialogHeader onClose={onClose}>
-        <DialogTitle>导入整合包</DialogTitle>
+        <DialogTitle>{t('dialogs.import.title')}</DialogTitle>
       </DialogHeader>
       <DialogBody>
         {step === 'select' && (
@@ -155,46 +147,46 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
         )}
 
         {step === 'parsing' && (
-          <p className="text-muted-foreground">正在解析整合包文件...</p>
+          <p className="text-muted-foreground">{t('dialogs.import.parsing')}</p>
         )}
 
         {step === 'preview' && parsed && (
           <div className="space-y-4">
             <div>
-              <Label>整合包名称</Label>
+              <Label>{t('dialogs.import.modpackName')}</Label>
               <p className="text-sm font-medium">{parsed.name}</p>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>游戏版本</Label>
+                <Label>{t('dialogs.import.gameVersion')}</Label>
                 <p className="text-sm">{parsed.gameVersion}</p>
               </div>
               <div>
-                <Label>加载器</Label>
+                <Label>{t('dialogs.import.loader')}</Label>
                 <p className="text-sm">{parsed.loader} {parsed.loaderVersion}</p>
               </div>
             </div>
             <Separator />
             <div>
-              <Label htmlFor="inst-name">实例名称</Label>
+              <Label htmlFor="inst-name">{t('dialogs.import.instanceName')}</Label>
               <Input id="inst-name" value={instanceName} onChange={e => setInstanceName(e.target.value)} />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => { reset(); onClose() }}>取消</Button>
-              <Button onClick={handleInstall}>开始安装</Button>
+              <Button variant="outline" onClick={() => { reset(); onClose() }}>{t('common.cancel')}</Button>
+              <Button onClick={handleInstall}>{t('dialogs.import.startInstall')}</Button>
             </div>
           </div>
         )}
 
         {step === 'installing' && (
           <div className="space-y-4">
-            {!progress && <p className="text-muted-foreground">正在连接...</p>}
+            {!progress && <p className="text-muted-foreground">{t('dialogs.import.connecting')}</p>}
             {progress && !isComplete && !isFailed && (
               <>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">安装中：{instanceName}</span>
+                    <span className="text-muted-foreground">{t('dialogs.import.installing', { name: instanceName })}</span>
                     <span className="font-medium">{Math.round(progress.progress)}%</span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -202,7 +194,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span>{STAGE_LABELS[progress.stage] ?? STAGE_LABELS[progress.status] ?? (progress.stage || progress.status)}</span>
+                  <span>{STAGE_KEYS.includes(progress.stage) ? t(`dialogs.stage.${progress.stage}`) : (STAGE_KEYS.includes(progress.status) ? t(`dialogs.stage.${progress.status}`) : (progress.stage || progress.status))}</span>
                   {progress.currentFileProgress > 0 && <span>({Math.round(progress.currentFileProgress)}%)</span>}
                   {progress.totalFiles != null && progress.totalFiles > 0 && <span>{progress.completedFiles ?? 0}/{progress.totalFiles}</span>}
                 </div>
@@ -213,26 +205,26 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             )}
             {isComplete && (
               <div className="text-center text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">✓ 安装完成！</p>
-                <p className="mt-1">整合包已成功安装为实例「{instanceName}」</p>
+                <p className="font-medium text-foreground">{t('dialogs.import.completed')}</p>
+                <p className="mt-1">{t('dialogs.import.completedDetail', { name: instanceName })}</p>
               </div>
             )}
             {isFailed && (
               <div className="text-sm text-destructive">
-                安装失败：{progress?.error || error || '请查看下载页了解详情'}
+                {t('dialogs.import.failedWith', { error: progress?.error || error || t('dialogs.import.seeDownloadPage') })}
               </div>
             )}
             <div className="flex justify-end gap-2">
               {(isComplete || isFailed) && installingInstanceId && (
                 <Button variant="outline" onClick={() => { reset(); onClose(); navigate(`/instances/${installingInstanceId}`) }}>
-                  查看实例
+                  {t('dialogs.import.viewInstance')}
                 </Button>
               )}
               {!isComplete && !isFailed && (
-                <Button variant="outline" onClick={() => { reset(); onClose() }}>后台下载</Button>
+                <Button variant="outline" onClick={() => { reset(); onClose() }}>{t('dialogs.import.backgroundDownload')}</Button>
               )}
               {(isComplete || isFailed) && (
-                <Button onClick={() => { reset(); onClose() }}>关闭</Button>
+                <Button onClick={() => { reset(); onClose() }}>{t('common.close')}</Button>
               )}
             </div>
           </div>

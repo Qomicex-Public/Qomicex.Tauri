@@ -10,43 +10,45 @@ const DEFAULT_TIMEOUT_MS = 30 * 60_000
 /** 无任何字节进度达到该时长即判定停滞（慢速但持续下载不会被误标为失败） */
 const STALL_TIMEOUT_MS = 120_000
 
-function errorMessage(status: string): string {
+type TFunc = (key: string, params?: Record<string, string | number>) => string
+
+function errorMessage(status: string, t: TFunc): string {
   switch (status) {
-    case 'not_found': return '任务已过期（后端未报告该会话）'
-    case 'timeout': return '下载超时（可能仍在后台进行）'
-    case 'stalled': return '下载停滞（长时间无进度）'
-    case 'cancelled': return '下载已取消'
-    default: return '下载失败'
+    case 'not_found': return t('dialogs.common.taskExpired')
+    case 'timeout': return t('dialogs.common.downloadTimeout')
+    case 'stalled': return t('dialogs.common.downloadStalled')
+    case 'cancelled': return t('dialogs.common.cancelled')
+    default: return t('dialogs.common.downloadFailed')
   }
 }
 
-function terminalUpdate(taskId: string, status: string): void {
+function terminalUpdate(taskId: string, status: string, t: TFunc): void {
   if (status === 'completed') {
     updateTask(taskId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
   } else {
-    updateTask(taskId, { status: 'failed', progress: 0, error: errorMessage(status) })
+    updateTask(taskId, { status: 'failed', progress: 0, error: errorMessage(status, t) })
   }
 }
 
-async function waitForCompletion(taskId: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<string> {
+async function waitForCompletion(taskId: string, t: TFunc, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<string> {
   const deadline = Date.now() + timeoutMs
   let lastBytes = -1
   let lastMoveAt = Date.now()
   while (true) {
     const p = await getResourceDownloadProgress(taskId)
     if (p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled' || p.status === 'not_found') {
-      terminalUpdate(taskId, p.status)
+      terminalUpdate(taskId, p.status, t)
       return p.status
     }
     if (p.downloadedBytes !== lastBytes) {
       lastBytes = p.downloadedBytes
       lastMoveAt = Date.now()
     } else if (Date.now() - lastMoveAt >= STALL_TIMEOUT_MS) {
-      terminalUpdate(taskId, 'stalled')
+      terminalUpdate(taskId, 'stalled', t)
       return 'stalled'
     }
     if (Date.now() >= deadline) {
-      terminalUpdate(taskId, 'timeout')
+      terminalUpdate(taskId, 'timeout', t)
       return 'timeout'
     }
     updateTask(taskId, {
@@ -73,7 +75,9 @@ export async function updateModsViaDownloadCenter(
   instanceId: string,
   updates: ModUpdateEntry[],
   onAdded?: (added: number) => void,
+  t?: TFunc,
 ): Promise<UpdateModsResult> {
+  const tf: TFunc = t ?? ((k: string) => k)
   const started = await Promise.all(updates.map(async (u): Promise<{ taskId: string; u: ModUpdateEntry; startError?: string }> => {
     try {
       const { taskId } = await startResourceDownload(instanceId, u.downloadUrl, u.newFileName, 'mod')
@@ -104,7 +108,7 @@ export async function updateModsViaDownloadCenter(
         taskId: failedTaskId,
         currentFile: u.newFileName,
         createdAt: new Date().toISOString(),
-        error: e instanceof Error ? `下载启动失败：${e.message}` : '下载启动失败',
+        error: e instanceof Error ? `${tf('dialogs.common.startFailed')}：${e.message}` : tf('dialogs.common.startFailed'),
       })
       return { taskId: failedTaskId, u, startError: e instanceof Error ? e.message : String(e) }
     }
@@ -114,7 +118,7 @@ export async function updateModsViaDownloadCenter(
   const results = await Promise.all(started.map(async ({ taskId, u, startError }): Promise<{ ok: boolean; fileName: string }> => {
     if (startError) return { ok: false, fileName: u.fileName }
     try {
-      const status = await waitForCompletion(taskId)
+      const status = await waitForCompletion(taskId, tf)
       if (status === 'completed') {
         await deleteMod(instanceId, u.fileName)
         return { ok: true, fileName: u.fileName }

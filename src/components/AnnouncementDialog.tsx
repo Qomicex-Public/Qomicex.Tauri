@@ -4,6 +4,7 @@ import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
+import { useI18n } from '../i18n/index.tsx'
 import type { Announcement } from '../api/announcements.ts'
 
 interface AnnouncementDialogProps {
@@ -17,6 +18,7 @@ interface AnnouncementDialogProps {
 }
 
 export function AnnouncementDialog({ open, onClose, announcement, onNext, hasNext, onPrev, hasPrev }: AnnouncementDialogProps) {
+  const { t } = useI18n()
   if (!announcement) return null
 
   const date = new Date(announcement.createdAt).toLocaleDateString('zh-CN', {
@@ -42,12 +44,12 @@ export function AnnouncementDialog({ open, onClose, announcement, onNext, hasNex
       </DialogBody>
       <DialogFooter>
         {hasPrev && onPrev && (
-          <Button variant="secondary" onClick={onPrev}>上一个</Button>
+          <Button variant="secondary" onClick={onPrev}>{t('common.prev')}</Button>
         )}
         {hasNext && onNext && (
-          <Button variant="secondary" onClick={onNext}>下一个</Button>
+          <Button variant="secondary" onClick={onNext}>{t('common.next')}</Button>
         )}
-        <Button onClick={onClose}>知道了</Button>
+        <Button onClick={onClose}>{t('dialogs.announcement.gotIt')}</Button>
       </DialogFooter>
     </Dialog>
   )

@@ -5,6 +5,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { Button } from '../components/ui'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import * as accountApi from '../api/account.ts'
+import { useI18n } from '../i18n/index.tsx'
 import type { Account } from '../types/index.ts'
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export function AccountSelectDialog({ open, onClose, onSelect }: Props) {
+  const { t } = useI18n()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [selectedUuid, setSelectedUuid] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -44,14 +46,14 @@ export function AccountSelectDialog({ open, onClose, onSelect }: Props) {
   return (
     <Dialog open={open} onClose={onClose} className="max-w-sm">
       <DialogHeader onClose={onClose}>
-        <DialogTitle>选择默认账户</DialogTitle>
+        <DialogTitle>{t('dialogs.accountSelect.title')}</DialogTitle>
       </DialogHeader>
       <DialogBody>
-        <p className="mb-4 text-xs text-muted-foreground">请选择一个账户作为默认账户，启动游戏时将使用该账户。</p>
+        <p className="mb-4 text-xs text-muted-foreground">{t('dialogs.accountSelect.description')}</p>
         {loading ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">加载中...</div>
+          <div className="py-8 text-center text-sm text-muted-foreground">{t('common.loading')}</div>
         ) : accounts.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">暂无账户</div>
+          <div className="py-8 text-center text-sm text-muted-foreground">{t('dialogs.accountSelect.noAccounts')}</div>
         ) : (
           <div className="space-y-1.5 max-h-60 overflow-y-auto">
             {accounts.map((acc) => {
@@ -83,9 +85,9 @@ export function AccountSelectDialog({ open, onClose, onSelect }: Props) {
         )}
       </DialogBody>
       <DialogFooter>
-        <Button variant="secondary" onClick={onClose}>取消</Button>
+        <Button variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
         <Button onClick={handleConfirm} disabled={!selectedUuid || loading}>
-          确认
+          {t('common.confirm')}
         </Button>
       </DialogFooter>
     </Dialog>

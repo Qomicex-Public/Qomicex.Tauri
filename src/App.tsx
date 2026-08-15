@@ -19,7 +19,7 @@ import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
 import useCloseGuard from './hooks/useCloseGuard.ts'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
 import { loadSettings, onSettingsChange, type AppSettings } from './api/settings.ts'
-import { I18nProvider } from './i18n/index.tsx'
+import { I18nProvider, useI18n } from './i18n/index.tsx'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
@@ -54,6 +54,7 @@ function AppContent() {
   const [backendState, setBackendState] = useState<'loading' | 'ready' | 'error'>('loading')
   const { closeWithGuard, Provider } = useCloseGuard()
   const { alert } = useMessageBox()
+  const { t } = useI18n()
   const { crashDialogState, clearCrashDialog } = useRunning()
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
@@ -87,7 +88,7 @@ function AppContent() {
         await loadCustomRuntimes()
         if (!hasAnyRuntimes()) await scanRuntimes('quick')
         if (!getRuntimes().some(r => r.state === 'Valid')) {
-          alert('启动 Minecraft 需要 Java 运行时环境。\n\n你可以使用「设置 → Java → 下载 Java」功能快速安装，或手动添加已安装的 Java 路径。', '未检测到 Java 运行时')
+          alert(t('common.javaRuntimeRequired'), t('common.javaRuntimeRequiredTitle'))
         }
       } catch {}
     })()

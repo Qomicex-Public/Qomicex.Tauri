@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { cn } from '../lib/utils.ts'
 import { Button } from './ui'
+import { useI18n } from '../i18n/index.tsx'
 
 interface SplashScreenProps {
   state: 'loading' | 'ready' | 'error'
@@ -8,6 +9,7 @@ interface SplashScreenProps {
 }
 
 export function SplashScreen({ state, onRetry }: SplashScreenProps) {
+  const { t } = useI18n()
   const [progress, setProgress] = useState(0)
   const [exiting, setExiting] = useState(false)
   const [mounted, setMounted] = useState(true)
@@ -52,14 +54,14 @@ export function SplashScreen({ state, onRetry }: SplashScreenProps) {
         </div>
         {state === 'loading' && (
           <p className="text-sm text-muted-foreground">
-            {progress < 60 ? '正在准备启动...' : '即将就绪...'}
+            {progress < 60 ? t('tools.splash.preparing') : t('tools.splash.almostReady')}
           </p>
         )}
       </div>
       {state === 'error' && (
         <div className="flex flex-col items-center gap-3">
-          <p className="text-sm text-destructive font-medium">启动失败</p>
-          <Button onClick={onRetry}>重试</Button>
+          <p className="text-sm text-destructive font-medium">{t('running.launchFailedTitle')}</p>
+          <Button onClick={onRetry}>{t('common.retry')}</Button>
         </div>
       )}
     </div>

@@ -14,6 +14,7 @@ import { getInstalledFileNames, getModsMetadata, deleteMod } from '../api/instan
 import { startResourceDownload } from '../api/resource-download.ts'
 import { addTask, updateTask } from '../stores/downloadStore.ts'
 import { useMessageBox } from './ui'
+import { useI18n } from '../i18n/index.tsx'
 import type { GameInstance, ModMetadata, ResourceVersion, ResolvedDependency } from '../types/index.ts'
 
 interface ResourceInstallDialogProps {
@@ -43,6 +44,7 @@ function versionCacheKey(resourceId: string, gameVersion: string, loader: string
 export default function ResourceInstallDialog({
   open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId, initialVersionId,
 }: ResourceInstallDialogProps) {
+  const { t } = useI18n()
   const { notify } = useMessageBox()
   const [instances, setInstances] = useState<GameInstance[]>([])
   const [selectedInstance, setSelectedInstance] = useState<GameInstance | null>(null)
@@ -78,7 +80,7 @@ export default function ResourceInstallDialog({
     setSearchQuery('')
     ;(async () => {
       setLoadingInstance(true)
-      setLoadStage('加载实例列表中...')
+      setLoadStage(t('dialogs.resourceInstall.loadingInstances'))
       try {
         const settings = await loadSettings()
         const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
@@ -90,7 +92,7 @@ export default function ResourceInstallDialog({
           const target = instanceId ? all.find(i => i.id === instanceId) : undefined
           setSelectedInstance(target ?? all.find(i => i.isDefault) ?? all[0])
         }
-      } catch { notify('加载实例列表失败', 'error') }
+      } catch { notify(t('dialogs.resourceInstall.instancesLoadFailed'), 'error') }
       setLoadingInstance(false)
       setLoadStage('')
     })()
@@ -134,7 +136,7 @@ export default function ResourceInstallDialog({
           const match = vlist.find(v => v.id === initialVersionId)
           if (match) setSelectedVersion(match)
         }
-      } catch { notify('加载版本列表失败', 'error') }
+      } catch { notify(t('dialogs.resourceInstall.versionsLoadFailed'), 'error') }
       if (!cancelled) setLoadingVersions(false)
     })()
     return () => { cancelled = true }
@@ -194,7 +196,7 @@ export default function ResourceInstallDialog({
           }
           setDepVersionOptions(vMap)
         }
-      } catch { notify('加载前置模组失败', 'error') }
+      } catch { notify(t('dialogs.resourceInstall.depsLoadFailed'), 'error') }
       if (!cancelled) setLoadingDeps(false)
     })()
     return () => { cancelled = true }
@@ -233,7 +235,7 @@ export default function ResourceInstallDialog({
       try { await deleteMod(selectedInstance.id, d.fileName) } catch { /* skip */ }
     }
     const mainFile = selectedVersion.downloads[0]
-    if (!mainFile) { setInstallError('该版本没有可下载的文件'); setInstalling(false); return }
+    if (!mainFile) { setInstallError(t('dialogs.resourceInstall.noDownloadableFile')); setInstalling(false); return }
     allItems.push({ url: mainFile.url, fileName: mainFile.fileName, category, name: resourceTitle })
 
     const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -266,7 +268,7 @@ export default function ResourceInstallDialog({
           status: i + 1 === allItems.length ? 'completed' : 'downloading',
         })
       } catch (e) {
-        const errMsg = `${item.name} 下载失败: ${e instanceof Error ? e.message : '未知错误'}`
+        const errMsg = t('dialogs.resourceInstall.downloadFailedWith', { name: item.name, error: e instanceof Error ? e.message : t('dialogs.common.unknownError') })
         updateTask(batchId, { status: 'failed', progress: (i / allItems.length) * 100, error: errMsg })
         setInstallError(errMsg)
         setInstalling(false)
@@ -275,7 +277,7 @@ export default function ResourceInstallDialog({
       }
     }
     setInstallProgress(null)
-    notify(`安装完成：${resourceTitle}`, 'success')
+    notify(t('dialogs.resourceInstall.installedDone', { name: resourceTitle }), 'success')
     setInstalling(false)
     onClose()
   }, [selectedInstance, selectedVersion, deps, installedNames, installedByProjectId, category, resourceTitle, notify, onClose])
@@ -289,21 +291,21 @@ export default function ResourceInstallDialog({
           ) : (
             <FontAwesomeIcon icon={faLayerGroup} className="h-4 w-4 text-muted-foreground" />
           )}
-          安装 {resourceTitle}
+          {t('dialogs.resourceInstall.title', { name: resourceTitle })}
         </DialogTitle>
       </DialogHeader>
 
       <DialogBody className="space-y-4">
         <div className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">选择实例</span>
+          <span className="text-xs font-medium text-muted-foreground">{t('dialogs.resourceInstall.selectInstance')}</span>
           {loadingInstance ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-              {loadStage || '加载中...'}
+              {loadStage || t('common.loading')}
             </div>
           ) : instances.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
-              暂无实例，请先创建实例
+              {t('dialogs.resourceInstall.noInstances')}
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -312,7 +314,7 @@ export default function ResourceInstallDialog({
                 <Input
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="搜索实例..."
+                  placeholder={t('dialogs.resourceInstall.searchPlaceholder')}
                   className="h-8 pl-8 text-xs"
                 />
               </div>
@@ -335,7 +337,7 @@ export default function ResourceInstallDialog({
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{inst.name}</div>
                     <div className="text-[11px] opacity-60">
-                      {inst.gameVersion}{inst.loader ? ` · ${inst.loader}` : ''}{inst.isDefault ? ' · 默认' : ''}
+                      {inst.gameVersion}{inst.loader ? ` · ${inst.loader}` : ''}{inst.isDefault ? ` · ${t('dialogs.resourceInstall.default')}` : ''}
                     </div>
                   </div>
                 </button>
@@ -346,15 +348,15 @@ export default function ResourceInstallDialog({
         </div>
 
         <div className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">选择版本</span>
+          <span className="text-xs font-medium text-muted-foreground">{t('dialogs.resourceInstall.selectVersion')}</span>
           {!selectedInstance ? (
             <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
-              请先选择一个实例
+              {t('dialogs.resourceInstall.selectInstanceFirst')}
             </div>
           ) : loadingVersions ? (
             <div className="flex items-center gap-2 rounded-lg border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
               <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-              正在加载版本列表...
+              {t('dialogs.resourceInstall.loadingVersions')}
             </div>
           ) : (
             <Select
@@ -364,9 +366,9 @@ export default function ResourceInstallDialog({
                 setSelectedVersion(v ?? null)
               }}
             >
-              <SelectOption value="">请选择版本</SelectOption>
+              <SelectOption value="">{t('dialogs.resourceInstall.selectVersionPlaceholder')}</SelectOption>
               {versionOptions.length === 0 ? (
-                <SelectOption value="" disabled>无可用版本</SelectOption>
+                <SelectOption value="" disabled>{t('dialogs.resourceInstall.noVersions')}</SelectOption>
               ) : (
                 versionOptions.map(v => (
                   <SelectOption key={v.id} value={v.id}>{v.versionNumber}</SelectOption>
@@ -379,16 +381,16 @@ export default function ResourceInstallDialog({
         {selectedVersion && category === 'mod' && (
           <div className="space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">
-              前置模组 {loadingDeps && <FontAwesomeIcon icon={faRotate} className="ml-1 h-3 w-3 animate-spin" />}
+              {t('dialogs.resourceInstall.depsTitle')} {loadingDeps && <FontAwesomeIcon icon={faRotate} className="ml-1 h-3 w-3 animate-spin" />}
             </span>
             {loadingDeps ? (
               <div className="flex items-center gap-2 rounded-lg border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
                 <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-                正在解析前置模组...
+                {t('dialogs.resourceInstall.parsingDeps')}
               </div>
             ) : deps.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
-                无前置模组
+                {t('dialogs.resourceInstall.noDeps')}
               </div>
             ) : (
               <div className="grid gap-1.5 max-h-[200px] overflow-y-auto">
@@ -459,12 +461,12 @@ export default function ResourceInstallDialog({
                       {installed ? (
                         <span className="inline-flex items-center gap-1 text-emerald-400 shrink-0">
                           <FontAwesomeIcon icon={faCheckCircle} className="h-3 w-3" />
-                          已安装
+                          {t('dialogs.resourceInstall.installed')}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-amber-400 shrink-0">
                           <FontAwesomeIcon icon={faCircle} className="h-3 w-3" />
-                          待安装
+                          {t('dialogs.resourceInstall.pending')}
                         </span>
                       )}
                     </div>
@@ -480,7 +482,7 @@ export default function ResourceInstallDialog({
             <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-                正在下载
+                {t('dialogs.resourceInstall.downloading')}
               </span>
               <span className="font-medium text-foreground/80">{installProgress.step} / {installProgress.total}</span>
             </div>
@@ -502,19 +504,19 @@ export default function ResourceInstallDialog({
             variant="ghost" size="sm" className="h-7 text-xs"
             onClick={() => { setInstallError(null); handleInstall() }}
           >
-            <FontAwesomeIcon icon={faRotate} className="mr-1 h-3 w-3" /> 重试
+            <FontAwesomeIcon icon={faRotate} className="mr-1 h-3 w-3" /> {t('common.retry')}
           </Button>
         </div>
       )}
 
       <DialogFooter>
-        <Button variant="secondary" onClick={onClose} disabled={installing}>{installError ? '关闭' : '取消'}</Button>
+        <Button variant="secondary" onClick={onClose} disabled={installing}>{installError ? t('common.close') : t('common.cancel')}</Button>
         <Button
           onClick={handleInstall}
           disabled={!selectedVersion || installing || loadingDeps || !!installError}
         >
           <FontAwesomeIcon icon={installing ? faRotate : faDownload} className={cn('mr-1.5 h-3.5 w-3.5', installing && 'animate-spin')} />
-          {installing && installProgress ? `正在下载 ${installProgress.name} (${installProgress.step}/${installProgress.total})` : installing ? '安装中...' : '确认安装'}
+          {installing && installProgress ? t('dialogs.resourceInstall.installingWithName', { name: installProgress.name, step: installProgress.step, total: installProgress.total }) : installing ? t('dialogs.resourceInstall.installing') : t('dialogs.resourceInstall.installConfirm')}
         </Button>
       </DialogFooter>
     </Dialog>

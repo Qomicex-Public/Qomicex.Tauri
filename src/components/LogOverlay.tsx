@@ -2,10 +2,12 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBug, faXmark, faChevronDown, faChevronUp } from '@fortawesome/free-solid-svg-icons'
 import { get } from '../api/client.ts'
+import { useI18n } from '../i18n/index.tsx'
 
 const MAX_VISIBLE = 50
 
 export default function LogOverlay() {
+  const { t } = useI18n()
   const [collapsed, setCollapsed] = useState(true)
   const [logs, setLogs] = useState<string[]>([])
   const [latest, setLatest] = useState('')
@@ -58,7 +60,7 @@ export default function LogOverlay() {
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <span className="text-xs font-medium text-muted-foreground">
             <FontAwesomeIcon icon={faBug} className="mr-1.5 h-3 w-3" />
-            调试日志 ({logs.length})
+            {t('tools.logs.debugLogsCount', { count: logs.length })}
           </span>
           <div className="flex items-center gap-1">
             <button onClick={() => setLogs([])} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
@@ -74,7 +76,7 @@ export default function LogOverlay() {
           className="h-48 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed"
         >
           {logs.length === 0 ? (
-            <span className="text-muted-foreground">暂无日志</span>
+            <span className="text-muted-foreground">{t('tools.logs.none')}</span>
           ) : (
             logs.slice(-MAX_VISIBLE).map((line, i) => (
               <div key={i} className="text-foreground/70 whitespace-pre-wrap border-b border-border/30 py-0.5 last:border-0">{line}</div>

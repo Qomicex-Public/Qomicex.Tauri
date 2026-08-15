@@ -11,8 +11,10 @@ import { cn } from '../lib/utils.ts'
 import { downloadTo } from '../api/resource-download.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { open } from '@tauri-apps/plugin-dialog'
+import { useI18n } from '../i18n/index.tsx'
 
 export default function ToolboxTab() {
+  const { t } = useI18n()
   const [url, setUrl] = useState('')
   const [targetDir, setTargetDir] = useState('')
   const [fileName, setFileName] = useState('')
@@ -63,7 +65,7 @@ export default function ToolboxTab() {
       setUrl('')
       setFileName('')
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '下载失败')
+      setError(e instanceof Error ? e.message : t('tools.toolbox.downloadFailed'))
     } finally {
       setDownloading(false)
     }
@@ -75,16 +77,16 @@ export default function ToolboxTab() {
         <CardHeader>
           <CardTitle>
             <FontAwesomeIcon icon={faDownload} className="mr-2 h-4 w-4 text-muted-foreground" />
-            自定义文件下载
+            {t('tools.toolbox.title')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            通过启动器下载任意文件到指定文件夹
+            {t('tools.toolbox.description')}
           </p>
 
           <div className="space-y-2">
-            <Label>下载地址 (URL)</Label>
+            <Label>{t('tools.toolbox.urlLabel')}</Label>
             <Input
               value={url}
               onChange={(e) => handleUrlChange(e.target.value)}
@@ -93,15 +95,15 @@ export default function ToolboxTab() {
           </div>
 
           <div className="space-y-2">
-            <Label>保存路径</Label>
+            <Label>{t('tools.toolbox.savePathLabel')}</Label>
             <div className="flex gap-2">
               <Input
                 value={fileName ? `${targetDir.replace(/[/\\]+$/, '')}/${fileName}` : ''}
                 readOnly
                 className="flex-1"
-                placeholder="选择文件夹后自动填充"
+                placeholder={t('tools.toolbox.autoFillPlaceholder')}
               />
-              <Tooltip content="选择文件夹">
+              <Tooltip content={t('tools.toolbox.pickFolder')}>
                 <Button variant="outline" size="icon" onClick={handlePickFolder} className="shrink-0">
                   <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
                 </Button>
@@ -121,7 +123,7 @@ export default function ToolboxTab() {
             className="w-full"
           >
             <FontAwesomeIcon icon={faDownload} className={cn('h-4 w-4', downloading && 'animate-spin')} />
-            <span>{downloading ? '提交中...' : '开始下载'}</span>
+            <span>{downloading ? t('tools.toolbox.submitting') : t('tools.toolbox.startDownload')}</span>
           </Button>
         </CardContent>
       </Card>

@@ -2,26 +2,17 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faRotate } from '@fortawesome/free-solid-svg-icons'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from './ui'
 import { useRunning } from '../contexts/RunningContext.tsx'
+import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
 
-const stageLabels: Record<string, string> = {
-  starting: '准备中',
-  checking: '检查文件完整性',
-  repairing: '补全文件',
-  'logging-in': '验证账户',
-  authlib: '配置外置登录',
-  natives: '解压原生库',
-  building: '构建启动参数',
-  preparing: '准备环境',
-  launching: '启动游戏',
-  running: '游戏运行中',
-  crashed: '游戏异常退出',
-  failed: '启动失败',
-  completed: '游戏已退出',
-  cancelled: '已取消',
-}
+const LAUNCH_STAGE_KEYS: readonly string[] = [
+  'starting', 'checking', 'repairing', 'logging-in', 'authlib', 'natives',
+  'building', 'preparing', 'launching', 'running', 'crashed', 'failed',
+  'completed', 'cancelled',
+]
 
 export default function LaunchProgressDialog() {
+  const { t } = useI18n()
   const { launchProgress, crashDialogState, cancelLaunch } = useRunning()
 
   if (!launchProgress) return null
@@ -38,12 +29,12 @@ export default function LaunchProgressDialog() {
   return (
     <Dialog open onClose={() => cancelLaunch()} closeOnBackdrop={isFinal} closeOnEsc={isFinal}>
       <DialogHeader onClose={() => cancelLaunch()}>
-        <DialogTitle>{isError ? '启动失败' : '启动游戏'}</DialogTitle>
+        <DialogTitle>{isError ? t('dialogs.launchProgress.titleFailed') : t('dialogs.launchProgress.title')}</DialogTitle>
       </DialogHeader>
       <DialogBody className="space-y-4">
         <div className="flex items-center justify-between text-sm">
           <span className={cn('font-medium', isError && 'text-destructive')}>
-            {stageLabels[launchProgress.stage] || launchProgress.stage}
+            {LAUNCH_STAGE_KEYS.includes(launchProgress.stage) ? t(`dialogs.launchProgress.stage.${launchProgress.stage}`) : launchProgress.stage}
           </span>
           <span className="text-muted-foreground">{Math.round(launchProgress.progress)}%</span>
         </div>
@@ -59,24 +50,24 @@ export default function LaunchProgressDialog() {
         )}
         {launchProgress.crashReport && (
           <details className="rounded-lg border border-border bg-muted/30">
-            <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">查看崩溃报告</summary>
+            <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">{t('dialogs.launchProgress.viewCrashReport')}</summary>
             <pre className="max-h-48 overflow-auto px-3 pb-3 text-[11px] text-muted-foreground">{launchProgress.crashReport}</pre>
           </details>
         )}
         {launchProgress.stage === 'running' && launchProgress.processId && (
-          <p className="text-xs text-muted-foreground">进程 ID: {launchProgress.processId}</p>
+          <p className="text-xs text-muted-foreground">{t('dialogs.launchProgress.processId', { pid: launchProgress.processId })}</p>
         )}
         {!isFinal ? (
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
             <span className="flex items-center gap-2">
               <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-              正在启动...
+              {t('dialogs.launchProgress.startingUp')}
             </span>
-            <button onClick={() => cancelLaunch()} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground">取消</button>
+            <button onClick={() => cancelLaunch()} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground">{t('common.cancel')}</button>
           </div>
         ) : (
           <div className="flex items-center justify-center gap-2 pt-2">
-            <button onClick={() => cancelLaunch()} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">关闭</button>
+            <button onClick={() => cancelLaunch()} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">{t('common.close')}</button>
           </div>
         )}
       </DialogBody>

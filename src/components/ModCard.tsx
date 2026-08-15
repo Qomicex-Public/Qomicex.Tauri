@@ -13,6 +13,7 @@ import { enableMod, disableMod, deleteMod } from '../api/instance-files.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useMessageBox } from './ui'
+import { useI18n } from '../i18n/index.tsx'
 import type { ModMetadata, ModUpdateEntry } from '../types/index.ts'
 
 interface ModCardProps {
@@ -34,6 +35,7 @@ export default function ModCard({
   mod, instanceId, gameVersion, loader, onRefresh, onToggle, onChangeVersion,
   selected, onSelect, update, onUpdated,
 }: ModCardProps) {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const hasUpdate = !!update
@@ -82,7 +84,7 @@ export default function ModCard({
   const contextItems: ContextMenuItem[] = []
   if (mod.mcmodId) {
     contextItems.push({
-      label: 'MC百科',
+      label: t('dialogs.mod.mcwiki'),
       onClick: () => openUrl(`https://www.mcmod.cn/class/${mod.mcmodId}`),
     })
   }
@@ -96,27 +98,27 @@ export default function ModCard({
     const id = mod.curseForgeId?.toString() ?? mod.modrinthId ?? ''
     const iconUrl = mod.iconUrl || (mod.iconBase64 ? `data:image/png;base64,${mod.iconBase64}` : '')
     contextItems.push({
-      label: '查看详情',
+      label: t('dialogs.common.viewDetail'),
       onClick: () => navigate(`/resource-center/${encodeURIComponent(id)}?${params.toString()}&expandBody=1`, { state: { iconUrl } }),
     })
   }
   contextItems.push(
-    { label: '更换版本', onClick: () => onChangeVersion(mod) },
+    { label: t('dialogs.mod.changeVersion'), onClick: () => onChangeVersion(mod) },
     {
-      label: '更新',
+      label: t('dialogs.mod.update'),
       disabled: !update,
       onClick: async () => {
         if (!update) return
         try {
-          const result = await updateModsViaDownloadCenter(instanceId, [update], () => notify('已加入下载列表', 'success'))
+          const result = await updateModsViaDownloadCenter(instanceId, [update], () => notify(t('dialogs.mod.addedToDownloadList'), 'success'), t)
           onUpdated?.(update.fileName)
           onRefresh()
-          if (result.failed === 0) notify(`已更新「${mod.name}」`, 'success')
-          else notify(`更新「${mod.name}」失败`, 'error')
-        } catch { notify('更新失败', 'error') }
+          if (result.failed === 0) notify(t('dialogs.mod.updatedWithName', { name: mod.name }), 'success')
+          else notify(t('dialogs.mod.updateFailedWithName', { name: mod.name }), 'error')
+        } catch { notify(t('dialogs.mod.updateFailed'), 'error') }
       },
     },
-    { label: '删除', onClick: () => setConfirmDelete(true), danger: true },
+    { label: t('common.delete'), onClick: () => setConfirmDelete(true), danger: true },
   )
 
   return (
@@ -151,13 +153,13 @@ export default function ModCard({
                   {mod.chineseName ? <>{mod.chineseName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {mod.name}</span></> : mod.name}
                 </h3>
                 {hasUpdate && (
-                  <Tooltip content={update ? `可更新至 ${update.latestVersion}` : ''}>
+                  <Tooltip content={update ? t('dialogs.mod.updateAvailableTo', { version: update.latestVersion }) : ''}>
                     <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-blue-500" />
                   </Tooltip>
                 )}
               </div>
               <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{mod.version || '未知版本'}</span>
+                <span>{mod.version || t('dialogs.mod.unknownVersion')}</span>
                 {mod.authors.length > 0 && (
                   <>
                     <span className="text-border">·</span>
@@ -171,7 +173,7 @@ export default function ModCard({
                 </p>
               )}
             </div>
-            <Tooltip content={mod.active ? '已启用' : '已禁用'}>
+            <Tooltip content={mod.active ? t('common.enabled') : t('common.disabled')}>
               <button
                 onClick={(e) => { e.stopPropagation(); handleToggle() }}
                 disabled={toggling}
@@ -198,15 +200,15 @@ export default function ModCard({
 
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)}>
         <DialogHeader onClose={() => setConfirmDelete(false)}>
-          <DialogTitle>删除 Mod</DialogTitle>
+          <DialogTitle>{t('dialogs.confirmDelete.titleMod')}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <p className="text-sm text-muted-foreground">确定要删除 Mod「{mod.name}」吗？将被移至回收站。</p>
+          <p className="text-sm text-muted-foreground">{t('dialogs.confirmDelete.bodyMod', { name: mod.name })}</p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setConfirmDelete(false)}>取消</Button>
+          <Button variant="outline" size="sm" onClick={() => setConfirmDelete(false)}>{t('common.cancel')}</Button>
           <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
-            {deleting ? '删除中...' : '删除'}
+            {deleting ? t('dialogs.common.deleting') : t('common.delete')}
           </Button>
         </DialogFooter>
       </Dialog>

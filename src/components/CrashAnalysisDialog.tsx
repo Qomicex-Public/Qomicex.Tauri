@@ -7,6 +7,7 @@ import { Tooltip } from './ui'
 import { Separator } from './ui'
 import { exportDiagnostics } from '../api/instance.ts'
 import { AnalysisResults } from './AnalysisResults.tsx'
+import { useI18n } from '../i18n/index.tsx'
 import type { LogAnalysisResult } from '../types/index.ts'
 
 export function CrashAnalysisDialog({ open, instanceId, title, message, detail, crashReport, args, analysis, analysisLoading, mcloGsUrl, qrCodeBase64, error, onClose }: {
@@ -24,6 +25,7 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
   error?: string | null
   onClose: () => void
 }) {
+  const { t } = useI18n()
   const [exporting, setExporting] = useState(false)
   const [exportErr, setExportErr] = useState('')
 
@@ -32,7 +34,7 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
   const logId = mcloGsUrl ? new URL(mcloGsUrl).pathname.replace(/^\//, '') : null
 
   const copyAll = () => {
-    const text = [title, message, detail && `详情:\n${detail}`, args && `启动参数:\n${args}`, crashReport && `崩溃报告:\n${crashReport}`, mcloGsUrl && `日志链接: ${mcloGsUrl}`].filter(Boolean).join('\n\n')
+    const text = [title, message, detail && t('dialogs.crashAnalysis.copyDetail', { detail }), args && t('dialogs.crashAnalysis.copyArgs', { args }), crashReport && t('dialogs.crashAnalysis.copyCrashReport', { crashReport }), mcloGsUrl && t('dialogs.crashAnalysis.copyLogLink', { url: mcloGsUrl })].filter(Boolean).join('\n\n')
     navigator.clipboard.writeText(text)
   }
 
@@ -43,7 +45,7 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
     try {
       await exportDiagnostics(instanceId)
     } catch (e: unknown) {
-      setExportErr(e instanceof Error ? e.message : '导出失败')
+      setExportErr(e instanceof Error ? e.message : t('dialogs.crashAnalysis.exportFailed'))
     } finally {
       setExporting(false)
     }
@@ -108,22 +110,22 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
                 >
                   <img src={qrCodeBase64} alt="QR Code" className="h-[120px] w-[120px] object-contain" />
                   {logId && <span className="text-[11px] font-mono text-muted-foreground">mclo.gs/{logId}</span>}
-                  <span className="text-[10px] text-muted-foreground">扫描查看完整日志</span>
+                  <span className="text-[10px] text-muted-foreground">{t('dialogs.crashAnalysis.scanQr')}</span>
                 </button>
               </div>
             )}
           </div>
 
-          {collapsibleSection('错误详情', detail)}
+          {collapsibleSection(t('dialogs.crashAnalysis.detail'), detail)}
 
-          {collapsibleSection('崩溃报告', crashReport)}
+          {collapsibleSection(t('dialogs.crashAnalysis.crashReport'), crashReport)}
 
-          {collapsibleSection('启动参数', args)}
+          {collapsibleSection(t('dialogs.crashAnalysis.launchArgs'), args)}
 
           {analysisLoading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
               <FontAwesomeIcon icon={faSpinner} className="h-3 w-3 animate-spin" />
-              正在分析崩溃报告...
+              {t('dialogs.crashAnalysis.analyzing')}
             </div>
           )}
 
@@ -135,11 +137,11 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
             <>
               <Separator />
               {analysisLoading ? (
-                <p className="text-sm text-muted-foreground">暂无分析结果</p>
+                <p className="text-sm text-muted-foreground">{t('dialogs.crashAnalysis.noResult')}</p>
               ) : analysis ? (
                 <AnalysisResults result={analysis} />
               ) : (
-                <p className="text-sm text-muted-foreground">暂无分析结果</p>
+                <p className="text-sm text-muted-foreground">{t('dialogs.crashAnalysis.noResult')}</p>
               )}
             </>
           )}
@@ -151,15 +153,15 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
 
         <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
           <Button variant="outline" size="sm" onClick={copyAll} className="gap-1.5 h-7 text-xs">
-            <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />复制全部
+            <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />{t('dialogs.crashAnalysis.copyAll')}
           </Button>
           {instanceId && (
             <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-1.5 h-7 text-xs">
               <FontAwesomeIcon icon={exporting ? faSpinner : faDownload} className={exporting ? 'h-3 w-3 animate-spin' : 'h-3 w-3'} />
-              {exporting ? '导出中...' : '导出诊断报告'}
+              {exporting ? t('dialogs.crashAnalysis.exporting') : t('dialogs.crashAnalysis.exportReport')}
             </Button>
           )}
-          <Button size="sm" onClick={onClose} className="h-7 text-xs">关闭</Button>
+          <Button size="sm" onClick={onClose} className="h-7 text-xs">{t('common.close')}</Button>
         </div>
       </div>
     </div>,

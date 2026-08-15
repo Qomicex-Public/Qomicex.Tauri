@@ -15,6 +15,7 @@ import {
 } from '../api/logs.ts'
 import type { LogEntry } from '../api/logs.ts'
 import { save } from '@tauri-apps/plugin-dialog'
+import { useI18n } from '../i18n/index.tsx'
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -32,6 +33,7 @@ function formatDate(iso: string): string {
 
 export default function LogTab() {
   const { notify, confirm: msgConfirm } = useMessageBox()
+  const { t } = useI18n()
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: LogEntry } | null>(null)
@@ -41,7 +43,7 @@ export default function LogTab() {
     try {
       setLogs(await listLogs())
     } catch {
-      notify('加载日志列表失败', 'error')
+      notify(t('tools.logs.loadFailed'), 'error')
     } finally {
       setLoading(false)
     }
@@ -65,12 +67,12 @@ export default function LogTab() {
       const dest = await save({ defaultPath: `${entry.name}.gz`, filters: [{ name: 'GZip', extensions: ['gz'] }] })
       if (!dest) return
       await exportLogTo(entry.path, dest)
-      notify(`已导出到 ${dest}`, 'success')
+      notify(t('tools.logs.exportedTo', { dest }), 'success')
     } catch {
       const a = document.createElement('a')
       a.href = getExportUrl(entry.path)
       a.click()
-      notify('已开始下载', 'success')
+      notify(t('tools.logs.downloadStarted'), 'success')
     }
   }
 
@@ -79,29 +81,29 @@ export default function LogTab() {
       const dest = await save({ defaultPath: `logs-${Date.now()}.zip`, filters: [{ name: 'Zip', extensions: ['zip'] }] })
       if (!dest) return
       await exportAllLogsTo(dest)
-      notify(`已导出到 ${dest}`, 'success')
+      notify(t('tools.logs.exportedTo', { dest }), 'success')
     } catch {
       const a = document.createElement('a')
       a.href = getExportAllUrl()
       a.click()
-      notify('已开始下载', 'success')
+      notify(t('tools.logs.downloadStarted'), 'success')
     }
   }
 
   const handleDelete = async (entry: LogEntry) => {
-    const ok = await msgConfirm(`确定要删除 "${entry.name}" 吗？`, '删除日志')
+    const ok = await msgConfirm(t('tools.logs.deleteConfirm', { name: entry.name }), t('tools.logs.deleteTitle'))
     if (!ok) return
     try {
       await deleteLog(entry.path)
-      notify('已删除', 'success')
+      notify(t('tools.logs.deleted'), 'success')
       fetchLogs()
     } catch {
-      notify('删除失败', 'error')
+      notify(t('tools.logs.deleteFailed'), 'error')
     }
   }
 
   const handleOpenDir = (entry: LogEntry) => {
-    openLogDir(entry.path).catch(() => notify('无法打开目录', 'error'))
+    openLogDir(entry.path).catch(() => notify(t('tools.logs.openDirFailed'), 'error'))
   }
 
   const handleContextMenu = (e: React.MouseEvent, entry: LogEntry) => {
@@ -117,7 +119,7 @@ export default function LogTab() {
         <CardHeader>
           <CardTitle>
             <FontAwesomeIcon icon={faFileLines} className="mr-2 h-4 w-4 text-muted-foreground" />
-            日志管理
+            {t('tools.logs.title')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -125,17 +127,17 @@ export default function LogTab() {
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={fetchLogs} disabled={loading}>
                 <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', loading && 'animate-spin')} />
-                刷新
+                {t('common.refresh')}
               </Button>
               <Button size="sm" variant="outline" onClick={handleExportAll} disabled={logs.length === 0}>
                 <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />
-                导出全部
+                {t('tools.logs.exportAll')}
               </Button>
             </div>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span>日志文件 <span className="font-medium text-foreground">{logs.length}</span></span>
+              <span>{t('tools.logs.filesLabel')} <span className="font-medium text-foreground">{logs.length}</span></span>
               {currentSessionCount > 0 && (
-                <span>当前会话 <span className="font-medium text-primary">{currentSessionCount}</span></span>
+                <span>{t('tools.logs.currentSession')} <span className="font-medium text-primary">{currentSessionCount}</span></span>
               )}
             </div>
           </div>
@@ -146,8 +148,8 @@ export default function LogTab() {
                 <FontAwesomeIcon icon={faFileLines} className="h-7 w-7 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-sm font-medium text-foreground">暂无日志</p>
-                <p className="mt-1 text-xs text-muted-foreground">启动器和后端运行时会产生日志文件</p>
+                <p className="text-sm font-medium text-foreground">{t('tools.logs.none')}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{t('tools.logs.emptyDescription')}</p>
               </div>
             </div>
           ) : (
@@ -166,7 +168,7 @@ export default function LogTab() {
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium truncate">{entry.name}</span>
                         {entry.isCurrentSession && (
-                          <Badge variant="default" className="shrink-0 h-5 px-1.5 text-[10px]">当前会话</Badge>
+                          <Badge variant="default" className="shrink-0 h-5 px-1.5 text-[10px]">{t('tools.logs.currentSession')}</Badge>
                         )}
                       </div>
                       <p className="mt-0.5 text-xs text-muted-foreground">
@@ -175,17 +177,17 @@ export default function LogTab() {
                     </div>
 
                     <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                      <Tooltip content="打开">
-                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openLog(entry.path).catch(() => notify('无法打开文件', 'error'))}>
+                      <Tooltip content={t('tools.logs.open')}>
+                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openLog(entry.path).catch(() => notify(t('tools.logs.openFailed'), 'error'))}>
                           <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
-                      <Tooltip content="导出 (.gz)">
+                      <Tooltip content={t('tools.logs.exportGz')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleExport(entry)}>
                           <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
-                      <Tooltip content="删除">
+                      <Tooltip content={t('common.delete')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive/70 hover:text-destructive" onClick={() => handleDelete(entry)}>
                           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
                         </Button>
@@ -202,10 +204,10 @@ export default function LogTab() {
             <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
               <FontAwesomeIcon icon={faInfoCircle} className="h-3.5 w-3.5 text-primary" />
               <span>
-                自动保留最近 10 条日志，超出自动清理最旧文件
-                {currentSessionCount > 0 && ` · ${currentSessionCount} 条当前会话`}
+                {t('tools.logs.retentionHint')}
+                {currentSessionCount > 0 && ` · ${t('tools.logs.currentSessionSuffix', { count: currentSessionCount })}`}
               </span>
-              <span className="ml-auto">{logs.length} 个文件</span>
+              <span className="ml-auto">{t('tools.logs.fileCountSuffix', { count: logs.length })}</span>
             </div>
           )}
         </CardContent>
@@ -221,26 +223,26 @@ export default function LogTab() {
             onClick={() => { openLog(contextMenu.entry.path).catch(() => {}); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
-            <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />打开
+            <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />{t('tools.logs.open')}
           </button>
           <button
             onClick={() => { handleOpenDir(contextMenu.entry); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
-            <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />打开所在目录
+            <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('tools.logs.openContainingDir')}
           </button>
           <button
             onClick={async () => { await handleExport(contextMenu.entry); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
-            <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />导出 (.gz)
+            <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('tools.logs.exportGz')}
           </button>
           <div className="my-1 border-t border-border" />
           <button
             onClick={() => { handleDelete(contextMenu.entry); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50"
           >
-            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />删除
+            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />{t('common.delete')}
           </button>
         </div>
       )}

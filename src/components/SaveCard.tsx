@@ -9,6 +9,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './u
 import { ContextMenu, type ContextMenuItem } from './ContextMenu.tsx'
 import type { SaveMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
+import { useI18n } from '../i18n/index.tsx'
 
 interface Props {
   save: SaveMetadata
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export default function SaveCard({ save, instanceId, onRefresh, selected, onSelect, onQuickJoin }: Props) {
+  const { t } = useI18n()
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -57,10 +59,10 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
   }, [instanceId, save.name, save.filePath, onRefresh])
 
   const contextItems: ContextMenuItem[] = [
-    { label: '备份', onClick: () => handleBackup() },
-    { label: '重命名', onClick: () => { setRenameValue(save.name); setRenaming(true) } },
-    ...(onQuickJoin ? [{ label: '快速进入', onClick: onQuickJoin }] : []),
-    { label: '删除', onClick: () => setConfirmOpen(true), danger: true },
+    { label: t('dialogs.save.backup'), onClick: () => handleBackup() },
+    { label: t('dialogs.save.rename'), onClick: () => { setRenameValue(save.name); setRenaming(true) } },
+    ...(onQuickJoin ? [{ label: t('dialogs.save.quickJoin'), onClick: onQuickJoin }] : []),
+    { label: t('common.delete'), onClick: () => setConfirmOpen(true), danger: true },
   ]
 
   return (
@@ -85,37 +87,37 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
                 className="h-7 text-sm"
                 autoFocus
               />
-              <Button size="sm" onClick={handleRename} className="h-7 text-xs">确定</Button>
-              <Button size="sm" variant="ghost" onClick={() => setRenaming(false)} className="h-7 text-xs">取消</Button>
+              <Button size="sm" onClick={handleRename} className="h-7 text-xs">{t('common.confirm')}</Button>
+              <Button size="sm" variant="ghost" onClick={() => setRenaming(false)} className="h-7 text-xs">{t('common.cancel')}</Button>
             </div>
           ) : (
             <>
               <h3 className="truncate text-sm font-semibold text-foreground">{save.name}</h3>
               {save.lastPlayed > 0 && (
-                <p className="mt-0.5 text-xs text-muted-foreground">上次游玩: {new Date(save.lastPlayed).toLocaleDateString('zh-CN')}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{t('dialogs.save.lastPlayed', { date: new Date(save.lastPlayed).toLocaleDateString('zh-CN') })}</p>
               )}
             </>
           )}
         </div>
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Tooltip content="备份">
+          <Tooltip content={t('dialogs.save.backup')}>
             <button onClick={(e) => { e.stopPropagation(); handleBackup() }} disabled={backingUp} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
               <FontAwesomeIcon icon={faCopy} className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
-          <Tooltip content="重命名">
+          <Tooltip content={t('dialogs.save.rename')}>
             <button onClick={(e) => { e.stopPropagation(); setRenameValue(save.name); setRenaming(true) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
               <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
           {onQuickJoin && (
-            <Tooltip content="快速进入">
+            <Tooltip content={t('dialogs.save.quickJoin')}>
               <button onClick={(e) => { e.stopPropagation(); onQuickJoin() }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
                 <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
           )}
-          <Tooltip content="删除">
+          <Tooltip content={t('common.delete')}>
             <button onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
               <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
             </button>
@@ -124,15 +126,15 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
       </CardContent>
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
         <DialogHeader onClose={() => setConfirmOpen(false)}>
-          <DialogTitle>删除存档</DialogTitle>
+          <DialogTitle>{t('dialogs.confirmDelete.titleSave')}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <p className="text-sm text-muted-foreground">确定要删除存档「{save.name}」吗？将被移至回收站。</p>
+          <p className="text-sm text-muted-foreground">{t('dialogs.confirmDelete.bodySave', { name: save.name })}</p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>取消</Button>
+          <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>{t('common.cancel')}</Button>
           <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
-            {deleting ? '删除中...' : '删除'}
+            {deleting ? t('dialogs.common.deleting') : t('common.delete')}
           </Button>
         </DialogFooter>
       </Dialog>

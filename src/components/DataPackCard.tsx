@@ -10,6 +10,7 @@ import { ApiError } from '../api/client.ts'
 import { openFolder } from '../api/settings.ts'
 import { Button } from './ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
+import { useI18n } from '../i18n/index.tsx'
 import type { DataPackMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 
@@ -25,6 +26,7 @@ interface Props {
 }
 
 export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, loader, onDelete, selected, onSelect }: Props) {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const [deleting, setDeleting] = useState(false)
@@ -35,10 +37,10 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
     try {
       const { deleteDataPack } = await import('../api/instance-files.ts')
       await deleteDataPack(instanceId, pack.fileName)
-      notify(`已删除「${pack.name}」`, 'success')
+      notify(t('dialogs.common.deleted', { name: pack.name }), 'success')
       onDelete(pack.fileName)
     } catch (e) {
-      notify(`删除失败: ${e instanceof ApiError ? e.displayMessage : '未知错误'}`, 'error')
+      notify(t('dialogs.common.deleteFailed', { error: e instanceof ApiError ? e.displayMessage : t('dialogs.common.unknownError') }), 'error')
       setDeleting(false)
     }
   }, [instanceId, pack.fileName, pack.name, onDelete, notify])
@@ -46,8 +48,8 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
   const contextItems: ContextMenuItem[] = []
 
   contextItems.push({
-    label: '打开文件夹',
-    onClick: () => openFolder(gameDir + '/datapacks').catch(() => notify('打开失败', 'error')),
+    label: t('dialogs.common.openFolder'),
+    onClick: () => openFolder(gameDir + '/datapacks').catch(() => notify(t('dialogs.common.openFailed'), 'error')),
   })
 
   if (pack.curseForgeId || pack.modrinthId) {
@@ -59,13 +61,13 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
     if (instanceId) params.set('instanceId', instanceId)
     const id = pack.curseForgeId?.toString() ?? pack.modrinthId ?? ''
     contextItems.push({
-      label: '查看详情',
+      label: t('dialogs.common.viewDetail'),
       onClick: () => navigate(`/resource-center/${encodeURIComponent(id)}?${params.toString()}&expandBody=1`),
     })
   }
 
   contextItems.push({
-    label: '删除',
+    label: t('common.delete'),
     onClick: () => setConfirmOpen(true),
     danger: true,
   })
@@ -110,15 +112,15 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
     </ContextMenu>
     <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
       <DialogHeader onClose={() => setConfirmOpen(false)}>
-        <DialogTitle>删除数据包</DialogTitle>
+        <DialogTitle>{t('dialogs.confirmDelete.titleDataPack')}</DialogTitle>
       </DialogHeader>
       <DialogBody>
-        <p className="text-sm text-muted-foreground">确定要删除数据包「{pack.name}」吗？将被移至回收站。</p>
+        <p className="text-sm text-muted-foreground">{t('dialogs.confirmDelete.bodyDataPack', { name: pack.name })}</p>
       </DialogBody>
       <DialogFooter>
-        <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>取消</Button>
+        <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>{t('common.cancel')}</Button>
         <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
-          {deleting ? '删除中...' : '删除'}
+          {deleting ? t('dialogs.common.deleting') : t('common.delete')}
         </Button>
       </DialogFooter>
     </Dialog>

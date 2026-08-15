@@ -11,12 +11,14 @@ import { get, post, API_BASE } from '../api/client.ts'
 import type { SystemInfo } from '../types/index.ts'
 import { useMessageBox } from './ui'
 import { clearAllTasks } from '../stores/downloadStore.ts'
+import { useI18n } from '../i18n/index.tsx'
 
 function LogCard() {
   const [logs, setLogs] = useState<string[]>([])
   const [autoScroll, setAutoScroll] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
   const { notify } = useMessageBox()
+  const { t } = useI18n()
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -51,28 +53,28 @@ function LogCard() {
   const handleDump = async () => {
     try {
       const res = await post<{ path: string }>('/diagnostics/dump')
-      notify(`日志已导出到: ${res.path}`, 'success')
+      notify(t('tools.debug.dumpExported', { path: res.path }), 'success')
     } catch { console.warn('Failed to dump logs') }
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faServer} className="mr-2 h-4 w-4 text-primary" />实时日志</CardTitle>
+        <CardTitle><FontAwesomeIcon icon={faServer} className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.liveLogs')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant={autoScroll ? 'default' : 'outline'} onClick={() => setAutoScroll(!autoScroll)} className="gap-1">
-            <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', autoScroll && 'animate-spin')} />自动滚动
+            <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', autoScroll && 'animate-spin')} />{t('tools.debug.autoScroll')}
           </Button>
           <Button size="sm" variant="outline" onClick={() => setLogs([])} className="gap-1">
-            <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />清空
+            <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />{t('tools.debug.clear')}
           </Button>
           <Button size="sm" variant="outline" onClick={handleExport} disabled={logs.length === 0} className="gap-1">
-            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />导出日志
+            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('tools.debug.exportLogs')}
           </Button>
           <Button size="sm" variant="outline" onClick={handleDump} className="gap-1">
-            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />触发 Dump
+            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('tools.debug.triggerDump')}
           </Button>
         </div>
         <div className="overflow-hidden rounded-lg border">
@@ -87,7 +89,7 @@ function LogCard() {
             className="h-80 overflow-y-auto bg-muted/30 p-3 font-mono text-xs leading-relaxed"
           >
             {logs.length === 0 ? (
-              <span className="text-muted-foreground">暂无日志...</span>
+              <span className="text-muted-foreground">{t('tools.debug.noLogs')}</span>
             ) : (
               logs.map((line, i) => <div key={i} className="text-foreground/80 whitespace-pre-wrap">{line}</div>)
             )}
@@ -104,6 +106,7 @@ function DiagnosticsCard() {
   const [apiTests, setApiTests] = useState<Record<string, { ok: boolean; latency: number }>>({})
   const [loading, setLoading] = useState(true)
   const [backendOk, setBackendOk] = useState(true)
+  const { t } = useI18n()
 
   useEffect(() => {
     let cancelled = false
@@ -141,25 +144,25 @@ function DiagnosticsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />启动器诊断</CardTitle>
+        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.diagnostics')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         {loading ? (
-          <div className="flex items-center gap-2 text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />加载中...</div>
+          <div className="flex items-center gap-2 text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('common.loading')}</div>
         ) : (
           <>
             {sysInfo && (
               <div>
-                <p className="font-medium text-xs text-muted-foreground mb-1">系统信息</p>
+                <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.systemInfo')}</p>
                 <p className="text-xs">OS: {sysInfo.osName} {sysInfo.architecture} | RAM: {(sysInfo.availableMemory / 1024).toFixed(1)} / {(sysInfo.memory / 1024).toFixed(1)} GiB</p>
               </div>
             )}
             <div>
-              <p className="font-medium text-xs text-muted-foreground mb-1">版本信息</p>
+              <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.versionInfo')}</p>
               <p className="text-xs">Launcher: {__APP_VERSION__} | React: 19 | Build: {import.meta.env.DEV ? 'dev' : 'release'}</p>
             </div>
             <div>
-              <p className="font-medium text-xs text-muted-foreground mb-1">连通状态</p>
+              <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.connectivity')}</p>
               <p className="text-xs space-x-3">
                 <span><FontAwesomeIcon icon={backendOk ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', backendOk ? 'text-green-500' : 'text-red-500')} />Backend</span>
                 {health ? (
@@ -176,7 +179,7 @@ function DiagnosticsCard() {
               </p>
             </div>
             <div>
-              <p className="font-medium text-xs text-muted-foreground mb-1">API 健康检查</p>
+              <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.apiHealthCheck')}</p>
               <div className="space-y-0.5">
                 {Object.entries(apiTests).map(([ep, r]) => (
                   <p key={ep} className="text-xs"><FontAwesomeIcon icon={r.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', r.ok ? 'text-green-500' : 'text-red-500')} />{ep} {r.ok ? `${r.latency}ms` : 'FAILED'}</p>
@@ -184,7 +187,7 @@ function DiagnosticsCard() {
               </div>
             </div>
             <div>
-              <p className="font-medium text-xs text-muted-foreground mb-1">路径信息</p>
+              <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.pathInfo')}</p>
               <p className="text-xs">API Base: {API_BASE}</p>
             </div>
           </>
@@ -196,21 +199,22 @@ function DiagnosticsCard() {
 
 function TogglesCard() {
   const { state, toggle } = useDebug()
+  const { t } = useI18n()
 
   const items: { key: keyof typeof state; label: string }[] = [
-    { key: 'disableAnimations', label: '禁用动画' },
-    { key: 'showComponentBoundaries', label: '显示组件边界' },
-    { key: 'simulateApiErrors', label: '模拟 API 错误' },
-    { key: 'networkLogging', label: '网络请求日志' },
-    { key: 'disableCaching', label: '禁用缓存' },
-    { key: 'logOverlay', label: '日志浮层（全局）' },
-    { key: 'showFps', label: '帧率显示（右上角）' },
+    { key: 'disableAnimations', label: t('tools.debug.toggleDisableAnimations') },
+    { key: 'showComponentBoundaries', label: t('tools.debug.toggleShowComponentBoundaries') },
+    { key: 'simulateApiErrors', label: t('tools.debug.toggleSimulateApiErrors') },
+    { key: 'networkLogging', label: t('tools.debug.toggleNetworkLogging') },
+    { key: 'disableCaching', label: t('tools.debug.toggleDisableCaching') },
+    { key: 'logOverlay', label: t('tools.debug.toggleLogOverlay') },
+    { key: 'showFps', label: t('tools.debug.toggleShowFps') },
   ]
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />调试开关（临时，重启归零）</CardTitle>
+        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.togglesTitle')}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 gap-3">
@@ -228,28 +232,29 @@ function TogglesCard() {
 
 function ClearDataCard() {
   const { confirm, notify } = useMessageBox()
+  const { t } = useI18n()
 
   async function handleClearDownloadTasks() {
-    const ok = await confirm('确定要清除所有下载任务列表吗？此操作不可撤销。', '清除下载任务')
+    const ok = await confirm(t('tools.debug.clearTasksConfirm'), t('tools.debug.clearTasksTitle'))
     if (!ok) return
     clearAllTasks()
-    notify('下载任务列表已清除', 'success')
+    notify(t('tools.debug.tasksCleared'), 'success')
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-destructive" />数据管理</CardTitle>
+        <CardTitle><FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-destructive" />{t('tools.debug.dataManagement')}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="flex items-center justify-between gap-4">
           <div className="space-y-1">
-            <p className="text-sm font-medium">下载任务列表</p>
-            <p className="text-xs text-muted-foreground">清除 localStorage 中的下载任务记录</p>
+            <p className="text-sm font-medium">{t('tools.debug.downloadTaskList')}</p>
+            <p className="text-xs text-muted-foreground">{t('tools.debug.clearTasksDescription')}</p>
           </div>
           <Button size="sm" variant="destructive" onClick={handleClearDownloadTasks} className="gap-1.5 shrink-0">
             <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />
-            清除下载任务列表
+            {t('tools.debug.clearTasksButton')}
           </Button>
         </div>
       </CardContent>

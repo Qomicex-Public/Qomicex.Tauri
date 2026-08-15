@@ -8,23 +8,14 @@ import { startModpackInstall, resolveModpack, getInstallProgress } from '../api/
 import type { ResourceVersion, InstallProgressResponse } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
 import { addTask, updateTask, removeTask } from '../stores/downloadStore.ts'
+import { useI18n } from '../i18n/index.tsx'
 
-const STAGE_LABELS: Record<string, string> = {
-  'queued': '排队中',
-  'downloading-json': '下载版本 JSON',
-  'downloading': '下载游戏文件',
-  'downloading-libraries': '下载支持库',
-  'downloading-assets': '下载资源文件',
-  'downloading-mainjar': '下载主文件',
-  'downloading-loader': '下载加载器',
-  'downloading-loader-libs': '下载加载器库',
-  'installing-loader': '安装加载器',
-  'downloading-addons': '下载附加内容',
-  'downloading-modpack': '下载整合包',
-  'parsing-modpack': '解析整合包',
-  'modpack-files': '下载整合包文件',
-  'modpack-overrides': '解压覆盖文件',
-}
+const STAGE_KEYS: readonly string[] = [
+  'queued', 'downloading-json', 'downloading', 'downloading-libraries',
+  'downloading-assets', 'downloading-mainjar', 'downloading-loader',
+  'downloading-loader-libs', 'installing-loader', 'downloading-addons',
+  'downloading-modpack', 'parsing-modpack', 'modpack-files', 'modpack-overrides',
+]
 
 interface ModpackInstallDialogProps {
   open: boolean
@@ -40,6 +31,7 @@ interface ModpackInstallDialogProps {
 export default function ModpackInstallDialog({
   open, onClose, modpackName, projectId, source, selectedVersion, gameDir, versionIsolation,
 }: ModpackInstallDialogProps) {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [step, setStep] = useState<'config' | 'installing'>('config')
@@ -66,7 +58,7 @@ export default function ModpackInstallDialog({
           if (p.status === 'completed') {
             updateTask(installingInstanceId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
           } else {
-            updateTask(installingInstanceId, { status: 'failed', progress: Math.round(p.progress), error: p.error || (p.status === 'cancelled' ? '已取消' : '安装失败') })
+            updateTask(installingInstanceId, { status: 'failed', progress: Math.round(p.progress), error: p.error || (p.status === 'cancelled' ? t('dialogs.modpackInstall.cancelled') : t('dialogs.modpackInstall.installFailed')) })
           }
         }
       } catch { /* retry next tick */ }
@@ -129,9 +121,9 @@ export default function ModpackInstallDialog({
     } catch (e: any) {
       updateTask(taskId, {
         status: 'failed',
-        error: e.message || '安装失败',
+        error: e.message || t('dialogs.modpackInstall.installFailed'),
       })
-      setError(e.message || '安装失败')
+      setError(e.message || t('dialogs.modpackInstall.installFailed'))
       setStep('config')
     }
   }
@@ -142,48 +134,48 @@ export default function ModpackInstallDialog({
   return (
     <Dialog open={open} onClose={() => { stopPolling(); onClose() }}>
       <DialogHeader onClose={() => { stopPolling(); onClose() }}>
-        <DialogTitle>安装整合包</DialogTitle>
+        <DialogTitle>{t('dialogs.modpackInstall.title')}</DialogTitle>
       </DialogHeader>
       <DialogBody className="space-y-4">
         {step === 'config' && (
           <>
             <div>
-              <Label>整合包</Label>
+              <Label>{t('dialogs.modpackInstall.modpackLabel')}</Label>
               <p className="text-sm font-medium">{modpackName}</p>
             </div>
             {selectedVersion && (
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>版本</Label>
+                  <Label>{t('common.version')}</Label>
                   <p className="text-sm">{selectedVersion.name}</p>
                 </div>
                 <div>
-                  <Label>游戏版本</Label>
+                  <Label>{t('dialogs.modpackInstall.gameVersion')}</Label>
                   <p className="text-sm">{selectedVersion.gameVersions.join(', ')}</p>
                 </div>
               </div>
             )}
             <Separator />
             <div>
-              <Label htmlFor="inst-name">实例名称</Label>
+              <Label htmlFor="inst-name">{t('dialogs.modpackInstall.instanceName')}</Label>
               <Input id="inst-name" value={instanceName} onChange={e => setInstanceName(e.target.value)} />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
             <DialogFooter className="border-0 px-0 pb-0">
-              <Button variant="outline" onClick={() => { stopPolling(); onClose() }}>取消</Button>
-              <Button onClick={handleInstall}>开始安装</Button>
+              <Button variant="outline" onClick={() => { stopPolling(); onClose() }}>{t('common.cancel')}</Button>
+              <Button onClick={handleInstall}>{t('dialogs.modpackInstall.startInstall')}</Button>
             </DialogFooter>
           </>
         )}
 
         {step === 'installing' && (
           <>
-            {!progress && <p className="text-muted-foreground">正在解析并安装...</p>}
+            {!progress && <p className="text-muted-foreground">{t('dialogs.modpackInstall.resolving')}</p>}
             {progress && !isComplete && !isFailed && (
               <>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">安装中：{instanceName}</span>
+                    <span className="text-muted-foreground">{t('dialogs.modpackInstall.installing', { name: instanceName })}</span>
                     <span className="font-medium">{Math.round(progress.progress)}%</span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -191,7 +183,7 @@ export default function ModpackInstallDialog({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span>{STAGE_LABELS[progress.stage] ?? STAGE_LABELS[progress.status] ?? (progress.stage || progress.status)}</span>
+                  <span>{STAGE_KEYS.includes(progress.stage) ? t(`dialogs.stage.${progress.stage}`) : (STAGE_KEYS.includes(progress.status) ? t(`dialogs.stage.${progress.status}`) : (progress.stage || progress.status))}</span>
                   {progress.currentFileProgress > 0 && <span>({Math.round(progress.currentFileProgress)}%)</span>}
                   {progress.totalFiles != null && progress.totalFiles > 0 && <span>{progress.completedFiles ?? 0}/{progress.totalFiles}</span>}
                 </div>
@@ -202,26 +194,26 @@ export default function ModpackInstallDialog({
             )}
             {isComplete && (
               <div className="text-center text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">✓ 安装完成！</p>
-                <p className="mt-1">整合包已成功安装为实例「{instanceName}」</p>
+                <p className="font-medium text-foreground">{t('dialogs.modpackInstall.completed')}</p>
+                <p className="mt-1">{t('dialogs.modpackInstall.completedDetail', { name: instanceName })}</p>
               </div>
             )}
             {isFailed && (
               <div className="text-sm text-destructive">
-                安装失败：{progress?.error || error || '请查看下载页了解详情'}
+                {t('dialogs.modpackInstall.failedWith', { error: progress?.error || error || t('dialogs.modpackInstall.seeDownloadPage') })}
               </div>
             )}
             <DialogFooter className="border-0 px-0 pb-0">
               {(isComplete || isFailed) && installingInstanceId && (
                 <Button variant="outline" onClick={() => { stopPolling(); onClose(); navigate(`/instances/${installingInstanceId}`) }}>
-                  查看实例
+                  {t('dialogs.modpackInstall.viewInstance')}
                 </Button>
               )}
               {!isComplete && !isFailed && (
-                <Button variant="outline" onClick={() => { stopPolling(); onClose() }}>后台下载</Button>
+                <Button variant="outline" onClick={() => { stopPolling(); onClose() }}>{t('dialogs.modpackInstall.backgroundDownload')}</Button>
               )}
               {(isComplete || isFailed) && (
-                <Button onClick={() => { stopPolling(); onClose() }}>关闭</Button>
+                <Button onClick={() => { stopPolling(); onClose() }}>{t('common.close')}</Button>
               )}
             </DialogFooter>
           </>
