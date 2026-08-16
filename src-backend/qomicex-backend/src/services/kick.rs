@@ -147,10 +147,11 @@ impl KickManager {
     }
 
     /// 踢出玩家（房主手动断开指定 guest）：
-    /// ① 解析其 easytier peer 并物理断开（优先已上报 easytier_id，否则 hostname / SCF 源
-    ///    虚拟 IP 反查；非 QML SCF 客户端不受 Scaffolding 协议控制，只能物理断开虚拟网络）；
-    /// ② 记入已踢黑名单（后续 re-ping 进入重连审核）；③ 断开其 Scaffolding TCP
-    /// （QML guest 心跳失败后自动整体退出）；④ 从玩家列表移除。
+    /// ① 解析其 easytier peer 并 **deny 持久物理封禁**（优先已上报 easytier_id，否则 hostname /
+    ///    SCF 源虚拟 IP 反查；非 QML SCF 客户端不受 Scaffolding 协议控制，只能断 easytier 数据面；
+    ///    deny 后对方重连请求在连接建立处被拒，重启也连不上）；
+    /// ② 记入已踢黑名单（若 deny 后 guest 仍能以其他方式触达 SCF，re-ping 进入重连审核）；
+    /// ③ 断开其 Scaffolding TCP（QML guest 心跳失败后自动整体退出）；④ 从玩家列表移除。
     pub async fn kick(&self, machine_id: &str) {
         let Some(center) = self.center.read().unwrap().clone() else {
             warn!("踢出玩家 {machine_id} 失败：联机中心未就绪");
@@ -166,8 +167,9 @@ impl KickManager {
             None => resolve_guest_easytier_peer(&center, machine_id).await,
         };
         if let Some(peer_id) = &peer_id {
-            if let Err(e) = center.disconnect_peer(peer_id).await {
-                warn!("踢出玩家 {machine_id} 时断开 easytier 连接失败: {e}");
+            // deny_peer = 持久物理封禁（入黑名单 + 立即断开全部连接；对方重连在连接建立处被拒）
+            if let Err(e) = center.deny_peer(peer_id).await {
+                warn!("踢出玩家 {machine_id} 时 deny easytier 失败: {e}");
             }
         } else {
             warn!(
@@ -213,8 +215,8 @@ impl KickManager {
 
     /// 处理房主对重连请求的决定（弹窗三选）。
     ///
-    /// - [`ReviewAction::Allow`]：从黑名单移除，下一次 player_ping 正常入列。
-    /// - [`ReviewAction::Reject`]：维持踢出（pending 复位），断开其等待中的连接。
+    /// - [`ReviewAction::Allow`]：解除 easytier deny + 从黑名单移除，下一次 player_ping 正常入列。
+    /// - [`ReviewAction::Reject`]：维持踢出（pending 复位 + deny 封禁），断开其等待中的连接。
     /// - [`ReviewAction::RejectSilent`]：同上，并置 `prompt_disabled`（后续重连不再弹窗）。
     pub async fn decide_review(&self, machine_id: &str, action: ReviewAction) {
         let Some(center) = self.center.read().unwrap().clone() else {
@@ -223,6 +225,18 @@ impl KickManager {
         };
         match action {
             ReviewAction::Allow => {
+                // 解除踢出时的 easytier deny（若有解析到 peer id），放行重新加入
+                let peer = self
+                    .kicked
+                    .read()
+                    .unwrap()
+                    .get(machine_id)
+                    .and_then(|k| k.easytier_peer.clone());
+                if let Some(peer) = peer {
+                    if let Err(e) = center.allow_peer(&peer).await {
+                        warn!("允许玩家 {machine_id} 重新加入时解除 deny 失败: {e}");
+                    }
+                }
                 self.kicked.write().unwrap().remove(machine_id);
                 info!("房主允许玩家 {machine_id} 重新加入");
             }
