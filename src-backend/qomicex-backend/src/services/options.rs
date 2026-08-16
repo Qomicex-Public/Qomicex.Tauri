@@ -23,10 +23,16 @@ const DESCRIPTIONS_ZH_CN: &str =
     include_str!("../../../../qomicex-tauri-i18n/src/zh-CN/game-settings-descriptions.json");
 const DESCRIPTIONS_ZH_TW: &str =
     include_str!("../../../../qomicex-tauri-i18n/src/zh-TW/game-settings-descriptions.json");
+const DESCRIPTIONS_ZH_HK: &str =
+    include_str!("../../../../qomicex-tauri-i18n/src/zh-HK/game-settings-descriptions.json");
 const DESCRIPTIONS_EN_US: &str =
     include_str!("../../../../qomicex-tauri-i18n/src/en-US/game-settings-descriptions.json");
 const DESCRIPTIONS_EN_GB: &str =
     include_str!("../../../../qomicex-tauri-i18n/src/en-GB/game-settings-descriptions.json");
+const DESCRIPTIONS_JA_JP: &str =
+    include_str!("../../../../qomicex-tauri-i18n/src/ja-JP/game-settings-descriptions.json");
+const DESCRIPTIONS_RU_RU: &str =
+    include_str!("../../../../qomicex-tauri-i18n/src/ru-RU/game-settings-descriptions.json");
 
 const DEFAULT_DESCRIPTION: &str = "(无描述)";
 const FALLBACK_LANGUAGE: &str = "en-US";
@@ -38,7 +44,7 @@ fn definitions() -> &'static Vec<MinecraftOption> {
 }
 
 /// 多语言描述（懒加载）：外层语言键 → 内层选项名键 → 描述。
-/// 4 份 submodule JSON 合并为一张表（zh-TW/en-GB 复用 zh-CN/en-US 内容）。
+/// 7 份 submodule JSON 合并为一张表（未覆盖语言经 get_description 回退 en-US）。
 fn descriptions() -> &'static HashMap<String, HashMap<String, String>> {
     static DESCRIPTIONS: OnceLock<HashMap<String, HashMap<String, String>>> = OnceLock::new();
     DESCRIPTIONS.get_or_init(|| {
@@ -46,8 +52,11 @@ fn descriptions() -> &'static HashMap<String, HashMap<String, String>> {
         for (lang, json) in [
             ("zh-CN", DESCRIPTIONS_ZH_CN),
             ("zh-TW", DESCRIPTIONS_ZH_TW),
+            ("zh-HK", DESCRIPTIONS_ZH_HK),
             ("en-US", DESCRIPTIONS_EN_US),
             ("en-GB", DESCRIPTIONS_EN_GB),
+            ("ja-JP", DESCRIPTIONS_JA_JP),
+            ("ru-RU", DESCRIPTIONS_RU_RU),
         ] {
             map.insert(
                 lang.to_string(),
@@ -276,8 +285,11 @@ pub fn to_minecraft_lang(language: &str) -> String {
     match language {
         "zh-CN" => "zh_cn".to_string(),
         "zh-TW" => "zh_tw".to_string(),
+        "zh-HK" => "zh_tw".to_string(),
         "en" | "en-US" => "en_us".to_string(),
         "en-GB" => "en_gb".to_string(),
+        "ja" | "ja-JP" => "ja_jp".to_string(),
+        "ru" | "ru-RU" => "ru_ru".to_string(),
         other => other.to_lowercase().replace('-', "_"),
     }
 }
@@ -341,9 +353,14 @@ mod tests {
     fn minecraft_lang_mapping() {
         assert_eq!(to_minecraft_lang("zh-CN"), "zh_cn");
         assert_eq!(to_minecraft_lang("zh-TW"), "zh_tw");
+        assert_eq!(to_minecraft_lang("zh-HK"), "zh_tw");
         assert_eq!(to_minecraft_lang("en"), "en_us");
         assert_eq!(to_minecraft_lang("en-US"), "en_us");
         assert_eq!(to_minecraft_lang("en-GB"), "en_gb");
+        assert_eq!(to_minecraft_lang("ja"), "ja_jp");
+        assert_eq!(to_minecraft_lang("ja-JP"), "ja_jp");
+        assert_eq!(to_minecraft_lang("ru"), "ru_ru");
+        assert_eq!(to_minecraft_lang("ru-RU"), "ru_ru");
     }
 
     #[test]
