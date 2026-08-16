@@ -1,4 +1,4 @@
-import { get, post, put, del, API_BASE } from './client.ts'
+import { get, post, put, del, API_BASE, ApiError } from './client.ts'
 import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
@@ -117,7 +117,7 @@ export async function setGameSetting(id: string, name: string, value: string): P
 
 export async function exportDiagnostics(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/instance/${id}/export-diagnostics`, { method: 'POST' })
-  if (!res.ok) throw new Error('导出诊断报告失败')
+  if (!res.ok) throw new ApiError({ code: 'EXPORT_DIAGNOSTICS_FAILED', message: '导出诊断报告失败', detail: null, traceId: '', timestamp: new Date().toISOString(), status: res.status })
   const blob = await res.blob()
   const disposition = res.headers.get('content-disposition')
   const match = disposition?.match(/filename="?(.+?)"?$/)
@@ -136,7 +136,8 @@ export async function parseModpackFile(file: File): Promise<ModpackParseResult> 
   const res = await fetch(`${API_BASE}/modpack/parse`, { method: 'POST', body: formData })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.message || err.error || '解析失败')
+    if (err.message) throw new Error(String(err.message))
+    throw new ApiError({ code: 'MODPACK_PARSE_FAILED', message: '解析失败', detail: typeof err.error === 'string' ? err.error : null, traceId: '', timestamp: new Date().toISOString(), status: res.status })
   }
   return res.json()
 }

@@ -1,5 +1,19 @@
 import { API_BASE } from '../api/client.ts'
 import { addTask } from '../stores/downloadStore.ts'
+import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
+
+function i18nKey(key: string, params?: Record<string, string | number>): string {
+  const lang = localStorage.getItem('qomicex-language') === 'en' ? 'en' : 'zh-CN'
+  const dict = RESOURCES[lang] as unknown as Record<string, unknown>
+  let val: unknown = dict
+  for (const part of key.split('.')) {
+    if (val && typeof val === 'object' && part in val) val = (val as Record<string, unknown>)[part]
+    else return key
+  }
+  if (typeof val !== 'string') return key
+  if (!params) return val
+  return val.replace(/\{(\w+)\}/g, (m, name: string) => (name in params ? String(params[name]) : m))
+}
 
 export interface ProxyRequest {
   url: string
@@ -411,14 +425,14 @@ async function fileOpWithAuth(pluginId: string, path: string, op: () => Promise<
   if (res.status === 403) {
     const err = await res.json().catch(() => null)
     if (err?.code === 'FS_AUTHORIZATION_REQUIRED') {
-      const ok = window.confirm(`插件「${pluginId}」请求访问路径：\n${path}\n\n是否允许？`)
-      if (!ok) throw new Error('用户拒绝了文件访问授权')
+      const ok = window.confirm(i18nKey('plugins.fileAuthRequest', { pluginId, path }))
+      if (!ok) throw new Error(i18nKey('plugins.fileAuthDenied'))
       const authRes = await fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/authorize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, allow: true })
       })
-      if (!authRes.ok) throw new Error('授权失败')
+      if (!authRes.ok) throw new Error(i18nKey('plugins.fileAuthFailed'))
       res = await op()
     }
   }

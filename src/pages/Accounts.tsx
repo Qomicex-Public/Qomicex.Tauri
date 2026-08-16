@@ -12,7 +12,7 @@ import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { invalidateAvatarCache } from '../api/skin.ts'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
-import { BatchToolbar } from '../components/ui'
+import { I18nBatchToolbar } from '../components/I18nBatchToolbar.tsx'
 import { Select, SelectOption } from '../components/ui'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui'
@@ -496,7 +496,7 @@ export default function Accounts() {
       </div>
     </PageShell>
 
-    <BatchToolbar
+    <I18nBatchToolbar
       selectedCount={selected.size}
       onClear={() => setSelected(new Set())}
     >
@@ -504,7 +504,7 @@ export default function Accounts() {
         <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
         {t('accounts.deleteSelected', { count: selected.size })}
       </Button>
-    </BatchToolbar>
+    </I18nBatchToolbar>
 
     <Dialog open={addOpen} onClose={() => setAddOpen(false)} className="max-w-md" closeOnBackdrop={false}>
         <DialogHeader onClose={() => setAddOpen(false)}>

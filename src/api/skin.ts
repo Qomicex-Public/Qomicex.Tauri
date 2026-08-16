@@ -1,4 +1,4 @@
-import { get, API_BASE } from './client.ts'
+import { get, API_BASE, ApiError } from './client.ts'
 import type { SkinProfile, McCape } from '../types/index.ts'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
 
@@ -48,7 +48,7 @@ export async function uploadSkin(uuid: string, file: File, type: string, server?
   if (server) params.set('server', server)
   if (model) params.set('model', model)
   const resp = await fetch(`${API_BASE}/skin/upload/${uuid}?${params.toString()}`, { method: 'POST', body: form })
-  if (!resp.ok) throw new Error('上传失败')
+  if (!resp.ok) throw new ApiError({ code: 'SKIN_UPLOAD_FAILED', message: '上传失败', detail: null, traceId: '', timestamp: new Date().toISOString(), status: resp.status })
 }
 
 export async function saveSkinTo(uuid: string, path: string, type: string, server?: string | null): Promise<void> {
@@ -57,14 +57,14 @@ export async function saveSkinTo(uuid: string, path: string, type: string, serve
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path, uuid, type, server }),
   })
-  if (!resp.ok) throw new Error('保存失败')
+  if (!resp.ok) throw new ApiError({ code: 'SKIN_SAVE_FAILED', message: '保存失败', detail: null, traceId: '', timestamp: new Date().toISOString(), status: resp.status })
 }
 
 export async function resetSkin(uuid: string, type: string, server?: string | null): Promise<void> {
   const params = new URLSearchParams({ type })
   if (server) params.set('server', server)
   const resp = await fetch(`${API_BASE}/skin/upload/${uuid}?${params.toString()}`, { method: 'DELETE' })
-  if (!resp.ok) throw new Error('重置失败')
+  if (!resp.ok) throw new ApiError({ code: 'SKIN_RESET_FAILED', message: '重置失败', detail: null, traceId: '', timestamp: new Date().toISOString(), status: resp.status })
 }
 
 /**

@@ -41,6 +41,29 @@ interface ToastState {
   type: MessageBoxType
   count: number
 }
+
+interface MessageBoxMessages {
+  ok: string
+  cancel: string
+  error: string
+  warning: string
+  success: string
+  info: string
+  input: string
+  inputPlaceholder: string
+}
+
+const defaultMessages: MessageBoxMessages = {
+  ok: 'OK',
+  cancel: 'Cancel',
+  error: 'Error',
+  warning: 'Warning',
+  success: 'Success',
+  info: 'Info',
+  input: 'Input',
+  inputPlaceholder: 'Enter...',
+}
+
 interface MessageBoxContextValue {
   alert: (message: string, title?: string) => Promise<void>
   confirm: (message: string, title?: string) => Promise<boolean>
@@ -75,12 +98,12 @@ function MessageIcon({ type, className }: { type: MessageBoxType; className?: st
   }
 }
 
-function MessageBoxProvider({ children }: { children: React.ReactNode }) {
+function MessageBoxProvider({ children, messages = defaultMessages }: { children: React.ReactNode; messages?: MessageBoxMessages }) {
   const [state, setState] = React.useState<MessageBoxState>({
-    open: false, type: "info", title: "", message: "", confirmText: "确定", cancelText: undefined, resolve: null,
+    open: false, type: "info", title: "", message: "", confirmText: messages.ok, cancelText: undefined, resolve: null,
   })
   const [promptState, setPromptState] = React.useState<PromptState>({
-    open: false, title: "", message: "", defaultValue: "", confirmText: "确定", cancelText: "取消", resolve: null,
+    open: false, title: "", message: "", defaultValue: "", confirmText: messages.ok, cancelText: messages.cancel, resolve: null,
   })
   const promptInputRef = React.useRef<HTMLInputElement>(null)
   const [promptValue, setPromptValue] = React.useState("")
@@ -98,18 +121,18 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
     toastTimer.current = window.setTimeout(() => setToast((t) => ({ ...t, open: false })), 3000)
   }, [])
 
-  const show = React.useCallback((type: MessageBoxType, message: string, title?: string, confirmText = "确定", cancelText?: string): Promise<boolean> => {
+  const show = React.useCallback((type: MessageBoxType, message: string, title?: string, confirmText = messages.ok, cancelText?: string): Promise<boolean> => {
     return new Promise((resolve) => {
       setState({
         open: true, type,
-        title: title || (type === "error" ? "错误" : type === "warning" ? "警告" : type === "success" ? "成功" : "提示"),
+        title: title || (type === "error" ? messages.error : type === "warning" ? messages.warning : type === "success" ? messages.success : messages.info),
         message, confirmText, cancelText, resolve,
       })
     })
-  }, [])
+  }, [messages])
 
   const alert = React.useCallback((message: string, title?: string) => show("info", message, title).then(() => {}), [show])
-  const confirm = React.useCallback((message: string, title?: string) => show("warning", message, title, "确定", "取消"), [show])
+  const confirm = React.useCallback((message: string, title?: string) => show("warning", message, title, messages.ok, messages.cancel), [show, messages])
   const choose = React.useCallback((message: string, confirmText: string, cancelText: string, title?: string) => show("info", message, title, confirmText, cancelText), [show])
   const error = React.useCallback((message: string, title?: string) => show("error", message, title).then(() => {}), [show])
   const success = React.useCallback((message: string, title?: string) => show("success", message, title).then(() => {}), [show])
@@ -118,10 +141,10 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
     return new Promise((resolve) => {
       setPromptValue(defaultValue)
       setPromptState({
-        open: true, title: title || "输入", message, defaultValue, confirmText: "确定", cancelText: "取消", resolve,
+        open: true, title: title || messages.input, message, defaultValue, confirmText: messages.ok, cancelText: messages.cancel, resolve,
       })
     })
-  }, [])
+  }, [messages])
 
   React.useEffect(() => {
     if (promptState.open) {
@@ -185,7 +208,7 @@ function MessageBoxProvider({ children }: { children: React.ReactNode }) {
                 handlePromptClose(promptValue)
               }
             }}
-            placeholder="请输入..."
+            placeholder={messages.inputPlaceholder}
           />
         </DialogBody>
         <DialogFooter>

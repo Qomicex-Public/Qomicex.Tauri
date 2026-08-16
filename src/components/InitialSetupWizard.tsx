@@ -703,7 +703,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
                 <div className="flex justify-between"><span className="text-muted-foreground">{t('wizard.stepMemory')}</span><span>{memoryMode === 'auto' ? t('wizard.memoryAuto') : `${defaultMaxMemory} ${t('wizard.memoryMb')}`}</span></div>
                 {mode === 'custom' && (
                   <>
-                    <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">{t('wizard.stepDirectories')}</span><span className="truncate text-right font-mono text-xs">{dataDir || '默认'}</span></div>
+                    <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">{t('wizard.stepDirectories')}</span><span className="truncate text-right font-mono text-xs">{dataDir || t('wizard.default')}</span></div>
                     <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">{t('wizard.stepDownloadSource')}</span><span className="truncate text-right font-mono text-xs">{sourcePings.find((p) => p.id === downloadSource)?.name || downloadSource}</span></div>
                   </>
                 )}

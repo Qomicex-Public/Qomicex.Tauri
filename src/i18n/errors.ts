@@ -22,6 +22,12 @@ const CODE_TO_KEY: Record<string, string> = {
   MC_API_ERROR: 'errors.mcApiError',
   FS_AUTHORIZATION_REQUIRED: 'errors.fsAuthRequired',
   PLUGIN_MISSING_DEPENDENCY: 'errors.pluginMissingDependency',
+  CONNECTOR_TIMEOUT: 'errors.connectorTimeout',
+  EXPORT_DIAGNOSTICS_FAILED: 'errors.exportDiagnosticsFailed',
+  MODPACK_PARSE_FAILED: 'errors.modpackParseFailed',
+  SKIN_UPLOAD_FAILED: 'errors.skinUploadFailed',
+  SKIN_SAVE_FAILED: 'errors.skinSaveFailed',
+  SKIN_RESET_FAILED: 'errors.skinResetFailed',
 }
 
 /** 按语言翻译后端错误；未映射的错误码返回 null（调用方回退后端 message） */

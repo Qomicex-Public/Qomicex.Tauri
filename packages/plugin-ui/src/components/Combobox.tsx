@@ -6,10 +6,11 @@ interface ComboboxProps {
   onChange: (value: string) => void
   options: { value: string; label: string }[]
   placeholder?: string
+  emptyText?: string
   className?: string
 }
 
-export function Combobox({ value, onChange, options, placeholder, className }: ComboboxProps) {
+export function Combobox({ value, onChange, options, placeholder, emptyText = '', className }: ComboboxProps) {
   const [open, setOpen] = useState(false)
   const [input, setInput] = useState(value)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -79,7 +80,7 @@ export function Combobox({ value, onChange, options, placeholder, className }: C
         >
           <div className="max-h-60 overflow-y-auto">
             {filtered.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-muted-foreground">无匹配</div>
+              <div className="px-3 py-2 text-xs text-muted-foreground">{emptyText}</div>
             ) : (
               filtered.map((opt) => (
                 <button

@@ -65,7 +65,19 @@ const ALIAS_NAMES: Record<string, string> = {
   Builder: '建造者披风',
 }
 
-export function capeDisplayName(id: string, alias?: string | null): string {
+function prettifyCape(id: string): string {
+  return id
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+export function capeDisplayName(id: string, alias?: string | null, lang: string = 'zh-CN'): string {
+  if (lang !== 'zh-CN') {
+    if (alias) return alias
+    if (id.startsWith('mcc_')) return `MCC (${id.slice(4)})`
+    if (id.startsWith('realms_')) return `Realms (${id.slice(7)})`
+    return prettifyCape(id)
+  }
   if (CAPE_NAMES[id]) return CAPE_NAMES[id]
   if (id.startsWith('mcc_')) return `MCC 披风 (${id.slice(4)})`
   if (id.startsWith('realms_')) return `Realms 披风 (${id.slice(7)})`

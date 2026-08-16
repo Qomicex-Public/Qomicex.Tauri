@@ -11,7 +11,7 @@ import { Checkbox } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { Tabs, TabContent } from '../components/ui'
-import { BatchToolbar } from '../components/ui'
+import { I18nBatchToolbar } from '../components/I18nBatchToolbar.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
@@ -213,7 +213,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
           </div>
         )}
       </CardContent>
-      <BatchToolbar
+      <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(s => s.filePath)))}
@@ -222,7 +222,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
-      </BatchToolbar>
+      </I18nBatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.saves.type') })}</DialogTitle>
@@ -343,7 +343,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
           </div>
         )}
       </CardContent>
-      <BatchToolbar
+      <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(s => s.filePath)))}
@@ -352,7 +352,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
-      </BatchToolbar>
+      </I18nBatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.screenshots.type') })}</DialogTitle>
@@ -768,7 +768,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         </CardContent>
       </Card>
 
-      <BatchToolbar
+      <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(m => m.fileName)))}
@@ -783,7 +783,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
-      </BatchToolbar>
+      </I18nBatchToolbar>
       <Dialog open={batchConfirm !== null} onClose={() => setBatchConfirm(null)}>
         <DialogHeader onClose={() => setBatchConfirm(null)}>
           <DialogTitle>
@@ -964,7 +964,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           </DragSelectArea>
         )}
       </CardContent>
-      <BatchToolbar
+      <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(p => p.fileName)))}
@@ -973,7 +973,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
-      </BatchToolbar>
+      </I18nBatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.resourcepacks.type') })}</DialogTitle>
@@ -1132,7 +1132,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           </DragSelectArea>
         )}
       </CardContent>
-      <BatchToolbar
+      <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(s => s.fileName)))}
@@ -1141,7 +1141,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
-      </BatchToolbar>
+      </I18nBatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.shaderpacks.type') })}</DialogTitle>
@@ -1296,7 +1296,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           </DragSelectArea>
         )}
       </CardContent>
-      <BatchToolbar
+      <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(p => p.fileName)))}
@@ -1305,7 +1305,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
-      </BatchToolbar>
+      </I18nBatchToolbar>
       <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
         <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
           <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.datapacks.type') })}</DialogTitle>
@@ -1596,7 +1596,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
           )}
         </CardContent>
       </Card>
-      <ConfirmDialog open={confirmIp !== null} title="删除服务器" message={t('instanceDetail.servers.deleteConfirm', { ip: confirmIp ?? '' })} onConfirm={() => confirmIp && handleDelete(confirmIp)} onCancel={() => setConfirmIp(null)} />
+      <ConfirmDialog open={confirmIp !== null} title={t('instanceDetail.servers.deleteTitle')} message={t('instanceDetail.servers.deleteConfirm', { ip: confirmIp ?? '' })} onConfirm={() => confirmIp && handleDelete(confirmIp)} onCancel={() => setConfirmIp(null)} />
       <Dialog open={showAdd} onClose={() => { setShowAdd(false); setEditServer(null) }}>
         <DialogHeader onClose={() => { setShowAdd(false); setEditServer(null) }}><DialogTitle>{editServer ? t('instanceDetail.servers.editTitle') : t('instanceDetail.servers.addTitle')}</DialogTitle></DialogHeader>
         <DialogBody className="space-y-3">
@@ -1618,9 +1618,34 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
   )
 }
 
+/** 需要翻译的按键名：code → instanceDetail.gamesettings.keys 下的 i18n key */
+const KEY_I18N_MAP: Record<string, string> = {
+  'key.keyboard.unknown': 'unbound',
+  'key.keyboard.space': 'space',
+  'key.keyboard.enter': 'enter',
+  'key.keyboard.backspace': 'backspace',
+  'key.keyboard.left.shift': 'leftShift',
+  'key.keyboard.right.shift': 'rightShift',
+  'key.keyboard.left.control': 'leftControl',
+  'key.keyboard.right.control': 'rightControl',
+  'key.keyboard.left.alt': 'leftAlt',
+  'key.keyboard.right.alt': 'rightAlt',
+  'key.keyboard.left.super': 'leftSuper',
+  'key.keyboard.right.super': 'rightSuper',
+  'key.keyboard.menu': 'menu',
+  'key.mouse.0': 'mouseLeft',
+  'key.mouse.1': 'mouseRight',
+  'key.mouse.2': 'mouseMiddle',
+  'key.keyboard.kp.add': 'keypadAdd',
+  'key.keyboard.kp.subtract': 'keypadSubtract',
+  'key.keyboard.kp.multiply': 'keypadMultiply',
+  'key.keyboard.kp.divide': 'keypadDivide',
+  'key.keyboard.kp.decimal': 'keypadDecimal',
+  'key.keyboard.kp.enter': 'keypadEnter',
+}
+
+/** 无需翻译的按键名（符号/功能键），code → 显示文本 */
 const KEY_DISPLAY_MAP: Record<string, string> = {
-  'key.keyboard.unknown': '未绑定',
-  'key.keyboard.space': '空格',
   'key.keyboard.apostrophe': "'",
   'key.keyboard.comma': ',',
   'key.keyboard.minus': '-',
@@ -1633,9 +1658,7 @@ const KEY_DISPLAY_MAP: Record<string, string> = {
   'key.keyboard.right.bracket': ']',
   'key.keyboard.backslash': '\\',
   'key.keyboard.escape': 'Esc',
-  'key.keyboard.enter': '回车',
   'key.keyboard.tab': 'Tab',
-  'key.keyboard.backspace': '退格',
   'key.keyboard.insert': 'Insert',
   'key.keyboard.delete': 'Delete',
   'key.keyboard.right': '→',
@@ -1651,33 +1674,11 @@ const KEY_DISPLAY_MAP: Record<string, string> = {
   'key.keyboard.num.lock': 'Num Lock',
   'key.keyboard.print.screen': 'Print Screen',
   'key.keyboard.pause': 'Pause',
-  'key.keyboard.left.shift': '左 Shift',
-  'key.keyboard.right.shift': '右 Shift',
-  'key.keyboard.left.control': '左 Ctrl',
-  'key.keyboard.right.control': '右 Ctrl',
-  'key.keyboard.left.alt': '左 Alt',
-  'key.keyboard.right.alt': '右 Alt',
-  'key.keyboard.left.super': '左 Win',
-  'key.keyboard.right.super': '右 Win',
-  'key.keyboard.menu': '菜单键',
-  'key.mouse.0': '鼠标左键',
-  'key.mouse.1': '鼠标右键',
-  'key.mouse.2': '鼠标中键',
-  'key.mouse.3': '鼠标按键 3',
-  'key.mouse.4': '鼠标按键 4',
-  'key.mouse.5': '鼠标按键 5',
 }
 
 for (let i = 0; i <= 9; i++) KEY_DISPLAY_MAP[`key.keyboard.${i}`] = `${i}`
 for (let i = 1; i <= 25; i++) KEY_DISPLAY_MAP[`key.keyboard.f${i}`] = `F${i}`
 for (const c of 'abcdefghijklmnopqrstuvwxyz') KEY_DISPLAY_MAP[`key.keyboard.${c}`] = c.toUpperCase()
-for (let i = 0; i <= 9; i++) KEY_DISPLAY_MAP[`key.keyboard.kp.${i}`] = `小键盘 ${i}`
-KEY_DISPLAY_MAP['key.keyboard.kp.add'] = '小键盘 +'
-KEY_DISPLAY_MAP['key.keyboard.kp.subtract'] = '小键盘 -'
-KEY_DISPLAY_MAP['key.keyboard.kp.multiply'] = '小键盘 *'
-KEY_DISPLAY_MAP['key.keyboard.kp.divide'] = '小键盘 /'
-KEY_DISPLAY_MAP['key.keyboard.kp.decimal'] = '小键盘 .'
-KEY_DISPLAY_MAP['key.keyboard.kp.enter'] = '小键盘 回车'
 
 function mapJSCodeToMinecraft(code: string): string | null {
   const m: Record<string, string> = {
@@ -1769,10 +1770,19 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
   const isKeybinding = (name: string) => name.startsWith('key_')
 
   const formatKeyDisplay = (code: string): string => {
+    const i18nKey = KEY_I18N_MAP[code]
+    if (i18nKey) return t(`instanceDetail.gamesettings.keys.${i18nKey}`)
     const name = KEY_DISPLAY_MAP[code]
     if (name) return name
+    if (code.startsWith('key.keyboard.kp.')) {
+      const n = code.slice('key.keyboard.kp.'.length)
+      if (/^\d+$/.test(n)) return t('instanceDetail.gamesettings.keys.keypad', { n })
+    }
     if (code.startsWith('key.keyboard.')) return code.slice('key.keyboard.'.length).toUpperCase()
-    if (code.startsWith('key.mouse.')) return `鼠标按键 ${code.slice('key.mouse.'.length)}`
+    if (code.startsWith('key.mouse.')) {
+      const n = code.slice('key.mouse.'.length)
+      return t('instanceDetail.gamesettings.keys.mouseButton', { n })
+    }
     return code
   }
 

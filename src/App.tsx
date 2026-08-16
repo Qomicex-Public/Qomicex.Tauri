@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import type { ReactNode } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout.tsx'
 import Dashboard from './pages/Dashboard.tsx'
@@ -295,6 +296,26 @@ if (savedTheme === 'light' || savedTheme === 'dark') {
   document.documentElement.classList.toggle('light', savedTheme === 'light')
 }
 
+function I18nMessageBoxProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n()
+  return (
+    <MessageBoxProvider
+      messages={{
+        ok: t('common.ok'),
+        cancel: t('common.cancel'),
+        error: t('common.error'),
+        warning: t('common.warning'),
+        success: t('common.success'),
+        info: t('common.info'),
+        input: t('common.input'),
+        inputPlaceholder: t('common.inputPlaceholder'),
+      }}
+    >
+      {children}
+    </MessageBoxProvider>
+  )
+}
+
 function App() {
   useEffect(() => {
     async function setTheme(theme: 'dark' | 'light') {
@@ -354,11 +375,11 @@ function App() {
   return (
     <I18nProvider>
       <RunningProvider>
-        <MessageBoxProvider>
+        <I18nMessageBoxProvider>
           <ErrorBoundary>
             <AppContent />
           </ErrorBoundary>
-        </MessageBoxProvider>
+        </I18nMessageBoxProvider>
       </RunningProvider>
     </I18nProvider>
   )

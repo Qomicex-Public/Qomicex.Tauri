@@ -38,7 +38,7 @@ export function PluginInstallDialog({ open, manifest, onConfirm, onCancel }: Plu
             <div className="space-y-1">
               <p className="text-xs font-medium text-red-400">{t('plugins.highRisk')}</p>
               {dangerPerms.map(p => (
-                <p key={p} className="text-sm text-red-400">⚠ {PERMISSION_CATALOG[p]?.label ?? p}</p>
+                <p key={p} className="text-sm text-red-400">⚠ {PERMISSION_CATALOG[p]?.key ? t(PERMISSION_CATALOG[p].key) : p}</p>
               ))}
             </div>
           )}
@@ -47,7 +47,7 @@ export function PluginInstallDialog({ open, manifest, onConfirm, onCancel }: Plu
             <div className="space-y-1">
               <p className="text-xs font-medium text-yellow-400">{t('plugins.caution')}</p>
               {warningPerms.map(p => (
-                <p key={p} className="text-sm text-yellow-400">• {PERMISSION_CATALOG[p]?.label ?? p}</p>
+                <p key={p} className="text-sm text-yellow-400">• {PERMISSION_CATALOG[p]?.key ? t(PERMISSION_CATALOG[p].key) : p}</p>
               ))}
             </div>
           )}
@@ -56,7 +56,7 @@ export function PluginInstallDialog({ open, manifest, onConfirm, onCancel }: Plu
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground">{t('plugins.normal')}</p>
               {normalPerms.map(p => (
-                <p key={p} className="text-sm text-muted-foreground">• {PERMISSION_CATALOG[p]?.label ?? p}</p>
+                <p key={p} className="text-sm text-muted-foreground">• {PERMISSION_CATALOG[p]?.key ? t(PERMISSION_CATALOG[p].key) : p}</p>
               ))}
             </div>
           )}

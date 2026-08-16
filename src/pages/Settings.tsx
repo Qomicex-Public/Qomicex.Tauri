@@ -57,14 +57,14 @@ import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, L
 import { LegalDialog } from '../components/LegalDialog.tsx'
 
 const CATEGORIES = [
-  { id: 'launcher', label: '启动器', icon: faRocket },
-  { id: 'java', label: 'Java 运行时', icon: faCoffee },
-  { id: 'plugins', label: '插件', icon: faPuzzlePiece },
-  { id: 'appearance', label: '外观', icon: faPalette },
-  { id: 'toolbox', label: '工具箱', icon: faDownload },
-  { id: 'logs', label: '日志', icon: faFileLines },
-  { id: 'about', label: '关于', icon: faInfoCircle },
-  { id: 'debug', label: '调试', icon: faBug },
+  { id: 'launcher', icon: faRocket },
+  { id: 'java', icon: faCoffee },
+  { id: 'plugins', icon: faPuzzlePiece },
+  { id: 'appearance', icon: faPalette },
+  { id: 'toolbox', icon: faDownload },
+  { id: 'logs', icon: faFileLines },
+  { id: 'about', icon: faInfoCircle },
+  { id: 'debug', icon: faBug },
 ] as const
 
 const DOWNLOAD_SOURCES = [
@@ -423,7 +423,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-muted-foreground">{dep.name}</span>
-                          {dep.license === '自研' && <Badge variant="outline" className="h-4 px-1 text-[9px] border-primary/30 text-primary">自研</Badge>}
+                          {dep.license === '自研' && <Badge variant="outline" className="h-4 px-1 text-[9px] border-primary/30 text-primary">{t('settings.about.depInHouse')}</Badge>}
                         </div>
                         {dep.url.startsWith('http') ? (
                           <FontAwesomeIcon icon={faExternalLinkAlt} className="h-2.5 w-2.5 text-muted-foreground/50 cursor-pointer" onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))} />
@@ -2049,7 +2049,7 @@ export default function Settings() {
                             <span className={`text-xs px-1.5 py-0.5 rounded border ${colors[info?.risk ?? 'normal'] ?? ''}`}>
                               {info?.risk ?? 'normal'}
                             </span>
-                            <span>{info?.label ?? p}</span>
+                            <span>{info?.key ? t(info.key) : p}</span>
                           </div>
                         )
                       })}

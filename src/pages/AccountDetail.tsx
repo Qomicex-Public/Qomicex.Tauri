@@ -20,7 +20,7 @@ export default function AccountDetail() {
   const { uuid } = useParams<{ uuid: string }>()
   const navigate = useNavigate()
   const { confirm: msgConfirm, notify } = useMessageBox()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [account, setAccount] = useState<Account | null>(null)
   const [profile, setProfile] = useState<SkinProfile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -262,7 +262,7 @@ export default function AccountDetail() {
                   {account.loginMethod === 'Microsoft' ? (
                     <div className="flex justify-between">
                       <dt className="text-muted-foreground">{t('accountDetail.cape')}</dt>
-                      <dd>{activeCape ? capeDisplayName(activeCape.id, activeCape.alias) : t('accountDetail.none')}</dd>
+                      <dd>{activeCape ? capeDisplayName(activeCape.id, activeCape.alias, lang) : t('accountDetail.none')}</dd>
                     </div>
                   ) : profile.capeUrl ? (
                     <div className="flex justify-between">

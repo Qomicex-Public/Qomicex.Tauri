@@ -5,6 +5,7 @@ import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { Separator } from '../components/ui'
 import { parseModpackFile, startModpackInstall, getInstallProgress } from '../api/instance.ts'
+import { ApiError } from '../api/client.ts'
 import type { ModpackParseResult, InstallProgressResponse } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
 import { addTask } from '../stores/downloadStore.ts'
@@ -69,7 +70,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
       setInstanceName(result.name)
       setStep('preview')
     } catch (e: any) {
-      setError(e.message || t('dialogs.import.parseFailed'))
+      setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
       setStep('select')
     }
   }

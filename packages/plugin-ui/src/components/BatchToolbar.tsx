@@ -1,12 +1,15 @@
 import { type ReactNode, useEffect, useState } from 'react'
 import { cn } from '../lib/cn.js'
 
-export function BatchToolbar({ selectedCount, onClear, onSelectAll, children, className }: {
+const defaultMessages = { selected: '{count} selected', selectAll: 'Select all', clear: 'Clear selection' }
+
+export function BatchToolbar({ selectedCount, onClear, onSelectAll, children, className, messages = defaultMessages }: {
   selectedCount: number
   onClear: () => void
   onSelectAll?: () => void
   children?: ReactNode
   className?: string
+  messages?: { selected: string; selectAll: string; clear: string }
 }) {
   const [visible, setVisible] = useState(false)
   const [exiting, setExiting] = useState(false)
@@ -40,7 +43,7 @@ export function BatchToolbar({ selectedCount, onClear, onSelectAll, children, cl
         onAnimationEnd={() => exiting && setVisible(false)}
       >
         <span className="text-sm text-muted-foreground whitespace-nowrap">
-          已选 <span className="font-semibold text-foreground">{selectedCount}</span> 个
+          {messages.selected.replace('{count}', String(selectedCount))}
         </span>
         <div className="h-5 w-px bg-border" />
         {onSelectAll && (
@@ -48,14 +51,14 @@ export function BatchToolbar({ selectedCount, onClear, onSelectAll, children, cl
             onClick={onSelectAll}
             className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
-            全选
+            {messages.selectAll}
           </button>
         )}
         <button
           onClick={onClear}
           className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
-          取消选择
+          {messages.clear}
         </button>
         {children}
       </div>

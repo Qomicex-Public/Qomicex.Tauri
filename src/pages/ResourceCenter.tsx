@@ -407,7 +407,7 @@ export default function ResourceCenter() {
             <div className="space-y-1">
               <p className="text-[11px] font-medium text-muted-foreground">{t('resource.gameVersionLabel')}</p>
               <div className="flex items-center gap-1">
-                <Combobox value={gameVersion} onChange={setGameVersion} options={GAME_VERSIONS.map((v) => ({ value: v, label: v }))} placeholder={t('resource.allVersions')} className="w-[150px]" />
+                <Combobox value={gameVersion} onChange={setGameVersion} options={GAME_VERSIONS.map((v) => ({ value: v, label: v }))} placeholder={t('resource.allVersions')} emptyText={t('common.noMatch')} className="w-[150px]" />
                 {gameVersion && (
                   <button onClick={clearVersion} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
                     <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />

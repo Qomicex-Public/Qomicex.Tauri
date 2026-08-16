@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react'
 import { getTasks, removeTask } from '../stores/downloadStore.ts'
 import { useMessageBox } from '../components/ui'
+import { useI18n } from '../i18n/index.tsx'
 import { CloseGuardContext } from './closeGuardContext.ts'
 
 function hasActiveTasks() {
@@ -18,10 +19,12 @@ function clearActiveTasks() {
 
 export default function useCloseGuard() {
   const { confirm } = useMessageBox()
+  const { t } = useI18n()
+  const closeConfirmMsg = t('common.pendingTasksCloseConfirm')
 
   const closeWithGuard = useCallback(async () => {
     if (hasActiveTasks()) {
-      const ok = await confirm('还有未完成的任务，关闭后将删除所有任务。\n\n确定要关闭吗？')
+      const ok = await confirm(closeConfirmMsg)
       if (!ok) return
       clearActiveTasks()
     }
@@ -31,7 +34,7 @@ export default function useCloseGuard() {
     } catch {
       window.close()
     }
-  }, [confirm])
+  }, [confirm, closeConfirmMsg])
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -43,7 +46,7 @@ export default function useCloseGuard() {
         const win = getCurrentWindow()
         unlisten = await win.onCloseRequested(async (event) => {
           if (!hasActiveTasks()) return
-          const ok = await confirm('还有未完成的任务，关闭后将删除所有任务。\n\n确定要关闭吗？')
+          const ok = await confirm(closeConfirmMsg)
           if (mounted && ok) {
             clearActiveTasks()
           } else {
@@ -74,7 +77,7 @@ export default function useCloseGuard() {
       window.removeEventListener('beforeunload', onBeforeUnload)
       window.removeEventListener('unload', onUnload)
     }
-  }, [confirm])
+  }, [confirm, closeConfirmMsg])
 
   return { closeWithGuard, Provider: CloseGuardContext.Provider }
 }

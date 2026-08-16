@@ -86,7 +86,7 @@ export default function LogOverlay() {
             {t('tools.logs.debugLogsCount', { count: logs.length })}
           </span>
           <div className="flex items-center gap-1">
-            <button onClick={handleCopy} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="复制">
+            <button onClick={handleCopy} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title={t('common.copy')}>
               <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />
             </button>
             <button onClick={() => setLogs([])} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">

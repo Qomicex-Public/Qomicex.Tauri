@@ -6,6 +6,7 @@ import { Button } from './ui'
 import { Tooltip } from './ui'
 import { Separator } from './ui'
 import { exportDiagnostics } from '../api/instance.ts'
+import { ApiError } from '../api/client.ts'
 import { AnalysisResults } from './AnalysisResults.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import type { LogAnalysisResult } from '../types/index.ts'
@@ -45,7 +46,7 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
     try {
       await exportDiagnostics(instanceId)
     } catch (e: unknown) {
-      setExportErr(e instanceof Error ? e.message : t('dialogs.crashAnalysis.exportFailed'))
+      setExportErr(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('dialogs.crashAnalysis.exportFailed'))
     } finally {
       setExporting(false)
     }

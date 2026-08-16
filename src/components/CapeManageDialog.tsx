@@ -14,7 +14,7 @@ interface Props {
 
 /** 披风管理弹窗（图库式网格：方形缩略图 + 名称 + 选中高亮）。 */
 export function CapeManageDialog({ open, onClose, mcCapes, capeImages, capeBusy, onToggle }: Props) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   return (
     <Dialog open={open} onClose={onClose} className="max-w-lg">
       <DialogHeader onClose={onClose}>
@@ -40,7 +40,7 @@ export function CapeManageDialog({ open, onClose, mcCapes, capeImages, capeBusy,
                     {capeImages.get(c.id) ? (
                       <img
                         src={capeImages.get(c.id)}
-                        alt={capeDisplayName(c.id, c.alias)}
+                        alt={capeDisplayName(c.id, c.alias, lang)}
                         className="h-full w-full object-contain"
                       />
                     ) : (
@@ -50,7 +50,7 @@ export function CapeManageDialog({ open, onClose, mcCapes, capeImages, capeBusy,
                     )}
                   </div>
                   <span className="truncate px-1.5 pb-1.5 text-center text-[11px]">
-                    {capeDisplayName(c.id, c.alias)}
+                    {capeDisplayName(c.id, c.alias, lang)}
                   </span>
                   {active && (
                     <span className="absolute right-1.5 top-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">

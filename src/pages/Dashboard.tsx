@@ -34,7 +34,7 @@ export default function Dashboard() {
   const [accountsOpen, setAccountsOpen] = useState(false)
   const [watermarkEnabled, setWatermarkEnabled] = useState(true)
   const [watermarkText, setWatermarkText] = useState('Qomicex')
-  const [watermarkSubtext, setWatermarkSubtext] = useState('启动器')
+  const [watermarkSubtext, setWatermarkSubtext] = useState(() => t('settings.appearance.watermarkSubtextPlaceholder'))
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const pageRef = usePageAnimation()
   const accountRef = useRef<HTMLDivElement>(null)
@@ -63,7 +63,7 @@ export default function Dashboard() {
     function load(s = getSettings()) {
       setWatermarkEnabled(s.watermarkEnabled !== false)
       setWatermarkText(s.watermarkText || 'Qomicex')
-      setWatermarkSubtext(s.watermarkSubtext || '启动器')
+      setWatermarkSubtext(s.watermarkSubtext || t('settings.appearance.watermarkSubtextPlaceholder'))
     }
     load()
     return onSettingsChange(load)
