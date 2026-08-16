@@ -516,13 +516,19 @@ mod tests {
     async fn resolve_uses_ali_header_from_server() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let handle = serve_once(listener, http_ok("X-Authlib-Injector-API-Location: /api/yggdrasil\r\n", "{}"));
+        let handle = serve_once(
+            listener,
+            http_ok("X-Authlib-Injector-API-Location: /api/yggdrasil\r\n", "{}"),
+        );
         let client = reqwest::Client::new();
         let out = resolve_yggdrasil_url(&client, &format!("http://127.0.0.1:{port}/"))
             .await
             .unwrap();
         handle.await.unwrap();
-        assert_eq!(out.api_root, format!("http://127.0.0.1:{port}/api/yggdrasil"));
+        assert_eq!(
+            out.api_root,
+            format!("http://127.0.0.1:{port}/api/yggdrasil")
+        );
         assert!(out.changed);
         // Plain http api root -> flagged insecure for the frontend warning.
         assert!(out.insecure);

@@ -133,10 +133,7 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
 ) -> Result<Vec<u8>, String> {
     let source_dir = instance_source_dir(instance);
     if !source_dir.is_dir() {
-        return Err(format!(
-            "实例目录不存在：{}",
-            source_dir.to_string_lossy()
-        ));
+        return Err(format!("实例目录不存在：{}", source_dir.to_string_lossy()));
     }
 
     // 1. 收集内容条目（含 mods 清单）
@@ -194,14 +191,45 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
     });
     match format {
         ExportFormat::CurseForge => {
-            write_cf_manifest(&mut zip, &opts, instance, &resolved, name_override, version_override, author_override)?;
-            write_overrides(&mut zip, &opts, &source_dir, &content, &HashSet::new(), progress, cancelled)?;
+            write_cf_manifest(
+                &mut zip,
+                &opts,
+                instance,
+                &resolved,
+                name_override,
+                version_override,
+                author_override,
+            )?;
+            write_overrides(
+                &mut zip,
+                &opts,
+                &source_dir,
+                &content,
+                &HashSet::new(),
+                progress,
+                cancelled,
+            )?;
         }
         ExportFormat::Modrinth => {
             // 反查命中的 mods 走 files[]，不再进 overrides（避免重复）。
             let resolved_rel: HashSet<&str> = resolved.keys().map(|s| s.as_str()).collect();
-            write_mr_index(&mut zip, &opts, instance, &resolved, name_override, version_override)?;
-            write_overrides(&mut zip, &opts, &source_dir, &content, &resolved_rel, progress, cancelled)?;
+            write_mr_index(
+                &mut zip,
+                &opts,
+                instance,
+                &resolved,
+                name_override,
+                version_override,
+            )?;
+            write_overrides(
+                &mut zip,
+                &opts,
+                &source_dir,
+                &content,
+                &resolved_rel,
+                progress,
+                cancelled,
+            )?;
         }
     }
     progress(ExportProgress {
@@ -247,19 +275,13 @@ fn instance_source_dir(instance: &GameInstance) -> PathBuf {
 pub fn list_export_tree(instance: &GameInstance) -> Result<Vec<ExportTreeNode>, String> {
     let source_dir = instance_source_dir(instance);
     if !source_dir.is_dir() {
-        return Err(format!(
-            "实例目录不存在：{}",
-            source_dir.to_string_lossy()
-        ));
+        return Err(format!("实例目录不存在：{}", source_dir.to_string_lossy()));
     }
     collect_export_tree(&source_dir, &instance.name)
 }
 
 /// 递归收集文件树。目录节点累计 `size`/`file_count`，排除项不进入树。
-fn collect_export_tree(
-    root: &Path,
-    version_dir_name: &str,
-) -> Result<Vec<ExportTreeNode>, String> {
+fn collect_export_tree(root: &Path, version_dir_name: &str) -> Result<Vec<ExportTreeNode>, String> {
     let version_json = format!("{version_dir_name}.json");
     let version_jar = format!("{version_dir_name}.jar");
 
@@ -334,10 +356,18 @@ fn flatten_tree(root: &Path, nodes: &[ExportTreeNode], out: &mut Vec<ContentEntr
     for n in nodes {
         let abs = root.join(&n.path);
         if n.kind == NodeKind::Dir {
-            out.push(ContentEntry { rel: n.path.clone(), abs: abs.clone(), is_dir: true });
+            out.push(ContentEntry {
+                rel: n.path.clone(),
+                abs: abs.clone(),
+                is_dir: true,
+            });
             flatten_tree(root, &n.children, out);
         } else {
-            out.push(ContentEntry { rel: n.path.clone(), abs, is_dir: false });
+            out.push(ContentEntry {
+                rel: n.path.clone(),
+                abs,
+                is_dir: false,
+            });
         }
     }
 }
@@ -345,14 +375,17 @@ fn flatten_tree(root: &Path, nodes: &[ExportTreeNode], out: &mut Vec<ContentEntr
 /// 按包含白名单过滤内容条目：文件必须命中白名单；目录仅当其子树
 /// 存在命中文件时保留（保证 zip 路径完整）。
 fn filter_by_include(content: Vec<ContentEntry>, include: &HashSet<String>) -> Vec<ContentEntry> {
-    content.into_iter().filter(|e| {
-        if e.is_dir {
-            let prefix = format!("{}/", e.rel);
-            include.iter().any(|p| p.starts_with(&prefix))
-        } else {
-            include.contains(&e.rel)
-        }
-    }).collect()
+    content
+        .into_iter()
+        .filter(|e| {
+            if e.is_dir {
+                let prefix = format!("{}/", e.rel);
+                include.iter().any(|p| p.starts_with(&prefix))
+            } else {
+                include.contains(&e.rel)
+            }
+        })
+        .collect()
 }
 
 fn collect_content(
@@ -465,8 +498,8 @@ async fn cf_reverse_lookup<P: FnMut(ExportProgress)>(
         if cancelled.load(Ordering::Relaxed) {
             return Err(EXPORT_CANCELLED_MSG.to_string());
         }
-        let bytes = std::fs::read(&e.abs)
-            .map_err(|err| format!("读取 mod 失败 {}: {err}", e.rel))?;
+        let bytes =
+            std::fs::read(&e.abs).map_err(|err| format!("读取 mod 失败 {}: {err}", e.rel))?;
         fingerprints.push(cf_fingerprint(&bytes) as i64);
         progress(ExportProgress {
             stage: "lookup",
@@ -538,8 +571,8 @@ async fn mr_reverse_lookup<P: FnMut(ExportProgress)>(
         if cancelled.load(Ordering::Relaxed) {
             return Err(EXPORT_CANCELLED_MSG.to_string());
         }
-        let bytes = std::fs::read(&e.abs)
-            .map_err(|err| format!("读取 mod 失败 {}: {err}", e.rel))?;
+        let bytes =
+            std::fs::read(&e.abs).map_err(|err| format!("读取 mod 失败 {}: {err}", e.rel))?;
         sha1s.push(sha1_hex(&bytes));
         progress(ExportProgress {
             stage: "lookup",
@@ -565,7 +598,9 @@ async fn mr_reverse_lookup<P: FnMut(ExportProgress)>(
             let matched = version.files.as_deref().and_then(|files| {
                 files
                     .iter()
-                    .find(|f| f.hashes.as_ref().and_then(|h| h.sha1.as_deref()) == Some(hash.as_str()))
+                    .find(|f| {
+                        f.hashes.as_ref().and_then(|h| h.sha1.as_deref()) == Some(hash.as_str())
+                    })
                     .or_else(|| files.iter().find(|f| f.is_primary))
             });
             if let Some(f) = matched {
@@ -628,17 +663,17 @@ fn write_cf_manifest<W: Write + std::io::Seek>(
     version_override: Option<&str>,
     author_override: Option<&str>,
 ) -> Result<(), String> {
-    let loader_id = match (instance.loader.as_deref(), instance.loader_version.as_deref()) {
+    let loader_id = match (
+        instance.loader.as_deref(),
+        instance.loader_version.as_deref(),
+    ) {
         (Some(l), Some(v)) if !l.is_empty() && !v.is_empty() => format!("{l}-{v}"),
         (Some(l), _) if !l.is_empty() => l.to_string(),
         _ => String::new(),
     };
     let mut mod_loaders = serde_json::Map::new();
     if !loader_id.is_empty() {
-        mod_loaders.insert(
-            "id".to_string(),
-            serde_json::Value::String(loader_id),
-        );
+        mod_loaders.insert("id".to_string(), serde_json::Value::String(loader_id));
         mod_loaders.insert("primary".to_string(), serde_json::Value::Bool(true));
     }
 
@@ -681,8 +716,12 @@ fn write_cf_manifest<W: Write + std::io::Seek>(
 
     zip.start_file("manifest.json", *opts)
         .map_err(|e| format!("写入 manifest.json 失败: {e}"))?;
-    zip.write_all(serde_json::to_string_pretty(&manifest).unwrap_or_default().as_bytes())
-        .map_err(|e| format!("写入 manifest.json 失败: {e}"))?;
+    zip.write_all(
+        serde_json::to_string_pretty(&manifest)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+    .map_err(|e| format!("写入 manifest.json 失败: {e}"))?;
     Ok(())
 }
 
@@ -696,8 +735,14 @@ fn write_mr_index<W: Write + std::io::Seek>(
 ) -> Result<(), String> {
     // dependencies：minecraft + 加载器（mrpack 键：fabric-loader/quilt-loader/forge/neoforge）
     let mut deps = serde_json::Map::new();
-    deps.insert("minecraft".to_string(), serde_json::Value::String(instance.game_version.clone()));
-    if let (Some(loader), Some(lv)) = (instance.loader.as_deref(), instance.loader_version.as_deref()) {
+    deps.insert(
+        "minecraft".to_string(),
+        serde_json::Value::String(instance.game_version.clone()),
+    );
+    if let (Some(loader), Some(lv)) = (
+        instance.loader.as_deref(),
+        instance.loader_version.as_deref(),
+    ) {
         let loader_lower = loader.to_ascii_lowercase();
         let key = match loader_lower.as_str() {
             "fabric" => "fabric-loader",
@@ -750,8 +795,12 @@ fn write_mr_index<W: Write + std::io::Seek>(
 
     zip.start_file("modrinth.index.json", *opts)
         .map_err(|e| format!("写入 modrinth.index.json 失败: {e}"))?;
-    zip.write_all(serde_json::to_string_pretty(&index).unwrap_or_default().as_bytes())
-        .map_err(|e| format!("写入 modrinth.index.json 失败: {e}"))?;
+    zip.write_all(
+        serde_json::to_string_pretty(&index)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+    .map_err(|e| format!("写入 modrinth.index.json 失败: {e}"))?;
     Ok(())
 }
 
@@ -799,14 +848,15 @@ fn write_overrides<W: Write + std::io::Seek, P: FnMut(ExportProgress)>(
 mod tests {
     use std::path::PathBuf;
 
-    use super::{cf_fingerprint, collect_export_tree, filter_by_include, flatten_tree, meta_override, ExportTreeNode};
+    use super::{
+        cf_fingerprint, collect_export_tree, filter_by_include, flatten_tree, meta_override,
+        ExportTreeNode,
+    };
 
     /// 测试用临时根目录（按进程 id 隔离，避免并行测试冲突）。
     fn temp_root(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "qomicex-export-test-{tag}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("qomicex-export-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

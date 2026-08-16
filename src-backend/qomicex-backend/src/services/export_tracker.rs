@@ -134,18 +134,12 @@ impl ExportTaskManager {
                         let t = t.lock().unwrap_or_else(|p| p.into_inner());
                         t.status != ExportTaskStatus::Running
                     })
-                    .min_by_key(|(_, t)| {
-                        t.lock().unwrap_or_else(|p| p.into_inner()).created_at
-                    })
+                    .min_by_key(|(_, t)| t.lock().unwrap_or_else(|p| p.into_inner()).created_at)
                     .map(|(k, _)| k.clone());
                 match oldest_terminal {
                     Some(k) => {
                         let t = map.remove(&k).expect("key just iterated");
-                        let removed = t
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .zip_path
-                            .take();
+                        let removed = t.lock().unwrap_or_else(|p| p.into_inner()).zip_path.take();
                         if let Some(z) = removed {
                             let _ = std::fs::remove_file(&z);
                         }
@@ -175,9 +169,8 @@ impl ExportTaskManager {
                     .unwrap_or_else(|g| g.into_inner())
                     .cancel
                     .clone();
-                let include_set = include_files.map(|v| {
-                    v.into_iter().collect::<std::collections::HashSet<_>>()
-                });
+                let include_set =
+                    include_files.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
                 let mut progress = |p: ExportProgress| {
                     let mut t = task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
                     t.stage = p.stage;
@@ -204,7 +197,9 @@ impl ExportTaskManager {
 
                 match result {
                     Ok(bytes) => {
-                        let zip_path = base_dir.join("temp").join(format!("export-{task_id_c}.zip"));
+                        let zip_path = base_dir
+                            .join("temp")
+                            .join(format!("export-{task_id_c}.zip"));
                         if let Some(parent) = zip_path.parent() {
                             let _ = std::fs::create_dir_all(parent);
                         }
@@ -216,46 +211,48 @@ impl ExportTaskManager {
                             return;
                         }
 
-                    match target_c {
-                        Some(target) => {
-                            let copy_result = std::fs::copy(&zip_path, &target);
-                            let _ = std::fs::remove_file(&zip_path);
-                            let mut t = task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
-                            match copy_result {
-                                Ok(_) => {
-                                    t.status = ExportTaskStatus::Completed;
-                                    t.stage = "packing";
-                                    t.percent = 100.0;
-                                }
-                                Err(e) => {
-                                    t.status = ExportTaskStatus::Failed;
-                                    t.stage = "packing";
-                                    t.error = Some(format!("写入目标路径失败: {e}"));
+                        match target_c {
+                            Some(target) => {
+                                let copy_result = std::fs::copy(&zip_path, &target);
+                                let _ = std::fs::remove_file(&zip_path);
+                                let mut t =
+                                    task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
+                                match copy_result {
+                                    Ok(_) => {
+                                        t.status = ExportTaskStatus::Completed;
+                                        t.stage = "packing";
+                                        t.percent = 100.0;
+                                    }
+                                    Err(e) => {
+                                        t.status = ExportTaskStatus::Failed;
+                                        t.stage = "packing";
+                                        t.error = Some(format!("写入目标路径失败: {e}"));
+                                    }
                                 }
                             }
+                            None => {
+                                let mut t =
+                                    task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
+                                t.status = ExportTaskStatus::Completed;
+                                t.stage = "packing";
+                                t.percent = 100.0;
+                                t.zip_path = Some(zip_path);
+                            }
                         }
-                        None => {
-                            let mut t = task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
-                            t.status = ExportTaskStatus::Completed;
-                            t.stage = "packing";
-                            t.percent = 100.0;
-                            t.zip_path = Some(zip_path);
+                    }
+                    Err(e) => {
+                        let mut t = task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
+                        t.status = if cancel_flag {
+                            ExportTaskStatus::Cancelled
+                        } else {
+                            ExportTaskStatus::Failed
+                        };
+                        t.stage = "packing";
+                        if !cancel_flag {
+                            t.error = Some(e);
                         }
                     }
                 }
-                Err(e) => {
-                    let mut t = task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
-                    t.status = if cancel_flag {
-                        ExportTaskStatus::Cancelled
-                    } else {
-                        ExportTaskStatus::Failed
-                    };
-                    t.stage = "packing";
-                    if !cancel_flag {
-                        t.error = Some(e);
-                    }
-                }
-            }
             });
         });
 

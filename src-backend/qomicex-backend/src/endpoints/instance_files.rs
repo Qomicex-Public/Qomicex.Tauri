@@ -282,7 +282,12 @@ fn read_mods_cache_stale(data_dir: &PathBuf, instance_id: &str) -> Option<Vec<Mo
     Some(cache.entries)
 }
 
-fn write_mods_cache(data_dir: &PathBuf, instance_id: &str, entries: Vec<ModMetadataDto>, ttl_secs: i64) {
+fn write_mods_cache(
+    data_dir: &PathBuf,
+    instance_id: &str,
+    entries: Vec<ModMetadataDto>,
+    ttl_secs: i64,
+) {
     let path = mods_cache_path(data_dir, instance_id);
     let _ = std::fs::create_dir_all(path.parent().unwrap());
     let cache = ModsCacheEntry {
@@ -1677,7 +1682,9 @@ fn saves_manager(
 /// core 存档设置错误映射：文件级业务错误（Params）→ 400；其余 → 500。
 fn map_level_dat_error(e: qomicex_core::error::Error) -> ApiError {
     match &e {
-        qomicex_core::error::Error::Params { .. } => ApiError::bad_request("BAD_REQUEST", e.to_string()),
+        qomicex_core::error::Error::Params { .. } => {
+            ApiError::bad_request("BAD_REQUEST", e.to_string())
+        }
         _ => ApiError::internal(e.to_string()),
     }
 }

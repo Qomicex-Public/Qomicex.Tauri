@@ -142,7 +142,10 @@ fn looks_like_list(value: &str) -> bool {
     if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
         return false;
     }
-    matches!(serde_json::from_str::<serde_json::Value>(trimmed), Ok(serde_json::Value::Array(_)))
+    matches!(
+        serde_json::from_str::<serde_json::Value>(trimmed),
+        Ok(serde_json::Value::Array(_))
+    )
 }
 
 /// 区间形态（替代 C# RangePattern 正则：`digits [-–] digits`）

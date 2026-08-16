@@ -95,8 +95,14 @@ pub fn router() -> Router<SharedState> {
         .route("/modpack/export/{instanceId}", post(export))
         .route("/modpack/export/files/{instanceId}", get(export_files))
         .route("/modpack/export/task/{taskId}", get(export_task_get))
-        .route("/modpack/export/task/{taskId}/cancel", post(export_task_cancel))
-        .route("/modpack/export/task/{taskId}/download", get(export_task_download))
+        .route(
+            "/modpack/export/task/{taskId}/cancel",
+            post(export_task_cancel),
+        )
+        .route(
+            "/modpack/export/task/{taskId}/download",
+            get(export_task_download),
+        )
         .route(
             "/modpack/progress/{instanceId}",
             get(progress).delete(cancel),
@@ -131,7 +137,10 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
             .map_err(|e| ApiError::internal(format!("保存上传文件失败: {e}")))?;
         let mut written: u64 = 0;
         while let Some(chunk) = field.chunk().await.map_err(|e| {
-            ApiError::bad_request("MODPACK_PARSE_UPLOAD_FAILED", format!("读取上传分块失败: {e}"))
+            ApiError::bad_request(
+                "MODPACK_PARSE_UPLOAD_FAILED",
+                format!("读取上传分块失败: {e}"),
+            )
         })? {
             if chunk.is_empty() {
                 continue;
@@ -145,11 +154,13 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
                     "整合包文件过大（上限 4 GiB）",
                 ));
             }
-            out.write_all(&chunk).await.map_err(|e| {
-                ApiError::internal(format!("写入上传文件失败: {e}"))
-            })?;
+            out.write_all(&chunk)
+                .await
+                .map_err(|e| ApiError::internal(format!("写入上传文件失败: {e}")))?;
         }
-        out.flush().await.map_err(|e| ApiError::internal(format!("落盘失败: {e}")))?;
+        out.flush()
+            .await
+            .map_err(|e| ApiError::internal(format!("落盘失败: {e}")))?;
         file_id = Some(id);
         saved_path = Some(path);
     }
@@ -184,7 +195,12 @@ async fn export(
         .instance
         .get_by_id(&instance_id)
         .ok_or_else(|| ApiError::not_found("MODPACK_EXPORT_INSTANCE_NOT_FOUND", "实例不存在"))?;
-    let format = match req.format.as_deref().map(str::to_ascii_lowercase).as_deref() {
+    let format = match req
+        .format
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("cf") | Some("curseforge") | Some("zip") => ExportFormat::CurseForge,
         Some("mr") | Some("modrinth") | Some("mrpack") => ExportFormat::Modrinth,
         _ => {
@@ -606,7 +622,11 @@ impl ModpackServiceData {
         let modpack_files = req.modpack_files.clone();
         let version_isolation = req.version_isolation;
         // 管道结束后清理上传的临时文件（install-direct 的绝对路径不属于我们，不删）。
-        let cleanup_path = if cleanup_upload { local_pack_path.clone() } else { None };
+        let cleanup_path = if cleanup_upload {
+            local_pack_path.clone()
+        } else {
+            None
+        };
 
         tracker.start_modpack_install(instance_id.clone(), move |handle| async move {
             let result = run_modpack_pipeline(
@@ -1301,14 +1321,15 @@ impl LocalPackParse {
 /// meta（名称/版本/作者/简介）与管道用 ParsedModpack。
 fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("打开整合包文件失败: {e}"))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
     let mut has_mr = false;
     let mut has_cf = false;
     let mut has_mr_overrides = false;
     let mut has_cf_overrides = false;
     for i in 0..archive.len() {
-        let Ok(entry) = archive.by_index(i) else { continue };
+        let Ok(entry) = archive.by_index(i) else {
+            continue;
+        };
         let name = entry.name();
         match name {
             "modrinth.index.json" => has_mr = true,
@@ -1334,8 +1355,14 @@ fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
             .and_then(|v| v.as_str())
             .unwrap_or("整合包")
             .to_string();
-        let version = root.get("versionId").and_then(|v| v.as_str()).map(String::from);
-        let summary = root.get("summary").and_then(|v| v.as_str()).map(String::from);
+        let version = root
+            .get("versionId")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let summary = root
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let pack = parse_modrinth_index(path)?;
         let file_count = pack.files.len() as i32;
         return Ok(LocalPackParse {
@@ -1353,15 +1380,23 @@ fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
     if has_cf {
         let root = read_zip_json(path, "manifest.json")?;
         if root.get("manifestType").and_then(|v| v.as_str()) != Some("minecraftModpack") {
-            return Err("不是有效的 CurseForge 整合包（manifestType 非 minecraftModpack）".to_string());
+            return Err(
+                "不是有效的 CurseForge 整合包（manifestType 非 minecraftModpack）".to_string(),
+            );
         }
         let name = root
             .get("name")
             .and_then(|v| v.as_str())
             .unwrap_or("整合包")
             .to_string();
-        let version = root.get("version").and_then(|v| v.as_str()).map(String::from);
-        let author = root.get("author").and_then(|v| v.as_str()).map(String::from);
+        let version = root
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let author = root
+            .get("author")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let pack = parse_curseforge_manifest(path)?;
         let file_count = pack.files.len() as i32;
         return Ok(LocalPackParse {

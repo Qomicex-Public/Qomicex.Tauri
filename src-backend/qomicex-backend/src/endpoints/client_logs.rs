@@ -38,7 +38,12 @@ async fn client_logs(
         return Err(ApiError::bad_request("BAD_REQUEST", "logs is required"));
     }
     // 设置开关：关闭则静默跳过（仍返回 200，避免前端把"关闭"误判为故障）。
-    let enabled = state.settings.read().await.auto_report_errors.unwrap_or(true);
+    let enabled = state
+        .settings
+        .read()
+        .await
+        .auto_report_errors
+        .unwrap_or(true);
     if !enabled {
         return Ok(Json(ClientLogsResponse {
             success: false,

@@ -208,12 +208,15 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
         let old_home = set_env("QOMICEX_HOME", &tmp);
         let client = reqwest::Client::new();
-        let ok = report_logs(&client, vec![ClientLogEntry {
-            level: "error".to_string(),
-            message: "test".to_string(),
-            stack: None,
-            device_info: None,
-        }])
+        let ok = report_logs(
+            &client,
+            vec![ClientLogEntry {
+                level: "error".to_string(),
+                message: "test".to_string(),
+                stack: None,
+                device_info: None,
+            }],
+        )
         .await
         .unwrap();
         assert!(!ok, "no license token should skip");
@@ -251,22 +254,32 @@ mod tests {
         });
 
         let client = reqwest::Client::new();
-        let ok = report_logs(&client, vec![ClientLogEntry {
-            level: "error".to_string(),
-            message: "crash happened".to_string(),
-            stack: Some("Error: boom\n at fn (file.ts:1:1)".to_string()),
-            device_info: None,
-        }])
+        let ok = report_logs(
+            &client,
+            vec![ClientLogEntry {
+                level: "error".to_string(),
+                message: "crash happened".to_string(),
+                stack: Some("Error: boom\n at fn (file.ts:1:1)".to_string()),
+                device_info: None,
+            }],
+        )
         .await
         .unwrap();
         assert!(ok, "with token should report");
 
         let req = handle.await.unwrap();
         assert!(req.starts_with("POST /api/client/logs HTTP/1.1"), "{req}");
-        assert!(req.to_ascii_lowercase().contains("authorization: bearer fake-token"), "{req}");
+        assert!(
+            req.to_ascii_lowercase()
+                .contains("authorization: bearer fake-token"),
+            "{req}"
+        );
         assert!(req.contains("crash happened"), "{req}");
         assert!(req.contains("deviceInfo"), "{req}");
-        assert!(req.contains("RAM:"), "deviceInfo should carry hardware info: {req}");
+        assert!(
+            req.contains("RAM:"),
+            "deviceInfo should carry hardware info: {req}"
+        );
 
         restore_env("QOMICEX_HOME", old_home);
         restore_env("QOMICEX_REPORT_URL", old_url);
