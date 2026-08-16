@@ -81,6 +81,9 @@ const SERVICE_DESC_KEYS: Record<string, string> = {
   mcmod: 'settings.about.serviceMcmod',
   'Minecraft官网': 'settings.about.serviceMinecraft',
 }
+const SERVICE_NAME_KEYS: Record<string, string> = {
+  'Minecraft官网': 'settings.about.serviceMinecraftName',
+}
 const REF_DESC_KEYS: Record<string, string> = {
   HMCL: 'settings.about.refVersionCheck',
   ProjBobcat: 'settings.about.refModloaderInstaller',
@@ -358,7 +361,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium">{svc.name}</div>
+                  <div className="font-medium">{t(SERVICE_NAME_KEYS[svc.name] ?? svc.name)}</div>
                   <div className="truncate text-xs text-muted-foreground">{t(SERVICE_DESC_KEYS[svc.name] ?? svc.description)}</div>
                 </div>
                 <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
@@ -1962,7 +1965,7 @@ export default function Settings() {
             <DialogBody className="space-y-4">
               <div className="space-y-2">
                 <Label>{t('settings.java.distribution')}</Label>
-                <Select value={downloadVendor} onChange={setDownloadVendor}>
+                <Select value={downloadVendor} onChange={setDownloadVendor} placeholder={t('common.select')}>
                   {downloadVendors.map((vendor) => (
                     <SelectOption key={vendor.id} value={vendor.id}>
                       {vendor.name}{vendor.isRecommended ? ` ${t('settings.java.recommended')}` : ''}
@@ -1972,7 +1975,7 @@ export default function Settings() {
               </div>
               <div className="space-y-2">
                 <Label>{t('settings.java.mainVersion')}</Label>
-                <Select value={downloadVersion} onChange={setDownloadVersion}>
+                <Select value={downloadVersion} onChange={setDownloadVersion} placeholder={t('common.select')}>
                   {(selectedVendor?.versions ?? []).map((version) => (
                     <SelectOption key={version} value={String(version)}>{version}</SelectOption>
                   ))}
@@ -1980,7 +1983,7 @@ export default function Settings() {
               </div>
               <div className="space-y-2">
                 <Label>{t('settings.java.platform')}</Label>
-                <Select value={downloadPlatform} onChange={setDownloadPlatform}>
+                <Select value={downloadPlatform} onChange={setDownloadPlatform} placeholder={t('common.select')}>
                   {(selectedVendor?.platforms ?? []).map((platform) => (
                     <SelectOption key={platform} value={platform}>{platform}</SelectOption>
                   ))}
@@ -1988,7 +1991,7 @@ export default function Settings() {
               </div>
               <div className="space-y-2">
                 <Label>{t('settings.java.architecture')}</Label>
-                <Select value={downloadArch} onChange={setDownloadArch}>
+                <Select value={downloadArch} onChange={setDownloadArch} placeholder={t('common.select')}>
                   {(selectedVendor?.architectures ?? []).map((arch) => (
                     <SelectOption key={arch} value={arch}>{arch}</SelectOption>
                   ))}

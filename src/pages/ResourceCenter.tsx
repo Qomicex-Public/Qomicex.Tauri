@@ -148,7 +148,7 @@ function ResourceCard({
   onInstall: (item: ResourceItem) => void
   cnName?: string | null
 }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   return (
     <Card className="group overflow-hidden border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5">
       <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start">
@@ -182,7 +182,7 @@ function ResourceCard({
             {item.categories.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {item.categories.slice(0, 6).map((tag) => (
-                  <Badge key={tag} variant="outline" className="rounded-full px-2.5 py-0.5 text-[11px] font-medium">{translateCategory(tag, item.source)}</Badge>
+                  <Badge key={tag} variant="outline" className="rounded-full px-2.5 py-0.5 text-[11px] font-medium">{translateCategory(tag, item.source, lang)}</Badge>
                 ))}
               </div>
             )}

@@ -34,7 +34,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
   const containerRef = useRef<HTMLDivElement>(null)
 
   const options: { value: string; label: string; disabled: boolean; isDivider: boolean }[] = []
-  let selectedLabel = placeholder || '选择...'
+  let selectedLabel = placeholder || ''
 
   function collect(el: React.ReactNode) {
     React.Children.forEach(el, (child) => {
@@ -115,7 +115,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
           !value && 'text-muted-foreground'
         )}
       >
-        <span className="truncate">{value ? selectedLabel : placeholder || '选择...'}</span>
+        <span className="truncate">{selectedLabel}</span>
         <svg className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
       </button>
 
@@ -133,7 +133,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
                   ref={searchRef}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="搜索..."
+                  placeholder=""
                   className="h-8 w-full rounded-md border-0 bg-muted pl-7 pr-2 text-xs text-foreground outline-none ring-1 ring-inset ring-border focus:ring-primary"
                 />
               </div>
@@ -141,7 +141,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
             {(() => {
               const filtered = options.filter((o) => o.isDivider || !search || o.label.toLowerCase().includes(search.toLowerCase()))
               return filtered.length === 0 ? (
-                <div className="px-3 py-2 text-xs text-muted-foreground">无匹配</div>
+                <div className="px-3 py-2 text-xs text-muted-foreground" />
               ) : (
                 filtered.map((opt, i) =>
                   opt.isDivider ? (

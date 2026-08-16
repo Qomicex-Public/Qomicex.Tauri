@@ -320,13 +320,15 @@ const mapsBySource: Record<string, Record<string, string>> = {
   ftb: ftbMap,
 }
 
-export function translateCategory(slug: string, source: string): string {
+export function translateCategory(slug: string, source: string, lang: string = 'zh-CN'): string {
   if (!slug) return slug
   const normalized = slug.trim().toLowerCase()
-  
-  // 优先：loader 官方名称（不受 source 限制）
+
+  // 优先：loader 官方名称（不受 source 限制，且两种语言都用官方名）
   if (loaderDisplayNames[normalized]) return loaderDisplayNames[normalized]
-  
+
+  if (lang !== 'zh-CN') return prettifySlug(normalized)
+
   const map = mapsBySource[source?.toLowerCase()] ?? null
   if (!map) return slug
   return (
@@ -335,4 +337,11 @@ export function translateCategory(slug: string, source: string): string {
     map[normalized.replace(/-/g, ' ')] ??
     slug
   )
+}
+
+/** 英文语言下把 slug 转成可读标题（game-mechanics → Game mechanics） */
+function prettifySlug(slug: string): string {
+  return slug
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
 }

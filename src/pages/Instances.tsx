@@ -695,7 +695,7 @@ export default function Instances() {
                 <FontAwesomeIcon icon={faCube} className="h-3.5 w-3.5 shrink-0" />
                 <span className="font-medium text-foreground">{form.gameVersion}</span>
                 {selectedVer && (
-                  <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', selectedVer.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : selectedVer.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : selectedVer.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{TYPE_LABEL[selectedVer.type] || selectedVer.type}</span>
+                  <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', selectedVer.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : selectedVer.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : selectedVer.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{t(TYPE_LABEL[selectedVer.type] || selectedVer.type)}</span>
                 )}
               </div>
             </div>

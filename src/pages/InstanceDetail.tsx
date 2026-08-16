@@ -1864,7 +1864,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
                       </button>
                     )}
                     {!keybind && s.valueKind === 'Enum' && enumOpts.length > 0 && (
-                      <Select value={s.currentValue} onChange={(v) => handleChange(s.name, v)} className="w-full">
+                      <Select value={s.currentValue} onChange={(v) => handleChange(s.name, v)} className="w-full" placeholder={t('common.select')}>
                         {enumOpts.map((opt) => (
                           <SelectOption key={opt} value={opt}>{opt}</SelectOption>
                         ))}

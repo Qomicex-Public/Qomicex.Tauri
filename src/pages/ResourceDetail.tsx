@@ -159,7 +159,7 @@ export default function ResourceDetailPage() {
   const location = useLocation()
   const navIconUrl = (location.state as { iconUrl?: string } | null)?.iconUrl
   const { notify } = useMessageBox()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const source = searchParams.get('source') ?? 'modrinth'
   const category = searchParams.get('category') ?? 'mod'
   const keyword = searchParams.get('keyword') ?? ''
@@ -612,7 +612,7 @@ export default function ResourceDetailPage() {
                         {detail.categories.map((item) => (
                           <Badge key={item} variant="outline" className="gap-1 rounded-full px-3 py-1">
                             <FontAwesomeIcon icon={faTag} className="h-2.5 w-2.5" />
-                            {translateCategory(item, detail.source)}
+                            {translateCategory(item, detail.source, lang)}
                           </Badge>
                         ))}
                       </div>
