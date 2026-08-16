@@ -34,7 +34,8 @@ import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui'
 import { useI18n } from '../i18n/index.tsx'
-import type { Lang } from '../i18n/types.ts'
+import { LANGS } from '../i18n/lang.ts'
+import type { LangChoice } from '../i18n/lang.ts'
 import { cn } from '../lib/utils.ts'
 import type { SystemInfo, JavaDownloadVendorInfo, DownloadTask } from '../types/index.ts'
 import {
@@ -972,12 +973,14 @@ export default function Settings() {
                     value={settings.language}
                     onChange={(v) => {
                       update('language', v)
-                      setLanguage(v as Lang)
+                      setLanguage(v as LangChoice)
                     }}
                     className="w-48"
                   >
-                    <SelectOption value="zh-CN">简体中文</SelectOption>
-                    <SelectOption value="en">English</SelectOption>
+                    {LANGS.map((l) => (
+                      <SelectOption key={l.value} value={l.value}>{l.label}</SelectOption>
+                    ))}
+                    <SelectOption value="system">{t('settings.appearance.followSystem')}</SelectOption>
                   </Select>
                 </div>
                 <div className="space-y-2">

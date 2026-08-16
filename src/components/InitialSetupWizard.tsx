@@ -4,7 +4,8 @@ import { Input } from './ui'
 import { Label } from './ui'
 import { Select, SelectOption } from './ui'
 import { useI18n } from '../i18n/index.tsx'
-import type { Lang } from '../i18n/types.ts'
+import { LANGS } from '../i18n/lang.ts'
+import type { LangChoice } from '../i18n/lang.ts'
 import { cn } from '../lib/utils.ts'
 import { saveSettings, setDataDir, pingDownloadSources, pingModSources } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
@@ -49,7 +50,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
   const { t, setLanguage } = useI18n()
   const [mode, setMode] = useState<'quick' | 'custom' | null>(null)
   const [step, setStep] = useState(0)
-  const [lang, setLang] = useState<Lang>(settings.language === 'en' ? 'en' : 'zh-CN')
+  const [lang, setLang] = useState<LangChoice>((settings.language === 'en' ? 'en-US' : settings.language) as LangChoice)
   const [theme, setTheme] = useState<'dark' | 'light'>(settings.theme === 'light' ? 'light' : 'dark')
   const [dataDir, setDataDirState] = useState(settings.dataDir || '')
   const [gameDir, setGameDir] = useState(settings.gameDir || '.minecraft')
@@ -366,14 +367,16 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
               <Select
                 value={lang}
                 onChange={(v) => {
-                  const next = v as Lang
+                  const next = v as LangChoice
                   setLang(next)
                   setLanguage(next)
                 }}
                 className="w-48"
               >
-                <SelectOption value="zh-CN">简体中文</SelectOption>
-                <SelectOption value="en">English</SelectOption>
+                {LANGS.map((l) => (
+                  <SelectOption key={l.value} value={l.value}>{l.label}</SelectOption>
+                ))}
+                <SelectOption value="system">{t('settings.appearance.followSystem')}</SelectOption>
               </Select>
             </div>
           )}
@@ -697,7 +700,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
                 </div>
               </div>
               <div className="rounded-lg border px-4 py-3 text-sm space-y-1.5">
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('wizard.stepLanguage')}</span><span>{lang === 'en' ? 'English' : '简体中文'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('wizard.stepLanguage')}</span><span>{lang === 'system' ? t('settings.appearance.followSystem') : LANGS.find((l) => l.value === lang)?.label ?? lang}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">{t('wizard.stepTheme')}</span><span>{t(theme === 'dark' ? 'wizard.dark' : 'wizard.light')}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">{t('wizard.stepJava')}</span><span>{REQUIRED_JAVA_VERSIONS.filter((v) => byVersion(v)).length}/{REQUIRED_JAVA_VERSIONS.length}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">{t('wizard.stepMemory')}</span><span>{memoryMode === 'auto' ? t('wizard.memoryAuto') : `${defaultMaxMemory} ${t('wizard.memoryMb')}`}</span></div>

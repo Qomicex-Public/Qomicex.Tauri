@@ -24,9 +24,9 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, lang: string): string {
   const d = new Date(iso)
-  return d.toLocaleString('zh-CN', {
+  return d.toLocaleString(lang, {
     month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   })
@@ -42,7 +42,7 @@ function inferLevel(line: string): 'ERROR' | 'WARN' | 'DEBUG' | 'INFO' {
 
 export default function LogTab() {
   const { notify, confirm: msgConfirm } = useMessageBox()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: LogEntry } | null>(null)
@@ -235,7 +235,7 @@ export default function LogTab() {
                         )}
                       </div>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {formatSize(entry.size)} · {formatDate(entry.lastModified)}
+                        {formatSize(entry.size)} · {formatDate(entry.lastModified, lang)}
                       </p>
                     </div>
 

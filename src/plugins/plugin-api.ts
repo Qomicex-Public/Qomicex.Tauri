@@ -1,10 +1,10 @@
 import { API_BASE } from '../api/client.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
+import { resolveLang } from '../i18n/lang.ts'
 
 function i18nKey(key: string, params?: Record<string, string | number>): string {
-  const lang = localStorage.getItem('qomicex-language') === 'en' ? 'en' : 'zh-CN'
-  const dict = RESOURCES[lang] as unknown as Record<string, unknown>
+  const dict = RESOURCES[resolveLang(localStorage.getItem('qomicex-language'))] as unknown as Record<string, unknown>
   let val: unknown = dict
   for (const part of key.split('.')) {
     if (val && typeof val === 'object' && part in val) val = (val as Record<string, unknown>)[part]

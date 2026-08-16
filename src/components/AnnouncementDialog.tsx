@@ -18,10 +18,10 @@ interface AnnouncementDialogProps {
 }
 
 export function AnnouncementDialog({ open, onClose, announcement, onNext, hasNext, onPrev, hasPrev }: AnnouncementDialogProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   if (!announcement) return null
 
-  const date = new Date(announcement.createdAt).toLocaleDateString('zh-CN', {
+  const date = new Date(announcement.createdAt).toLocaleDateString(lang, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',

@@ -1,6 +1,6 @@
 // 后端错误码 → 翻译 key 映射（前端统一映射，后端零改动）
 import type { ApiError } from '../api/client.ts'
-import { zhCN, en } from '../../qomicex-tauri-i18n/src/index.ts'
+import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
 import type { Lang } from './types'
 
 const CODE_TO_KEY: Record<string, string> = {
@@ -34,7 +34,7 @@ const CODE_TO_KEY: Record<string, string> = {
 export function translateApiError(e: ApiError, lang: Lang): string | null {
   const key = CODE_TO_KEY[e.code]
   if (!key) return null
-  const dict = (lang === 'en' ? en : zhCN) as unknown as Record<string, unknown>
+  const dict = RESOURCES[lang] as unknown as Record<string, unknown>
   let val: unknown = dict
   for (const part of key.split('.')) {
     if (val && typeof val === 'object' && part in val) {

@@ -200,7 +200,7 @@ export default function Dashboard() {
               <p className="mt-0.5 text-xs text-muted-foreground/70">
                 {defaultInstance.gameVersion}
                 {defaultInstance.loader && ` · ${defaultInstance.loader} ${defaultInstance.loaderVersion}`}
-                {defaultInstance.lastPlayed && ` · ${t('dashboard.lastPlayed', { date: new Date(defaultInstance.lastPlayed).toLocaleDateString(lang === 'zh-CN' ? 'zh-CN' : 'en-US') })}`}
+                {defaultInstance.lastPlayed && ` · ${t('dashboard.lastPlayed', { date: new Date(defaultInstance.lastPlayed).toLocaleDateString(lang) })}`}
               </p>
             </div>
           </div>

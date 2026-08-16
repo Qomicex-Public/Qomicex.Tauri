@@ -72,7 +72,7 @@ function prettifyCape(id: string): string {
 }
 
 export function capeDisplayName(id: string, alias?: string | null, lang: string = 'zh-CN'): string {
-  if (lang !== 'zh-CN') {
+  if (!lang.startsWith('zh')) {
     if (alias) return alias
     if (id.startsWith('mcc_')) return `MCC (${id.slice(4)})`
     if (id.startsWith('realms_')) return `Realms (${id.slice(7)})`

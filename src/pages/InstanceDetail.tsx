@@ -95,7 +95,7 @@ function formatDate(iso: string | null, t: (k: string, p?: Record<string, string
   if (diff < 60000) return t('instanceDetail.time.justNow')
   if (diff < 3600000) return t('instanceDetail.time.minutesAgo', { count: Math.floor(diff / 60000) })
   if (diff < 86400000) return t('instanceDetail.time.hoursAgo', { count: Math.floor(diff / 3600000) })
-  return d.toLocaleDateString(lang === 'zh-CN' ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
+  return d.toLocaleDateString(lang, { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
 }
 
 function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {

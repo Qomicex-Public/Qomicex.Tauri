@@ -327,7 +327,7 @@ export function translateCategory(slug: string, source: string, lang: string = '
   // 优先：loader 官方名称（不受 source 限制，且两种语言都用官方名）
   if (loaderDisplayNames[normalized]) return loaderDisplayNames[normalized]
 
-  if (lang !== 'zh-CN') return prettifySlug(normalized)
+  if (!lang.startsWith('zh')) return prettifySlug(normalized)
 
   const map = mapsBySource[source?.toLowerCase()] ?? null
   if (!map) return slug

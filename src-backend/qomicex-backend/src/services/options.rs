@@ -228,13 +228,18 @@ pub fn to_minecraft_lang(language: &str) -> String {
     match language {
         "zh-CN" => "zh_cn".to_string(),
         "zh-TW" => "zh_tw".to_string(),
-        "en" => "en_us".to_string(),
+        "en" | "en-US" => "en_us".to_string(),
+        "en-GB" => "en_gb".to_string(),
         other => other.to_lowercase().replace('-', "_"),
     }
 }
 
 /// 仅当 options.txt 不存在或未含 `lang` 选项时写入语言（尊重游戏内已设语言）。
+/// `system`（跟随系统）时跳过，避免写入错误的语言码。
 pub fn ensure_lang(game_dir: &str, version: &str, isolated: bool, language: &str) {
+    if language == "system" {
+        return;
+    }
     let path = options_path(game_dir, version, isolated);
     let config = load_config(&path);
     if config.iter().any(|(k, _)| k == "lang") {
@@ -269,6 +274,15 @@ mod tests {
         assert!(!is_available_in_version("1.21.11", "1.20.1"));
         assert!(is_available_in_version("1.20", "1.20.1"));
         assert!(is_available_in_version("snapshot-name", "1.20.1"));
+    }
+
+    #[test]
+    fn minecraft_lang_mapping() {
+        assert_eq!(to_minecraft_lang("zh-CN"), "zh_cn");
+        assert_eq!(to_minecraft_lang("zh-TW"), "zh_tw");
+        assert_eq!(to_minecraft_lang("en"), "en_us");
+        assert_eq!(to_minecraft_lang("en-US"), "en_us");
+        assert_eq!(to_minecraft_lang("en-GB"), "en_gb");
     }
 
     #[test]

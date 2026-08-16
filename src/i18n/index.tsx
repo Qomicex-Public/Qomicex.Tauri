@@ -4,14 +4,11 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo } 
 import type { ReactNode } from 'react'
 import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
 import type { Lang, DeepKeys, TranslationSchema } from './types'
+import { resolveLang } from './lang.ts'
+import type { LangChoice } from './lang.ts'
 import { onSettingsChange } from '../api/settings.ts'
 import { setApiErrorTranslator } from '../api/client.ts'
 import { translateApiError } from './errors.ts'
-
-export const LANGS: { value: Lang; label: string }[] = [
-  { value: 'zh-CN', label: '简体中文' },
-  { value: 'en', label: 'English' },
-]
 
 const STORAGE_KEY = 'qomicex-language'
 
@@ -21,21 +18,17 @@ interface I18nContextValue {
   lang: Lang
   /** 取翻译；{name} 形式占位符可用 params 替换。字面量 key 编译期校验，动态 key 也允许。 */
   t: (key: TranslationKey | (string & {}), params?: Record<string, string | number>) => string
-  setLanguage: (lang: Lang) => void
+  setLanguage: (lang: LangChoice) => void
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null)
 
-function resolveLang(raw: string | null | undefined): Lang {
-  return raw === 'en' ? 'en' : 'zh-CN'
-}
-
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Lang>(() => resolveLang(localStorage.getItem(STORAGE_KEY)))
 
-  const setLanguage = useCallback((l: Lang) => {
+  const setLanguage = useCallback((l: LangChoice) => {
     localStorage.setItem(STORAGE_KEY, l)
-    setLang(l)
+    setLang(resolveLang(l))
   }, [])
 
   // 后端持久化的 settings.language 变化时同步（含启动 loadSettings 完成后的广播）
@@ -44,7 +37,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       setLang((cur) => {
         const next = resolveLang(s.language)
         if (cur === next) return cur
-        localStorage.setItem(STORAGE_KEY, next)
+        localStorage.setItem(STORAGE_KEY, s.language)
         return next
       })
     })

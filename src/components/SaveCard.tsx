@@ -21,7 +21,7 @@ interface Props {
 }
 
 export default function SaveCard({ save, instanceId, onRefresh, selected, onSelect, onQuickJoin }: Props) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -94,7 +94,7 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
             <>
               <h3 className="truncate text-sm font-semibold text-foreground">{save.name}</h3>
               {save.lastPlayed > 0 && (
-                <p className="mt-0.5 text-xs text-muted-foreground">{t('dialogs.save.lastPlayed', { date: new Date(save.lastPlayed).toLocaleDateString('zh-CN') })}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{t('dialogs.save.lastPlayed', { date: new Date(save.lastPlayed).toLocaleDateString(lang) })}</p>
               )}
             </>
           )}
