@@ -246,9 +246,7 @@ pub fn router() -> Router<SharedState> {
 
 /// POST /api/logs/frontend — 前端 console 日志上报（构建版无控制台时仍可查看）。
 /// body: `{ "level": "warn", "message": "..." }`，写入 trace 缓冲 + 落盘文件。
-async fn frontend_log(
-    Json(body): Json<FrontendLogRequest>,
-) -> ApiResult<StatusCode> {
+async fn frontend_log(Json(body): Json<FrontendLogRequest>) -> ApiResult<StatusCode> {
     let level = body.level.unwrap_or_else(|| "log".to_string());
     let message = body.message.unwrap_or_default();
     // 消息可含换行（多行 console），逐行写入便于查看器按行过滤
@@ -265,9 +263,8 @@ async fn log_content(
     Query(q): Query<PathQuery>,
 ) -> ApiResult<Json<LogContentResponse>> {
     let log_dir = state.data_dir.join("logs");
-    let resolved = resolve_log_path(&log_dir, &q.path).ok_or_else(|| {
-        ApiError::not_found("LOG_NOT_FOUND", "Log file not found")
-    })?;
+    let resolved = resolve_log_path(&log_dir, &q.path)
+        .ok_or_else(|| ApiError::not_found("LOG_NOT_FOUND", "Log file not found"))?;
 
     const MAX_CONTENT_BYTES: u64 = 2 * 1024 * 1024; // 前端查看器上限 2MB
     let bytes = std::fs::read(&resolved)?;

@@ -16,8 +16,7 @@ fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     // 默认只开 info 级业务日志；tower_http 请求日志已由 TraceLayer 按 >=400 过滤，
     // 不再全局放行 debug（避免每请求两条 DEBUG 噪音）。RUST_LOG 环境变量可覆盖。
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         // ⚠️ 强制关闭 ANSI 转义码：tracing-subscriber 的 `ansi` feature 会被

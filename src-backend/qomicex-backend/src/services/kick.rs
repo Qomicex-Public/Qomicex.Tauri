@@ -14,9 +14,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use tracing::{debug, info, warn};
 use qomicex_connector::center::scaffolding_center::{PlayerPingHandler, ScaffoldingCenter};
 use qomicex_connector::models::player::PlayerInfo;
+use tracing::{debug, info, warn};
 
 /// 房主对已踢玩家重连请求的审核动作（弹窗三选）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,8 +95,8 @@ impl KickManager {
                     .map(|k| k.prompt_disabled)
                     .unwrap_or(false)
                 {
-                    let peer = kicked_read(&kicked, &machine_id)
-                        .and_then(|k| k.easytier_peer.clone());
+                    let peer =
+                        kicked_read(&kicked, &machine_id).and_then(|k| k.easytier_peer.clone());
                     let center = center.clone();
                     tokio::spawn(async move {
                         let Some(center) = center.read().unwrap().clone() else {
@@ -122,8 +122,7 @@ impl KickManager {
                     mark_kick_pending(&kicked, &machine_id, &info.name, &info.vendor);
                     info!("玩家 {machine_id} 申请重新加入，等待房主决定");
                 }
-                let peer = kicked_read(&kicked, &machine_id)
-                    .and_then(|k| k.easytier_peer.clone());
+                let peer = kicked_read(&kicked, &machine_id).and_then(|k| k.easytier_peer.clone());
                 let center = center.clone();
                 tokio::spawn(async move {
                     let Some(center) = center.read().unwrap().clone() else {
@@ -181,7 +180,10 @@ impl KickManager {
             KickedEntry {
                 easytier_peer: peer_id,
                 name: player.as_ref().map(|p| p.name.clone()).unwrap_or_default(),
-                vendor: player.as_ref().map(|p| p.vendor.clone()).unwrap_or_default(),
+                vendor: player
+                    .as_ref()
+                    .map(|p| p.vendor.clone())
+                    .unwrap_or_default(),
                 pending: false,
                 prompt_disabled: false,
             },
@@ -275,19 +277,28 @@ async fn drop_kicked_connection(
 ///    对齐 Rust/C# guest 的 easytier hostname 命名）；② 按 SCF TCP 源虚拟 IP 匹配
 ///    （guest 的 SCF 连接走 easytier 虚拟网时源地址即其虚拟 IP，对第三方 guest 也有效）。
 /// 均失败返回 `None`（第三方 guest 无法定位网络层）。
-async fn resolve_guest_easytier_peer(center: &ScaffoldingCenter, machine_id: &str) -> Option<String> {
+async fn resolve_guest_easytier_peer(
+    center: &ScaffoldingCenter,
+    machine_id: &str,
+) -> Option<String> {
     let nodes = center.easy_tier_nodes().await;
     let hostname = format!(
         "scaffolding-mc-guest-{}",
         machine_id.chars().take(8).collect::<String>()
     );
     if let Some(node) = nodes.iter().find(|n| n.hostname == hostname) {
-        info!("踢出 {machine_id}: 按 easytier hostname 反查命中 peer {}", node.node_id);
+        info!(
+            "踢出 {machine_id}: 按 easytier hostname 反查命中 peer {}",
+            node.node_id
+        );
         return Some(node.node_id.clone());
     }
     if let Some(src_ip) = center.machine_source_ip(machine_id).await {
         if let Some(node) = nodes.iter().find(|n| n.virtual_ip == src_ip) {
-            info!("踢出 {machine_id}: 按 SCF 源虚拟 IP {src_ip} 反查命中 peer {}", node.node_id);
+            info!(
+                "踢出 {machine_id}: 按 SCF 源虚拟 IP {src_ip} 反查命中 peer {}",
+                node.node_id
+            );
             return Some(node.node_id.clone());
         }
     }
@@ -303,7 +314,12 @@ fn kicked_read(
 }
 
 /// 置为待审核（同步回调内使用；写锁短临界区）。
-fn mark_kick_pending(kicked: &Arc<RwLock<HashMap<String, KickedEntry>>>, machine_id: &str, name: &str, vendor: &str) {
+fn mark_kick_pending(
+    kicked: &Arc<RwLock<HashMap<String, KickedEntry>>>,
+    machine_id: &str,
+    name: &str,
+    vendor: &str,
+) {
     if let Some(info) = kicked.write().unwrap().get_mut(machine_id) {
         info.pending = true;
         info.name = name.to_string();

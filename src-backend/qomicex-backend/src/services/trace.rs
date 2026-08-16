@@ -212,7 +212,11 @@ impl FileLog {
             *size = 0;
             let rotated = self.rotated_path();
             let _ = std::fs::rename(self.log_path(), rotated);
-            if let Ok(f) = OpenOptions::new().create(true).append(true).open(self.log_path()) {
+            if let Ok(f) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.log_path())
+            {
                 *file = Some(f);
             } else {
                 return;

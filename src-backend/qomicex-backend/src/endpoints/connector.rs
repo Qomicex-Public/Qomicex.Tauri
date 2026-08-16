@@ -1442,7 +1442,9 @@ async fn kick_player(Json(req): Json<KickRequest>) -> ApiResult<Json<StatusMessa
 /// POST /connector/kick/review — 房主决定已踢玩家的重连请求（弹窗三选）。
 ///
 /// action: `allow`（允许重新加入）| `reject`（拒绝）| `reject_silent`（拒绝且不再提示）。
-async fn decide_kick_review(Json(req): Json<KickReviewRequest>) -> ApiResult<Json<StatusMessageResponse>> {
+async fn decide_kick_review(
+    Json(req): Json<KickReviewRequest>,
+) -> ApiResult<Json<StatusMessageResponse>> {
     let conn = connector();
     let mode = conn.mode.lock().await;
     let Mode::Host(_) = &*mode else {

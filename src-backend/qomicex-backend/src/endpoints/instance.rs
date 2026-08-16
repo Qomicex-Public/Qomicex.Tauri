@@ -338,10 +338,7 @@ async fn create_group(
         .instance_groups
         .create(name, req.color.unwrap_or_else(default_group_color))
         .ok_or_else(|| {
-            ApiError::bad_request(
-                "GROUP_NAME_EXISTS",
-                "A group with this name already exists",
-            )
+            ApiError::bad_request("GROUP_NAME_EXISTS", "A group with this name already exists")
         })
         .map(Json)
 }
@@ -364,10 +361,7 @@ async fn update_group(
         .instance_groups
         .update(&id, name, color)
         .ok_or_else(|| {
-            ApiError::bad_request(
-                "GROUP_NAME_EXISTS",
-                "A group with this name already exists",
-            )
+            ApiError::bad_request("GROUP_NAME_EXISTS", "A group with this name already exists")
         })
         .map(Json)
 }

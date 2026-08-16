@@ -21,7 +21,9 @@ use crate::services::instance::InstanceService;
 use crate::services::instance_group::InstanceGroupService;
 use crate::services::launch_tracker::LaunchTracker;
 use crate::services::plugin::{FileAuthService, PluginGatewayClient, PluginStore};
-use crate::services::trace::{init_file_log, LogLevelManager, TraceBufferStore, TraceDumpService, FileLog};
+use crate::services::trace::{
+    init_file_log, FileLog, LogLevelManager, TraceBufferStore, TraceDumpService,
+};
 use crate::settings;
 use crate::settings::SettingsResponse;
 

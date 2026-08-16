@@ -120,7 +120,10 @@ fn spawn_backend(app: &tauri::App) {
     let exe_path = match extract_backend() {
         Some(p) => p,
         None => {
-            tauri_log!("backend", "failed to extract backend to a writable location");
+            tauri_log!(
+                "backend",
+                "failed to extract backend to a writable location"
+            );
             return;
         }
     };

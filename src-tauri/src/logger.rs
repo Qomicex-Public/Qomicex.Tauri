@@ -22,10 +22,12 @@ fn base_dir() -> PathBuf {
             return PathBuf::from(env);
         }
     }
-    let local = std::env::var("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|_| {
-        let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
-        home.join(".local/share")
-    });
+    let local = std::env::var("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
+            home.join(".local/share")
+        });
     local.join("qomicex-launcher")
 }
 
@@ -49,7 +51,11 @@ pub fn log_line(tag: &str, msg: &str) {
     let mut guard = LOG_FILE.lock().unwrap();
     if guard.is_none() {
         let path = log_dir().join("qomicex-tauri.log");
-        *guard = OpenOptions::new().create(true).append(true).open(&path).ok();
+        *guard = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok();
     }
     if let Some(f) = guard.as_mut() {
         let _ = writeln!(f, "{line}");
