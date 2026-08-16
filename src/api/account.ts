@@ -46,6 +46,18 @@ export function yggdrasilLogin(email: string, password: string, serverUrl = 'htt
   return post<Account>('/auth/yggdrasil', { username: email, password, serverUrl })
 }
 
+export interface YggdrasilResolveResult {
+  apiRoot: string
+  changed: boolean
+  insecure: boolean
+}
+
+/** ALI (API Location Indicator) resolution: turn a shortened server address
+ *  (e.g. `littleskin.cn`) into the full Yggdrasil API root. */
+export function yggdrasilResolve(url: string): Promise<YggdrasilResolveResult> {
+  return post<YggdrasilResolveResult>('/account/yggdrasil-resolve', { url })
+}
+
 export function tongyiLogin(serverId: string, email: string, password: string): Promise<Account> {
   return post<Account>('/auth/tongyi', { serverId, email: email, password })
 }

@@ -1971,3 +1971,34 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
   "availableMemory": 8589934592
 }
 ```
+
+### 2026-08-16 更新：Yggdrasil ALI 地址解析端点
+
+### POST `/api/account/yggdrasil-resolve`
+
+Yggdrasil 外置登录的 **ALI（API 地址指示）** 解析：把用户输入的缩略地址解析为完整 API 根地址。实现遵循 [authlib-injector 启动器技术规范](https://yushijinhun.github.io/authlib-injector/zh/%E5%90%AF%E5%8A%A8%E5%99%A8%E6%8A%80%E6%9C%AF%E8%A7%84%E8%8C%83.html)。
+
+**请求体：**
+```json
+{ "url": "littleskin.cn" }
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| url | string | 用户输入的地址；可缺省协议（自动补 `https://`）、可为完整 API 根 |
+
+**解析规则：**
+1. 无协议 → 补 `https://`（不降级到明文 http）；
+2. GET 该地址（跟随 HTTP 重定向）；
+3. 响应含 `X-Authlib-Injector-API-Location` 头 → 该头指向 API 根（相对地址基于最终响应 URL 解析；指向自身则视为当前地址即 API 根）；
+4. 无该头 → 当前（规范化后的输入）地址即 API 根。
+
+**响应：** `{ "apiRoot": "https://littleskin.cn/api/yggdrasil", "changed": true, "insecure": false }`
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| apiRoot | string | 解析后的 API 根地址（解析失败场景下前端回退用原始输入） |
+| changed | boolean | 是否与输入地址不同 |
+| insecure | boolean | apiRoot 是否为明文 `http://`（前端据此显示明文传输警告） |
+
+**错误：** 空 url → `400 BAD_REQUEST`；网络/TLS/DNS 等传输失败 → `502 UPSTREAM_ERROR`（非 2xx 响应不算失败，仍按上述规则检查 ALI 头）。

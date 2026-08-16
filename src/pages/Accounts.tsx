@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import type { DragEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
-import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faStar, faRotate, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faStar, faRotate, faMagnifyingGlass, faGripVertical } from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
@@ -27,6 +28,28 @@ function fmtErr(e: unknown): string {
   if (e instanceof ApiError) return e.displayMessage
   if (e instanceof Error) return e.message
   return String(e)
+}
+
+/** authlib-injector 技术规范 §通过拖拽设置：拖动数据为 text/plain，
+ *  内容形如 `authlib-injector:yggdrasil-server:{URI 编码的 API 地址}`。 */
+const YGG_DND_PREFIX = 'authlib-injector:yggdrasil-server:'
+
+function parseYggDndUri(text: string): string | null {
+  if (!text.startsWith(YGG_DND_PREFIX)) return null
+  const encoded = text.slice(YGG_DND_PREFIX.length)
+  try {
+    const url = decodeURIComponent(encoded).trim()
+    return url || null
+  } catch {
+    return null
+  }
+}
+
+interface YggResolvedInfo {
+  apiRoot: string
+  changed: boolean
+  insecure: boolean
+  error: boolean
 }
 
 function getAccountIcon(loginMethod: string): { icon: typeof faUser; color: string } {
@@ -115,6 +138,11 @@ export default function Accounts() {
   const [yggSelected, setYggSelected] = useState<Set<string>>(new Set())
   const [yggAuthToken, setYggAuthToken] = useState('')
   const [yggClientToken, setYggClientToken] = useState('')
+  const [yggResolved, setYggResolved] = useState<YggResolvedInfo | null>(null)
+  const yggLastResolvedRef = useRef('')
+  const yggResolvedRef = useRef<YggResolvedInfo | null>(null)
+  const yggResolveSeq = useRef(0)
+  const yggInFlightRef = useRef<{ target: string; promise: Promise<YggResolvedInfo> } | null>(null)
 
   const [tyServerId, setTyServerId] = useState('')
   const [tyEmail, setTyEmail] = useState('')
@@ -267,10 +295,83 @@ export default function Accounts() {
     }
   }
 
+  /** ALI 解析（API 地址指示）：把缩略地址解析为完整 API 根。seq 守卫丢弃过期结果。 */
+  async function doResolveYggServer(target: string): Promise<YggResolvedInfo> {
+    const seq = ++yggResolveSeq.current
+    try {
+      const res = await accountApi.yggdrasilResolve(target)
+      const out: YggResolvedInfo = { apiRoot: res.apiRoot, changed: res.changed, insecure: res.insecure, error: false }
+      if (seq === yggResolveSeq.current) {
+        yggLastResolvedRef.current = target
+        yggResolvedRef.current = out
+        setYggResolved(out)
+      }
+      return out
+    } catch {
+      const out: YggResolvedInfo = { apiRoot: '', changed: false, insecure: false, error: true }
+      if (seq === yggResolveSeq.current) {
+        yggLastResolvedRef.current = target
+        yggResolvedRef.current = out
+        setYggResolved(out)
+      }
+      return out
+    }
+  }
+
+  function ensureYggResolved(target: string): Promise<YggResolvedInfo> {
+    const t = target.trim()
+    const empty: YggResolvedInfo = { apiRoot: '', changed: false, insecure: false, error: false }
+    if (!t) return Promise.resolve(empty)
+    if (yggLastResolvedRef.current === t && yggResolvedRef.current) {
+      return Promise.resolve(yggResolvedRef.current)
+    }
+    if (yggInFlightRef.current && yggInFlightRef.current.target === t) {
+      return yggInFlightRef.current.promise
+    }
+    const promise = doResolveYggServer(t)
+    const tracked = promise.finally(() => {
+      if (yggInFlightRef.current?.target === t) yggInFlightRef.current = null
+    })
+    yggInFlightRef.current = { target: t, promise: tracked }
+    return tracked
+  }
+
+  /** 解析成功用 API 根，失败/未解析回退原始输入。 */
+  function effectiveYggServer(): string {
+    const r = yggResolvedRef.current
+    if (r && !r.error && r.apiRoot) return r.apiRoot
+    return yggServer.trim()
+  }
+
+  function clearYggResolved() {
+    yggLastResolvedRef.current = ''
+    yggResolvedRef.current = null
+    setYggResolved(null)
+    yggResolveSeq.current += 1
+  }
+
+  function onYggDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }
+
+  async function onYggDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    const url = parseYggDndUri(e.dataTransfer.getData('text/plain'))
+    if (!url) return
+    const ok = await msgConfirm(t('accounts.ygg.dndConfirm', { url }), t('accounts.ygg.dndTitle'))
+    if (!ok) return
+    setYggServer(url)
+    clearYggResolved()
+    void ensureYggResolved(url)
+  }
+
   async function handleYggdrasilLogin() {
     setLoading(true)
     try {
-      const result = await accountApi.yggdrasilGetProfiles(yggEmail, yggPwd, yggServer)
+      const resolved = await ensureYggResolved(yggServer)
+      const server = resolved.error ? yggServer.trim() : resolved.apiRoot
+      const result = await accountApi.yggdrasilGetProfiles(yggEmail, yggPwd, server)
       if (!result.success || !result.profiles?.length) {
         await msgError(result.errorMessage || t('accounts.microsoft.noRole'))
         return
@@ -292,7 +393,7 @@ export default function Accounts() {
     setLoading(true)
     try {
       const selected = yggProfiles.filter((p) => yggSelected.has(p.id))
-      await accountApi.yggdrasilSelectProfiles(yggAuthToken, yggClientToken, yggServer, selected)
+      await accountApi.yggdrasilSelectProfiles(yggAuthToken, yggClientToken, effectiveYggServer(), selected)
       await refresh()
       if (selected.length > 0) navigate(`/accounts/${selected[0].id}`)
       setAddOpen(false)
@@ -609,7 +710,11 @@ export default function Accounts() {
           )}
 
           {addTab === 'yggdrasil' && (
-            <div key="yggdrasil" className="animate-in slide-up space-y-4">
+            <div key="yggdrasil" className="animate-in slide-up space-y-4" onDragOver={onYggDragOver} onDrop={onYggDrop}>
+              <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/40 px-3 py-3 text-center text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5">
+                <FontAwesomeIcon icon={faGripVertical} className="h-3.5 w-3.5 shrink-0" />
+                {t('accounts.ygg.dndHint')}
+              </div>
               {yggStep === 'form' && (
                 <>
                   <div className="space-y-2">
@@ -621,7 +726,7 @@ export default function Accounts() {
                       ].map((p) => (
                         <button
                           key={p.url}
-                          onClick={() => setYggServer(p.url)}
+                          onClick={() => { setYggServer(p.url); clearYggResolved() }}
                           className={cn(
                             'rounded-md border px-2.5 py-1 text-xs transition-colors',
                             yggServer === p.url ? 'border-primary/40 bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-foreground/30'
@@ -642,7 +747,24 @@ export default function Accounts() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="ygg-server">{t('accounts.ygg.customServerAddr')}</Label>
-                    <Input id="ygg-server" value={yggServer} onChange={(e) => setYggServer(e.target.value)} placeholder="https://example.com/api/yggdrasil" />
+                    <Input
+                      id="ygg-server"
+                      value={yggServer}
+                      onChange={(e) => { setYggServer(e.target.value); clearYggResolved() }}
+                      onBlur={() => { const t = yggServer.trim(); if (t) void ensureYggResolved(t) }}
+                      placeholder="https://example.com/api/yggdrasil"
+                    />
+                    {yggResolved && !yggResolved.error && yggResolved.changed && (
+                      <p className="text-xs text-muted-foreground">{t('accounts.ygg.resolvedTo', { url: yggResolved.apiRoot })}</p>
+                    )}
+                    {yggResolved?.error && (
+                      <p className="text-xs text-destructive">{t('accounts.ygg.resolveFailed')}</p>
+                    )}
+                    {yggResolved?.insecure && (
+                      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                        {t('accounts.ygg.httpWarning')}
+                      </div>
+                    )}
                   </div>
                   <Button className="w-full" onClick={handleYggdrasilLogin} disabled={loading}>
                     <FontAwesomeIcon icon={faFingerprint} className="h-4 w-4" />

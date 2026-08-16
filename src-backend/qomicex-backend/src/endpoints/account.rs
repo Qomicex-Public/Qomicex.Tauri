@@ -16,7 +16,7 @@
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +46,19 @@ struct YggdrasilMetaResponse {
     server_name: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct YggdrasilResolveResponse {
+    api_root: String,
+    changed: bool,
+    insecure: bool,
+}
+
+#[derive(Deserialize)]
+struct ResolveUrlRequest {
+    url: String,
+}
+
 #[derive(Deserialize)]
 struct NameQuery {
     name: String,
@@ -69,6 +82,7 @@ pub fn router() -> Router<SharedState> {
         .route("/account/lost", get(check_lost))
         .route("/account/offline-uuid", get(offline_uuid))
         .route("/account/yggdrasil-meta", get(yggdrasil_meta))
+        .route("/account/yggdrasil-resolve", post(yggdrasil_resolve))
 }
 
 // =====================================================================
@@ -176,9 +190,101 @@ async fn yggdrasil_meta(
     Ok(Json(YggdrasilMetaResponse { server_name: name }))
 }
 
+/// POST /api/account/yggdrasil-resolve
+///
+/// Resolve a user-supplied verification-server address to the Yggdrasil API
+/// root, following the authlib-injector ALI (API Location Indicator) spec:
+/// 1. if the URL lacks a scheme, prepend `https://` (never downgrade to http);
+/// 2. GET the address (following HTTP redirects);
+/// 3. if the response carries an `X-Authlib-Injector-API-Location` header, that
+///    points to the API root — relative values are resolved against the final
+///    response URL, and a header pointing back to the input keeps the input;
+/// 4. otherwise the (normalized) input address itself is the API root.
+///
+/// Transport failures (unreachable host, TLS, DNS) surface as upstream errors;
+/// a completed non-2xx response is still inspected for the ALI header.
+async fn yggdrasil_resolve(
+    State(state): State<SharedState>,
+    Json(req): Json<ResolveUrlRequest>,
+) -> ApiResult<Json<YggdrasilResolveResponse>> {
+    let resolved = resolve_yggdrasil_url(&state.http_client, &req.url).await?;
+    Ok(Json(resolved))
+}
+
 // =====================================================================
 // Helpers
 // =====================================================================
+
+/// ALI resolution (see the `yggdrasil_resolve` docs). Shared by the handler
+/// and the unit tests.
+async fn resolve_yggdrasil_url(
+    client: &reqwest::Client,
+    raw: &str,
+) -> ApiResult<YggdrasilResolveResponse> {
+    let normalized = normalize_server_url(raw)
+        .ok_or_else(|| ApiError::bad_request("BAD_REQUEST", "url is required"))?;
+    let resp = client
+        .get(&normalized)
+        .send()
+        .await
+        .map_err(|e| ApiError::upstream(e.to_string()))?;
+    let final_url = resp.url().clone();
+    let ali = resp
+        .headers()
+        .get("x-authlib-injector-api-location")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let api_root = apply_ali(ali.as_deref(), &final_url, &normalized);
+    let insecure = url::Url::parse(&api_root)
+        .map(|u| u.scheme() == "http")
+        .unwrap_or(false);
+    Ok(YggdrasilResolveResponse {
+        changed: api_root != normalized,
+        api_root,
+        insecure,
+    })
+}
+
+/// Spec §设置验证服务器·在启动器中输入地址: if the URL lacks a scheme,
+/// prepend `https://`. An empty input yields `None`.
+fn normalize_server_url(input: &str) -> Option<String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return None;
+    }
+    if input.contains("://") {
+        Some(input.to_string())
+    } else {
+        Some(format!("https://{input}"))
+    }
+}
+
+/// Spec §处理 API 地址指示（ALI）: apply the `X-Authlib-Injector-API-Location`
+/// rule. `base` is the final response URL (redirects already followed);
+/// relative headers are resolved against it. A header that resolves to the
+/// input itself leaves the input unchanged.
+fn apply_ali(header: Option<&str>, base: &url::Url, input: &str) -> String {
+    let Some(header) = header else {
+        return input.to_string();
+    };
+    let header = header.trim();
+    if header.is_empty() {
+        return input.to_string();
+    }
+    let new_url = match url::Url::parse(header) {
+        Ok(abs) => abs,
+        Err(_) => match base.join(header) {
+            Ok(joined) => joined,
+            Err(_) => return input.to_string(),
+        },
+    };
+    let new_url = new_url.to_string();
+    if new_url == input {
+        input.to_string()
+    } else {
+        new_url
+    }
+}
 
 /// Fetch remote yggdrasil metadata and return the `meta.serverName` value.
 /// Mirrors source: on any request/parse failure the error is swallowed and an
@@ -299,4 +405,177 @@ fn offline_uuid_md5(data: &[u8]) -> [u8; 16] {
     out[8..12].copy_from_slice(&c0.to_le_bytes());
     out[12..16].copy_from_slice(&d0.to_le_bytes());
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_prepends_https_when_scheme_missing() {
+        assert_eq!(
+            normalize_server_url("littleskin.cn").as_deref(),
+            Some("https://littleskin.cn")
+        );
+        assert_eq!(
+            normalize_server_url("example.com/api/yggdrasil/").as_deref(),
+            Some("https://example.com/api/yggdrasil/")
+        );
+        assert_eq!(
+            normalize_server_url("https://littleskin.cn/api/yggdrasil").as_deref(),
+            Some("https://littleskin.cn/api/yggdrasil")
+        );
+        // Explicit http is preserved (frontend warns about it).
+        assert_eq!(
+            normalize_server_url("http://example.com").as_deref(),
+            Some("http://example.com")
+        );
+        assert_eq!(normalize_server_url(""), None);
+        assert_eq!(normalize_server_url("   "), None);
+    }
+
+    #[test]
+    fn ali_absolute_header_replaces_input() {
+        let base = url::Url::parse("https://littleskin.cn/").unwrap();
+        assert_eq!(
+            apply_ali(
+                Some("https://littleskin.cn/api/yggdrasil"),
+                &base,
+                "https://littleskin.cn"
+            ),
+            "https://littleskin.cn/api/yggdrasil"
+        );
+    }
+
+    #[test]
+    fn ali_relative_header_resolves_against_response_url() {
+        let base = url::Url::parse("https://example.com/start").unwrap();
+        assert_eq!(
+            apply_ali(Some("/api/yggdrasil"), &base, "https://example.com/start"),
+            "https://example.com/api/yggdrasil"
+        );
+        assert_eq!(
+            apply_ali(Some("api/yggdrasil/"), &base, "https://example.com/start"),
+            "https://example.com/api/yggdrasil/"
+        );
+    }
+
+    #[test]
+    fn ali_header_pointing_to_self_keeps_input() {
+        let base = url::Url::parse("https://example.com/api/yggdrasil").unwrap();
+        assert_eq!(
+            apply_ali(
+                Some("https://example.com/api/yggdrasil"),
+                &base,
+                "https://example.com/api/yggdrasil"
+            ),
+            "https://example.com/api/yggdrasil"
+        );
+    }
+
+    #[test]
+    fn missing_or_invalid_ali_header_keeps_input() {
+        let base = url::Url::parse("https://example.com/").unwrap();
+        assert_eq!(
+            apply_ali(None, &base, "https://example.com/api/yggdrasil"),
+            "https://example.com/api/yggdrasil"
+        );
+        assert_eq!(
+            apply_ali(Some(""), &base, "https://example.com/api/yggdrasil"),
+            "https://example.com/api/yggdrasil"
+        );
+        // Unparseable header (empty host) falls back to the input.
+        assert_eq!(
+            apply_ali(Some("//"), &base, "https://example.com/api/yggdrasil"),
+            "https://example.com/api/yggdrasil"
+        );
+    }
+
+    fn serve_once(
+        listener: tokio::net::TcpListener,
+        response: String,
+    ) -> tokio::task::JoinHandle<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let _ = sock.write_all(response.as_bytes()).await;
+        })
+    }
+
+    fn http_ok(extra_headers: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+    }
+
+    #[tokio::test]
+    async fn resolve_uses_ali_header_from_server() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = serve_once(listener, http_ok("X-Authlib-Injector-API-Location: /api/yggdrasil\r\n", "{}"));
+        let client = reqwest::Client::new();
+        let out = resolve_yggdrasil_url(&client, &format!("http://127.0.0.1:{port}/"))
+            .await
+            .unwrap();
+        handle.await.unwrap();
+        assert_eq!(out.api_root, format!("http://127.0.0.1:{port}/api/yggdrasil"));
+        assert!(out.changed);
+        // Plain http api root -> flagged insecure for the frontend warning.
+        assert!(out.insecure);
+    }
+
+    #[tokio::test]
+    async fn resolve_without_ali_header_keeps_url() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = serve_once(listener, http_ok("", "{}"));
+        let client = reqwest::Client::new();
+        let input = format!("http://127.0.0.1:{port}/api/yggdrasil");
+        let out = resolve_yggdrasil_url(&client, &input).await.unwrap();
+        handle.await.unwrap();
+        assert_eq!(out.api_root, input);
+        assert!(!out.changed);
+        assert!(out.insecure);
+    }
+
+    #[tokio::test]
+    async fn resolve_follows_redirects_then_ali() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{port}");
+        let base_in = base.clone();
+        let handle = tokio::spawn(async move {
+            // First request: 301 redirect.
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let redirect = format!(
+                "HTTP/1.1 301 Moved Permanently\r\nLocation: {base_in}/yggdrasil\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            let _ = sock.write_all(redirect.as_bytes()).await;
+            // Second request: final response carrying the ALI header.
+            let (mut sock2, _) = listener.accept().await.unwrap();
+            let mut buf2 = [0u8; 4096];
+            let _ = sock2.read(&mut buf2).await;
+            let body = "{}";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nX-Authlib-Injector-API-Location: {base_in}/api/yggdrasil\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock2.write_all(resp.as_bytes()).await;
+        });
+        let client = reqwest::Client::new();
+        let out = resolve_yggdrasil_url(&client, &format!("{base}/start"))
+            .await
+            .unwrap();
+        handle.await.unwrap();
+        assert_eq!(out.api_root, format!("{base}/api/yggdrasil"));
+        assert!(out.changed);
+    }
 }
