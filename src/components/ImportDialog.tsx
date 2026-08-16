@@ -95,6 +95,8 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
         modpackVersion: parsed.version,
         modpackAuthor: parsed.author,
         modpackSummary: parsed.summary,
+        source: parsed.source,
+        fileId: parsed.fileId ?? undefined,
       })
       addTask({
         id: instanceId,

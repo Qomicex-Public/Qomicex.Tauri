@@ -8,6 +8,7 @@ pub mod kick;
 pub mod launch_tracker;
 pub mod license;
 pub mod license_core;
+pub mod modpack_export;
 pub mod options;
 pub mod plugin;
 pub mod trace;

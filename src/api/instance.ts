@@ -1,5 +1,5 @@
 import { get, post, put, del, API_BASE, ApiError } from './client.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
@@ -153,4 +153,41 @@ export async function startModpackInstall(data: ModpackInstallRequest): Promise<
 
 export async function installModpackDirect(data: ModpackInstallDirectRequest): Promise<ModpackInstallDirectResult> {
   return post<ModpackInstallDirectResult>('/modpack/install-direct', data)
+}
+
+/** 导出整合包长超时（打包大包可能耗时，参考 connector 120s 长超时）。 */
+const MODPACK_EXPORT_TIMEOUT_MS = 300_000
+
+export interface ModpackExportResult {
+  blob: Blob
+  filename: string
+}
+
+/** 导出实例为整合包（cf zip / mr mrpack），返回 zip 字节与文件名。 */
+export async function exportModpack(
+  instanceId: string,
+  req: ModpackExportRequest,
+): Promise<ModpackExportResult> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), MODPACK_EXPORT_TIMEOUT_MS)
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}/modpack/export/${encodeURIComponent(instanceId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.message || err.error || `导出失败 (${res.status})`)
+  }
+  const blob = await res.blob()
+  const disposition = res.headers.get('content-disposition')
+  const match = disposition?.match(/filename="?(.+?)"?$/)
+  const filename = match?.[1] || `${req.format === 'cf' ? 'modpack' : 'modpack'}.${req.format === 'cf' ? 'zip' : 'mrpack'}`
+  return { blob, filename }
 }

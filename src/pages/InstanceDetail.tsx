@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup} from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup, faFileExport} from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Separator } from '../components/ui'
@@ -36,6 +36,7 @@ import { PageShell } from '../components/PageShell.tsx'
 import ModCard from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
 import ModUpdateDialog from '../components/ModUpdateDialog.tsx'
+import ExportModpackDialog from '../components/ExportModpackDialog.tsx'
 import type { ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata, ModUpdateEntry } from '../types/index.ts'
 import ResourcePackCard from '../components/ResourcePackCard.tsx'
 import DragSelectArea from '../components/DragSelectArea.tsx'
@@ -1952,6 +1953,7 @@ export default function InstanceDetailPage() {
   const [repairProgress, setRepairProgress] = useState(0)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const [savesRefresh, setSavesRefresh] = useState(0)
   const [screenshotsRefresh, setScreenshotsRefresh] = useState(0)
   const [modsRefresh, setModsRefresh] = useState(0)
@@ -2345,6 +2347,9 @@ export default function InstanceDetailPage() {
                     <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch(() => {})}>
                       <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.overview.openGameDir')}
                     </Button>
+                    <Button size="sm" variant="outline" className="gap-2" onClick={() => setExportOpen(true)}>
+                      <FontAwesomeIcon icon={faFileExport} className="h-3.5 w-3.5" />{t('instanceDetail.overview.exportModpack')}
+                    </Button>
                     <Button size="sm" variant="outline" className="gap-2 text-destructive hover:text-destructive" onClick={handleDelete}>
                       <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />{t('instanceDetail.overview.deleteInstance')}
                     </Button>
@@ -2598,6 +2603,11 @@ export default function InstanceDetailPage() {
         }}
       />
       <ConfirmDialog open={deleteConfirmOpen} title={t('instanceDetail.overview.deleteInstance')} message={t('instanceDetail.launch.deleteInstanceConfirm', { name: instance?.name ?? '' })} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
+      <ExportModpackDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        instance={instance}
+      />
     </PageShell>
   )
 }

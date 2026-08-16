@@ -659,6 +659,8 @@ export interface ModpackParseResult {
   fileCount: number
   overridesZip: string | null
   iconData: string | null
+  /** 本地导入：上传临时文件句柄，随 /modpack/install 传回 */
+  fileId?: string | null
 }
 
 export interface ModpackInstallRequest {
@@ -680,6 +682,15 @@ export interface ModpackInstallRequest {
   projectId?: string | null
   versionId?: string | null
   optifineVersion?: string | null
+  /** 本地导入：parse 返回的临时文件句柄 */
+  fileId?: string | null
+}
+
+export interface ModpackExportRequest {
+  /** cf（CurseForge zip）或 mr（Modrinth mrpack） */
+  format: 'cf' | 'mr'
+  includeSaves?: boolean
+  includeScreenshots?: boolean
 }
 
 export interface ModpackInstallDirectRequest {

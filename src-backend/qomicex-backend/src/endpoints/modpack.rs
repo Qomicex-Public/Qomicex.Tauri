@@ -2,7 +2,9 @@
 //! + Services/ModpackService.cs).
 //!
 //! Mounted under `/api/modpack`. Implements CurseForge / Modrinth / FTB
-//! modpack online resolve and one-click install.
+//! modpack online resolve, one-click install, local-file import
+//! (`.zip` / `.mrpack` upload + install) and instance export (CF zip / MR
+//! mrpack with hash reverse lookup).
 //!
 //! Self-contained slice: online resolution uses qomicex-core expansion
 //! sources (`create_modrinth_source` / `create_curseforge_source` /
@@ -10,27 +12,32 @@
 //! registers a background task in `InstallTracker` and returns an instance id
 //! for later progress query / cancel.
 //!
-//! Known gaps (documented with TODO, see item 4 of the task request):
-//! - `/parse` (multipart zip / .mrpack upload) is NOT implemented: axum is
-//!   built without the `multipart` feature and no `zip` crate is available,
-//!   so in-memory zip parsing (manifest.json / modrinth.index.json) is out of
-//!   scope for this batch.
-//! - Local-file install-direct (`path` branch) also requires zip parsing, so
-//!   it is stubbed with a clear error.
-//! - The install background runner advances progress through the install
-//!   stages but does NOT perform real download / backup extraction (the core
-//!   installer factory is `pub(crate)` in qomicex-core-rust and no `zip` crate
-//!   exists to extract overrides).
+//! Local import flow:
+//! - `POST /modpack/parse` (multipart `file`) saves the upload under
+//!   `{BaseDir}/temp/modpack-uploads/{uuid}`, detects the format
+//!   (`modrinth.index.json` → mrpack, `manifest.json` → CF zip) and returns a
+//!   `ModpackParseResult` including a `fileId` handle to the temp file.
+//! - `POST /modpack/install` accepts `fileId`; the pipeline then skips the
+//!   pack download and uses the temp file for manifest parsing and overrides
+//!   extraction. Mods are still fetched from their sources (Modrinth URLs /
+//!   CurseForge projectID:fileID lookups), and the local overrides are
+//!   released afterwards (overrides carry files not resolvable via APIs).
+//! - `POST /modpack/install-direct` with a `path` parses the local file and
+//!   runs the same background pipeline.
+//! - Temp uploads are removed after the install task settles.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use axum::extract::{Path as AxumPath, State};
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::extract::{Multipart, Path as AxumPath, State};
+use axum::http::{header, StatusCode};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 
 use qomicex_core::api::installer::InstallerFactory;
 use qomicex_core::core::GameCore;
@@ -41,6 +48,7 @@ use crate::services::install_service::{download_batch, run_install_pipeline, Ins
 use crate::services::install_tracker::InstallTracker;
 use crate::services::install_tracker::{InstallHandle, InstallProgress, InstallStatus};
 use crate::services::instance::InstanceService;
+use crate::services::modpack_export::{build_export_zip, ExportFormat};
 use crate::state::SharedState;
 
 /// Module-private aggregated state (assembled lazily, replacing DI injection).
@@ -82,6 +90,7 @@ pub fn router() -> Router<SharedState> {
         .route("/modpack/resolve", post(resolve))
         .route("/modpack/install", post(install))
         .route("/modpack/install-direct", post(install_direct))
+        .route("/modpack/export/{instanceId}", post(export))
         .route(
             "/modpack/progress/{instanceId}",
             get(progress).delete(cancel),
@@ -92,12 +101,121 @@ pub fn router() -> Router<SharedState> {
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// POST /modpack/parse -- NOT IMPLEMENTED (multipart + zip out of scope now).
-async fn parse() -> ApiResult<StatusCode> {
-    Err(ApiError::bad_request(
-        "MODPACK_PARSE_NOT_IMPLEMENTED",
-        "File parsing is not implemented in this batch (missing multipart/zip support)",
-    ))
+/// POST /modpack/parse -- multipart upload of a local `.zip` / `.mrpack`.
+///
+/// Saves the upload to `{BaseDir}/temp/modpack-uploads/{uuid}`, detects the
+/// format and returns a parse result. The returned `fileId` references the
+/// temp file so the subsequent `/modpack/install` can use it without
+/// re-uploading.
+async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> {
+    let mut file_id: Option<String> = None;
+    let mut saved_path: Option<PathBuf> = None;
+
+    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
+        ApiError::bad_request("MODPACK_PARSE_UPLOAD_FAILED", format!("读取上传失败: {e}"))
+    })? {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let uploads_dir = modpack_uploads_dir()?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let path = uploads_dir.join(&id);
+        let mut out = tokio::fs::File::create(&path)
+            .await
+            .map_err(|e| ApiError::internal(format!("保存上传文件失败: {e}")))?;
+        let mut written: u64 = 0;
+        while let Some(chunk) = field.chunk().await.map_err(|e| {
+            ApiError::bad_request("MODPACK_PARSE_UPLOAD_FAILED", format!("读取上传分块失败: {e}"))
+        })? {
+            if chunk.is_empty() {
+                continue;
+            }
+            written += chunk.len() as u64;
+            if written > MAX_UPLOAD_BYTES {
+                drop(out);
+                let _ = std::fs::remove_file(&path);
+                return Err(ApiError::bad_request(
+                    "MODPACK_PARSE_TOO_LARGE",
+                    "整合包文件过大（上限 4 GiB）",
+                ));
+            }
+            out.write_all(&chunk).await.map_err(|e| {
+                ApiError::internal(format!("写入上传文件失败: {e}"))
+            })?;
+        }
+        out.flush().await.map_err(|e| ApiError::internal(format!("落盘失败: {e}")))?;
+        file_id = Some(id);
+        saved_path = Some(path);
+    }
+
+    let path = saved_path
+        .ok_or_else(|| ApiError::bad_request("MODPACK_PARSE_FILE_REQUIRED", "缺少 file 字段"))?;
+    let file_id = file_id.expect("saved_path 与 file_id 同设");
+
+    let parsed = parse_local_pack_file(&path).map_err(|e| {
+        let _ = std::fs::remove_file(&path);
+        ApiError::bad_request("MODPACK_PARSE_FAILED", e)
+    })?;
+
+    let mut result = parsed.to_parse_result();
+    result.file_id = Some(file_id);
+    Ok(Json(result))
+}
+
+/// POST /modpack/export/{instanceId} -- export an installed instance as a
+/// CurseForge zip or a Modrinth mrpack (hash reverse lookup for files[]).
+async fn export(
+    State(s): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+    Json(req): Json<ModpackExportRequest>,
+) -> ApiResult<Response> {
+    let instance = s
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| ApiError::not_found("MODPACK_EXPORT_INSTANCE_NOT_FOUND", "实例不存在"))?;
+    let format = match req.format.as_deref().map(str::to_ascii_lowercase).as_deref() {
+        Some("cf") | Some("curseforge") | Some("zip") => ExportFormat::CurseForge,
+        Some("mr") | Some("modrinth") | Some("mrpack") => ExportFormat::Modrinth,
+        _ => {
+            return Err(ApiError::bad_request(
+                "MODPACK_EXPORT_FORMAT_INVALID",
+                "导出格式必须是 cf 或 mr",
+            ))
+        }
+    };
+    let bytes = build_export_zip(
+        &s.core,
+        &s.curse_forge_api_key,
+        &instance,
+        format,
+        req.include_saves.unwrap_or(false),
+        req.include_screenshots.unwrap_or(false),
+    )
+    .await
+    .map_err(|e| ApiError::internal(format!("导出整合包失败: {e}")))?;
+
+    let base = sanitize_filename(
+        &instance
+            .modpack_name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| instance.name.clone()),
+    );
+    let ext = match format {
+        ExportFormat::CurseForge => "zip",
+        ExportFormat::Modrinth => "mrpack",
+    };
+    let filename = format!("{base}.{ext}");
+    let body = Body::from(bytes);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/zip")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        )
+        .body(body)
+        .map_err(|e| ApiError::internal(format!("构造响应失败: {e}")))
 }
 
 /// POST /modpack/resolve -- resolve an online modpack project into parse result.
@@ -238,6 +356,7 @@ impl ModpackServiceData {
             file_count,
             overrides_zip: None,
             icon_data,
+            file_id: None,
         })
     }
 
@@ -293,6 +412,7 @@ impl ModpackServiceData {
             file_count,
             overrides_zip: None,
             icon_data: None,
+            file_id: None,
         })
     }
 
@@ -364,12 +484,31 @@ impl ModpackServiceData {
             file_count: 0,
             overrides_zip: None,
             icon_data,
+            file_id: None,
         })
     }
 
     /// Port of InstallAsync: create the GameInstance and register a background
     /// install task in InstallTracker, then return the instance id.
     async fn install(&self, req: ModpackInstallRequest) -> ApiResult<String> {
+        // 本地文件导入：file_id = parse 上传的临时文件句柄；local_path = 绝对路径
+        // （install-direct 直传，不属于上传目录，不清理）。
+        let (local_pack_path, cleanup_upload): (Option<PathBuf>, bool) =
+            match (req.file_id.as_deref(), req.local_path.as_deref()) {
+                (Some(fid), _) => {
+                    let path = modpack_uploads_dir()?.join(fid);
+                    if !path.is_file() {
+                        return Err(ApiError::not_found(
+                            "MODPACK_UPLOAD_NOT_FOUND",
+                            "整合包临时文件不存在或已过期，请重新上传",
+                        ));
+                    }
+                    (Some(path), true)
+                }
+                (None, Some(p)) => (Some(PathBuf::from(p)), false),
+                _ => (None, false),
+            };
+
         let mut instance = crate::services::instance::GameInstance::default();
         instance.name = req.name.clone();
         instance.game_version = req.game_version.clone();
@@ -401,9 +540,11 @@ impl ModpackServiceData {
         let file_id = req.version_id.clone();
         let modpack_files = req.modpack_files.clone();
         let version_isolation = req.version_isolation;
+        // 管道结束后清理上传的临时文件（install-direct 的绝对路径不属于我们，不删）。
+        let cleanup_path = if cleanup_upload { local_pack_path.clone() } else { None };
 
         tracker.start_modpack_install(instance_id.clone(), move |handle| async move {
-            run_modpack_pipeline(
+            let result = run_modpack_pipeline(
                 &handle,
                 &mgr,
                 &http_client,
@@ -419,8 +560,13 @@ impl ModpackServiceData {
                 file_id.as_deref(),
                 modpack_files.as_deref(),
                 version_isolation,
+                local_pack_path.as_deref().and_then(|p| p.to_str()),
             )
-            .await
+            .await;
+            if let Some(p) = cleanup_path {
+                let _ = std::fs::remove_file(&p);
+            }
+            result
         });
 
         Ok(instance_id)
@@ -448,11 +594,26 @@ impl ModpackServiceData {
                     "Modpack file not found",
                 ));
             }
-            // TODO: local .zip/.mrpack parsing needs a zip crate; not in scope.
-            return Err(ApiError::bad_request(
-                "MODPACK_PARSE_NOT_IMPLEMENTED",
-                "Local file parsing (zip/mrpack) is not implemented",
-            ));
+            let parsed = parse_local_pack_file(Path::new(path))
+                .map_err(|e| ApiError::bad_request("MODPACK_PARSE_FAILED", e))?;
+            let p = parsed.pack;
+            let result = ModpackParseResult {
+                name: parsed.name,
+                summary: parsed.summary,
+                author: parsed.author,
+                version: parsed.version,
+                game_version: p.game_version,
+                loader: p.loader,
+                loader_version: Some(p.loader_version),
+                source: parsed.source,
+                files: p.files,
+                has_overrides: parsed.has_overrides,
+                file_count: parsed.file_count,
+                overrides_zip: None,
+                icon_data: None,
+                file_id: None,
+            };
+            result
         } else {
             let project_id = req.project_id.as_deref().unwrap_or_default();
             let file_id = req.file_id.as_deref().unwrap_or_default();
@@ -481,6 +642,9 @@ impl ModpackServiceData {
             self.resolve_online(source, project_id, file_id).await?
         };
 
+        // 本地路径：直接复用该文件解析/释放 overrides（不再走 multipart 上传）。
+        let local_pack_path = req.path.clone();
+
         let install_request = ModpackInstallRequest {
             name: req.id,
             game_version: resolved.game_version,
@@ -500,6 +664,8 @@ impl ModpackServiceData {
             project_id: req.project_id,
             version_id: req.file_id,
             optifine_version: None,
+            file_id: None,
+            local_path: local_pack_path,
         };
         self.install(install_request).await
     }
@@ -609,6 +775,9 @@ fn is_cf_host(url: &str) -> bool {
 }
 
 /// 主安装管道（后台任务 runner）。任一步失败 → Err(msg) → tracker 置 Failed。
+///
+/// `local_pack_path` 非空时跳过包体下载，直接用该文件解析 manifest 并释放
+/// overrides（本地导入；mods 仍按源下载——mr 按 URL、cf 按 projectID:fileID）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_modpack_pipeline(
     handle: &InstallHandle,
@@ -626,13 +795,16 @@ pub(crate) async fn run_modpack_pipeline(
     file_id: Option<&str>,
     modpack_files: Option<&[ModpackFileEntry]>,
     version_isolation: bool,
+    local_pack_path: Option<&str>,
 ) -> Result<(), String> {
     let src = source.to_ascii_lowercase();
     let mut zip_path: Option<PathBuf> = None;
     let mut parsed: Option<ParsedModpack> = None;
 
-    // === 1. 下载整合包 zip（Modrinth .mrpack / CurseForge zip；FTB 无 zip 跳过）===
-    if src == "modrinth" || src == "curseforge" {
+    // === 1. 获取整合包包体（本地导入直接用已上传/给定文件；在线下载）===
+    if let Some(local) = local_pack_path {
+        zip_path = Some(PathBuf::from(local));
+    } else if src == "modrinth" || src == "curseforge" {
         handle.set_stage("downloading-modpack");
         handle.set_progress(5.0);
         let files = modpack_files.ok_or("整合包下载链接缺失")?;
@@ -1001,6 +1173,167 @@ fn read_zip_json(zip_path: &Path, entry_name: &str) -> Result<serde_json::Value,
     serde_json::from_str(&content).map_err(|e| format!("解析 {entry_name} 失败: {e}"))
 }
 
+/// 上传整合包最大体积（4 GiB，对应 CF zip / mrpack 上限）。
+const MAX_UPLOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// 上传临时目录 `{BaseDir}/temp/modpack-uploads/`；顺带清理超过 1 天的残留。
+fn modpack_uploads_dir() -> ApiResult<PathBuf> {
+    let dir = crate::settings::resolve_base_dir()
+        .join("temp")
+        .join("modpack-uploads");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| ApiError::internal(format!("创建上传目录失败: {e}")))?;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    if let Ok(age) = modified.elapsed() {
+                        if age.as_secs() > 24 * 3600 {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(dir)
+}
+
+/// 文件名安全化（去掉路径分隔与非法字符）。
+fn sanitize_filename(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.').to_string();
+    if trimmed.is_empty() {
+        "modpack".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// 本地文件解析结果（meta + 管道用的 ParsedModpack）。
+struct LocalPackParse {
+    source: String,
+    name: String,
+    summary: Option<String>,
+    author: Option<String>,
+    version: Option<String>,
+    has_overrides: bool,
+    file_count: i32,
+    pack: ParsedModpack,
+}
+
+impl LocalPackParse {
+    fn to_parse_result(self) -> ModpackParseResult {
+        ModpackParseResult {
+            name: self.name,
+            summary: self.summary,
+            author: self.author,
+            version: self.version,
+            game_version: self.pack.game_version,
+            loader: self.pack.loader,
+            loader_version: Some(self.pack.loader_version),
+            source: self.source,
+            files: self.pack.files,
+            has_overrides: self.has_overrides,
+            file_count: self.file_count,
+            overrides_zip: None,
+            icon_data: None,
+            file_id: None,
+        }
+    }
+}
+
+/// 解析本地 `.zip`（CurseForge）/`.mrpack`（Modrinth）文件：探测格式 + 提取
+/// meta（名称/版本/作者/简介）与管道用 ParsedModpack。
+fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("打开整合包文件失败: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
+    let mut has_mr = false;
+    let mut has_cf = false;
+    let mut has_mr_overrides = false;
+    let mut has_cf_overrides = false;
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index(i) else { continue };
+        let name = entry.name();
+        match name {
+            "modrinth.index.json" => has_mr = true,
+            "manifest.json" => has_cf = true,
+            _ => {}
+        }
+        if name.eq_ignore_ascii_case("override/") || name.starts_with("override/") {
+            has_mr_overrides = true;
+        }
+        if name.eq_ignore_ascii_case("overrides/") || name.starts_with("overrides/") {
+            has_cf_overrides = true;
+        }
+    }
+    drop(archive);
+
+    if has_mr {
+        let root = read_zip_json(path, "modrinth.index.json")?;
+        if root.get("game").and_then(|v| v.as_str()) != Some("minecraft") {
+            return Err("不是有效的 Modrinth 整合包（game 字段非 minecraft）".to_string());
+        }
+        let name = root
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("整合包")
+            .to_string();
+        let version = root.get("versionId").and_then(|v| v.as_str()).map(String::from);
+        let summary = root.get("summary").and_then(|v| v.as_str()).map(String::from);
+        let pack = parse_modrinth_index(path)?;
+        let file_count = pack.files.len() as i32;
+        return Ok(LocalPackParse {
+            source: "modrinth".to_string(),
+            name,
+            summary,
+            author: None,
+            version,
+            has_overrides: has_mr_overrides,
+            file_count,
+            pack,
+        });
+    }
+
+    if has_cf {
+        let root = read_zip_json(path, "manifest.json")?;
+        if root.get("manifestType").and_then(|v| v.as_str()) != Some("minecraftModpack") {
+            return Err("不是有效的 CurseForge 整合包（manifestType 非 minecraftModpack）".to_string());
+        }
+        let name = root
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("整合包")
+            .to_string();
+        let version = root.get("version").and_then(|v| v.as_str()).map(String::from);
+        let author = root.get("author").and_then(|v| v.as_str()).map(String::from);
+        let pack = parse_curseforge_manifest(path)?;
+        let file_count = pack.files.len() as i32;
+        return Ok(LocalPackParse {
+            source: "curseforge".to_string(),
+            name,
+            summary: None,
+            author,
+            version,
+            has_overrides: has_cf_overrides,
+            file_count,
+            pack,
+        });
+    }
+
+    Err("无法识别的整合包格式：需包含 modrinth.index.json（Modrinth）或 manifest.json（CurseForge）".to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1078,6 +1411,9 @@ pub struct ModpackParseResult {
     pub overrides_zip: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_data: Option<String>,
+    /// 本地导入时上传临时文件的句柄（随 /modpack/install 传回）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1138,6 +1474,12 @@ pub struct ModpackInstallRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[allow(dead_code)]
     pub optifine_version: Option<String>,
+    /// 本地导入：parse 返回的临时文件句柄。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
+    /// 本地导入：绝对路径（仅 install-direct 内部使用，不走 HTTP）。
+    #[serde(skip)]
+    pub local_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1172,4 +1514,18 @@ pub struct MessageResponse {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version_id: Option<String>,
+}
+
+/// POST /modpack/export/{instanceId} 请求体。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModpackExportRequest {
+    /// 导出格式：cf（CurseForge zip）或 mr（Modrinth mrpack）。
+    pub format: Option<String>,
+    /// 是否包含存档 saves。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_saves: Option<bool>,
+    /// 是否包含截图 screenshots。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_screenshots: Option<bool>,
 }
