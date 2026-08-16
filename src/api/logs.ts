@@ -64,3 +64,23 @@ export function reportFrontendLog(level: string, message: string): void {
     }).catch(() => {})
   } catch { /* 忽略 */ }
 }
+
+export interface ClientLogEntry {
+  level: 'error' | 'warn' | 'info'
+  message: string
+  stack?: string
+}
+
+export interface ClientLogsResponse {
+  success: boolean
+  skipped?: boolean
+}
+
+/**
+ * 上报严重错误日志到后端（后端补全 deviceInfo 后转发上游 api.qomicex.top）。
+ * 仅"恶性 bug"白名单使用（ErrorBoundary 渲染崩溃 / 后端 panic），一般业务错误不调用。
+ * 失败静默（不阻塞主流程）。
+ */
+export function uploadClientLogs(logs: ClientLogEntry[]): Promise<ClientLogsResponse> {
+  return post<ClientLogsResponse>('/client/logs', { logs })
+}

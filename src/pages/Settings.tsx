@@ -1095,6 +1095,17 @@ export default function Settings() {
                   </div>
                 </label>
 
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <Checkbox
+                    checked={settings.autoReportErrors !== false}
+                    onCheckedChange={(c) => update('autoReportErrors', c === true)}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{t('settings.launcher.autoReportErrors')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.launcher.autoReportErrorsDesc')}</div>
+                  </div>
+                </label>
+
                 <div className="space-y-2">
                   <Label>{t('settings.launcher.downloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">

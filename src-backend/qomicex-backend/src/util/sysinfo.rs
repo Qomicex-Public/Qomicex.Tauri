@@ -79,6 +79,24 @@ pub fn memory() -> (u64, u64) {
     )
 }
 
+/// 第一颗 CPU 的型号名（如 "Intel(R) Core(TM) i7-10750H CPU @ 2.60GHz"）。
+/// 采集有开销，用 `OnceLock` 缓存一次。失败返回空串（调用方拼接时忽略）。
+pub fn cpu_brand() -> String {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<String> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let mut sys = System::new();
+            sys.refresh_cpu_usage();
+            sys.cpus()
+                .first()
+                .map(|c| c.brand().trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_default()
+        })
+        .clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

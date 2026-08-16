@@ -1,5 +1,6 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react'
 import { useI18n } from '../i18n/index.tsx'
+import { reportRenderCrash } from '../lib/error-report.ts'
 
 interface Props {
   children: ReactNode
@@ -41,6 +42,8 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[ErrorBoundary]', error, info.componentStack)
+    // 渲染崩溃 = 启动器"前端渲染错误"页（恶性 bug 白名单之一）→ 自动上报。
+    reportRenderCrash(error)
   }
 
   render() {

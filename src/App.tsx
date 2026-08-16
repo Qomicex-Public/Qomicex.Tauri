@@ -21,6 +21,7 @@ import useCloseGuard from './hooks/useCloseGuard.ts'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
 import { loadSettings, onSettingsChange, getSettings, isSettingsLoaded, DEFAULT_SETTINGS, type AppSettings } from './api/settings.ts'
 import { reportFrontendLog } from './api/logs.ts'
+import { pushConsole } from './lib/error-report.ts'
 import { I18nProvider, useI18n } from './i18n/index.tsx'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
@@ -261,7 +262,8 @@ function setConsoleLevel(level: string) {
   const shouldLog = (lvlIdx: number) => lvlIdx >= idx
 
   // 包装 console 方法：按 logLevel 决定是否显示，同时上报后端日志体系
-  // （构建版 Tauri 无控制台，前端日志靠 POST /logs/frontend 落盘可查）。
+  // （构建版 Tauri 无控制台，前端日志靠 POST /logs/frontend 落盘可查），
+  // 并填充前端环形缓冲（严重错误上报时作为上下文附带）。
   function wrap(method: 'log' | 'warn' | 'error' | 'debug' | 'trace', enabled: boolean) {
     const orig = _console[method]
     return (...args: unknown[]) => {
@@ -269,6 +271,7 @@ function setConsoleLevel(level: string) {
         orig(...args)
         reportFrontendLog(method, args.map(fmtConsoleArg).join(' '))
       }
+      pushConsole(method, args.map(fmtConsoleArg).join(' '))
     }
   }
 

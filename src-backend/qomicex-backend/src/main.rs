@@ -50,6 +50,8 @@ async fn main() {
     // 先构建 state（内部注册全局 trace 缓冲），再初始化 tracing 与 stdout/stderr 捕获，
     // 保证日志写入有目标可落。
     let state = AppState::build();
+    // 注册进程级 panic hook（后端崩溃 → 自动上报严重错误日志）。
+    crate::services::error_report::install_panic_hook(state.settings.clone(), state.http_client.clone());
     init_tracing();
     crate::services::trace::start_io_capture();
 

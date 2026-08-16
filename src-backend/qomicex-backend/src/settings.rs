@@ -102,6 +102,9 @@ pub struct SettingsResponse {
     /// 老配置文件缺失该字段时在 [`load_settings`] 中视为已初始化（`Some(true)`），
     /// 避免老用户升级后被迫重走向导。
     pub initialized: Option<bool>,
+    /// 自动上报严重错误日志（崩溃类恶性 bug）。`None` 视为开启（默认开）；
+    /// 关闭时前后端都不上报。
+    pub auto_report_errors: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +164,7 @@ impl Default for SettingsResponse {
             curseforge_version_cache_ttl_seconds: 300,
             font_family: None,
             initialized: Some(false),
+            auto_report_errors: Some(true),
         }
     }
 }

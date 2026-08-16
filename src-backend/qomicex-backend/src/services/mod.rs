@@ -1,5 +1,6 @@
 pub mod account;
 pub mod curseforge_fetch;
+pub mod error_report;
 pub mod install_service;
 pub mod install_tracker;
 pub mod instance;
