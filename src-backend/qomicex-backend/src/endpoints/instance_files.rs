@@ -238,12 +238,17 @@ fn remove_progress(id: &str) {
 // =====================================================================
 
 const MODS_CACHE_TTL_SECS: i64 = 6 * 3600;
+/// 扫描结果为空时的短缓存：避免临时失败（网络抖动/目录错位）把空列表冻结 6 小时。
+const MODS_CACHE_EMPTY_TTL_SECS: i64 = 5 * 60;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ModsCacheEntry {
     fetched_at: i64,
     entries: Vec<ModMetadataDto>,
+    /// 缓存有效期（秒）；缺省 = MODS_CACHE_TTL_SECS（兼容旧缓存文件）。
+    #[serde(default)]
+    ttl_secs: Option<i64>,
 }
 
 static REFRESH_LOCK: LazyLock<Mutex<HashMap<String, ()>>> =
@@ -261,7 +266,8 @@ fn read_mods_cache(data_dir: &PathBuf, instance_id: &str) -> Option<Vec<ModMetad
     let bytes = std::fs::read(path).ok()?;
     let cache: ModsCacheEntry = serde_json::from_slice(&bytes).ok()?;
     let now = now_secs();
-    if now - cache.fetched_at < MODS_CACHE_TTL_SECS {
+    let ttl = cache.ttl_secs.unwrap_or(MODS_CACHE_TTL_SECS);
+    if now - cache.fetched_at < ttl {
         Some(cache.entries)
     } else {
         None
@@ -275,12 +281,13 @@ fn read_mods_cache_stale(data_dir: &PathBuf, instance_id: &str) -> Option<Vec<Mo
     Some(cache.entries)
 }
 
-fn write_mods_cache(data_dir: &PathBuf, instance_id: &str, entries: Vec<ModMetadataDto>) {
+fn write_mods_cache(data_dir: &PathBuf, instance_id: &str, entries: Vec<ModMetadataDto>, ttl_secs: i64) {
     let path = mods_cache_path(data_dir, instance_id);
     let _ = std::fs::create_dir_all(path.parent().unwrap());
     let cache = ModsCacheEntry {
         fetched_at: now_secs(),
         entries,
+        ttl_secs: Some(ttl_secs),
     };
     if let Ok(json) = serde_json::to_vec(&cache) {
         let _ = std::fs::write(path, json);
@@ -399,7 +406,13 @@ async fn refresh_mods_cache(
             }
         })
         .collect();
-    write_mods_cache(&state.data_dir, instance_id, result.clone());
+    // 空结果只写短缓存（临时失败不冻结 6 小时）；非空结果写 6h 长缓存。
+    let ttl = if result.is_empty() {
+        MODS_CACHE_EMPTY_TTL_SECS
+    } else {
+        MODS_CACHE_TTL_SECS
+    };
+    write_mods_cache(&state.data_dir, instance_id, result.clone(), ttl);
     Ok(result)
 }
 
