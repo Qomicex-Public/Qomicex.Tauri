@@ -243,7 +243,7 @@ export default function Connect() {
   const { error: msgError } = useMessageBox()
   const { launchInstance, watchInstance } = useRunning()
   const [status, setStatus] = useState<ConnectorStatus>({
-    mode: 'idle', roomCode: null, mcHost: null, mcPort: null, gameInfo: null, players: [], pendingKickReviews: [], error: null,
+    mode: 'idle', roomCode: null, mcHost: null, mcPort: null, gameInfo: null, players: [], pendingKickReviews: [], kickedPlayers: [], error: null,
   })
   const [port, setPort] = useState('')
   const [code, setCode] = useState('')
@@ -438,6 +438,16 @@ export default function Connect() {
     try { await connectorApi.decideKickReview(target.machineId, action); await refreshStatus() }
     catch (e) { msgError(fmtErr(e)) }
     finally { setReviewBusy(false) }
+  }
+
+  // 已踢玩家管理：解除 deny 封禁（误踢放行）
+  const [unbanBusyId, setUnbanBusyId] = useState<string | null>(null)
+  const handleUnban = async (p: KickReviewRequest) => {
+    if (unbanBusyId) return
+    setUnbanBusyId(p.machineId)
+    try { await connectorApi.decideKickReview(p.machineId, 'allow'); await refreshStatus() }
+    catch (e) { msgError(fmtErr(e)) }
+    finally { setUnbanBusyId(null) }
   }
 
   // 快捷启动匹配实例：启动并自动加入房间（joinServer = 本机转发端口）
@@ -663,6 +673,25 @@ export default function Connect() {
               </Button>
             </div>
             <PlayerList players={status.players} onKick={(p) => { if (p.kind !== 'host' && !kickBusy) handleKick(p) }} />
+            {status.kickedPlayers.length > 0 && (
+              <div className="space-y-2">
+                <Label>{t('connect.kickedPlayersTitle', { count: status.kickedPlayers.length })}</Label>
+                <div className="space-y-1.5">
+                  {status.kickedPlayers.map((p) => (
+                    <div key={p.machineId} className="flex items-center justify-between rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+                      <div className="min-w-0">
+                        <span className="truncate text-sm font-medium">{p.name}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">{p.vendor}</span>
+                      </div>
+                      <Button size="sm" variant="secondary" disabled={unbanBusyId === p.machineId} onClick={() => handleUnban(p)}>
+                        {unbanBusyId === p.machineId ? <FontAwesomeIcon icon={faSpinner} spin className="mr-1" /> : null}
+                        {t('connect.unban')}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
               <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />{t('connect.closeRoom')}
             </Button>

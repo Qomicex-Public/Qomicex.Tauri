@@ -208,6 +208,7 @@ export interface ConnectorStatus {
   gameInfo: ConnectorGameInfo | null
   players: ConnectorPlayer[]
   pendingKickReviews: KickReviewRequest[]
+  kickedPlayers: KickReviewRequest[]
   error: string | null
 }
 

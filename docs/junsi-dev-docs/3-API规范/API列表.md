@@ -1901,7 +1901,7 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 > 取代上文第 2 步「被踢 guest 再发 c:player_ping → 拒绝入列 + 状态 255」的**一律拒绝**语义：被踢玩家重连时，房主可人工放行（防误踢）。
 
-- **GET `/connector/status`** 响应新增 `pendingKickReviews: [{ machineId, name, vendor }]`（仅 host 模式；`services::kick::KickManager::pending_reviews`）。
+- **GET `/connector/status`** 响应新增 `pendingKickReviews: [{ machineId, name, vendor }]`（仅 host 模式；`services::kick::KickManager::pending_reviews`）与 `kickedPlayers: [{ machineId, name, vendor }]`（已踢黑名单全量，前端"已踢玩家管理"解除 deny 用；`KickManager::kicked_players`）。
 - **POST `/connector/kick/review`** `{ "machineId": "...", "action": "allow" | "reject" | "reject_silent" }`（仅房主）：
   - `allow`：`allow_peer` 解除 easytier deny + 从已踢黑名单移除 → 下一次 `c:player_ping` 正常入列；
   - `reject`：维持踢出，断开其等待中的 SCF TCP + easytier，下次重连可再次询问；

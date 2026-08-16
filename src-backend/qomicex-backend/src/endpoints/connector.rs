@@ -1062,6 +1062,7 @@ async fn status() -> ApiResult<Json<ConnectorStatusResponse>> {
         game_info: conn.game_info.read().unwrap().clone(),
         players: Vec::new(),
         pending_kick_reviews: Vec::new(),
+        kicked_players: Vec::new(),
         error: None,
     };
     let icons = conn.icon_map.read().unwrap().clone();
@@ -1082,6 +1083,16 @@ async fn status() -> ApiResult<Json<ConnectorStatusResponse>> {
             if let Some(kick) = kick.as_ref() {
                 resp.pending_kick_reviews = kick
                     .pending_reviews()
+                    .await
+                    .into_iter()
+                    .map(|r| KickReviewResponse {
+                        machine_id: r.machine_id,
+                        name: r.name,
+                        vendor: r.vendor,
+                    })
+                    .collect();
+                resp.kicked_players = kick
+                    .kicked_players()
                     .await
                     .into_iter()
                     .map(|r| KickReviewResponse {
@@ -1999,6 +2010,8 @@ pub struct ConnectorStatusResponse {
     pub players: Vec<ConnectorPlayer>,
     /// 待房主审核的重连请求（已踢玩家申请重新加入）。
     pub pending_kick_reviews: Vec<KickReviewResponse>,
+    /// 已踢黑名单全量（前端"已踢玩家管理"：误踢可解除 deny）。
+    pub kicked_players: Vec<KickReviewResponse>,
     pub error: Option<String>,
 }
 

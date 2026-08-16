@@ -213,6 +213,19 @@ impl KickManager {
             .collect()
     }
 
+    /// 已踢黑名单全量列表（供 `/connector/status` 暴露给前端"已踢玩家管理"）。
+    pub async fn kicked_players(&self) -> Vec<ReviewEntry> {
+        let guard = self.kicked.read().unwrap();
+        guard
+            .iter()
+            .map(|(mid, k)| ReviewEntry {
+                machine_id: mid.clone(),
+                name: k.name.clone(),
+                vendor: k.vendor.clone(),
+            })
+            .collect()
+    }
+
     /// 处理房主对重连请求的决定（弹窗三选）。
     ///
     /// - [`ReviewAction::Allow`]：解除 easytier deny + 从黑名单移除，下一次 player_ping 正常入列。
