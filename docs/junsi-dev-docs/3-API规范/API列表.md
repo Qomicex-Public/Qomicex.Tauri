@@ -892,11 +892,34 @@ Yggdrasil 认证登录。
 
 ### POST `/api/modpack/parse`
 
-上传并解析整合包文件（.zip / .mrpack）。
+上传并解析整合包文件（.zip / .mrpack），为本地导入的第一步。
 
-`multipart/form-data`，字段名 `file`。
+`multipart/form-data`，字段名 `file`（上限 4 GiB）。
+
+支持格式探测：含 `modrinth.index.json` → Modrinth（mr）；含 `manifest.json`（`manifestType=minecraftModpack`）→ CurseForge（cf）；两者皆无 → `MODPACK_PARSE_FAILED`(400)。
+
+文件保存到 `{BaseDir}/temp/modpack-uploads/{uuid}`（1 天后自动清理），响应带 `fileId` 句柄供 `/install` 传回复用，安装结束后删除。
 
 **响应：** `ModpackParseResult`
+
+```json
+{
+  "name": "TestPack",
+  "summary": "...",
+  "author": "...",
+  "version": "1.0.0",
+  "gameVersion": "1.20.1",
+  "loader": "forge",
+  "loaderVersion": "47.1.0",
+  "source": "modrinth",
+  "files": [{ "path": "mods/x.jar", "downloadUrl": "https://..." }],
+  "hasOverrides": true,
+  "fileCount": 10,
+  "fileId": "1ed395be-..."
+}
+```
+
+**错误码：** `MODPACK_PARSE_FILE_REQUIRED`(400)、`MODPACK_PARSE_UPLOAD_FAILED`(400)、`MODPACK_PARSE_TOO_LARGE`(400)、`MODPACK_PARSE_FAILED`(400)
 
 ### POST `/api/modpack/resolve`
 
@@ -912,7 +935,7 @@ Yggdrasil 认证登录。
 
 ### POST `/api/modpack/install`
 
-开始安装整合包。
+开始安装整合包。本地导入时传 `fileId`（parse 返回）即可复用已上传文件：管道跳过包体下载，mr 按 URL 下载 mods、cf 按 manifest `projectID:fileID` 查 CF API 逐文件下载，随后从本地 zip 释放 overrides（overrides 是 API 找不到的文件）。
 
 ```json
 {
@@ -920,9 +943,21 @@ Yggdrasil 认证登录。
   "projectId": 12345,
   "versionId": 67890,
   "name": "My Pack",
-  "gameDir": ".minecraft"
+  "gameDir": ".minecraft",
+  "fileId": "1ed395be-..."
 }
 ```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `name` | ✅ | 实例名 |
+| `gameVersion` | ✅ | 游戏版本 |
+| `gameDir` | ✅ | 实例根目录 |
+| `versionIsolation` | ✅ | 版本隔离 |
+| `loader`/`loaderVersion` | 条件 | 加载器（本地导入由 parse 结果带出） |
+| `source` | 条件 | `modrinth` / `curseforge` / `ftb`；本地导入必传（驱动 mods 下载与 overrides 释放） |
+| `fileId` | 条件 | 本地导入：`/parse` 返回的临时文件句柄 |
+| `modpackFiles` | 条件 | 解析出的文件清单（本地导入传 parse 结果的 files） |
 
 **响应：** `{ "message": "安装已启动", "versionId": "..." }`
 
@@ -940,6 +975,8 @@ Yggdrasil 认证登录。
 }
 ```
 
+本地导入：`path` 传服务器端绝对路径（.zip / .mrpack），后端同步解析 + 后台安装（同 `/parse` 的格式探测与管道本地分支）。
+
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `id` | ✅ | 实例名（同步为版本目录名） |
@@ -953,7 +990,29 @@ Yggdrasil 认证登录。
 
 **响应：** `{ "instanceId": "..." }`（安装异步进行，进度走下载中心 / SSE）
 
-**错误码：** `MODPACK_NAME_REQUIRED`(400)、`MODPACK_GAME_DIR_REQUIRED`(400)、`MODPACK_FILE_NOT_FOUND`(404)、`MODPACK_SOURCE_REQUIRED`(400)、`MODPACK_SOURCE_INVALID`(400)
+**错误码：** `MODPACK_NAME_REQUIRED`(400)、`MODPACK_GAME_DIR_REQUIRED`(400)、`MODPACK_FILE_NOT_FOUND`(404)、`MODPACK_SOURCE_REQUIRED`(400)、`MODPACK_SOURCE_INVALID`(400)、`MODPACK_PARSE_FAILED`(400)
+
+### POST `/api/modpack/export/{instanceId}`
+
+把已安装实例导出为整合包：`cf`（CurseForge zip，`manifest.json` + `overrides/`）或 `mr`（Modrinth mrpack，`modrinth.index.json` + `overrides/`）。同步生成，响应 `Content-Disposition: attachment` 的 zip 字节。
+
+```json
+{ "format": "cf", "includeSaves": false, "includeScreenshots": false }
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `format` | ✅ | `cf`/`curseforge`/`zip` 或 `mr`/`modrinth`/`mrpack` |
+| `includeSaves` | ❌ | 是否含 `saves`，默认 `false` |
+| `includeScreenshots` | ❌ | 是否含 `screenshots`，默认 `false` |
+
+导出内容：
+- 源目录 = `{gameDir}/versions/{inst.name}`（版本隔离）或 `{gameDir}`；排除版本 json/jar、`libraries/versions/assets/logs/temp/crash-reports`、账户缓存（`usercache.json` 等）与未勾选的 `saves`/`screenshots`。
+- **CF zip**：mods 用 CF fingerprint（32 位 MurmurHash2，种子 1、乘数 1540483477、忽略空白字节 9/10/13/32）反查 `POST /v1/fingerprints` 得 `projectID/fileID` 写入 `manifest.json` 的 `files[]`；mods 同时留在 `overrides/mods`（CF 惯例双份）。
+- **mrpack**：mods 用 SHA1 反查 `POST v2/version_files` 得下载 URL/哈希/大小写入 `modrinth.index.json` 的 `files[]`；已解析 mods 不再进 overrides。
+- 反查为 best-effort：失败（离线/无 key/限流）只影响 `files[]`，mods 回落 `overrides/mods`，导出不中断。
+
+**错误码：** `MODPACK_EXPORT_INSTANCE_NOT_FOUND`(404)、`MODPACK_EXPORT_FORMAT_INVALID`(400)
 
 ---
 
