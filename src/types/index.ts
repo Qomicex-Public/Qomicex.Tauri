@@ -797,6 +797,21 @@ export interface ModpackExportRequest {
   format: 'cf' | 'mr'
   includeSaves?: boolean
   includeScreenshots?: boolean
+  /** 包含文件白名单（相对路径）；不传 = 全量（向后兼容），传入时由白名单决定包含 */
+  includeFiles?: string[]
+}
+
+/** 导出文件树节点（GET /modpack/export/files/{instanceId}） */
+export interface ModpackExportFileNode {
+  name: string
+  /** 相对路径（`/` 分隔） */
+  path: string
+  type: 'dir' | 'file'
+  /** 文件大小；目录为子树累计大小（字节） */
+  size: number
+  /** 子树文件总数 */
+  fileCount: number
+  children?: ModpackExportFileNode[]
 }
 
 export interface ModpackInstallDirectRequest {

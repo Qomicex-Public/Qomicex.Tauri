@@ -1,5 +1,5 @@
 import { get, post, put, del, API_BASE, ApiError } from './client.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
@@ -161,6 +161,11 @@ const MODPACK_EXPORT_TIMEOUT_MS = 300_000
 export interface ModpackExportResult {
   blob: Blob
   filename: string
+}
+
+/** 读取实例可导出文件树（HMCL 风格勾选列表）。 */
+export async function listExportFiles(instanceId: string): Promise<ModpackExportFileNode[]> {
+  return get<ModpackExportFileNode[]>(`/modpack/export/files/${encodeURIComponent(instanceId)}`)
 }
 
 /** 导出实例为整合包（cf zip / mr mrpack），返回 zip 字节与文件名。 */

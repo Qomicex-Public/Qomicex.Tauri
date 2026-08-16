@@ -26,6 +26,7 @@
 //!   runs the same background pipeline.
 //! - Temp uploads are removed after the install task settles.
 
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -48,7 +49,7 @@ use crate::services::install_service::{download_batch, run_install_pipeline, Ins
 use crate::services::install_tracker::InstallTracker;
 use crate::services::install_tracker::{InstallHandle, InstallProgress, InstallStatus};
 use crate::services::instance::InstanceService;
-use crate::services::modpack_export::{build_export_zip, ExportFormat};
+use crate::services::modpack_export::{build_export_zip, list_export_tree, ExportFormat, ExportTreeNode};
 use crate::state::SharedState;
 
 /// Module-private aggregated state (assembled lazily, replacing DI injection).
@@ -91,6 +92,7 @@ pub fn router() -> Router<SharedState> {
         .route("/modpack/install", post(install))
         .route("/modpack/install-direct", post(install_direct))
         .route("/modpack/export/{instanceId}", post(export))
+        .route("/modpack/export/files/{instanceId}", get(export_files))
         .route(
             "/modpack/progress/{instanceId}",
             get(progress).delete(cancel),
@@ -183,6 +185,9 @@ async fn export(
             ))
         }
     };
+    let include_files = req
+        .include_files
+        .map(|v| v.into_iter().collect::<HashSet<String>>());
     let bytes = build_export_zip(
         &s.core,
         &s.curse_forge_api_key,
@@ -190,6 +195,7 @@ async fn export(
         format,
         req.include_saves.unwrap_or(false),
         req.include_screenshots.unwrap_or(false),
+        include_files.as_ref(),
     )
     .await
     .map_err(|e| ApiError::internal(format!("导出整合包失败: {e}")))?;
@@ -216,6 +222,24 @@ async fn export(
         )
         .body(body)
         .map_err(|e| ApiError::internal(format!("构造响应失败: {e}")))
+}
+
+/// GET /modpack/export/files/{instanceId} -- list the instance's exportable
+/// file tree (dir/file nodes with cumulative sizes) for the HMCL-style
+/// file-selection UI. Shares the export collection rules (excluded dirs,
+/// version json/jar, account caches); saves/screenshots are kept so the
+/// frontend can decide via checkboxes.
+async fn export_files(
+    State(s): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<Vec<ExportTreeNode>>> {
+    let instance = s
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| ApiError::not_found("MODPACK_EXPORT_INSTANCE_NOT_FOUND", "实例不存在"))?;
+    let tree = list_export_tree(&instance)
+        .map_err(|e| ApiError::internal(format!("读取实例文件列表失败: {e}")))?;
+    Ok(Json(tree))
 }
 
 /// POST /modpack/resolve -- resolve an online modpack project into parse result.
@@ -1528,4 +1552,8 @@ pub struct ModpackExportRequest {
     /// 是否包含截图 screenshots。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_screenshots: Option<bool>,
+    /// 包含文件白名单（相对路径，如 `mods/a.jar`）。不传 = 全量（向后兼容，
+    /// saves/screenshots 由上述开关控制）；传入时由白名单唯一决定包含内容。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_files: Option<Vec<String>>,
 }

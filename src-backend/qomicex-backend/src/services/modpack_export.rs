@@ -12,8 +12,12 @@
 //!
 //! 源目录 = `{gameDir}/versions/{inst.name}`（版本隔离）或 `{gameDir}`。
 //! 排除项：版本 json/jar、`libraries|versions|assets|logs|temp|crash-reports`、
-//! 账户缓存（usercache/usernamecache/launcher_*），以及未勾选的
-//! `saves`/`screenshots`。
+//! 账户缓存（usercache/usernamecache/launcher_*）。
+//!
+//! 文件勾选（HMCL 风格）：`list_export_tree` 返回完整文件树供前端展示勾选；
+//! 导出请求可携带 `includeFiles` 白名单（相对路径）精确控制包含内容。
+//! 白名单为 None 时保持旧语义（saves/screenshots 由独立开关控制），
+//! 传入时由白名单唯一决定包含（覆盖 saves/screenshots 开关）。
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Write};
@@ -21,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use qomicex_core::core::GameCore;
+use serde::Serialize;
 use sha1::{Digest, Sha1};
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
@@ -32,6 +37,33 @@ use crate::services::instance::GameInstance;
 pub enum ExportFormat {
     CurseForge,
     Modrinth,
+}
+
+/// 导出文件树节点（`GET /modpack/export/files/{instanceId}` 返回）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportTreeNode {
+    /// 文件名（不含路径）。
+    pub name: String,
+    /// 相对路径（`/` 分隔）；根级条目为其自身名。
+    pub path: String,
+    /// 节点类型：dir / file。
+    #[serde(rename = "type")]
+    pub kind: NodeKind,
+    /// 文件大小；目录为子树累计大小。
+    pub size: u64,
+    /// 子树文件总数（目录含全部后代文件；文件恒为 1）。
+    pub file_count: u64,
+    /// 子节点（仅目录）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<ExportTreeNode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeKind {
+    Dir,
+    File,
 }
 
 /// 反查批大小（CF fingerprint 与 Modrinth hash 接口均有请求体上限，保守分批）。
@@ -56,6 +88,10 @@ const EXCLUDED_ROOT_FILES: &[&str] = &[
 ];
 
 /// 构建导出 zip 字节。
+///
+/// `include_files`：可选包含白名单（相对路径）。`Some` 时由白名单唯一决定
+/// 包含内容（saves/screenshots 是否包含也看白名单）；`None` 时保持旧语义，
+/// 由 `include_saves` / `include_screenshots` 控制这两类。
 pub async fn build_export_zip(
     core: &Arc<GameCore>,
     cf_api_key: &str,
@@ -63,6 +99,7 @@ pub async fn build_export_zip(
     format: ExportFormat,
     include_saves: bool,
     include_screenshots: bool,
+    include_files: Option<&HashSet<String>>,
 ) -> Result<Vec<u8>, String> {
     let source_dir = instance_source_dir(instance);
     if !source_dir.is_dir() {
@@ -74,7 +111,14 @@ pub async fn build_export_zip(
 
     // 1. 收集内容条目（含 mods 清单）
     let mut content: Vec<ContentEntry> = Vec::new();
-    collect_content(&source_dir, &instance.name, include_saves, include_screenshots, &mut content)?;
+    collect_content(
+        &source_dir,
+        &instance.name,
+        include_saves,
+        include_screenshots,
+        include_files,
+        &mut content,
+    )?;
 
     let mod_jars: Vec<ContentEntry> = content
         .iter()
@@ -150,13 +194,26 @@ fn instance_source_dir(instance: &GameInstance) -> PathBuf {
     }
 }
 
-fn collect_content(
+/// 列出实例可导出的完整文件树（供前端勾选展示）。
+///
+/// 与导出共用同一收集逻辑：排除版本 json/jar、`EXCLUDED_DIRS`、
+/// 账户缓存。saves/screenshots 保留（是否导出由前端勾选/白名单决定）。
+pub fn list_export_tree(instance: &GameInstance) -> Result<Vec<ExportTreeNode>, String> {
+    let source_dir = instance_source_dir(instance);
+    if !source_dir.is_dir() {
+        return Err(format!(
+            "实例目录不存在：{}",
+            source_dir.to_string_lossy()
+        ));
+    }
+    collect_export_tree(&source_dir, &instance.name)
+}
+
+/// 递归收集文件树。目录节点累计 `size`/`file_count`，排除项不进入树。
+fn collect_export_tree(
     root: &Path,
     version_dir_name: &str,
-    include_saves: bool,
-    include_screenshots: bool,
-    out: &mut Vec<ContentEntry>,
-) -> Result<(), String> {
+) -> Result<Vec<ExportTreeNode>, String> {
     let version_json = format!("{version_dir_name}.json");
     let version_jar = format!("{version_dir_name}.jar");
 
@@ -166,11 +223,9 @@ fn collect_content(
         root: &Path,
         version_json: &str,
         version_jar: &str,
-        include_saves: bool,
-        include_screenshots: bool,
-        out: &mut Vec<ContentEntry>,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<ExportTreeNode>, String> {
         let entries = std::fs::read_dir(dir).map_err(|e| format!("读取目录失败 {dir:?}: {e}"))?;
+        let mut nodes = Vec::new();
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
@@ -187,14 +242,17 @@ fn collect_content(
                 if EXCLUDED_DIRS.iter().any(|d| lower == *d) {
                     continue;
                 }
-                if !include_saves && lower == "saves" {
-                    continue;
-                }
-                if !include_screenshots && lower == "screenshots" {
-                    continue;
-                }
-                out.push(ContentEntry { rel: rel.clone(), abs: path.clone(), is_dir: true });
-                walk(&path, &rel, root, version_json, version_jar, include_saves, include_screenshots, out)?;
+                let children = walk(&path, &rel, root, version_json, version_jar)?;
+                let size: u64 = children.iter().map(|c| c.size).sum();
+                let file_count: u64 = children.iter().map(|c| c.file_count).sum();
+                nodes.push(ExportTreeNode {
+                    name,
+                    path: rel,
+                    kind: NodeKind::Dir,
+                    size,
+                    file_count,
+                    children,
+                });
             } else if file_type.is_file() {
                 // 排除版本 json/jar（仅根目录）与账户缓存
                 if rel_dir.is_empty() {
@@ -208,13 +266,79 @@ fn collect_content(
                         continue;
                     }
                 }
-                out.push(ContentEntry { rel, abs: path, is_dir: false });
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                nodes.push(ExportTreeNode {
+                    name,
+                    path: rel,
+                    kind: NodeKind::File,
+                    size,
+                    file_count: 1,
+                    children: Vec::new(),
+                });
             }
         }
-        Ok(())
+        Ok(nodes)
     }
 
-    walk(root, "", root, &version_json, &version_jar, include_saves, include_screenshots, out)
+    walk(root, "", root, &version_json, &version_jar)
+}
+
+/// 树先序展平为内容条目（目录在前，文件在后；父目录先于子文件）。
+fn flatten_tree(root: &Path, nodes: &[ExportTreeNode], out: &mut Vec<ContentEntry>) {
+    for n in nodes {
+        let abs = root.join(&n.path);
+        if n.kind == NodeKind::Dir {
+            out.push(ContentEntry { rel: n.path.clone(), abs: abs.clone(), is_dir: true });
+            flatten_tree(root, &n.children, out);
+        } else {
+            out.push(ContentEntry { rel: n.path.clone(), abs, is_dir: false });
+        }
+    }
+}
+
+/// 按包含白名单过滤内容条目：文件必须命中白名单；目录仅当其子树
+/// 存在命中文件时保留（保证 zip 路径完整）。
+fn filter_by_include(content: Vec<ContentEntry>, include: &HashSet<String>) -> Vec<ContentEntry> {
+    content.into_iter().filter(|e| {
+        if e.is_dir {
+            let prefix = format!("{}/", e.rel);
+            include.iter().any(|p| p.starts_with(&prefix))
+        } else {
+            include.contains(&e.rel)
+        }
+    }).collect()
+}
+
+fn collect_content(
+    root: &Path,
+    version_dir_name: &str,
+    include_saves: bool,
+    include_screenshots: bool,
+    include_files: Option<&HashSet<String>>,
+    out: &mut Vec<ContentEntry>,
+) -> Result<(), String> {
+    let tree = collect_export_tree(root, version_dir_name)?;
+    flatten_tree(root, &tree, out);
+
+    if let Some(include) = include_files {
+        // 白名单模式：包含内容由白名单唯一决定
+        let filtered = filter_by_include(std::mem::take(out), include);
+        *out = filtered;
+        return Ok(());
+    }
+
+    // 旧语义（无白名单）：saves/screenshots 由独立开关控制（默认排除）
+    out.retain(|e| {
+        let top = e.rel.split('/').next().unwrap_or("");
+        if top.eq_ignore_ascii_case("saves") {
+            return include_saves;
+        }
+        if top.eq_ignore_ascii_case("screenshots") {
+            return include_screenshots;
+        }
+        true
+    });
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -529,11 +653,114 @@ fn write_overrides<W: Write + std::io::Seek>(
 
 #[cfg(test)]
 mod tests {
-    use super::cf_fingerprint;
+    use std::path::PathBuf;
 
-    /// 测试向量来自 dstvx/cf_fingerprint 参考实现的独立 Python 移植；
-    /// 其中 `fp_realmod` 已用真实 CurseForge API（POST /v1/fingerprints）
-    /// 端到端验证：命中 modId=1578679 / fileId=8266592（fileFingerprint 一致）。
+    use super::{cf_fingerprint, collect_export_tree, filter_by_include, flatten_tree, ExportTreeNode};
+
+    /// 测试用临时根目录（按进程 id 隔离，避免并行测试冲突）。
+    fn temp_root(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "qomicex-export-test-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(path: &std::path::Path, bytes: &[u8]) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    fn find<'a>(nodes: &'a [ExportTreeNode], path: &str) -> Option<&'a ExportTreeNode> {
+        for n in nodes {
+            if n.path == path {
+                return Some(n);
+            }
+            if let Some(found) = find(&n.children, path) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// 构造典型实例目录并验证：排除项不出现、size/file_count 累计正确。
+    #[test]
+    fn collect_tree_excludes_and_aggregates() {
+        let root = temp_root("tree");
+        write(&root.join("1.20.1-Forge-47.1.0.json"), b"{}");
+        write(&root.join("1.20.1-Forge-47.1.0.jar"), b"jar");
+        write(&root.join("usercache.json"), b"[]");
+        write(&root.join("mods/jei.jar"), &[0u8; 100]);
+        write(&root.join("mods/sub/another.jar"), &[0u8; 50]);
+        write(&root.join("resourcepacks/rp.zip"), &[0u8; 10]);
+        write(&root.join("config/toml.toml"), b"x");
+        write(&root.join("saves/world1/level.dat"), &[0u8; 7]);
+        write(&root.join("screenshots/s.png"), &[0u8; 3]);
+        write(&root.join("libraries/lib.jar"), &[0u8; 999]);
+
+        let tree = collect_export_tree(&root, "1.20.1-Forge-47.1.0").unwrap();
+
+        // 排除项不进入树
+        assert!(find(&tree, "libraries").is_none(), "libraries 应被排除");
+        assert!(find(&tree, "1.20.1-Forge-47.1.0.json").is_none());
+        assert!(find(&tree, "1.20.1-Forge-47.1.0.jar").is_none());
+        assert!(find(&tree, "usercache.json").is_none());
+
+        // saves/screenshots 保留（由前端勾选决定）
+        let saves = find(&tree, "saves").expect("saves 应保留");
+        assert_eq!(saves.file_count, 1);
+        assert_eq!(saves.size, 7);
+        assert!(find(&tree, "screenshots").is_some());
+
+        // 目录累计 size/file_count 含子目录
+        let mods = find(&tree, "mods").expect("mods 应存在");
+        assert_eq!(mods.file_count, 2);
+        assert_eq!(mods.size, 150);
+        assert!(find(&tree, "mods/sub").is_some());
+    }
+
+    /// 白名单过滤：只保留命中的文件及其父目录链。
+    #[test]
+    fn filter_by_include_keeps_selected_and_ancestors() {
+        let root = temp_root("filter");
+        write(&root.join("mods/jei.jar"), &[0u8; 10]);
+        write(&root.join("mods/sub/another.jar"), &[0u8; 20]);
+        write(&root.join("config/x.toml"), b"x");
+        write(&root.join("saves/world1/level.dat"), &[0u8; 5]);
+
+        let tree = collect_export_tree(&root, "v").unwrap();
+        let mut content = Vec::new();
+        flatten_tree(&root, &tree, &mut content);
+
+        let mut include = std::collections::HashSet::new();
+        include.insert("mods/jei.jar".to_string());
+        include.insert("saves/world1/level.dat".to_string());
+        let filtered = filter_by_include(content, &include);
+
+        let rels: Vec<&str> = filtered.iter().map(|e| e.rel.as_str()).collect();
+        // 命中的文件 + 父目录链存在
+        assert!(rels.contains(&"mods/jei.jar"));
+        assert!(rels.contains(&"mods"));
+        assert!(rels.contains(&"saves/world1/level.dat"));
+        assert!(rels.contains(&"saves/world1"));
+        assert!(rels.contains(&"saves"));
+        // 未命中的子树不出现
+        assert!(!rels.contains(&"mods/sub/another.jar"));
+        assert!(!rels.contains(&"mods/sub"));
+        assert!(!rels.contains(&"config/x.toml"));
+
+        // 文件条目都带绝对路径
+        for e in &filtered {
+            if !e.is_dir {
+                assert!(e.abs.is_file(), "{} 应为真实文件", e.rel);
+            }
+        }
+    }
+
     #[test]
     fn cf_fingerprint_matches_reference_vectors() {
         assert_eq!(cf_fingerprint(&[0x41; 1024]), 1_458_723_592);

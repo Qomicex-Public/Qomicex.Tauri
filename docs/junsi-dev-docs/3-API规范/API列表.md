@@ -1000,22 +1000,31 @@ Yggdrasil 认证登录。
 把已安装实例导出为整合包：`cf`（CurseForge zip，`manifest.json` + `overrides/`）或 `mr`（Modrinth mrpack，`modrinth.index.json` + `overrides/`）。同步生成，响应 `Content-Disposition: attachment` 的 zip 字节。
 
 ```json
-{ "format": "cf", "includeSaves": false, "includeScreenshots": false }
+{ "format": "cf", "includeSaves": false, "includeScreenshots": false, "includeFiles": ["mods/a.jar"] }
 ```
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `format` | ✅ | `cf`/`curseforge`/`zip` 或 `mr`/`modrinth`/`mrpack` |
-| `includeSaves` | ❌ | 是否含 `saves`，默认 `false` |
-| `includeScreenshots` | ❌ | 是否含 `screenshots`，默认 `false` |
+| `includeSaves` | ❌ | 是否含 `saves`，默认 `false`（无 `includeFiles` 时生效） |
+| `includeScreenshots` | ❌ | 是否含 `screenshots`，默认 `false`（无 `includeFiles` 时生效） |
+| `includeFiles` | ❌ | 包含文件白名单（相对路径数组，如 `mods/a.jar`）；不传 = 全量（向后兼容）；传入时由白名单唯一决定包含内容（覆盖 saves/screenshots 开关），目录条目由父目录链自动补全 |
 
 导出内容：
-- 源目录 = `{gameDir}/versions/{inst.name}`（版本隔离）或 `{gameDir}`；排除版本 json/jar、`libraries/versions/assets/logs/temp/crash-reports`、账户缓存（`usercache.json` 等）与未勾选的 `saves`/`screenshots`。
+- 源目录 = `{gameDir}/versions/{inst.name}`（版本隔离）或 `{gameDir}`；排除版本 json/jar、`libraries/versions/assets/logs/temp/crash-reports`、账户缓存（`usercache.json` 等）。`saves`/`screenshots` 在无白名单时由开关控制、有白名单时由白名单决定。
 - **CF zip**：mods 用 CF fingerprint（32 位 MurmurHash2，种子 1、乘数 1540483477、忽略空白字节 9/10/13/32）反查 `POST /v1/fingerprints` 得 `projectID/fileID` 写入 `manifest.json` 的 `files[]`；mods 同时留在 `overrides/mods`（CF 惯例双份）。
 - **mrpack**：mods 用 SHA1 反查 `POST v2/version_files` 得下载 URL/哈希/大小写入 `modrinth.index.json` 的 `files[]`；已解析 mods 不再进 overrides。
 - 反查为 best-effort：失败（离线/无 key/限流）只影响 `files[]`，mods 回落 `overrides/mods`，导出不中断。
 
 **错误码：** `MODPACK_EXPORT_INSTANCE_NOT_FOUND`(404)、`MODPACK_EXPORT_FORMAT_INVALID`(400)
+
+### GET `/api/modpack/export/files/{instanceId}`
+
+读取实例可导出文件的完整树（HMCL 风格勾选列表）。与导出共用排除规则（版本 json/jar、`libraries/versions/assets/logs/temp/crash-reports`、账户缓存）；saves/screenshots 保留（是否包含由前端勾选决定）。
+
+**响应：** `ExportTreeNode[]`——`{ name, path, type: "dir"|"file", size, fileCount, children[] }`；`size` 为文件大小或目录子树累计大小（字节），`fileCount` 为子树文件总数。
+
+**错误码：** `MODPACK_EXPORT_INSTANCE_NOT_FOUND`(404)
 
 ---
 
