@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog, DialogBody, DialogHeader, DialogTitle } from '../components/ui'
 import { Button } from '../components/ui'
 import { Label } from '../components/ui'
 import { Checkbox } from '../components/ui'
 import { Separator } from '../components/ui'
 import { Input } from '../components/ui'
-import { exportModpack, listExportFiles } from '../api/instance.ts'
+import { useMessageBox } from '../components/ui'
+import { startExportTask, getExportTask, cancelExportTask, downloadExportTask, listExportFiles } from '../api/instance.ts'
 import type { GameInstance, ModpackExportFileNode } from '../types/index.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../components/ui'
@@ -31,6 +32,19 @@ function formatSize(bytes: number): string {
   if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`
   if (bytes >= 1 << 10) return `${(bytes / (1 << 10)).toFixed(1)} KB`
   return `${bytes} B`
+}
+
+/** 简单进度条（0-100）。 */
+function ProgressBar({ percent }: { percent: number }) {
+  const clamped = Math.min(100, Math.max(0, percent))
+  return (
+    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+      <div
+        className="h-full rounded-full bg-primary transition-all duration-200"
+        style={{ width: `${clamped}%` }}
+      />
+    </div>
+  )
 }
 
 /** 收集节点子树内全部文件相对路径。 */
@@ -76,6 +90,7 @@ function defaultSelection(tree: ModpackExportFileNode[]): Set<string> {
 
 export default function ExportModpackDialog({ open, onClose, instance }: Props) {
   const { t } = useI18n()
+  const { confirm: msgConfirm } = useMessageBox()
   const [format, setFormat] = useState<'cf' | 'mr'>('cf')
   const [tree, setTree] = useState<ModpackExportFileNode[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -83,30 +98,46 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [exporting, setExporting] = useState(false)
-  const [done, setDone] = useState(false)
-  const [error, setError] = useState('')
   // 包信息（默认带出实例元数据，仅本次导出生效）
   const [packName, setPackName] = useState('')
   const [packVersion, setPackVersion] = useState('')
   const [packAuthor, setPackAuthor] = useState('')
+  // 导出任务（异步：进度轮询 + 取消）
+  const [exportTaskId, setExportTaskId] = useState<string | null>(null)
+  const [exportStatus, setExportStatus] = useState<'running' | 'completed' | 'cancelled' | 'failed' | null>(null)
+  const [exportStage, setExportStage] = useState('lookup')
+  const [exportPercent, setExportPercent] = useState(0)
+  const [exportCurrentFile, setExportCurrentFile] = useState('')
+  const [exportError, setExportError] = useState('')
+  const [exportTargetPath, setExportTargetPath] = useState('')
+  const pollTimerRef = useRef<number | null>(null)
+  // Tauri 桌面环境（有 IPC）才弹系统保存对话框；纯浏览器 dev 走 download fallback
+  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
   const reset = () => {
+    if (pollTimerRef.current !== null) {
+      clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+    setExportTaskId(null)
+    setExportStatus(null)
+    setExportStage('lookup')
+    setExportPercent(0)
+    setExportCurrentFile('')
+    setExportError('')
+    setExportTargetPath('')
     setExporting(false)
-    setDone(false)
-    setError('')
   }
 
   const loadFiles = useCallback(async () => {
     if (!instance) return
     setLoading(true)
     setLoadError('')
-    setError('')
     try {
       const nodes = await listExportFiles(instance.id)
       setTree(nodes)
       setSelected(defaultSelection(nodes))
       setExpanded(new Set())
-      setDone(false)
     } catch (e: any) {
       setLoadError(e.message || t('dialogs.modpackExport.loadFailed'))
       setTree(null)
@@ -191,35 +222,118 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
 
   const fileName = `${packName.trim() || 'modpack'}.${format === 'cf' ? 'zip' : 'mrpack'}`
 
+  /** 阶段 → 当前操作文案（对齐后端 stage：lookup/manifest/packing）。 */
+  const stageText = (stage: string, file: string) => {
+    if (stage === 'lookup') return t('dialogs.modpackExport.stageLookup')
+    if (stage === 'manifest') return t('dialogs.modpackExport.stageManifest')
+    if (stage === 'packing') {
+      return file ? t('dialogs.modpackExport.stagePacking', { file }) : t('dialogs.modpackExport.stageManifest')
+    }
+    return ''
+  }
+
+  /** 轮询导出任务直至终态。 */
+  const pollExport = useCallback(async (taskId: string, targetPath: string | undefined) => {
+    const tick = async () => {
+      try {
+        const p = await getExportTask(taskId)
+        setExportStage(p.stage)
+        setExportPercent(p.percent)
+        setExportCurrentFile(p.currentFile ?? '')
+        if (p.status === 'running') {
+          pollTimerRef.current = window.setTimeout(() => void tick(), 800)
+          return
+        }
+        setExportStatus(p.status)
+        setExporting(false)
+        if (p.status === 'completed' && !targetPath) {
+          // 未传 targetPath（浏览器 dev fallback）：下载 zip 字节
+          try {
+            const { blob, filename } = await downloadExportTask(taskId)
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = filename
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            URL.revokeObjectURL(url)
+          } catch (e: any) {
+            setExportError(e.message || t('dialogs.modpackExport.exportFailed'))
+          }
+        }
+        if (p.status === 'failed') {
+          setExportError(p.error || t('dialogs.modpackExport.exportFailed'))
+        }
+      } catch (e: any) {
+        setExportStatus('failed')
+        setExportError(e.message || t('dialogs.modpackExport.exportFailed'))
+        setExporting(false)
+      }
+    }
+    void tick()
+  }, [t])
+
   const handleExport = async () => {
     if (!instance || selected.size === 0) return
+
+    // 1. 桌面环境：先弹系统保存对话框选路径（取消则中止）
+    let targetPath: string | undefined
+    if (isTauri) {
+      try {
+        const { save } = await import('@tauri-apps/plugin-dialog')
+        const picked = await save({
+          defaultPath: fileName,
+          filters: format === 'cf'
+            ? [{ name: 'CurseForge Modpack', extensions: ['zip'] }]
+            : [{ name: 'Modrinth Modpack', extensions: ['mrpack'] }],
+        })
+        if (!picked) return
+        targetPath = picked
+      } catch {
+        // dialog 不可用（浏览器 dev）→ 走无 targetPath fallback
+      }
+    }
+
+    // 2. 启动异步导出任务
+    const meta: { name?: string; version?: string; author?: string } = {}
+    if (packName.trim()) meta.name = packName.trim()
+    if (packVersion.trim()) meta.version = packVersion.trim()
+    if (packAuthor.trim()) meta.author = packAuthor.trim()
+    // 全选时走旧语义（includeSaves/includeScreenshots=true 全含），
+    // 避免传递巨型白名单；部分选择时传 includeFiles 白名单。
+    const body = allSelected
+      ? { format, includeSaves: true, includeScreenshots: true, ...meta }
+      : { format, includeFiles: [...selected], ...meta }
+
+    setExportTaskId(null)
+    setExportStatus('running')
+    setExportStage('lookup')
+    setExportPercent(0)
+    setExportCurrentFile('')
+    setExportError('')
+    setExportTargetPath(targetPath ?? '')
     setExporting(true)
-    setDone(false)
-    setError('')
     try {
-      // 全选时走旧语义（includeSaves/includeScreenshots=true 全含），
-      // 避免传递巨型白名单；部分选择时传 includeFiles 白名单。
-      const meta: { name?: string; version?: string; author?: string } = {}
-      if (packName.trim()) meta.name = packName.trim()
-      if (packVersion.trim()) meta.version = packVersion.trim()
-      if (packAuthor.trim()) meta.author = packAuthor.trim()
-      const body = allSelected
-        ? { format, includeSaves: true, includeScreenshots: true, ...meta }
-        : { format, includeFiles: [...selected], ...meta }
-      const { blob, filename } = await exportModpack(instance.id, body)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      setDone(true)
+      const taskId = await startExportTask(instance.id, { ...body, targetPath })
+      setExportTaskId(taskId)
+      void pollExport(taskId, targetPath)
     } catch (e: any) {
-      setError(e.message || t('dialogs.modpackExport.exportFailed'))
-    } finally {
+      setExportStatus('failed')
+      setExportError(e.message || t('dialogs.modpackExport.exportFailed'))
       setExporting(false)
+    }
+  }
+
+  /** 取消导出（先确认，防误触）。 */
+  const handleCancelExport = async () => {
+    if (!exportTaskId) return
+    const ok = await msgConfirm(t('dialogs.modpackExport.cancelConfirm'))
+    if (!ok) return
+    try {
+      await cancelExportTask(exportTaskId)
+    } catch {
+      // 任务已完成/已结束：cancel 返回 404，忽略（轮询会收到终态）
     }
   }
 
@@ -272,11 +386,53 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
   }
 
   return (
-    <Dialog open={open} onClose={() => { reset(); onClose() }} className="max-w-2xl">
-      <DialogHeader onClose={onClose}>
-        <DialogTitle>{t('dialogs.modpackExport.title')}</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={() => { reset(); onClose() }}
+      className="max-w-2xl"
+      closeOnBackdrop={exportStatus !== 'running'}
+      closeOnEsc={exportStatus !== 'running'}
+    >
+      <DialogHeader onClose={exportStatus === 'running' ? undefined : onClose}>
+        <DialogTitle>
+          {exportStatus === 'running' ? t('dialogs.modpackExport.exportingTitle') : t('dialogs.modpackExport.title')}
+        </DialogTitle>
       </DialogHeader>
       <DialogBody>
+        {exportStatus !== null ? (
+          <div className="space-y-4 py-2">
+            <div className="flex items-center justify-between">
+              <Label>{t('dialogs.modpackExport.exportingTitle')}</Label>
+              {exportStatus === 'running' && (
+                <span className="text-xs tabular-nums text-muted-foreground">{Math.round(exportPercent)}%</span>
+              )}
+            </div>
+            <ProgressBar percent={exportPercent} />
+            {exportStatus === 'running' && (
+              <p className="text-sm text-muted-foreground">{stageText(exportStage, exportCurrentFile)}</p>
+            )}
+            {exportStatus === 'completed' && (
+              <p className="text-sm text-emerald-500 break-all">
+                {exportTargetPath
+                  ? t('dialogs.modpackExport.exportSavedTo', { path: exportTargetPath })
+                  : t('dialogs.modpackExport.exportSaved')}
+              </p>
+            )}
+            {exportStatus === 'cancelled' && (
+              <p className="text-sm text-muted-foreground">{t('dialogs.modpackExport.exportCancelled')}</p>
+            )}
+            {exportStatus === 'failed' && (
+              <p className="text-sm text-destructive break-all">{exportError || t('dialogs.modpackExport.exportFailed')}</p>
+            )}
+            {exportStatus === 'running' && (
+              <div className="flex justify-end pt-1">
+                <Button variant="outline" onClick={() => void handleCancelExport()}>
+                  {t('dialogs.modpackExport.cancelExport')}
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : (
         <div className="space-y-4">
           <div>
             <Label>{t('dialogs.modpackExport.format')}</Label>
@@ -378,10 +534,6 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
             <p className="mt-0.5 text-sm font-medium break-all">{fileName}</p>
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          {done && <p className="text-sm text-muted-foreground">{t('dialogs.modpackExport.exported')}</p>}
-          {exporting && <p className="text-sm text-muted-foreground">{t('dialogs.modpackExport.exporting')}</p>}
-
           <div className="flex justify-end gap-2">
             <Button variant="outline" disabled={exporting} onClick={() => { reset(); onClose() }}>
               {t('common.cancel')}
@@ -391,6 +543,7 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
             </Button>
           </div>
         </div>
+        )}
       </DialogBody>
     </Dialog>
   )

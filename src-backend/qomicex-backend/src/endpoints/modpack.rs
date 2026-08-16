@@ -45,11 +45,12 @@ use qomicex_core::core::GameCore;
 use qomicex_core::services::installers::factory::DefaultInstallerFactory;
 
 use crate::error::{ApiError, ApiResult};
+use crate::services::export_tracker::ExportTaskSnapshot;
 use crate::services::install_service::{download_batch, run_install_pipeline, InstallRequestData};
 use crate::services::install_tracker::InstallTracker;
 use crate::services::install_tracker::{InstallHandle, InstallProgress, InstallStatus};
 use crate::services::instance::InstanceService;
-use crate::services::modpack_export::{build_export_zip, list_export_tree, ExportFormat, ExportTreeNode};
+use crate::services::modpack_export::{list_export_tree, ExportFormat, ExportTreeNode};
 use crate::state::SharedState;
 
 /// Module-private aggregated state (assembled lazily, replacing DI injection).
@@ -93,6 +94,9 @@ pub fn router() -> Router<SharedState> {
         .route("/modpack/install-direct", post(install_direct))
         .route("/modpack/export/{instanceId}", post(export))
         .route("/modpack/export/files/{instanceId}", get(export_files))
+        .route("/modpack/export/task/{taskId}", get(export_task_get))
+        .route("/modpack/export/task/{taskId}/cancel", post(export_task_cancel))
+        .route("/modpack/export/task/{taskId}/download", get(export_task_download))
         .route(
             "/modpack/progress/{instanceId}",
             get(progress).delete(cancel),
@@ -164,13 +168,18 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
     Ok(Json(result))
 }
 
-/// POST /modpack/export/{instanceId} -- export an installed instance as a
-/// CurseForge zip or a Modrinth mrpack (hash reverse lookup for files[]).
+/// POST /modpack/export/{instanceId} -- start an async export task for an
+/// installed instance (CF zip / MR mrpack, hash reverse lookup for files[]).
+///
+/// Returns `202 { taskId }`; progress is polled via
+/// `GET /modpack/export/task/{taskId}`; cancellation via
+/// `POST /modpack/export/task/{taskId}/cancel`; the zip bytes (when no
+/// `targetPath` was given) via `GET /modpack/export/task/{taskId}/download`.
 async fn export(
     State(s): State<SharedState>,
     AxumPath(instance_id): AxumPath<String>,
     Json(req): Json<ModpackExportRequest>,
-) -> ApiResult<Response> {
+) -> ApiResult<Json<ExportTaskStartResponse>> {
     let instance = s
         .instance
         .get_by_id(&instance_id)
@@ -185,43 +194,65 @@ async fn export(
             ))
         }
     };
-    let include_files = req
-        .include_files
-        .map(|v| v.into_iter().collect::<HashSet<String>>());
-    let bytes = build_export_zip(
+    let task_id = s.export_tasks.start(
         &s.core,
         &s.curse_forge_api_key,
         &instance,
         format,
         req.include_saves.unwrap_or(false),
         req.include_screenshots.unwrap_or(false),
-        include_files.as_ref(),
-        req.name.as_deref(),
-        req.version.as_deref(),
-        req.author.as_deref(),
-    )
-    .await
-    .map_err(|e| ApiError::internal(format!("导出整合包失败: {e}")))?;
+        req.include_files,
+        req.name,
+        req.version,
+        req.author,
+        req.target_path,
+    );
+    Ok(Json(ExportTaskStartResponse { task_id }))
+}
 
-    // 下载文件名：优先请求覆盖的包名，其次实例 modpackName，最后实例名
-    let name_override = req
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|n| !n.is_empty());
-    let base = sanitize_filename(name_override.unwrap_or_else(|| {
-        instance
-            .modpack_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-            .unwrap_or(&instance.name)
-    }));
-    let ext = match format {
-        ExportFormat::CurseForge => "zip",
-        ExportFormat::Modrinth => "mrpack",
-    };
-    let filename = format!("{base}.{ext}");
+/// POST /modpack/export/{instanceId} 的响应：任务 id。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportTaskStartResponse {
+    pub task_id: String,
+}
+
+/// GET /modpack/export/task/{taskId} -- poll export task progress.
+async fn export_task_get(
+    State(s): State<SharedState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> ApiResult<Json<ExportTaskSnapshot>> {
+    s.export_tasks
+        .get(&task_id)
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("MODPACK_EXPORT_TASK_NOT_FOUND", "导出任务不存在"))
+}
+
+/// POST /modpack/export/task/{taskId}/cancel -- request cancellation.
+async fn export_task_cancel(
+    State(s): State<SharedState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let cancelled = s.export_tasks.cancel(&task_id);
+    if !cancelled {
+        return Err(ApiError::not_found(
+            "MODPACK_EXPORT_TASK_NOT_CANCELLABLE",
+            "导出任务不存在或已结束",
+        ));
+    }
+    Ok(Json(serde_json::json!({ "cancelled": true })))
+}
+
+/// GET /modpack/export/task/{taskId}/download -- fetch the finished zip bytes
+/// (only for tasks started without `targetPath`; the task is cleaned up).
+async fn export_task_download(
+    State(s): State<SharedState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> ApiResult<Response> {
+    let (filename, bytes) = s
+        .export_tasks
+        .take_result(&task_id)
+        .ok_or_else(|| ApiError::not_found("MODPACK_EXPORT_TASK_NO_RESULT", "导出结果不可用"))?;
     let body = Body::from(bytes);
     Response::builder()
         .status(StatusCode::OK)
@@ -1233,26 +1264,6 @@ fn modpack_uploads_dir() -> ApiResult<PathBuf> {
     Ok(dir)
 }
 
-/// 文件名安全化（去掉路径分隔与非法字符）。
-fn sanitize_filename(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let trimmed = cleaned.trim().trim_matches('.').to_string();
-    if trimmed.is_empty() {
-        "modpack".to_string()
-    } else {
-        trimmed
-    }
-}
-
 /// 本地文件解析结果（meta + 管道用的 ParsedModpack）。
 struct LocalPackParse {
     source: String,
@@ -1576,4 +1587,9 @@ pub struct ModpackExportRequest {
     /// 写入，mrpack 标准格式无 author 字段）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// 保存目标路径（用户经系统保存对话框选择的完整文件路径）。传了由后端
+    /// 在任务完成后把 zip 复制到该路径；不传则产物保留在临时目录，前端经
+    /// `GET /modpack/export/task/{taskId}/download` 取字节（浏览器 fallback）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_path: Option<String>,
 }

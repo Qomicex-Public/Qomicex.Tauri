@@ -155,44 +155,49 @@ export async function installModpackDirect(data: ModpackInstallDirectRequest): P
   return post<ModpackInstallDirectResult>('/modpack/install-direct', data)
 }
 
-/** 导出整合包长超时（打包大包可能耗时，参考 connector 120s 长超时）。 */
-const MODPACK_EXPORT_TIMEOUT_MS = 300_000
-
-export interface ModpackExportResult {
-  blob: Blob
-  filename: string
-}
-
 /** 读取实例可导出文件树（HMCL 风格勾选列表）。 */
 export async function listExportFiles(instanceId: string): Promise<ModpackExportFileNode[]> {
   return get<ModpackExportFileNode[]>(`/modpack/export/files/${encodeURIComponent(instanceId)}`)
 }
 
-/** 导出实例为整合包（cf zip / mr mrpack），返回 zip 字节与文件名。 */
-export async function exportModpack(
-  instanceId: string,
-  req: ModpackExportRequest,
-): Promise<ModpackExportResult> {
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), MODPACK_EXPORT_TIMEOUT_MS)
-  let res: Response
-  try {
-    res = await fetch(`${API_BASE}/modpack/export/${encodeURIComponent(instanceId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
-      signal: controller.signal,
-    })
-  } finally {
-    clearTimeout(timeoutId)
-  }
+/** 导出任务状态（GET /modpack/export/task/{taskId}）。 */
+export interface ExportTaskProgress {
+  taskId: string
+  instanceId: string
+  status: 'running' | 'completed' | 'cancelled' | 'failed'
+  /** lookup（识别文件指纹）/ manifest（生成配置文件）/ packing（打包游戏文件） */
+  stage: string
+  percent: number
+  currentFile?: string
+  error?: string
+}
+
+/** 启动导出任务（异步），返回 taskId。 */
+export async function startExportTask(instanceId: string, req: ModpackExportRequest): Promise<string> {
+  const res = await post<{ taskId: string }>(`/modpack/export/${encodeURIComponent(instanceId)}`, req)
+  return res.taskId
+}
+
+/** 轮询导出任务进度。 */
+export async function getExportTask(taskId: string): Promise<ExportTaskProgress> {
+  return get<ExportTaskProgress>(`/modpack/export/task/${encodeURIComponent(taskId)}`)
+}
+
+/** 取消导出任务。 */
+export async function cancelExportTask(taskId: string): Promise<void> {
+  await post(`/modpack/export/task/${encodeURIComponent(taskId)}/cancel`, {})
+}
+
+/** 下载导出任务产物（仅未传 targetPath 的任务；取走后任务清理）。 */
+export async function downloadExportTask(taskId: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${API_BASE}/modpack/export/task/${encodeURIComponent(taskId)}/download`)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.message || err.error || `导出失败 (${res.status})`)
+    throw new Error(err.message || err.error || `导出下载失败 (${res.status})`)
   }
   const blob = await res.blob()
   const disposition = res.headers.get('content-disposition')
   const match = disposition?.match(/filename="?(.+?)"?$/)
-  const filename = match?.[1] || `${req.format === 'cf' ? 'modpack' : 'modpack'}.${req.format === 'cf' ? 'zip' : 'mrpack'}`
+  const filename = match?.[1] || 'modpack.zip'
   return { blob, filename }
 }

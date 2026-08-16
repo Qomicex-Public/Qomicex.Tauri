@@ -22,6 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use qomicex_core::core::GameCore;
@@ -38,6 +39,22 @@ pub enum ExportFormat {
     CurseForge,
     Modrinth,
 }
+
+/// 导出进度回调数据（阶段 + 百分比 + 当前文件）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportProgress {
+    /// 阶段：`lookup`（识别文件指纹）/ `manifest`（生成配置文件）/ `packing`（打包游戏文件）。
+    pub stage: &'static str,
+    /// 总体进度 0-100。
+    pub percent: f64,
+    /// 当前处理的文件相对路径（非文件级阶段为 None）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_file: Option<String>,
+}
+
+/// 取消时的统一错误文案（任务管理器据此区分 cancelled 与 failed）。
+pub const EXPORT_CANCELLED_MSG: &str = "导出已取消";
 
 /// 导出文件树节点（`GET /modpack/export/files/{instanceId}` 返回）。
 #[derive(Debug, Clone, Serialize)]
@@ -96,7 +113,11 @@ const EXCLUDED_ROOT_FILES: &[&str] = &[
 /// `name_override` / `version_override` / `author_override`：导出元数据覆盖
 /// （trim 非空时生效，覆盖实例 modpackName/modpackVersion/modpackAuthor；
 /// 作者仅 CF 写入，mrpack 无此字段）。
-pub async fn build_export_zip(
+///
+/// `progress`：进度回调（阶段 `lookup`/`manifest`/`packing` + 0-100 百分比 +
+/// 当前文件）；`cancelled`：取消标志，反查批次与逐文件打包处检查，置位时
+/// 尽快中断并返回 [`EXPORT_CANCELLED_MSG`]。
+pub async fn build_export_zip<P: FnMut(ExportProgress)>(
     core: &Arc<GameCore>,
     cf_api_key: &str,
     instance: &GameInstance,
@@ -107,6 +128,8 @@ pub async fn build_export_zip(
     name_override: Option<&str>,
     version_override: Option<&str>,
     author_override: Option<&str>,
+    progress: &mut P,
+    cancelled: &AtomicBool,
 ) -> Result<Vec<u8>, String> {
     let source_dir = instance_source_dir(instance);
     if !source_dir.is_dir() {
@@ -137,7 +160,7 @@ pub async fn build_export_zip(
     //    导出不整体失败——离线/无 API key/限流时仍可打包）
     let resolved: HashMap<String, ResolvedMod> = match format {
         ExportFormat::CurseForge => {
-            match cf_reverse_lookup(core, cf_api_key, &mod_jars).await {
+            match cf_reverse_lookup(core, cf_api_key, &mod_jars, progress, cancelled).await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("[ModpackExport] CF fingerprint lookup skipped: {e}");
@@ -145,31 +168,47 @@ pub async fn build_export_zip(
                 }
             }
         }
-        ExportFormat::Modrinth => match mr_reverse_lookup(core, &mod_jars).await {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[ModpackExport] Modrinth hash lookup skipped: {e}");
-                HashMap::new()
+        ExportFormat::Modrinth => {
+            match mr_reverse_lookup(core, &mod_jars, progress, cancelled).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[ModpackExport] Modrinth hash lookup skipped: {e}");
+                    HashMap::new()
+                }
             }
-        },
+        }
     };
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(EXPORT_CANCELLED_MSG.to_string());
+    }
 
     // 3. 生成 zip
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
+    progress(ExportProgress {
+        stage: "manifest",
+        percent: 30.0,
+        current_file: None,
+    });
     match format {
         ExportFormat::CurseForge => {
             write_cf_manifest(&mut zip, &opts, instance, &resolved, name_override, version_override, author_override)?;
-            write_overrides(&mut zip, &opts, &source_dir, &content, &HashSet::new())?;
+            write_overrides(&mut zip, &opts, &source_dir, &content, &HashSet::new(), progress, cancelled)?;
         }
         ExportFormat::Modrinth => {
             // 反查命中的 mods 走 files[]，不再进 overrides（避免重复）。
             let resolved_rel: HashSet<&str> = resolved.keys().map(|s| s.as_str()).collect();
             write_mr_index(&mut zip, &opts, instance, &resolved, name_override, version_override)?;
-            write_overrides(&mut zip, &opts, &source_dir, &content, &resolved_rel)?;
+            write_overrides(&mut zip, &opts, &source_dir, &content, &resolved_rel, progress, cancelled)?;
         }
     }
+    progress(ExportProgress {
+        stage: "packing",
+        percent: 100.0,
+        current_file: None,
+    });
 
     let bytes = zip
         .finish()
@@ -411,21 +450,39 @@ fn cf_fingerprint(data: &[u8]) -> u32 {
     fp
 }
 
-async fn cf_reverse_lookup(
+async fn cf_reverse_lookup<P: FnMut(ExportProgress)>(
     core: &Arc<GameCore>,
     cf_api_key: &str,
     mod_jars: &[ContentEntry],
+    progress: &mut P,
+    cancelled: &AtomicBool,
 ) -> Result<HashMap<String, ResolvedMod>, String> {
     let cf = core.create_curseforge_source(cf_api_key);
+    let n = mod_jars.len().max(1) as f64;
     let mut fingerprints: Vec<i64> = Vec::with_capacity(mod_jars.len());
-    for e in mod_jars {
+    // 阶段 1a：计算指纹（0-15）
+    for (i, e) in mod_jars.iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(EXPORT_CANCELLED_MSG.to_string());
+        }
         let bytes = std::fs::read(&e.abs)
             .map_err(|err| format!("读取 mod 失败 {}: {err}", e.rel))?;
         fingerprints.push(cf_fingerprint(&bytes) as i64);
+        progress(ExportProgress {
+            stage: "lookup",
+            percent: 15.0 * (i as f64 + 1.0) / n,
+            current_file: Some(e.rel.clone()),
+        });
     }
 
     let mut found: HashMap<i64, (i32, i32)> = HashMap::new();
-    for chunk in fingerprints.chunks(LOOKUP_BATCH) {
+    // 阶段 1b：分批反查（15-30）
+    let chunks: Vec<&[i64]> = fingerprints.chunks(LOOKUP_BATCH).collect();
+    let cn = chunks.len().max(1) as f64;
+    for (i, chunk) in chunks.iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(EXPORT_CANCELLED_MSG.to_string());
+        }
         let matches = cf
             .get_fingerprint_matches(chunk)
             .await
@@ -437,6 +494,11 @@ async fn cf_reverse_lookup(
                 }
             }
         }
+        progress(ExportProgress {
+            stage: "lookup",
+            percent: 15.0 + 15.0 * (i as f64 + 1.0) / cn,
+            current_file: None,
+        });
     }
 
     let mut resolved = HashMap::new();
@@ -462,20 +524,38 @@ fn sha1_hex(data: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-async fn mr_reverse_lookup(
+async fn mr_reverse_lookup<P: FnMut(ExportProgress)>(
     core: &Arc<GameCore>,
     mod_jars: &[ContentEntry],
+    progress: &mut P,
+    cancelled: &AtomicBool,
 ) -> Result<HashMap<String, ResolvedMod>, String> {
     let mr = core.create_modrinth_source();
+    let n = mod_jars.len().max(1) as f64;
     let mut sha1s: Vec<String> = Vec::with_capacity(mod_jars.len());
-    for e in mod_jars {
+    // 阶段 1a：计算哈希（0-15）
+    for (i, e) in mod_jars.iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(EXPORT_CANCELLED_MSG.to_string());
+        }
         let bytes = std::fs::read(&e.abs)
             .map_err(|err| format!("读取 mod 失败 {}: {err}", e.rel))?;
         sha1s.push(sha1_hex(&bytes));
+        progress(ExportProgress {
+            stage: "lookup",
+            percent: 15.0 * (i as f64 + 1.0) / n,
+            current_file: Some(e.rel.clone()),
+        });
     }
 
     let mut resolved = HashMap::new();
-    for chunk in sha1s.chunks(LOOKUP_BATCH) {
+    // 阶段 1b：分批反查（15-30）
+    let chunks: Vec<&[String]> = sha1s.chunks(LOOKUP_BATCH).collect();
+    let cn = chunks.len().max(1) as f64;
+    for (i, chunk) in chunks.iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(EXPORT_CANCELLED_MSG.to_string());
+        }
         let dict = mr
             .get_project_versions_from_hashes_dict(chunk)
             .await
@@ -501,6 +581,11 @@ async fn mr_reverse_lookup(
                 );
             }
         }
+        progress(ExportProgress {
+            stage: "lookup",
+            percent: 15.0 + 15.0 * (i as f64 + 1.0) / cn,
+            current_file: None,
+        });
     }
 
     // 反查结果按文件名归位（dict 键为哈希，需回填到 mod 相对路径）。
@@ -671,14 +756,21 @@ fn write_mr_index<W: Write + std::io::Seek>(
 }
 
 /// 写入 `overrides/` 内容目录；`skip_rels` 内的相对路径（mods 已入 files[]）跳过。
-fn write_overrides<W: Write + std::io::Seek>(
+/// 逐文件回调进度（阶段 `packing`，35→100）并在每个文件前检查取消标志。
+fn write_overrides<W: Write + std::io::Seek, P: FnMut(ExportProgress)>(
     zip: &mut ZipWriter<W>,
     opts: &SimpleFileOptions,
     _source_dir: &Path,
     content: &[ContentEntry],
     skip_rels: &HashSet<&str>,
+    progress: &mut P,
+    cancelled: &AtomicBool,
 ) -> Result<(), String> {
-    for e in content {
+    let n = content.len().max(1) as f64;
+    for (i, e) in content.iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(EXPORT_CANCELLED_MSG.to_string());
+        }
         let entry_name = format!("overrides/{}", e.rel);
         if skip_rels.contains(e.rel.as_str()) {
             continue;
@@ -694,6 +786,11 @@ fn write_overrides<W: Write + std::io::Seek>(
             std::io::copy(&mut file, zip)
                 .map_err(|err| format!("写入文件失败 {}: {err}", e.rel))?;
         }
+        progress(ExportProgress {
+            stage: "packing",
+            percent: 35.0 + 65.0 * (i as f64 + 1.0) / n,
+            current_file: Some(e.rel.clone()),
+        });
     }
     Ok(())
 }

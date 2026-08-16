@@ -997,10 +997,10 @@ Yggdrasil 认证登录。
 
 ### POST `/api/modpack/export/{instanceId}`
 
-把已安装实例导出为整合包：`cf`（CurseForge zip，`manifest.json` + `overrides/`）或 `mr`（Modrinth mrpack，`modrinth.index.json` + `overrides/`）。同步生成，响应 `Content-Disposition: attachment` 的 zip 字节。
+把已安装实例导出为整合包：`cf`（CurseForge zip，`manifest.json` + `overrides/`）或 `mr`（Modrinth mrpack，`modrinth.index.json` + `overrides/`）。**异步任务**：创建任务并返回 `{ taskId }`（202），随后轮询 `GET /api/modpack/export/task/{taskId}` 查看进度，可经 `POST .../cancel` 取消。
 
 ```json
-{ "format": "cf", "includeSaves": false, "includeScreenshots": false, "includeFiles": ["mods/a.jar"], "name": "My Pack", "version": "2.0.0", "author": "作者" }
+{ "format": "cf", "includeSaves": false, "includeScreenshots": false, "includeFiles": ["mods/a.jar"], "name": "My Pack", "version": "2.0.0", "author": "作者", "targetPath": "C:\\Users\\me\\Desktop\\My Pack.zip" }
 ```
 
 | 字段 | 必填 | 说明 |
@@ -1009,17 +1009,40 @@ Yggdrasil 认证登录。
 | `includeSaves` | ❌ | 是否含 `saves`，默认 `false`（无 `includeFiles` 时生效） |
 | `includeScreenshots` | ❌ | 是否含 `screenshots`，默认 `false`（无 `includeFiles` 时生效） |
 | `includeFiles` | ❌ | 包含文件白名单（相对路径数组，如 `mods/a.jar`）；不传 = 全量（向后兼容）；传入时由白名单唯一决定包含内容（覆盖 saves/screenshots 开关），目录条目由父目录链自动补全 |
-| `name` | ❌ | 覆盖包名（trim 非空时生效，覆盖实例 `modpackName`；同时用于下载文件名） |
+| `name` | ❌ | 覆盖包名（trim 非空时生效，覆盖实例 `modpackName`） |
 | `version` | ❌ | 覆盖包版本（trim 非空时生效，覆盖实例 `modpackVersion`；CF 写 `manifest.json.version`、MR 写 `modrinth.index.json.versionId`） |
 | `author` | ❌ | 覆盖作者（trim 非空时生效，覆盖实例 `modpackAuthor`；**仅 CF `manifest.json.author` 写入**，mrpack 标准格式无 author 字段） |
+| `targetPath` | ❌ | 保存目标完整路径（系统保存对话框选择）。传了由后端在任务完成后把 zip 复制到该路径；不传则产物保留在 `{BaseDir}/temp/export-{taskId}.zip`，前端经 `GET .../download` 取字节（浏览器 fallback） |
+
+**响应（202）：** `{ "taskId": "..." }`
+
+**错误码：** `MODPACK_EXPORT_INSTANCE_NOT_FOUND`(404)、`MODPACK_EXPORT_FORMAT_INVALID`(400)
+
+### GET `/api/modpack/export/task/{taskId}`
+
+轮询导出任务进度。
+
+**响应：** `{ taskId, instanceId, status: "running"|"completed"|"cancelled"|"failed", stage: "lookup"|"manifest"|"packing", percent: 0-100, currentFile?, error? }`
+
+**错误码：** `MODPACK_EXPORT_TASK_NOT_FOUND`(404)
+
+### POST `/api/modpack/export/task/{taskId}/cancel`
+
+请求取消导出（置取消标志，反查/打包检查点尽快中断）。仅 running 任务可取消。
+
+**响应：** `{ cancelled: true }`；非 running/不存在 → `MODPACK_EXPORT_TASK_NOT_CANCELLABLE`(404)
+
+### GET `/api/modpack/export/task/{taskId}/download`
+
+取完成后的 zip 字节（仅未传 `targetPath` 的任务；取走即清理任务与临时文件）。响应 `Content-Disposition: attachment` 的 zip 字节。
+
+**错误码：** `MODPACK_EXPORT_TASK_NO_RESULT`(404)
 
 导出内容：
 - 源目录 = `{gameDir}/versions/{inst.name}`（版本隔离）或 `{gameDir}`；排除版本 json/jar、`libraries/versions/assets/logs/temp/crash-reports`、账户缓存（`usercache.json` 等）。`saves`/`screenshots` 在无白名单时由开关控制、有白名单时由白名单决定。
 - **CF zip**：mods 用 CF fingerprint（32 位 MurmurHash2，种子 1、乘数 1540483477、忽略空白字节 9/10/13/32）反查 `POST /v1/fingerprints` 得 `projectID/fileID` 写入 `manifest.json` 的 `files[]`；mods 同时留在 `overrides/mods`（CF 惯例双份）。
 - **mrpack**：mods 用 SHA1 反查 `POST v2/version_files` 得下载 URL/哈希/大小写入 `modrinth.index.json` 的 `files[]`；已解析 mods 不再进 overrides。
 - 反查为 best-effort：失败（离线/无 key/限流）只影响 `files[]`，mods 回落 `overrides/mods`，导出不中断。
-
-**错误码：** `MODPACK_EXPORT_INSTANCE_NOT_FOUND`(404)、`MODPACK_EXPORT_FORMAT_INVALID`(400)
 
 ### GET `/api/modpack/export/files/{instanceId}`
 

@@ -16,6 +16,7 @@ use tokio::sync::RwLock;
 
 use crate::services::account::AccountService;
 use crate::services::curseforge_fetch::CurseForgeVersionFetchService;
+use crate::services::export_tracker::ExportTaskManager;
 use crate::services::install_tracker::InstallTracker;
 use crate::services::instance::InstanceService;
 use crate::services::instance_group::InstanceGroupService;
@@ -70,6 +71,8 @@ pub struct AppState {
     pub log_level: Arc<LogLevelManager>,
     /// 安装任务跟踪（对应 InstallTracker）。
     pub install_tracker: Arc<InstallTracker>,
+    /// 导出任务跟踪（异步整合包导出：进度轮询 + 取消 + 产物保存）。
+    pub export_tasks: Arc<ExportTaskManager>,
     /// 启动进程跟踪（对应 LaunchTracker）。
     pub launch_tracker: Arc<LaunchTracker>,
     /// 插件商店（对应 PluginStore）。
@@ -184,6 +187,7 @@ impl AppState {
 
         let install_tracker = Arc::new(InstallTracker::new(core.clone()));
         let launch_tracker = Arc::new(LaunchTracker::new());
+        let export_tasks = Arc::new(ExportTaskManager::new());
 
         let plugin_store = Arc::new(PluginStore::new());
         let plugin_auth = Arc::new(FileAuthService::new());
@@ -211,6 +215,7 @@ impl AppState {
             log_level,
             install_tracker,
             launch_tracker,
+            export_tasks,
             plugin_store,
             plugin_auth,
             plugin_gateway,

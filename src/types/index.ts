@@ -805,6 +805,8 @@ export interface ModpackExportRequest {
   version?: string
   /** 覆盖作者（trim 非空时生效，覆盖实例 modpackAuthor；仅 CF manifest.json 写入，mrpack 无此字段） */
   author?: string
+  /** 保存目标路径（系统保存对话框选择的完整路径）；不传则后端保留临时产物，前端经 download 端点取字节 */
+  targetPath?: string
 }
 
 /** 导出文件树节点（GET /modpack/export/files/{instanceId}） */
