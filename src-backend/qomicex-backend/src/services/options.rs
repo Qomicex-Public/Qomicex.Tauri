@@ -2,7 +2,9 @@
 //!
 //! 对应 C# 侧 `OptionsHelper`（InstanceController.CreateGameSettingsOptions）与
 //! core 的 OptionsProvider（qomicex-core-rust services/options/options_txt.rs）：
-//! - 嵌入 `Resources/GameSettings/options.json`（选项定义）与 `descriptions.json`（zh-CN/en-US 描述）；
+//! - 嵌入 `Resources/GameSettings/options.json`（选项定义）；多语言描述单一文案源在
+//!   `qomicex-tauri-i18n` submodule 的 `src/{lang}/game-settings-descriptions.json`
+//!   （编辑翻译必须改 submodule 内文件并在 i18n 仓库提交推送）；
 //! - options.txt 格式：`key:value`（行内含 `=` 也接受），键值两侧 Trim，写回恒为 `key:value`；
 //! - 版本可用性为离线版本号比较（不依赖 mojang manifest）：解析 introducedVersion（如 "1.13"）
 //!   与实例 gameVersion（如 "1.20.1"）逐段比较，任一侧解析失败视为可用。
@@ -14,7 +16,17 @@ use std::sync::OnceLock;
 use qomicex_core::models::local::{MinecraftOption, OptionViewItem};
 
 const OPTIONS_JSON: &str = include_str!("../../Resources/GameSettings/options.json");
-const DESCRIPTIONS_JSON: &str = include_str!("../../Resources/GameSettings/descriptions.json");
+
+// 游戏设置描述（单一文案源：qomicex-tauri-i18n submodule，每语言一个 JSON）。
+// 路径从本文件（src/services/）上溯 4 级到仓库根，再进 submodule。
+const DESCRIPTIONS_ZH_CN: &str =
+    include_str!("../../../../qomicex-tauri-i18n/src/zh-CN/game-settings-descriptions.json");
+const DESCRIPTIONS_ZH_TW: &str =
+    include_str!("../../../../qomicex-tauri-i18n/src/zh-TW/game-settings-descriptions.json");
+const DESCRIPTIONS_EN_US: &str =
+    include_str!("../../../../qomicex-tauri-i18n/src/en-US/game-settings-descriptions.json");
+const DESCRIPTIONS_EN_GB: &str =
+    include_str!("../../../../qomicex-tauri-i18n/src/en-GB/game-settings-descriptions.json");
 
 const DEFAULT_DESCRIPTION: &str = "(无描述)";
 const FALLBACK_LANGUAGE: &str = "en-US";
@@ -25,11 +37,25 @@ fn definitions() -> &'static Vec<MinecraftOption> {
     DEFINITIONS.get_or_init(|| serde_json::from_str(OPTIONS_JSON).expect("解析 options.json 失败"))
 }
 
-/// 多语言描述（懒加载）：外层语言键 → 内层选项名键 → 描述
+/// 多语言描述（懒加载）：外层语言键 → 内层选项名键 → 描述。
+/// 4 份 submodule JSON 合并为一张表（zh-TW/en-GB 复用 zh-CN/en-US 内容）。
 fn descriptions() -> &'static HashMap<String, HashMap<String, String>> {
     static DESCRIPTIONS: OnceLock<HashMap<String, HashMap<String, String>>> = OnceLock::new();
     DESCRIPTIONS.get_or_init(|| {
-        serde_json::from_str(DESCRIPTIONS_JSON).expect("解析 descriptions.json 失败")
+        let mut map: HashMap<String, HashMap<String, String>> = HashMap::new();
+        for (lang, json) in [
+            ("zh-CN", DESCRIPTIONS_ZH_CN),
+            ("zh-TW", DESCRIPTIONS_ZH_TW),
+            ("en-US", DESCRIPTIONS_EN_US),
+            ("en-GB", DESCRIPTIONS_EN_GB),
+        ] {
+            map.insert(
+                lang.to_string(),
+                serde_json::from_str(json)
+                    .unwrap_or_else(|e| panic!("解析 {lang} 游戏设置描述失败: {e}")),
+            );
+        }
+        map
     })
 }
 
