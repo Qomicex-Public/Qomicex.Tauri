@@ -109,6 +109,16 @@ fn infer_value_kind(valid_values: &str) -> String {
     "Text".to_string()
 }
 
+/// 当前值是否为 JSON 数组形态（如 options.txt 的
+/// `resourcePacks:["vanilla","foo.zip"]`）→ 前端按列表（可增删 chips）展示。
+fn looks_like_list(value: &str) -> bool {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return false;
+    }
+    matches!(serde_json::from_str::<serde_json::Value>(trimmed), Ok(serde_json::Value::Array(_)))
+}
+
 /// 区间形态（替代 C# RangePattern 正则：`digits [-–] digits`）
 fn looks_like_range(value: &str) -> bool {
     for sep in ['–', '-'] {
@@ -175,21 +185,30 @@ pub fn list_options(
         .collect();
     definitions()
         .iter()
-        .map(|opt| OptionViewItem {
-            name: opt.name.clone(),
-            default_value: opt.default_value.clone(),
-            current_value: config
+        .map(|opt| {
+            let current_value = config
                 .get(&opt.name)
                 .cloned()
-                .unwrap_or_else(|| opt.default_value.clone()),
-            description: get_description(&opt.name, language),
-            valid_values_raw: opt.valid_values.clone(),
-            introduced_version: opt.introduced_version.clone(),
-            is_available_in_current_version: is_available_in_version(
-                &opt.introduced_version,
-                game_version,
-            ),
-            value_kind: infer_value_kind(&opt.valid_values),
+                .unwrap_or_else(|| opt.default_value.clone());
+            OptionViewItem {
+                name: opt.name.clone(),
+                default_value: opt.default_value.clone(),
+                current_value: current_value.clone(),
+                description: get_description(&opt.name, language),
+                valid_values_raw: opt.valid_values.clone(),
+                introduced_version: opt.introduced_version.clone(),
+                is_available_in_current_version: is_available_in_version(
+                    &opt.introduced_version,
+                    game_version,
+                ),
+                // 当前值是 JSON 数组（resourcePacks/datapacks 等）→ List，覆盖定义推断
+                // （这些 key 的 validValues 为空，原推断为 Text）。
+                value_kind: if looks_like_list(&current_value) {
+                    "List".to_string()
+                } else {
+                    infer_value_kind(&opt.valid_values)
+                },
+            }
         })
         .collect()
 }
@@ -264,6 +283,19 @@ mod tests {
         assert_eq!(infer_value_kind("all,decreased,minimal"), "Enum");
         assert_eq!(infer_value_kind("字符串"), "Text");
         assert_eq!(infer_value_kind("键控代码"), "Text");
+    }
+
+    #[test]
+    fn list_value_detection() {
+        // options.txt 的数组值（resourcePacks/datapacks 等）
+        assert!(looks_like_list(r#"["vanilla","foo.zip"]"#));
+        assert!(looks_like_list(r#"[]"#));
+        assert!(looks_like_list("[\"a\", \"b\"]"));
+        // 非数组/非法 JSON
+        assert!(!looks_like_list("vanilla"));
+        assert!(!looks_like_list(""));
+        assert!(!looks_like_list("[broken"));
+        assert!(!looks_like_list("{\"a\":1}"));
     }
 
     #[test]

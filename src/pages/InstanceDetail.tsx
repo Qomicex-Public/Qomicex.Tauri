@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup, faFileExport} from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup, faFileExport, faXmark} from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Separator } from '../components/ui'
@@ -1720,6 +1720,82 @@ function mapJSCodeToMinecraft(code: string): string | null {
   return null
 }
 
+/** 值是否为 JSON 数组形态（options.txt 的 resourcePacks/datapacks 等）。 */
+function isJsonArrayValue(value: string): boolean {
+  const v = value.trim()
+  if (!v.startsWith('[') || !v.endsWith(']')) return false
+  try { return Array.isArray(JSON.parse(v)) } catch { return false }
+}
+
+/** 解析 JSON 数组为字符串列表；失败/非数组 → 空列表。 */
+function parseJsonArray(value: string): string[] {
+  try {
+    const arr = JSON.parse(value)
+    if (Array.isArray(arr)) return arr.map((x) => String(x))
+  } catch { /* fallthrough */ }
+  return []
+}
+
+/** 数组类游戏设置（resourcePacks/datapacks 等）的列表编辑器：chips 可增删。 */
+function GameListSettingEditor({ name, value, onChange, t }: {
+  name: string
+  value: string
+  onChange: (name: string, value: string) => void
+  t: (key: string, params?: Record<string, string | number>) => string
+}) {
+  const [draft, setDraft] = useState('')
+  const items = parseJsonArray(value)
+  const commit = (next: string[]) => onChange(name, JSON.stringify(next))
+  const removeAt = (idx: number) => commit(items.filter((_, i) => i !== idx))
+  const addItem = () => {
+    const v = draft.trim()
+    if (!v) return
+    commit([...items, v])
+    setDraft('')
+  }
+  return (
+    <div className="flex max-w-full min-w-[260px] flex-wrap items-center justify-end gap-1">
+      {items.map((item, i) => (
+        <span
+          key={`${i}-${item}`}
+          className="inline-flex max-w-[180px] items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs"
+        >
+          <span className="truncate">{item}</span>
+          <Tooltip content={t('instanceDetail.gamesettings.remove')}>
+            <button
+              type="button"
+              onClick={() => removeAt(i)}
+              className="text-muted-foreground transition-colors hover:text-destructive"
+              aria-label={t('instanceDetail.gamesettings.remove')}
+            >
+              <FontAwesomeIcon icon={faXmark} className="h-3 w-3" />
+            </button>
+          </Tooltip>
+        </span>
+      ))}
+      <div className="flex items-center gap-1">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') addItem() }}
+          placeholder={t('instanceDetail.gamesettings.addPlaceholder')}
+          className="h-7 w-28 rounded-md border border-input bg-background px-2 text-xs shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+        <Tooltip content={t('instanceDetail.gamesettings.add')}>
+          <button
+            type="button"
+            onClick={addItem}
+            className="flex h-6 w-6 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label={t('instanceDetail.gamesettings.add')}
+          >
+            <FontAwesomeIcon icon={faPlus} className="h-3 w-3" />
+          </button>
+        </Tooltip>
+      </div>
+    </div>
+  )
+}
+
 function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
@@ -1854,7 +1930,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
                     </div>
                     <p className="text-xs text-muted-foreground truncate">{s.description}</p>
                   </div>
-                  <div className="shrink-0 max-w-40 min-w-0">
+                  <div className={cn('shrink-0 min-w-0', s.valueKind === 'List' || isJsonArrayValue(s.currentValue) ? 'max-w-[60%]' : 'max-w-40')}>
                     {s.valueKind === 'Boolean' && (
                       <Checkbox
                         checked={s.currentValue === 'true'}
@@ -1900,7 +1976,10 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
                         </span>
                       </div>
                     )}
-                    {!keybind && s.valueKind === 'Text' && (
+                    {!keybind && (s.valueKind === 'List' || isJsonArrayValue(s.currentValue)) && (
+                      <GameListSettingEditor name={s.name} value={s.currentValue} onChange={handleChange} t={t} />
+                    )}
+                    {!keybind && s.valueKind === 'Text' && !isJsonArrayValue(s.currentValue) && (
                       <Input
                         value={s.currentValue}
                         onChange={(e) => handleChange(s.name, e.target.value)}
