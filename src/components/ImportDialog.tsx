@@ -141,7 +141,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             <input
               ref={fileInputRef}
               type="file"
-              accept=".mrpack,.zip"
+              accept=".qmodpack,.mrpack,.zip"
               onChange={handleFileSelect}
               className="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-primary file:text-primary-foreground"
             />

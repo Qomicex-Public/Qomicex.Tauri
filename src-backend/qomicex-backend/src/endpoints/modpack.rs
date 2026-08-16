@@ -1850,3 +1850,97 @@ pub struct ModpackExportRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_path: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    use super::{modpack_target_path, release_qml_overrides};
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "qomicex-qml-release-test-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// release_qml_overrides：解压 overrides/** 到目标目录，忽略 qmodpack.index.json 与非 overrides 条目。
+    #[test]
+    fn release_qml_overrides_extracts_override_tree() {
+        let root = temp_dir("extract");
+        let src = root.join("src");
+        std::fs::create_dir_all(src.join("overrides/config")).unwrap();
+        std::fs::create_dir_all(src.join("overrides/mods")).unwrap();
+        std::fs::write(src.join("overrides/config/opt.toml"), b"a=1").unwrap();
+        std::fs::write(src.join("overrides/mods/keep.jar"), b"jar").unwrap();
+        std::fs::write(src.join("qmodpack.index.json"), b"{}").unwrap();
+        std::fs::write(src.join("manifest.json"), b"{}").unwrap();
+
+        let zip_path = root.join("pack.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default();
+        fn add_tree(
+            zip: &mut zip::ZipWriter<std::fs::File>,
+            dir: &PathBuf,
+            base: &str,
+            opts: &zip::write::SimpleFileOptions,
+        ) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                let rel = if base.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{base}/{name}")
+                };
+                if path.is_dir() {
+                    zip.add_directory(format!("{rel}/"), *opts).unwrap();
+                    add_tree(zip, &path, &rel, opts);
+                } else {
+                    zip.start_file(rel, *opts).unwrap();
+                    zip.write_all(&std::fs::read(&path).unwrap()).unwrap();
+                }
+            }
+        }
+        add_tree(&mut zip, &src, "", &opts);
+        zip.finish().unwrap();
+
+        // 释放到 game_dir（非隔离）
+        let game_dir = root.join("game");
+        release_qml_overrides(
+            zip_path.to_str().unwrap(),
+            game_dir.to_str().unwrap(),
+            "v",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(game_dir.join("config/opt.toml")).unwrap(),
+            "a=1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(game_dir.join("mods/keep.jar")).unwrap(),
+            "jar"
+        );
+        // 非 overrides 条目不释放
+        assert!(!game_dir.join("qmodpack.index.json").exists());
+        assert!(!game_dir.join("manifest.json").exists());
+    }
+
+    /// modpack_target_path：隔离/非隔离目标路径。
+    #[test]
+    fn target_path_respects_isolation() {
+        let isolated = modpack_target_path("G", "1.20.1-Forge-47.1.0", true, "config/x.toml");
+        assert_eq!(
+            isolated,
+            PathBuf::from("G/versions/1.20.1-Forge-47.1.0/config/x.toml")
+        );
+        let plain = modpack_target_path("G", "v", false, "config/x.toml");
+        assert_eq!(plain, PathBuf::from("G/config/x.toml"));
+    }
+}
