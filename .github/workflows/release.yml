@@ -111,7 +111,7 @@ jobs:
       licenseRequired: ${{ steps.construct.outputs.licenseRequired }}
       required: ${{ steps.construct.outputs.required }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -181,7 +181,7 @@ jobs:
     needs: [setup]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
@@ -237,10 +237,10 @@ jobs:
           # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
           cargo install cargo-audit
           cd src-backend/qomicex-backend && cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
           cache: pnpm
@@ -259,17 +259,17 @@ jobs:
     needs: [setup, quality-gate]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
       - uses: swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
@@ -331,11 +331,11 @@ jobs:
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qomicex-launcher-windows-x64
           path: |
@@ -352,17 +352,17 @@ jobs:
     needs: [setup, quality-gate]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-pc-windows-msvc }
       - uses: swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
         shell: pwsh
@@ -424,11 +424,11 @@ jobs:
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qomicex-launcher-windows-arm64
           path: |
@@ -445,17 +445,17 @@ jobs:
     needs: [setup, quality-gate]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-unknown-linux-gnu }
       - uses: swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
@@ -517,11 +517,11 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qomicex-launcher-linux-x64
           path: |
@@ -538,17 +538,17 @@ jobs:
     needs: [setup, quality-gate]
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-unknown-linux-gnu }
       - uses: swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
@@ -609,11 +609,11 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qomicex-launcher-linux-arm64
           path: |
@@ -631,7 +631,7 @@ jobs:
     env:
       IMAGE: ghcr.io/qomicex-public/qomicex-loong64-builder:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
@@ -705,11 +705,11 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qomicex-launcher-linux-loongarch64
           path: |
@@ -726,17 +726,17 @@ jobs:
     needs: [setup, quality-gate]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-apple-darwin }
       - uses: swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
@@ -818,11 +818,11 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qomicex-launcher-macos-arm64
           path: |
@@ -838,17 +838,17 @@ jobs:
     needs: [setup, quality-gate]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-apple-darwin }
       - uses: swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
@@ -930,11 +930,11 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
           path: update-fragment-*.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qomicex-launcher-macos-x64
           path: |
@@ -955,11 +955,11 @@ jobs:
       - macos-x64
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
 
@@ -1025,7 +1025,7 @@ jobs:
           cat alpha.json
 
       - name: Create/update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.setup.outputs.displayVersion }}
           name: Qomicex Launcher ${{ needs.setup.outputs.displayVersion }}
