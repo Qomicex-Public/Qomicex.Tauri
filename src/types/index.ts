@@ -550,6 +550,38 @@ export interface SaveMetadata {
   iconBase64?: string | null
 }
 
+/** 精选游戏规则子集（level.dat Data.GameRules，String "true"/"false"） */
+export interface SaveGameRules {
+  keepInventory: boolean
+  doDaylightCycle: boolean
+  doFireTick: boolean
+  mobGriefing: boolean
+  doMobSpawning: boolean
+  doWeatherCycle: boolean
+}
+
+/** 存档设置（level.dat Data 精选白名单字段，与后端 LevelDatSettings 对应） */
+export interface SaveSettings {
+  levelName: string
+  /** 0=生存 1=创造 2=冒险 3=旁观 */
+  gameType: number
+  /** 0=和平 1=简单 2=普通 3=困难 */
+  difficulty: number
+  allowCommands: boolean
+  hardcore: boolean
+  /** 世界时间（tick） */
+  time: number
+  /** 昼夜时间（0-24000） */
+  dayTime: number
+  raining: boolean
+  thundering: boolean
+  spawnX: number
+  spawnY: number
+  spawnZ: number
+  randomSeed: number
+  gameRules: SaveGameRules
+}
+
 export interface ScreenshotMetadata {
   fileName: string
   filePath: string

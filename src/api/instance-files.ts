@@ -1,5 +1,5 @@
-import { get, del, post } from './client.ts'
-import type { FileEntry, ModMetadata, ModEnrichEntry, ModUpdateEntry, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState, LanGameEntry } from '../types/index.ts'
+import { get, del, post, put } from './client.ts'
+import type { FileEntry, ModMetadata, ModEnrichEntry, ModUpdateEntry, ResourcePackMetadata, ShaderMetadata, SaveMetadata, SaveSettings, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState, LanGameEntry } from '../types/index.ts'
 
 export function getSaves(instanceId: string): Promise<FileEntry[]> {
   return get<FileEntry[]>(`/instance/${instanceId}/files/saves`)
@@ -9,6 +9,19 @@ export function deleteSave(instanceId: string, name: string): Promise<void> {
 }
 export function copySave(instanceId: string, name: string, newName: string): Promise<void> {
   return post(`/instance/${instanceId}/files/saves/copy`, { name, newName })
+}
+
+/** 读取存档设置（level.dat NBT 精选字段）。folderName = 存档目录名。 */
+export function getSaveSettings(instanceId: string, folderName: string): Promise<SaveSettings> {
+  return get<SaveSettings>(`/instance/${instanceId}/files/saves/${encodeURIComponent(folderName)}/settings`)
+}
+/** 更新存档设置（写前自动备份 level.dat.qomicex.bak，失败回滚）。返回服务器侧最新值。 */
+export function updateSaveSettings(instanceId: string, folderName: string, settings: SaveSettings): Promise<SaveSettings> {
+  return put<SaveSettings>(`/instance/${instanceId}/files/saves/${encodeURIComponent(folderName)}/settings`, settings)
+}
+/** 从 level.dat_old 恢复存档设置。返回恢复后的最新值。 */
+export function restoreSaveFromOld(instanceId: string, folderName: string): Promise<SaveSettings> {
+  return post<SaveSettings>(`/instance/${instanceId}/files/saves/${encodeURIComponent(folderName)}/settings/restore`)
 }
 
 export function getScreenshots(instanceId: string): Promise<FileEntry[]> {

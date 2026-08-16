@@ -20,11 +20,12 @@ use std::sync::{LazyLock, Mutex};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use qomicex_core::models::expansion::curseforge::mod_loader_type;
+use qomicex_core::models::expansion::local::LevelDatSettings;
 
 use crate::error::{ApiError, ApiResult};
 use crate::settings;
@@ -507,6 +508,15 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/files/saves/rename", post(rename_save))
         .route("/instance/{id}/files/saves/backup", post(backup_save))
         .route("/instance/{id}/files/saves", delete(delete_save))
+        // save settings (level.dat NBT; see services/local/level_dat.rs in core)
+        .route(
+            "/instance/{id}/files/saves/{name}/settings",
+            get(save_settings_get).put(save_settings_put),
+        )
+        .route(
+            "/instance/{id}/files/saves/{name}/settings/restore",
+            post(save_settings_restore),
+        )
         // servers
         .route(
             "/instance/{id}/files/servers",
@@ -1633,6 +1643,113 @@ async fn delete_save(
         let _ = std::fs::remove_dir_all(&path);
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+// =====================================================================
+// Handlers: save settings (level.dat NBT, core services/local/level_dat.rs)
+// =====================================================================
+
+/// 解析存档目录并校验存在（不存在 → 404 SAVE_NOT_FOUND）。
+fn save_settings_dir(r: &Resolved, name: &str) -> ApiResult<PathBuf> {
+    let dir = category_dir(r, "saves").join(name);
+    if !dir.is_dir() {
+        return Err(ApiError::not_found(
+            "SAVE_NOT_FOUND",
+            format!("Save directory '{name}' not found"),
+        ));
+    }
+    Ok(dir)
+}
+
+/// 创建 Saves 管理器（与 saves_metadata 一致）。
+fn saves_manager(
+    state: &crate::state::AppState,
+    r: &Resolved,
+) -> Box<dyn qomicex_core::api::local::SavesManager + Send + Sync> {
+    state.core.local_resource_provider().create_saves(
+        r.game_dir.to_str().unwrap_or_default(),
+        &r.version,
+        r.isolated,
+        &state.curse_forge_api_key,
+    )
+}
+
+/// core 存档设置错误映射：文件级业务错误（Params）→ 400；其余 → 500。
+fn map_level_dat_error(e: qomicex_core::error::Error) -> ApiError {
+    match &e {
+        qomicex_core::error::Error::Params { .. } => ApiError::bad_request("BAD_REQUEST", e.to_string()),
+        _ => ApiError::internal(e.to_string()),
+    }
+}
+
+/// GET /instance/{id}/files/saves/{name}/settings — 读取存档设置。
+async fn save_settings_get(
+    AxumPath((id, name)): AxumPath<(String, String)>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<LevelDatSettings>> {
+    let r = resolve(&id, &state)?;
+    let save_dir = save_settings_dir(&r, &name)?;
+    if !save_dir.join("level.dat").is_file() {
+        return Err(ApiError::not_found(
+            "SAVE_LEVEL_DAT_NOT_FOUND",
+            format!("level.dat not found in save '{name}'"),
+        ));
+    }
+    let saves = saves_manager(&state, &r);
+    let settings = saves
+        .read_level_dat_settings(&save_dir.to_string_lossy())
+        .map_err(map_level_dat_error)?;
+    Ok(Json(settings))
+}
+
+/// PUT /instance/{id}/files/saves/{name}/settings — 更新存档设置（写前备份+失败回滚）。
+async fn save_settings_put(
+    AxumPath((id, name)): AxumPath<(String, String)>,
+    State(state): State<SharedState>,
+    Json(req): Json<LevelDatSettings>,
+) -> ApiResult<Json<LevelDatSettings>> {
+    let r = resolve(&id, &state)?;
+    let save_dir = save_settings_dir(&r, &name)?;
+    if !save_dir.join("level.dat").is_file() {
+        return Err(ApiError::not_found(
+            "SAVE_LEVEL_DAT_NOT_FOUND",
+            format!("level.dat not found in save '{name}'"),
+        ));
+    }
+    let saves = saves_manager(&state, &r);
+    let path = save_dir.to_string_lossy().into_owned();
+    saves
+        .update_level_dat_settings(&path, &req)
+        .map_err(map_level_dat_error)?;
+    // 返回服务器侧最新值（写回后重读，含默认补齐字段）。
+    let updated = saves
+        .read_level_dat_settings(&path)
+        .map_err(map_level_dat_error)?;
+    Ok(Json(updated))
+}
+
+/// POST /instance/{id}/files/saves/{name}/settings/restore — 从 level.dat_old 恢复。
+async fn save_settings_restore(
+    AxumPath((id, name)): AxumPath<(String, String)>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<LevelDatSettings>> {
+    let r = resolve(&id, &state)?;
+    let save_dir = save_settings_dir(&r, &name)?;
+    if !save_dir.join("level.dat_old").is_file() {
+        return Err(ApiError::not_found(
+            "SAVE_LEVEL_DAT_OLD_NOT_FOUND",
+            format!("level.dat_old not found in save '{name}'"),
+        ));
+    }
+    let saves = saves_manager(&state, &r);
+    let path = save_dir.to_string_lossy().into_owned();
+    saves
+        .restore_level_dat_from_old(&path)
+        .map_err(map_level_dat_error)?;
+    let settings = saves
+        .read_level_dat_settings(&path)
+        .map_err(map_level_dat_error)?;
+    Ok(Json(settings))
 }
 
 // =====================================================================

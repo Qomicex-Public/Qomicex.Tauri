@@ -1,6 +1,6 @@
 # API 端点参考
 
-> 更新日期：2026-07-31
+> 更新日期：2026-08-16
 
 后端基础地址：`http://localhost:5000`。前端 Vite 代理将 `/api/*` 转发到此地址。
 
@@ -584,6 +584,9 @@ Yggdrasil 认证登录。
 | POST | `/saves/rename` | 重命名存档 `{ "oldName": "...", "newName": "..." }` |
 | POST | `/saves/backup?name=...` | 备份存档 |
 | DELETE | `/saves?name=...` | 删除存档 |
+| GET | `/saves/{name}/settings` | 读取存档设置（level.dat NBT 精选字段；level.dat 缺失 → 404） |
+| PUT | `/saves/{name}/settings` | 更新存档设置（写前自动备份 level.dat.qomicex.bak，失败回滚；返回最新值） |
+| POST | `/saves/{name}/settings/restore` | 从 level.dat_old 恢复存档设置（_old 缺失 → 404） |
 
 ### Servers
 

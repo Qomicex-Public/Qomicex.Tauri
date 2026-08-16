@@ -120,7 +120,7 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   )
 }
 
-function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQuickJoinWorld, gameVersion }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void; onQuickJoinWorld: (name: string) => void; gameVersion: string | undefined }) {
+function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQuickJoinWorld, gameVersion, running }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void; onQuickJoinWorld: (name: string) => void; gameVersion: string | undefined; running: boolean }) {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [saves, setSaves] = useState<SaveMetadata[]>([])
@@ -209,7 +209,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((save) => (
-              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} />
+              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} running={running} />
             ))}
           </div>
         )}
@@ -2652,7 +2652,7 @@ export default function InstanceDetailPage() {
             </Card>
           )}
 
-          <TabContent activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} onQuickJoinWorld={(name) => handleQuickLaunch({ joinWorld: name })} /></TabContent>
+          <TabContent activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} onQuickJoinWorld={(name) => handleQuickLaunch({ joinWorld: name })} running={runningInstances.some(r => r.instanceId === id)} /></TabContent>
           <TabContent activeTab={tab} tabId="screenshots"><ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} /></TabContent>
           <TabContent activeTab={tab} tabId="mods"><ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} /></TabContent>
           <TabContent activeTab={tab} tabId="resourcepacks"><ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} /></TabContent>

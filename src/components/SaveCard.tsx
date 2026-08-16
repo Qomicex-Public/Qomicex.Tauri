@@ -1,12 +1,13 @@
 import { useState, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faSave, faCopy, faPen, faTrashCan, faPlay } from '@fortawesome/free-solid-svg-icons'
+import { faSave, faCopy, faPen, faTrashCan, faPlay, faGear } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui'
 import { Tooltip } from './ui'
 import { Input } from './ui'
 import { Button } from './ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu.tsx'
+import SaveSettingsDialog from './SaveSettingsDialog.tsx'
 import type { SaveMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 import { useI18n } from '../i18n/index.tsx'
@@ -18,15 +19,21 @@ interface Props {
   selected?: boolean
   onSelect?: React.MouseEventHandler
   onQuickJoin?: () => void
+  /** 实例是否运行中（存档设置弹窗内提示写入会被游戏覆盖） */
+  running?: boolean
 }
 
-export default function SaveCard({ save, instanceId, onRefresh, selected, onSelect, onQuickJoin }: Props) {
+export default function SaveCard({ save, instanceId, onRefresh, selected, onSelect, onQuickJoin, running }: Props) {
   const { t, lang } = useI18n()
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(save.name)
   const [backingUp, setBackingUp] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  /** 存档目录名（= filePath 末段，API 路径用；与 handleDelete 一致） */
+  const folderName = save.filePath.replace(/\\/g, '/').split('/').pop() ?? save.name
 
   const handleBackup = useCallback(async () => {
     setBackingUp(true)
@@ -59,6 +66,7 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
   }, [instanceId, save.name, save.filePath, onRefresh])
 
   const contextItems: ContextMenuItem[] = [
+    { label: t('dialogs.save.settings'), onClick: () => setSettingsOpen(true) },
     { label: t('dialogs.save.backup'), onClick: () => handleBackup() },
     { label: t('dialogs.save.rename'), onClick: () => { setRenameValue(save.name); setRenaming(true) } },
     ...(onQuickJoin ? [{ label: t('dialogs.save.quickJoin'), onClick: onQuickJoin }] : []),
@@ -100,6 +108,11 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
           )}
         </div>
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Tooltip content={t('dialogs.save.settings')}>
+            <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
+              <FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
           <Tooltip content={t('dialogs.save.backup')}>
             <button onClick={(e) => { e.stopPropagation(); handleBackup() }} disabled={backingUp} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
               <FontAwesomeIcon icon={faCopy} className="h-3.5 w-3.5" />
@@ -138,6 +151,15 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
           </Button>
         </DialogFooter>
       </Dialog>
+      <SaveSettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        instanceId={instanceId}
+        saveName={save.name}
+        folderName={folderName}
+        running={running ?? false}
+        onSaved={onRefresh}
+      />
     </Card>
     </ContextMenu>
   )
