@@ -607,7 +607,7 @@ export interface SaveGameRules {
 }
 
 /** 存档设置（level.dat Data 精选白名单字段，与后端 LevelDatSettings 对应）。
- * 难度/硬核/锁定/出生点在 1.21.2+ 存档中读写 difficulty_settings / spawn 复合（后端透明映射）。 */
+ * 难度/极限/锁定/出生点在 1.21.2+ 存档中读写 difficulty_settings / spawn 复合（后端透明映射）。 */
 export interface SaveSettings {
   levelName: string
   /** 0=生存 1=创造 2=冒险 3=旁观 */

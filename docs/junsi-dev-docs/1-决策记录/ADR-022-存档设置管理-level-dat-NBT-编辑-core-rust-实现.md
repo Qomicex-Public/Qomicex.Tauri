@@ -23,7 +23,7 @@
   - `PUT  /instance/{id}/files/saves/{name}/settings`（写；返回服务器侧重读值）
   - `POST /instance/{id}/files/saves/{name}/settings/restore`（恢复；_old 缺失 → 404 SAVE_LEVEL_DAT_OLD_NOT_FOUND）
   - core `Error::Params` → 400，其余 → 500。
-- **前端**：`SaveCard` 每存档加「设置」按钮（⚙，与备份/重命名并列，右键菜单同步）→ `SaveSettingsDialog` 精选表单（Select 模式/难度、数字输入时间/出生点/种子、Checkbox 作弊/硬核/天气/游戏规则）；实例运行中显示警告；「从 level.dat_old 恢复」走 `useMessageBox().confirm` 二次确认；保存成功刷新存档列表（名称变更）。
+- **前端**：`SaveCard` 每存档加「设置」按钮（⚙，与备份/重命名并列，右键菜单同步）→ `SaveSettingsDialog` 精选表单（Select 模式/难度、数字输入时间/出生点/种子、Checkbox 作弊/极限/天气/游戏规则）；实例运行中显示警告；「从 level.dat_old 恢复」走 `useMessageBox().confirm` 二次确认；保存成功刷新存档列表（名称变更）。
 - **i18n**：`saveSettings.*` 与 `dialogs.save.settings` 文案入 i18n submodule 三语言（zh-CN/en-US/en-GB，zh-TW 回退 zh-CN），编辑翻译在 i18n 仓库单独提交推送。
 
 ## 备选方案
@@ -59,4 +59,4 @@
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-08-16 | v1.0 | 初版创建 | AI Agent |
-| 2026-08-16 | v1.1 | 存档设置扩展（Z1 一期）：① 修复三语言缺失的 `saveSettings.allowCommands`/`hardcore` i18n 键；② Data 白名单新增 `DifficultyLocked`/`clearWeatherTime`/`rainTime`/`thunderTime`/`WanderingTraderSpawnChance`/`SpawnDelay` + 世界边界 7 项（BorderCenterX/Z、BorderSize、BorderSafeZone、BorderDamagePerBlock、BorderWarningBlocks、BorderWarningTime）；③ GameRules 扩展 20 布尔 + 3 数值（randomTickSpeed/spawnRadius/maxEntityCramming，String 数字）；④ level.dat 双格式映射（按内容探测，不依赖 DataVersion）：`Data.difficulty_settings` 存在 → 难度/硬核/锁定读写 `difficulty_settings{difficulty:String,hardcore,locked}`，`Data.spawn` 存在 → 出生点读写 `spawn.pos`(IntArray)，否则经典键；残留键保留（未知键保留原则）。安全模型不变（写前备份/失败回滚/全树往返）；新增 DTO 字段**不加** `#[serde(default)]`（保持全量提交语义：旧客户端 PUT 因缺字段被后端 400 拒绝，避免默认值（如 borderSize=0）静默覆盖写坏存档）。决策记录见 .memory/decisions/2026-08-16T12-16-22。已知限制：26.1snap6+ 重构格式（GameRules/天气/边界/商人移出到 game_rules.dat/weather.dat/world_border.dat/wandering_trader.dat）本期不生效，完整支持为二期任务。core 2448273 / i18n b666ecc | AI Agent |
+| 2026-08-16 | v1.1 | 存档设置扩展（Z1 一期）：① 修复三语言缺失的 `saveSettings.allowCommands`/`hardcore` i18n 键；② Data 白名单新增 `DifficultyLocked`/`clearWeatherTime`/`rainTime`/`thunderTime`/`WanderingTraderSpawnChance`/`SpawnDelay` + 世界边界 7 项（BorderCenterX/Z、BorderSize、BorderSafeZone、BorderDamagePerBlock、BorderWarningBlocks、BorderWarningTime）；③ GameRules 扩展 20 布尔 + 3 数值（randomTickSpeed/spawnRadius/maxEntityCramming，String 数字）；④ level.dat 双格式映射（按内容探测，不依赖 DataVersion）：`Data.difficulty_settings` 存在 → 难度/极限/锁定读写 `difficulty_settings{difficulty:String,hardcore,locked}`，`Data.spawn` 存在 → 出生点读写 `spawn.pos`(IntArray)，否则经典键；残留键保留（未知键保留原则）。安全模型不变（写前备份/失败回滚/全树往返）；新增 DTO 字段**不加** `#[serde(default)]`（保持全量提交语义：旧客户端 PUT 因缺字段被后端 400 拒绝，避免默认值（如 borderSize=0）静默覆盖写坏存档）。决策记录见 .memory/decisions/2026-08-16T12-16-22。已知限制：26.1snap6+ 重构格式（GameRules/天气/边界/商人移出到 game_rules.dat/weather.dat/world_border.dat/wandering_trader.dat）本期不生效，完整支持为二期任务。core 2448273 / i18n b666ecc | AI Agent |
