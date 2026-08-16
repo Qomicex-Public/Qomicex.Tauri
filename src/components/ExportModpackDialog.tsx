@@ -4,6 +4,7 @@ import { Button } from '../components/ui'
 import { Label } from '../components/ui'
 import { Checkbox } from '../components/ui'
 import { Separator } from '../components/ui'
+import { Input } from '../components/ui'
 import { exportModpack, listExportFiles } from '../api/instance.ts'
 import type { GameInstance, ModpackExportFileNode } from '../types/index.ts'
 import { useI18n } from '../i18n/index.tsx'
@@ -84,6 +85,10 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
   const [exporting, setExporting] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
+  // 包信息（默认带出实例元数据，仅本次导出生效）
+  const [packName, setPackName] = useState('')
+  const [packVersion, setPackVersion] = useState('')
+  const [packAuthor, setPackAuthor] = useState('')
 
   const reset = () => {
     setExporting(false)
@@ -113,6 +118,9 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
   useEffect(() => {
     if (open && instance) {
       void loadFiles()
+      setPackName(instance.modpackName?.trim() || instance.name)
+      setPackVersion(instance.modpackVersion?.trim() || '1.0.0')
+      setPackAuthor(instance.modpackAuthor?.trim() || '')
     }
   }, [open, instance, loadFiles])
 
@@ -181,8 +189,7 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
     })
   }, [])
 
-  const packName = instance?.modpackName?.trim() || instance?.name || 'modpack'
-  const fileName = `${packName}.${format === 'cf' ? 'zip' : 'mrpack'}`
+  const fileName = `${packName.trim() || 'modpack'}.${format === 'cf' ? 'zip' : 'mrpack'}`
 
   const handleExport = async () => {
     if (!instance || selected.size === 0) return
@@ -192,9 +199,13 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
     try {
       // 全选时走旧语义（includeSaves/includeScreenshots=true 全含），
       // 避免传递巨型白名单；部分选择时传 includeFiles 白名单。
+      const meta: { name?: string; version?: string; author?: string } = {}
+      if (packName.trim()) meta.name = packName.trim()
+      if (packVersion.trim()) meta.version = packVersion.trim()
+      if (packAuthor.trim()) meta.author = packAuthor.trim()
       const body = allSelected
-        ? { format, includeSaves: true, includeScreenshots: true }
-        : { format, includeFiles: [...selected] }
+        ? { format, includeSaves: true, includeScreenshots: true, ...meta }
+        : { format, includeFiles: [...selected], ...meta }
       const { blob, filename } = await exportModpack(instance.id, body)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -290,6 +301,28 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
               >
                 Modrinth (.mrpack)
               </button>
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2">
+            <Label>{t('dialogs.modpackExport.packInfo')}</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">{t('dialogs.modpackExport.packName')}</Label>
+                <Input value={packName} onChange={(e) => setPackName(e.target.value)} placeholder={instance?.name || 'modpack'} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">{t('dialogs.modpackExport.packVersion')}</Label>
+                <Input value={packVersion} onChange={(e) => setPackVersion(e.target.value)} placeholder="1.0.0" />
+              </div>
+              {format === 'cf' && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">{t('dialogs.modpackExport.packAuthor')}</Label>
+                  <Input value={packAuthor} onChange={(e) => setPackAuthor(e.target.value)} />
+                </div>
+              )}
             </div>
           </div>
 

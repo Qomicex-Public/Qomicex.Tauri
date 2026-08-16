@@ -799,6 +799,12 @@ export interface ModpackExportRequest {
   includeScreenshots?: boolean
   /** 包含文件白名单（相对路径）；不传 = 全量（向后兼容），传入时由白名单决定包含 */
   includeFiles?: string[]
+  /** 覆盖包名（trim 非空时生效，覆盖实例 modpackName） */
+  name?: string
+  /** 覆盖包版本（trim 非空时生效，覆盖实例 modpackVersion） */
+  version?: string
+  /** 覆盖作者（trim 非空时生效，覆盖实例 modpackAuthor；仅 CF manifest.json 写入，mrpack 无此字段） */
+  author?: string
 }
 
 /** 导出文件树节点（GET /modpack/export/files/{instanceId}） */

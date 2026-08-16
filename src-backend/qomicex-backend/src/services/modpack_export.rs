@@ -92,6 +92,10 @@ const EXCLUDED_ROOT_FILES: &[&str] = &[
 /// `include_files`：可选包含白名单（相对路径）。`Some` 时由白名单唯一决定
 /// 包含内容（saves/screenshots 是否包含也看白名单）；`None` 时保持旧语义，
 /// 由 `include_saves` / `include_screenshots` 控制这两类。
+///
+/// `name_override` / `version_override` / `author_override`：导出元数据覆盖
+/// （trim 非空时生效，覆盖实例 modpackName/modpackVersion/modpackAuthor；
+/// 作者仅 CF 写入，mrpack 无此字段）。
 pub async fn build_export_zip(
     core: &Arc<GameCore>,
     cf_api_key: &str,
@@ -100,6 +104,9 @@ pub async fn build_export_zip(
     include_saves: bool,
     include_screenshots: bool,
     include_files: Option<&HashSet<String>>,
+    name_override: Option<&str>,
+    version_override: Option<&str>,
+    author_override: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     let source_dir = instance_source_dir(instance);
     if !source_dir.is_dir() {
@@ -153,13 +160,13 @@ pub async fn build_export_zip(
 
     match format {
         ExportFormat::CurseForge => {
-            write_cf_manifest(&mut zip, &opts, instance, &resolved)?;
+            write_cf_manifest(&mut zip, &opts, instance, &resolved, name_override, version_override, author_override)?;
             write_overrides(&mut zip, &opts, &source_dir, &content, &HashSet::new())?;
         }
         ExportFormat::Modrinth => {
             // 反查命中的 mods 走 files[]，不再进 overrides（避免重复）。
             let resolved_rel: HashSet<&str> = resolved.keys().map(|s| s.as_str()).collect();
-            write_mr_index(&mut zip, &opts, instance, &resolved)?;
+            write_mr_index(&mut zip, &opts, instance, &resolved, name_override, version_override)?;
             write_overrides(&mut zip, &opts, &source_dir, &content, &resolved_rel)?;
         }
     }
@@ -519,11 +526,22 @@ async fn mr_reverse_lookup(
 // 清单与 zip 写入
 // ---------------------------------------------------------------------------
 
+/// 元数据覆盖解析：请求值 trim 非空时优先，否则回退实例值。
+fn meta_override(value: Option<&str>, fallback: &str) -> String {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(v) => v.to_string(),
+        None => fallback.to_string(),
+    }
+}
+
 fn write_cf_manifest<W: Write + std::io::Seek>(
     zip: &mut ZipWriter<W>,
     opts: &SimpleFileOptions,
     instance: &GameInstance,
     resolved: &HashMap<String, ResolvedMod>,
+    name_override: Option<&str>,
+    version_override: Option<&str>,
+    author_override: Option<&str>,
 ) -> Result<(), String> {
     let loader_id = match (instance.loader.as_deref(), instance.loader_version.as_deref()) {
         (Some(l), Some(v)) if !l.is_empty() && !v.is_empty() => format!("{l}-{v}"),
@@ -548,6 +566,20 @@ fn write_cf_manifest<W: Write + std::io::Seek>(
         })
         .collect();
 
+    let default_name = instance
+        .modpack_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(&instance.name);
+    let default_version = instance
+        .modpack_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or("1.0.0");
+    let default_author = instance.modpack_author.as_deref().unwrap_or("");
+
     let manifest = serde_json::json!({
         "minecraft": {
             "version": instance.game_version,
@@ -555,9 +587,9 @@ fn write_cf_manifest<W: Write + std::io::Seek>(
         },
         "manifestType": "minecraftModpack",
         "manifestVersion": 1,
-        "name": instance.modpack_name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| instance.name.clone()),
-        "version": instance.modpack_version.clone().unwrap_or_else(|| "1.0.0".to_string()),
-        "author": instance.modpack_author.clone().unwrap_or_default(),
+        "name": meta_override(name_override, default_name),
+        "version": meta_override(version_override, default_version),
+        "author": meta_override(author_override, default_author),
         "files": files,
         "overrides": "overrides",
     });
@@ -574,6 +606,8 @@ fn write_mr_index<W: Write + std::io::Seek>(
     opts: &SimpleFileOptions,
     instance: &GameInstance,
     resolved: &HashMap<String, ResolvedMod>,
+    name_override: Option<&str>,
+    version_override: Option<&str>,
 ) -> Result<(), String> {
     // dependencies：minecraft + 加载器（mrpack 键：fabric-loader/quilt-loader/forge/neoforge）
     let mut deps = serde_json::Map::new();
@@ -605,11 +639,24 @@ fn write_mr_index<W: Write + std::io::Seek>(
         })
         .collect();
 
+    let default_name = instance
+        .modpack_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(&instance.name);
+    let default_version = instance
+        .modpack_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or("1.0.0");
+
     let index = serde_json::json!({
         "formatVersion": 1,
         "game": "minecraft",
-        "versionId": instance.modpack_version.clone().unwrap_or_else(|| "1.0.0".to_string()),
-        "name": instance.modpack_name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| instance.name.clone()),
+        "versionId": meta_override(version_override, default_version),
+        "name": meta_override(name_override, default_name),
         "summary": instance.modpack_summary.clone().unwrap_or_default(),
         "files": files,
         "dependencies": deps,
@@ -655,7 +702,7 @@ fn write_overrides<W: Write + std::io::Seek>(
 mod tests {
     use std::path::PathBuf;
 
-    use super::{cf_fingerprint, collect_export_tree, filter_by_include, flatten_tree, ExportTreeNode};
+    use super::{cf_fingerprint, collect_export_tree, filter_by_include, flatten_tree, meta_override, ExportTreeNode};
 
     /// 测试用临时根目录（按进程 id 隔离，避免并行测试冲突）。
     fn temp_root(tag: &str) -> PathBuf {
@@ -759,6 +806,16 @@ mod tests {
                 assert!(e.abs.is_file(), "{} 应为真实文件", e.rel);
             }
         }
+    }
+
+    /// 元数据覆盖：请求值 trim 非空优先，否则回退实例默认。
+    #[test]
+    fn meta_override_prefers_non_blank_request_value() {
+        assert_eq!(meta_override(Some("  My Pack  "), "Fallback"), "My Pack");
+        assert_eq!(meta_override(Some(""), "Fallback"), "Fallback");
+        assert_eq!(meta_override(Some("   "), "Fallback"), "Fallback");
+        assert_eq!(meta_override(None, "Fallback"), "Fallback");
+        assert_eq!(meta_override(Some("1.2.3"), "1.0.0"), "1.2.3");
     }
 
     #[test]

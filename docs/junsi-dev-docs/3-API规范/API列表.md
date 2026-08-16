@@ -1000,7 +1000,7 @@ Yggdrasil 认证登录。
 把已安装实例导出为整合包：`cf`（CurseForge zip，`manifest.json` + `overrides/`）或 `mr`（Modrinth mrpack，`modrinth.index.json` + `overrides/`）。同步生成，响应 `Content-Disposition: attachment` 的 zip 字节。
 
 ```json
-{ "format": "cf", "includeSaves": false, "includeScreenshots": false, "includeFiles": ["mods/a.jar"] }
+{ "format": "cf", "includeSaves": false, "includeScreenshots": false, "includeFiles": ["mods/a.jar"], "name": "My Pack", "version": "2.0.0", "author": "作者" }
 ```
 
 | 字段 | 必填 | 说明 |
@@ -1009,6 +1009,9 @@ Yggdrasil 认证登录。
 | `includeSaves` | ❌ | 是否含 `saves`，默认 `false`（无 `includeFiles` 时生效） |
 | `includeScreenshots` | ❌ | 是否含 `screenshots`，默认 `false`（无 `includeFiles` 时生效） |
 | `includeFiles` | ❌ | 包含文件白名单（相对路径数组，如 `mods/a.jar`）；不传 = 全量（向后兼容）；传入时由白名单唯一决定包含内容（覆盖 saves/screenshots 开关），目录条目由父目录链自动补全 |
+| `name` | ❌ | 覆盖包名（trim 非空时生效，覆盖实例 `modpackName`；同时用于下载文件名） |
+| `version` | ❌ | 覆盖包版本（trim 非空时生效，覆盖实例 `modpackVersion`；CF 写 `manifest.json.version`、MR 写 `modrinth.index.json.versionId`） |
+| `author` | ❌ | 覆盖作者（trim 非空时生效，覆盖实例 `modpackAuthor`；**仅 CF `manifest.json.author` 写入**，mrpack 标准格式无 author 字段） |
 
 导出内容：
 - 源目录 = `{gameDir}/versions/{inst.name}`（版本隔离）或 `{gameDir}`；排除版本 json/jar、`libraries/versions/assets/logs/temp/crash-reports`、账户缓存（`usercache.json` 等）。`saves`/`screenshots` 在无白名单时由开关控制、有白名单时由白名单决定。

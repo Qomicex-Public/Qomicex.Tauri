@@ -196,17 +196,27 @@ async fn export(
         req.include_saves.unwrap_or(false),
         req.include_screenshots.unwrap_or(false),
         include_files.as_ref(),
+        req.name.as_deref(),
+        req.version.as_deref(),
+        req.author.as_deref(),
     )
     .await
     .map_err(|e| ApiError::internal(format!("导出整合包失败: {e}")))?;
 
-    let base = sanitize_filename(
-        &instance
+    // 下载文件名：优先请求覆盖的包名，其次实例 modpackName，最后实例名
+    let name_override = req
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+    let base = sanitize_filename(name_override.unwrap_or_else(|| {
+        instance
             .modpack_name
-            .clone()
-            .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(|| instance.name.clone()),
-    );
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .unwrap_or(&instance.name)
+    }));
     let ext = match format {
         ExportFormat::CurseForge => "zip",
         ExportFormat::Modrinth => "mrpack",
@@ -1556,4 +1566,14 @@ pub struct ModpackExportRequest {
     /// saves/screenshots 由上述开关控制）；传入时由白名单唯一决定包含内容。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_files: Option<Vec<String>>,
+    /// 覆盖包名（trim 非空时生效，覆盖实例 modpackName，并用于下载文件名）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 覆盖包版本（trim 非空时生效，覆盖实例 modpackVersion）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// 覆盖作者（trim 非空时生效，覆盖实例 modpackAuthor；仅 CF manifest.json
+    /// 写入，mrpack 标准格式无 author 字段）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
 }
