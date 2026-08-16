@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '../lib/cn.js'
 
 const defaultMessages = { selected: '{count} selected', selectAll: 'Select all', clear: 'Clear selection' }
@@ -32,7 +33,10 @@ export function BatchToolbar({ selectedCount, onClear, onSelectAll, children, cl
 
   if (!visible && selectedCount === 0) return null
 
-  return (
+  // Portal 到 body：fixed 悬浮层不依赖祖先链。祖先若带 transform/filter/
+  // will-change/contain 会劫持 fixed 的 containing block（如实例详情 tab 滚动
+  // 容器的 translateZ(0)），导致工具栏随列表滚动而离开视口。
+  return createPortal(
     <div className={cn('fixed bottom-8 left-1/2 z-50 -translate-x-1/2', className)}>
       <div
         key={exiting ? undefined : animKey}
@@ -62,6 +66,7 @@ export function BatchToolbar({ selectedCount, onClear, onSelectAll, children, cl
         </button>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
