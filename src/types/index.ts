@@ -793,8 +793,8 @@ export interface ModpackInstallRequest {
 }
 
 export interface ModpackExportRequest {
-  /** cf（CurseForge zip）或 mr（Modrinth mrpack） */
-  format: 'cf' | 'mr'
+  /** cf（CurseForge zip）、mr（Modrinth mrpack）或 qml（Qomicex .qmodpack） */
+  format: 'cf' | 'mr' | 'qml'
   includeSaves?: boolean
   includeScreenshots?: boolean
   /** 包含文件白名单（相对路径）；不传 = 全量（向后兼容），传入时由白名单决定包含 */

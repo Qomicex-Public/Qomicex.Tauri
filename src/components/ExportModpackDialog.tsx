@@ -91,7 +91,7 @@ function defaultSelection(tree: ModpackExportFileNode[]): Set<string> {
 export default function ExportModpackDialog({ open, onClose, instance }: Props) {
   const { t } = useI18n()
   const { confirm: msgConfirm } = useMessageBox()
-  const [format, setFormat] = useState<'cf' | 'mr'>('cf')
+  const [format, setFormat] = useState<'cf' | 'mr' | 'qml'>('cf')
   const [tree, setTree] = useState<ModpackExportFileNode[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
@@ -113,6 +113,16 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
   const pollTimerRef = useRef<number | null>(null)
   // Tauri 桌面环境（有 IPC）才弹系统保存对话框；纯浏览器 dev 走 download fallback
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+  // CF/MR 格式不支持 legacyfabric/babric 加载器（仅 QML 支持原加载器）→ 禁用对应按钮
+  const loaderLower = (instance?.loader ?? '').toLowerCase()
+  const cfMrDisabled = loaderLower === 'legacyfabric' || loaderLower === 'babric'
+
+  // 实例加载器不支持 CF/MR 时自动切到 Qomicex 格式
+  useEffect(() => {
+    if (cfMrDisabled && format !== 'qml') {
+      setFormat('qml')
+    }
+  }, [cfMrDisabled, format])
 
   const reset = () => {
     if (pollTimerRef.current !== null) {
@@ -220,7 +230,8 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
     })
   }, [])
 
-  const fileName = `${packName.trim() || 'modpack'}.${format === 'cf' ? 'zip' : 'mrpack'}`
+  const formatExt = format === 'cf' ? 'zip' : format === 'mr' ? 'mrpack' : 'qmodpack'
+  const fileName = `${packName.trim() || 'modpack'}.${formatExt}`
 
   /** 阶段 → 当前操作文案（对齐后端 stage：lookup/manifest/packing）。 */
   const stageText = (stage: string, file: string) => {
@@ -286,7 +297,9 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
           defaultPath: fileName,
           filters: format === 'cf'
             ? [{ name: 'CurseForge Modpack', extensions: ['zip'] }]
-            : [{ name: 'Modrinth Modpack', extensions: ['mrpack'] }],
+            : format === 'mr'
+              ? [{ name: 'Modrinth Modpack', extensions: ['mrpack'] }]
+              : [{ name: 'Qomicex Modpack', extensions: ['qmodpack'] }],
         })
         if (!picked) return
         targetPath = picked
@@ -436,28 +449,47 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
         <div className="space-y-4">
           <div>
             <Label>{t('dialogs.modpackExport.format')}</Label>
-            <div className="mt-1.5 grid grid-cols-2 gap-2">
+            <div className="mt-1.5 grid grid-cols-3 gap-2">
               <button
                 type="button"
+                disabled={cfMrDisabled}
                 onClick={() => setFormat('cf')}
                 className={cn(
                   'rounded-md border px-3 py-2 text-sm transition-colors',
-                  format === 'cf' ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-muted-foreground/40',
+                  cfMrDisabled && 'cursor-not-allowed opacity-40',
+                  format === 'cf' && !cfMrDisabled ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-muted-foreground/40',
                 )}
               >
                 CurseForge (.zip)
               </button>
               <button
                 type="button"
+                disabled={cfMrDisabled}
                 onClick={() => setFormat('mr')}
                 className={cn(
                   'rounded-md border px-3 py-2 text-sm transition-colors',
-                  format === 'mr' ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-muted-foreground/40',
+                  cfMrDisabled && 'cursor-not-allowed opacity-40',
+                  format === 'mr' && !cfMrDisabled ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-muted-foreground/40',
                 )}
               >
                 Modrinth (.mrpack)
               </button>
+              <button
+                type="button"
+                onClick={() => setFormat('qml')}
+                className={cn(
+                  'rounded-md border px-3 py-2 text-sm transition-colors',
+                  format === 'qml' ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-muted-foreground/40',
+                )}
+              >
+                Qomicex (.qmodpack)
+              </button>
             </div>
+            {cfMrDisabled && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                {loaderLower} 加载器仅支持 Qomicex (.qmodpack) 格式导出
+              </p>
+            )}
           </div>
 
           <Separator />
@@ -473,7 +505,7 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
                 <Label className="text-xs text-muted-foreground">{t('dialogs.modpackExport.packVersion')}</Label>
                 <Input value={packVersion} onChange={(e) => setPackVersion(e.target.value)} placeholder="1.0.0" />
               </div>
-              {format === 'cf' && (
+              {format !== 'mr' && (
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">{t('dialogs.modpackExport.packAuthor')}</Label>
                   <Input value={packAuthor} onChange={(e) => setPackAuthor(e.target.value)} />

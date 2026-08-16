@@ -203,10 +203,11 @@ async fn export(
     {
         Some("cf") | Some("curseforge") | Some("zip") => ExportFormat::CurseForge,
         Some("mr") | Some("modrinth") | Some("mrpack") => ExportFormat::Modrinth,
+        Some("qml") | Some("qomicex") | Some("qmodpack") => ExportFormat::Qomicex,
         _ => {
             return Err(ApiError::bad_request(
                 "MODPACK_EXPORT_FORMAT_INVALID",
-                "导出格式必须是 cf 或 mr",
+                "导出格式必须是 cf、mr 或 qml",
             ))
         }
     };
@@ -801,6 +802,7 @@ impl ModpackServiceData {
 // ---------------------------------------------------------------------------
 
 /// 解析后的整合包清单（三源统一视图）。
+#[derive(Debug, Clone)]
 struct ParsedModpack {
     game_version: String,
     loader: String,
@@ -1073,6 +1075,65 @@ pub(crate) async fn run_modpack_pipeline(
                 handle.set_progress(88.0);
             }
         }
+        "qml" => {
+            // QML：files[] 混合来源——modrinth 直链（download_url 非空）+ curseforge
+            // projectID:fileID 占位（download_url 为空，逐个反查下载链接）。
+            let p: ParsedModpack = match parsed.as_ref() {
+                Some(p) => p.clone(),
+                None => {
+                    // 本地导入时管道未预解析：从包体 zip 现解析 qmodpack.index.json
+                    let zp = zip_path.as_ref().ok_or("整合包文件缺失")?;
+                    parse_qmodpack_index(zp)
+                        .map_err(|e| format!("解析 qmodpack.index.json 失败: {e}"))?
+                }
+            };
+            let cf = core.create_curseforge_source(cf_api_key);
+            let mut files = Vec::new();
+            for f in &p.files {
+                if let Some(url) = f.download_url.as_deref() {
+                    if url.is_empty() {
+                        continue;
+                    }
+                    let dest =
+                        modpack_target_path(game_dir, version_dir_name, version_isolation, &f.path);
+                    files.push((url.to_string(), dest, modpack_headers(url, cf_api_key)));
+                } else {
+                    // curseforge 占位：path = "projectID:fileID"
+                    let Some((proj, fid)) = f.path.split_once(':') else {
+                        continue;
+                    };
+                    let Ok(info) = cf.get_file_info(proj, fid).await else {
+                        continue;
+                    };
+                    let Ok(download_url) = cf.get_download_url(proj, fid).await else {
+                        continue;
+                    };
+                    if download_url.is_empty() {
+                        continue;
+                    }
+                    let filename = info.file_name.unwrap_or_else(|| {
+                        download_url
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or("mod.jar")
+                            .to_string()
+                    });
+                    let dest = modpack_target_path(
+                        game_dir,
+                        version_dir_name,
+                        version_isolation,
+                        &format!("mods/{filename}"),
+                    );
+                    let headers = modpack_headers(&download_url, cf_api_key);
+                    files.push((download_url, dest, headers));
+                }
+            }
+            if !files.is_empty() {
+                download_batch(handle, mgr, files, 68.0, 85.0).await?;
+            } else {
+                handle.set_progress(85.0);
+            }
+        }
         _ => {
             handle.set_progress(85.0);
         }
@@ -1095,6 +1156,15 @@ pub(crate) async fn run_modpack_pipeline(
         inst.install(version_dir_name, "", None, None, None, None)
             .await
             .map_err(|e| format!("释放整合包覆盖文件失败: {e}"))?;
+    } else if src == "qml" {
+        // QML 结构简单（qmodpack.index.json + overrides/**），自行释放 overrides
+        handle.set_stage("modpack-overrides");
+        handle.set_progress(92.0);
+        let zip_str = zip_path
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .ok_or("整合包文件缺失")?;
+        release_qml_overrides(zip_str, game_dir, version_dir_name, version_isolation)?;
     }
 
     handle.update(|f| {
@@ -1103,6 +1173,44 @@ pub(crate) async fn run_modpack_pipeline(
         f.progress = 98.0;
         f.current_file = "整合包安装完成".to_string();
     });
+    Ok(())
+}
+
+/// 释放 QML `.qmodpack` 的 `overrides/**` 到目标目录（结构简单，不走 core 安装器）。
+fn release_qml_overrides(
+    zip_path: &str,
+    game_dir: &str,
+    version_dir_name: &str,
+    version_isolation: bool,
+) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("读取整合包条目失败: {e}"))?;
+        let name = entry.name().to_string();
+        let Some(rel) = name.strip_prefix("overrides/") else {
+            continue;
+        };
+        if rel.is_empty() {
+            continue;
+        }
+        let dest = modpack_target_path(game_dir, version_dir_name, version_isolation, rel);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&dest)
+                .map_err(|e| format!("创建目录失败 {}: {e}", dest.display()))?;
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建目录失败 {}: {e}", parent.display()))?;
+        }
+        let mut out = std::fs::File::create(&dest)
+            .map_err(|e| format!("创建文件失败 {}: {e}", dest.display()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("释放文件失败 {}: {e}", dest.display()))?;
+    }
     Ok(())
 }
 
@@ -1171,6 +1279,85 @@ fn parse_modrinth_index(zip_path: &Path) -> Result<ParsedModpack, String> {
                 download_url: Some(url),
                 size: None,
             });
+        }
+    }
+
+    Ok(ParsedModpack {
+        game_version,
+        loader,
+        loader_version,
+        files,
+    })
+}
+
+/// 解析 Qomicex `.qmodpack` 的 `qmodpack.index.json`。
+///
+/// files[] 语义（导出端与 qml 格式一致）：
+/// - `source: "modrinth"` → 直链下载（`downloads[0]`），与 mrpack 分支同路径；
+/// - `source: "curseforge"` → `projectId:fileId` 占位（`download_url = None`），
+///   由安装管道按 CF API 反查下载（与 CF manifest 分支一致，零管道改动）。
+fn parse_qmodpack_index(zip_path: &Path) -> Result<ParsedModpack, String> {
+    let root = read_zip_json(zip_path, "qmodpack.index.json")?;
+    let game_version = root
+        .get("gameVersion")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let loader = normalize_loader(
+        root.get("loader")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+    );
+    let loader_version = root
+        .get("loaderVersion")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let mut files = Vec::new();
+    if let Some(arr) = root.get("files").and_then(|f| f.as_array()) {
+        for f in arr {
+            let path = f
+                .get("path")
+                .and_then(|p| p.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let size = f.get("size").and_then(|s| s.as_i64());
+            let source = f.get("source").and_then(|s| s.as_str()).unwrap_or_default();
+            match source {
+                "modrinth" => {
+                    let url = f
+                        .get("downloads")
+                        .and_then(|d| d.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|u| u.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    if path.is_empty() || url.is_empty() {
+                        continue;
+                    }
+                    files.push(ModpackFileEntry {
+                        path,
+                        download_url: Some(url),
+                        size,
+                    });
+                }
+                "curseforge" => {
+                    let pid = f.get("projectId").and_then(|v| v.as_i64());
+                    let fid = f.get("fileId").and_then(|v| v.as_i64());
+                    let (Some(pid), Some(fid)) = (pid, fid) else {
+                        continue;
+                    };
+                    // 与 CF manifest 占位一致：管道识别 download_url=None → CF 反查
+                    // （目标文件名由 CF API 的 file_name 决定，同 CF zip 导入语义）
+                    files.push(ModpackFileEntry {
+                        path: format!("{pid}:{fid}"),
+                        download_url: None,
+                        size,
+                    });
+                }
+                _ => continue,
+            }
         }
     }
 
@@ -1324,6 +1511,7 @@ fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
     let mut has_mr = false;
     let mut has_cf = false;
+    let mut has_qml = false;
     let mut has_mr_overrides = false;
     let mut has_cf_overrides = false;
     for i in 0..archive.len() {
@@ -1334,6 +1522,7 @@ fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
         match name {
             "modrinth.index.json" => has_mr = true,
             "manifest.json" => has_cf = true,
+            "qmodpack.index.json" => has_qml = true,
             _ => {}
         }
         if name.eq_ignore_ascii_case("override/") || name.starts_with("override/") {
@@ -1411,7 +1600,40 @@ fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
         });
     }
 
-    Err("无法识别的整合包格式：需包含 modrinth.index.json（Modrinth）或 manifest.json（CurseForge）".to_string())
+    if has_qml {
+        let root = read_zip_json(path, "qmodpack.index.json")?;
+        let name = root
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("整合包")
+            .to_string();
+        let version = root
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let author = root
+            .get("author")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let summary = root
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let pack = parse_qmodpack_index(path)?;
+        let file_count = pack.files.len() as i32;
+        return Ok(LocalPackParse {
+            source: "qml".to_string(),
+            name,
+            summary,
+            author,
+            version,
+            has_overrides: has_cf_overrides,
+            file_count,
+            pack,
+        });
+    }
+
+    Err("无法识别的整合包格式：需包含 qmodpack.index.json（Qomicex）、modrinth.index.json（Modrinth）或 manifest.json（CurseForge）".to_string())
 }
 
 // ---------------------------------------------------------------------------

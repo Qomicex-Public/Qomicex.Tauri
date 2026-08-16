@@ -56,6 +56,8 @@ pub struct ExportTaskSnapshot {
 struct ExportTask {
     task_id: String,
     instance_id: String,
+    /// 导出格式（download 端点文件名扩展名依据）。
+    format: ExportFormat,
     status: ExportTaskStatus,
     stage: &'static str,
     percent: f64,
@@ -65,6 +67,15 @@ struct ExportTask {
     zip_path: Option<PathBuf>,
     created_at: Instant,
     cancel: Arc<AtomicBool>,
+}
+
+/// 格式 → download 文件扩展名。
+fn format_ext(format: ExportFormat) -> &'static str {
+    match format {
+        ExportFormat::CurseForge => "zip",
+        ExportFormat::Modrinth => "mrpack",
+        ExportFormat::Qomicex => "qmodpack",
+    }
 }
 
 impl ExportTask {
@@ -113,6 +124,7 @@ impl ExportTaskManager {
         let task = Arc::new(Mutex::new(ExportTask {
             task_id: task_id.clone(),
             instance_id: instance.id.clone(),
+            format,
             status: ExportTaskStatus::Running,
             stage: "lookup",
             percent: 0.0,
@@ -291,7 +303,8 @@ impl ExportTaskManager {
         let zip_path = guard.zip_path.take()?;
         let bytes = std::fs::read(&zip_path).ok()?;
         let _ = std::fs::remove_file(&zip_path);
-        Some((format!("{}.zip", task_id), bytes))
+        let ext = format_ext(guard.format);
+        Some((format!("{task_id}.{ext}"), bytes))
     }
 }
 

@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use qomicex_core::core::GameCore;
+use qomicex_core::models::installer::ModLoaderType;
 use serde::Serialize;
 use sha1::{Digest, Sha1};
 use zip::write::SimpleFileOptions;
@@ -38,6 +39,10 @@ use crate::services::instance::GameInstance;
 pub enum ExportFormat {
     CurseForge,
     Modrinth,
+    /// Qomicex 自有格式（`.qmodpack`）：结合 mrpack 与 CF zip 特点的瘦身包。
+    /// mods 不打包本体（清单引用 CF/MR 下载源，安装时在线下载）；
+    /// 反查失败/无来源的 mods 兜底进 overrides；非 mod 文件全打包（高压缩）。
+    Qomicex,
 }
 
 /// 导出进度回调数据（阶段 + 百分比 + 当前文件）。
@@ -55,6 +60,61 @@ pub struct ExportProgress {
 
 /// 取消时的统一错误文案（任务管理器据此区分 cancelled 与 failed）。
 pub const EXPORT_CANCELLED_MSG: &str = "导出已取消";
+
+/// 解析导出清单应使用的加载器与版本（按格式）。
+///
+/// - `Qomicex`：原样（支持 legacyfabric / babric / cleanroom 等全部加载器）。
+/// - CF / MR：`legacyfabric` / `babric` 不支持 → 错误（提示改用 QML）；
+///   `cleanroom` → 用该 MC 版本最新 Forge 替代（`is_recommand` 优先，否则按
+///   release_time / 版本号取最新；查询失败 → 错误，避免生成装不了的包）；
+///   其他（forge/fabric/neoforge/quilt）原样。
+async fn resolve_export_loader(
+    core: &Arc<GameCore>,
+    instance: &GameInstance,
+    format: ExportFormat,
+) -> Result<(String, Option<String>), String> {
+    let loader = instance
+        .loader
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if format == ExportFormat::Qomicex || loader.is_empty() {
+        return Ok((
+            instance.loader.clone().unwrap_or_default(),
+            instance.loader_version.clone(),
+        ));
+    }
+    match loader.as_str() {
+        "legacyfabric" | "babric" => Err(format!(
+            "CF/MR 格式不支持 {loader} 加载器，请使用 Qomicex (.qmodpack) 格式导出"
+        )),
+        "cleanroom" => {
+            let versions = core
+                .installer_provider()
+                .get_available_mod_loaders(&instance.game_version, ModLoaderType::Forge)
+                .await
+                .map_err(|e| format!("查询该版本的 Forge 版本列表失败: {e}"))?;
+            let pick = versions
+                .iter()
+                .find(|v| v.is_recommand)
+                .or_else(|| {
+                    versions
+                        .iter()
+                        .max_by(|a, b| a.release_time.cmp(&b.release_time))
+                })
+                .or_else(|| versions.iter().max_by(|a, b| a.version.cmp(&b.version)));
+            let ver = pick
+                .map(|v| v.version.clone())
+                .ok_or("未找到该游戏版本可用的 Forge 版本")?;
+            Ok(("forge".to_string(), Some(ver)))
+        }
+        _ => Ok((
+            instance.loader.clone().unwrap_or_default(),
+            instance.loader_version.clone(),
+        )),
+    }
+}
 
 /// 导出文件树节点（`GET /modpack/export/files/{instanceId}` 返回）。
 #[derive(Debug, Clone, Serialize)]
@@ -153,6 +213,10 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
         .cloned()
         .collect();
 
+    // 清单加载器解析（CF/MR 限制 legacyfabric/babric、cleanroom→forge 最新版替代）
+    let (export_loader, export_loader_version) =
+        resolve_export_loader(core, instance, format).await?;
+
     // 2. 反查 mods（best-effort：反查失败只影响 files[]，mods 回落 overrides，
     //    导出不整体失败——离线/无 API key/限流时仍可打包）
     let resolved: HashMap<String, ResolvedMod> = match format {
@@ -173,6 +237,32 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
                     HashMap::new()
                 }
             }
+        }
+        ExportFormat::Qomicex => {
+            // 双来源反查：Modrinth SHA1 优先（直链稳定），未命中的 mods
+            // 再走 CurseForge fingerprint 兜底（best-effort，失败不影响导出）。
+            let mut resolved: HashMap<String, ResolvedMod> =
+                match mr_reverse_lookup(core, &mod_jars, progress, cancelled).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[ModpackExport] Modrinth hash lookup skipped: {e}");
+                        HashMap::new()
+                    }
+                };
+            let unresolved: Vec<ContentEntry> = mod_jars
+                .iter()
+                .filter(|e| !resolved.contains_key(&e.rel))
+                .cloned()
+                .collect();
+            if !unresolved.is_empty() {
+                match cf_reverse_lookup(core, cf_api_key, &unresolved, progress, cancelled).await {
+                    Ok(cf) => resolved.extend(cf),
+                    Err(e) => {
+                        eprintln!("[ModpackExport] CF fingerprint lookup skipped: {e}");
+                    }
+                }
+            }
+            resolved
         }
     };
 
@@ -196,6 +286,8 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
                 &opts,
                 instance,
                 &resolved,
+                &export_loader,
+                export_loader_version.as_deref(),
                 name_override,
                 version_override,
                 author_override,
@@ -208,6 +300,7 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
                 &HashSet::new(),
                 progress,
                 cancelled,
+                false,
             )?;
         }
         ExportFormat::Modrinth => {
@@ -218,6 +311,8 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
                 &opts,
                 instance,
                 &resolved,
+                &export_loader,
+                export_loader_version.as_deref(),
                 name_override,
                 version_override,
             )?;
@@ -229,6 +324,45 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
                 &resolved_rel,
                 progress,
                 cancelled,
+                false,
+            )?;
+        }
+        ExportFormat::Qomicex => {
+            // 反查命中的 mods 走 qmodpack.index.json files[]（不打包本体）；
+            // 未命中的 mods 兜底进 overrides。非 mod 文件全打包（高压缩）。
+            let resolved_rel: HashSet<&str> = resolved.keys().map(|s| s.as_str()).collect();
+            // 为清单收集已解析 mods 的 sha1 + size（CF 反查结果无哈希，需读文件）
+            let mut mod_sha1s: HashMap<String, String> = HashMap::new();
+            let mut mod_sizes: HashMap<String, u64> = HashMap::new();
+            for e in &mod_jars {
+                if !resolved.contains_key(&e.rel) {
+                    continue;
+                }
+                if let Ok(bytes) = std::fs::read(&e.abs) {
+                    mod_sha1s.insert(e.rel.clone(), sha1_hex(&bytes));
+                    mod_sizes.insert(e.rel.clone(), bytes.len() as u64);
+                }
+            }
+            write_qml_index(
+                &mut zip,
+                &opts,
+                instance,
+                &resolved,
+                &mod_sha1s,
+                &mod_sizes,
+                name_override,
+                version_override,
+                author_override,
+            )?;
+            write_overrides(
+                &mut zip,
+                &opts,
+                &source_dir,
+                &content,
+                &resolved_rel,
+                progress,
+                cancelled,
+                true,
             )?;
         }
     }
@@ -659,16 +793,15 @@ fn write_cf_manifest<W: Write + std::io::Seek>(
     opts: &SimpleFileOptions,
     instance: &GameInstance,
     resolved: &HashMap<String, ResolvedMod>,
+    loader: &str,
+    loader_version: Option<&str>,
     name_override: Option<&str>,
     version_override: Option<&str>,
     author_override: Option<&str>,
 ) -> Result<(), String> {
-    let loader_id = match (
-        instance.loader.as_deref(),
-        instance.loader_version.as_deref(),
-    ) {
-        (Some(l), Some(v)) if !l.is_empty() && !v.is_empty() => format!("{l}-{v}"),
-        (Some(l), _) if !l.is_empty() => l.to_string(),
+    let loader_id = match loader_version {
+        Some(v) if !loader.is_empty() && !v.is_empty() => format!("{loader}-{v}"),
+        _ if !loader.is_empty() => loader.to_string(),
         _ => String::new(),
     };
     let mut mod_loaders = serde_json::Map::new();
@@ -730,6 +863,8 @@ fn write_mr_index<W: Write + std::io::Seek>(
     opts: &SimpleFileOptions,
     instance: &GameInstance,
     resolved: &HashMap<String, ResolvedMod>,
+    loader: &str,
+    loader_version: Option<&str>,
     name_override: Option<&str>,
     version_override: Option<&str>,
 ) -> Result<(), String> {
@@ -739,17 +874,14 @@ fn write_mr_index<W: Write + std::io::Seek>(
         "minecraft".to_string(),
         serde_json::Value::String(instance.game_version.clone()),
     );
-    if let (Some(loader), Some(lv)) = (
-        instance.loader.as_deref(),
-        instance.loader_version.as_deref(),
-    ) {
+    if !loader.is_empty() {
         let loader_lower = loader.to_ascii_lowercase();
         let key = match loader_lower.as_str() {
             "fabric" => "fabric-loader",
             "quilt" => "quilt-loader",
             other => other,
         };
-        if !lv.is_empty() {
+        if let Some(lv) = loader_version.filter(|v| !v.is_empty()) {
             deps.insert(key.to_string(), serde_json::Value::String(lv.to_string()));
         }
     }
@@ -804,8 +936,105 @@ fn write_mr_index<W: Write + std::io::Seek>(
     Ok(())
 }
 
+/// 写入 Qomicex 格式清单 `qmodpack.index.json`。
+///
+/// 与 mrpack 同思路但来源更宽：resolved mods 只记录引用（Modrinth 直链
+/// 或 CurseForge projectID:fileID），不打包本体；`mod_sha1s`/`mod_sizes`
+/// 供完整性校验与显示。
+fn write_qml_index<W: Write + std::io::Seek>(
+    zip: &mut ZipWriter<W>,
+    opts: &SimpleFileOptions,
+    instance: &GameInstance,
+    resolved: &HashMap<String, ResolvedMod>,
+    mod_sha1s: &HashMap<String, String>,
+    mod_sizes: &HashMap<String, u64>,
+    name_override: Option<&str>,
+    version_override: Option<&str>,
+    author_override: Option<&str>,
+) -> Result<(), String> {
+    let default_name = instance
+        .modpack_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(&instance.name);
+    let default_version = instance
+        .modpack_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or("1.0.0");
+    let default_author = instance.modpack_author.as_deref().unwrap_or("");
+
+    let mut files = Vec::new();
+    for (path, m) in resolved {
+        let mut entry = serde_json::Map::new();
+        entry.insert("path".to_string(), serde_json::Value::String(path.clone()));
+        if let Some(sha1) = mod_sha1s.get(path) {
+            entry.insert("sha1".to_string(), serde_json::Value::String(sha1.clone()));
+        }
+        if let Some(size) = mod_sizes.get(path) {
+            entry.insert("size".to_string(), serde_json::Value::from(*size as i64));
+        }
+        if let (Some(url), Some(_sha1)) = (m.mr_download_url.as_deref(), m.mr_sha1.as_deref()) {
+            entry.insert(
+                "source".to_string(),
+                serde_json::Value::String("modrinth".into()),
+            );
+            entry.insert("downloads".to_string(), serde_json::json!([url]));
+        } else if let (Some(pid), Some(fid)) = (m.cf_project_id, m.cf_file_id) {
+            entry.insert(
+                "source".to_string(),
+                serde_json::Value::String("curseforge".into()),
+            );
+            entry.insert("projectId".to_string(), serde_json::Value::from(pid));
+            entry.insert("fileId".to_string(), serde_json::Value::from(fid));
+        } else {
+            // 反查信息不全（理论不可达：resolved 必有其一）——跳过该条，文件已在 overrides
+            continue;
+        }
+        files.push(serde_json::Value::Object(entry));
+    }
+
+    let index = serde_json::json!({
+        "formatVersion": 1,
+        "game": "minecraft",
+        "gameVersion": instance.game_version,
+        "loader": instance.loader.clone().unwrap_or_default(),
+        "loaderVersion": instance.loader_version.clone().unwrap_or_default(),
+        "name": meta_override(name_override, default_name),
+        "version": meta_override(version_override, default_version),
+        "author": meta_override(author_override, default_author),
+        "summary": instance.modpack_summary.clone().unwrap_or_default(),
+        "files": files,
+    });
+
+    zip.start_file("qmodpack.index.json", *opts)
+        .map_err(|e| format!("写入 qmodpack.index.json 失败: {e}"))?;
+    zip.write_all(
+        serde_json::to_string_pretty(&index)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+    .map_err(|e| format!("写入 qmodpack.index.json 失败: {e}"))?;
+    Ok(())
+}
+
+/// 已压缩/二进制格式（二次压缩无收益甚至变大）：QML 高压缩打包时用 Stored。
+fn is_already_compressed(rel: &str) -> bool {
+    const COMPRESSED_EXTS: &[&str] = &[
+        "zip", "jar", "mrpack", "qmodpack", "7z", "gz", "xz", "zst", "bz2", "png", "jpg", "jpeg",
+        "webp", "gif", "ico", "ogg", "mp3", "mp4", "flac", "wav",
+    ];
+    let ext = rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    COMPRESSED_EXTS.contains(&ext.as_str())
+}
+
 /// 写入 `overrides/` 内容目录；`skip_rels` 内的相对路径（mods 已入 files[]）跳过。
 /// 逐文件回调进度（阶段 `packing`，35→100）并在每个文件前检查取消标志。
+///
+/// `high_compression`（Qomicex 格式）：文本类文件用 Deflated level 9，
+/// 已压缩格式（png/zip 等）用 Stored 避免二次压缩。
 fn write_overrides<W: Write + std::io::Seek, P: FnMut(ExportProgress)>(
     zip: &mut ZipWriter<W>,
     opts: &SimpleFileOptions,
@@ -814,6 +1043,7 @@ fn write_overrides<W: Write + std::io::Seek, P: FnMut(ExportProgress)>(
     skip_rels: &HashSet<&str>,
     progress: &mut P,
     cancelled: &AtomicBool,
+    high_compression: bool,
 ) -> Result<(), String> {
     let n = content.len().max(1) as f64;
     for (i, e) in content.iter().enumerate() {
@@ -824,11 +1054,22 @@ fn write_overrides<W: Write + std::io::Seek, P: FnMut(ExportProgress)>(
         if skip_rels.contains(e.rel.as_str()) {
             continue;
         }
+        let file_opts = if high_compression && !e.is_dir {
+            if is_already_compressed(&e.rel) {
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)
+            } else {
+                SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated)
+                    .compression_level(Some(9))
+            }
+        } else {
+            *opts
+        };
         if e.is_dir {
             zip.add_directory(entry_name, *opts)
                 .map_err(|err| format!("写入目录失败 {}: {err}", e.rel))?;
         } else {
-            zip.start_file(entry_name, *opts)
+            zip.start_file(entry_name, file_opts)
                 .map_err(|err| format!("写入文件失败 {}: {err}", e.rel))?;
             let mut file = std::fs::File::open(&e.abs)
                 .map_err(|err| format!("打开文件失败 {}: {err}", e.rel))?;
