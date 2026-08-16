@@ -33,7 +33,39 @@
 
 **Qomicex Launcher 测试 ①群** [623362446](https://qm.qq.com/q/rKiwzrkg8w)
 
-> 启动器后端已用 Rust (axum) 完整重写，核心库与下载器也已迁移为 Rust 子模块（`qomicex-core-rust` / `qomicex-downloader-rust`），不再依赖 .NET SDK。
+> 启动器后端已用 Rust (axum) 完整重写，核心库与下载器也已迁移为 Rust 子模块（`qomicex-core-rust` / `qomicex-connector-rust` / `qomicex-downloader-rust`），不再依赖 .NET SDK。
+
+## ✨ 功能特性
+
+> 桌面版（Tauri v2）当前能力，核心逻辑全部由 Rust 实现：
+
+### 🏆 特色功能
+
+- **联机（自研 SCF 协议 + EasyTier 虚拟局域网）**
+  - 建房 / 加入房间、NAT 类型检测（STUN 多端口降级）、中继组网
+  - 踢出升级为 **deny 持久物理封禁**：被踢玩家即使重连、重启也无法再进入房间
+  - 误踢可救：重连审核弹窗（允许 / 拒绝 / 拒绝且不再提示），房主黑名单列表可一键解除封禁
+  - 主机 Mod 校验：缺失标记、与主机不一致时强制同步
+- **整合包 导入 / 导出**
+  - 本地导入：zip / mrpack 上传解析并一键安装
+  - 实例导出：CurseForge zip、Modrinth mrpack、Qomicex 专属 `.qmodpack`，哈希反查自动生成文件清单
+  - HMCL 风格**逐文件勾选**导出，异步任务（进度 / 取消 / 自定义保存路径），自定义包名 / 版本 / 作者
+- **存档设置编辑器（level.dat NBT）**：游戏模式、难度、天气、出生点、世界边界、游戏规则等可视化编辑，支持从 `level.dat_old` 恢复
+- **I18N 国际化**：中 / 英 / 繁 / 日 / 俄等 **7 种语言**，支持「跟随系统」，运行时实时切换
+- **皮肤站快速导入**：Yggdrasil 服务器地址自动解析（authlib-injector 规范），支持把皮肤站链接**拖入表单一键添加**
+- **个性化**：自定义 UI 字体（枚举系统字体、实时预览）、实例自定义分组
+
+### 🧩 核心功能
+
+- **实例管理**：多实例、版本隔离目录；一键安装版本与 Forge / Fabric / NeoForge / Quilt 等加载器
+- **资源中心**：聚合 **Modrinth / CurseForge / FTB** 三源，支持模组、整合包、光影、资源包、数据包、存档分类检索，MC 百科中文名补全
+- **下载中心**：统一任务管理（实例安装 / 模组下载 / Java 运行时），断点续传、暂停 / 恢复 / 取消、实时进度
+- **账号体系**：Microsoft（OAuth 设备码登录）、离线、Yggdrasil 皮肤站（LittleSkin、Blessing Skin 等预设）
+- **模组更新检查**：Modrinth / CurseForge 批量哈希匹配，变更列表 + 下载中心编排更新
+- **游戏设置**：`options.txt` 可视化编辑，多语言描述，数组值（resourcePacks / datapacks 等）以 chips 增删
+- **插件系统**：清单贡献点、内联渲染 / iframe 浮层、L3 WASM 插件网关（wasmtime 沙箱，Rust 编写）
+- **Java 运行时管理**：自动扫描已安装 Java，缺失的 8 / 17 / 21 在线下载，内存分配设置
+- **自动更新**：Tauri updater，alpha / latest 双更新通道
 
 ## ℹ️ 小Tips - 读音
 Qomicex
