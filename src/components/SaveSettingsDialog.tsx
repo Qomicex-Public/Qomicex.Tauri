@@ -6,7 +6,7 @@ import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { ApiError } from '../api/client.ts'
 import { getSaveSettings, updateSaveSettings, restoreSaveFromOld } from '../api/instance-files.ts'
-import type { SaveSettings } from '../types/index.ts'
+import type { SaveSettings, SaveGameRules } from '../types/index.ts'
 
 interface Props {
   open: boolean
@@ -25,6 +25,11 @@ interface Props {
 const GAME_TYPES = ['gameTypeSurvival', 'gameTypeCreative', 'gameTypeAdventure', 'gameTypeSpectator'] as const
 const DIFFICULTIES = ['difficultyPeaceful', 'difficultyEasy', 'difficultyNormal', 'difficultyHard'] as const
 
+/** SaveSettings 中所有 number 字段（数值输入用） */
+type NumberKey = { [K in keyof SaveSettings]: SaveSettings[K] extends number ? K : never }[keyof SaveSettings]
+/** SaveGameRules 中的数值规则（String 数字） */
+type RuleNumberKey = 'randomTickSpeed' | 'spawnRadius' | 'maxEntityCramming'
+
 /** 复选框行（check 值为 boolean） */
 function CheckRow({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
@@ -32,6 +37,13 @@ function CheckRow({ checked, onChange, label }: { checked: boolean; onChange: (v
       <Checkbox checked={checked} onCheckedChange={(c) => onChange(c === true)} />
       <span className="text-xs text-muted-foreground">{label}</span>
     </label>
+  )
+}
+
+/** 分组标题行 */
+function SectionLabel({ children }: { children: string }) {
+  return (
+    <Label className="border-b border-border/60 pb-1 text-xs font-medium text-foreground">{children}</Label>
   )
 }
 
@@ -67,19 +79,39 @@ export default function SaveSettingsDialog({ open, onClose, instanceId, saveName
     setSettings((prev) => (prev ? { ...prev, [key]: value } : prev))
   }, [])
 
-  const updateRule = useCallback((key: keyof SaveSettings['gameRules'], value: boolean) => {
+  const updateRule = useCallback(<K extends keyof SaveGameRules>(key: K, value: SaveGameRules[K]) => {
     setSettings((prev) => (prev ? { ...prev, gameRules: { ...prev.gameRules, [key]: value } } : prev))
   }, [])
 
-  const numInput = (key: 'time' | 'dayTime' | 'spawnX' | 'spawnY' | 'spawnZ' | 'randomSeed', label: string) => (
+  /** 数字输入（int/float 通用；NaN → 0） */
+  const numInput = (key: NumberKey, label: string, opts?: { step?: string; min?: number; max?: number }) => (
     <div className="grid gap-1.5">
       <Label className="text-xs">{label}</Label>
       <Input
         type="number"
+        step={opts?.step}
+        min={opts?.min}
+        max={opts?.max}
         value={settings ? String(settings[key]) : ''}
         onChange={(e) => {
           const v = Number(e.target.value)
           update(key, Number.isFinite(v) ? v : 0)
+        }}
+        className="h-8 text-xs"
+      />
+    </div>
+  )
+
+  /** 数值规则输入（String 数字） */
+  const ruleNumInput = (key: RuleNumberKey, label: string) => (
+    <div className="grid gap-1.5">
+      <Label className="text-xs">{label}</Label>
+      <Input
+        type="number"
+        value={settings ? String(settings.gameRules[key]) : ''}
+        onChange={(e) => {
+          const v = Number(e.target.value)
+          updateRule(key, Number.isFinite(v) ? v : 0)
         }}
         className="h-8 text-xs"
       />
@@ -147,49 +179,89 @@ export default function SaveSettingsDialog({ open, onClose, instanceId, saveName
             <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
         ) : (
-          <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <Label className="text-xs">{t('instanceDetail.saveSettings.levelName')}</Label>
-              <Input value={settings.levelName} onChange={(e) => update('levelName', e.target.value)} className="h-8 text-xs" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-4">
+            {/* ── 基础信息 ── */}
+            <div className="grid gap-3">
+              <SectionLabel>{t('instanceDetail.saveSettings.sectionBasic')}</SectionLabel>
               <div className="grid gap-1.5">
-                <Label className="text-xs">{t('instanceDetail.saveSettings.gameType')}</Label>
-                <Select value={String(settings.gameType)} onChange={(v) => update('gameType', Number(v))} className="h-8 text-xs">
-                  {GAME_TYPES.map((k, i) => (
-                    <SelectOption key={k} value={String(i)}>{t(`instanceDetail.saveSettings.${k}`)}</SelectOption>
-                  ))}
-                </Select>
+                <Label className="text-xs">{t('instanceDetail.saveSettings.levelName')}</Label>
+                <Input value={settings.levelName} onChange={(e) => update('levelName', e.target.value)} className="h-8 text-xs" />
               </div>
-              <div className="grid gap-1.5">
-                <Label className="text-xs">{t('instanceDetail.saveSettings.difficulty')}</Label>
-                <Select value={String(settings.difficulty)} onChange={(v) => update('difficulty', Number(v))} className="h-8 text-xs">
-                  {DIFFICULTIES.map((k, i) => (
-                    <SelectOption key={k} value={String(i)}>{t(`instanceDetail.saveSettings.${k}`)}</SelectOption>
-                  ))}
-                </Select>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1.5">
+                  <Label className="text-xs">{t('instanceDetail.saveSettings.gameType')}</Label>
+                  <Select value={String(settings.gameType)} onChange={(v) => update('gameType', Number(v))} className="h-8 text-xs">
+                    {GAME_TYPES.map((k, i) => (
+                      <SelectOption key={k} value={String(i)}>{t(`instanceDetail.saveSettings.${k}`)}</SelectOption>
+                    ))}
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label className="text-xs">{t('instanceDetail.saveSettings.difficulty')}</Label>
+                  <Select value={String(settings.difficulty)} onChange={(v) => update('difficulty', Number(v))} className="h-8 text-xs">
+                    {DIFFICULTIES.map((k, i) => (
+                      <SelectOption key={k} value={String(i)}>{t(`instanceDetail.saveSettings.${k}`)}</SelectOption>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                <CheckRow checked={settings.allowCommands} onChange={(v) => update('allowCommands', v)} label={t('instanceDetail.saveSettings.allowCommands')} />
+                <CheckRow checked={settings.hardcore} onChange={(v) => update('hardcore', v)} label={t('instanceDetail.saveSettings.hardcore')} />
+                <CheckRow checked={settings.difficultyLocked} onChange={(v) => update('difficultyLocked', v)} label={t('instanceDetail.saveSettings.difficultyLocked')} />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-x-3 gap-y-2">
-              <CheckRow checked={settings.allowCommands} onChange={(v) => update('allowCommands', v)} label={t('instanceDetail.saveSettings.allowCommands')} />
-              <CheckRow checked={settings.hardcore} onChange={(v) => update('hardcore', v)} label={t('instanceDetail.saveSettings.hardcore')} />
-              <CheckRow checked={settings.raining} onChange={(v) => update('raining', v)} label={t('instanceDetail.saveSettings.raining')} />
-              <CheckRow checked={settings.thundering} onChange={(v) => update('thundering', v)} label={t('instanceDetail.saveSettings.thundering')} />
+            {/* ── 天气与时间 ── */}
+            <div className="grid gap-3">
+              <SectionLabel>{t('instanceDetail.saveSettings.sectionWeather')}</SectionLabel>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                <CheckRow checked={settings.raining} onChange={(v) => update('raining', v)} label={t('instanceDetail.saveSettings.raining')} />
+                <CheckRow checked={settings.thundering} onChange={(v) => update('thundering', v)} label={t('instanceDetail.saveSettings.thundering')} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {numInput('time', t('instanceDetail.saveSettings.time'))}
+                {numInput('dayTime', t('instanceDetail.saveSettings.dayTime'))}
+                {numInput('clearWeatherTime', t('instanceDetail.saveSettings.clearWeatherTime'))}
+                {numInput('rainTime', t('instanceDetail.saveSettings.rainTime'))}
+                {numInput('thunderTime', t('instanceDetail.saveSettings.thunderTime'))}
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              {numInput('time', t('instanceDetail.saveSettings.time'))}
-              {numInput('dayTime', t('instanceDetail.saveSettings.dayTime'))}
-              {numInput('spawnX', t('instanceDetail.saveSettings.spawnX'))}
-              {numInput('spawnY', t('instanceDetail.saveSettings.spawnY'))}
-              {numInput('spawnZ', t('instanceDetail.saveSettings.spawnZ'))}
-              {numInput('randomSeed', t('instanceDetail.saveSettings.randomSeed'))}
+            {/* ── 出生点与商人 ── */}
+            <div className="grid gap-3">
+              <SectionLabel>{t('instanceDetail.saveSettings.sectionSpawn')}</SectionLabel>
+              <div className="grid grid-cols-3 gap-3">
+                {numInput('spawnX', t('instanceDetail.saveSettings.spawnX'))}
+                {numInput('spawnY', t('instanceDetail.saveSettings.spawnY'))}
+                {numInput('spawnZ', t('instanceDetail.saveSettings.spawnZ'))}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {numInput('randomSeed', t('instanceDetail.saveSettings.randomSeed'))}
+                {numInput('wanderingTraderSpawnChance', t('instanceDetail.saveSettings.wanderingTraderSpawnChance'))}
+                {numInput('wanderingTraderSpawnDelay', t('instanceDetail.saveSettings.wanderingTraderSpawnDelay'))}
+              </div>
             </div>
 
-            <div className="grid gap-1.5">
-              <Label className="text-xs">{t('instanceDetail.saveSettings.gameRules')}</Label>
+            {/* ── 世界边界 ── */}
+            <div className="grid gap-3">
+              <SectionLabel>{t('instanceDetail.saveSettings.sectionBorder')}</SectionLabel>
+              <div className="grid grid-cols-2 gap-3">
+                {numInput('borderCenterX', t('instanceDetail.saveSettings.borderCenterX'), { step: '1' })}
+                {numInput('borderCenterZ', t('instanceDetail.saveSettings.borderCenterZ'), { step: '1' })}
+                {numInput('borderSize', t('instanceDetail.saveSettings.borderSize'), { step: '1' })}
+                {numInput('borderSafeZone', t('instanceDetail.saveSettings.borderSafeZone'), { step: '0.1' })}
+                {numInput('borderDamagePerBlock', t('instanceDetail.saveSettings.borderDamagePerBlock'), { step: '0.1' })}
+                {numInput('borderWarningBlocks', t('instanceDetail.saveSettings.borderWarningBlocks'), { step: '0.1' })}
+                {numInput('borderWarningTime', t('instanceDetail.saveSettings.borderWarningTime'), { step: '0.1' })}
+              </div>
+            </div>
+
+            {/* ── 游戏规则 ── */}
+            <div className="grid gap-3">
+              <SectionLabel>{t('instanceDetail.saveSettings.gameRules')}</SectionLabel>
               <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                 <CheckRow checked={settings.gameRules.keepInventory} onChange={(v) => updateRule('keepInventory', v)} label={t('instanceDetail.saveSettings.ruleKeepInventory')} />
                 <CheckRow checked={settings.gameRules.doDaylightCycle} onChange={(v) => updateRule('doDaylightCycle', v)} label={t('instanceDetail.saveSettings.ruleDoDaylightCycle')} />
@@ -197,6 +269,31 @@ export default function SaveSettingsDialog({ open, onClose, instanceId, saveName
                 <CheckRow checked={settings.gameRules.mobGriefing} onChange={(v) => updateRule('mobGriefing', v)} label={t('instanceDetail.saveSettings.ruleMobGriefing')} />
                 <CheckRow checked={settings.gameRules.doMobSpawning} onChange={(v) => updateRule('doMobSpawning', v)} label={t('instanceDetail.saveSettings.ruleDoMobSpawning')} />
                 <CheckRow checked={settings.gameRules.doWeatherCycle} onChange={(v) => updateRule('doWeatherCycle', v)} label={t('instanceDetail.saveSettings.ruleDoWeatherCycle')} />
+                <CheckRow checked={settings.gameRules.doMobLoot} onChange={(v) => updateRule('doMobLoot', v)} label={t('instanceDetail.saveSettings.ruleDoMobLoot')} />
+                <CheckRow checked={settings.gameRules.doTileDrops} onChange={(v) => updateRule('doTileDrops', v)} label={t('instanceDetail.saveSettings.ruleDoTileDrops')} />
+                <CheckRow checked={settings.gameRules.doEntityDrops} onChange={(v) => updateRule('doEntityDrops', v)} label={t('instanceDetail.saveSettings.ruleDoEntityDrops')} />
+                <CheckRow checked={settings.gameRules.doNaturalRegeneration} onChange={(v) => updateRule('doNaturalRegeneration', v)} label={t('instanceDetail.saveSettings.ruleDoNaturalRegeneration')} />
+                <CheckRow checked={settings.gameRules.doImmediateRespawn} onChange={(v) => updateRule('doImmediateRespawn', v)} label={t('instanceDetail.saveSettings.ruleDoImmediateRespawn')} />
+                <CheckRow checked={settings.gameRules.doInsomnia} onChange={(v) => updateRule('doInsomnia', v)} label={t('instanceDetail.saveSettings.ruleDoInsomnia')} />
+                <CheckRow checked={settings.gameRules.doPatrolSpawning} onChange={(v) => updateRule('doPatrolSpawning', v)} label={t('instanceDetail.saveSettings.ruleDoPatrolSpawning')} />
+                <CheckRow checked={settings.gameRules.doTraderSpawning} onChange={(v) => updateRule('doTraderSpawning', v)} label={t('instanceDetail.saveSettings.ruleDoTraderSpawning')} />
+                <CheckRow checked={settings.gameRules.drowningDamage} onChange={(v) => updateRule('drowningDamage', v)} label={t('instanceDetail.saveSettings.ruleDrowningDamage')} />
+                <CheckRow checked={settings.gameRules.fallDamage} onChange={(v) => updateRule('fallDamage', v)} label={t('instanceDetail.saveSettings.ruleFallDamage')} />
+                <CheckRow checked={settings.gameRules.fireDamage} onChange={(v) => updateRule('fireDamage', v)} label={t('instanceDetail.saveSettings.ruleFireDamage')} />
+                <CheckRow checked={settings.gameRules.freezeDamage} onChange={(v) => updateRule('freezeDamage', v)} label={t('instanceDetail.saveSettings.ruleFreezeDamage')} />
+                <CheckRow checked={settings.gameRules.showDeathMessages} onChange={(v) => updateRule('showDeathMessages', v)} label={t('instanceDetail.saveSettings.ruleShowDeathMessages')} />
+                <CheckRow checked={settings.gameRules.announceAdvancements} onChange={(v) => updateRule('announceAdvancements', v)} label={t('instanceDetail.saveSettings.ruleAnnounceAdvancements')} />
+                <CheckRow checked={settings.gameRules.commandBlockOutput} onChange={(v) => updateRule('commandBlockOutput', v)} label={t('instanceDetail.saveSettings.ruleCommandBlockOutput')} />
+                <CheckRow checked={settings.gameRules.sendCommandFeedback} onChange={(v) => updateRule('sendCommandFeedback', v)} label={t('instanceDetail.saveSettings.ruleSendCommandFeedback')} />
+                <CheckRow checked={settings.gameRules.reducedDebugInfo} onChange={(v) => updateRule('reducedDebugInfo', v)} label={t('instanceDetail.saveSettings.ruleReducedDebugInfo')} />
+                <CheckRow checked={settings.gameRules.disableElytraMovementCheck} onChange={(v) => updateRule('disableElytraMovementCheck', v)} label={t('instanceDetail.saveSettings.ruleDisableElytraMovementCheck')} />
+                <CheckRow checked={settings.gameRules.spectatorsGenerateChunks} onChange={(v) => updateRule('spectatorsGenerateChunks', v)} label={t('instanceDetail.saveSettings.ruleSpectatorsGenerateChunks')} />
+                <CheckRow checked={settings.gameRules.doLimitedCrafting} onChange={(v) => updateRule('doLimitedCrafting', v)} label={t('instanceDetail.saveSettings.ruleDoLimitedCrafting')} />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {ruleNumInput('randomTickSpeed', t('instanceDetail.saveSettings.ruleRandomTickSpeed'))}
+                {ruleNumInput('spawnRadius', t('instanceDetail.saveSettings.ruleSpawnRadius'))}
+                {ruleNumInput('maxEntityCramming', t('instanceDetail.saveSettings.ruleMaxEntityCramming'))}
               </div>
             </div>
           </div>

@@ -550,7 +550,7 @@ export interface SaveMetadata {
   iconBase64?: string | null
 }
 
-/** 精选游戏规则子集（level.dat Data.GameRules，String "true"/"false"） */
+/** 精选游戏规则子集（level.dat Data.GameRules，String "true"/"false" 或数字字符串） */
 export interface SaveGameRules {
   keepInventory: boolean
   doDaylightCycle: boolean
@@ -558,9 +558,56 @@ export interface SaveGameRules {
   mobGriefing: boolean
   doMobSpawning: boolean
   doWeatherCycle: boolean
+  /** 生物掉落物 */
+  doMobLoot: boolean
+  /** 方块掉落物 */
+  doTileDrops: boolean
+  /** 实体掉落物 */
+  doEntityDrops: boolean
+  /** 自然生命恢复 */
+  doNaturalRegeneration: boolean
+  /** 立即重生 */
+  doImmediateRespawn: boolean
+  /** 幻翼生成 */
+  doInsomnia: boolean
+  /** 掠夺者巡逻队生成 */
+  doPatrolSpawning: boolean
+  /** 流浪商人生成 */
+  doTraderSpawning: boolean
+  /** 溺水伤害 */
+  drowningDamage: boolean
+  /** 摔落伤害 */
+  fallDamage: boolean
+  /** 火焰伤害 */
+  fireDamage: boolean
+  /** 冰冻伤害 */
+  freezeDamage: boolean
+  /** 死亡消息 */
+  showDeathMessages: boolean
+  /** 公告进度 */
+  announceAdvancements: boolean
+  /** 命令方块输出 */
+  commandBlockOutput: boolean
+  /** 命令反馈 */
+  sendCommandFeedback: boolean
+  /** 简化调试信息 */
+  reducedDebugInfo: boolean
+  /** 禁用鞘翅移动检查 */
+  disableElytraMovementCheck: boolean
+  /** 旁观者生成区块 */
+  spectatorsGenerateChunks: boolean
+  /** 限制合成 */
+  doLimitedCrafting: boolean
+  /** 随机刻速度（0=禁用） */
+  randomTickSpeed: number
+  /** 出生点半径 */
+  spawnRadius: number
+  /** 实体堆叠上限 */
+  maxEntityCramming: number
 }
 
-/** 存档设置（level.dat Data 精选白名单字段，与后端 LevelDatSettings 对应） */
+/** 存档设置（level.dat Data 精选白名单字段，与后端 LevelDatSettings 对应）。
+ * 难度/硬核/锁定/出生点在 1.21.2+ 存档中读写 difficulty_settings / spawn 复合（后端透明映射）。 */
 export interface SaveSettings {
   levelName: string
   /** 0=生存 1=创造 2=冒险 3=旁观 */
@@ -569,16 +616,42 @@ export interface SaveSettings {
   difficulty: number
   allowCommands: boolean
   hardcore: boolean
+  /** 锁定难度（1.21.2+ 读 difficulty_settings.locked） */
+  difficultyLocked: boolean
   /** 世界时间（tick） */
   time: number
   /** 昼夜时间（0-24000） */
   dayTime: number
   raining: boolean
   thundering: boolean
+  /** 晴天剩余时间（0=无限） */
+  clearWeatherTime: number
+  /** 降雨剩余时间 */
+  rainTime: number
+  /** 雷暴剩余时间 */
+  thunderTime: number
   spawnX: number
   spawnY: number
   spawnZ: number
   randomSeed: number
+  /** 流浪商人生成概率（0=禁用） */
+  wanderingTraderSpawnChance: number
+  /** 流浪商人生成延迟（tick） */
+  wanderingTraderSpawnDelay: number
+  /** 世界边界中心 X */
+  borderCenterX: number
+  /** 世界边界中心 Z */
+  borderCenterZ: number
+  /** 世界边界大小 */
+  borderSize: number
+  /** 世界边界安全区 */
+  borderSafeZone: number
+  /** 边界外每格伤害 */
+  borderDamagePerBlock: number
+  /** 边界警告距离 */
+  borderWarningBlocks: number
+  /** 边界警告时间（秒） */
+  borderWarningTime: number
   gameRules: SaveGameRules
 }
 
