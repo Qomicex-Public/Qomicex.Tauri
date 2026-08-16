@@ -1024,6 +1024,23 @@ jobs:
           echo "=== alpha.json ==="
           cat alpha.json
 
+      # GitHub Release 不允许同名 asset：windows-x64 / windows-arm64 两个
+      # artifact 都带 wintun.dll / Packet.dll（打进安装包的同时单独分发），
+      # 重名会导致第二次上传走 update 路径并在 label restore 时 404
+      # （softprops/action-gh-release 已知问题 #760）。上传前按架构重命名。
+      - name: Rename arch-specific DLL assets
+        run: |
+          for d in qomicex-launcher-*; do
+            case "$d" in
+              *windows-x64) ARCH=x64 ;;
+              *windows-arm64) ARCH=arm64 ;;
+              *) continue ;;
+            esac
+            if [ -f "$d/wintun.dll" ]; then mv "$d/wintun.dll" "$d/wintun-$ARCH.dll"; fi
+            if [ -f "$d/Packet.dll" ]; then mv "$d/Packet.dll" "$d/Packet-$ARCH.dll"; fi
+            echo "renamed $d -> wintun-$ARCH.dll / Packet-$ARCH.dll"
+          done
+
       - name: Create/update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
