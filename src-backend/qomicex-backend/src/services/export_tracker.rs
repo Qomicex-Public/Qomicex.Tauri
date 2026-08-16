@@ -163,52 +163,58 @@ impl ExportTaskManager {
         let target_c = target_path.clone();
         let task_id_c = task_id.clone();
 
-        tokio::spawn(async move {
-            let cancel = task_for_worker
-                .lock()
-                .unwrap_or_else(|g| g.into_inner())
-                .cancel
-                .clone();
-            let include_set = include_files.map(|v| {
-                v.into_iter().collect::<std::collections::HashSet<_>>()
-            });
-            let mut progress = |p: ExportProgress| {
-                let mut t = task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
-                t.stage = p.stage;
-                t.percent = p.percent;
-                t.current_file = p.current_file.clone();
-            };
-            let result = build_export_zip(
-                &core_c,
-                &cf_key_c,
-                &instance_c,
-                format,
-                include_saves,
-                include_screenshots,
-                include_set.as_ref(),
-                name_override.as_deref(),
-                version_override.as_deref(),
-                author_override.as_deref(),
-                &mut progress,
-                &cancel,
-            )
-            .await;
+        // 独立线程 + 独立 tokio runtime 执行导出：
+        // 打包（Deflated 压缩）、落盘 fs::write、fs::copy 都是阻塞 CPU/IO，
+        // 若跑在主 runtime 的 worker 上会冻结 HTTP 请求处理（复现：大包导出时
+        // 轮询请求排队 10s+，前端 15s 超时）。独立线程让阻塞完全脱离主 runtime。
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("创建导出任务 runtime 失败");
+            rt.block_on(async move {
+                let cancel = task_for_worker
+                    .lock()
+                    .unwrap_or_else(|g| g.into_inner())
+                    .cancel
+                    .clone();
+                let include_set = include_files.map(|v| {
+                    v.into_iter().collect::<std::collections::HashSet<_>>()
+                });
+                let mut progress = |p: ExportProgress| {
+                    let mut t = task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
+                    t.stage = p.stage;
+                    t.percent = p.percent;
+                    t.current_file = p.current_file.clone();
+                };
+                let result = build_export_zip(
+                    &core_c,
+                    &cf_key_c,
+                    &instance_c,
+                    format,
+                    include_saves,
+                    include_screenshots,
+                    include_set.as_ref(),
+                    name_override.as_deref(),
+                    version_override.as_deref(),
+                    author_override.as_deref(),
+                    &mut progress,
+                    &cancel,
+                )
+                .await;
 
-            let cancel_flag = cancel.load(Ordering::Relaxed);
+                let cancel_flag = cancel.load(Ordering::Relaxed);
 
-            match result {
-                Ok(bytes) => {
-                    let zip_path = base_dir.join("temp").join(format!("export-{task_id_c}.zip"));
-                    if let Some(parent) = zip_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    if let Err(e) = std::fs::write(&zip_path, &bytes) {
-                        let mut t = task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
-                        t.status = ExportTaskStatus::Failed;
-                        t.stage = "packing";
-                        t.error = Some(format!("写入临时文件失败: {e}"));
-                        return;
-                    }
+                match result {
+                    Ok(bytes) => {
+                        let zip_path = base_dir.join("temp").join(format!("export-{task_id_c}.zip"));
+                        if let Some(parent) = zip_path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if let Err(e) = std::fs::write(&zip_path, &bytes) {
+                            let mut t = task_for_worker.lock().unwrap_or_else(|g| g.into_inner());
+                            t.status = ExportTaskStatus::Failed;
+                            t.stage = "packing";
+                            t.error = Some(format!("写入临时文件失败: {e}"));
+                            return;
+                        }
 
                     match target_c {
                         Some(target) => {
@@ -250,6 +256,7 @@ impl ExportTaskManager {
                     }
                 }
             }
+            });
         });
 
         task_id
