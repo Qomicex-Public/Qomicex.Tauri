@@ -14,6 +14,7 @@ import Connect from './pages/Connect.tsx'
 import Settings from './pages/Settings.tsx'
 import RunningInstances from './pages/RunningInstances.tsx'
 import PluginPage from './pages/PluginPage.tsx'
+import LogAnalysis from './pages/LogAnalysis.tsx'
 import PluginOverlayManager from './components/PluginOverlayManager.tsx'
 import { MessageBoxProvider, useMessageBox } from './components/ui'
 import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
@@ -206,6 +207,7 @@ function AppContent() {
                   <Route path="/connect" element={<Connect />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="/running" element={<RunningInstances />} />
+                  <Route path="/log-analysis" element={<LogAnalysis />} />
                   <Route path="/plugins/p/:pluginId" element={<PluginPage />} />
                 </>
               ) : (

@@ -131,7 +131,8 @@ Exception: directory barrels like `src/components/ui` (its `index.ts`) resolve f
 
 ## Backend conventions
 
-- **22 endpoint modules** in `src-backend/qomicex-backend/src/endpoints/` → `api/<name>` routes, assembled in `app.rs` (`build_router`). `main.rs` loads config (`settings.rs`) then serves.
+- **23 endpoint modules** in `src-backend/qomicex-backend/src/endpoints/` → `api/<name>` routes, assembled in `app.rs` (`build_router`). `main.rs` loads config (`settings.rs`) then serves.
+- **Log analysis** (`endpoints/loganalysis.rs` → `api/loganalysis`): `POST /loganalysis/analyze`（body `{logContent}`，逐行/`(?s)` 跨行模式匹配）和 `POST /loganalysis/analyze-crash/{instanceId}`（读 `LaunchTracker` 内存中的 `crash_report`，无则 400 `NO_CRASH_REPORT`；成功后可选上传 mclo.gs）。模式库在 `Resources/error-patterns.json`（44 种），分析引擎 `services/log_analysis.rs`（去重+按 Critical>Error>Warning>Info 排序）。
 - Router: `.nest("/api", ...)` + permissive CORS (`CorsLayer`) + `TraceLayer`; `/api/ping` (in `app.rs`) and `/api/health` (in `system.rs`) liveness probes — the frontend polls `/api/health`. `middleware/not_found.rs` handles 404 (registered before `.layer()` so CORS wraps fallback).
 - Data dir resolution (`settings.rs` `resolve_base_dir`): `QOMICEX_HOME` env → `.qomicex-bootstrap` file (content is the path) → `{LocalAppData}/qomicex-launcher`.
 - Shared services in `services/` and `state.rs` (`AppState`): reqwest HTTP clients (Modrinth, CurseForge, FTB, etc.), `InstallTracker`, `LaunchTracker`, account/skin services, trace buffer, plugin service. License core only under `--features license-required` (`#[cfg(feature = "license-required")]` in `license_core.rs`).
