@@ -18,6 +18,7 @@ import {
   Identifier,
   type Resources,
   type BlockFlags,
+  type NbtCompound,
 } from 'deepslate'
 import { mat4, vec3 } from 'gl-matrix'
 import type { LitematicFile } from './litematic.ts'
@@ -25,6 +26,17 @@ import type { SchematicAssetsBundle } from '../types/index.ts'
 
 /** Fallback block used for palette entries missing from the vanilla assets. */
 const FALLBACK_BLOCK = 'minecraft:stone'
+
+/** Blocks deepslate renders through SpecialRenderers (not the normal block
+ *  model). Excluding their block-state definition avoids drawing them twice
+ *  (normal model + special mesh overlap). */
+const SPECIAL_RENDER_RE =
+  /_sign$|_wall_sign$|_hanging_sign$|_wall_hanging_sign$|_chest$|^chest$|_shulker_box$|_banner$|_wall_banner$|_bed$|decorated_pot|_skull$|_head$|^water$|^lava$/
+
+function isSpecialRender(id: string): boolean {
+  const n = id.split(':').pop() ?? id
+  return SPECIAL_RENDER_RE.test(n)
+}
 
 // ---------------------------------------------------------------------------
 // Bundle → deepslate resources
@@ -57,6 +69,7 @@ const NON_SOLID_KEYWORDS = [
   'mushroom', 'kelp', 'seagrass', 'coral', 'chorus', 'scaffolding', 'candle',
   'lantern', 'chain', 'bell', 'big_dripleaf', 'small_dripleaf', 'spore_blossom',
   'azalea', 'moss_carpet', 'lever', 'repeater', 'comparator', 'tripwire',
+  'redstone_wire', 'redstone_torch', 'redstone_wall_torch', 'lever',
   // Non-full-cube solids: NOT opaque for occlusion, so a neighbour's face
   // facing them is NOT culled (e.g. the side of a full block next to a slab
   // must stay visible above the half-height slab).
@@ -82,12 +95,38 @@ function computeFlags(name: string): BlockFlags {
  * `upperPowerOfTwo(Math.sqrt(count + 1))`, whose bit-hack truncates the float
  * and can under-size the atlas (e.g. 22 textures → 4×4=16 cells, 64px). That
  * pushes later textures beyond the canvas → wrong UVs → magenta / swapped
- * textures. We use an integer power-of-two SIDE that always fits every cell.
+ * textures.
+ *
+ * We also support non-16×16 textures (entity chest / shulker / banner / bed are
+ * 32–64px; sign boards are tall sprites). Instead of force-cropping everything
+ * into a single 16×16 cell, each texture is drawn at its NATIVE size into a
+ * region of `ceil(w/16) × ceil(h/16)` cells and its UV maps that whole region.
+ * deepslate's special-renderer models are written against the full texture, so
+ * this makes chests/signs render correctly instead of showing only a corner.
  */
-async function buildAtlas(blobs: Record<string, Blob>): Promise<TextureAtlas> {
-  const count = Object.keys(blobs).length + 1
+async function buildAtlas(blobs: Record<string, Blob>, animated: Set<string>): Promise<TextureAtlas> {
+  // Decode every texture first to learn its native size.
+  const entries: Array<{ id: string; img: ImageBitmap; w: number; h: number; cw: number; ch: number }> = []
+  let totalCells = 1 // +1 invalid marker cell
+  for (const [id, blob] of Object.entries(blobs)) {
+    try {
+      const img = await createImageBitmap(blob)
+      // Textures with a `{id}.png.mcmeta` `animation` are animated sprites
+      // (fire/water/lava/portal/…) whose PNGs are frame sheets; deepslate's
+      // models expect a single 16×16 frame, so use the top-left frame only.
+      const isAnimated = animated.has(id)
+      const w = isAnimated ? 16 : Math.max(16, img.width)
+      const h = isAnimated ? 16 : Math.max(16, img.height)
+      const cw = Math.ceil(w / 16)
+      const ch = Math.ceil(h / 16)
+      entries.push({ id, img, w, h, cw, ch })
+      totalCells += cw * ch
+    } catch { /* skip corrupt */ }
+  }
+  const count = entries.length + 1
   let side = 1
-  while (side * side < count) side *= 2
+  while (side * side < count * 4) side *= 2 // generous so large textures pack
+  while (side < 4) side *= 2
   const pixelSize = side * 16
   const canvas = document.createElement('canvas')
   canvas.width = pixelSize
@@ -100,19 +139,25 @@ async function buildAtlas(blobs: Record<string, Blob>): Promise<TextureAtlas> {
   ctx.fillStyle = '#ff00ff'
   ctx.fillRect(0, 0, 8, 8)
   ctx.fillRect(8, 8, 8, 8)
-  const part = 1 / side
+
   const idMap: Record<string, [number, number, number, number]> = {}
-  let index = 1
-  for (const [id, blob] of Object.entries(blobs)) {
-    const u = index % side
-    const v = Math.floor(index / side)
-    index += 1
-    idMap[id] = [part * u, part * v, part * u + part, part * v + part]
-    try {
-      const img = await createImageBitmap(blob)
-      ctx.drawImage(img, 0, 0, 16, 16, u * 16, v * 16, 16, 16)
-    } catch { /* keep cell transparent; block falls back to invalid texture */ }
+  // Greedy row pack: advance x, wrap to next row when out of width.
+  let cx = 1
+  let cy = 0
+  let rowH = 1
+  for (const e of entries) {
+    if (cx + e.cw > side) {
+      cx = 1
+      cy += rowH
+      rowH = 1
+    }
+    if (cy + e.ch > side) continue // shouldn't happen with generous side
+    ctx.drawImage(e.img, 0, 0, e.w, e.h, cx * 16, cy * 16, e.w, e.h)
+    idMap[e.id] = [cx / side, cy / side, (cx + e.cw) / side, (cy + e.ch) / side]
+    cx += e.cw
+    rowH = Math.max(rowH, e.ch)
   }
+
   return new TextureAtlas(ctx.getImageData(0, 0, pixelSize, pixelSize), idMap)
 }
 
@@ -122,6 +167,11 @@ async function buildAtlas(blobs: Record<string, Blob>): Promise<TextureAtlas> {
 export async function buildResources(bundle: SchematicAssetsBundle): Promise<Resources> {
   const blockDefinitions: Record<string, BlockDefinition> = {}
   for (const [id, json] of Object.entries(bundle.blockstates)) {
+    // Blocks deepslate renders via SpecialRenderers (signs/chests/shulker/
+    // banners/beds/skulls/fluids) must NOT also render their normal block
+    // model — deepslate's ChunkBuilder merges both, which would draw the block
+    // twice. Excluding their block definition leaves only the special mesh.
+    if (isSpecialRender(id)) continue
     try {
       blockDefinitions[id] = BlockDefinition.fromJson(json)
     } catch { /* skip malformed */ }
@@ -144,7 +194,7 @@ export async function buildResources(bundle: SchematicAssetsBundle): Promise<Res
       blobs[id] = textureToBlob(b64)
     } catch { /* skip corrupt */ }
   }
-  const atlas = await buildAtlas(blobs)
+  const atlas = await buildAtlas(blobs, new Set(bundle.animated ?? []))
 
   return {
     getBlockDefinition(id) {
@@ -243,6 +293,12 @@ export function buildStructure(
     const px = region.origin.x - box.minX
     const py = region.origin.y - box.minY
     const pz = region.origin.z - box.minZ
+    // Block entities (chests/signs/banners) keyed by local pos → NBT for the
+    // deepslate special renderers.
+    const beMap = new Map<string, NbtCompound>()
+    for (const be of region.blockEntities) {
+      beMap.set(`${be.x},${be.y},${be.z}`, be.nbt)
+    }
     for (let y = Math.max(0, yMin); y <= Math.min(h - 1, yMax); y++) {
       for (let z = 0; z < d; z++) {
         for (let x = 0; x < w; x++) {
@@ -259,7 +315,7 @@ export function buildStructure(
           // Defensive bounds guard: skip cells outside the world box rather than
           // letting deepslate's addBlock throw and nuke the whole structure.
           if (wx < 0 || wy < 0 || wz < 0 || wx >= box.width || wy >= box.height || wz >= box.depth) continue
-          structure.addBlock([wx, wy, wz], name, props)
+          structure.addBlock([wx, wy, wz], name, props, beMap.get(`${x},${y},${z}`))
           added++
           if (opts.maxBlocks && added > opts.maxBlocks) throw new Error('TOO_MANY_BLOCKS')
         }
@@ -292,6 +348,18 @@ export class SchematicViewer {
   private rafId = 0
   private disposed = false
   private pressedKeys = new Set<string>()
+  /** Mouse sensitivity multiplier (rotating yaw/pitch on middle-drag). */
+  private sensitivity = 1
+  /** Keyboard / wheel movement speed multiplier. */
+  private moveSpeed = 1
+
+  setSensitivity(v: number) {
+    this.sensitivity = Math.max(0.1, v)
+  }
+
+  setMoveSpeed(v: number) {
+    this.moveSpeed = Math.max(0.05, v)
+  }
 
   constructor(canvas: HTMLCanvasElement, litematic: LitematicFile, bundle: SchematicAssetsBundle, resources: Resources) {
     this.canvas = canvas
@@ -396,8 +464,8 @@ export class SchematicViewer {
       if (middlePos) {
         const dx = evt.clientX - middlePos[0]
         const dy = evt.clientY - middlePos[1]
-        this.yaw += dx / 200
-        this.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.pitch + dy / 200))
+        this.yaw += (dx / 200) * this.sensitivity
+        this.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.pitch + (dy / 200) * this.sensitivity))
         middlePos = [evt.clientX, evt.clientY]
       } else if (leftPos) {
         this.pan(evt.clientX - leftPos[0], evt.clientY - leftPos[1])
@@ -415,7 +483,7 @@ export class SchematicViewer {
     })
     canvas.addEventListener('wheel', (evt) => {
       evt.preventDefault()
-      this.move3d([0, 0, -evt.deltaY / 120])
+      this.move3d([0, 0, (-evt.deltaY / 120) * this.moveSpeed])
     })
 
     const keyMoves: Record<string, [number, number, number]> = {
@@ -459,7 +527,7 @@ export class SchematicViewer {
 
   private pan(dx: number, dy: number) {
     const offset = vec3.create()
-    vec3.set(offset, dx / 90, -dy / 90, 0)
+    vec3.set(offset, (dx / 90) * this.sensitivity, (-dy / 90) * this.sensitivity, 0)
     vec3.rotateX(offset, offset, [0, 0, 0], -this.pitch)
     vec3.rotateY(offset, offset, [0, 0, 0], -this.yaw)
     vec3.add(this.cameraPos, this.cameraPos, offset)
@@ -484,7 +552,7 @@ export class SchematicViewer {
       const m = keyMoves[key]
       if (m) vec3.add(direction, direction, m)
     }
-    this.move3d([direction[0], direction[1], direction[2]])
+    this.move3d([direction[0] * this.moveSpeed, direction[1] * this.moveSpeed, direction[2] * this.moveSpeed])
   }
 
   dispose() {

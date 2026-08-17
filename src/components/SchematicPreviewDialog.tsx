@@ -36,7 +36,12 @@ export default function SchematicPreviewDialog({ open, instanceId, fileName, onC
   const [yMax, setYMax] = useState(0)
   const [height, setHeight] = useState(1)
   const [materialsOpen, setMaterialsOpen] = useState(false)
+  const [sensitivity, setSensitivity] = useState(1)
+  const [moveSpeed, setMoveSpeed] = useState(1)
   const rebuildTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => { viewerRef.current?.setSensitivity(sensitivity) }, [sensitivity])
+  useEffect(() => { viewerRef.current?.setMoveSpeed(moveSpeed) }, [moveSpeed])
 
   const load = useCallback(async () => {
     setStage('loading')
@@ -44,6 +49,8 @@ export default function SchematicPreviewDialog({ open, instanceId, fileName, onC
     setLitematic(null)
     setMissing([])
     setOverCap(false)
+    setSensitivity(1)
+    setMoveSpeed(1)
     viewerRef.current?.dispose()
     viewerRef.current = null
     try {
@@ -234,6 +241,30 @@ export default function SchematicPreviewDialog({ open, instanceId, fileName, onC
                         max={Math.max(0, height - 1)}
                         value={yMax}
                         onChange={(e) => setYMax(Math.max(Number(e.target.value), yMin))}
+                        className="w-full"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[11px]">{t('instanceDetail.schematics.mouseSensitivity')}<span className="ml-1 text-muted-foreground/60">{sensitivity.toFixed(1)}x</span></Label>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={5}
+                        step={0.1}
+                        value={sensitivity}
+                        onChange={(e) => setSensitivity(Number(e.target.value))}
+                        className="w-full"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[11px]">{t('instanceDetail.schematics.moveSpeed')}<span className="ml-1 text-muted-foreground/60">{moveSpeed.toFixed(1)}x</span></Label>
+                      <input
+                        type="range"
+                        min={0.2}
+                        max={5}
+                        step={0.1}
+                        value={moveSpeed}
+                        onChange={(e) => setMoveSpeed(Number(e.target.value))}
                         className="w-full"
                       />
                     </div>

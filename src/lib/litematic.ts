@@ -31,6 +31,16 @@ export interface PaletteEntry {
   properties: Record<string, string>
 }
 
+/** A block entity (tile entity). `x/y/z` are region-local (0-based) coords.
+ *  `nbt` carries the block-specific data deepslate's special renderers need
+ *  (chest contents, sign text, banner pattern, ...). */
+export interface RegionBlockEntity {
+  x: number
+  y: number
+  z: number
+  nbt: NbtCompound
+}
+
 export interface SchematicRegion {
   name: string
   /** Absolute dimensions (abs of raw Size). */
@@ -45,6 +55,8 @@ export interface SchematicRegion {
   /** Palette indices, flat with index = y*(w*d) + z*w + x (matches decode order). */
   blocks: Uint32Array
   blockCount: number
+  /** Block entities (chests/signs/banners/...) with their NBT, keyed by local pos. */
+  blockEntities: RegionBlockEntity[]
 }
 
 export interface SchematicMaterials {
@@ -140,6 +152,24 @@ function parsePalette(list: NbtTag | undefined): PaletteEntry[] {
     entries.push(name ? { name, properties: props } : { name: 'minecraft:air', properties: {} })
   }
   return entries
+}
+
+/** Parse a region's TileEntities list. Positions are region-local (0-based).
+ *  Each item keeps its full NBT compound so deepslate's special renderers can
+ *  draw chests/signs/banners/etc. */
+function parseBlockEntities(region: NbtCompound): RegionBlockEntity[] {
+  const out: RegionBlockEntity[] = []
+  const listTag = region.getList('TileEntities', 10) // TAG_Compound(10)
+  const getItems = (listTag as unknown as { getItems?: () => NbtTag[] })?.getItems
+  if (typeof getItems !== 'function') return out
+  for (const item of getItems.call(listTag)) {
+    const comp = item as NbtCompound
+    const x = intOf(comp, 'x')
+    const y = intOf(comp, 'y')
+    const z = intOf(comp, 'z')
+    out.push({ x, y, z, nbt: comp })
+  }
+  return out
 }
 
 /**
@@ -290,6 +320,7 @@ export function parseLitematic(bytes: ArrayBuffer): LitematicFile {
         palette,
         blocks: indexed,
         blockCount,
+        blockEntities: parseBlockEntities(comp),
       })
     }
   }

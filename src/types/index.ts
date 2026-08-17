@@ -478,6 +478,8 @@ export interface SchematicAssetsBundle {
   blockstates: Record<string, unknown>
   models: Record<string, unknown>
   textures: Record<string, string>
+  /** 动画精灵图贴图 id（有 .mcmeta animation）——渲染时只取首帧 16×16。 */
+  animated: string[]
   source: string
   missingBlocks: string[]
 }

@@ -45,6 +45,10 @@ pub struct SchematicAssetsBundle {
     pub models: BTreeMap<String, serde_json::Value>,
     /// texture id (e.g. "minecraft:block/stone") → base64 PNG bytes.
     pub textures: BTreeMap<String, String>,
+    /// Textures whose `{id}.png.mcmeta` declares an `animation` — animated
+    /// sprites (fire/water/lava/portal/…) whose PNGs are frame spritesheets.
+    /// The frontend renders only the first 16×16 frame.
+    pub animated: Vec<String>,
     /// Human-readable path of the jar/dir actually used (for error messages/UI).
     pub source: String,
     /// Requested blocks that have no blockstate asset (mod blocks etc.).
@@ -132,6 +136,7 @@ pub fn extract_bundle(
         blockstates: BTreeMap::new(),
         models: BTreeMap::new(),
         textures: BTreeMap::new(),
+        animated: Vec::new(),
         source: source.describe(),
         missing_blocks: Vec::new(),
     };
@@ -190,13 +195,18 @@ pub fn extract_bundle(
             Ok(b) => b,
             Err(_) => continue,
         };
-        let json: serde_json::Value = match serde_json::from_slice(&bytes) {
+        let mut json: serde_json::Value = match serde_json::from_slice(&bytes) {
             Ok(v) => v,
             Err(_) => continue,
         };
         if let Some(par) = json.get("parent").and_then(|v| v.as_str()) {
             queue.push(normalize_id(par));
         }
+        // Newer jar formats (1.21.4+/26.x) encode per-face textures as objects,
+        // e.g. {"force_translucent": true, "sprite": "minecraft:block/x"}.
+        // deepslate's getTexture expects a plain string, so collapse the object
+        // to its `sprite` id (otherwise rendering throws for those blocks).
+        normalize_model_textures(&mut json);
         if let Some(tex) = json.get("textures").and_then(|v| v.as_object()) {
             for v in tex.values() {
                 if let Some(s) = v.as_str() {
@@ -209,20 +219,57 @@ pub fn extract_bundle(
         bundle.models.insert(format!("minecraft:{model_id}"), json);
     }
 
-    // Load every referenced texture as base64 PNG (key keeps the full
-    // "block/..." id, matching what the frontend asks the atlas for).
-    for tex_id in pending_textures {
-        let full = if tex_id.starts_with("block/") {
+    // Load every referenced texture as base64 PNG. Keys keep the full id
+    // ("minecraft:block/...", or "minecraft:entity/..." for special blocks),
+    // matching what the frontend asks the atlas for.
+    let mut all_textures: BTreeSet<String> = pending_textures;
+    for raw in blocks {
+        for special in special_texture_ids(raw.trim()) {
+            all_textures.insert(special);
+        }
+    }
+    for tex_id in all_textures {
+        let full = if tex_id.starts_with("block/") || tex_id.starts_with("entity/") {
             tex_id
         } else {
             format!("block/{tex_id}")
         };
         let file = format!("textures/{full}.png");
-        let Some(bytes) = read_asset(&mut opened, &file).ok() else {
-            continue;
+        let bytes = match read_asset(&mut opened, &file) {
+            Ok(b) => b,
+            Err(_) => {
+                // deepslate's sign special-renderer asks for
+                // `entity/signs/{wood}` (and the old data layout had it there),
+                // but 26.x keeps the sign board under `block/{wood}_sign`. Fall
+                // back to that so signs render with their real wood texture.
+                let tex_id = full.as_str();
+                let probe = if let Some(wood) = tex_id.strip_prefix("entity/signs/hanging/") {
+                    Some(format!("textures/block/{wood}_sign.png"))
+                } else if let Some(wood) = tex_id.strip_prefix("entity/signs/") {
+                    Some(format!("textures/block/{wood}_sign.png"))
+                } else {
+                    None
+                };
+                match probe {
+                    Some(p) => match read_asset(&mut opened, &p) {
+                        Ok(b) => b,
+                        Err(_) => continue,
+                    },
+                    None => continue,
+                }
+            }
         };
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
         bundle.textures.insert(format!("minecraft:{full}"), b64);
+        // Animated sprite? (its `{id}.png.mcmeta` declares an `animation`).
+        let mcm_path = format!("textures/{full}.png.mcmeta");
+        if let Ok(mcm) = read_asset(&mut opened, &mcm_path) {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&mcm) {
+                if v.get("animation").is_some() {
+                    bundle.animated.push(format!("minecraft:{full}"));
+                }
+            }
+        }
     }
 
     bundle.missing_blocks.sort();
@@ -267,6 +314,98 @@ fn normalize_id(s: &str) -> String {
     s.strip_prefix("minecraft:").unwrap_or(s).to_string()
 }
 
+/// Collapse newer object-form texture entries like
+/// `{"force_translucent": true, "sprite": "minecraft:block/white_stained_glass"}`
+/// down to the plain `sprite` string, which deepslate's string-based
+/// `getTexture` can resolve. Leaves string / "#ref" values untouched.
+fn normalize_model_textures(json: &mut serde_json::Value) {
+    let Some(tex) = json.get_mut("textures").and_then(|t| t.as_object_mut()) else {
+        return;
+    };
+    for v in tex.values_mut() {
+        if let Some(sprite) = v.get("sprite").and_then(|s| s.as_str()) {
+            *v = serde_json::Value::String(sprite.to_string());
+        }
+    }
+}
+
+/// Extra texture ids (no "minecraft:" prefix) needed for blocks that deepslate
+/// renders via `SpecialRenderers` / fluids. These reference textures that are
+/// NOT reachable from any jar block model (water_flow, entity/signs/*, ...), so
+/// we add them explicitly when such a block is in the palette.
+fn special_texture_ids(name: &str) -> Vec<String> {
+    let id = name.rsplit(':').next().unwrap_or(name);
+    let mut out = Vec::new();
+    if id == "water" {
+        return vec!["block/water_still".into(), "block/water_flow".into()];
+    }
+    if id == "lava" {
+        return vec!["block/lava_still".into(), "block/lava_flow".into()];
+    }
+    // Signs (standing / wall / hanging) -> entity/signs/{wood}
+    for suf in ["_wall_sign", "_hanging_sign", "_wall_hanging_sign", "_sign"] {
+        if let Some(wood) = id.strip_suffix(suf) {
+            out.push(format!("entity/signs/{wood}"));
+            out.push(format!("entity/signs/hanging/{wood}"));
+            return out;
+        }
+    }
+    // Chests -> entity/chest/{type}
+    const CHEST_TYPES: &[(&str, &str)] = &[
+        ("chest", "normal"),
+        ("trapped_chest", "trapped"),
+        ("ender_chest", "ender"),
+        ("copper_chest", "copper"),
+        ("exposed_copper_chest", "copper_exposed"),
+        ("weathered_copper_chest", "copper_weathered"),
+        ("oxidized_copper_chest", "copper_oxidized"),
+        ("waxed_copper_chest", "copper"),
+        ("waxed_exposed_copper_chest", "copper_exposed"),
+        ("waxed_weathered_copper_chest", "copper_weathered"),
+        ("waxed_oxidized_copper_chest", "copper_oxidized"),
+    ];
+    for (n, t) in CHEST_TYPES {
+        if id == *n {
+            return vec![format!("entity/chest/{t}")];
+        }
+    }
+    // Shulker boxes -> entity/shulker/shulker_{color}
+    if let Some(c) = id.strip_suffix("_shulker_box") {
+        return vec![format!("entity/shulker/shulker_{c}")];
+    }
+    // Banners
+    if let Some(c) = id.strip_suffix("_wall_banner") {
+        return vec![format!("entity/banner/{c}")];
+    }
+    if let Some(c) = id.strip_suffix("_banner") {
+        return vec![format!("entity/banner/{c}")];
+    }
+    // Beds
+    if let Some(c) = id.strip_suffix("_bed") {
+        return vec![format!("entity/bed/{c}")];
+    }
+    // Decorated pots
+    if id.contains("decorated_pot") {
+        return vec![
+            "entity/decorated_pot/decorated_pot_side".into(),
+            "entity/decorated_pot/decorated_pot_base".into(),
+        ];
+    }
+    // Skulls / heads
+    for (n, path) in [
+        ("skeleton_skull", "entity/skeleton/skeleton"),
+        ("wither_skeleton_skull", "entity/skeleton/wither_skeleton"),
+        ("zombie_head", "entity/zombie/zombie"),
+        ("creeper_head", "entity/creeper/creeper"),
+        ("player_head", "entity/player/wide/steve"),
+    ] {
+        if id == n {
+            return vec![path.to_string()];
+        }
+    }
+    out
+}
+
 /// Read one asset file from the (already-opened) source. Paths are relative to
 /// the assets root (e.g. `blockstates/stone_bricks.json`), i.e. the content of
 /// `assets/minecraft/...` (jar) or `<assets dir>/minecraft/...` (directory).
@@ -290,6 +429,9 @@ fn read_asset(source: &mut OpenedSource, rel: &str) -> Result<Vec<u8>, String> {
 
 /// Discriminant-preserving decode of a base64 cached bundle (see cache module).
 /// Kept here so the cache format stays colocated with the producer.
+/// `CACHE_FMT` bumps whenever the extraction output changes (e.g. texture
+/// normalization), so stale on-disk bundles from older builds are invalidated.
+const CACHE_FMT: &str = "v6";
 pub fn bundle_cache_key(game_root: &Path, game_version: &str, blocks: &[String]) -> String {
     use sha1::{Digest, Sha1};
     let mut names: Vec<String> = blocks
@@ -311,7 +453,7 @@ pub fn bundle_cache_key(game_root: &Path, game_version: &str, blocks: &[String])
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    format!("{game_version}-{root_hex}-{hex}")
+    format!("{CACHE_FMT}-{game_version}-{root_hex}-{hex}")
 }
 
 /// On-disk cache for extracted bundles, under `{dataDir}/QML/schematic-assets/`.
@@ -434,5 +576,97 @@ mod tests {
         assert!(is_valid_schematic_ext("a.LITEMATIC"));
         assert!(is_valid_schematic_ext("a.schem"));
         assert!(!is_valid_schematic_ext("a.txt"));
+    }
+
+    #[test]
+    fn object_form_textures_are_collapsed_to_sprite() {
+        // Newer jars (1.21.4+/26.x) use {"sprite": ...} texture objects, which
+        // deepslate's getTexture cannot parse → glass would not render.
+        let mut m = serde_json::json!({
+            "parent": "minecraft:block/cube_all",
+            "textures": {
+                "all": { "force_translucent": true, "sprite": "minecraft:block/white_stained_glass" },
+                "particle": "#all"
+            }
+        });
+        normalize_model_textures(&mut m);
+        assert_eq!(
+            m["textures"]["all"],
+            serde_json::json!("minecraft:block/white_stained_glass")
+        );
+        assert_eq!(m["textures"]["particle"], serde_json::json!("#all"));
+        // Plain string values untouched.
+        let mut s = serde_json::json!({ "textures": { "all": "block/stone" } });
+        normalize_model_textures(&mut s);
+        assert_eq!(s["textures"]["all"], serde_json::json!("block/stone"));
+    }
+
+    #[test]
+    fn special_texture_ids_map_fluids_and_entities() {
+        assert_eq!(
+            special_texture_ids("minecraft:water"),
+            vec!["block/water_still", "block/water_flow"]
+        );
+        assert_eq!(
+            special_texture_ids("minecraft:lava"),
+            vec!["block/lava_still", "block/lava_flow"]
+        );
+        // wall sign -> entity/signs/{wood} (+ hanging)
+        let s = special_texture_ids("minecraft:cherry_wall_sign");
+        assert!(s.contains(&"entity/signs/cherry".to_string()));
+        let s2 = special_texture_ids("minecraft:chest");
+        assert_eq!(s2, vec!["entity/chest/normal"]);
+        assert_eq!(
+            special_texture_ids("minecraft:purple_shulker_box"),
+            vec!["entity/shulker/shulker_purple"]
+        );
+        // Non-special returns empty.
+        assert!(special_texture_ids("minecraft:stone").is_empty());
+    }
+
+    #[test]
+    fn extract_bundle_normalizes_object_textures_and_loads_sprite() {
+        let dir = tmpdir("objtex");
+        let jar = dir.join("objtex.jar");
+        let blockstate = br##"{"variants":{"":{"model":"minecraft:block/white_stained_glass"}}}"##;
+        let model = br##"{"parent":"minecraft:block/cube_all","textures":{"all":{"force_translucent":true,"sprite":"minecraft:block/white_stained_glass"},"particle":"#all"}}"##;
+        let cube_all = br##"{"parent":"minecraft:block/cube","textures":{"down":"#all","east":"#all","north":"#all","particle":"#all","south":"#all","up":"#all","west":"#all"}}"##;
+        let cube = br##"{"parent":"minecraft:block/block","textures":{},"elements":[]}"##;
+        let base = br##"{"textures":{},"elements":[]}"##;
+        let png = [0x89u8, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3];
+        write_zip_fixture(
+            &jar,
+            &[
+                (
+                    "assets/minecraft/blockstates/white_stained_glass.json",
+                    blockstate,
+                ),
+                (
+                    "assets/minecraft/models/block/white_stained_glass.json",
+                    model,
+                ),
+                ("assets/minecraft/models/block/cube_all.json", cube_all),
+                ("assets/minecraft/models/block/cube.json", cube),
+                ("assets/minecraft/models/block/block.json", base),
+                (
+                    "assets/minecraft/textures/block/white_stained_glass.png",
+                    &png,
+                ),
+            ],
+        );
+        let bundle = extract_bundle(
+            &AssetSource::Jar(jar),
+            &["minecraft:white_stained_glass".to_string()],
+        )
+        .unwrap();
+        let glass_model = &bundle.models["minecraft:block/white_stained_glass"];
+        // Object texture collapsed to a plain string AND the sprite PNG extracted.
+        assert_eq!(
+            glass_model["textures"]["all"],
+            serde_json::json!("minecraft:block/white_stained_glass")
+        );
+        assert!(bundle
+            .textures
+            .contains_key("minecraft:block/white_stained_glass"));
     }
 }
