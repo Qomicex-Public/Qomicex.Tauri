@@ -35,7 +35,7 @@ use crate::state::SharedState;
 /// easytier 为库内嵌魔改版（rev 287c667），无独立可执行文件可查版本，etVersion 固定。
 fn vendor_string() -> String {
     format!(
-        "Qomicex Launcher {}(Qomicex Connector 2.0) / Easytier v2.6.4 for QML",
+        "Qomicex Launcher {}(Qomicex Connector 2.1) / Easytier v2.6.4-d114cdd(QML edit)",
         crate::state::APP_VERSION
     )
 }
