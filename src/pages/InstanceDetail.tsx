@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup, faFileExport, faXmark} from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup, faFileExport, faXmark, faDrawPolygon, faEye, faUpload} from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Separator } from '../components/ui'
@@ -23,8 +23,8 @@ import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto } from '../types/index.ts'
-import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates } from '../api/instance-files.ts'
+import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto, FileEntry } from '../types/index.ts'
+import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates, getSchematics, deleteSchematic, renameSchematic, importSchematic } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -48,6 +48,7 @@ import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import { useI18n } from '../i18n/index.tsx'
+import SchematicPreviewDialog from '../components/SchematicPreviewDialog.tsx'
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -69,6 +70,7 @@ const TABS = [
   { id: 'resourcepacks', icon: faBox },
   { id: 'shaderpacks', icon: faSun },
   { id: 'datapacks', icon: faDatabase },
+  { id: 'schematics', icon: faDrawPolygon },
   { id: 'servers', icon: faServer },
 ] as const
 
@@ -1325,6 +1327,248 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
   )
 }
 
+function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
+  const { t } = useI18n()
+  const { notify } = useMessageBox()
+  const [search, setSearch] = useState('')
+  const [files, setFiles] = useState<FileEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const lastClickedRef = useRef(-1)
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
+  const [batchDeleting, setBatchDeleting] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [previewFile, setPreviewFile] = useState<string | null>(null)
+  const [renameTarget, setRenameTarget] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renaming, setRenaming] = useState(false)
+
+  const load = useCallback(async () => {
+    setSelected(new Set())
+    setLoading(true)
+    try { const data = await getSchematics(instanceId); setFiles(data.filter((f) => !f.isDirectory).sort((a, b) => b.lastModified.localeCompare(a.lastModified))) }
+    catch { setFiles([]) }
+    setLoading(false)
+  }, [instanceId])
+
+  useEffect(() => { load() }, [load, refreshKey])
+
+  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (ctrl) {
+        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
+      } else if (shift && lastClickedRef.current >= 0) {
+        const start = Math.min(lastClickedRef.current, files.findIndex(f => f.name === fileName))
+        const end = Math.max(lastClickedRef.current, files.findIndex(f => f.name === fileName))
+        for (let i = start; i <= end; i++) next.add(files[i].name)
+      } else {
+        next.clear(); next.add(fileName)
+      }
+      return next
+    })
+    lastClickedRef.current = files.findIndex(f => f.name === fileName)
+  }, [files])
+
+  const handleImport = useCallback(async (file: File) => {
+    setImporting(true)
+    try {
+      await importSchematic(instanceId, file)
+      notify(t('instanceDetail.schematics.imported', { name: file.name }), 'success')
+      load()
+    } catch (e) {
+      notify(t('instanceDetail.schematics.importFailed') + ': ' + (e instanceof ApiError ? e.displayMessage : String(e)), 'error')
+    }
+    setImporting(false)
+  }, [instanceId, load, notify, t])
+
+  const handleDeleteOne = useCallback(async (name: string) => {
+    try { await deleteSchematic(instanceId, name); load() }
+    catch (e) { notify(t('instanceDetail.schematics.deleteFailed') + ': ' + (e instanceof ApiError ? e.displayMessage : String(e)), 'error') }
+  }, [instanceId, load, notify, t])
+
+  const handleRename = useCallback(async () => {
+    if (!renameTarget || !renameValue.trim() || renameValue === renameTarget) {
+      setRenameTarget(null)
+      return
+    }
+    setRenaming(true)
+    try {
+      await renameSchematic(instanceId, renameTarget, renameValue.trim())
+      notify(t('instanceDetail.schematics.renamed', { name: renameValue }), 'success')
+      setRenameTarget(null)
+      load()
+    } catch (e) {
+      notify(t('instanceDetail.schematics.renameFailed') + ': ' + (e instanceof ApiError ? e.displayMessage : String(e)), 'error')
+    }
+    setRenaming(false)
+  }, [instanceId, renameTarget, renameValue, load, notify, t])
+
+  const handleBatchDelete = useCallback(async () => {
+    setBatchDeleting(true)
+    try {
+      for (const name of Array.from(selected)) {
+        try { await deleteSchematic(instanceId, name) } catch {}
+      }
+    } catch {}
+    setSelected(new Set())
+    setBatchDeleteOpen(false)
+    setBatchDeleting(false)
+    load()
+  }, [instanceId, selected, load])
+
+  const filtered = useMemo(() => {
+    if (!search) return files
+    const q = search.toLowerCase()
+    return files.filter(f => f.name.toLowerCase().includes(q))
+  }, [files, search])
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium shrink-0">
+            <FontAwesomeIcon icon={faDrawPolygon} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.schematics')}
+            {files.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({files.length})</span>}
+          </h3>
+          <div className="flex items-center gap-2 flex-1 max-w-sm">
+            <div className="relative flex-1">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.schematics.search')} className="h-8 pl-8 text-xs" />
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/schematics').catch(() => {})} className="gap-1.5 h-7 text-xs">
+              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
+            </Button>
+            <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={importing} className="gap-1.5 h-7 text-xs">
+              {importing ? <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin" /> : <FontAwesomeIcon icon={faUpload} className="h-3.5 w-3.5" />}
+              {t('instanceDetail.schematics.import')}
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".litematic,.schematic,.schem,.nbt"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const filesToImport = Array.from(e.target.files ?? [])
+                e.target.value = ''
+                for (const f of filesToImport) void handleImport(f)
+              }}
+            />
+          </div>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {search ? t('instanceDetail.schematics.noMatch') : t('instanceDetail.schematics.empty')}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {filtered.map((f) => (
+              <div
+                key={f.name}
+                onClick={(e) => toggleSelect(f.name, e.shiftKey, e.ctrlKey)}
+                className={cn(
+                  'group flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all',
+                  selected.has(f.name) ? 'border-primary/50 bg-primary/5' : 'border-border/60 bg-card hover:border-primary/20 hover:shadow-sm'
+                )}
+              >
+                <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors', selected.has(f.name) ? 'bg-primary/10 text-primary' : 'bg-muted/60 group-hover:text-primary')}>
+                  <FontAwesomeIcon icon={faDrawPolygon} className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{f.name}</div>
+                  <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>{(f.size / 1024).toFixed(f.size >= 1024 * 1024 ? 1 : 0)}{f.size >= 1024 * 1024 ? ' MB' : ' KB'}</span>
+                    <span className="text-border">·</span>
+                    <span>{new Date(f.lastModified).toLocaleString()}</span>
+                    {f.extension === 'litematic' && (
+                      <span className="rounded border px-1 py-px text-[10px] text-muted-foreground/70">litematic</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <Tooltip content={t('instanceDetail.schematics.preview')}>
+                    <button aria-label={t('instanceDetail.schematics.preview')} onClick={(e) => { e.stopPropagation(); setPreviewFile(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
+                      <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content={t('instanceDetail.schematics.rename')}>
+                    <button aria-label={t('instanceDetail.schematics.rename')} onClick={(e) => { e.stopPropagation(); setRenameTarget(f.name); setRenameValue(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                      <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content={t('instanceDetail.schematics.delete')}>
+                    <button aria-label={t('instanceDetail.schematics.delete')} onClick={(e) => { e.stopPropagation(); handleDeleteOne(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                      <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+      <I18nBatchToolbar
+        selectedCount={selected.size}
+        onClear={() => setSelected(new Set())}
+        onSelectAll={() => setSelected(new Set(filtered.map(f => f.name)))}
+      >
+        <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
+          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          {t('instanceDetail.deleteSelected', { count: selected.size })}
+        </Button>
+      </I18nBatchToolbar>
+      <Dialog open={batchDeleteOpen} onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+        <DialogHeader onClose={() => !batchDeleting && setBatchDeleteOpen(false)}>
+          <DialogTitle>{t('instanceDetail.batchDeleteTitle', { type: t('instanceDetail.schematics.type') })}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">{t('instanceDetail.batchDeleteConfirm', { count: selected.size, type: t('instanceDetail.schematics.type') })}</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>{t('instanceDetail.confirm.cancel')}</Button>
+          <Button size="sm" variant="destructive" onClick={handleBatchDelete} disabled={batchDeleting}>
+            {batchDeleting ? t('instanceDetail.confirm.deleting') : t('instanceDetail.confirm.delete')}
+          </Button>
+        </DialogFooter>
+      </Dialog>
+      <Dialog open={renameTarget !== null} onClose={() => setRenameTarget(null)}>
+        <DialogHeader onClose={() => setRenameTarget(null)}><DialogTitle>{t('instanceDetail.schematics.renameTitle')}</DialogTitle></DialogHeader>
+        <DialogBody className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t('instanceDetail.schematics.renamePlaceholder')}</Label>
+            <Input
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleRename() }}
+              autoFocus
+            />
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => setRenameTarget(null)} disabled={renaming}>{t('instanceDetail.confirm.cancel')}</Button>
+          <Button size="sm" onClick={() => void handleRename()} disabled={renaming || !renameValue.trim() || renameValue === renameTarget}>
+            {renaming ? t('instanceDetail.confirm.deleting') : t('instanceDetail.confirm.confirm')}
+          </Button>
+        </DialogFooter>
+      </Dialog>
+      <SchematicPreviewDialog
+        open={previewFile !== null}
+        instanceId={instanceId}
+        fileName={previewFile ?? ''}
+        onClose={() => setPreviewFile(null)}
+      />
+    </Card>
+  )
+}
+
 function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoinServer }: { instanceId: string; refreshKey: number; onRefresh: () => void; onQuickJoinServer: (ip: string) => void }) {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
@@ -2039,6 +2283,7 @@ export default function InstanceDetailPage() {
   const [resourcePacksRefresh, setResourcePacksRefresh] = useState(0)
   const [shadersRefresh, setShadersRefresh] = useState(0)
   const [dataPacksRefresh, setDataPacksRefresh] = useState(0)
+  const [schematicsRefresh, setSchematicsRefresh] = useState(0)
   const [serversRefresh, setServersRefresh] = useState(0)
   const [gameSettingsRefresh, setGameSettingsRefresh] = useState(0)
   const [detailRefreshKey, setDetailRefreshKey] = useState(0)
@@ -2055,6 +2300,7 @@ export default function InstanceDetailPage() {
     setResourcePacksRefresh(k => k + 1)
     setShadersRefresh(k => k + 1)
     setDataPacksRefresh(k => k + 1)
+    setSchematicsRefresh(k => k + 1)
     setServersRefresh(k => k + 1)
     setGameSettingsRefresh(k => k + 1)
   }, [])
@@ -2658,6 +2904,7 @@ export default function InstanceDetailPage() {
           <TabContent activeTab={tab} tabId="resourcepacks"><ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} /></TabContent>
           <TabContent activeTab={tab} tabId="shaderpacks"><ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} /></TabContent>
           <TabContent activeTab={tab} tabId="datapacks"><DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} /></TabContent>
+          <TabContent activeTab={tab} tabId="schematics"><SchematicsTab instanceId={id!} gameDir={gameDir} refreshKey={schematicsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-schematics`); setSchematicsRefresh(k => k + 1) }} /></TabContent>
           <TabContent activeTab={tab} tabId="servers"><ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} onQuickJoinServer={(ip) => handleQuickLaunch({ joinServer: ip })} /></TabContent>
           <TabContent activeTab={tab} tabId="gamesettings"><GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} /></TabContent>
         </div>

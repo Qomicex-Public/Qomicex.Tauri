@@ -441,6 +441,7 @@ pub async fn run_install_pipeline(
             "screenshots",
             "datapacks",
             "crash-reports",
+            "schematics",
         ] {
             let _ = std::fs::create_dir_all(iso_dir.join(sub));
         }

@@ -13,5 +13,6 @@ pub mod license_core;
 pub mod modpack_export;
 pub mod options;
 pub mod plugin;
+pub mod schematic_assets;
 pub mod trace;
 pub mod translation;

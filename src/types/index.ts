@@ -469,6 +469,19 @@ export interface FileEntry {
   extension: string
 }
 
+/**
+ * 原理图预览资源包（POST /instance/{id}/schematics/assets 响应）。
+ * blockstates/models 的键为完整 id（minecraft:xxx / minecraft:block/xxx），
+ * textures 为 base64 PNG。
+ */
+export interface SchematicAssetsBundle {
+  blockstates: Record<string, unknown>
+  models: Record<string, unknown>
+  textures: Record<string, string>
+  source: string
+  missingBlocks: string[]
+}
+
 export interface ModUpdateEntry {
   fileName: string
   name: string

@@ -17,10 +17,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,7 @@ use qomicex_core::models::expansion::curseforge::mod_loader_type;
 use qomicex_core::models::expansion::local::LevelDatSettings;
 
 use crate::error::{ApiError, ApiResult};
+use crate::services::schematic_assets;
 use crate::settings;
 use crate::state::SharedState;
 
@@ -172,6 +173,17 @@ struct SaveRenameRequest {
     old_name: String,
     new_name: String,
 }
+
+/// POST /instance/{id}/schematics/assets — blocks to extract (full names like
+/// "minecraft:stone_bricks").
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SchematicAssetsRequest {
+    blocks: Vec<String>,
+}
+
+/// 单个原理图文件最大体积（导入 / 预览字节下载上限）。
+const SCHEMATIC_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Deserialize, Default)]
 struct NameQuery {
@@ -506,6 +518,22 @@ pub fn router() -> Router<SharedState> {
             "/instance/{id}/files/screenshots",
             delete(delete_screenshot),
         )
+        // schematics (投影原理图 / Litematica)
+        .route("/instance/{id}/files/schematics", get(list_schematics))
+        .route("/instance/{id}/files/schematics", delete(delete_schematic))
+        .route(
+            "/instance/{id}/files/schematics/rename",
+            post(rename_schematic),
+        )
+        .route(
+            "/instance/{id}/files/schematics/import",
+            post(import_schematic).route_layer(DefaultBodyLimit::max(SCHEMATIC_MAX_BYTES as usize)),
+        )
+        .route(
+            "/instance/{id}/files/schematics/{name}/bytes",
+            get(schematic_bytes),
+        )
+        .route("/instance/{id}/schematics/assets", post(schematic_assets))
         // saves
         .route("/instance/{id}/files/saves", get(list_saves))
         .route("/instance/{id}/files/saves/metadata", get(saves_metadata))
@@ -723,6 +751,7 @@ async fn installed_names(
         "datapacks" | "datapack" => "datapacks",
         "saves" | "save" => "saves",
         "screenshots" => "screenshots",
+        "schematics" | "schematic" => "schematics",
         _ => "mods",
     };
     let dir = category_dir(&r, cat);
@@ -1543,6 +1572,214 @@ async fn delete_screenshot(
     let r = resolve(&id, &state)?;
     delete_file(&category_dir(&r, "screenshots").join(&name));
     Ok(StatusCode::NO_CONTENT)
+}
+
+// =====================================================================
+// Handlers: schematics (投影原理图 / Litematica)
+// =====================================================================
+
+async fn list_schematics(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<Vec<FileEntryDto>>> {
+    let r = resolve(&id, &state)?;
+    Ok(Json(file_entries(&category_dir(&r, "schematics"))))
+}
+
+async fn delete_schematic(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Query(q): Query<NameQuery>,
+) -> ApiResult<StatusCode> {
+    let name = required_name(q.name)?;
+    if !schematic_assets::is_plain_file_name(&name) {
+        return Err(ApiError::bad_request("INVALID_NAME", "非法的文件名"));
+    }
+    let r = resolve(&id, &state)?;
+    delete_file(&category_dir(&r, "schematics").join(&name));
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn rename_schematic(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Json(req): Json<SaveRenameRequest>,
+) -> ApiResult<StatusCode> {
+    if !schematic_assets::is_plain_file_name(&req.old_name)
+        || !schematic_assets::is_plain_file_name(&req.new_name)
+    {
+        return Err(ApiError::bad_request("INVALID_NAME", "非法的文件名"));
+    }
+    let r = resolve(&id, &state)?;
+    let dir = category_dir(&r, "schematics");
+    let src = dir.join(&req.old_name);
+    if !src.is_file() {
+        return Err(ApiError::not_found(
+            "SCHEMATIC_NOT_FOUND",
+            format!("原理图 '{}' 不存在", req.old_name),
+        ));
+    }
+    let dst = dir.join(&req.new_name);
+    if dst.exists() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "SCHEMATIC_EXISTS",
+            format!("已存在同名文件 '{}'", req.new_name),
+        ));
+    }
+    std::fs::rename(&src, &dst).map_err(|e| ApiError::internal(format!("重命名失败: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn import_schematic(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    mut multipart: Multipart,
+) -> ApiResult<StatusCode> {
+    let r = resolve(&id, &state)?;
+    let dir = category_dir(&r, "schematics");
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::bad_request("MULTIPART_ERROR", e.to_string()))?
+    {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let file_name = field
+            .file_name()
+            .map(String::from)
+            .ok_or_else(|| ApiError::bad_request("MISSING_FILENAME", "缺少文件名"))?;
+        if !schematic_assets::is_plain_file_name(&file_name) {
+            return Err(ApiError::bad_request("INVALID_NAME", "非法的文件名"));
+        }
+        if !schematic_assets::is_valid_schematic_ext(&file_name) {
+            return Err(ApiError::bad_request(
+                "SCHEMATIC_BAD_EXTENSION",
+                "仅支持 .litematic / .schematic / .schem / .nbt 文件",
+            ));
+        }
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| ApiError::bad_request("UPLOAD_READ_ERROR", e.to_string()))?;
+        if data.is_empty() {
+            return Err(ApiError::bad_request("EMPTY_FILE", "文件为空"));
+        }
+        if data.len() as u64 > SCHEMATIC_MAX_BYTES {
+            return Err(ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "SCHEMATIC_TOO_LARGE",
+                "原理图文件过大",
+            ));
+        }
+        let dst = dir.join(&file_name);
+        if dst.exists() {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "SCHEMATIC_EXISTS",
+                format!("已存在同名文件 '{file_name}'，请先重命名或删除"),
+            ));
+        }
+        std::fs::write(&dst, &data).map_err(|e| ApiError::internal(format!("写入失败: {e}")))?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    Err(ApiError::bad_request(
+        "MISSING_FILE",
+        "缺少上传文件 (name=file)",
+    ))
+}
+
+async fn schematic_bytes(
+    AxumPath((id, name)): AxumPath<(String, String)>,
+    State(state): State<SharedState>,
+) -> ApiResult<Response> {
+    if !schematic_assets::is_plain_file_name(&name) {
+        return Err(ApiError::bad_request("INVALID_NAME", "非法的文件名"));
+    }
+    let r = resolve(&id, &state)?;
+    let path = category_dir(&r, "schematics").join(&name);
+    if !path.is_file() {
+        return Err(ApiError::not_found(
+            "SCHEMATIC_NOT_FOUND",
+            format!("原理图 '{name}' 不存在"),
+        ));
+    }
+    let meta = match std::fs::metadata(&path) {
+        Ok(m) => m,
+        Err(e) => return Err(ApiError::internal(format!("读取失败: {e}"))),
+    };
+    if meta.len() > SCHEMATIC_MAX_BYTES {
+        return Err(ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "SCHEMATIC_TOO_LARGE",
+            "原理图文件过大，无法预览",
+        ));
+    }
+    let bytes = std::fs::read(&path)?;
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        bytes,
+    )
+        .into_response())
+}
+
+/// POST /instance/{id}/schematics/assets — 按调色板子集从用户游戏文件提取
+/// blockstates/models/纹理（base64），磁盘缓存避免重复解 jar。
+async fn schematic_assets(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Json(req): Json<SchematicAssetsRequest>,
+) -> ApiResult<Json<schematic_assets::SchematicAssetsBundle>> {
+    let inst = state
+        .instance
+        .get_by_id(&id)
+        .ok_or_else(|| instance_not_found(&id))?;
+    let game_version = inst.game_version.clone();
+    if game_version.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "GAME_VERSION_MISSING",
+            "实例缺少游戏版本，无法定位材质",
+        ));
+    }
+    let game_root = {
+        let raw = inst.game_dir.clone();
+        let base = PathBuf::from(&raw);
+        if base.is_absolute() {
+            base
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(base)
+        } else {
+            base
+        }
+    };
+    if req.blocks.is_empty() {
+        return Err(ApiError::bad_request(
+            "MISSING_BLOCKS",
+            "缺少要提取的方块列表",
+        ));
+    }
+    // 去重、排序后与缓存匹配
+    let mut blocks = req.blocks.clone();
+    blocks.sort();
+    blocks.dedup();
+    // 始终附带 mogic stone 兜底：前端把缺材质的方块渲染为石头。
+    if !blocks.iter().any(|b| b == "minecraft:stone") {
+        blocks.push("minecraft:stone".to_string());
+        blocks.sort();
+    }
+    let cache_key = schematic_assets::bundle_cache_key(&game_root, &game_version, &blocks);
+    let cache_path = schematic_assets::bundle_cache_path(&state.data_dir, &cache_key);
+    if let Some(cached) = schematic_assets::read_bundle_cache(&cache_path) {
+        return Ok(Json(cached));
+    }
+    let source = schematic_assets::locate_asset_source(&game_root, &game_version)
+        .map_err(|msg| ApiError::not_found("SCHEMATIC_ASSETS_NOT_FOUND", msg))?;
+    let bundle = schematic_assets::extract_bundle(&source, &blocks)
+        .map_err(|e| ApiError::internal(format!("材质提取失败: {e}")))?;
+    schematic_assets::write_bundle_cache(&cache_path, &bundle);
+    Ok(Json(bundle))
 }
 
 // =====================================================================

@@ -1,5 +1,19 @@
-import { get, del, post, put } from './client.ts'
-import type { FileEntry, ModMetadata, ModEnrichEntry, ModUpdateEntry, ResourcePackMetadata, ShaderMetadata, SaveMetadata, SaveSettings, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState, LanGameEntry } from '../types/index.ts'
+import { get, del, post, put, ApiError, API_BASE } from './client.ts'
+import type { FileEntry, ModMetadata, ModEnrichEntry, ModUpdateEntry, ResourcePackMetadata, ShaderMetadata, SaveMetadata, SaveSettings, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState, LanGameEntry, SchematicAssetsBundle } from '../types/index.ts'
+
+/** 从非 JSON 错误响应构造 ApiError（表单上传等场景）。 */
+async function apiErrorFrom(res: Response, fallbackCode: string, fallbackMessage: string): Promise<ApiError> {
+  try {
+    const json = await res.json()
+    if (json && typeof json.code === 'string' && typeof json.message === 'string') {
+      return new ApiError(json)
+    }
+    if (json && typeof json.message === 'string') {
+      return new ApiError({ code: fallbackCode, message: String(json.message), detail: null, traceId: '', timestamp: new Date().toISOString(), status: res.status })
+    }
+  } catch { /* non-JSON body */ }
+  return new ApiError({ code: fallbackCode, message: fallbackMessage, detail: null, traceId: '', timestamp: new Date().toISOString(), status: res.status })
+}
 
 export function getSaves(instanceId: string): Promise<FileEntry[]> {
   return get<FileEntry[]>(`/instance/${instanceId}/files/saves`)
@@ -155,6 +169,45 @@ export async function deleteDataPack(instanceId: string, name: string): Promise<
 
 export function getLanGames(instanceId: string): Promise<LanGameEntry[]> {
   return get<LanGameEntry[]>(`/instance/${instanceId}/files/lan-games`)
+}
+
+// =====================================================================
+// 投影原理图 / Litematica (.litematic) 管理
+// =====================================================================
+
+export function getSchematics(instanceId: string): Promise<FileEntry[]> {
+  return get<FileEntry[]>(`/instance/${instanceId}/files/schematics`)
+}
+
+export function deleteSchematic(instanceId: string, name: string): Promise<void> {
+  return del(`/instance/${instanceId}/files/schematics?name=${encodeURIComponent(name)}`)
+}
+
+export function renameSchematic(instanceId: string, oldName: string, newName: string): Promise<void> {
+  return post(`/instance/${instanceId}/files/schematics/rename`, { oldName, newName })
+}
+
+/** 导入本地原理图文件（multipart）。同名报 409 SCHEMATIC_EXISTS。 */
+export async function importSchematic(instanceId: string, file: File): Promise<void> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE}/instance/${instanceId}/files/schematics/import`, { method: 'POST', body: form })
+  if (!res.ok) throw await apiErrorFrom(res, 'SCHEMATIC_IMPORT_FAILED', '导入失败')
+}
+
+/** 下载原理图原始字节（浏览器端解析 NBT）。 */
+export async function getSchematicBytes(instanceId: string, name: string): Promise<ArrayBuffer> {
+  const res = await fetch(`${API_BASE}/instance/${instanceId}/files/schematics/${encodeURIComponent(name)}/bytes`)
+  if (!res.ok) throw await apiErrorFrom(res, 'SCHEMATIC_DOWNLOAD_FAILED', '下载原理图失败')
+  return res.arrayBuffer()
+}
+
+/** 按调色板方块集从游戏 jar/版本目录提取预览素材（首次提取可达数十秒，绕过 15s 全局超时）。 */
+export function getSchematicAssets(instanceId: string, blocks: string[]): Promise<SchematicAssetsBundle> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 120_000)
+  return post<SchematicAssetsBundle>(`/instance/${instanceId}/schematics/assets`, { blocks }, { signal: controller.signal })
+    .finally(() => clearTimeout(timer))
 }
 
 export function getModUpdatesCache(instanceId: string): Promise<{ updates: ModUpdateEntry[]; stale: boolean }> {
