@@ -29,6 +29,7 @@ import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
+import { checkRequired } from '../api/update.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
@@ -126,6 +127,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [licenseCopied, setLicenseCopied] = useState(false)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
+  const [pendingRequired, setPendingRequired] = useState(false)
   const [legalDialogOpen, setLegalDialogOpen] = useState(false)
   const { t } = useI18n()
 
@@ -155,7 +157,13 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
         setUpdateState('uptodate')
         return
       }
+      let required = false
+      try {
+        const info = await checkRequired(update.currentVersion, channel)
+        required = info.hasUpdate && info.required === true
+      } catch {}
       setPendingUpdate(update)
+      setPendingRequired(required)
       setUpdateState('available')
       setUpdateDialogOpen(true)
     } catch (e) {
@@ -282,16 +290,11 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
         </CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
-            <Select value={channel} onChange={setChannelAndSave} className="w-28">
-              {licenseStatus?.valid && licenseStatus?.channel === 'alpha' ? (
-                <SelectOption value="alpha">Alpha</SelectOption>
-              ) : (
-                <>
-                  <SelectOption value="stable">{t('settings.about.stable')}</SelectOption>
-                  <SelectOption value="beta">{t('settings.about.beta')}</SelectOption>
-                </>
-              )}
-            </Select>
+<Select value={channel} onChange={setChannelAndSave} className="w-28">
+  <SelectOption value="stable">{t('settings.about.stable')}</SelectOption>
+  <SelectOption value="beta">{t('settings.about.beta')}</SelectOption>
+  <SelectOption value="alpha">Alpha</SelectOption>
+</Select>
             <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
               <FontAwesomeIcon icon={updateState === 'checking' ? faRotate : faArrowUp} className={cn('mr-1 h-3 w-3', updateState === 'checking' && 'animate-spin')} />
               {updateState === 'checking' ? t('settings.about.checking') : t('settings.about.checkUpdate')}
@@ -315,7 +318,11 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       <UpdateDialog
         open={updateDialogOpen}
         update={pendingUpdate}
-        onClose={() => setUpdateDialogOpen(false)}
+        required={pendingRequired}
+        onClose={() => {
+          setUpdateDialogOpen(false)
+          setPendingRequired(false)
+        }}
       />
 
       {/* Contributors */}
