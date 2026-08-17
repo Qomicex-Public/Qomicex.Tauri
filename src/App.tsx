@@ -30,6 +30,7 @@ import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
+import { checkRequired } from './api/update.ts'
 
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
 import { SplashScreen } from './components/SplashScreen.tsx'
@@ -62,6 +63,7 @@ function AppContent() {
   const { crashDialogState, clearCrashDialog } = useRunning()
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
+  const [pendingUpdateRequired, setPendingUpdateRequired] = useState(false)
   const autoCheckDone = useRef(false)
   const { loadPlugins } = usePluginStore()
   const [showWizard, setShowWizard] = useState(false)
@@ -127,8 +129,15 @@ function AppContent() {
         })
         if (!update) return
 
+        // 强制更新标记：来自后端 /api/update/check（后端镜像 C# 逻辑，按 current 判断）
+        let required = false
+        try {
+          const info = await checkRequired(update.currentVersion, channel)
+          required = info.hasUpdate && info.required === true
+        } catch {}
+
         const snooze = localStorage.getItem('snooze-update')
-        if (snooze) {
+        if (!required && snooze) {
           try {
             const s = JSON.parse(snooze)
             if (s.version === update.version && s.until > Date.now()) return
@@ -136,6 +145,7 @@ function AppContent() {
         }
 
         setPendingUpdate(update)
+        setPendingUpdateRequired(required)
       } catch (e) {
         console.warn('[updater] background check failed:', e)
       }
@@ -232,11 +242,13 @@ function AppContent() {
       <UpdateDialog
         open={pendingUpdate !== null}
         update={pendingUpdate}
+        required={pendingUpdateRequired}
         onClose={() => {
-          if (pendingUpdate) {
+          if (pendingUpdate && !pendingUpdateRequired) {
             localStorage.setItem('snooze-update', JSON.stringify({ version: pendingUpdate.version, until: Date.now() + 86400000 }))
           }
           setPendingUpdate(null)
+          setPendingUpdateRequired(false)
         }}
       />
     </Provider>
