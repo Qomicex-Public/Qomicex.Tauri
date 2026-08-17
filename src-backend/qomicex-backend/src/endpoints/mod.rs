@@ -10,6 +10,7 @@ pub mod launch;
 pub mod license;
 pub mod loader;
 pub mod log;
+pub mod loganalysis;
 pub mod mcmod;
 pub mod modpack;
 pub mod plugin;

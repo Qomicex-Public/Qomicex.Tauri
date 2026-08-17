@@ -1,0 +1,1152 @@
+{
+  "version": "1.1.0",
+  "lastUpdated": "2026-08-17",
+  "patterns": [
+    {
+      "id": "out-of-memory-heap",
+      "category": "Memory",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "Java堆内存不足", "description": "游戏分配的堆内存不足导致崩溃" },
+        "en": { "name": "Java Heap Space Out of Memory", "description": "Game crashed due to insufficient heap memory allocation" }
+      },
+      "regexPatterns": [
+        "java\\.lang\\.OutOfMemoryError: Java heap space",
+        "java\\.lang\\.OutOfMemoryError: GC overhead limit exceeded"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "建议将最大内存分配增加到至少 4096MB（当前可能过低）。在 版本设置 → Java 选项 中调整 -Xmx 参数",
+          "actionType": "IncreaseMemory"
+        },
+        {
+          "priority": 2,
+          "description": "如果内存已设置足够，尝试添加JVM参数：-XX:+UseG1GC -XX:MaxGCPauseMillis=200",
+          "actionType": "AddJvmArgs"
+        },
+        {
+          "priority": 3,
+          "description": "关闭其他占用内存的程序后重试",
+          "actionType": "CloseOtherApps"
+        }
+      ]
+    },
+    {
+      "id": "out-of-memory-metaspace",
+      "category": "Memory",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "Metaspace内存不足", "description": "类元数据空间不足，通常由过多Mod导致" },
+        "en": { "name": "Metaspace Out of Memory", "description": "Class metadata space exhausted, usually caused by too many mods" }
+      },
+      "regexPatterns": [
+        "java\\.lang\\.OutOfMemoryError: Metaspace",
+        "java\\.lang\\.OutOfMemoryError: CompressedClassSpace"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "添加JVM参数增加Metaspace大小：-XX:MaxMetaspaceSize=512M",
+          "actionType": "AddJvmArgs"
+        },
+        {
+          "priority": 2,
+          "description": "考虑减少同时加载的Mod数量",
+          "actionType": "ReduceMods"
+        }
+      ]
+    },
+    {
+      "id": "mod-duplicate",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Mod重复", "description": "检测到重复的Mod文件" },
+        "en": { "name": "Duplicate Mod", "description": "Duplicate mod files detected" }
+      },
+      "regexPatterns": [
+        "Found a duplicate mod (?<modId>[^\\s]+)",
+        "Mod (?<modId>\\S+) has been loaded twice",
+        "Duplicate Mods:\\s*\\{(?<modId>[^}]+)\\}"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "删除重复的Mod文件：{modId}，保留最新版本。在 实例 → 模组管理 中查找并移除",
+          "actionType": "RemoveDuplicateMod"
+        }
+      ]
+    },
+    {
+      "id": "missing-dependency",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "缺少依赖Mod", "description": "Mod需要其他Mod作为依赖但未找到" },
+        "en": { "name": "Missing Dependency", "description": "Mod requires another mod as dependency" }
+      },
+      "regexPatterns": [
+        "模组.*\\((?<modA>[^\\)]+)\\).*需要.*?(?<modB>architectury|fabric|forge|quilt).*?(?<version>\\d+\\.\\d+\\.\\d+)",
+        "Mod \\((?<modA>[^)]+)\\).*requires.*?(?<modB>\\w+).*?(?<version>\\d+\\.\\d+\\.\\d+)",
+        "MissingModsException: Mod \\{(?<modA>[^}]+)\\} requires \\{(?<modB>[^}]+)\\}",
+        "Could not find required mod: '(?<modB>[^']+)'",
+        "depends (?<modB>\\S+) @ \\[(?<version>[\\d.]+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "安装缺失的依赖Mod：{modB} 版本 {version} 或更高版本。可在 资源中心 搜索下载",
+          "actionType": "InstallMod"
+        },
+        {
+          "priority": 2,
+          "description": "如果已安装该Mod，检查版本是否满足要求（需要 {version} 或更高）",
+          "actionType": "CheckModVersion"
+        }
+      ]
+    },
+    {
+      "id": "mod-version-conflict",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Mod版本冲突", "description": "Mod之间存在版本不兼容" },
+        "en": { "name": "Mod Version Conflict", "description": "Incompatible mod versions" }
+      },
+      "regexPatterns": [
+        "(?<modA>\\S+) is incompatible with (?<modB>\\S+)",
+        "Conflicting mods found: (?<modA>[^,]+), (?<modB>[^\\s]+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "Mod {modA} 与 {modB} 存在冲突，请移除其中一个。在 实例 → 模组管理 中卸载",
+          "actionType": "RemoveConflictingMod"
+        },
+        {
+          "priority": 2,
+          "description": "尝试寻找兼容的两个Mod版本",
+          "actionType": "FindCompatibleVersion"
+        }
+      ]
+    },
+    {
+      "id": "incompatible-mod-set",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Mod集合不兼容", "description": "Mod之间存在不兼容，无法确定具体是哪个Mod" },
+        "en": { "name": "Incompatible Mod Set", "description": "Mods are incompatible, specific conflicting mods unknown" }
+      },
+      "regexPatterns": [
+        "Incompatible mod set!"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "检查完整的错误日志，找出具体冲突的Mod",
+          "actionType": "ReviewFullLog"
+        },
+        {
+          "priority": 2,
+          "description": "尝试逐个移除最近添加的Mod来排查问题",
+          "actionType": "BinarySearchMods"
+        }
+      ]
+    },
+    {
+      "id": "java-version-too-old",
+      "category": "JavaRelated",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "Java版本过旧", "description": "当前Java版本无法满足游戏或Mod要求" },
+        "en": { "name": "Java Version Too Old", "description": "Current Java version too old for game or mods" }
+      },
+      "regexPatterns": [
+        "class file version (?<major>\\d+)\\.(?<minor>\\d+)",
+        "Unsupported class file major version (?<version>\\d+)",
+        "has been compiled by a more recent version of the Java Runtime",
+        "(?<class>\\S+)\\.class: version (?<version>\\d+)\\.\\d+"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "当前Java版本过旧，建议升级到Java 17 或更高版本。在 设置 → Java 管理 中安装新版本并切换到实例",
+          "actionType": "UpgradeJava"
+        }
+      ]
+    },
+    {
+      "id": "java-version-too-new",
+      "category": "JavaRelated",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "Java版本过新", "description": "当前Java版本过高，旧版游戏不支持" },
+        "en": { "name": "Java Version Too New", "description": "Current Java version too new for old game version" }
+      },
+      "regexPatterns": [
+        "Java version (?<version>\\d+) is not supported",
+        "Unsupported Java version",
+        "does not support Java (?<version>\\d+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "当前Java版本过高，建议使用Java 8（旧版游戏）。在 实例 → Java 选项 中切换到已安装的 Java 8",
+          "actionType": "DowngradeJava"
+        }
+      ]
+    },
+    {
+      "id": "missing-natives",
+      "category": "Resource",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "缺少本地库文件", "description": "无法找到必要的本地库文件（.dll/.so/.dylib）" },
+        "en": { "name": "Missing Native Libraries", "description": "Required native libraries not found" }
+      },
+      "regexPatterns": [
+        "UnsatisfiedLinkError: (?<library>[^\\s]+)",
+        "no (?<library>[^\\s]+) in java\\.library\\.path",
+        "Failed to locate library: (?<library>[^\\s]+)",
+        "Failed to load native library: (?<library>[^\\s]+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "缺少本地库：{library}，尝试重新安装游戏版本",
+          "actionType": "ReinstallVersion"
+        },
+        {
+          "priority": 2,
+          "description": "检查系统是否安装了必要的运行库（如Visual C++ Redistributable）",
+          "actionType": "InstallRuntime"
+        }
+      ]
+    },
+    {
+      "id": "access-violation",
+      "category": "Resource",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "访问违规/显卡驱动问题", "description": "通常是显卡驱动问题或内存访问违规" },
+        "en": { "name": "Access Violation", "description": "Usually graphics driver issue or memory access violation" }
+      },
+      "regexPatterns": [
+        "EXCEPTION_ACCESS_VIOLATION",
+        "The game crashed whilst (?<reason>[^\\n]+)",
+        "exit code: (?<code>-?\\d+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "更新显卡驱动到最新版本",
+          "actionType": "UpdateDriver"
+        },
+        {
+          "priority": 2,
+          "description": "尝试禁用Mod后启动，检查是否是Mod导致的兼容性问题",
+          "actionType": "DisableMods"
+        },
+        {
+          "priority": 3,
+          "description": "如果是笔记本电脑，确保使用独立显卡而非集成显卡运行游戏",
+          "actionType": "SwitchGraphicsCard"
+        }
+      ]
+    },
+    {
+      "id": "shader-pack-error",
+      "category": "Resource",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "光影包错误", "description": "光影包（Shader）加载失败" },
+        "en": { "name": "Shader Pack Error", "description": "Shader pack failed to load" }
+      },
+      "regexPatterns": [
+        "Shader compilation failed",
+        "Error compiling shader: (?<shader>[^\\n]+)",
+        "(?<shaderPack>[^\\s]+) shader pack: (?<error>[^\\n]+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "移除或更换当前光影包：{shaderPack}",
+          "actionType": "RemoveShaderPack"
+        },
+        {
+          "priority": 2,
+          "description": "更新显卡驱动，确保支持OpenGL 3.2 或更高",
+          "actionType": "UpdateDriver"
+        }
+      ]
+    },
+    {
+      "id": "texture-atlas-too-large",
+      "category": "Performance",
+      "severity": "Warning",
+      "i18n": {
+        "zh": { "name": "纹理图集过大", "description": "Mod过多导致纹理图集超出显卡限制" },
+        "en": { "name": "Texture Atlas Too Large", "description": "Too many mods causing texture atlas to exceed GPU limits" }
+      },
+      "regexPatterns": [
+        "Texture atlas is too large",
+        "Maximum texture size is (?<size>\\d+)",
+        "Texture dimensions exceed maximum"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "减少高清资源包和Mod数量",
+          "actionType": "ReduceResourcePacks"
+        },
+        {
+          "priority": 2,
+          "description": "安装内存优化Mod，如FerriteCore或ModernFix",
+          "actionType": "InstallOptimizationMod"
+        }
+      ]
+    },
+    {
+      "id": "ticking-entity",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "实体Tick异常", "description": "某个实体（生物/方块）更新时发生错误" },
+        "en": { "name": "Ticking Entity", "description": "Error occurred while updating an entity" }
+      },
+      "regexPatterns": [
+        "Ticking entity",
+        "Ticking block entity",
+        "Entity being ticked",
+        "Caused by: (?<exception>[^\\n]+)\\s*at (?<class>[^.]+\\.[^.]+\\.[^.]+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "使用NBT编辑器删除导致问题的实体（高级操作，请备份存档）",
+          "actionType": "RemoveEntity"
+        },
+        {
+          "priority": 2,
+          "description": "如果知道是哪个Mod添加的实体，尝试移除该Mod",
+          "actionType": "RemoveProblemMod"
+        }
+      ]
+    },
+    {
+      "id": "mixin-transformer-error",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Mixin转换错误", "description": "Mod代码注入失败，通常是Mod间不兼容" },
+        "en": { "name": "Mixin Transformer Error", "description": "Mod code injection failed, usually mod incompatibility" }
+      },
+      "regexPatterns": [
+        "Mixin apply failed",
+        "Mixin transformation of (?<class>[^\\s]+) failed",
+        "org\\.spongepowered\\.asm\\.mixin\\.transformer\\.throwables\\.MixinTransformerError"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "检查冲突的Mod：查找堆栈追踪中提到的Mod名称",
+          "actionType": "IdentifyConflictingMod"
+        },
+        {
+          "priority": 2,
+          "description": "尝试逐个移除最近添加的Mod，找出导致问题的Mod",
+          "actionType": "BinarySearchMods"
+        }
+      ]
+    },
+    {
+      "id": "class-not-found",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "类未找到", "description": "运行时找不到所需的类，通常是Mod间API版本不匹配" },
+        "en": { "name": "Class Not Found", "description": "Required class not found at runtime, usually API version mismatch" }
+      },
+      "regexPatterns": [
+        "java\\.lang\\.ClassNotFoundException: (?<class>[^\\s]+)",
+        "NoClassDefFoundError: (?<class>[^\\s]+)",
+        "Caused by: java\\.lang\\.ClassNotFoundException"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "检查缺失的类所属的Mod版本是否兼容当前游戏版本",
+          "actionType": "CheckModCompatibility"
+        },
+        {
+          "priority": 2,
+          "description": "尝试重新下载安装该Mod，文件可能损坏",
+          "actionType": "ReinstallMod"
+        }
+      ]
+    },
+    {
+      "id": "no-such-method",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "方法未找到", "description": "调用的方法不存在，通常是Mod与游戏版本不兼容" },
+        "en": { "name": "No Such Method", "description": "Method not found, usually mod incompatible with game version" }
+      },
+      "regexPatterns": [
+        "java\\.lang\\.NoSuchMethodError: (?<method>[^\\s]+)",
+        "java\\.lang\\.NoSuchFieldError: (?<field>[^\\s]+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "该Mod版本与当前游戏版本不兼容，请更新Mod或寻找兼容版本",
+          "actionType": "UpdateMod"
+        }
+      ]
+    },
+    {
+      "id": "glfw-error",
+      "category": "JavaRelated",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "GLFW窗口错误", "description": "游戏窗口初始化失败" },
+        "en": { "name": "GLFW Error", "description": "Game window initialization failed" }
+      },
+      "regexPatterns": [
+        "GLFW error (?<code>\\d+): (?<message>[^\\n]+)",
+        "Failed to create GLFW window",
+        "GLFW platform error"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "更新显卡驱动",
+          "actionType": "UpdateDriver"
+        },
+        {
+          "priority": 2,
+          "description": "尝试以窗口化模式启动（而非全屏）",
+          "actionType": "UseWindowedMode"
+        },
+        {
+          "priority": 3,
+          "description": "检查是否有其他程序占用了图形资源",
+          "actionType": "CloseGraphicApps"
+        }
+      ]
+    },
+    {
+      "id": "lwjgl-error",
+      "category": "JavaRelated",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "LWJGL错误", "description": "轻量级Java游戏库初始化失败" },
+        "en": { "name": "LWJGL Error", "description": "Lightweight Java Game Library initialization failed" }
+      },
+      "regexPatterns": [
+        "org\\.lwjgl\\.system\\.glfw\\.GLFWError",
+        "LWJGL Error: (?<message>[^\\n]+)",
+        "Failed to initialize LWJGL"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "尝试删除 .minecraft/libraries 目录后重新启动（会自动重新下载）",
+          "actionType": "ClearLibraries"
+        },
+        {
+          "priority": 2,
+          "description": "更新显卡驱动",
+          "actionType": "UpdateDriver"
+        }
+      ]
+    },
+    {
+      "id": "mod-loading-failed",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Mod加载失败", "description": "Mod初始化过程中发生错误" },
+        "en": { "name": "Mod Loading Failed", "description": "Error during mod initialization" }
+      },
+      "regexPatterns": [
+        "Failed to load mod: (?<modId>[^\\s]+)",
+        "Mod (?<modId>[^\\s]+) failed to load",
+        "Failed to create mod instance for (?<modId>[^\\s]+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "移除Mod：{modId}，检查是否有更新的兼容版本",
+          "actionType": "RemoveMod"
+        },
+        {
+          "priority": 2,
+          "description": "检查该Mod的依赖是否全部安装",
+          "actionType": "CheckDependencies"
+        }
+      ]
+    },
+    {
+      "id": "resource-pack-error",
+      "category": "Resource",
+      "severity": "Warning",
+      "i18n": {
+        "zh": { "name": "资源包错误", "description": "资源包加载失败或格式错误" },
+        "en": { "name": "Resource Pack Error", "description": "Resource pack failed to load or format error" }
+      },
+      "regexPatterns": [
+        "Failed to load resource pack: (?<pack>[^\\n]+)",
+        "Resource pack (?<pack>[^\\s]+) is incompatible",
+        "Error loading pack (?<pack>[^\\s]+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "移除或更新资源包：{pack}",
+          "actionType": "RemoveResourcePack"
+        }
+      ]
+    },
+    {
+      "id": "network-error",
+      "category": "Network",
+      "severity": "Warning",
+      "i18n": {
+        "zh": { "name": "网络错误", "description": "连接服务器或下载资源时出错" },
+        "en": { "name": "Network Error", "description": "Error connecting to server or downloading resources" }
+      },
+      "regexPatterns": [
+        "java\\.net\\.(?<exception>[^\\s]+): (?<message>[^\\n]+)",
+        "Failed to connect to server",
+        "Connection timed out",
+        "IO EXCEPTION: (?<message>[^\\n]+)"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "检查网络连接是否正常",
+          "actionType": "CheckNetwork"
+        },
+        {
+          "priority": 2,
+          "description": "如果是正版验证失败，检查防火墙或尝试使用VPN",
+          "actionType": "CheckFirewall"
+        }
+      ]
+    },
+    {
+      "id": "forge-config-error",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Forge配置错误", "description": "Forge Mod Loader配置出现问题" },
+        "en": { "name": "Forge Config Error", "description": "Forge Mod Loader configuration issue" }
+      },
+      "regexPatterns": [
+        "Forge Mod Loader detected missing mods",
+        "MissingModsException",
+        "FML appears to be missing any signature data"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "检查并安装所有缺失的依赖Mod",
+          "actionType": "CheckDependencies"
+        },
+        {
+          "priority": 2,
+          "description": "尝试重新安装Forge",
+          "actionType": "ReinstallForge"
+        }
+      ]
+    },
+    {
+      "id": "fabric-dependency-missing",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Fabric缺少依赖", "description": "Fabric检测到缺少必要的依赖Mod" },
+        "en": { "name": "Fabric Missing Dependency", "description": "Fabric detected missing required dependency mod" }
+      },
+      "regexPatterns": [
+        "HARD_DEP_NO_CANDIDATE (?<modA>\\S+) (?<version>\\S+) .*?depends (?<modB>\\S+)",
+        "Fix: add \\[add:(?<modB>\\S+) (?<version>\\S+)",
+        "Incompatible mods found!"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "模组 '{modA}' 需要依赖 '{modB}' 版本 {version} 或以上，请安装该Mod",
+          "actionType": "InstallMod"
+        },
+        {
+          "priority": 2,
+          "description": "访问Mod下载页面（如CurseForge/Modrinth）搜索并下载 {modB}",
+          "actionType": "DownloadFromModSite"
+        }
+      ]
+    },
+    {
+      "id": "fabric-error",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Fabric错误", "description": "Fabric Mod Loader加载错误" },
+        "en": { "name": "Fabric Error", "description": "Fabric Mod Loader loading error" }
+      },
+      "regexPatterns": [
+        "net\\.fabricmc\\.loader\\.(?<exception>[^\\s]+)",
+        "Fabric Loader could not load",
+        "Mod resolution failed"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "检查Mod列表中是否有缺失的依赖或版本冲突",
+          "actionType": "CheckFabricMods"
+        },
+        {
+          "priority": 2,
+          "description": "尝试更新Fabric Loader到最新版本",
+          "actionType": "UpdateFabricLoader"
+        }
+      ]
+    },
+    {
+      "id": "quilt-mod-resolution",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Quilt Mod解析失败", "description": "Quilt无法解析Mod依赖关系或Mod配置" },
+        "en": { "name": "Quilt Mod Resolution Failed", "description": "Quilt failed to resolve mod dependencies or configuration" }
+      },
+      "regexPatterns": [
+        "org\\.quiltmc\\.loader\\.impl\\.discovery\\.ModResolutionException"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "检查Mod依赖关系，确保所有依赖Mod已安装",
+          "actionType": "CheckQuiltDependencies"
+        },
+        {
+          "priority": 2,
+          "description": "删除或更新有问题的Mod（检查quilt.mod.json错误）",
+          "actionType": "RemoveBrokenMod"
+        }
+      ]
+    },
+    {
+      "id": "quilt-invalid-mod-json",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Quilt Mod配置无效", "description": "Mod的quilt.mod.json文件格式错误" },
+        "en": { "name": "Invalid Quilt Mod Configuration", "description": "Mod's quilt.mod.json file has invalid format" }
+      },
+      "regexPatterns": [
+        "has an invalid quilt\\.mod\\.json file",
+        "ParseException.*quilt\\.mod\\.json",
+        "quilt\\.mod\\.json.*invalid"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "删除或重新下载有问题的Mod文件：{modFile}（文件可能损坏或格式错误）",
+          "actionType": "ReinstallMod"
+        },
+        {
+          "priority": 2,
+          "description": "检查Mod版本是否与当前游戏版本兼容",
+          "actionType": "CheckModVersion"
+        }
+      ]
+    },
+    {
+      "id": "quilt-error",
+      "category": "Unknown",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "未知崩溃", "description": "无法识别的崩溃类型" },
+        "en": { "name": "Unknown Crash", "description": "Unrecognized crash type" }
+      },
+      "regexPatterns": [
+        "Exception in thread",
+        "A fatal error has been detected",
+        "Game crashed!"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "尝试移除所有Mod后启动，确认是否是Mod导致的问题",
+          "actionType": "DisableMods"
+        },
+        {
+          "priority": 2,
+          "description": "检查Java版本与游戏版本的兼容性",
+          "actionType": "CheckJavaVersion"
+        },
+        {
+          "priority": 3,
+          "description": "查看完整的崩溃报告获取更多信息",
+          "actionType": "ReviewFullLog"
+        }
+      ]
+    },
+    {
+      "id": "gpu-intel-access-violation",
+      "category": "Resource",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "Intel核显驱动不兼容", "description": "崩溃堆栈指向Intel集成显卡驱动，通常是驱动版本不兼容" },
+        "en": { "name": "Intel GPU Driver Incompatibility", "description": "Crash stack points to Intel integrated GPU driver" }
+      },
+      "regexPatterns": [
+        "(?s)EXCEPTION_ACCESS_VIOLATION.*?#\\s+C\\s+\\[ig"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "Intel核显驱动与游戏不兼容导致崩溃。请更新Intel显卡驱动到最新稳定版（或尝试回退到旧版驱动）",
+          "actionType": "UpdateDriver"
+        },
+        {
+          "priority": 2,
+          "description": "如果是双显卡笔记本，请在系统设置中强制使用独立显卡运行游戏",
+          "actionType": "SwitchGraphicsCard"
+        },
+        {
+          "priority": 3,
+          "description": "在 版本设置 → 高级 中尝试关闭\"快速渲染\"或降级光影/材质设置后重试",
+          "actionType": "LowerRenderSettings"
+        }
+      ]
+    },
+    {
+      "id": "gpu-amd-access-violation",
+      "category": "Resource",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "AMD显卡驱动不兼容", "description": "崩溃堆栈指向AMD显卡驱动，通常是驱动版本不兼容" },
+        "en": { "name": "AMD GPU Driver Incompatibility", "description": "Crash stack points to AMD GPU driver" }
+      },
+      "regexPatterns": [
+        "(?s)EXCEPTION_ACCESS_VIOLATION.*?#\\s+C\\s+\\[atio"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "AMD显卡驱动与游戏不兼容导致崩溃。请更新AMD显卡驱动（Adrenalin）到最新稳定版或尝试回退旧版",
+          "actionType": "UpdateDriver"
+        },
+        {
+          "priority": 2,
+          "description": "尝试在AMD显卡设置中关闭\"性能提升\"或\"游戏优化\"等实验性选项",
+          "actionType": "DisableGpuEnhancements"
+        },
+        {
+          "priority": 3,
+          "description": "在 版本设置 中降低分配的内存并关闭光影/材质包后重试",
+          "actionType": "LowerRenderSettings"
+        }
+      ]
+    },
+    {
+      "id": "gpu-nvidia-access-violation",
+      "category": "Resource",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "Nvidia显卡驱动不兼容", "description": "崩溃堆栈指向Nvidia显卡驱动，通常是驱动版本不兼容" },
+        "en": { "name": "Nvidia GPU Driver Incompatibility", "description": "Crash stack points to Nvidia GPU driver" }
+      },
+      "regexPatterns": [
+        "(?s)EXCEPTION_ACCESS_VIOLATION.*?#\\s+C\\s+\\[nvoglv"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "Nvidia显卡驱动与游戏不兼容导致崩溃。请更新Nvidia驱动到最新稳定版（或使用Studio版驱动）",
+          "actionType": "UpdateDriver"
+        },
+        {
+          "priority": 2,
+          "description": "在Nvidia控制面板中将游戏设置为使用独立显卡",
+          "actionType": "SwitchGraphicsCard"
+        },
+        {
+          "priority": 3,
+          "description": "若刚更新驱动后崩溃，可回退到上一个正常的驱动版本",
+          "actionType": "RollbackDriver"
+        }
+      ]
+    },
+    {
+      "id": "gpu-pixel-format",
+      "category": "Resource",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "像素格式设置失败", "description": "游戏无法设置像素格式，通常与显卡驱动或远程桌面相关" },
+        "en": { "name": "Pixel Format Error", "description": "Game cannot set pixel format, usually GPU driver or remote desktop related" }
+      },
+      "regexPatterns": [
+        "Couldn't set pixel format",
+        "Pixel format not accelerated"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "像素格式设置失败。请更新显卡驱动",
+          "actionType": "UpdateDriver"
+        },
+        {
+          "priority": 2,
+          "description": "如果是通过远程桌面/虚拟机运行，请改为本机直接运行，或调整远程桌面显卡设置",
+          "actionType": "CheckRemoteDesktop"
+        },
+        {
+          "priority": 3,
+          "description": "在 版本设置 中尝试切换为窗口化运行",
+          "actionType": "UseWindowedMode"
+        }
+      ]
+    },
+    {
+      "id": "gpu-opengl-not-supported",
+      "category": "Resource",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "显卡不支持OpenGL", "description": "显卡驱动不支持游戏所需的OpenGL版本" },
+        "en": { "name": "OpenGL Not Supported", "description": "GPU driver does not support required OpenGL version" }
+      },
+      "regexPatterns": [
+        "The driver does not appear to support OpenGL"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "显卡驱动未启用/不支持OpenGL。请更新显卡驱动",
+          "actionType": "UpdateDriver"
+        },
+        {
+          "priority": 2,
+          "description": "旧电脑/虚拟机可尝试安装OpenGL兼容层（如Mesa3D），或更换设备",
+          "actionType": "InstallOpenGLCompat"
+        }
+      ]
+    },
+    {
+      "id": "optifine-forge-incompatible",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "OptiFine与Forge不兼容", "description": "OptiFine与当前Forge版本不兼容导致崩溃" },
+        "en": { "name": "OptiFine Forge Incompatibility", "description": "OptiFine incompatible with current Forge version" }
+      },
+      "regexPatterns": [
+        "(?s)NoSuchMethodError.*?optifine",
+        "The mod file optifine",
+        "Mod File optifine",
+        "Could not find OptiFine jar"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "OptiFine与当前Forge版本不兼容。请下载对应游戏版本的最新OptiFine，并确认其支持当前Forge版本",
+          "actionType": "UpdateMod"
+        },
+        {
+          "priority": 2,
+          "description": "尝试移除OptiFine后启动，确认是否是OptiFine导致的问题",
+          "actionType": "RemoveMod"
+        },
+        {
+          "priority": 3,
+          "description": "可改用支持光影的替代方案（如Iris/Oculus）",
+          "actionType": "UseAlternative"
+        }
+      ]
+    },
+    {
+      "id": "optifine-world-load",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "OptiFine导致世界加载崩溃", "description": "OptiFine的区块代理在加载世界时崩溃" },
+        "en": { "name": "OptiFine World Load Crash", "description": "OptiFine chunk proxy crashed while loading world" }
+      },
+      "regexPatterns": [
+        "(?s)ChunkManager\\$ProxyTicketManager\\.shouldForceTicks.*?OptiFine"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "OptiFine在加载世界时崩溃。请更新OptiFine到与游戏版本完全匹配的最新版",
+          "actionType": "UpdateMod"
+        },
+        {
+          "priority": 2,
+          "description": "在OptiFine视频设置中关闭\"动态更新\"或\"区块加载优化\"等实验性选项",
+          "actionType": "DisableOptifineFeatures"
+        },
+        {
+          "priority": 3,
+          "description": "若持续崩溃，建议移除OptiFine",
+          "actionType": "RemoveMod"
+        }
+      ]
+    },
+    {
+      "id": "shadersmod-optifine-conflict",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "ShadersMod与OptiFine冲突", "description": "检测到ShadersMod与OptiFine同时安装" },
+        "en": { "name": "ShadersMod OptiFine Conflict", "description": "ShadersMod and OptiFine installed together" }
+      },
+      "regexPatterns": [
+        "Shaders Mod detected\\. Please remove it",
+        "Shaders Mod Detected"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "ShadersMod与OptiFine冲突，请移除ShadersMod（OptiFine已内置光影功能）",
+          "actionType": "RemoveMod"
+        },
+        {
+          "priority": 2,
+          "description": "若需要ShadersMod功能，请移除OptiFine并换用Iris/Oculus",
+          "actionType": "UseAlternative"
+        }
+      ]
+    },
+    {
+      "id": "forge-incomplete-install",
+      "category": "JavaRelated",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Forge安装不完整", "description": "Forge加载器安装损坏或缺失文件" },
+        "en": { "name": "Forge Incomplete Install", "description": "Forge loader installation corrupted or missing files" }
+      },
+      "regexPatterns": [
+        "Cannot find launch target fmlclient",
+        "(?s)Invalid paths argument.*?fmlcore"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "Forge安装不完整。请在 版本管理 中重新安装该版本的Forge",
+          "actionType": "ReinstallForge"
+        },
+        {
+          "priority": 2,
+          "description": "删除该版本的 versions 目录后重新安装（保留存档，存档在 saves 目录）",
+          "actionType": "ReinstallVersion"
+        }
+      ]
+    },
+    {
+      "id": "forge-multiple-json",
+      "category": "JavaRelated",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Forge版本JSON冲突", "description": "版本配置中存在多个Forge导致启动失败" },
+        "en": { "name": "Forge Multiple JSON", "description": "Multiple Forge entries in version JSON" }
+      },
+      "regexPatterns": [
+        "Found multiple arguments for option fml\\.forgeVersion"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "版本JSON中存在多个Forge配置。请在 版本管理 中重新安装该版本，或在 高级 中重置版本文件",
+          "actionType": "ReinstallForge"
+        },
+        {
+          "priority": 2,
+          "description": "删除该版本目录下的 json 文件并重新安装（注意备份）",
+          "actionType": "ReinstallVersion"
+        }
+      ]
+    },
+    {
+      "id": "forge-old-version-java",
+      "category": "JavaRelated",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "旧版Forge不兼容新版Java", "description": "低版本Forge需要旧版Java运行" },
+        "en": { "name": "Old Forge Incompatible With Java", "description": "Old Forge requires older Java" }
+      },
+      "regexPatterns": [
+        "NoSuchMethodError: sun\\.security\\.util\\.ManifestEntryVerifier"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "低版本Forge不支持高版本Java。请在 版本设置 → Java 选项 中为实例切换到 Java 8",
+          "actionType": "DowngradeJava"
+        },
+        {
+          "priority": 2,
+          "description": "若已使用Java 8仍崩溃，请检查Java 8是否为64位并重装",
+          "actionType": "CheckJavaVersion"
+        }
+      ]
+    },
+    {
+      "id": "java-openj9",
+      "category": "JavaRelated",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "OpenJ9 JVM不受支持", "description": "Minecraft不支持OpenJ9虚拟机" },
+        "en": { "name": "OpenJ9 JVM Unsupported", "description": "Minecraft does not support OpenJ9 JVM" }
+      },
+      "regexPatterns": [
+        "Open J9 is not supported",
+        "OpenJ9 is incompatible",
+        "\\.J9VMInternals\\."
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "Minecraft不支持OpenJ9虚拟机。请在 设置 → Java 管理 中安装Oracle/OpenJDK HotSpot虚拟机并切换到实例",
+          "actionType": "SwitchJava"
+        },
+        {
+          "priority": 2,
+          "description": "检查当前Java路径是否为OpenJ9发行版（如Eclipse OpenJ9、某些商用JDK）",
+          "actionType": "CheckJavaVersion"
+        }
+      ]
+    },
+    {
+      "id": "java-32bit",
+      "category": "JavaRelated",
+      "severity": "Critical",
+      "i18n": {
+        "zh": { "name": "32位Java内存限制", "description": "32位Java无法分配大内存导致崩溃" },
+        "en": { "name": "32-bit Java Memory Limit", "description": "32-bit Java cannot allocate large heap" }
+      },
+      "regexPatterns": [
+        "Invalid maximum heap size",
+        "Could not reserve enough space for 1048576KB",
+        "Could not reserve enough space for object heap"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "当前使用32位Java。请在 设置 → Java 管理 中安装64位Java并切换到实例",
+          "actionType": "SwitchJava"
+        },
+        {
+          "priority": 2,
+          "description": "同时在 版本设置 中适当调低内存分配（32位Java上限约1.5GB）",
+          "actionType": "ReduceMemory"
+        }
+      ]
+    },
+    {
+      "id": "java-mod-needs-11",
+      "category": "JavaRelated",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Mod需要Java 11", "description": "Mod使用Java 11编译，当前Java版本无法运行" },
+        "en": { "name": "Mod Requires Java 11", "description": "Mod compiled for Java 11, current Java cannot run it" }
+      },
+      "regexPatterns": [
+        "(?s)class file version 55\\.0.*?only recognizes",
+        "JAVA_11 could not be set",
+        "class file version 55\\.0"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "该Mod需要Java 11或更高版本。请在 版本设置 → Java 选项 中切换到Java 11/17",
+          "actionType": "UpgradeJava"
+        },
+        {
+          "priority": 2,
+          "description": "若游戏版本过低不支持高版本Java，请寻找兼容该版本Java的Mod替代品",
+          "actionType": "FindCompatibleVersion"
+        }
+      ]
+    },
+    {
+      "id": "mod-extracted",
+      "category": "ModConflict",
+      "severity": "Warning",
+      "i18n": {
+        "zh": { "name": "Mod被解压", "description": "检测到Mod文件被解压成文件夹，会导致加载失败" },
+        "en": { "name": "Extracted Mod Jars", "description": "Mod jars extracted to folders, causes load failure" }
+      },
+      "regexPatterns": [
+        "Extracted mod jars found",
+        "The directories below appear to be extracted jar files"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "Mod被解压成文件夹。请在 实例 → 模组管理 中删除解压的文件夹，并重新放入对应的 .jar 文件",
+          "actionType": "FixExtractedMod"
+        },
+        {
+          "priority": 2,
+          "description": "若无原始jar文件，请重新从 资源中心 下载该Mod",
+          "actionType": "DownloadFromModSite"
+        }
+      ]
+    },
+    {
+      "id": "mod-id-limit",
+      "category": "Performance",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "Mod数量超出ID上限", "description": "加载的Mod过多超出游戏ID限制" },
+        "en": { "name": "Mod ID Limit Exceeded", "description": "Too many mods exceed game ID limit" }
+      },
+      "regexPatterns": [
+        "maximum id range exceeded"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "Mod数量超出游戏ID上限。请移除部分不需要的Mod以减少数量",
+          "actionType": "ReduceMods"
+        },
+        {
+          "priority": 2,
+          "description": "尝试安装ID扩展/合并类优化Mod（如FerriteCore），或将多个小Mod合并",
+          "actionType": "InstallOptimizationMod"
+        }
+      ]
+    },
+    {
+      "id": "mixin-bootstrap-missing",
+      "category": "ModConflict",
+      "severity": "Error",
+      "i18n": {
+        "zh": { "name": "MixinBootstrap缺失", "description": "Mod依赖MixinBootstrap但未安装" },
+        "en": { "name": "MixinBootstrap Missing", "description": "Mod requires MixinBootstrap but it is not installed" }
+      },
+      "regexPatterns": [
+        "ClassNotFoundException: org\\.spongepowered\\.asm\\.launch\\.MixinTweaker"
+      ],
+      "solutions": [
+        {
+          "priority": 1,
+          "description": "Mod缺少MixinBootstrap依赖。请安装MixinBootstrap前置Mod（1.8-1.12版本Mod常见）",
+          "actionType": "InstallMod"
+        },
+        {
+          "priority": 2,
+          "description": "若已安装，检查版本是否与游戏版本匹配",
+          "actionType": "CheckModVersion"
+        }
+      ]
+    }
+  ]
+}

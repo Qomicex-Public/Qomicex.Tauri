@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad, faNetworkWired } from '@fortawesome/free-solid-svg-icons'
+import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad, faNetworkWired, faFileLines } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { useI18n } from '../i18n/index.tsx'
@@ -10,7 +10,7 @@ import { PluginSidebarItems } from './PluginSidebarItems.tsx'
 
 interface NavLinkDef {
   to: string
-  key: 'home' | 'instances' | 'downloads' | 'accounts' | 'resourceCenter' | 'connect'
+  key: 'home' | 'instances' | 'downloads' | 'accounts' | 'resourceCenter' | 'connect' | 'logAnalysis'
   icon: ReactNode
   end?: boolean
 }
@@ -22,6 +22,7 @@ const NAV_LINKS: readonly NavLinkDef[] = [
   { to: '/accounts', key: 'accounts', icon: <FontAwesomeIcon icon={faUser} className="h-5 w-5" /> },
   { to: '/resource-center', key: 'resourceCenter', icon: <FontAwesomeIcon icon={faCompass} className="h-5 w-5" /> },
   { to: '/connect', key: 'connect', icon: <FontAwesomeIcon icon={faNetworkWired} className="h-5 w-5" />, end: true },
+  { to: '/log-analysis', key: 'logAnalysis', icon: <FontAwesomeIcon icon={faFileLines} className="h-5 w-5" /> },
 ]
 
 export function NavItem({ to, label, icon, end }: { to: string; label: string; icon: React.ReactNode; end?: boolean }) {

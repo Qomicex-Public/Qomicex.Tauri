@@ -33,6 +33,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(endpoints::client_logs::router())
         .merge(endpoints::update::router())
         .merge(endpoints::log::router())
+        .merge(endpoints::loganalysis::router())
         .merge(endpoints::mcmod::router())
         .merge(endpoints::launch::router())
         .merge(endpoints::license::router())
