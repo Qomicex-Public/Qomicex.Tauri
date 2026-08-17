@@ -61,6 +61,8 @@ const SEMI_TRANSPARENT_KEYWORDS = [
   'cocoa', 'berry', 'ladder', 'rail', 'torch', 'lamp', 'chain', 'bell',
   'lantern', 'nether_sprouts', 'warped_roots', 'crimson_roots', 'soul_lantern',
   'candle', 'bubble', 'suspicious_sand', 'suspicious_gravel',
+  // Translucent solids: neighbour faces must still render through them.
+  'honey_block', 'slime_block',
 ]
 const NON_SOLID_KEYWORDS = [
   'button', 'lever', 'pressure', 'door', 'trapdoor', 'fence_gate', 'fence',
@@ -74,6 +76,9 @@ const NON_SOLID_KEYWORDS = [
   // facing them is NOT culled (e.g. the side of a full block next to a slab
   // must stay visible above the half-height slab).
   'slab', 'stairs', 'anvil', 'chest', 'cauldron', 'hopper', 'brewing_stand',
+  // Emissive/translucent-looking solids: draw the neighbour's adjacent face
+  // (for opaque magma the extra face is depth-occluded, harmless).
+  'magma',
 ]
 
 function computeFlags(name: string): BlockFlags {
