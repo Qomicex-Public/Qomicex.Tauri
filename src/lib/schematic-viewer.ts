@@ -62,7 +62,7 @@ const SEMI_TRANSPARENT_KEYWORDS = [
   'lantern', 'nether_sprouts', 'warped_roots', 'crimson_roots', 'soul_lantern',
   'candle', 'bubble', 'suspicious_sand', 'suspicious_gravel',
   // Translucent solids: neighbour faces must still render through them.
-  'honey_block', 'slime_block',
+  'honey_block', 'slime_block', 'water', 'lava',
 ]
 const NON_SOLID_KEYWORDS = [
   'button', 'lever', 'pressure', 'door', 'trapdoor', 'fence_gate', 'fence',
