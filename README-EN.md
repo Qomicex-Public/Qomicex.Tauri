@@ -181,7 +181,7 @@ QML's core capabilities are provided by the following **Rust submodules** (git s
 
 **Partner / Related community project**:
 
-- [EuoraCraft-Launcher (ECLteam)](https://github.com/ECLteam/EuoraCraft-Launcher) — a **partnership project** (maintained by ECLteam, Python + Tauri Minecraft launcher). Both projects **share online nodes** and are **compatible with Qomicex / Scaffolding protocol extensions** for cross-launcher multiplayer; they help each other during development and QML has contributed implementation ideas and solutions to EuoraCraft
+- [EuoraCraft-Launcher (ECLteam)](https://github.com/ECLteam/EuoraCraft-Launcher) — ECLteam's Python + Tauri third-party Minecraft launcher, which **shares online nodes** with QML and is **compatible with the SCF protocol extension** for cross-launcher multiplayer
 
 ## 🔗 Links
 

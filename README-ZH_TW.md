@@ -181,7 +181,7 @@ QML 的核心能力由以下 **Rust 子模組**承載（倉庫根 git submodule�
 
 **合作 / 相關社群專案**：
 
-- [EuoraCraft-Launcher（ECLteam）](https://github.com/ECLteam/EuoraCraft-Launcher) — 作者的**合作專案**（合作夥伴 ECLteam 維護的 Python + Tauri 第三方 Minecraft 啟動器）。雙方**共用聯機節點**，並**相容 Qomicex / SCF 拓展協議**實現互通聯機；開發過程中互相幫助、QML 也為 EuoraCraft 提供了部分實作的解決思路
+- [EuoraCraft-Launcher（ECLteam）](https://github.com/ECLteam/EuoraCraft-Launcher) — ECLteam 維護的 Python + Tauri 第三方 Minecraft 啟動器，與 QML**共用聯機節點**，並**相容 SCF 拓展協議**實現互通聯機
 
 ## 🔗 相關連結
 
