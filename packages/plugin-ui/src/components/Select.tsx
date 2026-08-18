@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '../lib/cn.js'
 
 interface SelectOptionProps {
@@ -31,7 +32,6 @@ export function Select({ value, onChange, children, className, placeholder, disa
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
 
   const options: { value: string; label: string; disabled: boolean; isDivider: boolean }[] = []
   let selectedLabel = placeholder || ''
@@ -72,11 +72,11 @@ export function Select({ value, onChange, children, className, placeholder, disa
   useEffect(() => {
     if (!open) return
     function reposition() {
-      if (!triggerRef.current || !containerRef.current) return
+      if (!triggerRef.current) return
       const tr = triggerRef.current.getBoundingClientRect()
-      const cr = containerRef.current.getBoundingClientRect()
-      setPos({ top: tr.bottom - cr.top, left: tr.left - cr.left, width: tr.width })
+      setPos({ top: tr.bottom + 4, left: tr.left, width: tr.width })
     }
+    reposition()
     window.addEventListener('scroll', reposition, true)
     window.addEventListener('resize', reposition)
     return () => {
@@ -86,10 +86,9 @@ export function Select({ value, onChange, children, className, placeholder, disa
   }, [open])
 
   function openPopup() {
-    if (!triggerRef.current || !containerRef.current) return
+    if (!triggerRef.current) return
     const tr = triggerRef.current.getBoundingClientRect()
-    const cr = containerRef.current.getBoundingClientRect()
-    setPos({ top: tr.bottom - cr.top + 4, left: tr.left - cr.left, width: tr.width })
+    setPos({ top: tr.bottom + 4, left: tr.left, width: tr.width })
     setOpen(true)
     requestAnimationFrame(() => searchRef.current?.focus())
   }
@@ -101,7 +100,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
   }
 
   return (
-    <div ref={containerRef} className={cn('relative', className)}>
+    <div className={cn('relative', className)}>
       <button
         ref={triggerRef}
         type="button"
@@ -119,11 +118,11 @@ export function Select({ value, onChange, children, className, placeholder, disa
         <svg className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
       </button>
 
-      {open && (
+      {open && createPortal(
         <div
           ref={popupRef}
-          style={{ position: 'absolute', top: pos.top, left: pos.left, width: Math.max(pos.width, 180) }}
-          className="z-50 rounded-lg border border-border/50 bg-popover/90 backdrop-blur-lg p-1 shadow-xl animate-in fade-in zoom-in-95"
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: Math.max(pos.width, 180), zIndex: 9999 }}
+          className="rounded-lg border border-border/50 bg-popover/90 backdrop-blur-lg p-1 shadow-xl animate-in fade-in zoom-in-95"
         >
           <div className="max-h-72 overflow-y-auto">
             {options.length > 6 && (
@@ -168,7 +167,8 @@ export function Select({ value, onChange, children, className, placeholder, disa
               )
             })()}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
