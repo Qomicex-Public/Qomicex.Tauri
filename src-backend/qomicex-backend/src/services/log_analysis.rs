@@ -103,8 +103,8 @@ struct CompiledPattern {
 fn load_patterns() -> &'static Vec<CompiledPattern> {
     static PATTERNS: OnceLock<Vec<CompiledPattern>> = OnceLock::new();
     PATTERNS.get_or_init(|| {
-        let file: PatternFile = serde_json::from_str(ERROR_PATTERNS_JSON)
-            .expect("内嵌 error-patterns.json 必须可解析");
+        let file: PatternFile =
+            serde_json::from_str(ERROR_PATTERNS_JSON).expect("内嵌 error-patterns.json 必须可解析");
         file.patterns
             .into_iter()
             .map(|p| {
@@ -176,9 +176,7 @@ pub fn analyze_content(content: &str) -> LogAnalysisResult {
         }
         // 2) 跨行模式（`(?s)`）：整体文本找首个命中
         if let Some(re) = pattern.doc_regexes.iter().find(|re| re.is_match(content)) {
-            let line_no = content[..re.find(content).unwrap().start()]
-                .lines()
-                .count();
+            let line_no = content[..re.find(content).unwrap().start()].lines().count();
             issues.push(build_issue(pattern, re, content, line_no));
         }
     }
@@ -197,7 +195,12 @@ pub fn analyze_content(content: &str) -> LogAnalysisResult {
     }
 }
 
-fn build_issue(pattern: &CompiledPattern, re: &Regex, matched: &str, line_idx: usize) -> DetectedIssue {
+fn build_issue(
+    pattern: &CompiledPattern,
+    re: &Regex,
+    matched: &str,
+    line_idx: usize,
+) -> DetectedIssue {
     let cap = re.captures(matched);
     let matched_text = cap
         .as_ref()
@@ -230,8 +233,11 @@ fn build_issue(pattern: &CompiledPattern, re: &Regex, matched: &str, line_idx: u
                 vars.insert(k.clone(), v.clone());
             }
             for (k, v) in &s.parameters {
-                vars.entry(k.clone())
-                    .or_insert_with(|| v.as_str().map(String::from).unwrap_or_else(|| v.to_string()));
+                vars.entry(k.clone()).or_insert_with(|| {
+                    v.as_str()
+                        .map(String::from)
+                        .unwrap_or_else(|| v.to_string())
+                });
             }
             for (k, v) in vars {
                 desc = desc.replace(&format!("{{{k}}}"), &v);
@@ -281,7 +287,11 @@ fn severity_rank(severity: &str) -> i32 {
 }
 
 fn dep_patterns() -> [&'static str; 3] {
-    ["missing-dependency", "fabric-dependency-missing", "quilt-mod-resolution"]
+    [
+        "missing-dependency",
+        "fabric-dependency-missing",
+        "quilt-mod-resolution",
+    ]
 }
 
 fn err_patterns() -> [&'static str; 3] {
@@ -322,7 +332,9 @@ fn is_duplicate(existing: &DetectedIssue, candidate: &DetectedIssue) -> bool {
     }
 
     // Mod 版本冲突：冲突双方相同
-    if existing.pattern_id == "mod-version-conflict" && candidate.pattern_id == "mod-version-conflict" {
+    if existing.pattern_id == "mod-version-conflict"
+        && candidate.pattern_id == "mod-version-conflict"
+    {
         let same_pair = |a: &DetectedIssue, b: &DetectedIssue| {
             a.captured_groups.get("modA") == b.captured_groups.get("modA")
                 && a.captured_groups.get("modB") == b.captured_groups.get("modB")
@@ -397,7 +409,11 @@ fn parse_mod_loader(lines: &[&str]) -> Option<String> {
                 .unwrap()
                 .captures(line)
                 .map(|c| c[1].to_string());
-            return Some(format!("Quilt {}", v.unwrap_or_default()).trim_end().to_string());
+            return Some(
+                format!("Quilt {}", v.unwrap_or_default())
+                    .trim_end()
+                    .to_string(),
+            );
         }
         if lower.contains("neoforge") {
             return Some("NeoForge".to_string());
@@ -407,14 +423,22 @@ fn parse_mod_loader(lines: &[&str]) -> Option<String> {
                 .unwrap()
                 .captures(line)
                 .map(|c| c[1].to_string());
-            return Some(format!("Forge {}", v.unwrap_or_default()).trim_end().to_string());
+            return Some(
+                format!("Forge {}", v.unwrap_or_default())
+                    .trim_end()
+                    .to_string(),
+            );
         }
         if lower.contains("fabric") && !lower.contains("quilt") {
             let v = Regex::new(r"(?i)Fabric[^\d]*(\d+\.\d+\.\d+)")
                 .unwrap()
                 .captures(line)
                 .map(|c| c[1].to_string());
-            return Some(format!("Fabric {}", v.unwrap_or_default()).trim_end().to_string());
+            return Some(
+                format!("Fabric {}", v.unwrap_or_default())
+                    .trim_end()
+                    .to_string(),
+            );
         }
     }
     None
@@ -507,12 +531,18 @@ mod tests {
         let r = analyze_content(oom);
         assert!(r.is_success);
         assert_eq!(r.minecraft_version.as_deref(), Some("1.20.1"));
-        assert!(r.issues.iter().any(|i| i.pattern_id == "out-of-memory-heap"));
+        assert!(r
+            .issues
+            .iter()
+            .any(|i| i.pattern_id == "out-of-memory-heap"));
         assert_eq!(r.issues[0].severity, "Critical");
 
         let gpu = "---- Minecraft Crash Report ----\n\nA detailed walkthrough...\n\n-- System Details --\n\nJava VM Version: ...\n\n#\n# A fatal error has been detected by the Java Runtime Environment:\n#\n#  EXCEPTION_ACCESS_VIOLATION (0xc0000005) at pc=0x000...\n#\n# C  [ig9x86-64.dll+0x5a]\n#";
         let r = analyze_content(gpu);
-        assert!(r.issues.iter().any(|i| i.pattern_id == "gpu-intel-access-violation"));
+        assert!(r
+            .issues
+            .iter()
+            .any(|i| i.pattern_id == "gpu-intel-access-violation"));
     }
 
     #[test]

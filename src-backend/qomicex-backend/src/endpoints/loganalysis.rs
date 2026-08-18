@@ -30,13 +30,19 @@ struct CrashAnalysisResponse {
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/loganalysis/analyze", post(analyze))
-        .route("/loganalysis/analyze-crash/{instance_id}", post(analyze_crash))
+        .route(
+            "/loganalysis/analyze-crash/{instance_id}",
+            post(analyze_crash),
+        )
 }
 
 /// POST /api/loganalysis/analyze
 async fn analyze(Json(req): Json<AnalyzeRequest>) -> ApiResult<Json<LogAnalysisResult>> {
     if req.log_content.trim().is_empty() {
-        return Err(ApiError::bad_request("BAD_REQUEST", "logContent is required"));
+        return Err(ApiError::bad_request(
+            "BAD_REQUEST",
+            "logContent is required",
+        ));
     }
     let content = req.log_content;
     // 日志可能很大，模式扫描放到阻塞池，避免卡住 HTTP 运行时
@@ -57,10 +63,7 @@ async fn analyze_crash(
         .and_then(|p| p.crash_report)
         .filter(|c| !c.trim().is_empty());
     let Some(crash_report) = crash_report else {
-        return Err(ApiError::bad_request(
-            "NO_CRASH_REPORT",
-            "无可用崩溃报告",
-        ));
+        return Err(ApiError::bad_request("NO_CRASH_REPORT", "无可用崩溃报告"));
     };
 
     let http = state.http_client.clone();

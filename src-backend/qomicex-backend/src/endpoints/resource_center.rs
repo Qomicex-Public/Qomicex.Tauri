@@ -319,15 +319,6 @@ fn map_ft_sort(sort: Option<&str>) -> &'static str {
     }
 }
 
-fn empty_search(page: i32, page_size: i32) -> ResourceSearchResponse {
-    ResourceSearchResponse {
-        items: vec![],
-        total: 0,
-        page,
-        page_size,
-    }
-}
-
 // =====================================================================
 // Handlers: search
 // =====================================================================
@@ -344,88 +335,146 @@ async fn search(
     let game_version = q.game_version.clone();
     let loader = q.loader.clone();
     let sort = q.sort.clone();
+    let page = q.page.unwrap_or(1);
+    let page_size = q.page_size.unwrap_or(20);
 
-    let (items, total, page, page_size) = if src.eq_ignore_ascii_case("modrinth") {
+    // "all" = 聚合源：按分类决定可聚合的源。save 仅 CurseForge；
+    // modpack 额外含 FTB；其余为 Modrinth + CurseForge。
+    let sources: Vec<&str> = if src.eq_ignore_ascii_case("all") {
+        match category.as_deref() {
+            Some(c) if c.eq_ignore_ascii_case("save") => vec!["curseforge"],
+            Some(c) if c.eq_ignore_ascii_case("modpack") => {
+                vec!["modrinth", "curseforge", "ftb"]
+            }
+            _ => vec!["modrinth", "curseforge"],
+        }
+    } else {
+        vec![src.as_str()]
+    };
+
+    if sources.len() == 1 {
+        let (items, total) = search_one(
+            &state,
+            sources[0],
+            &keyword,
+            category.as_deref(),
+            game_version.as_deref(),
+            loader.as_deref(),
+            sort.as_deref(),
+            page,
+            page_size,
+        )
+        .await?;
+        return Ok(Json(ResourceSearchResponse {
+            items,
+            total,
+            page,
+            page_size,
+        }));
+    }
+
+    // ponytail: 顺序聚合，各源失败即整体失败（与单源一致）；并发可用
+    // tokio::join! 提升延迟，量级不大暂不做
+    let mut merged: Vec<ResourceItemDto> = Vec::new();
+    let mut total = 0i32;
+    for source in sources {
+        let (items, t) = search_one(
+            &state,
+            source,
+            &keyword,
+            category.as_deref(),
+            game_version.as_deref(),
+            loader.as_deref(),
+            sort.as_deref(),
+            page,
+            page_size,
+        )
+        .await?;
+        total = total.saturating_add(t);
+        merged.extend(items);
+    }
+    // 聚合排序统一按下载量，跨源可比
+    merged.sort_by(|a, b| b.download_count.cmp(&a.download_count));
+    merged.truncate(page_size as usize);
+    // ponytail: total 为各源 total 之和（近似）；FTB 无分页，翻页会重复出现
+    Ok(Json(ResourceSearchResponse {
+        items: merged,
+        total,
+        page,
+        page_size,
+    }))
+}
+
+async fn search_one(
+    state: &SharedState,
+    source: &str,
+    keyword: &str,
+    category: Option<&str>,
+    game_version: Option<&str>,
+    loader: Option<&str>,
+    sort: Option<&str>,
+    page: i32,
+    page_size: i32,
+) -> ApiResult<(Vec<ResourceItemDto>, i32)> {
+    if source.eq_ignore_ascii_case("modrinth") {
         let mr = state.core.create_modrinth_source();
-        let loaders: Vec<String> = loader
-            .as_deref()
-            .map(|l| vec![l.to_string()])
-            .unwrap_or_default();
+        let loaders: Vec<String> = loader.map(|l| vec![l.to_string()]).unwrap_or_default();
         let result = mr
             .search(
-                &keyword,
-                category.as_deref(),
-                game_version.as_deref(),
+                keyword,
+                category,
+                game_version,
                 None,
                 if loaders.is_empty() {
                     None
                 } else {
                     Some(loaders.as_slice())
                 },
-                map_mr_sort(sort.as_deref()),
-                (q.page.unwrap_or(1)) - 1,
-                q.page_size.unwrap_or(20),
+                map_mr_sort(sort),
+                page - 1,
+                page_size,
             )
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-
         let items = result
             .results
             .iter()
             .map(|r| search_info_to_item(r, "modrinth"))
             .collect();
-        (
-            items,
-            result.total_results,
-            q.page.unwrap_or(1),
-            q.page_size.unwrap_or(20),
-        )
-    } else if src.eq_ignore_ascii_case("curseforge") {
+        Ok((items, result.total_results))
+    } else if source.eq_ignore_ascii_case("curseforge") {
         let cf = state
             .core
             .create_curseforge_source(&state.curse_forge_api_key);
-        let cf_class_id = map_cf_class_id(category.as_deref());
-        let cf_url_slug = map_cf_url_slug(category.as_deref());
-        let loaders = loader
-            .as_deref()
-            .and_then(map_cf_loader)
-            .unwrap_or_default();
+        let cf_class_id = map_cf_class_id(category);
+        let cf_url_slug = map_cf_url_slug(category);
+        let loaders = loader.and_then(map_cf_loader).unwrap_or_default();
         let result = cf
             .search(
-                &keyword,
-                game_version.as_ref().map(|g| vec![g.clone()]).as_deref(),
+                keyword,
+                game_version.map(|g| vec![g.to_string()]).as_deref(),
                 None,
                 if loaders.is_empty() {
                     None
                 } else {
                     Some(loaders.as_slice())
                 },
-                Some(map_cf_sort(sort.as_deref())),
-                Some(q.page.unwrap_or(1)),
-                Some(q.page_size.unwrap_or(25)),
+                Some(map_cf_sort(sort)),
+                Some(page),
+                Some(page_size),
                 cf_class_id,
             )
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-
         let items = result
             .results
             .iter()
             .filter_map(|r| cf_result_to_item(r, cf_url_slug))
             .collect();
-        (
-            items,
-            result.total_count,
-            q.page.unwrap_or(1),
-            q.page_size.unwrap_or(25),
-        )
-    } else if src.eq_ignore_ascii_case("ftb") {
-        if !category
-            .as_deref()
-            .unwrap_or("")
-            .eq_ignore_ascii_case("modpack")
-        {
-            return Ok(Json(empty_search(q.page.unwrap_or(1), 20)));
+        Ok((items, result.total_count))
+    } else if source.eq_ignore_ascii_case("ftb") {
+        if !category.unwrap_or("").eq_ignore_ascii_case("modpack") {
+            return Ok((vec![], 0));
         }
         let ftb = state.core.create_ftb_source();
         let packs = ftb
@@ -433,31 +482,23 @@ async fn search(
                 if keyword.is_empty() {
                     None
                 } else {
-                    Some(&keyword)
+                    Some(keyword)
                 },
                 None,
-                game_version.as_deref(),
-                loader.as_deref(),
-                map_ft_sort(sort.as_deref()),
-                q.page_size.unwrap_or(20),
+                game_version,
+                loader,
+                map_ft_sort(sort),
+                page_size,
             )
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-
         let items: Vec<ResourceItemDto> =
             packs.iter().map(|p| ftb_pack_to_item(p, "ftb")).collect();
         let count = items.len() as i32;
-        (items, count, q.page.unwrap_or(1), q.page_size.unwrap_or(20))
+        Ok((items, count))
     } else {
-        return Ok(Json(empty_search(1, 20)));
-    };
-
-    Ok(Json(ResourceSearchResponse {
-        items,
-        total,
-        page,
-        page_size,
-    }))
+        Ok((vec![], 0))
+    }
 }
 
 // =====================================================================

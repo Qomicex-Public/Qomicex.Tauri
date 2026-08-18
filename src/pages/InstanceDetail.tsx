@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup, faFileExport, faXmark, faDrawPolygon, faEye, faUpload} from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui'
@@ -2250,7 +2250,11 @@ export default function InstanceDetailPage() {
   const { t, lang } = useI18n()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
   const { state: _debugState } = useDebug()
-  const [tab, setTab] = useState<TabId>('overview')
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState<TabId>(() => {
+    const t = searchParams.get('tab')
+    return t && TABS.some(x => x.id === t) ? t as TabId : 'overview'
+  })
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
   const gameDir = useMemo(() => {

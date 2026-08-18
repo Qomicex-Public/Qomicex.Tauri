@@ -165,6 +165,7 @@ export default function ResourceDetailPage() {
   const keyword = searchParams.get('keyword') ?? ''
   const sort = searchParams.get('sort') ?? 'relevance'
   const instanceIdParam = searchParams.get('instanceId') ?? ''
+  const fromInstanceMods = searchParams.get('from') === 'instance'
 
   const [detail, setDetail] = useState<ResourceDetail | null>(null)
   const [versions, setVersions] = useState<ResourceVersion[]>([])
@@ -393,9 +394,15 @@ export default function ResourceDetailPage() {
             if (inst.loader) {
               const loader = inst.loader.toLowerCase().trim()
               const hasVersion = !inst.gameVersion || versionList.some(v => v.gameVersions.includes(inst.gameVersion))
-              const hasLoader = versionList.some(v => v.loaders.length === 0 || v.loaders.includes(loader))
+              const hasLoader = (l: string) => versionList.some(v => v.loaders.length === 0 || v.loaders.includes(l))
               if (!urlGameVersion && inst.gameVersion && hasVersion) setSelectedGameVersion(inst.gameVersion)
-              if (!urlLoader && hasLoader) setSelectedLoader(loader)
+              // 自动匹配加载器：URL/实例指定加载器 → cleanroom 缺失回退 forge（forge 分支，兼容其 mod）→ 全部加载器兜底
+              const desired = (urlLoader || loader).toLowerCase()
+              if (hasLoader(desired)) {
+                if (!urlLoader) setSelectedLoader(loader)
+              } else {
+                setSelectedLoader(desired === 'cleanroom' && hasLoader('forge') ? 'forge' : 'all')
+              }
             }
           }
         } catch { /* no instance available */ }
@@ -439,6 +446,10 @@ export default function ResourceDetailPage() {
   if (urlGameVersion) backQuery.set('gameVersion', urlGameVersion)
   if (urlLoader) backQuery.set('loader', urlLoader)
 
+  const backHref = fromInstanceMods && instanceIdParam
+    ? `/instances/${instanceIdParam}?tab=mods`
+    : `/resource-center?${backQuery.toString()}`
+
   const handleLoadDownloads = async (versionId: string) => {
     if (!resourceId || source !== 'ftb' || downloadsByVersion[versionId]) return
 
@@ -457,7 +468,7 @@ export default function ResourceDetailPage() {
         <PageHeader
           title={
             <>
-              <Link to={`/resource-center?${backQuery.toString()}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
+              <Link to={backHref} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
                 <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
               </Link>
               <span className="ml-2">{t('resourceDetail.title')}</span>
