@@ -43,7 +43,8 @@ export const BACKEND_DEPENDENCIES: Record<string, Dependency[]> = {
   ],
   '核心库': [
     { name: 'qomicex-core-rust', version: '0.1.0', url: 'https://github.com/Qomicex-Public/qomicex-core-rust', license: 'GPL-3.0' },
-    { name: 'qomicex-downloader-rust', version: '0.1.0', url: 'https://github.com/Qomicex-Public/qomicex-downloader-rust', license: 'MIT' },
+    { name: 'qomicex-connector-rust', version: '0.1.0', url: 'https://github.com/Qomicex-Public/qomicex-connector-rust', license: 'GPL-3.0' },
+    { name: 'qomicex-downloader-rust', version: '0.1.0', url: 'https://github.com/Qomicex-Public/qomicex-downloader-rust', license: 'GPL-3.0' },
   ],
 }
 
