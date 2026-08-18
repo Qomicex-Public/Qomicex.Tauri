@@ -401,7 +401,7 @@ export default function ResourceCenter() {
           <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
             <div className="space-y-2">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.sourceLabel')}</p>
-              <Tabs tabs={SOURCES.map(s => ({ id: s.key, label: s.label }))} activeTab={source} onChange={handleSourceChange} />
+              <Tabs tabs={SOURCES.map(s => ({ id: s.key, label: s.key === 'all' ? t('resource.sources.all') : s.label }))} activeTab={source} onChange={handleSourceChange} />
             </div>
             <div className="space-y-2 xl:ml-auto">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.categoryLabel')}</p>
