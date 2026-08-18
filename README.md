@@ -84,6 +84,15 @@ QML 内置**Scaffolding 协议联机**，无需公网 IP 即可与好友组网�
 - 每个实例单独管理 Mod、存档、材质包、光影包、配置文件、Java 与内存、JVM 参数
 - 实例自定义分组，让大量版本井井有条
 
+### 📐 投影原理图管理 · Deepslate 3D 预览
+
+实例详情页内置 **Litematica 投影原理图**管理与预览：
+
+- 列表 / 搜索 / 打开文件夹 / 本地导入（multipart，扩展名白名单）/ 重命名 / 单个删除 + 批量删除
+- **Deepslate WebGL 3D 预览**：查看投影完整内容 + 材质面板 + Y 层滑块 + 多 region + 方块/材料统计列表
+- 材质从原理图调色板子集、按需从用户游戏 jar 运行时提取并本地缓存，**不捆绑 Mojang 素材**（版权合规）
+- schematics 目录纳入版本隔离，随实例独立存放
+
 ### 🗂️ 资源中心
 
 聚合 **Modrinth / CurseForge / FTB** 三大数据源，一站式查找资源：
@@ -120,6 +129,14 @@ QML 内置**Scaffolding 协议联机**，无需公网 IP 即可与好友组网�
 
 禁用 Mod 时保留文件、只改启用状态，方便排查冲突。
 
+### 📎 模组前置自动安装
+
+安装 Mod 时，QML 会自动解析其所在的 Modrinth / CurseForge 数据源的**依赖清单**：
+
+- 识别并展示**必需前置（required dependencies）**，支持递归解析深层依赖
+- 一键连同前置一起安装到目标实例，避免「缺前置开不了服、报红名错误」的困扰
+- 可选跳过非必需依赖，按需选择安装范围
+
 ### ☕ Java 运行时管理
 
 不同版本需要不同 Java，QML 根据实例版本自动选择：
@@ -154,6 +171,30 @@ QML 提供可扩展的插件生态：
 - **I18N 国际化**：中 / 英 / 繁 / 日 / 俄等 **7 种语言**，支持「跟随系统」，运行时实时切换
 - 自定义 UI 字体（枚举系统字体、实时预览）
 - 内置 / 自定义背景、主题色等界面个性化选项
+
+## 🔗 依赖与相关项目
+
+QML 的核心能力由以下 **Rust 子模块**承载（仓库根 git submodule，`git submodule update --recursive` 拉取）：
+
+- [qomicex-core-rust](https://github.com/Qomicex-Public/qomicex-core-rust) — 核心库（GameCore 游戏核心、实例 / 账号 / Java / 下载等业务逻辑）
+- [qomicex-downloader-rust](https://github.com/Qomicex-Public/qomicex-downloader-rust) — 统一高速下载器
+- [qomicex-connector-rust](https://github.com/Qomicex-Public/qomicex-connector-rust) — 联机 / SCF 协议库（依赖 EasyTier4QML 分支）
+- [Qomicex.Tauri.i18n](https://github.com/Qomicex-Public/Qomicex.Tauri.i18n) — 前端多语言资源仓库
+
+**合作 / 相关社区项目**：
+
+- [EuoraCraft-Launcher（ECLteam）](https://github.com/ECLteam/EuoraCraft-Launcher) — ECLteam 维护的 Python + Tauri 第三方 Minecraft 启动器，与 QML 同属社区友好启动器生态，可互相参考
+
+## 🔗 相关链接
+
+| 链接 | 地址 |
+|:--|:--|
+| 官方网站 | <https://www.qomicex.top> |
+| 项目仓库 | <https://github.com/Qomicex-Public/Qomicex.Tauri> |
+| 发布下载 | <https://github.com/Qomicex-Public/Qomicex.Tauri/releases> |
+| 问题反馈 | <https://github.com/Qomicex-Public/Qomicex.Tauri/issues> |
+| 多语言仓库 | <https://github.com/Qomicex-Public/Qomicex.Tauri.i18n> |
+| 测试反馈群 | [623362446](https://qm.qq.com/q/rKiwzrkg8w) |
 
 ## 🎯 适合场景
 
@@ -190,42 +231,61 @@ Qomicex
 ![Linux](https://img.shields.io/badge/Linux-Ubuntu%2020.04%2B-yellow?logo=linux)
 
 
-## 🔧 开发与编译
+## 🔧 开发、调试与构建
 
-> 仓库为 **pnpm** 管理（`workspace:*` 指向 `@qomicex/plugin-ui`），编译/发布由 **Rust**（axum 后端 + Tauri v2）与 **React 19** 前端构成。外部 Rust 核心库（`qomicex-core-rust` / `qomicex-connector-rust` / `qomicex-downloader-rust`）与多语言资源（`qomicex-tauri-i18n`）以 git submodule 引入，请先 `git submodule update --recursive` 拉取。
+> 技术栈：**Rust**（axum 后端 + Tauri v2）+ **React 19 / Vite / TypeScript**（前端）+ **pnpm**（workspace 依赖 `@qomicex/plugin-ui`）。核心库与多语言资源以 git submodule 引入。
 
-安装依赖（全新检出）：
+### 环境要求
+
+- Rust 工具链（stable）+ `cargo`；推荐 `rust-analyzer`（编辑器补全）与 `codelldb`（调试，可参考 `.vscode/launch.json` 的 Rust 后端调试配置）
+- Node.js + pnpm（workspace 管理）
+- Windows 联机构建需要 npcap（`Packet.dll`）等运行时，具体前置见 `AGENTS.md` 与 CI `setup-connector-build`
+
+### 初始化（全新检出）
 
 ```bash
+git submodule update --recursive
 pnpm install --frozen-lockfile
 pnpm --filter @qomicex/plugin-ui build   # 组件库 dist/ 为 gitignored，前端依赖此产物
 ```
 
-后端（Rust API，默认 `127.0.0.1:5000`）：
+### 后端开发（Rust API）
 
 ```bash
 cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml
 ```
 
-前端开发（Vite，端口 1420）：
+默认监听 `127.0.0.1:5000`，可用环境变量 `QOMICEX_PORT` 覆盖端口；开发期可用 VS Code `codelldb` 附加断点调试 Rust 后端。
+
+### 前端开发（Vite）
 
 ```bash
-pnpm run dev
+pnpm run dev        # http://localhost:1420，/api 代理到 :5000
 ```
 
-Tauri 桌面开发（替代纯 Vite，集成窗口/后端进程）：
+### 桌面开发（Tauri，集成窗口与后端进程）
 
 ```bash
 pnpm run tauri dev
 ```
 
-构建（先 `tsc` 类型检查再 `vite build`，类型错误会中断构建）：
+### 测试
 
 ```bash
-pnpm run build
+cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml   # 后端单元测试（含 kick 审核状态机等）
+cd src-tauri && cargo test --lib plugin_gateway                      # Tauri WASM 插件网关测试
+pnpm exec tsc --noEmit                                                # 前端 + i18n 类型检查
+bash scripts/test-api-filters.sh    # 或 test-api-filters.ps1，针对 :5000 的行为验证
 ```
 
-> 修改 `packages/plugin-ui/src/` 后需重建组件库；修改 Rust 代码后请运行 `cargo fmt`（CI 会校验格式）。
+### 构建与格式
+
+```bash
+pnpm run build    # 先 tsc 再 vite build，类型错误会中断构建
+cargo fmt         # 修改 Rust 代码后必跑，CI 会校验格式
+```
+
+> 修改 `packages/plugin-ui/src/` 后需重建组件库；修改 i18n 需在 `qomicex-tauri-i18n` 子模块单独提交推送。
 
 
 ---
