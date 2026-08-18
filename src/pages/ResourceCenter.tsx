@@ -56,6 +56,7 @@ const CATEGORIES = [
 ]
 
 const SOURCES = [
+  { key: 'all', label: '全部' },
   { key: 'modrinth', label: 'Modrinth' },
   { key: 'curseforge', label: 'CurseForge' },
   { key: 'ftb', label: 'FTB' },
@@ -72,6 +73,9 @@ const LOADERS = [
 ]
 
 const SORT_OPTIONS: Record<string, { key: string }[]> = {
+  all: [
+    { key: 'downloads' },
+  ],
   modrinth: [
     { key: 'relevance' },
     { key: 'downloads' },
@@ -214,30 +218,44 @@ export default function ResourceCenter() {
   const navigate = useNavigate()
   const { t } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [category, setCategory] = useState(() => savedSnapshot?.category ?? searchParams.get('category') ?? 'mod')
+  const snap = savedSnapshot
+  const urlCategory = searchParams.get('category')
+  const urlSource = searchParams.get('source')
+  const urlKeyword = searchParams.get('keyword')
+  const urlSort = searchParams.get('sort')
+  const urlGameVersion = searchParams.get('gameVersion')
+  const urlLoader = searchParams.get('loader')
+  // 快照仅用于"返回"场景（URL 筛选与快照一致）；带新筛选的跳转（如实例内
+  // "安装"按钮）视为全新进入，URL 参数优先，不恢复快照。
+  const urlState: [keyof Snapshot, string | null][] = [
+    ['category', urlCategory], ['source', urlSource], ['keyword', urlKeyword],
+    ['sort', urlSort], ['gameVersion', urlGameVersion], ['loader', urlLoader],
+  ]
+  const freshEntry = snap !== null && urlState.some(([k, v]) => v !== null && v !== snap[k])
+  const categoryInit = urlCategory ?? (!freshEntry ? snap?.category : undefined) ?? 'mod'
+  const [category, setCategory] = useState(categoryInit)
   const [source, setSource] = useState(() => {
-    const cat = savedSnapshot?.category ?? searchParams.get('category') ?? 'mod'
-    const src = savedSnapshot?.source ?? searchParams.get('source') ?? 'modrinth'
-    return cat === 'save' ? 'curseforge' : src
+    const src = urlSource ?? (!freshEntry ? snap?.source : undefined) ?? 'modrinth'
+    return categoryInit === 'save' ? 'curseforge' : src
   })
-  const [keyword, setKeyword] = useState(() => savedSnapshot?.keyword ?? searchParams.get('keyword') ?? '')
-  const [searchInput, setSearchInput] = useState(() => savedSnapshot?.searchInput ?? searchParams.get('keyword') ?? '')
-  const [sort, setSort] = useState(() => savedSnapshot?.sort ?? searchParams.get('sort') ?? 'relevance')
-  const [gameVersion, setGameVersion] = useState(() => savedSnapshot?.gameVersion ?? searchParams.get('gameVersion') ?? '')
-  const [loader, setLoader] = useState(() => (savedSnapshot?.loader ?? searchParams.get('loader') ?? '').toLowerCase())
+  const [keyword, setKeyword] = useState(() => urlKeyword ?? (!freshEntry ? snap?.keyword : undefined) ?? '')
+  const [searchInput, setSearchInput] = useState(() => urlKeyword ?? (!freshEntry ? snap?.searchInput : undefined) ?? '')
+  const [sort, setSort] = useState(() => urlSort ?? (!freshEntry ? snap?.sort : undefined) ?? 'relevance')
+  const [gameVersion, setGameVersion] = useState(() => urlGameVersion ?? (!freshEntry ? snap?.gameVersion : undefined) ?? '')
+  const [loader, setLoader] = useState(() => (urlLoader ?? (!freshEntry ? snap?.loader : undefined) ?? '').toLowerCase())
   const instanceId = searchParams.get('instanceId') ?? ''
-  const [items, setItems] = useState<ResourceItem[]>(() => savedSnapshot?.items ?? [])
-  const [total, setTotal] = useState(() => savedSnapshot?.total ?? 0)
-  const [page, setPage] = useState(() => savedSnapshot?.page ?? 1)
+  const [items, setItems] = useState<ResourceItem[]>(() => freshEntry ? [] : (snap?.items ?? []))
+  const [total, setTotal] = useState(() => freshEntry ? 0 : (snap?.total ?? 0))
+  const [page, setPage] = useState(() => freshEntry ? 1 : (snap?.page ?? 1))
   const [loading, setLoading] = useState(false)
-  const [initialLoading, setInitialLoading] = useState(() => !savedSnapshot)
+  const [initialLoading, setInitialLoading] = useState(() => !snap || freshEntry)
   const [isReplacing, setIsReplacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [installDialogItem, setInstallDialogItem] = useState<ResourceItem | null>(null)
-  const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => savedSnapshot?.cnNames ?? {})
+  const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => freshEntry ? {} : (snap?.cnNames ?? {}))
   const pageSize = 20
 
-  const restoredRef = useRef(!!savedSnapshot)
+  const restoredRef = useRef(!freshEntry && !!snap)
   const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, items, total, page, searchInput, cnNames })
   useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, items, total, page, searchInput, cnNames } })
 
@@ -330,7 +348,7 @@ export default function ResourceCenter() {
   const handleCategoryChange = (nextCategory: string) => {
     if (source === 'ftb' && nextCategory !== 'modpack') return
     if (nextCategory === 'save') {
-      if (source !== 'curseforge') setSource('curseforge')
+      if (source !== 'curseforge' && source !== 'all') setSource('curseforge')
       setSort('downloads')
       setCategory(nextCategory)
       return
@@ -343,6 +361,10 @@ export default function ResourceCenter() {
     if (nextSource === 'ftb') {
       setCategory('modpack')
       setSort('relevance')
+      return
+    }
+    if (nextSource === 'all') {
+      setSort('downloads')
       return
     }
     if (category === 'save' && nextSource !== 'curseforge') setCategory('mod')
@@ -383,7 +405,7 @@ export default function ResourceCenter() {
             </div>
             <div className="space-y-2 xl:ml-auto">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.categoryLabel')}</p>
-              <Tabs tabs={CATEGORIES.map(c => ({ id: c.key, label: t(`resource.categories.${c.key}`), disabled: (source === 'ftb' && c.key !== 'modpack') || (source !== 'curseforge' && c.key === 'save') }))} activeTab={category} onChange={handleCategoryChange} />
+              <Tabs tabs={CATEGORIES.map(c => ({ id: c.key, label: t(`resource.categories.${c.key}`), disabled: (source === 'ftb' && c.key !== 'modpack') || (source !== 'curseforge' && source !== 'all' && c.key === 'save') }))} activeTab={category} onChange={handleCategoryChange} />
             </div>
           </div>
 
