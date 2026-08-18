@@ -68,6 +68,9 @@ No test framework. Backend API test script: `bash scripts/test-api-filters.sh` (
 
 ## Rust 测试
 
+- **Rust 格式化（必做）**：修改 `src-backend/qomicex-backend/` 或 `src-tauri/` 下任何 `.rs` 文件后，必须运行
+  `cargo fmt --manifest-path src-backend/qomicex-backend/Cargo.toml` 和 `cargo fmt --manifest-path src-tauri/Cargo.toml`。
+  CI（`.github/workflows/ci.yml`）会跑 `cargo fmt -- --check`，漏跑会导致 push 失败。
 - **Tauri 侧测试**（WASM 网关）：`cd src-tauri && cargo test --lib plugin_gateway`。
   夹具在 `src-tauri/tests/fixtures/`：`dev.test.wasm/`（预编译 `plugin.wasm` + `manifest.json`）
   会被测试自动部署到临时 `QOMICEX_HOME`，无需手工预置。
