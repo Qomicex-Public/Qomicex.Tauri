@@ -1,12 +1,12 @@
 [submodule "qomicex-core-rust"]
 	path = qomicex-core-rust
-	url = git@github.com:Qomicex-Public/qomicex-core-rust.git
+	url = https://github.com/Qomicex-Public/qomicex-core-rust.git
 [submodule "qomicex-downloader-rust"]
 	path = qomicex-downloader-rust
-	url = git@github.com:Qomicex-Public/qomicex-downloader-rust.git
+	url = https://github.com/Qomicex-Public/qomicex-downloader-rust.git
 [submodule "qomicex-connector-rust"]
 	path = qomicex-connector-rust
-	url = git@github.com:Qomicex-Public/qomicex-connector-rust.git
+	url = https://github.com/Qomicex-Public/qomicex-connector-rust.git
 [submodule "qomicex-tauri-i18n"]
 	path = qomicex-tauri-i18n
-	url = git@github.com:Qomicex-Public/Qomicex.Tauri.i18n.git
+	url = https://github.com/Qomicex-Public/Qomicex.Tauri.i18n.git
