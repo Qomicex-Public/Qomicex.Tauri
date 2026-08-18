@@ -185,6 +185,7 @@ async fn get_fastest_proxy_prefix(download_url: &str) -> String {
 async fn race_proxies(download_url: &str) -> String {
     let client = match reqwest::Client::builder()
         .timeout(PROXY_RACE_TIMEOUT)
+        .user_agent(crate::state::USER_AGENT)
         .build()
     {
         Ok(c) => c,

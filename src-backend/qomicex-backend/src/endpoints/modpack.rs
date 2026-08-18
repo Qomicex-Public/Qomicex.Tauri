@@ -834,10 +834,16 @@ fn modpack_headers(url: &str, cf_api_key: &str) -> Vec<(String, String)> {
     if is_cf_host(url) {
         vec![
             ("x-api-key".to_string(), cf_api_key.to_string()),
-            ("User-Agent".to_string(), "QomicexLauncher/1.0".to_string()),
+            (
+                "User-Agent".to_string(),
+                crate::state::USER_AGENT.to_string(),
+            ),
         ]
     } else {
-        vec![("User-Agent".to_string(), "QomicexLauncher/1.0".to_string())]
+        vec![(
+            "User-Agent".to_string(),
+            crate::state::USER_AGENT.to_string(),
+        )]
     }
 }
 

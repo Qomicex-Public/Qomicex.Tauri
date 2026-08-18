@@ -28,7 +28,7 @@ fn ping_client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(PING_TIMEOUT)
-            .user_agent("QomicexLauncher/1.0")
+            .user_agent(crate::state::USER_AGENT)
             .build()
             .expect("构建 ping client 失败")
     })
