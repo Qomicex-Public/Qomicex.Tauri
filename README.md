@@ -43,7 +43,7 @@ Qomicex Launcher（简称 QML）的目标，是让「启动、安装、管理实
 
 ### 🚀 游戏启动
 
-支持启动原版 Minecraft，也支持绝大多数 Mod Loader：
+支持启动原版 Minecraft，也支持绝大多数 Mod Loader 的**一键自动安装**：
 
 - Vanilla
 - Forge
@@ -183,7 +183,7 @@ QML 的核心能力由以下 **Rust 子模块**承载（仓库根 git submodule�
 
 **合作 / 相关社区项目**：
 
-- [EuoraCraft-Launcher（ECLteam）](https://github.com/ECLteam/EuoraCraft-Launcher) — ECLteam 维护的 Python + Tauri 第三方 Minecraft 启动器，与 QML 同属社区友好启动器生态，可互相参考
+- [EuoraCraft-Launcher（ECLteam）](https://github.com/ECLteam/EuoraCraft-Launcher) — 作者的**合作项目**（搭档 ECLteam 维护的 Python + Tauri 第三方 Minecraft 启动器）。双方**共用联机节点**，并**兼容 Qomicex / SCF 拓展协议**实现互相联机；开发过程中相互帮助、QML 也为 EuoraCraft 提供了部分实现的解决思路
 
 ## 🔗 相关链接
 
