@@ -95,6 +95,7 @@ export default function ModCard({
     if (gameVersion) params.set('gameVersion', gameVersion)
     if (loader) params.set('loader', loader.toLowerCase())
     if (instanceId) params.set('instanceId', instanceId)
+    params.set('from', 'instance')
     const id = mod.curseForgeId?.toString() ?? mod.modrinthId ?? ''
     const iconUrl = mod.iconUrl || (mod.iconBase64 ? `data:image/png;base64,${mod.iconBase64}` : '')
     contextItems.push({

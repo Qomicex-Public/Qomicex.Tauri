@@ -1094,6 +1094,11 @@ export default function Instances() {
             </Button>
           </Tooltip>
         )}
+        <Tooltip content={t('instances.manageGroups')}>
+          <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setManageGroupsOpen(true)}>
+            <FontAwesomeIcon icon={faFolderPlus} className="h-3.5 w-3.5" />
+          </Button>
+        </Tooltip>
         <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-background text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', viewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
           <FontAwesomeIcon icon={viewMode === 'grid' ? faGrip : faList} className="h-3.5 w-3.5" />
         </button>
@@ -1116,11 +1121,6 @@ export default function Instances() {
           }}
           className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
         />
-        <Tooltip content={t('instances.manageGroups')}>
-          <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={() => setManageGroupsOpen(true)}>
-            <FontAwesomeIcon icon={faFolderPlus} className="h-3.5 w-3.5" />
-          </Button>
-        </Tooltip>
       </div>
 
       {!currentDir ? (
