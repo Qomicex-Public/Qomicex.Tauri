@@ -919,6 +919,23 @@ export default function Instances() {
           <DialogTitle>{t('instances.dirManagerTitle')}</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-2">
+          <div className="space-y-1">
+            <p className="px-1 text-xs text-muted-foreground">{t('instances.currentDir')}</p>
+            <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 p-3">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                <FontAwesomeIcon icon={faCheck} className="h-3.5 w-3.5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium leading-7">{currentDir ? dirName(currentDir) : t('instances.selectGameDir')}</div>
+                <div className="mt-0.5 truncate text-xs text-muted-foreground">{currentDir || '-'}</div>
+              </div>
+              <Tooltip content={t('instances.openDir')}>
+                <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => currentDir && openFolder(currentDir).catch(() => {})}>
+                  <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                </Button>
+              </Tooltip>
+            </div>
+          </div>
           {managedDirs.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-8">
               <FontAwesomeIcon icon={faFolder} className="h-10 w-10 text-muted-foreground/40" />

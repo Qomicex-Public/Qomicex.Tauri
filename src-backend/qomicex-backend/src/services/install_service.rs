@@ -360,13 +360,19 @@ pub async fn run_install_pipeline(
                 );
                 let mut headers = Vec::new();
                 if af.source.eq_ignore_ascii_case("modrinth") {
-                    headers.push(("User-Agent".to_string(), "QomicexLauncher/1.0".to_string()));
+                    headers.push((
+                        "User-Agent".to_string(),
+                        crate::state::USER_AGENT.to_string(),
+                    ));
                 }
                 let is_cf =
                     af.source.eq_ignore_ascii_case("curseforge") || is_cf_domain(&af.identifier);
                 if is_cf {
                     headers.push(("x-api-key".to_string(), curse_forge_api_key.to_string()));
-                    headers.push(("User-Agent".to_string(), "QomicexLauncher/1.0".to_string()));
+                    headers.push((
+                        "User-Agent".to_string(),
+                        crate::state::USER_AGENT.to_string(),
+                    ));
                 }
                 (af.identifier.clone(), dest, headers)
             })
@@ -514,7 +520,7 @@ fn build_core(
         .configure(|o| {
             o.launcher_name = "QML".to_string();
             o.game_root = game_root.to_string_lossy().into_owned();
-            o.user_agent = "QomicexLauncher/1.0".to_string();
+            o.user_agent = crate::state::USER_AGENT.to_string();
             o.cache_expiry = Duration::from_secs(1800);
         })
         .use_download_mirror(mirror)

@@ -39,6 +39,10 @@ pub const DEFAULT_PORT: u16 = 5000;
 ///   对应 C# 旧版 `AssemblyInformationalVersion`（构建时程序集版本）。
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// 后端所有出站 HTTP 请求的统一 User-Agent（发布版本自动跟随 CARGO_PKG_VERSION）。
+/// 联机节点获取（connector.rs ScaffoldingClient）的 UA 单独为 `QML/{version}`，不受此处约束。
+pub const USER_AGENT: &str = concat!("Qomicex.Launcher/", env!("CARGO_PKG_VERSION"));
+
 pub struct AppState {
     /// 游戏核心（复用 qomicex-core-rust）。
     pub core: Arc<GameCore>,
@@ -96,7 +100,7 @@ impl AppState {
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(&settings_now.game_dir));
         let app_version = APP_VERSION.to_string();
-        let user_agent = format!("Qomicex.Launcher/{}", app_version);
+        let user_agent = USER_AGENT.to_string();
         let curse_forge_api_key = std::env::var("CURSEFORGE_API_KEY")
             .ok()
             .filter(|s| !s.is_empty())
@@ -137,7 +141,14 @@ impl AppState {
         let core = builder.build();
 
         // 下载管理器（对应 DownloadSessionManagerBuilder 的核心参数）。
-        let download_manager = Arc::new(DownloadManager::new(DownloadOptions::default(), 64));
+        // 显式传入统一 UA，避免 fallback 到 downloader 库默认（qomicex-downloader/0.1.0）。
+        let download_manager = Arc::new(DownloadManager::new(
+            DownloadOptions {
+                user_agent: USER_AGENT.to_string(),
+                ..Default::default()
+            },
+            64,
+        ));
         // 下载器日志事件（重试/看门狗/降级等）转发进日志体系：
         // qomicex-downloader 不直接输出，事件只发给订阅者；这里全局订阅一次，
         // DownloadEvent::Log 按级别写入 trace 缓冲 + 落盘。
@@ -161,7 +172,7 @@ impl AppState {
         // 插件 proxy 客户端（对应命名 HttpClient "PluginProxy"）。
         let proxy_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
-            .user_agent("QomicexLauncher/1.0")
+            .user_agent(user_agent.clone())
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .expect("构建插件代理 HTTP 客户端失败");
