@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract, faGear, faDatabase, faWrench } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
@@ -59,11 +59,14 @@ import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, L
 import { LegalDialog } from '../components/LegalDialog.tsx'
 
 const CATEGORIES = [
-  { id: 'launcher', icon: faRocket },
+  { id: 'basic', icon: faGear },
+  { id: 'launch', icon: faRocket },
+  { id: 'download', icon: faDownload },
+  { id: 'storage', icon: faDatabase },
   { id: 'java', icon: faCoffee },
   { id: 'plugins', icon: faPuzzlePiece },
   { id: 'appearance', icon: faPalette },
-  { id: 'toolbox', icon: faDownload },
+  { id: 'toolbox', icon: faWrench },
   { id: 'logs', icon: faFileLines },
   { id: 'about', icon: faInfoCircle },
   { id: 'debug', icon: faBug },
@@ -557,7 +560,7 @@ export default function Settings() {
   const { state: debugState } = useDebug()
   const [category, setCategory] = useState(() => {
     const params = new URLSearchParams(window.location.search)
-    return params.get('tab') ?? 'launcher'
+    return params.get('tab') ?? 'basic'
   })
   const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
   const settingsRef = useRef(settings)
@@ -964,13 +967,13 @@ export default function Settings() {
         </div>
 
         <div className="flex-1 min-w-0 space-y-4">
-          <TabContent activeTab={category} tabId="launcher">
+          <TabContent activeTab={category} tabId="basic">
             <div className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>
-                  <FontAwesomeIcon icon={faRocket} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.launcher.title')}
+                  <FontAwesomeIcon icon={faGear} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  {t('settings.category.basic')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-5">
@@ -991,28 +994,112 @@ export default function Settings() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>{t('settings.launcher.dataDir')}</Label>
-                  <div className="flex items-center gap-2">
-                    <Input value={settings.dataDir} readOnly className="font-mono text-xs" />
-                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={async () => {
-                      const { open } = await import('@tauri-apps/plugin-dialog')
-                      const result = await open({ directory: true, multiple: false })
-                      if (result) {
-                        try {
-                          const newPath = await setDataDir(result)
-                          update('dataDir', newPath)
-                          notify(t('settings.launcher.dataDirChanged'), 'success')
-                        } catch {
-                          notify(t('settings.launcher.saveFailed'), 'error')
-                        }
-                      }
-                    }}>
-                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.dataDirDesc')}</p>
+                  <Label>{t('settings.launcher.translationProvider')}</Label>
+                  <Select
+                    value={settings.translationProvider}
+                    onChange={(v) => update('translationProvider', v)}
+                    className="w-48"
+                  >
+                    <SelectOption value="mymemory">{t('settings.launcher.translationDefault')}</SelectOption>
+                    <SelectOption value="google">{t('settings.launcher.translationGoogle')}</SelectOption>
+                    <SelectOption value="bing">Bing Translator</SelectOption>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.translationProviderDesc')}</p>
+                  {settings.translationProvider === 'bing' && (
+                    <div className="mt-3">
+                      <Label htmlFor="bingApiKey">Bing API Key</Label>
+                      <Input
+                        id="bingApiKey"
+                        type="password"
+                        value={settings.bingApiKey || ''}
+                        onChange={(e) => update('bingApiKey', e.target.value)}
+                        placeholder={t('settings.launcher.bingApiKeyPlaceholder')}
+                        className="mt-1 max-w-sm"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {t('settings.launcher.bingApiKeyDesc')}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <Checkbox
+                    checked={settings.autoReportErrors !== false}
+                    onCheckedChange={(c) => update('autoReportErrors', c === true)}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{t('settings.launcher.autoReportErrors')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.launcher.autoReportErrorsDesc')}</div>
+                  </div>
+                </label>
+
+                <div className="space-y-2">
+                  <Label>{t('settings.launcher.logLevelLabel')}</Label>
+                  <Select
+                    value={settings.logLevel}
+                    onChange={(v) => update('logLevel', v)}
+                    className="w-48"
+                  >
+                    <SelectOption value="error">{t('settings.launcher.logLevel.error')}</SelectOption>
+                    <SelectOption value="warn">{t('settings.launcher.logLevel.warn')}</SelectOption>
+                    <SelectOption value="info">{t('settings.launcher.logLevel.info')}</SelectOption>
+                    <SelectOption value="debug">{t('settings.launcher.logLevel.debug')}</SelectOption>
+                    <SelectOption value="trace">{t('settings.launcher.logLevel.trace')}</SelectOption>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.logLevelDesc')}</p>
+                </div>
+              </CardContent>
+            </Card>
+            </div>
+          </TabContent>
+
+          <TabContent activeTab={category} tabId="launch">
+            <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <FontAwesomeIcon icon={faRocket} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  {t('settings.category.launch')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <Checkbox
+                    checked={settings.versionIsolation}
+                    onCheckedChange={(c) => update('versionIsolation', c === true)}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{t('settings.launcher.versionIsolation')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.launcher.versionIsolationDesc')}</div>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <Checkbox
+                    checked={settings.closeAfterLaunch}
+                    onCheckedChange={(c) => update('closeAfterLaunch', c === true)}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{t('settings.launcher.closeAfterLaunch')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.launcher.closeAfterLaunchDesc')}</div>
+                  </div>
+                </label>
+              </CardContent>
+            </Card>
+            </div>
+          </TabContent>
+
+          <TabContent activeTab={category} tabId="download">
+            <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <FontAwesomeIcon icon={faDownload} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  {t('settings.category.download')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
                 <div className="space-y-2">
                   <Label htmlFor="downloadThreads">{t('settings.launcher.downloadThreads')}</Label>
                   <div className="flex items-center gap-2">
@@ -1050,39 +1137,6 @@ export default function Settings() {
                   </Select>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.fileChunkThreadsDesc')}</p>
                 </div>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
-                    checked={settings.versionIsolation}
-                    onCheckedChange={(c) => update('versionIsolation', c === true)}
-                  />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.versionIsolation')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.versionIsolationDesc')}</div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
-                    checked={settings.closeAfterLaunch}
-                    onCheckedChange={(c) => update('closeAfterLaunch', c === true)}
-                  />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.closeAfterLaunch')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.closeAfterLaunchDesc')}</div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
-                    checked={settings.autoReportErrors !== false}
-                    onCheckedChange={(c) => update('autoReportErrors', c === true)}
-                  />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.autoReportErrors')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.autoReportErrorsDesc')}</div>
-                  </div>
-                </label>
 
                 <div className="space-y-2">
                   <Label>{t('settings.launcher.downloadSource')}</Label>
@@ -1198,36 +1252,6 @@ export default function Settings() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>{t('settings.launcher.translationProvider')}</Label>
-                  <Select
-                    value={settings.translationProvider}
-                    onChange={(v) => update('translationProvider', v)}
-                    className="w-48"
-                  >
-                    <SelectOption value="mymemory">{t('settings.launcher.translationDefault')}</SelectOption>
-                    <SelectOption value="google">{t('settings.launcher.translationGoogle')}</SelectOption>
-                    <SelectOption value="bing">Bing Translator</SelectOption>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.translationProviderDesc')}</p>
-                  {settings.translationProvider === 'bing' && (
-                    <div className="mt-3">
-                      <Label htmlFor="bingApiKey">Bing API Key</Label>
-                      <Input
-                        id="bingApiKey"
-                        type="password"
-                        value={settings.bingApiKey || ''}
-                        onChange={(e) => update('bingApiKey', e.target.value)}
-                        placeholder={t('settings.launcher.bingApiKeyPlaceholder')}
-                        className="mt-1 max-w-sm"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {t('settings.launcher.bingApiKeyDesc')}
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2">
                   <Label htmlFor="downloadTimeout">{t('settings.launcher.downloadTimeout')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.max(0, settings.downloadTimeout - 5))} disabled={settings.downloadTimeout <= 0}>
@@ -1261,21 +1285,42 @@ export default function Settings() {
                   </label>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.enableHttp3Desc')}</p>
                 </div>
+              </CardContent>
+            </Card>
+            </div>
+          </TabContent>
 
+          <TabContent activeTab={category} tabId="storage">
+            <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <FontAwesomeIcon icon={faDatabase} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  {t('settings.category.storage')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
                 <div className="space-y-2">
-                  <Label>{t('settings.launcher.logLevelLabel')}</Label>
-                  <Select
-                    value={settings.logLevel}
-                    onChange={(v) => update('logLevel', v)}
-                    className="w-48"
-                  >
-                    <SelectOption value="error">{t('settings.launcher.logLevel.error')}</SelectOption>
-                    <SelectOption value="warn">{t('settings.launcher.logLevel.warn')}</SelectOption>
-                    <SelectOption value="info">{t('settings.launcher.logLevel.info')}</SelectOption>
-                    <SelectOption value="debug">{t('settings.launcher.logLevel.debug')}</SelectOption>
-                    <SelectOption value="trace">{t('settings.launcher.logLevel.trace')}</SelectOption>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.logLevelDesc')}</p>
+                  <Label>{t('settings.launcher.dataDir')}</Label>
+                  <div className="flex items-center gap-2">
+                    <Input value={settings.dataDir} readOnly className="font-mono text-xs" />
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={async () => {
+                      const { open } = await import('@tauri-apps/plugin-dialog')
+                      const result = await open({ directory: true, multiple: false })
+                      if (result) {
+                        try {
+                          const newPath = await setDataDir(result)
+                          update('dataDir', newPath)
+                          notify(t('settings.launcher.dataDirChanged'), 'success')
+                        } catch {
+                          notify(t('settings.launcher.saveFailed'), 'error')
+                        }
+                      }
+                    }}>
+                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.dataDirDesc')}</p>
                 </div>
               </CardContent>
             </Card>
