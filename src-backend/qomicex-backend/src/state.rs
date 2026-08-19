@@ -230,9 +230,11 @@ fn new_download_manager(settings: &SettingsResponse) -> Arc<DownloadManager> {
     let dm = Arc::new(DownloadManager::new(
         DownloadOptions {
             user_agent: USER_AGENT.to_string(),
-            // 手动启用 HTTP/3（实验性）→ 不支持回退：服务器不支持 H3 直接失败。
+            // 关闭：enable_http3=false → 只建 h2 client，完全不用 HTTP/3，强制 HTTP/2。
+            // 开启：enable_http3=true → 优先 HTTP/3，http3_fallback=true → 服务器不支持
+            // QUIC 时自动回退 HTTP/2（下载器默认回退行为）。
             enable_http3,
-            http3_fallback: false,
+            http3_fallback: true,
             ..Default::default()
         },
         DOWNLOAD_CONCURRENCY,

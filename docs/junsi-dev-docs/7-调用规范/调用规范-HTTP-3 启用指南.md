@@ -85,15 +85,15 @@ let m_h2 = DownloadManager::new(DownloadOptions::default(), 8);
 
 - **编译期**：`src-backend/qomicex-backend/Cargo.toml` 对 `qomicex-downloader` 开启 `features = ["http3"]`；
   根 `.cargo/config.toml` 加 `[build] rustflags = ["--cfg", "reqwest_unstable"]`，dev / release.yml 全部后端构建自动带上。
-- **运行时**：`SettingsResponse.enableHttp3`（默认 `false`）。开启时后端用
-  `DownloadOptions { enable_http3: true, http3_fallback: false, .. }` 重建下载管理器，
-  **强制只走 HTTP/3、不回退 HTTP/2**（服务器不支持 QUIC 则下载失败）。
+- **运行时**：`SettingsResponse.enableHttp3`（默认 `false`）。**关闭**（默认）→ 强制 HTTP/2，完全不使用 HTTP/3；
+  **开启** → 用 `DownloadOptions { enable_http3: true, http3_fallback: true, .. }` 重建下载管理器，
+  **优先 HTTP/3，服务器不支持 QUIC 时自动回退 HTTP/2**（不中断下载）。
 - **热替换**：`AppState.download_manager` 为 `ArcSwap<DownloadManager>`，开关变化即在
   `PUT /settings` 时重建并替换（旧管理器进行中的任务被取消）。
 - **UI**：设置 → 下载 →「启用 HTTP/3 文件下载（实验性）」复选框（默认关闭）。
 
-`http3_fallback`（默认 `true`）为库新增的控制项；`false` 即"无回退"档位，这是启动器
-当前开启 HTTP/3 时采用的模式。
+`http3_fallback`（默认 `true`）为库新增的控制项，供需要"完全无回退"的调用方将之设 `false`；
+启动器采用 `true`（回退模式）。
 
 
 ## 修订记录
