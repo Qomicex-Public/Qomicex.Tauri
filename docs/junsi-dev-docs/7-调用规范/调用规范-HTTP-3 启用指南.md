@@ -76,6 +76,7 @@ let m_h2 = DownloadManager::new(DownloadOptions::default(), 8);
 
 HTTP/2 调优字段（adaptive window / 大帧等）只在服务器确实协商到 H2 时生效，对 H1-only 源无影响。
 > ⚠️ 坑：`http2_max_frame_size` 合法上限是 `2^24-1 = 16_777_215`；写成 `16*1024*1024`(16_777_216) 会超出上限 1，属**无效 SETTINGS**，服务器会断开 h2 连接导致全部下载失败（详见决策记录 2026-08-19）。
+> 2026-08-19 更新：下载器已改为 **HTTP/1.1-only**（每个并发文件独立 TCP 连接，规避 HTTP/2 单连接多路复用被代理/DPI 掐速的问题，同时对仅支持 H1 的源更兼容）。HTTP/3（需手动开启 + 回退）为独立可选路径。
 
 ## 4. Android / 跨平台注意
 
