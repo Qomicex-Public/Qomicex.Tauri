@@ -1037,47 +1037,18 @@ export default function Settings() {
 
                 <div className="space-y-2">
                   <Label htmlFor="fileChunkThreads">{t('settings.launcher.fileChunkThreads')}</Label>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('fileChunkThreads', Math.max(0, settings.fileChunkThreads - 1))} disabled={settings.fileChunkThreads <= 0}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
-                    </Button>
-                    <Input
-                      id="fileChunkThreads"
-                      type="number"
-                      min={0}
-                      max={16}
-                      value={settings.fileChunkThreads}
-                      onChange={(e) => update('fileChunkThreads', Math.max(0, Math.min(16, parseInt(e.target.value) || 0)))}
-                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                    />
-                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('fileChunkThreads', Math.min(16, settings.fileChunkThreads + 1))} disabled={settings.fileChunkThreads >= 16}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+                  <Select
+                    value={String(settings.fileChunkThreads)}
+                    onChange={(v) => update('fileChunkThreads', Number(v))}
+                    className="w-48"
+                  >
+                    <SelectOption value="-1">{t('settings.launcher.fileChunkThreadsOff')}</SelectOption>
+                    <SelectOption value="0">{t('settings.launcher.fileChunkThreadsAuto')}</SelectOption>
+                    {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+                      <SelectOption key={n} value={String(n)}>{n}</SelectOption>
+                    ))}
+                  </Select>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.fileChunkThreadsDesc')}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="maxConnectionsPerServer">{t('settings.launcher.maxConnections')}</Label>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('maxConnectionsPerServer', Math.max(8, settings.maxConnectionsPerServer - 8))} disabled={settings.maxConnectionsPerServer <= 8}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
-                    </Button>
-                    <Input
-                      id="maxConnectionsPerServer"
-                      type="number"
-                      min={8}
-                      max={256}
-                      step={8}
-                      value={settings.maxConnectionsPerServer}
-                      onChange={(e) => update('maxConnectionsPerServer', Math.max(8, Math.min(256, parseInt(e.target.value) || 8)))}
-                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                    />
-                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('maxConnectionsPerServer', Math.min(256, settings.maxConnectionsPerServer + 8))} disabled={settings.maxConnectionsPerServer >= 256}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.maxConnectionsDesc')}</p>
                 </div>
 
                 <label className="flex items-center gap-3 cursor-pointer">

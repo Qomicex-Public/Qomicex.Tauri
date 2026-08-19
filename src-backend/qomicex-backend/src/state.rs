@@ -221,15 +221,22 @@ impl AppState {
     }
 }
 
-/// 下载管理器并发上限（worker 级全局最大任务数）。
-const DOWNLOAD_CONCURRENCY: usize = 64;
-
 /// 按设置构造下载管理器，并挂接 downloader 日志转发到 trace 体系。
 fn new_download_manager(settings: &SettingsResponse) -> Arc<DownloadManager> {
     let enable_http3 = settings.enable_http3.unwrap_or(false);
+    // 「下载线程数」= 全局同时下载的文件数上限（DownloadManager worker 级并发）。
+    // UI 允许 1-512，这里钳位免越界（Semaphore::new 负数会 panic）。
+    let concurrency = settings.download_threads.clamp(1, 512) as usize;
+    // 「分片数」下拉框：-1=关闭（单段直传，不分片并行）、0=自动（引擎默认 16）、1-16=显式。
+    let max_segments = match settings.file_chunk_threads {
+        Some(v) if v < 0 => 1,
+        Some(v) if v > 0 => v.clamp(1, 16) as u32,
+        _ => DownloadOptions::default().max_segments,
+    };
     let dm = Arc::new(DownloadManager::new(
         DownloadOptions {
             user_agent: USER_AGENT.to_string(),
+            max_segments,
             // 关闭：enable_http3=false → 只建 h2 client，完全不用 HTTP/3，强制 HTTP/2。
             // 开启：enable_http3=true → 优先 HTTP/3，http3_fallback=true → 服务器不支持
             // QUIC 时自动回退 HTTP/2（下载器默认回退行为）。
@@ -237,7 +244,7 @@ fn new_download_manager(settings: &SettingsResponse) -> Arc<DownloadManager> {
             http3_fallback: true,
             ..Default::default()
         },
-        DOWNLOAD_CONCURRENCY,
+        concurrency,
     ));
     spawn_downloader_log_forward(&dm);
     dm

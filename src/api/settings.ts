@@ -15,7 +15,6 @@ export interface AppSettings {
   gameDir: string
   downloadThreads: number
   fileChunkThreads: number
-  maxConnectionsPerServer: number
   versionIsolation: boolean
   closeAfterLaunch: boolean
   memoryMode: 'auto' | 'custom'
@@ -63,7 +62,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   gameDir: '.minecraft',
   downloadThreads: 64,
   fileChunkThreads: 0,
-  maxConnectionsPerServer: 64,
   versionIsolation: true,
   closeAfterLaunch: false,
   memoryMode: 'auto',

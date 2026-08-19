@@ -63,7 +63,6 @@ pub struct SettingsResponse {
     pub download_threads: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_chunk_threads: Option<i32>,
-    pub max_connections_per_server: i32,
     pub version_isolation: bool,
     pub close_after_launch: bool,
     pub memory_mode: Option<String>,
@@ -133,7 +132,6 @@ impl Default for SettingsResponse {
             game_dir: default_dir,
             download_threads: 64,
             file_chunk_threads: None,
-            max_connections_per_server: 64,
             version_isolation: true,
             close_after_launch: false,
             memory_mode: Some("auto".to_string()),
