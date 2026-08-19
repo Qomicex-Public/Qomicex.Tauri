@@ -75,6 +75,7 @@ let m_h2 = DownloadManager::new(DownloadOptions::default(), 8);
 - 仅当开启 HTTP/3（`enable_http3=true`）时才用 `http3_prior_knowledge`（仅 H3）客户端；服务器不支持时经 `http3_fallback` 回退到上述 H1/H2 客户端，再经 ALPN 协商（H2 或 H1.1）。
 
 HTTP/2 调优字段（adaptive window / 大帧等）只在服务器确实协商到 H2 时生效，对 H1-only 源无影响。
+> ⚠️ 坑：`http2_max_frame_size` 合法上限是 `2^24-1 = 16_777_215`；写成 `16*1024*1024`(16_777_216) 会超出上限 1，属**无效 SETTINGS**，服务器会断开 h2 连接导致全部下载失败（详见决策记录 2026-08-19）。
 
 ## 4. Android / 跨平台注意
 
