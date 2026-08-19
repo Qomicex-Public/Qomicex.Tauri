@@ -92,6 +92,11 @@ let m_h2 = DownloadManager::new(DownloadOptions::default(), 8);
   `PUT /settings` 时重建并替换（旧管理器进行中的任务被取消）。
 - **UI**：设置 → 下载 →「启用 HTTP/3 文件下载（实验性）」复选框（默认关闭）。
 
+另：下载管理器构造参数已跟随设置——「下载线程数」`downloadThreads` → 全局并发上限
+`max_concurrent`（原先硬编码 64）；「分片数」`fileChunkThreads` 下拉（-1=关闭/0=自动/1-16）
+→ `DownloadOptions::max_segments`。此两项与 HTTP/3 开关共同触发热替换。「最大连接数」
+`maxConnectionsPerServer` 原为无效设置，已删除。
+
 `http3_fallback`（默认 `true`）为库新增的控制项，供需要"完全无回退"的调用方将之设 `false`；
 启动器采用 `true`（回退模式）。
 
