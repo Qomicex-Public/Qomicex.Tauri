@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract, faGear, faDatabase, faWrench } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract, faGear, faDatabase } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
@@ -59,14 +59,11 @@ import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, L
 import { LegalDialog } from '../components/LegalDialog.tsx'
 
 const CATEGORIES = [
-  { id: 'basic', icon: faGear },
-  { id: 'launch', icon: faRocket },
-  { id: 'download', icon: faDownload },
-  { id: 'storage', icon: faDatabase },
+  { id: 'launcher', icon: faRocket },
   { id: 'java', icon: faCoffee },
   { id: 'plugins', icon: faPuzzlePiece },
   { id: 'appearance', icon: faPalette },
-  { id: 'toolbox', icon: faWrench },
+  { id: 'toolbox', icon: faDownload },
   { id: 'logs', icon: faFileLines },
   { id: 'about', icon: faInfoCircle },
   { id: 'debug', icon: faBug },
@@ -560,7 +557,7 @@ export default function Settings() {
   const { state: debugState } = useDebug()
   const [category, setCategory] = useState(() => {
     const params = new URLSearchParams(window.location.search)
-    return params.get('tab') ?? 'basic'
+    return params.get('tab') ?? 'launcher'
   })
   const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
   const settingsRef = useRef(settings)
@@ -967,7 +964,7 @@ export default function Settings() {
         </div>
 
         <div className="flex-1 min-w-0 space-y-4">
-          <TabContent activeTab={category} tabId="basic">
+          <TabContent activeTab={category} tabId="launcher">
             <div className="space-y-6">
             <Card>
               <CardHeader>
@@ -1051,11 +1048,7 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
-            </div>
-          </TabContent>
 
-          <TabContent activeTab={category} tabId="launch">
-            <div className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>
@@ -1087,11 +1080,7 @@ export default function Settings() {
                 </label>
               </CardContent>
             </Card>
-            </div>
-          </TabContent>
 
-          <TabContent activeTab={category} tabId="download">
-            <div className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>
@@ -1287,11 +1276,7 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
-            </div>
-          </TabContent>
 
-          <TabContent activeTab={category} tabId="storage">
-            <div className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>
