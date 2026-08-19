@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use axum::body::Body;
-use axum::extract::{Multipart, Path as AxumPath, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
@@ -88,7 +88,10 @@ fn modpack_data(shared: &SharedState) -> Arc<ModpackServiceData> {
 
 pub fn router() -> Router<SharedState> {
     Router::new()
-        .route("/modpack/parse", post(parse))
+        .route(
+            "/modpack/parse",
+            post(parse).route_layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES as usize)),
+        )
         .route("/modpack/resolve", post(resolve))
         .route("/modpack/install", post(install))
         .route("/modpack/install-direct", post(install_direct))

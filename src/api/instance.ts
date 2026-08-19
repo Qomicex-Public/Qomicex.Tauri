@@ -133,13 +133,18 @@ export async function exportDiagnostics(id: string): Promise<void> {
 export async function parseModpackFile(file: File): Promise<ModpackParseResult> {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await fetch(`${API_BASE}/modpack/parse`, { method: 'POST', body: formData })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    if (err.message) throw new Error(String(err.message))
-    throw new ApiError({ code: 'MODPACK_PARSE_FAILED', message: '解析失败', detail: typeof err.error === 'string' ? err.error : null, traceId: '', timestamp: new Date().toISOString(), status: res.status })
+  try {
+    const res = await fetch(`${API_BASE}/modpack/parse`, { method: 'POST', body: formData })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      if (err.message) throw new Error(String(err.message))
+      throw new ApiError({ code: 'MODPACK_PARSE_FAILED', message: '解析失败', detail: typeof err.error === 'string' ? err.error : null, traceId: '', timestamp: new Date().toISOString(), status: res.status })
+    }
+    return res.json()
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    throw new ApiError({ code: 'MODPACK_UPLOAD_FAILED', message: '上传中断/连接失败，请重试', detail: e instanceof Error ? e.message : null, traceId: '', timestamp: new Date().toISOString(), status: 0 })
   }
-  return res.json()
 }
 
 export async function resolveModpack(source: string, projectId: string, versionId: string): Promise<ModpackParseResult> {
