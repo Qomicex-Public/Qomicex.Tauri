@@ -65,6 +65,17 @@ let m_h2 = DownloadManager::new(DownloadOptions::default(), 8);
 - 同一进程可共存多个不同协议的 Manager，互不影响。
 - 开启 HTTP/3 的实例在服务器不支持 QUIC 时会**自动回退 HTTP/2**（无需人为处理）。
 
+## 3.5 协议协商与 HTTP/1.1 基线
+
+普通客户端（非 H3）同时支持 **HTTP/1.1 + HTTP/2**（未设 `http2_prior_knowledge`，故不强制 H2）：
+
+- **HTTPS**：握手时经 **ALPN** 协商（`h2, http/1.1`）。服务器支持 H2 → HTTP/2；只支持 HTTP/1.1 → 自动回落 **HTTP/1.1**。
+- **HTTP 明文**：固定 HTTP/1.1。
+- 因此**不支持 HTTP/2 的下载源/文件会照常以 HTTP/1.1 下载**，不会失败。
+- 仅当开启 HTTP/3（`enable_http3=true`）时才用 `http3_prior_knowledge`（仅 H3）客户端；服务器不支持时经 `http3_fallback` 回退到上述 H1/H2 客户端，再经 ALPN 协商（H2 或 H1.1）。
+
+HTTP/2 调优字段（adaptive window / 大帧等）只在服务器确实协商到 H2 时生效，对 H1-only 源无影响。
+
 ## 4. Android / 跨平台注意
 
 - **默认（不开 feature）**：rustls 纯 Rust TLS，Tauri CLI 自带 NDK，直接 `tauri android build` 即可。
