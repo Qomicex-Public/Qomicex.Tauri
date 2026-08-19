@@ -483,7 +483,7 @@ async fn launch_instance(
 
     let tracker = state.launch_tracker.clone();
     let core = state.core.clone();
-    let download_manager = state.download_manager.clone();
+    let download_manager = state.download_manager.load_full();
     let game_dir = instance.game_dir.clone();
     let name = instance.name.clone();
     let skip_integrity_check = instance.skip_integrity_check;
@@ -832,7 +832,7 @@ async fn install_instance(
     };
 
     let tracker = state.install_tracker.clone();
-    let mgr = state.download_manager.clone();
+    let mgr = state.download_manager.load_full();
     let http_client = state.http_client.clone();
     let cf_api_key = state.curse_forge_api_key.clone();
 

@@ -54,6 +54,8 @@ export interface AppSettings {
   initialized?: boolean
   /** 自动上报严重错误日志（崩溃类恶性 bug）；缺失 = 开启（默认开） */
   autoReportErrors?: boolean
+  /** 启用 HTTP/3 文件下载（实验性）；缺失 = 关闭（默认走 HTTP/2） */
+  enableHttp3?: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -95,6 +97,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontFamily: '',
   initialized: false,
   autoReportErrors: true,
+  enableHttp3: false,
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }

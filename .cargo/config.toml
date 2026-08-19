@@ -5,3 +5,9 @@ git-fetch-with-cli = true
 PROTOC = "C:/Users/tmoam/AppData/Local/Microsoft/WinGet/Packages/Google.Protobuf_Microsoft.Winget.Source_8wekyb3d8bbwe/bin/protoc.exe"
 VC_LTL = "C:/Users/tmoam/AppData/Local/Temp/opencode/vcltl/vc-ltl5"
 YY_THUNKS = "C:/Users/tmoam/AppData/Local/Temp/opencode/vcltl/yy-thunks"
+
+# reqwest 的 HTTP/3 是 unstable 特性，需 `--cfg reqwest_unstable` 才编译进 quinn/QUIC 栈。
+# 后端已开启 `http3` feature（qomicex-downloader 依赖），此 cfg 让下载器 HTTP/3 真正可用。
+# 对未启用 http3 的 crate（联机/核心等）无影响，仅每次变更后全量重编一次。
+[build]
+rustflags = ["--cfg", "reqwest_unstable"]

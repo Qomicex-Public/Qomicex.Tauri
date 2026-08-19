@@ -1279,6 +1279,19 @@ export default function Settings() {
                 </div>
 
                 <div className="space-y-2">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <Checkbox
+                      checked={settings.enableHttp3 === true}
+                      onCheckedChange={(c) => update('enableHttp3', c === true)}
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium">{t('settings.launcher.enableHttp3')}</span>
+                    </div>
+                  </label>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.enableHttp3Desc')}</p>
+                </div>
+
+                <div className="space-y-2">
                   <Label>{t('settings.launcher.logLevelLabel')}</Label>
                   <Select
                     value={settings.logLevel}

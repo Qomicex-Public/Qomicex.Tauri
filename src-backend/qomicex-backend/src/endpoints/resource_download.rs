@@ -258,7 +258,7 @@ async fn start(
     State(state): State<SharedState>,
     Json(req): Json<StartDownloadRequest>,
 ) -> ApiResult<Json<DownloadStartResponse>> {
-    ensure_watcher(state.download_manager.clone());
+    ensure_watcher(state.download_manager.load_full());
 
     let cat = match req.category.as_deref().map(|c| c.to_lowercase()).as_deref() {
         Some("resourcepacks" | "resourcepack") => "resourcepacks",
@@ -301,7 +301,7 @@ async fn start(
         task = task.with_header("x-api-key", state.curse_forge_api_key.clone());
     }
 
-    let id = state.download_manager.add(task);
+    let id = state.download_manager.load_full().add(task);
 
     let file_name = req.file_name.clone();
     {
@@ -331,7 +331,7 @@ async fn download_to(
     State(state): State<SharedState>,
     Json(req): Json<DownloadToRequest>,
 ) -> ApiResult<Json<DownloadToResponse>> {
-    ensure_watcher(state.download_manager.clone());
+    ensure_watcher(state.download_manager.load_full());
 
     let target = PathBuf::from(req.target_path.trim());
     let target_dir = target
@@ -350,7 +350,7 @@ async fn download_to(
         task = task.with_header("x-api-key", state.curse_forge_api_key.clone());
     }
 
-    let id = state.download_manager.add(task);
+    let id = state.download_manager.load_full().add(task);
 
     let path = target.to_string_lossy().into_owned();
     {
@@ -413,7 +413,7 @@ async fn cancel(
     })?;
     // Cancel is best-effort in the original: a missing task still replies
     // `{ status: "cancelled" }`. Ignore TaskNotFound here to match that.
-    let _ = state.download_manager.cancel(id).await;
+    let _ = state.download_manager.load_full().cancel(id).await;
     Ok(Json(StatusResponse {
         status: "cancelled".to_string(),
     }))
@@ -431,7 +431,7 @@ async fn cancel_batch(
         }
     }
     for id in ids {
-        let _ = state.download_manager.cancel(id).await;
+        let _ = state.download_manager.load_full().cancel(id).await;
     }
     Ok(Json(StatusResponse {
         status: "cancelled".to_string(),

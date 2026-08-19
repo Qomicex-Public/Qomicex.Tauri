@@ -105,6 +105,10 @@ pub struct SettingsResponse {
     /// 自动上报严重错误日志（崩溃类恶性 bug）。`None` 视为开启（默认开）；
     /// 关闭时前后端都不上报。
     pub auto_report_errors: Option<bool>,
+    /// 启用 HTTP/3 文件下载（实验性）。`None`/`Some(false)` = 关闭（默认，走 HTTP/2）；
+    /// `Some(true)` = 下载强制走 HTTP/3 且不支持回退（服务器不支持则下载失败）。
+    /// 需后端以 `http3` feature + `--cfg reqwest_unstable` 编译才真正生效。
+    pub enable_http3: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +169,7 @@ impl Default for SettingsResponse {
             font_family: None,
             initialized: Some(false),
             auto_report_errors: Some(true),
+            enable_http3: None,
         }
     }
 }

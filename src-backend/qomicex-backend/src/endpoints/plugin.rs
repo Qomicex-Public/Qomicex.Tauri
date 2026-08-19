@@ -1111,7 +1111,7 @@ async fn download_start(
     }
 
     // Subscribe before adding so completion cannot race past the worker.
-    let manager = state.download_manager.clone();
+    let manager = state.download_manager.load_full();
     let download_id = manager.add(task);
 
     {
@@ -1187,7 +1187,7 @@ async fn download_cancel(
         guard.get(&task_id).map(|s| s.download_id)
     };
     if let Some(download_id) = download_id {
-        let _ = state.download_manager.cancel(download_id).await;
+        let _ = state.download_manager.load_full().cancel(download_id).await;
     }
     update_session(&task_id, |s| {
         s.status = "cancelled".to_string();

@@ -171,7 +171,12 @@ async fn put_settings(
     state
         .curseforge_fetch
         .set_config(body.curseforge_fetch_config());
-    *state.settings.write().await = body;
+    // HTTP/3 开关变化 → 热替换下载管理器（旧管理器进行中的任务被取消）。
+    let old_enable_http3 = { state.settings.read().await.enable_http3.unwrap_or(false) };
+    *state.settings.write().await = body.clone();
+    if old_enable_http3 != body.enable_http3.unwrap_or(false) {
+        state.replace_download_manager(&body);
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

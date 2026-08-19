@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use qomicex_core::builder::GameCoreBuilder;
 use qomicex_core::core::GameCore;
 use qomicex_core::models::download::DownloadMirror;
@@ -46,8 +47,9 @@ pub const USER_AGENT: &str = concat!("Qomicex.Launcher/", env!("CARGO_PKG_VERSIO
 pub struct AppState {
     /// 游戏核心（复用 qomicex-core-rust）。
     pub core: Arc<GameCore>,
-    /// 下载管理器（复用 qomicex-downloader）。
-    pub download_manager: Arc<DownloadManager>,
+    /// 下载管理器（复用 qomicex-downloader）。用 `ArcSwap` 支持运行时热替换
+    /// （切换 HTTP/3 开关时重建并替换，旧管理器进行中的任务被取消）。
+    pub download_manager: ArcSwap<DownloadManager>,
     /// 数据目录（AppPaths.BaseDir）。
     pub data_dir: PathBuf,
     /// CurseForge API Key。
@@ -142,32 +144,8 @@ impl AppState {
 
         // 下载管理器（对应 DownloadSessionManagerBuilder 的核心参数）。
         // 显式传入统一 UA，避免 fallback 到 downloader 库默认（qomicex-downloader/0.1.0）。
-        let download_manager = Arc::new(DownloadManager::new(
-            DownloadOptions {
-                user_agent: USER_AGENT.to_string(),
-                ..Default::default()
-            },
-            64,
-        ));
-        // 下载器日志事件（重试/看门狗/降级等）转发进日志体系：
-        // qomicex-downloader 不直接输出，事件只发给订阅者；这里全局订阅一次，
-        // DownloadEvent::Log 按级别写入 trace 缓冲 + 落盘。
-        {
-            let dm = download_manager.clone();
-            tokio::spawn(async move {
-                let mut rx = dm.subscribe();
-                loop {
-                    match rx.recv().await {
-                        Ok(qomicex_downloader::DownloadEvent::Log { level, message }) => {
-                            let line = format!("[downloader:{level:?}] {message}");
-                            crate::services::trace::trace_append(line);
-                        }
-                        Ok(_) => {}
-                        Err(_) => break,
-                    }
-                }
-            });
-        }
+        // enable_http3 / http3_fallback 跟随设置：HTTP/3 开启时强制不回退（实验性）。
+        let download_manager = new_download_manager(&settings_now);
 
         // 插件 proxy 客户端（对应命名 HttpClient "PluginProxy"）。
         let proxy_client = reqwest::Client::builder()
@@ -212,7 +190,7 @@ impl AppState {
 
         Self {
             core,
-            download_manager,
+            download_manager: ArcSwap::from(download_manager),
             data_dir: settings::resolve_base_dir(),
             curse_forge_api_key,
             http_client,
@@ -235,6 +213,52 @@ impl AppState {
             curseforge_fetch,
         }
     }
+
+    /// 运行时重建并热替换下载管理器（切换 HTTP/3 开关时调用）。
+    /// 旧管理器在无引用后释放，其进行中的任务被取消。
+    pub fn replace_download_manager(&self, settings: &SettingsResponse) {
+        self.download_manager.store(new_download_manager(settings));
+    }
+}
+
+/// 下载管理器并发上限（worker 级全局最大任务数）。
+const DOWNLOAD_CONCURRENCY: usize = 64;
+
+/// 按设置构造下载管理器，并挂接 downloader 日志转发到 trace 体系。
+fn new_download_manager(settings: &SettingsResponse) -> Arc<DownloadManager> {
+    let enable_http3 = settings.enable_http3.unwrap_or(false);
+    let dm = Arc::new(DownloadManager::new(
+        DownloadOptions {
+            user_agent: USER_AGENT.to_string(),
+            // 手动启用 HTTP/3（实验性）→ 不支持回退：服务器不支持 H3 直接失败。
+            enable_http3,
+            http3_fallback: false,
+            ..Default::default()
+        },
+        DOWNLOAD_CONCURRENCY,
+    ));
+    spawn_downloader_log_forward(&dm);
+    dm
+}
+
+/// 下载器日志事件（重试/看门狗/降级等）转发进日志体系：qomicex-downloader
+/// 不直接输出，事件只发给订阅者；这里对每个 manager 订阅一次，`DownloadEvent::Log`
+/// 按级别写入 trace 缓冲 + 落盘。
+fn spawn_downloader_log_forward(dm: &Arc<DownloadManager>) {
+    let dm = dm.clone();
+    tokio::spawn(async move {
+        let mut rx = dm.subscribe();
+        loop {
+            match rx.recv().await {
+                Ok(qomicex_downloader::DownloadEvent::Log { level, message }) => {
+                    let line = format!("[downloader:{level:?}] {message}");
+                    crate::services::trace::trace_append(line);
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
 }
 
 /// Fallback CurseForge API key read from the (embedded) `appsettings.json`

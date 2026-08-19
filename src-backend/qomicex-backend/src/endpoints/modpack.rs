@@ -76,7 +76,7 @@ fn modpack_data(shared: &SharedState) -> Arc<ModpackServiceData> {
                 http_client: shared.http_client.clone(),
                 instance: shared.instance.clone(),
                 tracker: shared.install_tracker.clone(),
-                download_manager: shared.download_manager.clone(),
+                download_manager: shared.download_manager.load_full(),
             })
         })
         .clone()

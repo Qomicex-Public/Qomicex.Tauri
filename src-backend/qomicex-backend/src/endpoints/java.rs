@@ -61,7 +61,11 @@ fn java_data(shared: &SharedState) -> Arc<JavaStateData> {
             Arc::new(JavaStateData {
                 core: core.clone(),
                 store: store.clone(),
-                download: JavaDownloadService::new(core, store, shared.download_manager.clone()),
+                download: JavaDownloadService::new(
+                    core,
+                    store,
+                    shared.download_manager.load_full(),
+                ),
             })
         })
         .clone()
