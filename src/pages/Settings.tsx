@@ -1307,17 +1307,7 @@ export default function Settings() {
                   </div>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.dataDirDesc')}</p>
                 </div>
-              </CardContent>
-            </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.launcher.storageCache')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
                 <div className="flex items-center justify-between gap-4">
                   <div className="space-y-1">
                     <Label>{t('settings.launcher.versionListCache')}</Label>
