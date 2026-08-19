@@ -1022,12 +1022,6 @@ pub(crate) async fn download_batch(
                 // state as a fallback so Completed/Failed/Cancelled tasks are
                 // always reconciled.
                 if started {
-                    // DEBUG-PROBE
-                    let states = mgr.list().await;
-                    let stuck: Vec<_> = states.iter()
-                        .filter(|(id, st)| id_set.contains(id) && matches!(st, TaskState::Queued | TaskState::Downloading))
-                        .take(8).map(|(id, st)| format!("{id}:{st:?}")).collect();
-                    eprintln!("[download_batch probe] done={} total={} stuck_visible={:?}", done_ids.len(), total, stuck);
                     poll_task_states(mgr, &id_set, &mut done_ids, &mut prog, &mut task_speed, &mut failed).await;
                 }
             }
