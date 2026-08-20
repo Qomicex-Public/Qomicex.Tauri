@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup, faFileExport, faXmark, faDrawPolygon, faEye, faUpload} from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup, faFileExport, faXmark, faDrawPolygon, faEye, faUpload, faTerminal} from '@fortawesome/free-solid-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Separator } from '../components/ui'
@@ -17,7 +17,7 @@ import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { useMessageBox } from '../components/ui'
-import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups } from '../api/instance.ts'
+import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups, getInstanceLogViewUrl } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
@@ -2412,6 +2412,27 @@ export default function InstanceDetailPage() {
     }
   }, [id, instance?.name, needsAccount, resolveAccountCheck, ctxLaunchInstance, selectedAccountUuid, t])
 
+  const handleTestGame = useCallback(async () => {
+    if (!id) return
+    if (needsAccount && !selectedAccountUuid) {
+      const ok = await resolveAccountCheck()
+      if (!ok) return
+    }
+    try {
+      await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir }, selectedAccountUuid ? { accountUuid: selectedAccountUuid } : undefined)
+      // 启动成功：另开系统级浏览器窗口显示游戏实时日志（直连后端 SSE）。
+      window.open(getInstanceLogViewUrl(id), '_blank')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const code = e instanceof ApiError ? e.code : ''
+      if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
+        setShowMicrosoftReauth(true)
+        return
+      }
+      showLaunchError(t('instanceDetail.launch.launchFailed'), e instanceof Error ? e.message : String(e))
+    }
+  }, [id, instance?.name, instance?.javaPath, instance?.gameVersion, instance?.gameDir, needsAccount, resolveAccountCheck, ctxLaunchInstance, selectedAccountUuid, t])
+
   const handleQuickLaunch = useCallback(async (options: { joinServer?: string; joinWorld?: string }) => {
     if (!id) return
     if (needsAccount) {
@@ -2562,6 +2583,9 @@ export default function InstanceDetailPage() {
           </Tooltip>
           <Button onClick={handleLaunch} className="gap-2">
             <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />{t('instanceDetail.overview.launch')}
+          </Button>
+          <Button variant="outline" onClick={handleTestGame} className="gap-2">
+            <FontAwesomeIcon icon={faTerminal} className="h-3.5 w-3.5" />{t('instanceDetail.overview.testGame')}
           </Button>
           <Tooltip content={isDefault ? t('instanceDetail.overview.unpin') : t('instanceDetail.overview.pin')}>
             <Button variant="outline" size="icon" onClick={toggleDefault}>

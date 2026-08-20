@@ -5,6 +5,7 @@ pub mod client_logs;
 pub mod connector;
 pub mod instance;
 pub mod instance_files;
+pub mod instance_logs;
 pub mod java;
 pub mod launch;
 pub mod license;

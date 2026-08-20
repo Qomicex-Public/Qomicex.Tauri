@@ -18,6 +18,7 @@ use tokio::sync::RwLock;
 use crate::services::account::AccountService;
 use crate::services::curseforge_fetch::CurseForgeVersionFetchService;
 use crate::services::export_tracker::ExportTaskManager;
+use crate::services::game_log::GameLogService;
 use crate::services::install_tracker::InstallTracker;
 use crate::services::instance::InstanceService;
 use crate::services::instance_group::InstanceGroupService;
@@ -81,6 +82,8 @@ pub struct AppState {
     pub export_tasks: Arc<ExportTaskManager>,
     /// 启动进程跟踪（对应 LaunchTracker）。
     pub launch_tracker: Arc<LaunchTracker>,
+    /// 实时游戏日志服务（订阅核心输出总线，按实例缓冲 + 广播）。
+    pub game_log: Arc<GameLogService>,
     /// 插件商店（对应 PluginStore）。
     pub plugin_store: Arc<PluginStore>,
     /// 插件文件授权（对应 FileAuthService）。
@@ -195,6 +198,8 @@ impl AppState {
 
         let install_tracker = Arc::new(InstallTracker::new(core.clone()));
         let launch_tracker = Arc::new(LaunchTracker::new());
+        let game_log = Arc::new(GameLogService::new());
+        GameLogService::spawn(&game_log);
         let export_tasks = Arc::new(ExportTaskManager::new());
 
         let plugin_store = Arc::new(PluginStore::new());
@@ -223,6 +228,7 @@ impl AppState {
             log_level,
             install_tracker,
             launch_tracker,
+            game_log,
             export_tasks,
             plugin_store,
             plugin_auth,

@@ -21,6 +21,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(endpoints::loader::router())
         .merge(endpoints::java::router())
         .merge(endpoints::instance::router())
+        .merge(endpoints::instance_logs::router())
         .merge(endpoints::resource::router())
         .merge(endpoints::resource_center::router())
         .merge(endpoints::resource_download::router())
@@ -44,6 +45,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     let app = Router::new()
         .nest("/api", api)
+        // 独立日志页（非 /api，供系统级浏览器窗口直连）。
+        .merge(endpoints::instance_logs::page_router())
         // fallback must be registered BEFORE .layer() so the CORS middleware
         // also wraps 404 responses (otherwise cross-origin errors from
         // unregistered /api/* routes are blocked without CORS headers).

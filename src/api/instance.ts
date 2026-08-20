@@ -67,6 +67,28 @@ export async function launchInstance(id: string, options?: LaunchInstanceOptions
   return post<LaunchResult>(`/instance/${id}/launch`, options || {})
 }
 
+/** 实时游戏日志的一行。 */
+export interface GameLogLine {
+  timestamp: string
+  /** "out" = stdout，"err" = stderr。 */
+  stream: 'out' | 'err'
+  text: string
+}
+
+/** GET /api/instance/{id}/logs — 该实例已缓冲的历史日志。 */
+export async function getInstanceLogs(id: string): Promise<{ instanceId: string; running: boolean; lines: GameLogLine[] }> {
+  return get(`/instance/${encodeURIComponent(id)}/logs`)
+}
+
+/**
+ * 「测试游戏」独立日志窗口的 URL（后端托管的站外页面，供 `window.open` 另开系统级浏览器窗口，
+ * 直接连后端 SSE `/logs/stream`，无需加载整个启动器 SPA）。
+ */
+export function getInstanceLogViewUrl(id: string): string {
+  const base = API_BASE.replace(/\/api\/?$/, '')
+  return `${base}/logs-view/${encodeURIComponent(id)}`
+}
+
 export async function getLaunchProgress(id: string): Promise<LaunchProgress> {
   return get<LaunchProgress>(`/instance/${id}/launch/progress`)
 }

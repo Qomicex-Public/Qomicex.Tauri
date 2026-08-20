@@ -506,6 +506,7 @@ async fn launch_instance(
     let auth_options = resolve_auth_options(account);
 
     let tracker = state.launch_tracker.clone();
+    let game_log = state.game_log.clone();
     let core = state.core.clone();
     let download_manager = state.download_manager.load_full();
     let game_dir = instance.game_dir.clone();
@@ -712,6 +713,7 @@ async fn launch_instance(
             Ok((pid, _msg)) => {
                 tracing::info!(instance = %instance_id, pid, "launch: game started");
                 tracker.track(&instance_id, pid);
+                game_log.register(&instance_id, pid);
                 tracker.set_progress(
                     &instance_id,
                     LaunchProgress {
@@ -814,6 +816,7 @@ async fn launch_cancel(
     AxumPath(instance_id): AxumPath<String>,
 ) -> ApiResult<Json<MessageResponse>> {
     state.launch_tracker.stop(&instance_id);
+    state.game_log.remove(&instance_id);
     Ok(Json(MessageResponse {
         message: format!("Launch cancelled for {instance_id}"),
     }))
