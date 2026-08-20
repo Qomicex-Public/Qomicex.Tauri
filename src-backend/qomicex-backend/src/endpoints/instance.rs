@@ -5,6 +5,7 @@
 //! InstallTracker which are ported separately, so they are stubbed here with
 //! 501 NOT_IMPLEMENTED placeholders until those services land.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::{Path as AxumPath, Query, State};
@@ -29,6 +30,7 @@ use crate::services::instance::GameInstance;
 use crate::services::instance_group::InstanceGroup;
 use crate::services::launch_tracker::LaunchProgress;
 use crate::state::SharedState;
+use crate::util::pcl_icon::resolve_pcl_icon;
 
 // =====================================================================
 // DTO
@@ -188,9 +190,22 @@ pub fn router() -> Router<SharedState> {
 // Handlers
 // =====================================================================
 
+fn enrich_instance_icon(inst: &mut GameInstance) {
+    if inst.icon_data.is_none() {
+        let version_dir = Path::new(&inst.game_dir).join("versions").join(&inst.name);
+        if let Some(data) = resolve_pcl_icon(&version_dir) {
+            inst.icon_data = Some(data);
+        }
+    }
+}
+
 /// GET /instance: list all instances.
 async fn list_instances(State(state): State<SharedState>) -> ApiResult<Json<Vec<GameInstance>>> {
-    Ok(Json(state.instance.get_all()))
+    let mut instances = state.instance.get_all();
+    for inst in &mut instances {
+        enrich_instance_icon(inst);
+    }
+    Ok(Json(instances))
 }
 
 /// GET /instance/default: return the default instance or 204 if unset.
@@ -199,7 +214,10 @@ async fn get_default(State(state): State<SharedState>) -> ApiResult<Response> {
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
     match state.instance.get_by_id(&id) {
-        Some(inst) => Ok(Json(inst).into_response()),
+        Some(mut inst) => {
+            enrich_instance_icon(&mut inst);
+            Ok(Json(inst).into_response())
+        }
         None => Ok(StatusCode::NO_CONTENT.into_response()),
     }
 }
@@ -211,7 +229,10 @@ async fn set_default(
 ) -> ApiResult<Response> {
     state.instance.set_default_id(&id);
     match state.instance.get_by_id(&id) {
-        Some(inst) => Ok(Json(inst).into_response()),
+        Some(mut inst) => {
+            enrich_instance_icon(&mut inst);
+            Ok(Json(inst).into_response())
+        }
         None => Ok(StatusCode::NO_CONTENT.into_response()),
     }
 }
@@ -253,7 +274,10 @@ async fn get_instance(
     State(state): State<SharedState>,
 ) -> ApiResult<Response> {
     match state.instance.get_by_id(&id) {
-        Some(inst) => Ok(Json(inst).into_response()),
+        Some(mut inst) => {
+            enrich_instance_icon(&mut inst);
+            Ok(Json(inst).into_response())
+        }
         None => Err(instance_not_found(&id)),
     }
 }

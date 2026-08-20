@@ -26,6 +26,7 @@ use qomicex_core::models::version_metadata::CompleteVersionMetadata;
 use crate::error::{ApiError, ApiResult};
 use crate::services::instance::InstanceService;
 use crate::state::SharedState;
+use crate::util::pcl_icon::resolve_pcl_icon;
 
 // =====================================================================
 // DTO
@@ -40,6 +41,8 @@ struct ScannedVersionEntry {
     state_describe: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     loaders: Option<Vec<ScannedLoaderEntry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon_data: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -170,6 +173,7 @@ async fn scan(
                         state: "Corrupted".to_string(),
                         state_describe: "版本文件缺失".to_string(),
                         loaders: None,
+                        icon_data: None,
                     });
                     continue;
                 }
@@ -230,6 +234,7 @@ async fn scan(
                     } else {
                         Some(loaders)
                     },
+                    icon_data: resolve_pcl_icon(&dir_path),
                 });
             }
         }

@@ -316,6 +316,7 @@ export interface ScannedVersion {
   state: string
   stateDescribe: string
   loaders: ScannedVersionLoader[]
+  iconData?: string
   modpack?: {
     iconData?: string
     modpackName?: string
