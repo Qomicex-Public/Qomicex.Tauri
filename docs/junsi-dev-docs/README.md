@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-08-21 05:29
+最后更新：2026-08-21 05:55
 
 ## 1-决策记录
 
@@ -39,6 +39,7 @@
 - [ADR-033：个性化设置支持自定义主题色（Accent Color）](1-决策记录/ADR-033-个性化设置支持自定义主题色-Accent-Color-.md)
 - [ADR-034：主题色「跟随背景」莫奈式取色模式](1-决策记录/ADR-034-主题色-跟随背景-莫奈式取色模式.md)
 - [ADR-035：毛玻璃材质设置（glassEffect + glassBlur）](1-决策记录/ADR-035-毛玻璃材质设置-glassEffect---glassBlur-.md)
+- [ADR-036：组件材质下拉（默认/毛玻璃/液态玻璃）：液态玻璃参考liquid-glass-react](1-决策记录/ADR-036-组件材质下拉-默认-毛玻璃-液态玻璃--液态玻璃参考liquid-glass-react.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

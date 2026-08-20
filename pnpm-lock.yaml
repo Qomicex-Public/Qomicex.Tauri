@@ -65,6 +65,9 @@ importers:
       postcss:
         specifier: ^8.5.15
         version: 8.5.25
+      quidlass:
+        specifier: ^1.2.2
+        version: 1.2.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react:
         specifier: ^19.1.0
         version: 19.2.8
@@ -132,6 +135,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      quidlass:
+        specifier: ^1.2.2
+        version: 1.2.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react:
         specifier: ^19
         version: 19.2.8
@@ -1417,6 +1423,12 @@ packages:
 
   queue-microtask@1.2.3:
     resolution: {integrity: sha512-NuaNSa6flKT5JaSYQzJok04JzTL1CA6aGhv5rfLW3PgqA+M2ChpZQnAC8h8i4ZFkBS8X5RqkDBHA7r4hej3K9A==}
+
+  quidlass@1.2.2:
+    resolution: {integrity: sha512-taYfZnmkAQjlSRE4WUtFAnOkoqw/5DEyLq/Bs+RU6d8ADqX75NaL1ev1raWWlVkITlr20SnHx2zSxIBd+xSvjQ==}
+    peerDependencies:
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
 
   react-dom@19.2.8:
     resolution: {integrity: sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ==}
@@ -3004,6 +3016,11 @@ snapshots:
   property-information@7.2.0: {}
 
   queue-microtask@1.2.3: {}
+
+  quidlass@1.2.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+    dependencies:
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
 
   react-dom@19.2.8(react@19.2.8):
     dependencies:

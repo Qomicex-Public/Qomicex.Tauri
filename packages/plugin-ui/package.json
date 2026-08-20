@@ -15,17 +15,20 @@
       "require": "./dist/tailwind-preset.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@radix-ui/react-checkbox": "^1.3.5",
+    "@radix-ui/react-slot": "^1.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "tailwind-merge": "^3.6.0",
-    "@radix-ui/react-checkbox": "^1.3.5",
-    "@radix-ui/react-slot": "^1.3.0"
+    "quidlass": "^1.2.2",
+    "tailwind-merge": "^3.6.0"
   },
   "peerDependencies": {
     "react": "^19",
