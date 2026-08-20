@@ -80,15 +80,6 @@ export async function getInstanceLogs(id: string): Promise<{ instanceId: string;
   return get(`/instance/${encodeURIComponent(id)}/logs`)
 }
 
-/**
- * 「测试游戏」独立日志窗口的 URL（后端托管的站外页面，供 `window.open` 另开系统级浏览器窗口，
- * 直接连后端 SSE `/logs/stream`，无需加载整个启动器 SPA）。
- */
-export function getInstanceLogViewUrl(id: string): string {
-  const base = API_BASE.replace(/\/api\/?$/, '')
-  return `${base}/logs-view/${encodeURIComponent(id)}`
-}
-
 export async function getLaunchProgress(id: string): Promise<LaunchProgress> {
   return get<LaunchProgress>(`/instance/${id}/launch/progress`)
 }

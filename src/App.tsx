@@ -15,6 +15,7 @@ import Settings from './pages/Settings.tsx'
 import RunningInstances from './pages/RunningInstances.tsx'
 import PluginPage from './pages/PluginPage.tsx'
 import LogAnalysis from './pages/LogAnalysis.tsx'
+import GameLogWindow from './pages/GameLogWindow.tsx'
 import PluginOverlayManager from './components/PluginOverlayManager.tsx'
 import { MessageBoxProvider, useMessageBox } from './components/ui'
 import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
@@ -40,6 +41,15 @@ import { usePluginStore } from './stores/pluginStore.ts'
 import { activatePlugin, deactivatePlugin, sortByDependencies } from './plugins/plugin-loader.tsx'
 import './plugins/plugin-registry.ts'
 import type { PluginState } from './plugins/types.ts'
+
+/** 独立日志窗口模式：`?logWindow=1&instance=<id>`（由「测试游戏」打开的 Tauri 子窗口）。 */
+const LOG_WINDOW_INSTANCE: string | null =
+  typeof window !== 'undefined'
+    ? (() => {
+        const p = new URLSearchParams(window.location.search)
+        return p.get('logWindow') === '1' ? p.get('instance') || '' : null
+      })()
+    : null
 
 function OverlayStoreBridge() {
   const { createOverlay, showOverlay, hideOverlay, destroyOverlay, setOverlayHtml, setOverlayPosition, setOverlaySize } = usePluginStore()
@@ -388,6 +398,16 @@ function App() {
     window.addEventListener('error', handler)
     return () => window.removeEventListener('error', handler)
   }, [])
+
+  // 独立日志窗口：直接渲染日志页（仍用 I18nProvider 供翻译），
+  // 不加载主 Layout / 路由 / 后台健康轮询等重逻辑。
+  if (LOG_WINDOW_INSTANCE !== null) {
+    return (
+      <I18nProvider>
+        <GameLogWindow instanceId={LOG_WINDOW_INSTANCE} />
+      </I18nProvider>
+    )
+  }
 
   return (
     <I18nProvider>

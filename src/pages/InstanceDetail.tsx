@@ -17,7 +17,7 @@ import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { useMessageBox } from '../components/ui'
-import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups, getInstanceLogViewUrl } from '../api/instance.ts'
+import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
@@ -53,30 +53,37 @@ import SchematicPreviewDialog from '../components/SchematicPreviewDialog.tsx'
 /** 测试游戏的独立日志窗口 label（固定，重复点击先关旧的再开新的）。 */
 const GAME_LOG_WINDOW_LABEL = 'game-log-window'
 
+/** 独立日志窗口加载本 SPA 的地址（带 logWindow 分支参数）。 */
+function logWindowUrl(instanceId: string): string {
+  return `${window.location.origin}/?logWindow=1&instance=${encodeURIComponent(instanceId)}`
+}
+
 /**
- * 打开独立的游戏实时日志窗口。
- * - Tauri 环境：用原生 `WebviewWindow` 另开一个应用独立窗口承载日志页（本地后端页面，
- *   直连 SSE），非系统浏览器。
- * - 非 Tauri（纯浏览器 dev）：退回 `window.open`。
+ * 打开独立的游戏实时日志窗口（Tauri 原生子窗口，加载本 SPA 的 `?logWindow=1` 分支，
+ * 与主窗口共用主题/字体）。Windows 下隐藏系统标题栏并渲染自定义标题栏（同主窗口做法）；
+ * 非 Windows 保留系统标题栏。
+ * 非 Tauri（纯浏览器 dev）退回 `window.open`。
  */
-async function openLogWindow(url: string): Promise<void> {
+async function openLogWindow(instanceId: string): Promise<void> {
   try {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
     const existing = await WebviewWindow.getByLabel(GAME_LOG_WINDOW_LABEL)
     if (existing) await existing.close().catch(() => {})
+    const isWindows = !navigator.userAgent.includes('Linux') && !navigator.userAgent.includes('Mac')
     // eslint-disable-next-line no-new
     new WebviewWindow(GAME_LOG_WINDOW_LABEL, {
-      url,
+      url: logWindowUrl(instanceId),
       title: '实时游戏日志',
-      width: 760,
-      height: 560,
-      minWidth: 420,
-      minHeight: 300,
+      width: 780,
+      height: 620,
+      minWidth: 480,
+      minHeight: 360,
       resizable: true,
       center: true,
+      decorations: !isWindows,
     })
   } catch {
-    window.open(url, '_blank')
+    window.open(logWindowUrl(instanceId), '_blank')
   }
 }
 
@@ -2444,12 +2451,11 @@ export default function InstanceDetailPage() {
 
   const handleTestGame = useCallback(async () => {
     if (!id) return
-    const url = getInstanceLogViewUrl(id)
     // 纯浏览器 dev：window.open 非同步会丢失手势被弹窗拦截，故在点击内先同步打开。
     const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
     let win: Window | null = null
     if (!isTauri) {
-      win = window.open(url, '_blank')
+      win = window.open(logWindowUrl(id), '_blank')
     }
     if (needsAccount && !selectedAccountUuid) {
       const ok = await resolveAccountCheck()
@@ -2459,7 +2465,7 @@ export default function InstanceDetailPage() {
       await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir }, selectedAccountUuid ? { accountUuid: selectedAccountUuid } : undefined)
       // 启动成功后在 Tauri 下另开原生独立日志窗口（IPC，不受弹窗/手势限制）。
       if (isTauri) {
-        await openLogWindow(url)
+        await openLogWindow(id)
       }
     } catch (e) {
       win?.close()

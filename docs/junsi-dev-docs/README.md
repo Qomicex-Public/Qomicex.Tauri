@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-08-20 19:53
+最后更新：2026-08-20 23:06
 
 ## 1-决策记录
 
@@ -32,6 +32,7 @@
 - [ADR-026：NeoForge 版本列表官方源失败时自动回退 BMCLAPI 镜像](1-决策记录/ADR-026-NeoForge-版本列表官方源失败时自动回退-BMCLAPI-镜像.md)
 - [ADR-027：启动器网络设置：下载源迁移 + 代理 + 忽略SSL](1-决策记录/ADR-027-启动器网络设置-下载源迁移---代理---忽略SSL.md)
 - [ADR-028：Forge/NeoForge 主 jar 落到版本隔离目录，消除孤儿原版实例](1-决策记录/ADR-028-Forge-NeoForge-主-jar-落到版本隔离目录-消除孤儿原版实例.md)
+- [ADR-029：实例「测试游戏」实时日志：stdout 直推 + SSE + 独立浏览器窗口](1-决策记录/ADR-029-实例-测试游戏-实时日志-stdout-直推---SSE---独立浏览器窗口.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
