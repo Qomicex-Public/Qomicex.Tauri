@@ -110,6 +110,17 @@ pub struct SettingsResponse {
     pub curseforge_version_cache_ttl_seconds: i32,
     /// 全局 UI 自定义字体家族名；None/空 = 系统默认字体。
     pub font_family: Option<String>,
+    /// 全局主题强调色（hex，如 `#22c55e`）。`None`/空 = 使用默认配色（绿）。
+    /// 前端把它转成 HSL 覆盖 `--primary`/`--ring`，并据此自动计算前景对比色。
+    #[serde(default)]
+    pub theme_color: Option<String>,
+    /// 组件材质：`""`（或 `None`）= 默认；`"frosted"` = 毛玻璃；`"liquid"` = 液态玻璃。
+    /// 前端经 `document.documentElement[data-material]` 应用对应的表面材质。
+    #[serde(default)]
+    pub component_material: Option<String>,
+    /// 毛玻璃/液态玻璃模糊强度（像素）。材质为默认时忽略；`None` = 前端默认 18px。
+    #[serde(default)]
+    pub glass_blur: Option<i32>,
     /// 是否已完成首次启动初始化向导。`Some(false)` = 新安装待初始化；
     /// 老配置文件缺失该字段时在 [`load_settings`] 中视为已初始化（`Some(true)`），
     /// 避免老用户升级后被迫重走向导。
@@ -197,6 +208,9 @@ impl Default for SettingsResponse {
             curseforge_version_fetch_concurrency: 10,
             curseforge_version_cache_ttl_seconds: 300,
             font_family: None,
+            theme_color: None,
+            component_material: None,
+            glass_blur: None,
             initialized: Some(false),
             auto_report_errors: Some(true),
             enable_http3: None,

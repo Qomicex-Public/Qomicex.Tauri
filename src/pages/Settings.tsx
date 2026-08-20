@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract, faGear, faDatabase } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract, faGear, faDatabase, faImage } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
@@ -38,6 +38,7 @@ import { useI18n } from '../i18n/index.tsx'
 import { LANGS } from '../i18n/lang.ts'
 import type { LangChoice } from '../i18n/lang.ts'
 import { cn } from '../lib/utils.ts'
+import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
 import type { SystemInfo, JavaDownloadVendorInfo, DownloadTask } from '../types/index.ts'
 import {
   addCustomJavaRuntime,
@@ -72,6 +73,20 @@ const CATEGORIES = [
 const DOWNLOAD_SOURCES = [
   { value: 0 },
   { value: 1 },
+]
+
+/** 主题色默认值（未设置时回落到 CSS 默认绿，仅用于取色器占位显示）。 */
+const DEFAULT_THEME_COLOR = '#22c55e'
+/** 预设主题色板（Tailwind 500 系）。 */
+const THEME_COLOR_PRESETS: { value: string; label: string }[] = [
+  { value: '#22c55e', label: 'Green' },
+  { value: '#3b82f6', label: 'Blue' },
+  { value: '#8b5cf6', label: 'Violet' },
+  { value: '#f97316', label: 'Orange' },
+  { value: '#ef4444', label: 'Red' },
+  { value: '#14b8a6', label: 'Teal' },
+  { value: '#ec4899', label: 'Pink' },
+  { value: '#f59e0b', label: 'Amber' },
 ]
 
 // 关于页 credits 数据 → i18n key 映射（credits.ts 数据对象保持中文，渲染处查表翻译）
@@ -1786,6 +1801,63 @@ export default function Settings() {
                     </Select>
                   </div>
 
+                  <div className="space-y-2">
+                    <Label>{t('settings.appearance.themeColor')}</Label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Tooltip content={t('settings.appearance.themeColorBackground')}>
+                        <button
+                          type="button"
+                          onClick={() => update('themeColor', THEME_COLOR_MODE_BACKGROUND)}
+                          className={cn(
+                            'flex h-7 w-7 items-center justify-center rounded-full border-2 transition',
+                            settings.themeColor === THEME_COLOR_MODE_BACKGROUND
+                              ? 'border-foreground ring-2 ring-primary/40'
+                              : 'border-border/60 hover:border-foreground/50'
+                          )}
+                          style={{ background: 'conic-gradient(#f87171,#fbbf24,#34d399,#60a5fa,#a78bfa,#f87171)' }}
+                        >
+                          <FontAwesomeIcon icon={faImage} className="h-3 w-3 text-foreground" />
+                        </button>
+                      </Tooltip>
+                      {THEME_COLOR_PRESETS.map((p) => (
+                        <button
+                          key={p.value}
+                          type="button"
+                          title={p.label}
+                          onClick={() => update('themeColor', p.value)}
+                          className={cn(
+                            'h-7 w-7 rounded-full border-2 transition',
+                            (settings.themeColor && settings.themeColor.toLowerCase() === p.value)
+                              ? 'border-foreground ring-2 ring-primary/40'
+                              : 'border-border/60 hover:border-foreground/50'
+                          )}
+                          style={{ backgroundColor: p.value }}
+                        />
+                      ))}
+                      <Tooltip content={t('settings.appearance.themeColorCustom')}>
+                        <div className="relative h-7 w-7 overflow-hidden rounded-full border border-border/60">
+                          <input
+                            type="color"
+                            value={(settings.themeColor && normalizeHex(settings.themeColor)) || DEFAULT_THEME_COLOR}
+                            onChange={(e) => update('themeColor', e.target.value)}
+                            className="absolute -inset-2 h-12 w-12 cursor-pointer"
+                          />
+                        </div>
+                      </Tooltip>
+                      <Tooltip content={t('settings.appearance.themeColorReset')}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => update('themeColor', '')}
+                        >
+                          {t('settings.appearance.themeColorReset')}
+                        </Button>
+                      </Tooltip>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{t('settings.appearance.themeColorDesc')}</p>
+                  </div>
+
                   <div className="space-y-3">
                     <Label>{t('settings.appearance.animations')}</Label>
                     <label className="flex items-center gap-3 cursor-pointer">
@@ -1832,6 +1904,47 @@ export default function Settings() {
                     </Select>
                     <p className="text-xs text-muted-foreground">{t('settings.appearance.maxFrameRateDesc')}</p>
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    <FontAwesomeIcon icon={faSliders} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    {t('settings.appearance.componentMaterial')}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <Select
+                      value={settings.componentMaterial ?? 'default'}
+                      onChange={(v) => update('componentMaterial', v as 'default' | 'frosted' | 'liquid')}
+                      className="w-48"
+                    >
+                      <SelectOption value="default">{t('settings.appearance.componentMaterialDefault')}</SelectOption>
+                      <SelectOption value="frosted">{t('settings.appearance.componentMaterialFrosted')}</SelectOption>
+                    </Select>
+                  </div>
+                  {settings.componentMaterial !== 'default' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={2}
+                          max={40}
+                          step={1}
+                          value={settings.glassBlur ?? 18}
+                          onChange={(e) => update('glassBlur', parseInt(e.target.value))}
+                          className="flex-1"
+                        />
+                        <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.glassBlur ?? 18}px</span>
+                      </div>
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>{t('settings.appearance.glassBlurLow')}</span>
+                        <span>{t('settings.appearance.glassBlurHigh')}</span>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 

@@ -31,7 +31,7 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
       />
       <div
         className={cn(
-          "relative z-10 w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto rounded-xl border bg-popover/90 backdrop-blur-lg p-0 shadow-2xl animate-in zoom-in-95",
+          "relative z-10 w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto rounded-xl border bg-popover/90 backdrop-blur-lg p-0 shadow-2xl animate-in zoom-in-95 glass-surface",
           className
         )}
       >

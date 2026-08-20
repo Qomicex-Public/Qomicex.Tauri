@@ -33,6 +33,7 @@ import { get } from './api/client.ts'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { checkRequired } from './api/update.ts'
+import { applyThemeColor } from './lib/themeColor.ts'
 
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
 import { SplashScreen } from './components/SplashScreen.tsx'
@@ -362,10 +363,17 @@ function App() {
         root.style.removeProperty('--app-font')
       }
     }
+    function applyGlassMaterial(material: string | undefined, blur: number | undefined) {
+      const root = document.documentElement
+      root.dataset.material = material ?? 'default'
+      root.style.setProperty('--glass-blur', `${Math.max(0, blur ?? 18)}px`)
+    }
     loadSettings().then(s => {
       setConsoleLevel(s.logLevel ?? 'info')
       setTheme(s.theme ?? 'dark')
       applyFont(s.fontFamily)
+      applyThemeColor(s.themeColor)
+      applyGlassMaterial(s.componentMaterial, s.glassBlur)
     })
     const unsub = onSettingsChange((s: AppSettings) => {
       const enabled = s.animationsEnabled !== false
@@ -379,6 +387,8 @@ function App() {
       setConsoleLevel(s.logLevel ?? 'info')
       setTheme(s.theme ?? 'dark')
       applyFont(s.fontFamily)
+      applyThemeColor(s.themeColor)
+      applyGlassMaterial(s.componentMaterial, s.glassBlur)
     })
     return unsub
   }, [])

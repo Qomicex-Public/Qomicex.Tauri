@@ -53,6 +53,12 @@ export interface AppSettings {
   curseforgeVersionCacheTtlSeconds: number
   /** 全局 UI 自定义字体家族名；空/缺失 = 系统默认字体 */
   fontFamily?: string
+  /** 全局主题强调色（hex，如 `#22c55e`）；空/缺失 = 使用默认配色（绿） */
+  themeColor?: string
+  /** 组件材质：'default' 默认 / 'frosted' 毛玻璃 / 'liquid' 液态玻璃 */
+  componentMaterial?: 'default' | 'frosted' | 'liquid'
+  /** 毛玻璃/液态玻璃模糊强度（px，默认 18）；材质为 default 时不生效 */
+  glassBlur?: number
   /** 是否已完成首次启动初始化向导；false/缺失 = 显示向导 */
   initialized?: boolean
   /** 自动上报严重错误日志（崩溃类恶性 bug）；缺失 = 开启（默认开） */
@@ -107,6 +113,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   curseforgeVersionFetchConcurrency: 10,
   curseforgeVersionCacheTtlSeconds: 300,
   fontFamily: '',
+  themeColor: '',
+  componentMaterial: 'default',
+  glassBlur: 18,
   initialized: false,
   autoReportErrors: true,
   enableHttp3: false,

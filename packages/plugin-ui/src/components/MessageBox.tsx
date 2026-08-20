@@ -223,7 +223,7 @@ function MessageBoxProvider({ children, messages = defaultMessages }: { children
       {createPortal(
         <div
           className={cn(
-            'fixed bottom-6 right-6 z-[100] flex items-center gap-2.5 rounded-xl border border-border/50 bg-popover/90 px-4 py-3 text-sm shadow-2xl backdrop-blur-lg transition-all duration-300',
+            'fixed bottom-6 right-6 z-[100] flex items-center gap-2.5 rounded-xl border border-border/50 bg-popover/90 px-4 py-3 text-sm shadow-2xl backdrop-blur-lg transition-all duration-300 glass-surface',
             toast.open ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'
           )}
         >

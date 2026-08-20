@@ -12,6 +12,7 @@ import FpsOverlay from './FpsOverlay.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { PluginEventBridge } from './PluginEventBridge.tsx'
 import { useI18n } from '../i18n/index.tsx'
+import { setThemeBackground } from '../lib/themeColor.ts'
 
 function DebugEffects() {
   const { state, unlock } = useDebug()
@@ -92,7 +93,9 @@ export default function Layout() {
         }
       } catch { filename = '' }
     }
-    setBg(filename ? `${API_BASE}/settings/backgrounds/${encodeURIComponent(filename)}` : '')
+    const url = filename ? `${API_BASE}/settings/backgrounds/${encodeURIComponent(filename)}` : ''
+    setBg(url)
+    setThemeBackground(url)
   }
 
   useEffect(() => {
