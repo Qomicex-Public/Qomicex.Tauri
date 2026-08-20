@@ -26,6 +26,10 @@ export interface AppSettings {
   autoSelectDownloadSource: boolean
   modMirror: number
   autoSelectModMirror: boolean
+  /** 资源下载源（mod 文件 CDN）：0 = 官方源（直连原 CDN）；1 = QML Mirror（下载域名重写到镜像） */
+  fileDownloadSource: number
+  /** 自动选择资源（文件 CDN）下载源 */
+  autoSelectFileDownloadSource: boolean
   downloadTimeout: number
   theme: 'dark' | 'light'
   animationsEnabled: boolean
@@ -61,6 +65,8 @@ export interface AppSettings {
   proxyHost: string
   /** 忽略 SSL 证书校验；true = 不校验（仅用于自签/内网代理等场景） */
   ignoreSslCert?: boolean
+  /** 强制所有下载用 HTTP/1.1 并行连接；false（默认）= 按来源自动（Modrinth 用并行，其余用 HTTP/2） */
+  http1Parallel: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -79,6 +85,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSelectDownloadSource: false,
   modMirror: 0,
   autoSelectModMirror: false,
+  fileDownloadSource: 0,
+  autoSelectFileDownloadSource: false,
   downloadTimeout: 15,
   theme: 'dark',
   animationsEnabled: true,
@@ -105,6 +113,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   proxyMode: 'system',
   proxyHost: '',
   ignoreSslCert: false,
+  http1Parallel: false,
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }
@@ -174,6 +183,10 @@ export interface ModSourcePing {
 
 export async function pingModSources(): Promise<ModSourcePing[]> {
   return get<ModSourcePing[]>('/settings/mod-sources/ping')
+}
+
+export async function pingFileDownloadSources(): Promise<DownloadSourcePing[]> {
+  return get<DownloadSourcePing[]>('/settings/file-download-sources/ping')
 }
 
 export async function autoSelectModSource(): Promise<{ id: number; latencyMs: number }> {

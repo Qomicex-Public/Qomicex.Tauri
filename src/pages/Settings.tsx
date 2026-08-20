@@ -52,7 +52,7 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, clearCache, clearCurseForgeCache, setDataDir, getSystemFonts } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, setDataDir, getSystemFonts } from '../api/settings.ts'
 import { setPluginState as apiSetPluginState } from '../api/plugins.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
@@ -589,6 +589,8 @@ export default function Settings() {
   const [pingLoading, setPingLoading] = useState(false)
   const [modPings, setModPings] = useState<ModSourcePing[]>([])
   const [modPingLoading, setModPingLoading] = useState(false)
+  const [filePings, setFilePings] = useState<DownloadSourcePing[]>([])
+  const [filePingLoading, setFilePingLoading] = useState(false)
   const { plugins, loading, loadPlugins } = usePluginStore()
   const [pluginsMsg, setPluginsMsg] = useState<string | null>(null)
   const [pluginDetail, setPluginDetail] = useState<PluginInfo | null>(null)
@@ -601,6 +603,7 @@ export default function Settings() {
       loadedRef.current = true
       pingDownloadSources().then(setSourcePings).catch(() => {})
       pingModSources().then(setModPings).catch(() => {})
+      pingFileDownloadSources().then(setFilePings).catch(() => {})
     }).catch(() => {})
     get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})
     getSystemFonts().then(setFontList).catch(() => {})
@@ -620,6 +623,11 @@ export default function Settings() {
     if (!loadedRef.current) return
     refreshModPings()
   }, [settings.autoSelectModMirror])
+
+  useEffect(() => {
+    if (!loadedRef.current) return
+    refreshFilePings()
+  }, [settings.autoSelectFileDownloadSource])
 
   useEffect(() => {
     if (category === 'about') {
@@ -802,6 +810,24 @@ export default function Settings() {
       setModPings([])
     } finally {
       setModPingLoading(false)
+    }
+  }
+
+  async function refreshFilePings() {
+    setFilePingLoading(true)
+    try {
+      const pings = await pingFileDownloadSources()
+      setFilePings(pings)
+      if (settings.autoSelectFileDownloadSource) {
+        const best = pings.filter(p => p.ok).sort((a, b) => a.latency - b.latency)[0]
+        if (best && best.id !== settings.fileDownloadSource) {
+          update('fileDownloadSource', best.id)
+        }
+      }
+    } catch {
+      setFilePings([])
+    } finally {
+      setFilePingLoading(false)
     }
   }
 
@@ -1228,6 +1254,61 @@ export default function Settings() {
                 </div>
 
                 <div className="space-y-2">
+                  <Label>{t('settings.launcher.resourceDownloadSource')}</Label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[0, 1].map((s) => {
+                      const ping = filePings.find(p => p.id === s)
+                      const showLatency = ping && ping.latency >= 0
+                      const latencyColor = !ping?.ok ? 'text-destructive'
+                        : ping.latency < 200 ? 'text-emerald-400'
+                        : ping.latency < 400 ? 'text-amber-400'
+                        : 'text-destructive'
+                      return (
+                        <button
+                          key={s}
+                          disabled={settings.autoSelectFileDownloadSource}
+                          onClick={() => update('fileDownloadSource', s)}
+                          className={cn(
+                            'flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm transition-colors',
+                            settings.autoSelectFileDownloadSource && 'pointer-events-none opacity-60',
+                            settings.fileDownloadSource === s && !settings.autoSelectFileDownloadSource
+                              ? 'border-primary bg-primary/10 font-medium text-primary'
+                              : 'border-border hover:border-muted-foreground/30'
+                          )}
+                        >
+                          {t(`settings.launcher.resourceDownloadSourceName.${s}`)}
+                          {filePingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
+                          {!filePingLoading && showLatency && (
+                            <span className={cn('text-xs tabular-nums', latencyColor)}>
+                              {ping.latency}ms
+                            </span>
+                          )}
+                          {!filePingLoading && !showLatency && (
+                            <span className="text-xs text-muted-foreground">--</span>
+                          )}
+                        </button>
+                      )
+                    })}
+                    <Tooltip content={t('settings.launcher.refreshLatency')}>
+                      <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshFilePings} disabled={filePingLoading}>
+                        <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', filePingLoading && 'animate-spin')} />
+                      </Button>
+                    </Tooltip>
+                  </div>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <Checkbox
+                      checked={settings.autoSelectFileDownloadSource}
+                      onCheckedChange={(c) => update('autoSelectFileDownloadSource', c === true)}
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
+                      <span className="text-sm font-medium">{t('settings.launcher.autoSelectFileDownloadSource')}</span>
+                    </div>
+                  </label>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.resourceDownloadSourceDesc')}</p>
+                </div>
+
+                <div className="space-y-2">
                   <Label>{t('settings.launcher.modSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {[
@@ -1332,6 +1413,17 @@ export default function Settings() {
                   <div>
                     <div className="text-sm font-medium">{t('settings.network.ignoreSslCert')}</div>
                     <div className="text-xs text-muted-foreground">{t('settings.network.ignoreSslCertDesc')}</div>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <Checkbox
+                    checked={settings.http1Parallel === true}
+                    onCheckedChange={(c) => update('http1Parallel', c === true)}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{t('settings.network.http1Parallel')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.network.http1ParallelDesc')}</div>
                   </div>
                 </label>
               </CardContent>
