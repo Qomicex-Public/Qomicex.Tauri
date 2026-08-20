@@ -2414,15 +2414,18 @@ export default function InstanceDetailPage() {
 
   const handleTestGame = useCallback(async () => {
     if (!id) return
+    // ⚠️ 必须在 await 之前、处于用户点击手势内同步打开日志窗口，否则被 WebView/浏览器
+    // 当作弹窗拦截（window.open 在 await 之后会丢失用户激活）。先拿句柄，后续失败再关。
+    const win = window.open(getInstanceLogViewUrl(id), '_blank')
     if (needsAccount && !selectedAccountUuid) {
       const ok = await resolveAccountCheck()
-      if (!ok) return
+      if (!ok) { win?.close(); return }
     }
     try {
       await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir }, selectedAccountUuid ? { accountUuid: selectedAccountUuid } : undefined)
-      // 启动成功：另开系统级浏览器窗口显示游戏实时日志（直连后端 SSE）。
-      window.open(getInstanceLogViewUrl(id), '_blank')
+      // 启动成功：日志窗口保持打开，已连 SSE 显示实时日志。
     } catch (e) {
+      win?.close()
       const msg = e instanceof Error ? e.message : String(e)
       const code = e instanceof ApiError ? e.code : ''
       if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
