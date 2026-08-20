@@ -1128,6 +1128,51 @@ export default function Settings() {
                 </div>
 
                 <div className="space-y-2">
+                  <Label htmlFor="downloadTimeout">{t('settings.launcher.downloadTimeout')}</Label>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.max(0, settings.downloadTimeout - 5))} disabled={settings.downloadTimeout <= 0}>
+                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                    </Button>
+                    <Input
+                      id="downloadTimeout"
+                      type="number"
+                      min={0}
+                      max={120}
+                      value={settings.downloadTimeout}
+                      onChange={(e) => update('downloadTimeout', Math.max(0, Math.min(120, parseInt(e.target.value) || 15)))}
+                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.min(120, settings.downloadTimeout + 5))} disabled={settings.downloadTimeout >= 120}>
+                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadTimeoutDesc')}</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <Checkbox
+                      checked={settings.enableHttp3 === true}
+                      onCheckedChange={(c) => update('enableHttp3', c === true)}
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium">{t('settings.launcher.enableHttp3')}</span>
+                    </div>
+                  </label>
+                  <p className="text-xs text-muted-foreground">{t('settings.launcher.enableHttp3Desc')}</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  {t('settings.launcher.downloadSource')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="space-y-2">
                   <Label>{t('settings.launcher.downloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {DOWNLOAD_SOURCES.map((s) => {
@@ -1239,41 +1284,56 @@ export default function Settings() {
                   </label>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectModSourceDesc')}</p>
                 </div>
+              </CardContent>
+            </Card>
 
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  {t('settings.network.proxy')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
                 <div className="space-y-2">
-                  <Label htmlFor="downloadTimeout">{t('settings.launcher.downloadTimeout')}</Label>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.max(0, settings.downloadTimeout - 5))} disabled={settings.downloadTimeout <= 0}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
-                    </Button>
+                  <Label>{t('settings.network.proxyMode')}</Label>
+                  <Select
+                    value={settings.proxyMode}
+                    onChange={(v) => update('proxyMode', v as AppSettings['proxyMode'])}
+                    className="w-48"
+                  >
+                    <SelectOption value="off">{t('settings.network.proxyOff')}</SelectOption>
+                    <SelectOption value="system">{t('settings.network.proxySystem')}</SelectOption>
+                    <SelectOption value="http">HTTP(S)</SelectOption>
+                    <SelectOption value="socks5">SOCKS5</SelectOption>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{t('settings.network.proxyModeDesc')}</p>
+                </div>
+
+                {(settings.proxyMode === 'http' || settings.proxyMode === 'socks5') && (
+                  <div className="space-y-2">
+                    <Label htmlFor="proxyHost">{t('settings.network.proxyHost')}</Label>
                     <Input
-                      id="downloadTimeout"
-                      type="number"
-                      min={0}
-                      max={120}
-                      value={settings.downloadTimeout}
-                      onChange={(e) => update('downloadTimeout', Math.max(0, Math.min(120, parseInt(e.target.value) || 15)))}
-                      className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                      id="proxyHost"
+                      value={settings.proxyHost}
+                      onChange={(e) => update('proxyHost', e.target.value)}
+                      placeholder={t('settings.network.proxyHostPlaceholder')}
+                      className="mt-1 max-w-sm font-mono"
                     />
-                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.min(120, settings.downloadTimeout + 5))} disabled={settings.downloadTimeout >= 120}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
-                    </Button>
+                    <p className="text-xs text-muted-foreground">{t('settings.network.proxyHostDesc')}</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadTimeoutDesc')}</p>
-                </div>
+                )}
 
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
-                      checked={settings.enableHttp3 === true}
-                      onCheckedChange={(c) => update('enableHttp3', c === true)}
-                    />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-medium">{t('settings.launcher.enableHttp3')}</span>
-                    </div>
-                  </label>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.enableHttp3Desc')}</p>
-                </div>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <Checkbox
+                    checked={settings.ignoreSslCert === true}
+                    onCheckedChange={(c) => update('ignoreSslCert', c === true)}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{t('settings.network.ignoreSslCert')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.network.ignoreSslCertDesc')}</div>
+                  </div>
+                </label>
               </CardContent>
             </Card>
 
@@ -1375,9 +1435,9 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
+
             </div>
           </TabContent>
-
           <TabContent activeTab={category} tabId="java">
             <div className="space-y-6">
               <Card>

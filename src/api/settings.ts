@@ -55,6 +55,12 @@ export interface AppSettings {
   autoReportErrors?: boolean
   /** 启用 HTTP/3 文件下载（实验性）；缺失 = 关闭（默认走 HTTP/2） */
   enableHttp3?: boolean
+  /** 代理模式：'off' = 不使用代理；'system' = 使用系统代理；'http' = 自定义 HTTP(S) 代理；'socks5' = SOCKS5 代理 */
+  proxyMode: 'off' | 'system' | 'http' | 'socks5'
+  /** 代理地址（host:port，如 127.0.0.1:7890）；proxyMode 为 http/socks5 时生效 */
+  proxyHost: string
+  /** 忽略 SSL 证书校验；true = 不校验（仅用于自签/内网代理等场景） */
+  ignoreSslCert?: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -96,6 +102,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   initialized: false,
   autoReportErrors: true,
   enableHttp3: false,
+  proxyMode: 'system',
+  proxyHost: '',
+  ignoreSslCert: false,
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }

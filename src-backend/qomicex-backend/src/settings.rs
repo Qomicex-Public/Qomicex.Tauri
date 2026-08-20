@@ -11,6 +11,12 @@ use std::path::PathBuf;
 const APP_DIR: &str = "qomicex-launcher";
 const BOOTSTRAP_FILE: &str = ".qomicex-bootstrap";
 
+/// 代理模式默认值：使用系统代理（与旧版 reqwest 默认行为一致）。
+/// 供 `#[serde(default)]` 在老配置文件缺失字段时使用。
+fn default_proxy_mode() -> String {
+    "system".to_string()
+}
+
 fn local_app_data_root() -> PathBuf {
     dirs::data_local_dir().unwrap_or_else(|| std::env::temp_dir())
 }
@@ -108,6 +114,18 @@ pub struct SettingsResponse {
     /// `Some(true)` = 下载强制走 HTTP/3 且不支持回退（服务器不支持则下载失败）。
     /// 需后端以 `http3` feature + `--cfg reqwest_unstable` 编译才真正生效。
     pub enable_http3: Option<bool>,
+    /// 代理模式：`"off"` = 不使用代理；`"system"` = 使用系统代理（环境变量，reqwest 默认行为）；
+    /// `"http"` = 自定义 HTTP(S) 代理；`"socks5"` = SOCKS5 代理。
+    /// 老配置文件缺失时默认 `"system"`（与旧版默认行为一致，`#[serde(default)]`）。
+    #[serde(default = "default_proxy_mode")]
+    pub proxy_mode: String,
+    /// 代理地址（`host:port`，如 `127.0.0.1:7890`）。`proxy_mode` 为 `"http"`/`"socks5"` 时生效。
+    /// 老配置文件缺失时默认为空（`#[serde(default)]`）。
+    #[serde(default)]
+    pub proxy_host: String,
+    /// 忽略 SSL 证书校验（跳过 TLS 证书验证）。`None`/`Some(false)` = 校验（默认安全）；
+    /// `Some(true)` = 不校验（仅用于自签/内网代理等场景，慎用）。
+    pub ignore_ssl_cert: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +186,9 @@ impl Default for SettingsResponse {
             initialized: Some(false),
             auto_report_errors: Some(true),
             enable_http3: None,
+            proxy_mode: "system".to_string(),
+            proxy_host: String::new(),
+            ignore_ssl_cert: None,
         }
     }
 }

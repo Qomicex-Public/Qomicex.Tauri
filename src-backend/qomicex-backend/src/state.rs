@@ -117,11 +117,13 @@ impl AppState {
             DownloadMirror::Official
         };
 
-        let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .user_agent(&user_agent)
-            .build()
-            .expect("构建共享 HTTP 客户端失败");
+        // 网络设置：代理 + 忽略 SSL。共享 HTTP 客户端在启动时按此构建；
+        // 下载管理器由 new_download_manager 同步携带并在 PUT /settings 时热替换。
+        let (proxy_url, no_proxy) = proxy_settings(&settings_now);
+        let ignore_ssl = settings_now.ignore_ssl_cert.unwrap_or(false);
+
+        let http_client =
+            build_http_client(&user_agent, proxy_url.as_deref(), no_proxy, ignore_ssl);
 
         let mods_icon_dir = settings::resolve_base_dir().join("QML").join("mod-icons");
         let _ = std::fs::create_dir_all(&mods_icon_dir);
@@ -135,6 +137,11 @@ impl AppState {
                 o.cache_expiry = Duration::from_secs(1800);
                 o.user_agent = user_agent.clone();
                 o.icon_cache_dir = Some(mods_icon_dir.to_string_lossy().into_owned());
+                // 核心库自建内部 HTTP 客户端（version locator / download source /
+                // completer / installers）也遵循代理与忽略 SSL 设置。
+                o.proxy_url = proxy_url.clone();
+                o.no_proxy = no_proxy;
+                o.ignore_ssl_certs = ignore_ssl;
             })
             .use_microsoft_auth(microsoft_client_id)
             .use_download_mirror(global_mirror)
@@ -148,12 +155,24 @@ impl AppState {
         let download_manager = new_download_manager(&settings_now);
 
         // 插件 proxy 客户端（对应命名 HttpClient "PluginProxy"）。
-        let proxy_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .user_agent(user_agent.clone())
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()
-            .expect("构建插件代理 HTTP 客户端失败");
+        let proxy_client = {
+            let mut b = reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .user_agent(user_agent.clone())
+                .redirect(reqwest::redirect::Policy::limited(10));
+            if ignore_ssl {
+                b = b.danger_accept_invalid_certs(true);
+            }
+            if no_proxy {
+                b = b.no_proxy();
+            }
+            if let Some(url) = proxy_url.as_deref() {
+                if let Ok(p) = reqwest::Proxy::all(url) {
+                    b = b.proxy(p);
+                }
+            }
+            b.build().expect("构建插件代理 HTTP 客户端失败")
+        };
 
         // 共享后端服务（对应 Program.cs 中 Singleton 注册）。
         let instance = Arc::new(InstanceService::new());
@@ -242,6 +261,10 @@ fn new_download_manager(settings: &SettingsResponse) -> Arc<DownloadManager> {
             // QUIC 时自动回退 HTTP/2（下载器默认回退行为）。
             enable_http3,
             http3_fallback: true,
+            // 网络设置：代理 + 忽略 SSL，随下载管理器热替换即时生效。
+            proxy: proxy_settings(settings).0,
+            no_proxy: proxy_settings(settings).1,
+            ignore_ssl_certs: settings.ignore_ssl_cert.unwrap_or(false),
             ..Default::default()
         },
         concurrency,
@@ -268,6 +291,46 @@ fn spawn_downloader_log_forward(dm: &Arc<DownloadManager>) {
             }
         }
     });
+}
+
+/// 根据设置解析代理配置，返回 `(自定义代理 URL, 是否禁用所有代理)`：
+/// - `off` → `(None, true)`：不使用代理（连系统代理也禁用）
+/// - `system` → `(None, false)`：使用系统代理（reqwest 默认行为）
+/// - `http`/`socks5` → `(Some(url), false)`：使用自定义代理（`proxy()` 会自动禁掉系统代理）
+fn proxy_settings(settings: &SettingsResponse) -> (Option<String>, bool) {
+    let host = settings.proxy_host.trim();
+    let custom = match settings.proxy_mode.as_str() {
+        "http" if !host.is_empty() => Some(format!("http://{host}")),
+        "socks5" if !host.is_empty() => Some(format!("socks5://{host}")),
+        _ => None,
+    };
+    let no_proxy = settings.proxy_mode.as_str() == "off";
+    (custom, no_proxy)
+}
+
+/// 构建一个带可选代理 + 可选禁用系统代理 + 可选忽略 SSL 的 reqwest 客户端。
+/// 代理 URL 非法时静默跳过代理。
+fn build_http_client(
+    user_agent: &str,
+    proxy_url: Option<&str>,
+    no_proxy: bool,
+    ignore_ssl: bool,
+) -> reqwest::Client {
+    let mut b = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .user_agent(user_agent);
+    if ignore_ssl {
+        b = b.danger_accept_invalid_certs(true);
+    }
+    if no_proxy {
+        b = b.no_proxy();
+    }
+    if let Some(url) = proxy_url {
+        if let Ok(p) = reqwest::Proxy::all(url) {
+            b = b.proxy(p);
+        }
+    }
+    b.build().expect("构建共享 HTTP 客户端失败")
 }
 
 /// Fallback CurseForge API key read from the (embedded) `appsettings.json`
