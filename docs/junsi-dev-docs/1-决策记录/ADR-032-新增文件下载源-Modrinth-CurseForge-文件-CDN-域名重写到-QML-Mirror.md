@@ -50,3 +50,23 @@
   - `GET /settings/file-download-source/auto-select`（选延迟最低可用源，写 `file_download_source`）。
 - 前端：文件下载源选择器与「游戏库下载源 / mod 源」一致——显示测速延迟、刷新按钮、自动选择开关；说明文案面向用户精简为「选择 mod 文件下载用的 CDN：官方源直连原站，QML Mirror 走你的镜像」。7 语言 i18n 同步。
 - 说明：官方源 ping 目标用 `cdn.modrinth.com` 根 HEAD；若该站根路径 HEAD 非 2xx 会显示 `--`/不可用，可在真机验证后改用一个真实存在的 CDN 文件路径做 ping。
+
+### 2026-08-21 增补：QML Mirror HK（file_download_source = 2）
+
+新增第二个自建镜像「QML Mirror HK」，行为与源 1 完全一致（仅域名不同）：
+- `cdn.modrinth.com`/`cdn-alt.modrinth.com` → `modrinth.qomicex.dpdns.org`
+- `mediafilez.forgecdn.net` → `mirror.qomicex.dpdns.org`
+- `file_mirror.rs` 的 `rewrite_file_cdn` 按 `file_download_source` 匹配 1→lenmei233 域名、2→qomicex HK 域名，其余值原样返回（新增 1 条单测）。
+- `FILE_DOWNLOAD_SOURCES` 新增 `(2, "QML Mirror HK", "https://modrinth.qomicex.dpdns.org")`，自动选择/测速自动覆盖。
+- 前端选择器 `[0, 1, 2]`；7 语言 i18n 增加 `resourceDownloadSourceName.2 = 'QML Mirror HK'`。
+
+
+### 2026-08-21 更新
+### 2026-08-21 增补：QML Mirror HK（file_download_source = 2）
+
+新增第二个自建镜像「QML Mirror HK」，行为与源 1 完全一致（仅域名不同）：
+- `cdn.modrinth.com`/`cdn-alt.modrinth.com` → `modrinth.qomicex.dpdns.org`
+- `mediafilez.forgecdn.net` → `mirror.qomicex.dpdns.org`
+- `file_mirror.rs` 的 `rewrite_file_cdn` 按 `file_download_source` 匹配 1→lenmei233 域名、2→qomicex HK 域名，其余值原样返回（新增 1 条单测）。
+- `FILE_DOWNLOAD_SOURCES` 新增 `(2, "QML Mirror HK", "https://modrinth.qomicex.dpdns.org")`，自动选择/测速自动覆盖。
+- 前端选择器 `[0, 1, 2]`；7 语言 i18n 增加 `resourceDownloadSourceName.2 = 'QML Mirror HK'`。

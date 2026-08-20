@@ -82,7 +82,9 @@ pub struct SettingsResponse {
     pub auto_select_mod_mirror: Option<bool>,
     /// 资源（mod 文件 CDN）下载源：0 = 官方源（直连原 CDN）；1 = QML Mirror（把
     /// `cdn.modrinth.com`/`cdn-alt.modrinth.com` → `modrinth.lenmei233.dpdns.org`、
-    /// `mediafilez.forgecdn.net` → `mirror.lenmei233.dpdns.org`）。老配置缺失时默认 0。
+    /// `mediafilez.forgecdn.net` → `mirror.lenmei233.dpdns.org`）；2 = QML Mirror HK
+    /// （同 1，域名换成 `modrinth.qomicex.dpdns.org` / `mirror.qomicex.dpdns.org`）。
+    /// 老配置缺失时默认 0。
     #[serde(default)]
     pub file_download_source: i32,
     /// 自动选择资源（文件 CDN）下载源：`true` = 自动选当前延迟最低的可用源。

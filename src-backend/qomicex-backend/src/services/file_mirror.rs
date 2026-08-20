@@ -7,6 +7,9 @@
 /// QML Mirror 镜像域名（常量映射；用户自建，镜像透传 api key，支持 HTTP/2）。
 const MIRROR_MODRINTH: &str = "modrinth.lenmei233.dpdns.org";
 const MIRROR_CURSEFORGE: &str = "mirror.lenmei233.dpdns.org";
+/// QML Mirror HK 镜像域名（第二个自建镜像，行为与 QML Mirror 一致）。
+const MIRROR_HK_MODRINTH: &str = "modrinth.qomicex.dpdns.org";
+const MIRROR_HK_CURSEFORGE: &str = "mirror.qomicex.dpdns.org";
 
 /// Modrinth 官方文件 CDN 域名（需重写到 QML Mirror）。
 const MODRINTH_CDN_HOSTS: &[&str] = &["cdn.modrinth.com", "cdn-alt.modrinth.com"];
@@ -18,14 +21,17 @@ const CURSEFORGE_CDN_HOSTS: &[&str] = &["mediafilez.forgecdn.net"];
 /// - `file_download_source == 1`（QML Mirror）：把 `cdn.modrinth.com`/`cdn-alt.modrinth.com`
 ///   替换为 `modrinth.lenmei233.dpdns.org`，`mediafilez.forgecdn.net` 替换为
 ///   `mirror.lenmei233.dpdns.org`（仅 host，保留 scheme/路径/查询）。
+/// - `file_download_source == 2`（QML Mirror HK）：同 QML Mirror，但域名换成
+///   `modrinth.qomicex.dpdns.org` / `mirror.qomicex.dpdns.org`。
 /// - 其他值（0 = 官方源）：原样返回。
 pub fn rewrite_file_cdn(url: &str, file_download_source: i32) -> String {
-    if file_download_source != 1 {
-        return url.to_string();
-    }
-    rewrite_host(url, MODRINTH_CDN_HOSTS, MIRROR_MODRINTH).unwrap_or_else(|| {
-        rewrite_host(url, CURSEFORGE_CDN_HOSTS, MIRROR_CURSEFORGE)
-            .unwrap_or_else(|| url.to_string())
+    let (modrinth, curseforge) = match file_download_source {
+        1 => (MIRROR_MODRINTH, MIRROR_CURSEFORGE),
+        2 => (MIRROR_HK_MODRINTH, MIRROR_HK_CURSEFORGE),
+        _ => return url.to_string(),
+    };
+    rewrite_host(url, MODRINTH_CDN_HOSTS, modrinth).unwrap_or_else(|| {
+        rewrite_host(url, CURSEFORGE_CDN_HOSTS, curseforge).unwrap_or_else(|| url.to_string())
     })
 }
 
@@ -70,6 +76,18 @@ mod tests {
         assert_eq!(
             rewrite_file_cdn("https://mediafilez.forgecdn.net/files/1234/5678/a.jar", 1),
             "https://mirror.lenmei233.dpdns.org/files/1234/5678/a.jar"
+        );
+    }
+
+    #[test]
+    fn mirror_hk_rewrites_modrinth_and_curseforge_host() {
+        assert_eq!(
+            rewrite_file_cdn("https://cdn.modrinth.com/data/abc/1.0.jar", 2),
+            "https://modrinth.qomicex.dpdns.org/data/abc/1.0.jar"
+        );
+        assert_eq!(
+            rewrite_file_cdn("https://mediafilez.forgecdn.net/files/1234/5678/a.jar", 2),
+            "https://mirror.qomicex.dpdns.org/files/1234/5678/a.jar"
         );
     }
 

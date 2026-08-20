@@ -55,10 +55,12 @@ const MOD_SOURCES: &[(i32, &str, &str)] = &[
 
 /// 资源（mod 文件 CDN）下载源。ping 目标用各自文件 CDN 的根地址；QML Mirror 是用户
 /// 自建镜像（modrinth.lenmei233.dpdns.org 替换 cdn.modrinth.com / cdn-alt.modrinth.com，
-/// mirror.lenmei233.dpdns.org 替换 mediafilez.forgecdn.net）。
+/// mirror.lenmei233.dpdns.org 替换 mediafilez.forgecdn.net），QML Mirror HK 同但域名换成
+/// modrinth.qomicex.dpdns.org / mirror.qomicex.dpdns.org。
 const FILE_DOWNLOAD_SOURCES: &[(i32, &str, &str)] = &[
     (0, "官方源", "https://cdn.modrinth.com"),
     (1, "QML Mirror", "https://modrinth.lenmei233.dpdns.org"),
+    (2, "QML Mirror HK", "https://modrinth.qomicex.dpdns.org"),
 ];
 
 pub fn router() -> Router<SharedState> {

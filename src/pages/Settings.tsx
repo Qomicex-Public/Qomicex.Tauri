@@ -1243,8 +1243,9 @@ export default function Settings() {
                           onClick={() => update('downloadSource', s.value)}
                           className={cn(
                             'flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm transition-colors',
-                            settings.autoSelectDownloadSource && 'pointer-events-none opacity-60',
-                            settings.downloadSource === s.value && !settings.autoSelectDownloadSource
+                            settings.autoSelectDownloadSource && settings.downloadSource !== s.value && 'pointer-events-none opacity-60',
+                            settings.autoSelectDownloadSource && settings.downloadSource === s.value && 'pointer-events-none',
+                            settings.downloadSource === s.value
                               ? 'border-primary bg-primary/10 font-medium text-primary'
                               : 'border-border hover:border-muted-foreground/30'
                           )}
@@ -1284,7 +1285,7 @@ export default function Settings() {
                 <div className="space-y-2">
                   <Label>{t('settings.launcher.resourceDownloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
-                    {[0, 1].map((s) => {
+                    {[0, 1, 2].map((s) => {
                       const ping = filePings.find(p => p.id === s)
                       const showLatency = ping && ping.latency >= 0
                       const latencyColor = !ping?.ok ? 'text-destructive'
@@ -1298,8 +1299,9 @@ export default function Settings() {
                           onClick={() => update('fileDownloadSource', s)}
                           className={cn(
                             'flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm transition-colors',
-                            settings.autoSelectFileDownloadSource && 'pointer-events-none opacity-60',
-                            settings.fileDownloadSource === s && !settings.autoSelectFileDownloadSource
+                            settings.autoSelectFileDownloadSource && settings.fileDownloadSource !== s && 'pointer-events-none opacity-60',
+                            settings.autoSelectFileDownloadSource && settings.fileDownloadSource === s && 'pointer-events-none',
+                            settings.fileDownloadSource === s
                               ? 'border-primary bg-primary/10 font-medium text-primary'
                               : 'border-border hover:border-muted-foreground/30'
                           )}
@@ -1356,8 +1358,9 @@ export default function Settings() {
                           onClick={() => update('modMirror', s.value)}
                           className={cn(
                             'flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm transition-colors',
-                            settings.autoSelectModMirror && 'pointer-events-none opacity-60',
-                            settings.modMirror === s.value && !settings.autoSelectModMirror
+                            settings.autoSelectModMirror && settings.modMirror !== s.value && 'pointer-events-none opacity-60',
+                            settings.autoSelectModMirror && settings.modMirror === s.value && 'pointer-events-none',
+                            settings.modMirror === s.value
                               ? 'border-primary bg-primary/10 font-medium text-primary'
                               : 'border-border hover:border-muted-foreground/30'
                           )}
