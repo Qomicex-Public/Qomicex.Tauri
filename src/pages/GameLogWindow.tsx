@@ -13,18 +13,17 @@ const LEVELS: LogLevel[] = ['INFO', 'WARN', 'ERROR', 'DEBUG', 'FATAL', 'OTHER']
 /**
  * 解析 Minecraft 日志行的等级：`[thread/LEVEL]`，如 `[main/INFO]`、`[Render thread/ERROR]`。
  * NeoForge 日志形如 `[time] [main/INFO] [logger/]: message`，等级括号后可能还有其它括号，
- * 故只按「括号内 线程/LEVEL」匹配，不要求其后紧跟冒号。
+ * 故只按「括号内 线程/LEVEL」匹配，不要求其后紧跟冒号。无等级标签则返回 null。
  */
 const LEVEL_RE = /\[([^\]]+)\/(INFO|WARN|ERROR|DEBUG|FATAL|TRACE)\]/
 
-function classify(text: string): LogLevel {
+function detectLevel(text: string): LogLevel | null {
   const m = LEVEL_RE.exec(text)
   if (m) {
     const lvl = m[2].toUpperCase()
-    if (lvl === 'TRACE') return 'DEBUG'
-    return lvl as LogLevel
+    return lvl === 'TRACE' ? 'DEBUG' : (lvl as LogLevel)
   }
-  return 'OTHER'
+  return null
 }
 
 const LEVEL_CLASS: Record<LogLevel, string> = {
@@ -61,6 +60,21 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
   const idRef = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
+  // 最近一条带等级日志的等级，供堆栈/续行继承（无 [thread/LEVEL] 时沿用）。
+  const lastLevelRef = useRef<LogLevel>('OTHER')
+
+  /** 由一行原始输出构造 Line：优先自身等级；无等级则继承上一行（异常堆栈续行）。 */
+  const lineFrom = (base: GameLogLine): Line => {
+    const detected = detectLevel(base.text)
+    let level: LogLevel
+    if (detected) {
+      level = detected
+      lastLevelRef.current = detected
+    } else {
+      level = lastLevelRef.current
+    }
+    return { ...base, id: ++idRef.current, level }
+  }
 
   useEffect(() => {
     const es = new EventSource(`${API_BASE}/instance/${encodeURIComponent(instanceId)}/logs/stream`)
@@ -70,20 +84,19 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
       try {
         const d = JSON.parse(e.data)
         if (d.type === 'snapshot') {
-          const arr: Line[] = (d.lines || []).map((l: GameLogLine) => ({
-            ...l, id: ++idRef.current, level: classify(l.text),
-          }))
+          const arr: Line[] = (d.lines || []).map((l: GameLogLine) => lineFrom(l))
           setLines(arr)
         } else if (d.type === 'line') {
           const l = d.entry as GameLogLine
           setLines(prev => {
-            const next = [...prev, { ...l, id: ++idRef.current, level: classify(l.text) }]
+            const next = [...prev, lineFrom(l)]
             return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next
           })
         }
       } catch { /* ignore malformed frame */ }
     }
     return () => es.close()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instanceId])
 
   // 自动滚动到底部（默认跟随新日志）。
