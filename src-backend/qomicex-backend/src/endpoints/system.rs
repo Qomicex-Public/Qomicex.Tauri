@@ -53,6 +53,14 @@ const MOD_SOURCES: &[(i32, &str, &str)] = &[
     ),
 ];
 
+/// 资源（mod 文件 CDN）下载源。ping 目标用各自文件 CDN 的根地址；QML Mirror 是用户
+/// 自建镜像（modrinth.lenmei233.dpdns.org 替换 cdn.modrinth.com / cdn-alt.modrinth.com，
+/// mirror.lenmei233.dpdns.org 替换 mediafilez.forgecdn.net）。
+const FILE_DOWNLOAD_SOURCES: &[(i32, &str, &str)] = &[
+    (0, "官方源", "https://cdn.modrinth.com"),
+    (1, "QML Mirror", "https://modrinth.lenmei233.dpdns.org"),
+];
+
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/health", get(health))
@@ -75,12 +83,20 @@ pub fn router() -> Router<SharedState> {
         )
         .route("/settings/mod-sources/ping", get(ping_mod_sources))
         .route(
+            "/settings/file-download-sources/ping",
+            get(ping_file_download_sources),
+        )
+        .route(
             "/settings/download-source/auto-select",
             get(auto_select_download_source),
         )
         .route(
             "/settings/mod-source/auto-select",
             get(auto_select_mod_source),
+        )
+        .route(
+            "/settings/file-download-source/auto-select",
+            get(auto_select_file_download_source),
         )
         .route(
             "/settings/clear-curseforge-cache",
@@ -181,6 +197,7 @@ async fn put_settings(
             || old.proxy_mode != body.proxy_mode
             || old.proxy_host != body.proxy_host
             || old.ignore_ssl_cert.unwrap_or(false) != body.ignore_ssl_cert.unwrap_or(false)
+            || old.http1_parallel != body.http1_parallel
     };
     *state.settings.write().await = body.clone();
     if rebuild_download_manager {
@@ -286,6 +303,26 @@ async fn ping_mod_sources() -> ApiResult<Json<Vec<ModSourcePing>>> {
     Ok(Json(results))
 }
 
+async fn ping_file_download_sources() -> ApiResult<Json<Vec<DownloadSourcePing>>> {
+    let pings = futures::future::join_all(
+        FILE_DOWNLOAD_SOURCES
+            .iter()
+            .map(|(_, _, url)| ping_head(url)),
+    )
+    .await;
+    let mut results = Vec::with_capacity(FILE_DOWNLOAD_SOURCES.len());
+    for ((id, name, url), (lat, ok)) in FILE_DOWNLOAD_SOURCES.iter().zip(pings) {
+        results.push(DownloadSourcePing {
+            id: *id,
+            name: (*name).to_string(),
+            url: (*url).to_string(),
+            latency: lat,
+            ok,
+        });
+    }
+    Ok(Json(results))
+}
+
 async fn auto_select_download_source() -> ApiResult<Json<AutoSelectResponse>> {
     let pings =
         futures::future::join_all(DOWNLOAD_SOURCES.iter().map(|(_, _, url)| ping_head(url))).await;
@@ -320,6 +357,32 @@ async fn auto_select_mod_source() -> ApiResult<Json<AutoSelectResponse>> {
         }
     }
     auto_select_update(|s| s.mod_mirror = best_id);
+    Ok(Json(AutoSelectResponse {
+        id: best_id,
+        latency_ms: if best_latency == i64::MAX {
+            -1
+        } else {
+            best_latency
+        },
+    }))
+}
+
+async fn auto_select_file_download_source() -> ApiResult<Json<AutoSelectResponse>> {
+    let pings = futures::future::join_all(
+        FILE_DOWNLOAD_SOURCES
+            .iter()
+            .map(|(_, _, url)| ping_head(url)),
+    )
+    .await;
+    let mut best_id = 0;
+    let mut best_latency = i64::MAX;
+    for ((id, _, _), (lat, ok)) in FILE_DOWNLOAD_SOURCES.iter().zip(pings) {
+        if ok && lat < best_latency {
+            best_latency = lat;
+            best_id = *id;
+        }
+    }
+    auto_select_update(|s| s.file_download_source = best_id);
     Ok(Json(AutoSelectResponse {
         id: best_id,
         latency_ms: if best_latency == i64::MAX {

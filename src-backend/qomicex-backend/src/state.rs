@@ -246,6 +246,11 @@ impl AppState {
     }
 }
 
+/// 按来源自动路由：这些「按连接限速」的 CDN 主机强制走 HTTP/1.1 并行连接，其余源
+///（Mojang/BMCLAPI/CurseForge 等）走 HTTP/2 多路复用。实测仅 Modrinth 的 cdn 被按
+/// 连接限速（H1 并行比 H2 多路复用快 3.7 倍）；若后续发现其他源也按连接限速，加进来即可。
+const H1_PARALLEL_HOSTS: &[&str] = &["cdn.modrinth.com"];
+
 /// 按设置构造下载管理器，并挂接 downloader 日志转发到 trace 体系。
 fn new_download_manager(settings: &SettingsResponse) -> Arc<DownloadManager> {
     let enable_http3 = settings.enable_http3.unwrap_or(false);
@@ -271,6 +276,11 @@ fn new_download_manager(settings: &SettingsResponse) -> Arc<DownloadManager> {
             proxy: proxy_settings(settings).0,
             no_proxy: proxy_settings(settings).1,
             ignore_ssl_certs: settings.ignore_ssl_cert.unwrap_or(false),
+            // 下载传输按来源自动路由：`http1_parallel` 为「强制 H1」开关（默认关，不强制）；
+            // `h1_parallel_hosts` 恒含「按连接限速」CDN（Modrinth），其余源（Mojang/BMCLAPI/
+            // CurseForge 等）保持 HTTP/2。实测 Modrinth CDN 上 H1 并行比 H2 多路复用快 3.7 倍。
+            http1_parallel: settings.http1_parallel,
+            h1_parallel_hosts: H1_PARALLEL_HOSTS.iter().map(|s| s.to_string()).collect(),
             ..Default::default()
         },
         concurrency,

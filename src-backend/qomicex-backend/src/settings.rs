@@ -80,6 +80,13 @@ pub struct SettingsResponse {
     pub auto_select_download_source: Option<bool>,
     pub mod_mirror: i32,
     pub auto_select_mod_mirror: Option<bool>,
+    /// 资源（mod 文件 CDN）下载源：0 = 官方源（直连原 CDN）；1 = QML Mirror（把
+    /// `cdn.modrinth.com`/`cdn-alt.modrinth.com` → `modrinth.lenmei233.dpdns.org`、
+    /// `mediafilez.forgecdn.net` → `mirror.lenmei233.dpdns.org`）。老配置缺失时默认 0。
+    #[serde(default)]
+    pub file_download_source: i32,
+    /// 自动选择资源（文件 CDN）下载源：`true` = 自动选当前延迟最低的可用源。
+    pub auto_select_file_download_source: Option<bool>,
     pub download_timeout: i32,
     pub animations_enabled: Option<bool>,
     pub animation_speed: Option<i32>,
@@ -126,6 +133,11 @@ pub struct SettingsResponse {
     /// 忽略 SSL 证书校验（跳过 TLS 证书验证）。`None`/`Some(false)` = 校验（默认安全）；
     /// `Some(true)` = 不校验（仅用于自签/内网代理等场景，慎用）。
     pub ignore_ssl_cert: Option<bool>,
+    /// 强制所有下载走 HTTP/1.1 并行连接（每个文件独立 TCP 连接）。
+    /// `true` = 强制 H1（所有来源）；`false`（默认）= 按来源自动路由：Modrinth 等
+    /// 按连接限速的 CDN 自动走 H1 并行，其余源（Mojang/BMCLAPI/CurseForge 等）走 HTTP/2。
+    #[serde(default)]
+    pub http1_parallel: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +173,8 @@ impl Default for SettingsResponse {
             auto_select_download_source: None,
             mod_mirror: 0,
             auto_select_mod_mirror: None,
+            file_download_source: 0,
+            auto_select_file_download_source: None,
             download_timeout: 15,
             animations_enabled: None,
             animation_speed: None,
@@ -189,6 +203,7 @@ impl Default for SettingsResponse {
             proxy_mode: "system".to_string(),
             proxy_host: String::new(),
             ignore_ssl_cert: None,
+            http1_parallel: false,
         }
     }
 }
@@ -262,4 +277,9 @@ pub fn save_settings(settings: &SettingsResponse) -> std::io::Result<()> {
 /// 全局版本隔离开关（对应 SystemEndpoints.GetGlobalVersionIsolation）。
 pub fn get_global_version_isolation() -> bool {
     load_settings().version_isolation
+}
+
+/// 全局「资源下载源」（mod 文件 CDN 镜像）：0 = 官方，1 = QML Mirror。
+pub fn get_global_file_download_source() -> i32 {
+    load_settings().file_download_source
 }

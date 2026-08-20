@@ -296,7 +296,12 @@ async fn start(
     // The C# Save flavour extracts the downloaded zip; that extraction is not
     // performed here (see TODOs below). Nothing else is specific to `saves`.
     let full_path = target_dir.join(&req.file_name);
-    let mut task = DownloadTask::new(req.url.clone(), full_path);
+    // 资源下载源：重写文件 CDN 域名（官方/QML Mirror）。api-key 按重写前的原始 host 判断。
+    let download_url = crate::services::file_mirror::rewrite_file_cdn(
+        &req.url,
+        state.settings.read().await.file_download_source,
+    );
+    let mut task = DownloadTask::new(download_url, full_path);
     if is_cf_url(&req.url) && !state.curse_forge_api_key.is_empty() {
         task = task.with_header("x-api-key", state.curse_forge_api_key.clone());
     }
@@ -345,7 +350,12 @@ async fn download_to(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let mut task = DownloadTask::new(req.url.clone(), target.clone());
+    // 资源下载源：重写文件 CDN 域名（官方/QML Mirror）。api-key 按重写前的原始 host 判断。
+    let download_url = crate::services::file_mirror::rewrite_file_cdn(
+        &req.url,
+        state.settings.read().await.file_download_source,
+    );
+    let mut task = DownloadTask::new(download_url, target.clone());
     if is_cf_url(&req.url) && !state.curse_forge_api_key.is_empty() {
         task = task.with_header("x-api-key", state.curse_forge_api_key.clone());
     }
