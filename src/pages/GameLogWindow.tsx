@@ -10,7 +10,12 @@ type LogLevel = 'INFO' | 'WARN' | 'ERROR' | 'DEBUG' | 'FATAL' | 'OTHER'
 const LEVELS: LogLevel[] = ['INFO', 'WARN', 'ERROR', 'DEBUG', 'FATAL', 'OTHER']
 
 /** Minecraft 日志行形如 `[12:34:56] [main/INFO]: ...`，提取 LEVEL。 */
-const LEVEL_RE = /^\[(\d{2}:\d{2}:\d{2})\]\s*\[[^\]]*\/\s*(INFO|WARN|ERROR|DEBUG|FATAL|TRACE)\s*\]:/
+/**
+ * 解析 Minecraft 日志行的等级：`[thread/LEVEL]`，如 `[main/INFO]`、`[Render thread/ERROR]`。
+ * NeoForge 日志形如 `[time] [main/INFO] [logger/]: message`，等级括号后可能还有其它括号，
+ * 故只按「括号内 线程/LEVEL」匹配，不要求其后紧跟冒号。
+ */
+const LEVEL_RE = /\[([^\]]+)\/(INFO|WARN|ERROR|DEBUG|FATAL|TRACE)\]/
 
 function classify(text: string): LogLevel {
   const m = LEVEL_RE.exec(text)
@@ -169,7 +174,7 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
       </div>
 
       {/* 日志列表 */}
-      <div ref={listRef} className="flex-1 overflow-auto px-3 py-2 font-mono text-[13px] leading-5" onScroll={e => {
+      <div ref={listRef} className="log-selectable flex-1 overflow-auto px-3 py-2 font-mono text-[13px] leading-5" onScroll={e => {
         const el = e.currentTarget
         stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
       }}>
