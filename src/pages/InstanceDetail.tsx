@@ -27,7 +27,6 @@ import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, Serve
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates, getSchematics, deleteSchematic, renameSchematic, importSchematic } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { ApiError } from '../api/client.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
@@ -50,6 +49,36 @@ import { useDebug } from '../components/DebugContext.tsx'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import SchematicPreviewDialog from '../components/SchematicPreviewDialog.tsx'
+
+/** 测试游戏的独立日志窗口 label（固定，重复点击先关旧的再开新的）。 */
+const GAME_LOG_WINDOW_LABEL = 'game-log-window'
+
+/**
+ * 打开独立的游戏实时日志窗口。
+ * - Tauri 环境：用原生 `WebviewWindow` 另开一个应用独立窗口承载日志页（本地后端页面，
+ *   直连 SSE），非系统浏览器。
+ * - 非 Tauri（纯浏览器 dev）：退回 `window.open`。
+ */
+async function openLogWindow(url: string): Promise<void> {
+  try {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+    const existing = await WebviewWindow.getByLabel(GAME_LOG_WINDOW_LABEL)
+    if (existing) await existing.close().catch(() => {})
+    // eslint-disable-next-line no-new
+    new WebviewWindow(GAME_LOG_WINDOW_LABEL, {
+      url,
+      title: '实时游戏日志',
+      width: 760,
+      height: 560,
+      minWidth: 420,
+      minHeight: 300,
+      resizable: true,
+      center: true,
+    })
+  } catch {
+    window.open(url, '_blank')
+  }
+}
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -2416,7 +2445,6 @@ export default function InstanceDetailPage() {
   const handleTestGame = useCallback(async () => {
     if (!id) return
     const url = getInstanceLogViewUrl(id)
-    // Tauri 环境：用系统默认浏览器打开（=「另开系统级浏览器窗口」），走原生 Opener。
     // 纯浏览器 dev：window.open 非同步会丢失手势被弹窗拦截，故在点击内先同步打开。
     const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
     let win: Window | null = null
@@ -2429,9 +2457,9 @@ export default function InstanceDetailPage() {
     }
     try {
       await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir }, selectedAccountUuid ? { accountUuid: selectedAccountUuid } : undefined)
-      // 启动成功后才在 Tauri 下打开日志窗口（openUrl 非弹窗，不受手势影响）。
+      // 启动成功后在 Tauri 下另开原生独立日志窗口（IPC，不受弹窗/手势限制）。
       if (isTauri) {
-        openUrl(url).catch(() => { window.open(url, '_blank') })
+        await openLogWindow(url)
       }
     } catch (e) {
       win?.close()
