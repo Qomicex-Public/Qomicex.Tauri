@@ -42,3 +42,18 @@
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-08-20 | v1.0 | 初版创建 | AI Agent |
+
+### 2026-08-21 更新
+
+## 修订（2026-08-20）：落地改为启动器原生独立窗口
+
+经实现验证，用户要求的是**启动器自身的独立日志窗口**（非系统浏览器、非站外页面）。最终实现调整为：
+
+- 日志窗口改为 **Tauri 原生 `WebviewWindow`**（label `game-log-window`），加载本 SPA 的 `?logWindow=1&instance=<id>` 分支，与主窗口**共用同一套 Tailwind 主题/字体**。
+- Windows 下 `decorations:false` 隐藏系统标题栏，并复用主窗口同款自定义标题栏（拖拽区 + 最小化/最大化/关闭）；非 Windows 保留系统标题栏（与主窗口一致）。
+- 新增前端组件 `src/pages/GameLogWindow.tsx`：日志**等级筛选**（INFO/WARN/ERROR/DEBUG/FATAL/OTHER，客户端按 `[thread/LEVEL]` 解析）、**关键词搜索**、自动滚动、连接状态、**停止游戏**按钮（`POST /api/instance/{id}/launch/cancel`）。
+- `src/App.tsx` 检测 `?logWindow=1` 分支，独立渲染该组件（不加载主 Layout/路由/后台轮询）。
+- 能力配置 `src-tauri/capabilities/default.json`：新增 `core:webview:allow-create-webview-window`，并把 `windows` 覆盖到 `game-log-window`（窗口内 close/minimize/toggle-maximize/start-dragging）。
+- i18n submodule 新增 `gameLog` 命名空间（7 语言）。
+- 后端 `/logs-view/{id}` 独立页不再被日志窗口使用（保留后端 `/instance/{id}/logs` + `/logs/stream` SSE 数据接口）。
+
