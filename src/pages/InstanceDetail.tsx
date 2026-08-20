@@ -27,6 +27,7 @@ import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, Serve
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates, getSchematics, deleteSchematic, renameSchematic, importSchematic } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { ApiError } from '../api/client.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
@@ -2414,16 +2415,24 @@ export default function InstanceDetailPage() {
 
   const handleTestGame = useCallback(async () => {
     if (!id) return
-    // ⚠️ 必须在 await 之前、处于用户点击手势内同步打开日志窗口，否则被 WebView/浏览器
-    // 当作弹窗拦截（window.open 在 await 之后会丢失用户激活）。先拿句柄，后续失败再关。
-    const win = window.open(getInstanceLogViewUrl(id), '_blank')
+    const url = getInstanceLogViewUrl(id)
+    // Tauri 环境：用系统默认浏览器打开（=「另开系统级浏览器窗口」），走原生 Opener。
+    // 纯浏览器 dev：window.open 非同步会丢失手势被弹窗拦截，故在点击内先同步打开。
+    const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+    let win: Window | null = null
+    if (!isTauri) {
+      win = window.open(url, '_blank')
+    }
     if (needsAccount && !selectedAccountUuid) {
       const ok = await resolveAccountCheck()
       if (!ok) { win?.close(); return }
     }
     try {
       await ctxLaunchInstance(id, instance?.name || id, { path: instance?.javaPath, gameVersion: instance?.gameVersion, gameDir: instance?.gameDir }, selectedAccountUuid ? { accountUuid: selectedAccountUuid } : undefined)
-      // 启动成功：日志窗口保持打开，已连 SSE 显示实时日志。
+      // 启动成功后才在 Tauri 下打开日志窗口（openUrl 非弹窗，不受手势影响）。
+      if (isTauri) {
+        openUrl(url).catch(() => { window.open(url, '_blank') })
+      }
     } catch (e) {
       win?.close()
       const msg = e instanceof Error ? e.message : String(e)
