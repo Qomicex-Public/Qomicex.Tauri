@@ -135,6 +135,10 @@ fn spawn_backend(app: &tauri::App) {
     let mut cmd = std::process::Command::new(&exe_path);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        cmd.env("QOMICEX_HOME", &data_dir);
+        tauri_log!("backend", "set QOMICEX_HOME={}", data_dir.display());
+    }
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
