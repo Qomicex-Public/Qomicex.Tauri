@@ -145,7 +145,7 @@ export default function Layout() {
       <PluginEventBridge />
       {bg && (
         <>
-          <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: `blur(${blur}px)` }} />
+          <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: blur > 0 ? `blur(${blur}px)` : 'none' }} />
           <div className="fixed inset-0 z-0" style={{ backgroundColor: `hsl(var(--background)/${(opacity / 100).toFixed(2)})` }} />
         </>
       )}
@@ -154,7 +154,7 @@ export default function Layout() {
         <div className="flex flex-1 flex-col min-w-0">
           {!isLinux && !isMacos && <TitleBar />}
           <div className="relative flex flex-1 min-w-0 overflow-hidden">
-            <div className="absolute inset-0 bg-background/50 backdrop-blur-sm" />
+            <div className="absolute inset-0 bg-background/50" style={{ backdropFilter: blur > 0 ? `blur(${blur}px)` : 'none' }} />
             <main className="relative z-10 flex min-h-0 overflow-hidden flex-1">
               <Outlet />
             </main>
