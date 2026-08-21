@@ -116,7 +116,7 @@ pub struct SettingsResponse {
     /// 前端把它转成 HSL 覆盖 `--primary`/`--ring`，并据此自动计算前景对比色。
     #[serde(default)]
     pub theme_color: Option<String>,
-    /// 组件材质：`""`（或 `None`）= 默认；`"frosted"` = 亚克力玻璃；`"aero"` = Aero；`"liquid"` = 液态玻璃。
+    /// 组件材质：`""`（或 `None`）= 默认；`"frosted"` = 毛玻璃；`"acrylic"` = 亚克力玻璃；`"aero"` = Aero；`"liquid"` = 液态玻璃。
     /// 前端经 `document.documentElement[data-material]` 应用对应的表面材质。
     #[serde(default)]
     pub component_material: Option<String>,

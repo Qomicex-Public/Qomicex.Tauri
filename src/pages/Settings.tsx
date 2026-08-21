@@ -1921,11 +1921,12 @@ export default function Settings() {
                   <div className="space-y-2">
                     <Select
                       value={settings.componentMaterial ?? 'default'}
-                      onChange={(v) => update('componentMaterial', v as 'default' | 'frosted' | 'aero' | 'liquid')}
+                      onChange={(v) => update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid')}
                       className="w-48"
                     >
                       <SelectOption value="default">{t('settings.appearance.componentMaterialDefault')}</SelectOption>
                       <SelectOption value="frosted">{t('settings.appearance.componentMaterialFrosted')}</SelectOption>
+                      <SelectOption value="acrylic">{t('settings.appearance.componentMaterialAcrylic')}</SelectOption>
                       <SelectOption value="aero">{t('settings.appearance.componentMaterialAero')}</SelectOption>
                       <SelectOption value="liquid">{t('settings.appearance.componentMaterialLiquid')}</SelectOption>
                     </Select>
@@ -2376,3 +2377,10 @@ export default function Settings() {
     </PageShell>
   )
 }
+
+
+
+
+
+
+
