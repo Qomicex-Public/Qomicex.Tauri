@@ -231,9 +231,10 @@ async fn open_folder(Json(body): Json<OpenPathRequest>) -> ApiResult<StatusCode>
         return Ok(StatusCode::BAD_REQUEST);
     }
     if std::path::Path::new(&path).is_relative() {
-        path = std::env::current_dir()
-            .map(|c| c.join(&path).to_string_lossy().into_owned())
-            .unwrap_or(path);
+        path = crate::settings::resolve_base_dir()
+            .join(&path)
+            .to_string_lossy()
+            .into_owned();
     }
     let _ = std::fs::create_dir_all(&path);
     let _ = open::that_detached(&path);

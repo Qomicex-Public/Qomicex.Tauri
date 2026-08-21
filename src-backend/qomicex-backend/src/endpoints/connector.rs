@@ -276,15 +276,12 @@ fn custom_protocols() -> Vec<Arc<dyn qomicex_connector::protocols::ProtocolHandl
 /// 语法级绝对化，不跟随符号链接，容忍目标不存在）。
 fn abs_game_dir(game_dir: &str) -> String {
     let path = std::path::Path::new(game_dir);
-    if path.is_absolute() {
+    let resolved = if path.is_absolute() {
         path.to_path_buf()
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(path)
     } else {
-        path.to_path_buf()
-    }
-    .to_string_lossy()
-    .into_owned()
+        crate::settings::resolve_base_dir().join(path)
+    };
+    resolved.to_string_lossy().into_owned()
 }
 
 /// 扫描实例 mods 目录（sha1 + Modrinth/CurseForge 反查），映射为 [`GameModEntry`]，
@@ -772,10 +769,11 @@ async fn host_instance(
                 let err_str = err.to_string();
                 tracing::error!("联机: 启动游戏失败: {chain}");
                 let _ = std::fs::create_dir_all(
-                    std::path::Path::new(&instance_clone.game_dir).join("logs"),
+                    std::path::Path::new(&abs_game_dir(&instance_clone.game_dir)).join("logs"),
                 );
                 let _ = std::fs::write(
-                    std::path::Path::new(&instance_clone.game_dir).join("logs/launch-errors.log"),
+                    std::path::Path::new(&abs_game_dir(&instance_clone.game_dir))
+                        .join("logs/launch-errors.log"),
                     format!(
                         "[{:?}] [{}] {}\n\n",
                         chrono::Utc::now(),

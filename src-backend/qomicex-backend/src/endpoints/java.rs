@@ -1084,10 +1084,10 @@ fn full_path(p: &str) -> String {
     if path.is_absolute() {
         return path.to_string_lossy().into_owned();
     }
-    match std::env::current_dir() {
-        Ok(cwd) => cwd.join(path).to_string_lossy().into_owned(),
-        Err(_) => p.trim().to_string(),
-    }
+    crate::settings::resolve_base_dir()
+        .join(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn path_eq(a: &str, b: &str) -> bool {
