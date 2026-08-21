@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { API_BASE } from '../api/client.ts'
+import { openStream, createSseParser } from '../api/ipc.ts'
 
 export interface InstallState {
   instanceId: string
@@ -62,18 +62,26 @@ export function useDownloadSSE() {
   const [reconnectKey, setReconnectKey] = useState(0)
 
   useEffect(() => {
-    const es = new EventSource(`${API_BASE}/progress/stream`)
-    es.onopen = () => setReconnectKey(c => c + 1)
-    es.onmessage = (e) => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const feed = createSseParser(text => {
       try {
-        const parsed = JSON.parse(e.data) as ProgressPayload
-        setData(parsed)
+        setData(JSON.parse(text) as ProgressPayload)
       } catch { /* ignore malformed */ }
+    })
+    // 断线自动重连（对齐原 EventSource 自动重连语义）
+    const connect = () => {
+      if (cancelled) return
+      setReconnectKey(c => c + 1)
+      openStream('/progress/stream', feed).done.catch(() => {
+        if (!cancelled) timer = setTimeout(connect, 1000)
+      })
     }
-    es.onerror = () => {
-      // browser will auto-reconnect
+    connect()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
     }
-    return () => es.close()
   }, [])
 
   return { data, reconnectKey }

@@ -29,6 +29,16 @@ export function isIpcMode(): boolean {
 
 // --- 流式通道 ---
 
+/** 非 2xx 流响应的统一错误（与 fetch !res.ok 语义对齐） */
+export class StreamStatusError extends Error {
+  readonly status: number
+  constructor(status: number) {
+    super(`Stream failed: ${status}`)
+    this.name = 'StreamStatusError'
+    this.status = status
+  }
+}
+
 export interface StreamHandle {
   done: Promise<void>
   close: () => void
@@ -74,7 +84,7 @@ function httpStream(path: string, onChunk: (text: string) => void, opts?: Stream
       body: opts?.body,
       signal: controller.signal,
     })
-    if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`)
+    if (!res.ok || !res.body) throw new StreamStatusError(res.status)
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     for (;;) {
@@ -98,12 +108,26 @@ function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamO
     const { invoke, Channel } = await import('@tauri-apps/api/core')
     const id = Math.random().toString(36).slice(2)
     await new Promise<void>((resolve, reject) => {
+      let dead = false
       const channel = new Channel<string>()
       channel.onmessage = msg => {
+        if (dead) return
         let e: StreamEvent
         try { e = JSON.parse(msg) as StreamEvent } catch { return }
-        if (e.t === 'chunk') onChunk(e.d ?? '')
-        else if (e.t === 'error') reject(new Error(e.d))
+        if (e.t === 'head') {
+          // 统一契约：非 2xx 视为失败，停掉后端流任务并 reject（对齐 fetch !res.ok）
+          const s = e.status ?? 0
+          if (s < 200 || s >= 300) {
+            dead = true
+            invoke('ipc_stream_abort', { id }).catch(() => {})
+            reject(new StreamStatusError(s))
+          }
+        }
+        else if (e.t === 'chunk') onChunk(e.d ?? '')
+        else if (e.t === 'error') {
+          dead = true
+          reject(new Error(e.d || 'stream failed'))
+        }
         else if (e.t === 'end') resolve()
       }
       closeFn = () => {

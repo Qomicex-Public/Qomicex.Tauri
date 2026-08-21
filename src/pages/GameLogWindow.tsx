@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { API_BASE } from '../api/client.ts'
+import { openStream, createSseParser, type StreamHandle } from '../api/ipc.ts'
 import { cancelLaunch, type GameLogLine } from '../api/instance.ts'
 import { Button, Input } from '../components/ui'
 import { useI18n } from '../i18n/index.tsx'
@@ -77,12 +77,10 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
   }
 
   useEffect(() => {
-    const es = new EventSource(`${API_BASE}/instance/${encodeURIComponent(instanceId)}/logs/stream`)
-    es.onopen = () => setConnected(true)
-    es.onerror = () => setConnected(false)
-    es.onmessage = (e) => {
+    let handle: StreamHandle | null = null
+    const feed = createSseParser(text => {
       try {
-        const d = JSON.parse(e.data)
+        const d = JSON.parse(text)
         if (d.type === 'snapshot') {
           const arr: Line[] = (d.lines || []).map((l: GameLogLine) => lineFrom(l))
           setLines(arr)
@@ -94,8 +92,15 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
           })
         }
       } catch { /* ignore malformed frame */ }
-    }
-    return () => es.close()
+    })
+    handle = openStream(`/instance/${encodeURIComponent(instanceId)}/logs/stream`, feed)
+    setConnected(true)
+    // 流断开（游戏退出/后端关闭）→ 断线重连拿最新 snapshot
+    handle.done.then(
+      () => setConnected(false),
+      () => setConnected(false),
+    )
+    return () => handle?.close()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instanceId])
 
