@@ -30,6 +30,7 @@ import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
+import { initApiTransport } from './api/ipc.ts'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { checkRequired } from './api/update.ts'
@@ -86,6 +87,8 @@ function AppContent() {
     let cancelled = false
     let attempts = 0
     const poll = async () => {
+      // 先探测 IPC 管道可用性（非 Tauri 环境立即返回，保持 HTTP）
+      await initApiTransport()
       while (!cancelled && attempts < 10) {
         try {
           // 用轻量 /health（不触外部网络 ping），避免就绪判定被慢速诊断端点阻塞

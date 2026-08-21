@@ -1,4 +1,9 @@
-export const API_BASE = 'http://127.0.0.1:5000/api'
+export let API_BASE = 'http://127.0.0.1:5000/api'
+
+/** IPC 探测成功后由 initApiTransport 调用；ESM live binding 对全部导入方生效 */
+export function setApiBase(base: string) {
+  API_BASE = base
+}
 
 /** 全局请求超时：任何请求 15s 无响应即中断，避免"一直加载"（如慢速外部 ping）。 */
 const REQUEST_TIMEOUT_MS = 15_000
