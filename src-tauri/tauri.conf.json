@@ -22,7 +22,7 @@
     ],
     "security": {
       "dangerousDisableAssetCspModification": true,
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:5000 ws://localhost:5000 https://api.github.com blob: data:; img-src 'self' blob: asset: http://localhost:5000 data: https:; style-src 'self' 'unsafe-inline' http://localhost:5000; font-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' http://localhost:5000 blob: data:; worker-src 'self' blob: data:; frame-src 'self' blob:; media-src 'self' asset:"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:5000 http://127.0.0.1:5000 ws://localhost:5000 ws://127.0.0.1:5000 https://api.github.com blob: data:; img-src 'self' blob: asset: http://localhost:5000 http://127.0.0.1:5000 data: https:; style-src 'self' 'unsafe-inline' http://localhost:5000 http://127.0.0.1:5000; font-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' http://localhost:5000 http://127.0.0.1:5000 blob: data:; worker-src 'self' blob: data:; frame-src 'self' blob:; media-src 'self' asset:"
     }
   },
   "bundle": {

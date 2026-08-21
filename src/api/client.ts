@@ -1,4 +1,4 @@
-export const API_BASE = 'http://localhost:5000/api'
+export const API_BASE = 'http://127.0.0.1:5000/api'
 
 /** 全局请求超时：任何请求 15s 无响应即中断，避免"一直加载"（如慢速外部 ping）。 */
 const REQUEST_TIMEOUT_MS = 15_000
