@@ -1,0 +1,985 @@
+name: Debug Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      major:
+        description: '主版本号'
+        required: true
+        default: '0'
+      minor:
+        description: '次版本号'
+        required: true
+        default: '1'
+      patch:
+        description: '补丁版本号'
+        required: true
+        default: '0'
+      releaseType:
+        description: '发布类型'
+        required: true
+        type: choice
+        options:
+          - release
+          - beta
+          - alpha
+      releaseNum:
+        description: '发布序数（仅 release/beta，如 release5 的 5）'
+        required: false
+        default: '1'
+      licenseRequired:
+        description: '启用许可证验证'
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: '标记为 GitHub Pre-release'
+        required: false
+        default: false
+        type: boolean
+      required:
+        description: '强制更新（用户必须更新才能继续使用）'
+        required: false
+        default: false
+        type: boolean
+      buildPlatform:
+        description: '构建平台'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - windows
+          - linux
+          - macos
+          - loongarch64
+          - all
+      linuxBundles:
+        description: 'Linux 打包格式（仅 linux/all 时有效）'
+        required: false
+        default: 'appimage,deb,rpm'
+        type: choice
+        options:
+          - appimage,deb,rpm
+          - appimage,deb
+          - appimage,rpm
+          - deb,rpm
+          - appimage
+          - deb
+          - rpm
+      macosArch:
+        description: 'macOS 架构（仅 macos/all 时有效）'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - arm64
+          - x64
+      windowsArch:
+        description: 'Windows 架构（仅 windows/all 时有效）'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - arm64
+          - x64
+      linuxArch:
+        description: 'Linux 架构（仅 linux/all 时有效）'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - arm64
+          - x64
+
+env:
+  CARGO_TERM_COLORS: always
+  GITHUB_SHA: ${{ github.sha }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.construct.outputs.version }}
+      displayVersion: ${{ steps.construct.outputs.displayVersion }}
+      releaseType: ${{ steps.construct.outputs.releaseType }}
+      prerelease: ${{ steps.construct.outputs.prerelease }}
+      licenseRequired: ${{ steps.construct.outputs.licenseRequired }}
+      required: ${{ steps.construct.outputs.required }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+
+      - name: Construct version
+        id: construct
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            TAG="${TAG#v}"
+            echo "version=$TAG" >> "$GITHUB_OUTPUT"
+            echo "displayVersion=v$TAG" >> "$GITHUB_OUTPUT"
+            TYPE=$(echo "$TAG" | sed -n 's/^[0-9.]*-\([a-z]*\)[0-9].*/\1/p')
+            echo "releaseType=$TYPE" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${{ github.event.release.prerelease }}" >> "$GITHUB_OUTPUT"
+            echo "licenseRequired=false" >> "$GITHUB_OUTPUT"
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          else
+            RTYPE="${{ github.event.inputs.releaseType }}"
+            MAJOR="${{ github.event.inputs.major }}"
+            MINOR="${{ github.event.inputs.minor }}"
+            PATCH="${{ github.event.inputs.patch }}"
+            RNUM="${{ github.event.inputs.releaseNum }}"
+
+            if [ "$RTYPE" = "alpha" ]; then
+              DATE=$(date +%Y%m%d)
+              MAX_N=-1
+              for TAG in $(git tag -l "v*-alpha${DATE}.*" 2>/dev/null); do
+                N=$(echo "$TAG" | sed "s/.*alpha${DATE}\\.\\([0-9]*\\)/\\1/")
+                if [ "$N" -gt "$MAX_N" ] 2>/dev/null; then MAX_N=$N; fi
+              done
+              BUILD=$((MAX_N + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}-alpha${DATE}.${BUILD}"
+            else
+              VERSION="${MAJOR}.${MINOR}.${PATCH}-${RTYPE}${RNUM}.0"
+            fi
+
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "displayVersion=v$VERSION" >> "$GITHUB_OUTPUT"
+            echo "releaseType=$RTYPE" >> "$GITHUB_OUTPUT"
+
+            PR="${{ github.event.inputs.prerelease }}"
+            if [ "$RTYPE" = "release" ]; then
+              echo "prerelease=${PR}" >> "$GITHUB_OUTPUT"
+            else
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            fi
+            echo "licenseRequired=${{ github.event.inputs.licenseRequired }}" >> "$GITHUB_OUTPUT"
+            echo "required=${{ github.event.inputs.required == 'true' && 'true' || 'false' }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version files
+        if: github.event_name == 'workflow_dispatch'
+        run: node scripts/bump-version.mjs "${{ steps.construct.outputs.version }}"
+
+      - name: Show version
+        run: |
+          echo "Version: ${{ steps.construct.outputs.displayVersion }}"
+          echo "Type: ${{ steps.construct.outputs.releaseType }}"
+          echo "Prerelease: ${{ steps.construct.outputs.prerelease }}"
+          echo "License: ${{ steps.construct.outputs.licenseRequired }}"
+          echo "Required: ${{ steps.construct.outputs.required }}"
+
+  quality-gate:
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - name: Setup connector build
+        id: connector  # Add this ID
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            protobuf-compiler \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - name: Cargo check
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: cargo check --manifest-path src-backend/qomicex-backend/Cargo.toml
+      - name: Cargo test
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml
+      - name: Tauri tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib plugin_gateway
+      - name: Cargo fmt
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+        run: |
+          cargo fmt --manifest-path src-backend/qomicex-backend/Cargo.toml -- --check
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Cargo clippy
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: |
+          cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
+          cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
+      - name: Cargo audit
+        run: |
+          # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
+          # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
+          cargo install cargo-audit
+          cd src-backend/qomicex-backend && cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      - run: pnpm run build
+      - run: pnpm audit --audit-level moderate || true
+      - run: pnpm --filter @qomicex/plugin-ui audit --audit-level moderate || true
+
+  windows-x64:
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'x64'))
+    needs: [setup, quality-gate]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-pc-windows-msvc }
+      - uses: swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7.0.0
+        with: { node-version: '22', cache: pnpm }
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+        shell: pwsh
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Build Rust backend
+        shell: pwsh
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: |
+          $features = @()
+          if ("${{ needs.setup.outputs.licenseRequired }}" -eq "true") { $features = @("--features", "license-required") }
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target x86_64-pc-windows-msvc @features
+      - name: Stage backend binary
+        shell: pwsh
+        run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          Move-Item -Force src-backend/qomicex-backend/target/x86_64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
+          # Packet.dll: 需与后端 exe 同目录(npcap)，一并打进 binaries/
+          Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.dll src-tauri/binaries/Packet.dll
+          # wintun.dll: easytier TUN 模式（管理员运行）动态加载
+          Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/wintun.dll src-tauri/binaries/wintun.dll
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      - run: npm run tauri -- build --bundles nsis
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Generate update manifest fragment
+        shell: pwsh
+        run: |
+          $version = "${{ needs.setup.outputs.displayVersion }}"
+          Write-Output "=== Bundle dir contents ==="
+          $bundleDir = "src-tauri/target/release/bundle"
+          Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
+          $archive = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.nsis.zip" | Select-Object -First 1
+          $platform = "windows-x86_64"
+          if ($archive) {
+            $sigFile = Get-ChildItem -Path $bundleDir -Recurse -Filter "$($archive.Name).sig" | Select-Object -First 1
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($archive.Name)"
+            if ($sigFile) {
+              $signature = (Get-Content -Path $sigFile.FullName -Raw).Trim()
+              $fragment = @{ $platform = @{ url = $url; signature = $signature } }
+            } else {
+              $fragment = @{ $platform = @{ url = $url } }
+            }
+          } else {
+            $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+            if (-not $exe) { throw "No installer found" }
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
+            $fragment = @{ $platform = @{ url = $url } }
+          }
+          $json = $fragment | ConvertTo-Json -Compress -Depth 10
+          Set-Content -Path "update-fragment-$platform.json" -Value $json
+          Write-Output "Fragment: $json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qomicex-launcher-windows-x64
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/binaries/Packet.dll
+            src-tauri/binaries/wintun.dll
+
+  windows-arm64:
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'arm64'))
+    needs: [setup, quality-gate]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-pc-windows-msvc }
+      - uses: swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7.0.0
+        with: { node-version: '22', cache: pnpm }
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+        shell: pwsh
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Build Rust backend
+        shell: pwsh
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: |
+          $features = @()
+          if ("${{ needs.setup.outputs.licenseRequired }}" -eq "true") { $features = @("--features", "license-required") }
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target aarch64-pc-windows-msvc @features
+      - name: Stage backend binary
+        shell: pwsh
+        run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          Move-Item -Force src-backend/qomicex-backend/target/aarch64-pc-windows-msvc/release/qomicex-backend.exe src-tauri/binaries/backend.exe
+          # Packet.dll: ARM64 进程必须用 ARM64 版（x64 版加载失败 0xC0000135）
+          Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/Packet.dll src-tauri/binaries/Packet.dll
+          # wintun.dll: easytier TUN 模式（管理员运行）动态加载，ARM64 版
+          Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/wintun.dll src-tauri/binaries/wintun.dll
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Generate update manifest fragment
+        shell: pwsh
+        run: |
+          $version = "${{ needs.setup.outputs.displayVersion }}"
+          Write-Output "=== Bundle dir contents ==="
+          $bundleDir = "src-tauri/target/aarch64-pc-windows-msvc/release/bundle"
+          Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
+          $archive = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.nsis.zip" | Select-Object -First 1
+          $platform = "windows-aarch64"
+          if ($archive) {
+            $sigFile = Get-ChildItem -Path $bundleDir -Recurse -Filter "$($archive.Name).sig" | Select-Object -First 1
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($archive.Name)"
+            if ($sigFile) {
+              $signature = (Get-Content -Path $sigFile.FullName -Raw).Trim()
+              $fragment = @{ $platform = @{ url = $url; signature = $signature } }
+            } else {
+              $fragment = @{ $platform = @{ url = $url } }
+            }
+          } else {
+            $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+            if (-not $exe) { throw "No installer found" }
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
+            $fragment = @{ $platform = @{ url = $url } }
+          }
+          $json = $fragment | ConvertTo-Json -Compress -Depth 10
+          Set-Content -Path "update-fragment-$platform.json" -Value $json
+          Write-Output "Fragment: $json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qomicex-launcher-windows-arm64
+          path: |
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
+            src-tauri/binaries/Packet.dll
+            src-tauri/binaries/wintun.dll
+
+  linux-x64:
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'x64'))
+    needs: [setup, quality-gate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-unknown-linux-gnu }
+      - uses: swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7.0.0
+        with: { node-version: '22', cache: pnpm }
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils libglib2.0-dev
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target x86_64-unknown-linux-gnu $FEATURES
+      - name: Stage backend binary
+        run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
+          mv src-backend/qomicex-backend/target/x86_64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      - run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          PLATFORM="linux-x86_64"
+          # Prefer update archive (.tar.gz) with signature
+          ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
+          if [ -n "$ARCHIVE" ]; then
+            ASSET_NAME=$(basename "$ARCHIVE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            SIG_FILE="${ARCHIVE}.sig"
+            if [ -f "$SIG_FILE" ]; then
+              SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+            else
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+            fi
+          else
+            BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
+            ASSET_NAME=$(basename "$BUNDLE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qomicex-launcher-linux-x64
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+
+  linux-arm64:
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'arm64'))
+    needs: [setup, quality-gate]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-unknown-linux-gnu }
+      - uses: swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7.0.0
+        with: { node-version: '22', cache: pnpm }
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils libglib2.0-dev
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target aarch64-unknown-linux-gnu $FEATURES
+      - name: Stage backend binary
+        run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
+          mv src-backend/qomicex-backend/target/aarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      - run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          PLATFORM="linux-aarch64"
+          ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
+          if [ -n "$ARCHIVE" ]; then
+            ASSET_NAME=$(basename "$ARCHIVE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            SIG_FILE="${ARCHIVE}.sig"
+            if [ -f "$SIG_FILE" ]; then
+              SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+            else
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+            fi
+          else
+            BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
+            ASSET_NAME=$(basename "$BUNDLE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qomicex-launcher-linux-arm64
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+
+  loongarch64:
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'loongarch64'))
+    needs: [setup, quality-gate]
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/qomicex-public/qomicex-loong64-builder:latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      # 注册 loong64 用户态模拟（与 build-loong64-builder.yml 构建镜像同款方案）
+      - name: Set up QEMU (loong64)
+        run: docker run --rm --privileged ghcr.io/loong64/binfmt --install all
+      # builder 镜像为私有包，需以 GITHUB_TOKEN 登录 GHCR 才能拉取
+      - name: Login to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build in loong64 container
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+          LICENSE_REQUIRED: ${{ needs.setup.outputs.licenseRequired }}
+        run: |
+          # 全部构建在 loong64 容器内完成（QEMU 模拟，耗时较长）：
+          # - protoc 用镜像自带 /usr/bin/protoc（host 侧 setup-connector-build 装的是
+          #   x86_64 二进制，容器内不可执行）；easytier 的 git 认证在容器内重写
+          # - AppImage 无 loong64 的 linuxdeploy 支持，固定 deb,rpm
+          docker run --rm -i --network=host --security-opt seccomp=unconfined --platform linux/loong64 \
+            -v "$PWD:/workspace" -w /workspace \
+            -e PROTOC=/usr/bin/protoc \
+            -e VC_LTL= \
+            -e YY_THUNKS= \
+            -e VERSION="$VERSION" \
+            -e LICENSE_REQUIRED="$LICENSE_REQUIRED" \
+            -e QOMICEX_PAT='${{ secrets.QOMICEX_PAT }}' \
+            -e TAURI_SIGNING_PRIVATE_KEY='${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}' \
+            -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD='${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}' \
+            "$IMAGE" bash -euxo pipefail <<'EOF'
+            set -e
+            git config --global url."https://x-access-token:${QOMICEX_PAT}@github.com/".insteadOf "ssh://git@github.com/"
+            node scripts/bump-version.mjs "$VERSION"
+            FEATURES=""
+            if [ "$LICENSE_REQUIRED" = "true" ]; then FEATURES="--features license-required"; fi
+            cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
+            mkdir -p src-tauri/binaries
+            mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
+            pnpm store prune || true
+            # ponytail: QEMU 用户态模拟下 pnpm tarball 完整性校验异常（Wanted==Got 仍报错），
+            # 用非 frozen 模式接受 registry 当前 integrity；仅 QEMU 交叉构建路径使用
+            pnpm install --no-frozen-lockfile \
+              --fetch-timeout=600000 --fetch-retries=5
+            pnpm --filter @qomicex/plugin-ui build
+            npm run tauri -- build --bundles deb,rpm
+          EOF
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          PLATFORM="linux-loongarch64"
+          ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
+          if [ -n "$ARCHIVE" ]; then
+            ASSET_NAME=$(basename "$ARCHIVE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            SIG_FILE="${ARCHIVE}.sig"
+            if [ -f "$SIG_FILE" ]; then
+              SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+            else
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+            fi
+          else
+            BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
+            ASSET_NAME=$(basename "$BUNDLE")
+            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qomicex-launcher-linux-loongarch64
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+
+  macos-arm64:
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'arm64'))
+    needs: [setup, quality-gate]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-apple-darwin }
+      - uses: swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7.0.0
+        with: { node-version: '22', cache: pnpm }
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target aarch64-apple-darwin $FEATURES
+      - name: Stage backend binary
+        run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
+          mv src-backend/qomicex-backend/target/aarch64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      - run: npm run tauri -- build --bundles app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Free disk space before DMG
+        run: |
+          rm -rf src-tauri/target/release/incremental \
+                 src-tauri/target/release/build \
+                 src-tauri/target/release/.fingerprint \
+                 src-tauri/target/release/deps
+          pnpm store prune || true
+          df -h
+      - name: Create DMG
+        run: |
+          APP="src-tauri/target/release/bundle/macos/Qomicex Launcher.app"
+          DMG_DIR="src-tauri/target/release/bundle/dmg"
+          STAGING=$(mktemp -d)
+          mkdir -p "$DMG_DIR"
+          codesign --force --deep --sign - "$APP"
+          cp -R "$APP" "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+          SIZE_MB=$(du -sm "$STAGING" | awk '{printf "%.0f", $1 * 1.3 + 64}')
+          hdiutil create -volname "Qomicex Launcher" \
+            -size "${SIZE_MB}m" \
+            -srcfolder "$STAGING" \
+            -ov -format UDZO \
+            "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_$(uname -m).dmg"
+          rm -rf "$STAGING"
+      - name: Sign DMG for updater
+        run: |
+          DMG=$(find src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then
+            echo "ERROR: No DMG found to sign"
+            exit 1
+          fi
+          npx tauri signer sign "$DMG"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then echo "ERROR: No DMG found"; exit 1; fi
+          ASSET_NAME=$(basename "$DMG")
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+          PLATFORM="darwin-aarch64"
+          SIG_FILE="${DMG}.sig"
+          if [ -f "$SIG_FILE" ]; then
+            SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+          else
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qomicex-launcher-macos-arm64
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.dmg.sig
+
+  macos-x64:
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'x64'))
+    needs: [setup, quality-gate]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT }}
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-apple-darwin }
+      - uses: swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7.0.0
+        with: { node-version: '22', cache: pnpm }
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target x86_64-apple-darwin $FEATURES
+      - name: Stage backend binary
+        run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
+          mv src-backend/qomicex-backend/target/x86_64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      - run: npm run tauri -- build --bundles app --target x86_64-apple-darwin
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Free disk space before DMG
+        run: |
+          rm -rf src-tauri/target/x86_64-apple-darwin/release/incremental \
+                 src-tauri/target/x86_64-apple-darwin/release/build \
+                 src-tauri/target/x86_64-apple-darwin/release/.fingerprint \
+                 src-tauri/target/x86_64-apple-darwin/release/deps
+          pnpm store prune || true
+          df -h
+      - name: Create DMG
+        run: |
+          APP="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Qomicex Launcher.app"
+          DMG_DIR="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg"
+          STAGING=$(mktemp -d)
+          mkdir -p "$DMG_DIR"
+          codesign --force --deep --sign - "$APP"
+          cp -R "$APP" "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+          SIZE_MB=$(du -sm "$STAGING" | awk '{printf "%.0f", $1 * 1.3 + 64}')
+          hdiutil create -volname "Qomicex Launcher" \
+            -size "${SIZE_MB}m" \
+            -srcfolder "$STAGING" \
+            -ov -format UDZO \
+            "$DMG_DIR/qomicex-launcher_${{ needs.setup.outputs.displayVersion }}_x86_64.dmg"
+          rm -rf "$STAGING"
+      - name: Sign DMG for updater
+        run: |
+          DMG=$(find src-tauri/target/x86_64-apple-darwin/release/bundle/dmg -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then
+            echo "ERROR: No DMG found to sign"
+            exit 1
+          fi
+          npx tauri signer sign "$DMG"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Generate update manifest fragment
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          BUNDLE_DIR="src-tauri/target/x86_64-apple-darwin/release/bundle"
+          echo "=== Bundle dir contents ==="
+          find "$BUNDLE_DIR" -type f | head -30
+          DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then echo "ERROR: No DMG found"; exit 1; fi
+          ASSET_NAME=$(basename "$DMG")
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+          PLATFORM="darwin-x86_64"
+          SIG_FILE="${DMG}.sig"
+          if [ -f "$SIG_FILE" ]; then
+            SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+          else
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+          fi
+          cat "update-fragment-$PLATFORM.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-fragment-${{ github.job }}
+          path: update-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qomicex-launcher-macos-x64
+          path: |
+            src-tauri/target/x86_64-apple-darwin/release/bundle/**/*.dmg
+            src-tauri/target/x86_64-apple-darwin/release/bundle/**/*.dmg.sig
+
+  collect:
+    # debug 构建：仅合并更新清单并作为 CI artifact 上传，不创建 GitHub Release、不触发站点重建
+    if: ${{ !cancelled() }}
+    needs:
+      - setup
+      - quality-gate
+      - windows-x64
+      - windows-arm64
+      - linux-x64
+      - linux-arm64
+      - loongarch64
+      - macos-arm64
+      - macos-x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: update-fragment-*
+          merge-multiple: true
+
+      - name: Merge update fragments into latest.json
+        run: |
+          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          REQUIRED=${{ needs.setup.outputs.required }}
+          jq -n \
+            --arg version "$VERSION" \
+            --argjson required "$REQUIRED" \
+            --arg notes "dev build" \
+            '{version: $version, required: $required, notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: {}}' \
+            > latest.json
+          for f in update-fragment-*.json; do
+            if [ -f "$f" ]; then
+              KEY=$(jq -r 'keys[0]' "$f")
+              VAL=$(jq '.[keys[0]]' "$f")
+              jq --arg k "$KEY" --argjson v "$VAL" '.platforms[$k] = $v' latest.json > tmp.json
+              mv tmp.json latest.json
+            fi
+          done
+          echo "=== latest.json ==="
+          cat latest.json
+
+      - name: Upload merged update manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: latest-json
+          path: latest.json
+

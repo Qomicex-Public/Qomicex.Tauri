@@ -608,10 +608,8 @@ fn resolve(id: &str, state: &crate::state::AppState) -> ApiResult<Resolved> {
 fn to_absolute(path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(path)
     } else {
-        path.to_path_buf()
+        crate::settings::resolve_base_dir().join(path)
     }
 }
 
@@ -1744,14 +1742,11 @@ async fn schematic_assets(
         ));
     }
     let game_root = {
-        let raw = inst.game_dir.clone();
-        let base = PathBuf::from(&raw);
+        let base = PathBuf::from(&inst.game_dir);
         if base.is_absolute() {
             base
-        } else if let Ok(cwd) = std::env::current_dir() {
-            cwd.join(base)
         } else {
-            base
+            crate::settings::resolve_base_dir().join(base)
         }
     };
     if req.blocks.is_empty() {

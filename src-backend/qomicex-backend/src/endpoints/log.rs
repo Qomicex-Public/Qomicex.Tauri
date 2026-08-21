@@ -342,7 +342,7 @@ fn resolve_log_path(log_dir: &Path, raw: &str) -> Option<PathBuf> {
     let full = if p.is_absolute() {
         p.to_path_buf()
     } else {
-        std::env::current_dir().ok()?.join(p)
+        crate::settings::resolve_base_dir().join(p)
     };
     let full_c = full.canonicalize().ok()?;
     let log_c = log_dir

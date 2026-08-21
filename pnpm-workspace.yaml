@@ -2,4 +2,6 @@ packages:
   - 'packages/*'
 allowBuilds:
   esbuild: false
+minimumReleaseAgeExclude:
+  - '@qomicex/plugin-ui@0.1.0'
 onlyBuiltDependencies: '["esbuild"]'

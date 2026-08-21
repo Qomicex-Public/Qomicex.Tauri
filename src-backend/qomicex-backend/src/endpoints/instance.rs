@@ -5,7 +5,7 @@
 //! InstallTracker which are ported separately, so they are stubbed here with
 //! 501 NOT_IMPLEMENTED placeholders until those services land.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::{Path as AxumPath, Query, State};
@@ -192,7 +192,12 @@ pub fn router() -> Router<SharedState> {
 
 fn enrich_instance_icon(inst: &mut GameInstance) {
     if inst.icon_data.is_none() {
-        let version_dir = Path::new(&inst.game_dir).join("versions").join(&inst.name);
+        let game_root = if Path::new(&inst.game_dir).is_absolute() {
+            PathBuf::from(&inst.game_dir)
+        } else {
+            crate::settings::resolve_base_dir().join(&inst.game_dir)
+        };
+        let version_dir = game_root.join("versions").join(&inst.name);
         if let Some(data) = resolve_pcl_icon(&version_dir) {
             inst.icon_data = Some(data);
         }

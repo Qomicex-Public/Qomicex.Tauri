@@ -473,7 +473,7 @@ pub async fn run_install_pipeline(
 fn absolute_path(game_dir: &str) -> PathBuf {
     let mut root = PathBuf::from(game_dir);
     if !root.is_absolute() {
-        root = std::env::current_dir().unwrap_or_default().join(root);
+        root = crate::settings::resolve_base_dir().join(root);
     }
     strip_verbatim_prefix(root.canonicalize().unwrap_or(root))
 }
@@ -1187,6 +1187,20 @@ mod tests {
         assert!(
             !s.starts_with(r"\\?\"),
             "absolute_path 不应返回 verbatim 路径: {s}"
+        );
+    }
+
+    #[test]
+    fn absolute_path_relative_anchors_to_base_dir_not_root() {
+        // macOS 打包 App 的进程 cwd 是 `/`；相对 game_dir 必须锚定到数据目录，
+        // 否则会变成 `/.minecraft`（根目录只读 → 写报错）。
+        // 注意：不得修改 QOMICEX_HOME——error_report 等测试持 ENV_LOCK 串行使用它，
+        // 这里并发只读，锚点一致即通过。
+        let expected = crate::settings::resolve_base_dir().join(".minecraft");
+        let got = absolute_path(".minecraft");
+        assert_eq!(
+            got, expected,
+            "relative game_dir must anchor to BaseDir, not cwd"
         );
     }
 }

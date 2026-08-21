@@ -46,7 +46,7 @@ import {
   getJavaDownloadCatalog,
   startJavaDownload,
 } from '../api/java.ts'
-import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, subscribe } from '../stores/javaStore.ts'
+import { getRuntimes, getValidRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, subscribe } from '../stores/javaStore.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
@@ -579,6 +579,8 @@ export default function Settings() {
   settingsRef.current = settings
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [runtimes, setRuntimesState] = useState<JavaRuntime[]>(() => getRuntimes())
+  const [showInvalid, setShowInvalid] = useState(false)
+  const listRuntimes = showInvalid ? getRuntimes() : getValidRuntimes()
   const [scanning, setScanning] = useState<'idle' | 'quick' | 'deep'>('idle')
   const [javaStatus, setJavaStatus] = useState(() => t('settings.java.ready'))
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -1588,6 +1590,10 @@ export default function Settings() {
                         <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', scanning !== 'idle' && 'animate-spin')} />
                       </Button>
                     </Tooltip>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Checkbox checked={showInvalid} onCheckedChange={(v) => setShowInvalid(v === true)} />
+                      {t('settings.java.showInvalid')}
+                    </label>
                   </div>
 
                   {scanning !== 'idle' && (
@@ -1597,7 +1603,7 @@ export default function Settings() {
                     </div>
                   )}
 
-                  {scanning === 'idle' && runtimes.length === 0 && (
+                  {scanning === 'idle' && listRuntimes.length === 0 && (
                     <div className="flex flex-col items-center gap-4 py-12 text-center">
                       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
                         <FontAwesomeIcon icon={faCoffee} className="h-7 w-7 text-muted-foreground" />
@@ -1613,9 +1619,9 @@ export default function Settings() {
                     </div>
                   )}
 
-                  {scanning === 'idle' && runtimes.length > 0 && (
+                  {scanning === 'idle' && listRuntimes.length > 0 && (
                     <div className="space-y-1">
-                      {runtimes.map((j, i) => (
+                      {listRuntimes.map((j, i) => (
                         <div
                           key={i}
                           className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 transition-colors hover:border-muted-foreground/30"
@@ -1689,7 +1695,7 @@ export default function Settings() {
                     <Label>{t('settings.java.defaultRuntime')}</Label>
                     <Select value={settings.defaultJavaPath} onChange={(v) => update('defaultJavaPath', v)}>
                       <SelectOption value="">{t('settings.java.autoSelect')}</SelectOption>
-                      {runtimes.filter((j) => j.state === 'Valid').map((j, i) => (
+                      {getValidRuntimes().map((j, i) => (
                         <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                       ))}
                     </Select>
