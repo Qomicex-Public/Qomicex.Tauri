@@ -47,6 +47,11 @@ export function getRuntimes(): JavaRuntime[] {
   return [...map.values()]
 }
 
+// 仅返回可用（state === 'Valid'）的 Java，供所有选择/列表界面过滤不可用项。
+export function getValidRuntimes(): JavaRuntime[] {
+  return getRuntimes().filter((r) => r.state === 'Valid')
+}
+
 export function getScanMode(): JavaSearchMode | null {
   return scanMode
 }

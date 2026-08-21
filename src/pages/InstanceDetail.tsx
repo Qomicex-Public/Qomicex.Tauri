@@ -20,7 +20,7 @@ import { useMessageBox } from '../components/ui'
 import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
-import { getRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
+import { getRuntimes, getValidRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto, FileEntry } from '../types/index.ts'
@@ -2305,7 +2305,7 @@ export default function InstanceDetailPage() {
     return instance.gameDir
   }, [instance])
   const [saving, setSaving] = useState(false)
-  const [runtimes, setRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
+  const [, setRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
   const [accounts, setAccounts] = useState<Account[]>([])
   const [form, setForm] = useState<GameInstance | null>(null)
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
@@ -2826,7 +2826,7 @@ export default function InstanceDetailPage() {
                   <Label>{t('instanceDetail.settingsTab.javaRuntime')}</Label>
                   <Select value={form.javaPath ?? ''} onChange={(v) => update('javaPath', v || null)}>
                     <SelectOption value="">{t('instanceDetail.settingsTab.autoSelect')}</SelectOption>
-                    {runtimes.filter((j) => j.state === 'Valid').map((j, i) => (
+                    {getValidRuntimes().map((j, i) => (
                       <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                     ))}
                   </Select>

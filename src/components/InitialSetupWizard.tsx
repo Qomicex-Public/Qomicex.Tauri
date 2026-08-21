@@ -150,7 +150,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
   }, [open, memoryMode, sysInfo])
 
   const byVersion = useCallback(
-    (v: number) => javaRuntimes.find((r) => (r.majorVersion ?? r.versionID) === v && r.state !== 'Broken'),
+    (v: number) => javaRuntimes.find((r) => (r.majorVersion ?? r.versionID) === v && r.state === 'Valid'),
     [javaRuntimes]
   )
   const javaReady = useMemo(
