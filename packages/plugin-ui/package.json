@@ -1,6 +1,6 @@
 {
   "name": "@qomicex/plugin-ui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Qomicex Launcher shared UI component library (React 19 + Tailwind)",
   "license": "GPL-3.0",
   "type": "module",
