@@ -78,63 +78,6 @@
     transform: none !important;
   }
 
-  /* 组件材质：设置页「组件材质」下拉控制 documentElement[data-material]。
-      打上 glass-surface 标记的卡片/对话框/toast 等表面按材质渲染。
-      - frosted = 毛玻璃：半透明 + backdrop blur；
-      - acrylic = 亚克力玻璃：半透明 + backdrop blur + 顶部高亮边；
-      - 模糊强度由 --glass-blur 控制（强度滑块，默认 18px）。 */
-  :root[data-material="frosted"] .glass-surface {
-    background-color: hsl(var(--card) / 0.6);
-    -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
-    backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
-  }
-
-  :root[data-material="acrylic"] .glass-surface {
-    background-color: rgba(255, 255, 255, 0.15);
-    -webkit-backdrop-filter: blur(15px) saturate(120%);
-    backdrop-filter: blur(15px) saturate(120%);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-top: 1px solid rgba(255, 255, 255, 0.5);
-    border-radius: 8px;
-    box-shadow:
-      0 8px 32px 0 rgba(0, 0, 0, 0.37),
-      inset 0 1px 0 rgba(255, 255, 255, 0.2);
-  }
-
-  /* Aero：半透明 + backdrop blur + 明显的斜向折痕纹理。
-      折痕 = 45deg 重复细条纹 + overlay 混合，仅 Aero 用强折痕。 */
-  :root[data-material="aero"] .glass-surface {
-    background-color: rgba(255, 255, 255, 0.12);
-    background-image: repeating-linear-gradient(
-      45deg,
-      transparent,
-      transparent 3px,
-      rgba(255, 255, 255, 0.02) 3px,
-      rgba(255, 255, 255, 0.02) 6px
-    );
-    background-blend-mode: overlay;
-    -webkit-backdrop-filter: blur(16px) saturate(1.8);
-    backdrop-filter: blur(16px) saturate(1.8);
-    border: 1px solid rgba(255, 255, 255, 0.40);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.6),
-      0 12px 48px rgba(0, 0, 0, 0.35);
-  }
-
-  /* 液态玻璃（liquid）时，Card 由 quidlass 的 LiquidGlass 组件渲染（自带画布/SVG 液态），
-      不在这里加折痕；Dialog/Toast 等非 Card 玻璃表面回退到此轻量观感（无强折痕）。 */
-  :root[data-material="liquid"] .glass-surface {
-    background-color: hsl(var(--card) / 0.42);
-    background-image:
-      linear-gradient(135deg, hsl(0 0% 100% / 0.10), transparent 42%),
-      linear-gradient(-45deg, hsl(0 0% 100% / 0.03), hsl(0 0% 0% / 0.06) 62%, transparent);
-    -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
-    backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
-    border-color: hsl(0 0% 100% / 0.16);
-    box-shadow:
-      inset 0 1px 1px hsl(0 0% 100% / 0.18),
-      0 6px 18px -10px hsl(0 0% 0% / 0.35);
-  }
 }
 
 @layer base {
@@ -399,3 +342,53 @@
 }
 
 
+
+/* 组件材质规则（非分层，确保优先覆盖 Tailwind utilities） */
+:root[data-material="frosted"] .glass-surface {
+  background-color: hsl(var(--card) / 0.6);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
+  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
+}
+
+:root[data-material="acrylic"] .glass-surface {
+  background-color: rgba(255, 255, 255, 0.15);
+  -webkit-backdrop-filter: blur(15px) saturate(120%);
+  backdrop-filter: blur(15px) saturate(120%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-top: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 8px;
+  box-shadow:
+    0 8px 32px 0 rgba(0, 0, 0, 0.37),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+:root[data-material="aero"] .glass-surface {
+  background-color: rgba(255, 255, 255, 0.12);
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 3px,
+    rgba(255, 255, 255, 0.02) 3px,
+    rgba(255, 255, 255, 0.02) 6px
+  );
+  background-blend-mode: overlay;
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  backdrop-filter: blur(16px) saturate(1.8);
+  border: 1px solid rgba(255, 255, 255, 0.40);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 12px 48px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-material="liquid"] .glass-surface {
+  background-color: hsl(var(--card) / 0.42);
+  background-image:
+    linear-gradient(135deg, hsl(0 0% 100% / 0.10), transparent 42%),
+    linear-gradient(-45deg, hsl(0 0% 100% / 0.03), hsl(0 0% 0% / 0.06) 62%, transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
+  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
+  border-color: hsl(0 0% 100% / 0.16);
+  box-shadow:
+    inset 0 1px 1px hsl(0 0% 100% / 0.18),
+    0 6px 18px -10px hsl(0 0% 0% / 0.35);
+}
