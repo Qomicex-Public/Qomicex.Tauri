@@ -21,6 +21,7 @@ use qomicex_core::core::GameCore;
 use qomicex_core::models::download::DownloadMirror;
 use qomicex_core::models::installer::{MissFileInfo, ModLoaderType};
 use qomicex_core::models::java::{JavaSearchMode, JavaSearchOptions, JavaState};
+use qomicex_core::models::version_metadata::{CompleteVersionMetadata, JavaVersion};
 use qomicex_core::services::installers::factory::DefaultInstallerFactory;
 use qomicex_core::services::installers::installer::{Installer, MissFileData};
 use qomicex_downloader::{DownloadEvent, DownloadManager, DownloadTask, TaskState};
@@ -642,7 +643,8 @@ async fn install_loader(
                 .to_str()
                 .ok_or("安装器路径非法")?
                 .to_string();
-            let java_path = resolve_java_path(core).await?;
+            let required_java = required_java_from_json(inherits_from_json);
+            let java_path = resolve_java_path(core, required_java).await?;
             let inst = if lower == "forge" {
                 factory.create_forge(download_source_id, &game_dir_str, game_version)
             } else {
@@ -704,22 +706,61 @@ async fn install_loader(
     .map_err(|e| format!("安装 {loader} 失败: {e}"))
 }
 
-/// 解析 Java 路径（源 `ResolveJavaPath`：Deep 扫描取第一个 Valid）。
-async fn resolve_java_path(core: &GameCore) -> Result<String, String> {
+/// 解析 Java 路径（源 `ResolveJavaPath`；改用与原版启动流程一致的版本感知选择：
+/// Quick 扫描 + recommand，取满足所需 Java 大版本的运行时。旧实现 Deep 全盘扫描
+/// 取第一个 Valid，会把 Apple JavaAppletPlugin 等遗留 Java 8 误选去跑需要 Java 17
+/// 的 Forge/NeoForge 处理器，导致 binarypatcher 等退出码 1）。
+async fn resolve_java_path(core: &GameCore, required_java: i32) -> Result<String, String> {
     let options = JavaSearchOptions {
-        mode: JavaSearchMode::Deep,
+        mode: JavaSearchMode::Quick,
         ..Default::default()
     };
-    let javas = core
+    let mut javas = core
         .java_provider()
         .search(&options)
         .await
         .map_err(|e| format!("扫描 Java 失败: {e}"))?;
-    javas
-        .into_iter()
-        .find(|j| j.state == JavaState::Valid)
-        .map(|j| j.path)
-        .ok_or_else(|| "未找到可用的 Java 运行时，请先下载或指定 Java".to_string())
+    javas.retain(|j| j.state == JavaState::Valid);
+    if javas.is_empty() {
+        return Err("未找到可用的 Java 运行时，请先下载或指定 Java".to_string());
+    }
+    let metadata = CompleteVersionMetadata {
+        id: String::new(),
+        r#type: "release".into(),
+        main_class: String::new(),
+        inherits_from: None,
+        jar: None,
+        arguments: None,
+        libraries: Vec::new(),
+        asset_index: None,
+        downloads: None,
+        java_version: Some(JavaVersion {
+            component: "jre-legacy".into(),
+            major_version: required_java,
+        }),
+        minimum_launcher_version: None,
+        release_time: String::new(),
+        time: String::new(),
+    };
+    let recommended = core
+        .java_provider()
+        .recommand(&javas, &metadata)
+        .await
+        .map_err(|e| format!("选择 Java 运行时失败: {e}"))?;
+    Ok(recommended.path)
+}
+
+/// 从原版版本 JSON（`inherits_from_json`）解析所需 Java 大版本
+/// （`javaVersion.majorVersion`，缺失默认 8，对应 `required_java_from_path` 默认）。
+fn required_java_from_json(json: &str) -> i32 {
+    let Ok(node) = serde_json::from_str::<Value>(json) else {
+        return 8;
+    };
+    node.get("javaVersion")
+        .and_then(|j| j.get("majorVersion"))
+        .and_then(Value::as_i64)
+        .map(|m| m as i32)
+        .unwrap_or(8)
 }
 
 /// 合并用户 addons 与加载器默认 addon（源 `MergeAddons`）。
@@ -1202,5 +1243,21 @@ mod tests {
             got, expected,
             "relative game_dir must anchor to BaseDir, not cwd"
         );
+    }
+
+    #[test]
+    fn required_java_from_json_reads_java_version() {
+        // MC 1.20.1 原版 JSON：javaVersion.majorVersion = 17（Forge 26.2 处理器依赖）
+        let json =
+            r#"{"id":"1.20.1","javaVersion":{"component":"java-runtime-delta","majorVersion":17}}"#;
+        assert_eq!(required_java_from_json(json), 17);
+        // 1.21.1：majorVersion = 21
+        let json = r#"{"id":"1.21.1","javaVersion":{"majorVersion":21}}"#;
+        assert_eq!(required_java_from_json(json), 21);
+        // 无 javaVersion → 默认 8（对应 required_java_from_path 默认）
+        assert_eq!(required_java_from_json(r#"{"id":"1.12.2"}"#), 8);
+        // 非法 / 空 JSON → 默认 8
+        assert_eq!(required_java_from_json("not json"), 8);
+        assert_eq!(required_java_from_json(""), 8);
     }
 }
