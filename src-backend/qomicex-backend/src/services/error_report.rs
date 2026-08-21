@@ -166,12 +166,12 @@ pub fn install_panic_hook(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// env 相关测试共用一把锁：std::env::set_var 是进程全局的，cargo test 并行
     /// 跑测试会互相串扰（QOMICEX_HOME / QOMICEX_REPORT_URL 被并发改写）。
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn set_env(key: &str, value: impl AsRef<std::ffi::OsStr>) -> Option<std::ffi::OsString> {
         let old = std::env::var_os(key);
