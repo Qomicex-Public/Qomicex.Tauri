@@ -20,7 +20,7 @@ use qomicex_core::builder::GameCoreBuilder;
 use qomicex_core::core::GameCore;
 use qomicex_core::models::download::DownloadMirror;
 use qomicex_core::models::installer::{MissFileInfo, ModLoaderType};
-use qomicex_core::models::java::{JavaSearchMode, JavaSearchOptions, JavaState};
+use qomicex_core::models::java::{JavaResult, JavaState};
 use qomicex_core::models::version_metadata::{CompleteVersionMetadata, JavaVersion};
 use qomicex_core::services::installers::factory::DefaultInstallerFactory;
 use qomicex_core::services::installers::installer::{Installer, MissFileData};
@@ -618,7 +618,7 @@ async fn get_miss_loader_libraries(
 
 /// 安装加载器（源 `InstallLoader` 参数映射逐字对齐；补充 optifine case 修复上游 bug）。
 async fn install_loader(
-    core: &GameCore,
+    core: &Arc<GameCore>,
     version_id: &str,
     inherits_from_json: &str,
     game_dir: &Path,
@@ -707,20 +707,16 @@ async fn install_loader(
 }
 
 /// 解析 Java 路径（源 `ResolveJavaPath`；改用与原版启动流程一致的版本感知选择：
-/// Quick 扫描 + recommand，取满足所需 Java 大版本的运行时。旧实现 Deep 全盘扫描
-/// 取第一个 Valid，会把 Apple JavaAppletPlugin 等遗留 Java 8 误选去跑需要 Java 17
+/// 复用 Java 管理页已保存/合并的运行时列表（Quick 扫描 + 下载目录 + 自定义注册），
+/// 按所需 Java 大版本经 `recommand` 选最优。旧实现 Deep 全盘扫描取第一个 Valid，
+/// 既重复扫描，又会把 Apple JavaAppletPlugin 等遗留 Java 8 误选去跑需要 Java 17
 /// 的 Forge/NeoForge 处理器，导致 binarypatcher 等退出码 1）。
-async fn resolve_java_path(core: &GameCore, required_java: i32) -> Result<String, String> {
-    let options = JavaSearchOptions {
-        mode: JavaSearchMode::Quick,
-        ..Default::default()
-    };
-    let mut javas = core
-        .java_provider()
-        .search(&options)
-        .await
-        .map_err(|e| format!("扫描 Java 失败: {e}"))?;
-    javas.retain(|j| j.state == JavaState::Valid);
+async fn resolve_java_path(core: &Arc<GameCore>, required_java: i32) -> Result<String, String> {
+    let javas = crate::endpoints::java::merged_java_runtimes(core).await;
+    let javas: Vec<JavaResult> = javas
+        .into_iter()
+        .filter(|j| j.state == JavaState::Valid)
+        .collect();
     if javas.is_empty() {
         return Err("未找到可用的 Java 运行时，请先下载或指定 Java".to_string());
     }

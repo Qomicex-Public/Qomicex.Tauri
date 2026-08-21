@@ -50,6 +50,43 @@ pub(crate) async fn scan_quick(core: Arc<GameCore>) -> Vec<JavaResult> {
     }
 }
 
+/// 与 Java 管理页一致的合并运行时列表（Quick 扫描 + 下载目录 + 自定义注册），
+/// 供安装等需要按版本选 Java 的场景复用，避免各自再全盘扫描。返回 `JavaResult`
+/// 供 `recommand` 使用。
+pub(crate) async fn merged_java_runtimes(core: &Arc<GameCore>) -> Vec<JavaResult> {
+    let store = JavaRuntimeStore::new(core.clone());
+    store
+        .get_merged(JavaSearchMode::Quick)
+        .await
+        .into_iter()
+        .filter_map(dto_to_result)
+        .collect()
+}
+
+/// `JavaRuntimeDto` → `JavaResult`（`From<JavaResult> for JavaRuntimeDto` 的逆变换）。
+fn dto_to_result(dto: JavaRuntimeDto) -> Option<JavaResult> {
+    Some(JavaResult {
+        path: dto.path,
+        major_version: dto.major_version,
+        version: dto.version,
+        state: match dto.state.as_str() {
+            "Valid" => JavaState::Valid,
+            "InvalidPath" => JavaState::InvalidPath,
+            "MissingReleaseFile" => JavaState::MissingReleaseFile,
+            "CorruptedReleaseFile" => JavaState::CorruptedReleaseFile,
+            _ => JavaState::UnknownError,
+        },
+        arch: dto.arch,
+        r#type: match dto.r#type.as_str() {
+            "JDK" => JavaType::JDK,
+            "JRE" => JavaType::JRE,
+            _ => JavaType::Unknown,
+        },
+        discovered_by: dto.discovered_by.unwrap_or_default(),
+        name: dto.name,
+    })
+}
+
 /// 进程级单例（OnceLock）：Java 状态在首次 handler 触发时按 `SharedState.core` 惰性组装。
 static JAVA_STATE: OnceLock<Arc<JavaStateData>> = OnceLock::new();
 
@@ -1376,4 +1413,45 @@ struct JavaDownloadVendorInfo {
 #[serde(rename_all = "camelCase")]
 struct JavaDownloadCatalogResponse {
     vendors: Vec<JavaDownloadVendorInfo>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dto_round_trips_back_to_result() {
+        // merged_java_runtimes 依赖 DTO → JavaResult 逆变换；字段必须无损。
+        let r = JavaResult {
+            path: "/tmp/java17/bin/java".to_string(),
+            major_version: 17,
+            version: "17.0.11".to_string(),
+            state: JavaState::Valid,
+            arch: "x64".to_string(),
+            r#type: JavaType::JDK,
+            discovered_by: "Custom".to_string(),
+            name: "Java 17.0.11".to_string(),
+        };
+        let dto = JavaRuntimeDto::from(r.clone());
+        let back = dto_to_result(dto).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn dto_state_and_type_strings_map_back() {
+        let r = JavaRuntimeDto {
+            path: "/tmp/java8/bin/java".to_string(),
+            major_version: 8,
+            version: "1.8.0_502".to_string(),
+            state: "Valid".to_string(),
+            arch: "x64".to_string(),
+            r#type: "JRE".to_string(),
+            discovered_by: Some("DownloadDir".to_string()),
+            name: "Java 1.8.0_502".to_string(),
+        };
+        let back = dto_to_result(r).unwrap();
+        assert_eq!(back.state, JavaState::Valid);
+        assert_eq!(back.r#type, JavaType::JRE);
+        assert_eq!(back.discovered_by, "DownloadDir");
+    }
 }
