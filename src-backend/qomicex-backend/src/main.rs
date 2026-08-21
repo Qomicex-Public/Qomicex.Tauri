@@ -1,6 +1,7 @@
 mod app;
 mod endpoints;
 mod error;
+mod ipc;
 mod middleware;
 mod models;
 mod services;
@@ -72,15 +73,46 @@ async fn main() {
     // 外部管理器已拉起后端时（如 Tauri 开发期附加），可跳过自建监听逻辑的校验提示。
     let app = app::build_router(std::sync::Arc::new(state));
 
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .unwrap_or_else(|e| panic!("绑定后端监听地址 {addr} 失败: {e}"));
-    tracing::info!("qomicex-backend listening on http://{addr}");
+    // IPC 管道：QOMICEX_IPC_PIPE 设置时启用（release 由 Tauri 注入）。
+    // QOMICEX_NO_TCP=1 关闭 TCP 监听（release 用，端口彻底消失）；
+    // dev/CI 默认保留 TCP 兼容 curl 冒烟与测试脚本。
+    let pipe_name = std::env::var("QOMICEX_IPC_PIPE").ok();
+    let tcp_enabled = std::env::var("QOMICEX_NO_TCP")
+        .map(|v| v != "1")
+        .unwrap_or(true);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            tokio::signal::ctrl_c().await.ok();
+    let tcp_task = if tcp_enabled {
+        let listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .unwrap_or_else(|e| panic!("绑定后端监听地址 {addr} 失败: {e}"));
+        tracing::info!("qomicex-backend listening on http://{addr}");
+        let app = app.clone();
+        Some(tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    tokio::signal::ctrl_c().await.ok();
+                })
+                .await
+                .expect("axum server error");
+        }))
+    } else {
+        None
+    };
+
+    let pipe_task = pipe_name.map(|name| {
+        let app = app.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ipc::serve(app, name).await {
+                tracing::error!("qipc server failed: {e}");
+            }
         })
-        .await
-        .expect("axum server error");
+    });
+    drop(app);
+
+    if let Some(t) = tcp_task {
+        t.await.expect("axum server error");
+    }
+    if let Some(t) = pipe_task {
+        t.await.ok();
+    }
 }

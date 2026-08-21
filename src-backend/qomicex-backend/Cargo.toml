@@ -69,6 +69,7 @@ md-5 = "0.10"
 
 # --- 整合包导出（CurseForge fingerprint = MurmurHash2-32；Modrinth sha1 反查）---
 sha1 = "0.10"
+http-body-util = "0.1"
 
 # --- 日志捕获（实时日志：stderr 重定向到 trace 缓冲）---
 [target.'cfg(windows)'.dependencies]
