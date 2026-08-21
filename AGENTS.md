@@ -132,6 +132,17 @@ Exception: directory barrels like `src/components/ui` (its `index.ts`) resolve f
 - **Select**: use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>`.
 - `LogAnalysis.tsx` exists but is **not registered** in the router.
 
+## 浏览器调试（Playwright Tauri mock 注入）
+
+前端在**纯浏览器**(Vite dev)里不能直接挂载：`src/components/TitleBar.tsx:5` 在模块顶层调用 `getCurrentWindow()`，读取 `window.__TAURI_INTERNALS__.metadata.currentWindow.label`，无 Tauri 外壳时抛异常 → `#root` 一直为空。要在浏览器里跑起前端检查/自动化，须在页面脚本前用 Playwright `addInitScript` 注入一套 Tauri API mock，再 `goto` 到 `http://127.0.0.1:1420/`。完整 mock 写法、挂载等待方法与注意事项见
+`docs/junsi-dev-docs/2-架构设计/前端浏览器调试-Playwright-Tauri-mock注入.md`。
+
+要点：
+- **前置**：后端在 `:5000`（`SplashScreen` 轮询 `/api/health` 通过才渲染）；`pnpm run dev` 起 Vite(:1420)。已占 5000 时用 `QOMICEX_PORT` 起第二实例。
+- **mock 核心**：`window.__TAURI_INTERNALS__` 提供 `metadata.currentWindow.label`、`transformCallback`、`invoke`（`plugin:window|is_*`→false、`plugin:event|listen`→id、其它→undefined）、`event.{listen,once,emit,emitTo}`；补 `__TAURI_EVENT_PLUGIN_INTERNALS__` 等。
+- **挂载判断**：`document.querySelector('main')` 存在即已挂载（SplashScreen 阶段无 `main`）；`goto domcontentloaded` 后轮询等待，勿等 `load`。
+- **注意**：浏览器(Chromium)≠WebView2 保真，复合/backdrop-filter 行为可能有差异，web 检查结论需在真实 Tauri/WebView2 复核；仅导航只读页面，勿触发写数据/启动实例；用后停 server、删探针。
+
 ## Backend conventions
 
 - **23 endpoint modules** in `src-backend/qomicex-backend/src/endpoints/` → `api/<name>` routes, assembled in `app.rs` (`build_router`). `main.rs` loads config (`settings.rs`) then serves.
