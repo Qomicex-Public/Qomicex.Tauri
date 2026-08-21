@@ -1,0 +1,53 @@
+name: Publish plugin-ui
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'packages/plugin-ui/**'
+      - '.github/workflows/plugin-ui-publish.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: plugin-ui-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/plugin-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Install & build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @qomicex/plugin-ui build
+      - name: Check version not yet published
+        id: version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@qomicex/plugin-ui@$VERSION" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "@qomicex/plugin-ui@$VERSION already published, skipping"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "@qomicex/plugin-ui@$VERSION is new"
+          fi
+      - name: Publish
+        if: steps.version.outputs.publish == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          npm publish --access public
