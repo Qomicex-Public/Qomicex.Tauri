@@ -351,32 +351,32 @@
 }
 
 :root[data-material="acrylic"] .glass-surface {
-  background-color: rgba(255, 255, 255, 0.15);
+  background-color: hsl(var(--card) / 0.25);
   -webkit-backdrop-filter: blur(15px) saturate(120%);
   backdrop-filter: blur(15px) saturate(120%);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-top: 1px solid rgba(255, 255, 255, 0.5);
+  border: 1px solid hsl(var(--card-foreground) / 0.15);
+  border-top: 1px solid hsl(var(--card-foreground) / 0.25);
   border-radius: 8px;
   box-shadow:
     0 8px 32px 0 rgba(0, 0, 0, 0.37),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    inset 0 1px 0 hsl(var(--card-foreground) / 0.1);
 }
 
 :root[data-material="aero"] .glass-surface {
-  background-color: rgba(255, 255, 255, 0.12);
+  background-color: hsl(var(--card) / 0.2);
   background-image: repeating-linear-gradient(
     45deg,
     transparent,
     transparent 3px,
-    rgba(255, 255, 255, 0.02) 3px,
-    rgba(255, 255, 255, 0.02) 6px
+    hsl(var(--card-foreground) / 0.03) 3px,
+    hsl(var(--card-foreground) / 0.03) 6px
   );
   background-blend-mode: overlay;
   -webkit-backdrop-filter: blur(16px) saturate(1.8);
   backdrop-filter: blur(16px) saturate(1.8);
-  border: 1px solid rgba(255, 255, 255, 0.40);
+  border: 1px solid hsl(var(--card-foreground) / 0.2);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 1px 0 hsl(var(--card-foreground) / 0.3),
     0 12px 48px rgba(0, 0, 0, 0.35);
 }
 
@@ -391,4 +391,14 @@
   box-shadow:
     inset 0 1px 1px hsl(0 0% 100% / 0.18),
     0 6px 18px -10px hsl(0 0% 0% / 0.35);
+}
+
+/* 玻璃材质下禁用滚动渐隐遮罩。
+   mask-image 会使滚动容器成为 backdrop root，切断后代 .glass-surface /
+   LiquidGlass 的 backdrop-filter 对壁纸的采样，导致模糊/折射完全失效
+   （半透明卡片后背景保持清晰）。非分层规则确保覆盖上方 @layer 内的定义。 */
+:root[data-material]:not([data-material="default"]) .scroll-fade-mask,
+:root[data-material]:not([data-material="default"]) .scroll-fade-mask-both {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
