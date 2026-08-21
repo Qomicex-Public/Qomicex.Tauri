@@ -2,24 +2,46 @@ import { API_BASE, setApiBase } from './client.ts'
 
 /**
  * 传输层选择：
- * - Tauri 内：探测 ipc_ping 成功后把 API_BASE 切到 qomicex:// 协议 URL
- *   （Windows origin 形态是 http://qomicex.localhost，其余平台 qomicex://localhost）
- * - 纯浏览器/IPC 不可用：保持 HTTP :5000（Playwright 调试、CI 脚本依赖此路径）
+ * - Tauri 内：端到端探测（fetch 协议 URL 的 /ping 断言 pong）成功后把 API_BASE
+ *   切到 qomicex:// 协议地址。Windows origin 形态是 http://qomicex.localhost，
+ *   其余平台 qomicex://localhost；两种候选都试，首个通过者胜出。
+ *   端到端而非仅 invoke：协议转发器→管道→后端整链路可用才算数。
+ * - 纯浏览器/IPC 不可用：保持 HTTP :5000（Playwright 调试、CI 脚本依赖此路径）。
  */
-export async function initApiTransport(): Promise<void> {
-  if (!('__TAURI_INTERNALS__' in window)) return
+const PROBE_TIMEOUT_MS = 2_000
+
+let transportResolved = false
+
+function ipcBaseCandidates(): string[] {
+  return navigator.userAgent.includes('Windows')
+    ? ['http://qomicex.localhost/api', 'qomicex://localhost/api']
+    : ['qomicex://localhost/api', 'http://qomicex.localhost/api']
+}
+
+async function probeIpcBase(base: string): Promise<boolean> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    if (!(await invoke<boolean>('ipc_ping'))) return
-    ;(globalThis as Record<string, unknown>).__QOMICEX_IPC__ = true
-    setApiBase(
-      navigator.userAgent.includes('Windows')
-        ? 'http://qomicex.localhost/api'
-        : 'qomicex://localhost/api',
-    )
-    console.log('[ipc] transport switched to pipe:', API_BASE)
-  } catch (e) {
-    console.warn('[ipc] probe failed, falling back to http:', e)
+    const res = await fetch(`${base}/ping`, { signal: controller.signal })
+    return res.ok && (await res.text()) === 'pong'
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 幂等：已解析直接返回；未解析时逐候选端到端尝试。由健康轮询每轮调用以重试。 */
+export async function initApiTransport(): Promise<void> {
+  if (!('__TAURI_INTERNALS__' in window) || transportResolved) return
+  for (const base of ipcBaseCandidates()) {
+    if (await probeIpcBase(base)) {
+      transportResolved = true
+      ;(globalThis as Record<string, unknown>).__QOMICEX_IPC__ = true
+      setApiBase(base)
+      console.log('[ipc] transport switched to pipe:', API_BASE)
+      return
+    }
   }
 }
 
