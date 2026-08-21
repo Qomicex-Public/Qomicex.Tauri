@@ -1,6 +1,7 @@
 # Node
 node_modules/
 .pnpm-store/
+backend.err
 
 # Frontend build
 dist/
