@@ -325,10 +325,10 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
       data-tauri-drag-region
       className="fixed inset-0 z-[9998] flex flex-col bg-background cursor-default select-none overflow-hidden"
     >
-      {/* 顶部品牌栏 */}
-      <div className="flex items-center gap-3 px-8 pt-6">
-        <img src="/logo.svg" alt="Qomicex" className="h-10 w-10" />
-        <div className="flex flex-col">
+      {/* 顶部品牌栏（拖动条） */}
+      <div data-tauri-drag-region className="flex items-center gap-3 px-8 pt-6 select-none">
+        <img src="/logo.svg" alt="Qomicex" className="pointer-events-none h-10 w-10" />
+        <div className="pointer-events-none flex flex-col">
           <span className="text-base font-semibold">{t('wizard.title')}</span>
           <span className="text-xs text-muted-foreground">{t('wizard.subtitle')}</span>
         </div>
