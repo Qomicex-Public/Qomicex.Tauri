@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract, faGear, faDatabase, faImage } from '@fortawesome/free-solid-svg-icons'
+import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract, faGear, faDatabase, faImage, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { Button } from '../components/ui'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
@@ -1932,15 +1932,29 @@ export default function Settings() {
                   <div className="space-y-2">
                     <Select
                       value={settings.componentMaterial ?? 'default'}
-                      onChange={(v) => update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid')}
+                      onChange={(v) => {
+                        if (v === 'liquid') {
+                          msgConfirm(t('settings.appearance.componentMaterialLiquidConfirmBody'), t('settings.appearance.componentMaterialLiquidConfirmTitle')).then((ok) => {
+                            if (ok) update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid')
+                          })
+                        } else {
+                          update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid')
+                        }
+                      }}
                       className="w-48"
                     >
                       <SelectOption value="default">{t('settings.appearance.componentMaterialDefault')}</SelectOption>
                       <SelectOption value="frosted">{t('settings.appearance.componentMaterialFrosted')}</SelectOption>
                       <SelectOption value="acrylic">{t('settings.appearance.componentMaterialAcrylic')}</SelectOption>
                       <SelectOption value="aero">{t('settings.appearance.componentMaterialAero')}</SelectOption>
-                      <SelectOption value="liquid">{t('settings.appearance.componentMaterialLiquid')}</SelectOption>
+                      <SelectOption value="liquid">{t('settings.appearance.componentMaterialLiquidPreview')}</SelectOption>
                     </Select>
+                    {settings.componentMaterial === 'liquid' && (
+                      <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                        <FontAwesomeIcon icon={faTriangleExclamation} className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span>{t('settings.appearance.componentMaterialLiquidWarning')}</span>
+                      </div>
+                    )}
                   </div>
                   {settings.componentMaterial !== 'default' && (
                     <div className="space-y-2">
