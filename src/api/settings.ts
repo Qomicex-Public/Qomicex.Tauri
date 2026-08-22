@@ -130,17 +130,23 @@ let loaded = false
 const listeners = new Set<(s: AppSettings) => void>()
 
 export async function loadSettings(): Promise<AppSettings> {
-  try {
-    const [data, { path: dataDir }] = await Promise.all([
-      get<Partial<AppSettings>>('/settings'),
-      get<{ path: string }>('/settings/data-dir'),
-    ])
-    cached = { ...DEFAULT_SETTINGS, ...data, dataDir, theme: data.theme ?? cached.theme ?? DEFAULT_SETTINGS.theme }
-  } catch {
-    cached = { ...DEFAULT_SETTINGS }
+  // 失败时不更新 cached、不置 loaded：backend 未就绪时若把 DEFAULT_SETTINGS
+  // （initialized:false）当成已加载的真实设置，会让 App 误判"未初始化"而弹向导。
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const [data, { path: dataDir }] = await Promise.all([
+        get<Partial<AppSettings>>('/settings'),
+        get<{ path: string }>('/settings/data-dir'),
+      ])
+      cached = { ...DEFAULT_SETTINGS, ...data, dataDir, theme: data.theme ?? cached.theme ?? DEFAULT_SETTINGS.theme }
+      loaded = true
+      listeners.forEach(fn => fn(cached))
+      break
+    } catch (e) {
+      if (attempt === 2) console.error('[settings] load failed after retries', e)
+      else await new Promise(r => setTimeout(r, 1000))
+    }
   }
-  loaded = true
-  listeners.forEach(fn => fn(cached))
   return cached
 }
 

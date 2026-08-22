@@ -135,10 +135,11 @@ fn spawn_backend(app: &tauri::App) {
     let mut cmd = std::process::Command::new(&exe_path);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    if let Ok(data_dir) = app.path().app_data_dir() {
-        cmd.env("QOMICEX_HOME", &data_dir);
-        tauri_log!("backend", "set QOMICEX_HOME={}", data_dir.display());
-    }
+    // 注意：不要给 backend 注入 QOMICEX_HOME=app_data_dir()——三平台上该目录
+    // （identifier 目录 / Windows Roaming）与 backend 默认解析目录（{LocalAppData}/
+    // qomicex-launcher）不一致，注入会导致老用户配置"搬家"丢失，且与 Tauri 主进程
+    // 自身的 logger/plugin_gateway 解析结果分裂。backend 的 resolve_base_dir 不依赖
+    // cwd，无需注入即可稳定解析（51d6529 曾因此回滚）。
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;

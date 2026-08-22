@@ -101,6 +101,13 @@ function AppContent() {
     return () => { cancelled = true }
   }, [])
 
+  // /health 通过（backend 已监听）后再拉取设置：挂载即拉会输给 release 冷启动的
+  // 解压+spawn 时序，失败曾把默认值当成真实设置误触初始化向导。
+  useEffect(() => {
+    if (backendState !== 'ready') return
+    void loadSettings()
+  }, [backendState])
+
   useEffect(() => {
     if (backendState !== 'ready') return
     const onSettings = (s: AppSettings) => {
@@ -368,13 +375,9 @@ function App() {
       root.dataset.material = material ?? 'default'
       root.style.setProperty('--glass-blur', `${Math.max(0, blur ?? 18)}px`)
     }
-    loadSettings().then(s => {
-      setConsoleLevel(s.logLevel ?? 'info')
-      setTheme(s.theme ?? 'dark')
-      applyFont(s.fontFamily)
-      applyThemeColor(s.themeColor)
-      applyGlassMaterial(s.componentMaterial, s.glassBlur)
-    })
+    // 初始设置不在这里加载：backend 可能尚未监听（Tauri release 冷启动要先解压
+    // + spawn），fetch 失败会让 UI 用默认值渲染。加载移到 AppContent 中
+    // backendState==='ready' 之后；首次加载成功会触发下方 listener 完成初始应用。
     const unsub = onSettingsChange((s: AppSettings) => {
       const enabled = s.animationsEnabled !== false
       const speed = s.animationSpeed ?? 1
