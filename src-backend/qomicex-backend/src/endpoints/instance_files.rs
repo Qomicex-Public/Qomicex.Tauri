@@ -262,6 +262,10 @@ struct ModsCacheEntry {
     /// 缓存有效期（秒）；缺省 = MODS_CACHE_TTL_SECS（兼容旧缓存文件）。
     #[serde(default)]
     ttl_secs: Option<i64>,
+    /// 写入时 mods 目录内容指纹；命中时与当前目录比对，不一致视为过期。
+    /// 缺省 = 未记录（兼容旧缓存文件 → 直接 miss 重扫）。
+    #[serde(default)]
+    dir_signature: Option<u64>,
 }
 
 static REFRESH_LOCK: LazyLock<Mutex<HashMap<String, ()>>> =
@@ -274,23 +278,37 @@ fn mods_cache_path(data_dir: &PathBuf, instance_id: &str) -> PathBuf {
         .join(format!("{instance_id}-mods.json"))
 }
 
-fn read_mods_cache(data_dir: &PathBuf, instance_id: &str) -> Option<Vec<ModMetadataDto>> {
+fn read_mods_cache(
+    data_dir: &PathBuf,
+    instance_id: &str,
+    expected_signature: u64,
+) -> Option<Vec<ModMetadataDto>> {
     let path = mods_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
     let cache: ModsCacheEntry = serde_json::from_slice(&bytes).ok()?;
     let now = now_secs();
     let ttl = cache.ttl_secs.unwrap_or(MODS_CACHE_TTL_SECS);
-    if now - cache.fetched_at < ttl {
+    // TTL 内还须目录指纹一致：用户在文件系统增删/改名/移动 mod 后立即失效。
+    if now - cache.fetched_at < ttl && cache.dir_signature == Some(expected_signature) {
         Some(cache.entries)
     } else {
         None
     }
 }
 
-fn read_mods_cache_stale(data_dir: &PathBuf, instance_id: &str) -> Option<Vec<ModMetadataDto>> {
+fn read_mods_cache_stale(
+    data_dir: &PathBuf,
+    instance_id: &str,
+    expected_signature: u64,
+) -> Option<Vec<ModMetadataDto>> {
     let path = mods_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
     let cache: ModsCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    // 仅"目录未动、纯 TTL 过期"走 stale-while-revalidate；
+    // 签名不一致说明用户刚改过文件，必须同步重扫（见调用方）。
+    if cache.dir_signature != Some(expected_signature) {
+        return None;
+    }
     Some(cache.entries)
 }
 
@@ -299,6 +317,7 @@ fn write_mods_cache(
     instance_id: &str,
     entries: Vec<ModMetadataDto>,
     ttl_secs: i64,
+    dir_signature: u64,
 ) {
     let path = mods_cache_path(data_dir, instance_id);
     let _ = std::fs::create_dir_all(path.parent().unwrap());
@@ -306,10 +325,45 @@ fn write_mods_cache(
         fetched_at: now_secs(),
         entries,
         ttl_secs: Some(ttl_secs),
+        dir_signature: Some(dir_signature),
     };
     if let Ok(json) = serde_json::to_vec(&cache) {
         let _ = std::fs::write(path, json);
     }
+}
+
+/// Mods 目录内容指纹：全部文件 (文件名, 大小, mtime) 排序后哈希。
+/// 目录不存在/读失败 → 空列表的哈希（与"空目录"一致，安全侧）。
+fn mods_dir_signature(r: &Resolved) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut items: Vec<(String, u64, i64)> = std::fs::read_dir(category_dir(r, "mods"))
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let md = e.metadata().ok()?;
+                    if !md.is_file() {
+                        return None;
+                    }
+                    let mtime = md
+                        .modified()
+                        .ok()?
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()?
+                        .as_secs() as i64;
+                    Some((
+                        e.file_name().to_string_lossy().into_owned(),
+                        md.len(),
+                        mtime,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    items.sort();
+    let mut h = DefaultHasher::new();
+    items.hash(&mut h);
+    h.finish()
 }
 
 fn now_secs() -> i64 {
@@ -430,7 +484,8 @@ async fn refresh_mods_cache(
     } else {
         MODS_CACHE_TTL_SECS
     };
-    write_mods_cache(&state.data_dir, instance_id, result.clone(), ttl);
+    let sig = mods_dir_signature(&r);
+    write_mods_cache(&state.data_dir, instance_id, result.clone(), ttl, sig);
     Ok(result)
 }
 
@@ -772,12 +827,14 @@ async fn mods_metadata(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Response> {
+    // 目录指纹：文件系统变动（增删/改名/移动）立即使磁盘缓存失效。
+    let sig = mods_dir_signature(&resolve(&id, &state)?);
     // Disk cache (6h TTL): fresh hit skips scan + network entirely.
-    if let Some(entries) = read_mods_cache(&state.data_dir, &id) {
+    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig) {
         return Ok(Json(entries).into_response());
     }
-    // Stale hit: return stale + spawn background refresh (stale-while-revalidate).
-    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id) {
+    // Stale hit（仅目录未动的纯 TTL 过期）: return stale + spawn background refresh.
+    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig) {
         let state2 = state.clone();
         let id2 = id.clone();
         tokio::spawn(async move {
@@ -785,7 +842,7 @@ async fn mods_metadata(
         });
         return Ok(Json(entries).into_response());
     }
-    // No cache: full scan + write cache.
+    // No cache / 目录已变动: 同步全量扫描 + write cache（一次返回正确数据）。
     let entries = refresh_mods_cache(&state, &id).await?;
     Ok(Json(entries).into_response())
 }
@@ -917,12 +974,14 @@ async fn mods_enrich(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<ModEnrichDto>>> {
+    // 目录指纹：文件系统变动立即使磁盘缓存失效（与 mods_metadata 同一语义）。
+    let sig = mods_dir_signature(&resolve(&id, &state)?);
     // Disk cache (6h TTL): fresh hit skips scan + network entirely.
-    if let Some(entries) = read_mods_cache(&state.data_dir, &id) {
+    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig) {
         return Ok(Json(entries_to_enrich(entries)));
     }
-    // Stale hit: return stale + spawn background refresh.
-    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id) {
+    // Stale hit（仅目录未动的纯 TTL 过期）: return stale + spawn background refresh.
+    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig) {
         let state2 = state.clone();
         let id2 = id.clone();
         tokio::spawn(async move {
@@ -930,7 +989,7 @@ async fn mods_enrich(
         });
         return Ok(Json(entries_to_enrich(entries)));
     }
-    // No cache: full scan + enrich + write cache.
+    // No cache / 目录已变动: 同步全量扫描 + enrich + write cache。
     let entries = refresh_mods_cache(&state, &id).await?;
     Ok(Json(entries_to_enrich(entries)))
 }
