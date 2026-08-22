@@ -1898,7 +1898,9 @@ fn build_launch_options(
     use qomicex_core::models::launch::LaunchOptions;
     LaunchOptions {
         version: instance.name.clone(),
-        version_isolation: instance.version_isolation.unwrap_or(false),
+        version_isolation: instance
+            .version_isolation
+            .unwrap_or_else(crate::settings::get_global_version_isolation),
         join_server: None,
         join_world: None,
         // 与普通启动路径（instance.rs launch_instance）一致：显式 game_root 覆盖

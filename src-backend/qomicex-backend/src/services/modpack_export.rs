@@ -395,7 +395,10 @@ struct ContentEntry {
 /// 实例内容源目录（版本隔离 → `{gameDir}/versions/{name}`，否则 `{gameDir}`）。
 fn instance_source_dir(instance: &GameInstance) -> PathBuf {
     let game_dir = Path::new(&instance.game_dir);
-    if instance.version_isolation.unwrap_or(false) {
+    if instance
+        .version_isolation
+        .unwrap_or_else(crate::settings::get_global_version_isolation)
+    {
         game_dir.join("versions").join(&instance.name)
     } else {
         game_dir.to_path_buf()

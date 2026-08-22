@@ -99,6 +99,11 @@ const SERVICE_DESC_KEYS: Record<string, string> = {
   'Minecraft官网': 'settings.about.serviceMinecraft',
 }
 const SERVICE_NAME_KEYS: Record<string, string> = {
+  Modrinth: 'settings.about.serviceModrinthName',
+  CurseForge: 'settings.about.serviceCurseForgeName',
+  FTB: 'settings.about.serviceFtbName',
+  bangbang93: 'settings.about.serviceBmclapiName',
+  mcmod: 'settings.about.serviceMcmodName',
   'Minecraft官网': 'settings.about.serviceMinecraftName',
 }
 const REF_DESC_KEYS: Record<string, string> = {
