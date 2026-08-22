@@ -94,3 +94,4 @@ src-backend/**/logs/
 qomicex-plugin-ui-0.1.0.tgz
 
 .playwright-mcp/
+stuck_urls.txt
