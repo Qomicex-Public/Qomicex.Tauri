@@ -68,7 +68,9 @@ async fn connect_pipe(name: &str) -> std::io::Result<IpcConn> {
     }
     #[cfg(unix)]
     {
-        tokio::net::UnixStream::connect(name).await
+        tokio::net::UnixStream::connect(name)
+            .await
+            .map(IpcConn::Unix)
     }
 }
 
