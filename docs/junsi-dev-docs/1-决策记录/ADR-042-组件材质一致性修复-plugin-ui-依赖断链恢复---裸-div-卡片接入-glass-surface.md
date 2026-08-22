@@ -1,4 +1,4 @@
-# ADR-040：组件材质一致性修复：plugin-ui 依赖断链恢复 + 裸 div 卡片接入 glass-surface
+# ADR-042：组件材质一致性修复：plugin-ui 依赖断链恢复 + 裸 div 卡片接入 glass-surface
 
 | 属性 | 内容 |
 |---|---|
