@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '../lib/cn.js'
 
 interface ComboboxProps {
@@ -13,6 +14,7 @@ interface ComboboxProps {
 export function Combobox({ value, onChange, options, placeholder, emptyText = '', className }: ComboboxProps) {
   const [open, setOpen] = useState(false)
   const [input, setInput] = useState(value)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
@@ -33,15 +35,35 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
     close()
   }, [onChange, close])
 
+  // 下拉经 portal 渲染到 body（fixed 定位）：液态玻璃材质下卡片容器带
+  // overflow:hidden，absolute 弹层会被裁剪；portal 同时规避一切祖先裁剪。
+  const updatePos = useCallback(() => {
+    if (!inputRef.current) return
+    const tr = inputRef.current.getBoundingClientRect()
+    setPos({ top: tr.bottom + 4, left: tr.left, width: tr.width })
+  }, [])
+
+  const openPopup = useCallback(() => {
+    updatePos()
+    setOpen(true)
+  }, [updatePos])
+
   useEffect(() => {
     if (!open) return
     function handler(e: MouseEvent) {
       if (containerRef.current?.contains(e.target as Node)) return
+      if (popupRef.current?.contains(e.target as Node)) return
       commit(input)
     }
     document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open, commit, input])
+    window.addEventListener('scroll', updatePos, true)
+    window.addEventListener('resize', updatePos)
+    return () => {
+      document.removeEventListener('mousedown', handler)
+      window.removeEventListener('scroll', updatePos, true)
+      window.removeEventListener('resize', updatePos)
+    }
+  }, [open, commit, input, updatePos])
 
   return (
     <div ref={containerRef} className={cn('relative', className)}>
@@ -50,7 +72,7 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
           ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onFocus={() => setOpen(true)}
+          onFocus={openPopup}
           onBlur={() => commit(input)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') { close(); inputRef.current?.blur() }
@@ -66,16 +88,17 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
         <button
           type="button"
           tabIndex={-1}
-          onClick={() => { if (open) { commit(input) } else { setOpen(true); inputRef.current?.focus() } }}
+          onClick={() => { if (open) { commit(input) } else { openPopup(); inputRef.current?.focus() } }}
           className="absolute right-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent"
         >
           <svg className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
         </button>
       </div>
-      {open && (
+      {open && createPortal(
         <div
           ref={popupRef}
-          className="absolute left-0 top-full z-50 mt-1 w-full min-w-[180px] rounded-lg border border-border/50 bg-popover/90 backdrop-blur-lg p-1 shadow-xl animate-in fade-in zoom-in-95"
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: Math.max(pos.width, 180), zIndex: 9999 }}
+          className="rounded-lg border border-border/50 bg-popover/90 backdrop-blur-lg p-1 shadow-xl animate-in fade-in zoom-in-95"
           onMouseDown={(e) => e.preventDefault()}
         >
           <div className="max-h-60 overflow-y-auto">
@@ -97,7 +120,8 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
               ))
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

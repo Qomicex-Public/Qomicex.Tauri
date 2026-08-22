@@ -393,6 +393,39 @@
     0 6px 18px -10px hsl(0 0% 0% / 0.35);
 }
 
+/* 液态玻璃 Card（quidlass LiquidGlass 容器）统一底色。
+   liquid 下 Card 不再叠加调用方 bg-card 类（Card.tsx 已 neutralize），
+   由主题统一给半透明底色保证可读性，透明度与上方 .glass-surface 的 liquid 规则同源。 */
+:root[data-material="liquid"] [data-liquid-glass] {
+  background-color: hsl(var(--card) / 0.42);
+}
+
+/* 液态玻璃 Card 内部隔离与间距还原。
+   quidlass 会把业务 children 包进单个 content div，因此：
+   1) 调用方写在 Card 上的 space-y-*（`.space-y-N > * ~ *`）命中的是 quidlass
+      内部装饰层而非业务内容——装饰层是 absolute 定位，被加上 margin-top 后与
+      容器错位，卡片顶部露出一条无填充空带（联机中心 space-y-4 卡片实测错位 16px）。
+      这里对容器全部直接子 div 强制归零 margin 隔离。
+   2) 下方按档位把 space-y 语义转移到 content div 的真实子元素间，
+      保持与 default/毛玻璃材质一致的布局节奏。 */
+:root[data-material="liquid"] [data-liquid-glass] > div {
+  margin: 0 !important;
+}
+
+:root[data-material="liquid"] [data-liquid-glass].space-y-1 > [data-liquid-glass-content] > :not([hidden]) ~ :not([hidden]) { margin-top: 0.25rem; }
+:root[data-material="liquid"] [data-liquid-glass].space-y-2 > [data-liquid-glass-content] > :not([hidden]) ~ :not([hidden]) { margin-top: 0.5rem; }
+:root[data-material="liquid"] [data-liquid-glass].space-y-3 > [data-liquid-glass-content] > :not([hidden]) ~ :not([hidden]) { margin-top: 0.75rem; }
+:root[data-material="liquid"] [data-liquid-glass].space-y-4 > [data-liquid-glass-content] > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem; }
+:root[data-material="liquid"] [data-liquid-glass].space-y-5 > [data-liquid-glass-content] > :not([hidden]) ~ :not([hidden]) { margin-top: 1.25rem; }
+:root[data-material="liquid"] [data-liquid-glass].space-y-6 > [data-liquid-glass-content] > :not([hidden]) ~ :not([hidden]) { margin-top: 1.5rem; }
+
+/* 去掉 quidlass 内置的顶部白色渐变遮罩（height:40% 高光带，无 prop 可关）：
+   深色壁纸上观感廉价且与主题不搭；用 style 特征选择器精准命中该层，
+   不依赖子元素顺序（backdrop/shadow/content 层均无 linear-gradient 内联样式）。 */
+:root[data-material="liquid"] [data-liquid-glass] > div[style*="linear-gradient"] {
+  display: none;
+}
+
 /* 玻璃材质下禁用滚动渐隐遮罩。
    mask-image 会使滚动容器成为 backdrop root，切断后代 .glass-surface /
    LiquidGlass 的 backdrop-filter 对壁纸的采样，导致模糊/折射完全失效
