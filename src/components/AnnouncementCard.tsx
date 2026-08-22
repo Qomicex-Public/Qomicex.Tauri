@@ -48,7 +48,7 @@ export function AnnouncementCard() {
     <>
       <div
         onClick={() => setDialogOpen(true)}
-        className="cursor-pointer rounded-xl border border-border/30 bg-card/70 p-4 backdrop-blur-md transition-colors hover:bg-card/80"
+        className="glass-surface cursor-pointer rounded-xl border border-border/30 bg-card/70 p-4 backdrop-blur-md transition-colors hover:bg-card/80"
       >
         <div className="flex items-start gap-2">
           <FontAwesomeIcon icon={faBullhorn} className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />

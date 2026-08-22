@@ -1512,7 +1512,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
                 key={f.name}
                 onClick={(e) => toggleSelect(f.name, e.shiftKey, e.ctrlKey)}
                 className={cn(
-                  'group flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all',
+                  'group glass-surface flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all',
                   selected.has(f.name) ? 'border-primary/50 bg-primary/5' : 'border-border/60 bg-card hover:border-primary/20 hover:shadow-sm'
                 )}
               >

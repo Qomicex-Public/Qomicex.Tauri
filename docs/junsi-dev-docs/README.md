@@ -1,6 +1,6 @@
 # 项目文档索引
 
-最后更新：2026-08-22 20:05
+最后更新：2026-08-22 23:37
 
 ## 1-决策记录
 
@@ -46,6 +46,7 @@
 - [ADR-038：下载器传输模型改为 aria2 式独立 TCP 分段并修复 total timeout 杀请求](1-决策记录/ADR-038-下载器传输模型改为-aria2-式独立-TCP-分段并修复-total-timeout-杀请求.md)
 - [ADR-039：macOS Java 扫描停用全盘 BFS,改用标准路径+java_home 官方枚举](1-决策记录/ADR-039-macOS-Java-扫描停用全盘-BFS-改用标准路径-java_home-官方枚举.md)
 - [ADR-040：HTTP→IPC：双进程保留，传输层换命名管道/UDS（QIPC 帧协议）](1-决策记录/ADR-040-HTTP-IPC-双进程保留-传输层换命名管道-UDS-QIPC-帧协议-.md)
+- [ADR-040：组件材质一致性修复：plugin-ui 依赖断链恢复 + 裸 div 卡片接入 glass-surface](1-决策记录/ADR-040-组件材质一致性修复-plugin-ui-依赖断链恢复---裸-div-卡片接入-glass-surface.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

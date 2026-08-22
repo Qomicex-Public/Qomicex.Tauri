@@ -129,7 +129,7 @@ export default function Dashboard() {
       <div className="absolute right-8 top-24 w-72 space-y-4">
         {/* Account widget */}
         <div className="relative z-50">
-          <div className="rounded-xl border border-border/30 bg-card/70 p-4 backdrop-blur-md">
+          <div className="glass-surface rounded-xl border border-border/30 bg-card/70 p-4 backdrop-blur-md">
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">{t('dashboard.account')}</p>
             <div ref={accountRef} className="flex items-center gap-3">
               {defaultAccount ? (
@@ -185,7 +185,7 @@ export default function Dashboard() {
 
       {/* Bottom action bar */}
       {defaultInstance ? (
-        <div className="mt-auto flex items-center justify-between rounded-2xl border border-border/30 bg-card/70 px-6 py-4 backdrop-blur-md">
+        <div className="glass-surface mt-auto flex items-center justify-between rounded-2xl border border-border/30 bg-card/70 px-6 py-4 backdrop-blur-md">
           <div className="flex items-center gap-4">
             <InstanceIcon icon={defaultInstance.icon} iconData={defaultInstance.iconData} loader={defaultInstance.loader} className="h-12 w-12 shrink-0 rounded-xl" imgClassName="rounded-xl" />
             <div>
@@ -219,7 +219,7 @@ export default function Dashboard() {
           </div>
         </div>
       ) : (
-        <div className="mt-auto flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border/40 bg-card/30 px-6 py-8 text-center backdrop-blur-md">
+        <div className="glass-surface mt-auto flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border/40 bg-card/30 px-6 py-8 text-center backdrop-blur-md">
           <FontAwesomeIcon icon={faCube} className="h-6 w-6 text-muted-foreground/30" />
           <p className="text-sm text-muted-foreground">{t('dashboard.noPinnedInstance')}</p>
           <Button variant="outline" size="sm" onClick={() => navigate('/instances')} className="mt-1">

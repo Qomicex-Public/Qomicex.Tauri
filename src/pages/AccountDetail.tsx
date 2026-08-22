@@ -207,7 +207,7 @@ export default function AccountDetail() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1">
-            <div className="flex flex-col items-center gap-3 rounded-xl border bg-card p-6">
+            <div className="glass-surface flex flex-col items-center gap-3 rounded-xl border bg-card p-6">
               <SkinViewer3D textureUrl={textureUrl} model={profile?.model === 'slim' ? 'slim' : 'classic'} width={280} height={380} className="rounded-lg" name={account.name} showNameTag={showNameTag} panoramaUrl="/panorama.png" capeUrl={capeUrl} showCape={showCape} />
               <div className="flex flex-wrap items-center justify-center gap-4">
                 <button onClick={() => setShowNameTag(v => !v)} className={`flex items-center gap-2 text-xs ${showNameTag ? 'text-primary' : 'text-muted-foreground'}`}>
@@ -232,7 +232,7 @@ export default function AccountDetail() {
         </div>
 
         <div className="space-y-4 lg:col-span-2">
-          <div className="rounded-xl border bg-card p-5">
+          <div className="glass-surface rounded-xl border bg-card p-5">
             <h2 className="mb-3 text-sm font-semibold">{t('accountDetail.accountInfo')}</h2>
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">

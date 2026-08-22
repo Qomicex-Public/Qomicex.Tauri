@@ -538,7 +538,7 @@ export default function Accounts() {
                 key={acc.uuid}
                 onClick={() => { if (selected.size > 0) toggleSelect(acc.uuid, index, false); else navigate(`/accounts/${acc.uuid}`) }}
                 className={cn(
-                  'group flex w-full cursor-pointer items-center gap-3 rounded-lg border bg-card px-3.5 py-3 text-left transition-colors hover:border-border',
+                  'group glass-surface flex w-full cursor-pointer items-center gap-3 rounded-lg border bg-card px-3.5 py-3 text-left transition-colors hover:border-border',
                   isSelected ? 'border-primary/40 bg-primary/[0.03]' : 'border-transparent'
                 )}
                 role="button"

@@ -334,7 +334,7 @@ export default function DownloadCenter() {
             const isActive = task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'
             const safeIcon = getSafeIconDataUrl(task.icon)
             return (
-              <div key={task.id} className="group rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
+              <div key={task.id} className="group glass-surface rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex min-w-0 items-start gap-3">
                     <div className={cn(
