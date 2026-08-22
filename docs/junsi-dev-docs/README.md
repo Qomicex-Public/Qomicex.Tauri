@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-08-22 17:45
+最后更新：2026-08-22 19:20
 
 ## 1-决策记录
 
@@ -42,6 +42,7 @@
 - [ADR-036：组件材质下拉（默认/毛玻璃/液态玻璃）：液态玻璃参考liquid-glass-react](1-决策记录/ADR-036-组件材质下拉-默认-毛玻璃-液态玻璃--液态玻璃参考liquid-glass-react.md)
 - [ADR-037：玻璃材质与滚动渐隐遮罩互斥：材质激活时禁用 scroll-fade-mask](1-决策记录/ADR-037-玻璃材质与滚动渐隐遮罩互斥-材质激活时禁用-scroll-fade-mask.md)
 - [ADR-038：下载器传输模型改为 aria2 式独立 TCP 分段并修复 total timeout 杀请求](1-决策记录/ADR-038-下载器传输模型改为-aria2-式独立-TCP-分段并修复-total-timeout-杀请求.md)
+- [ADR-039：macOS Java 扫描停用全盘 BFS,改用标准路径+java_home 官方枚举](1-决策记录/ADR-039-macOS-Java-扫描停用全盘-BFS-改用标准路径-java_home-官方枚举.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
