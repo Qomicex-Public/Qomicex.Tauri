@@ -227,7 +227,9 @@ async fn forward(
 
     let mut conn = match connect_pipe(pipe_name).await {
         Ok(c) => c,
-        Err(e) => return error_response(502, "IPC_CONNECT_FAILED", &format!("{e}")),
+        Err(e) => {
+            return error_response(502, "IPC_CONNECT_FAILED", &format!("{e}"));
+        }
     };
     if write_all(
         &mut conn,
@@ -240,7 +242,9 @@ async fn forward(
     }
     let (status, resp_headers) = match read_head(&mut conn).await {
         Ok(h) => h,
-        Err(e) => return error_response(502, "IPC_READ_FAILED", &format!("{e}")),
+        Err(e) => {
+            return error_response(502, "IPC_READ_FAILED", &format!("{e}"));
+        }
     };
     let mut buf = Vec::new();
     if read_chunks(&mut conn, |c| {
@@ -254,14 +258,23 @@ async fn forward(
     }
 
     // ponytail: 响应整体缓冲（导出大文件一次性进内存）；流式消费走 ipc_stream 命令
-    let mut builder = Response::builder()
-        .status(status)
-        .header("access-control-allow-origin", "*")
-        .header("access-control-expose-headers", "*");
+    let mut builder = Response::builder().status(status);
     for (k, v) in resp_headers {
+        // CORS 头由本层统一注入：后端 CorsLayer 已带一份，叠加会出现重复
+        // Access-Control-Allow-Origin，WebView2 视为非法 CORS 响应导致 fetch
+        // 直接 ERR_FAILED（启动器卡死在启动失败页的根因）。
+        if k.eq_ignore_ascii_case("access-control-allow-origin")
+            || k.eq_ignore_ascii_case("access-control-expose-headers")
+        {
+            continue;
+        }
         builder = builder.header(k, v);
     }
-    builder.body(std::borrow::Cow::Owned(buf)).unwrap()
+    builder
+        .header("access-control-allow-origin", "*")
+        .header("access-control-expose-headers", "*")
+        .body(std::borrow::Cow::Owned(buf))
+        .unwrap()
 }
 
 /// 注册到 Builder 的协议处理器闭包
