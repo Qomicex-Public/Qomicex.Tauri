@@ -1,0 +1,44 @@
+# HTTP→IPC 迁移映射表（migrate/http-to-ipc）
+# 原则：axum 路由与全部 23 个 endpoint 模块零改动；只换传输层。
+# 管道协议 QIPC：一连接一请求；REQ=[len][method][path][headers][body]；
+# RESP=[status][headers] 后接 [len|chunk]* 以 len=0 结束。
+
+transport:
+  dev_plain_browser: HTTP tcp://127.0.0.1:5000   # Playwright 调试流程保留
+  dev_tauri:        HTTP（默认）或 QOMICEX_IPC_PIPE 时管道   # 手动跑后端不受影响
+  ci_test_scripts:  HTTP（不变，curl 冒烟照旧）
+  release:          仅管道（QOMICEX_NO_TCP=1），端口消失
+
+surfaces:
+  - id: client.ts.request
+    old: fetch(http://127.0.0.1:5000/api/*)
+    new: API_BASE 运行期切换 → 'qomicex://localhost/api'（initApiTransport 探测 ipc_ping 成功后翻转）
+    callers: 全部 205 个 api 函数零改动
+
+  - id: 直接 fetch(API_BASE) 消费者
+    files: [instance.ts, instance-files.ts, skin.ts, logs.ts, plugins.ts, plugin-api.ts,
+            installer.ts, sandbox.ts, plugin-loader.tsx, Settings.tsx, AccountDetail.tsx]
+    new: 同一常量切换，URL 形态变为协议 URL；img/script/css 子资源经协议处理器加载
+
+  - id: SSE progress/stream (useDownloadSSE.ts)
+    old: EventSource
+    new: invoke('ipc_stream') + Channel<string>，前端按行解析 data: JSON
+
+  - id: SSE instance/{id}/logs/stream (GameLogWindow.tsx)
+    old: EventSource
+    new: 同上
+
+  - id: plugins/proxy stream (plugin-api.ts proxyFetchStream)
+    old: fetch POST + res.body.getReader()
+    new: invoke('ipc_stream') + Channel，onChunk 文本透传
+
+  - id: updater 本地端点
+    old: http://localhost:5000/api/update/manifest
+    new: 删除（远程 api.qomicex.top 已是首位端点）
+
+  - id: WASM 网关 .gateway_port
+    action: 本次不动（随机端口冲突概率极低）；记 ADR 技术债
+
+env_contract:
+  QOMICEX_IPC_PIPE: 管道路径/名称。Tauri spawn 注入；外部手动跑后端可不设（纯 HTTP）
+  QOMICEX_NO_TCP:   设为 1 时关闭 TCP 监听（release 用）

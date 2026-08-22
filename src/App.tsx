@@ -30,6 +30,7 @@ import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
+import { initApiTransport, isIpcMode } from './api/ipc.ts'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { checkRequired } from './api/update.ts'
@@ -87,6 +88,9 @@ function AppContent() {
     let attempts = 0
     const poll = async () => {
       while (!cancelled && attempts < 10) {
+        // 每轮重试 IPC 端到端探测（非 Tauri 环境立即返回；已解析则跳过）。
+        // release 下后端解压/spawn 可能晚于首帧，一次性探测会永久锁错传输。
+        await initApiTransport()
         try {
           // 用轻量 /health（不触外部网络 ping），避免就绪判定被慢速诊断端点阻塞
           await get('/health')
@@ -94,6 +98,12 @@ function AppContent() {
           return
         } catch { attempts++ }
         if (!cancelled) await new Promise(r => setTimeout(r, 1000))
+      }
+      if (!cancelled && !isIpcMode()) {
+        console.error(
+          '[app] backend unreachable after 10 attempts (transport=http :5000)。' +
+          'release 应走 qomicex:// 管道；dev 需手动启动 src-backend/qomicex-backend（cargo run）。',
+        )
       }
       if (!cancelled) setBackendState('error')
     }

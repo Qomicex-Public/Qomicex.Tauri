@@ -3709,6 +3709,7 @@ dependencies = [
  "futures",
  "hkdf",
  "hmac",
+ "http-body-util",
  "libc",
  "md-5",
  "open",

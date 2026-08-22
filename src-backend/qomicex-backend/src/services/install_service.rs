@@ -1231,8 +1231,12 @@ mod tests {
     fn absolute_path_relative_anchors_to_base_dir_not_root() {
         // macOS 打包 App 的进程 cwd 是 `/`；相对 game_dir 必须锚定到数据目录，
         // 否则会变成 `/.minecraft`（根目录只读 → 写报错）。
-        // 注意：不得修改 QOMICEX_HOME——error_report 等测试持 ENV_LOCK 串行使用它，
-        // 这里并发只读，锚点一致即通过。
+        // 本测试对 QOMICEX_HOME 只读，但 expected 与 absolute_path 内部是两次独立
+        // env 读取；必须与 error_report 等改写该变量的测试共用 ENV_LOCK，否则
+        // 两次读取可能落入对方的改写窗口（实测会随并行调度偶发失败）。
+        let _env_guard = crate::services::error_report::tests::ENV_LOCK
+            .lock()
+            .unwrap();
         let expected = crate::settings::resolve_base_dir().join(".minecraft");
         let got = absolute_path(".minecraft");
         assert_eq!(

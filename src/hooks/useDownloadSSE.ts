@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { API_BASE } from '../api/client.ts'
+import { openStream, createSseParser } from '../api/ipc.ts'
 
 export interface InstallState {
   instanceId: string
@@ -62,18 +62,33 @@ export function useDownloadSSE() {
   const [reconnectKey, setReconnectKey] = useState(0)
 
   useEffect(() => {
-    const es = new EventSource(`${API_BASE}/progress/stream`)
-    es.onopen = () => setReconnectKey(c => c + 1)
-    es.onmessage = (e) => {
-      try {
-        const parsed = JSON.parse(e.data) as ProgressPayload
-        setData(parsed)
-      } catch { /* ignore malformed */ }
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let handle: { done: Promise<void>; close: () => void } | null = null
+    // 断线自动重连（对齐原 EventSource 自动重连语义）。
+    // parser 在每次 connect 内新建：避免上一条连接残留的半行拼进下一条连接。
+    const connect = () => {
+      if (cancelled) return
+      setReconnectKey(c => c + 1)
+      const feed = createSseParser(text => {
+        try {
+          setData(JSON.parse(text) as ProgressPayload)
+        } catch { /* ignore malformed */ }
+      })
+      handle = openStream('/progress/stream', feed.feed)
+      // 流结束时才 flush：中途 flush 会把被切断的半行提前吐出
+      handle.done
+        .then(() => feed.flush())
+        .catch(() => {
+          if (!cancelled) timer = setTimeout(connect, 1000)
+        })
     }
-    es.onerror = () => {
-      // browser will auto-reconnect
+    connect()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      handle?.close()
     }
-    return () => es.close()
   }, [])
 
   return { data, reconnectKey }

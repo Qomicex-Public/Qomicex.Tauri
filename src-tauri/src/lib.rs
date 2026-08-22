@@ -7,6 +7,7 @@ use tauri::{Emitter, Manager};
 #[macro_use]
 mod logger;
 mod dialog_cmd;
+mod ipc;
 mod plugin_gateway;
 
 #[cfg(all(windows, not(debug_assertions)))]
@@ -37,7 +38,7 @@ const BACKEND_EXE: &str = "qomicex-backend";
 
 struct BackendChild(Mutex<Option<std::process::Child>>);
 
-fn user_temp_dir() -> std::path::PathBuf {
+pub(crate) fn user_temp_dir() -> std::path::PathBuf {
     #[cfg(unix)]
     {
         // Prefer the per-user runtime dir (private, 0700). Falls back to a
@@ -108,7 +109,7 @@ fn extract_sidecar_dlls(base: &std::path::Path) {
 #[cfg(not(windows))]
 fn extract_sidecar_dlls(_base: &std::path::Path) {}
 
-fn spawn_backend(app: &tauri::App) {
+fn spawn_backend(app: &tauri::App, pipe_name: &Option<String>) {
     if std::env::var("QOMICEX_LAUNCHER_MANAGED").is_ok() {
         tauri_log!("backend", "launcher-managed, skipping spawn");
         return;
@@ -133,6 +134,12 @@ fn spawn_backend(app: &tauri::App) {
         let _ = std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755));
     }
     let mut cmd = std::process::Command::new(&exe_path);
+    // IPC 模式：release 由启动器注入管道名并关闭 TCP（端口彻底消失）
+    if let Some(name) = pipe_name {
+        cmd.env("QOMICEX_IPC_PIPE", name);
+        cmd.env("QOMICEX_NO_TCP", "1");
+        tauri_log!("backend", "ipc pipe: {name} (tcp disabled)");
+    }
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     // 注意：不要给 backend 注入 QOMICEX_HOME=app_data_dir()——三平台上该目录
@@ -178,20 +185,31 @@ fn spawn_backend(app: &tauri::App) {
     );
 }
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 管道名来源优先级：显式 env > release 内嵌后端默认启用；debug 占位/外部管理回落 None（前端走 HTTP）
+    let pipe_name: Option<String> = std::env::var("QOMICEX_IPC_PIPE").ok().or_else(|| {
+        if BACKEND.len() >= 1024 {
+            Some(ipc::pipe_name_for_pid(std::process::id()))
+        } else {
+            None
+        }
+    });
+    let pipe_shared = std::sync::Arc::new(std::sync::Mutex::new(pipe_name.clone()));
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(BackendChild(Mutex::new(None)))
-        .setup(|app| {
+        .manage(ipc::IpcPipe(pipe_shared.clone()))
+        .manage(ipc::StreamRegistry::default())
+        .register_asynchronous_uri_scheme_protocol(
+            "qomicex",
+            ipc::make_protocol_handler(pipe_shared),
+        )
+        .setup(move |app| {
             if let Some(w) = app.get_webview_window("main") {
                 #[cfg(target_os = "windows")]
                 let _ = w.set_decorations(false);
@@ -206,7 +224,7 @@ pub fn run() {
                     }
                 });
             }
-            spawn_backend(app);
+            spawn_backend(app, &pipe_name);
             let mut runtime = plugin_gateway::loader::PluginRuntime::new().unwrap();
             let _ = runtime.scan_and_load();
             tauri::async_runtime::spawn(async move {
@@ -217,7 +235,12 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, dialog_cmd::pick_dialog])
+        .invoke_handler(tauri::generate_handler![
+            dialog_cmd::pick_dialog,
+            ipc::ipc_ping,
+            ipc::ipc_stream,
+            ipc::ipc_stream_abort
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

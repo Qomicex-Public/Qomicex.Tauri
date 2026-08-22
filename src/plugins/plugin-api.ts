@@ -1,4 +1,5 @@
 import { API_BASE } from '../api/client.ts'
+import { openStream, createSseParser } from '../api/ipc.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
 import { resolveLang } from '../i18n/lang.ts'
@@ -185,34 +186,15 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       return res.json()
     },
     proxyFetchStream: async (req, onChunk, signal) => {
-      const res = await fetch(`${API_BASE}/plugins/proxy`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...req, stream: true }),
-        signal
-      })
-      if (!res.ok || !res.body) throw new Error(`Proxy stream failed: ${res.status}`)
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let idx: number
-        while ((idx = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 1)
-          const trimmed = line.trim()
-          if (trimmed.startsWith('data:')) {
-            onChunk(trimmed.slice(5).trim())
-          }
-        }
-      }
-      if (buffer.trim()) {
-        const trimmed = buffer.trim()
-        if (trimmed.startsWith('data:')) onChunk(trimmed.slice(5).trim())
-      }
+      const parser = createSseParser(onChunk)
+      const handle = openStream(
+        '/plugins/proxy',
+        parser.feed,
+        { method: 'POST', body: JSON.stringify({ ...req, stream: true }), signal },
+      )
+      await handle.done
+      parser.flush()
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     },
     registerMethod: (method, fn) => {
       const registry = (window as any).__pluginRegistry
