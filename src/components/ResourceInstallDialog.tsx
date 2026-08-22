@@ -13,6 +13,8 @@ import { loadSettings } from '../api/settings.ts'
 import { getInstalledFileNames, getModsMetadata, deleteMod } from '../api/instance-files.ts'
 import { startResourceDownload } from '../api/resource-download.ts'
 import { addTask, updateTask } from '../stores/downloadStore.ts'
+import { waitForCompletion } from '../lib/updateMods.ts'
+import { cacheInvalidate } from '../lib/simple-cache.ts'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import type { GameInstance, ModMetadata, ResourceVersion, ResolvedDependency } from '../types/index.ts'
@@ -260,12 +262,10 @@ export default function ResourceInstallDialog({
       try {
         const result = await startResourceDownload(selectedInstance.id, item.url, item.fileName, item.category)
         taskIds.push(result.taskId)
+        // 仅记录启动结果：start 成功 ≠ 下载完成，终态由下方 waitForCompletion 判定
         updateTask(batchId, {
           currentFile: item.name,
-          completedFiles: i + 1,
-          progress: ((i + 1) / allItems.length) * 100,
           batchTaskIds: [...taskIds],
-          status: i + 1 === allItems.length ? 'completed' : 'downloading',
         })
       } catch (e) {
         const errMsg = t('dialogs.resourceInstall.downloadFailedWith', { name: item.name, error: e instanceof Error ? e.message : t('dialogs.common.unknownError') })
@@ -277,9 +277,29 @@ export default function ResourceInstallDialog({
       }
     }
     setInstallProgress(null)
-    notify(t('dialogs.resourceInstall.installedDone', { name: resourceTitle }), 'success')
+    // 等待全部文件真正下载完成（并行轮询后端会话状态），聚合真实进度到 batch 任务
+    const prog = new Map<string, number>()
+    const statuses = await Promise.all(taskIds.map(id =>
+      waitForCompletion(id, t, undefined, p => {
+        prog.set(id, p.progress)
+        updateTask(batchId, { progress: [...prog.values()].reduce((a, b) => a + b, 0) / taskIds.length })
+      })
+    ))
+    const failedCount = statuses.filter(s => s !== 'completed').length
+    if (failedCount === 0) {
+      updateTask(batchId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+    } else {
+      updateTask(batchId, { status: 'failed', progress: 0, error: t('dialogs.common.downloadFailed') })
+    }
+    // 统一咽喉点：失效 mods 列表缓存（与模组更新路径同一语义）
+    cacheInvalidate(`api-instance-${selectedInstance.id}-mods`)
+    if (failedCount === 0) {
+      notify(t('dialogs.resourceInstall.installedDone', { name: resourceTitle }), 'success')
+      onClose()
+    } else {
+      notify(t('dialogs.common.downloadFailed'), 'error')
+    }
     setInstalling(false)
-    onClose()
   }, [selectedInstance, selectedVersion, deps, installedNames, installedByProjectId, category, resourceTitle, notify, onClose])
 
   return (

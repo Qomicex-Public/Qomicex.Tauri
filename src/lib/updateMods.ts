@@ -2,7 +2,7 @@ import { startResourceDownload, getResourceDownloadProgress } from '../api/resou
 import { deleteMod, invalidateModUpdatesCache } from '../api/instance-files.ts'
 import { addTask, updateTask } from '../stores/downloadStore.ts'
 import { cacheInvalidate } from './simple-cache.ts'
-import type { ModUpdateEntry } from '../types/index.ts'
+import type { ModUpdateEntry, ResourceDownloadState } from '../types/index.ts'
 
 const POLL_INTERVAL_MS = 800
 /** 外层总超时上限：足够覆盖任何正常模组下载，仅作兜底 */
@@ -30,7 +30,13 @@ function terminalUpdate(taskId: string, status: string, t: TFunc): void {
   }
 }
 
-async function waitForCompletion(taskId: string, t: TFunc, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<string> {
+/** 轮询后端下载会话直到终态；onProgress 用于调用方聚合展示（如 batch 进度条）。 */
+export async function waitForCompletion(
+  taskId: string,
+  t: TFunc,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  onProgress?: (p: ResourceDownloadState) => void,
+): Promise<string> {
   const deadline = Date.now() + timeoutMs
   let lastBytes = -1
   let lastMoveAt = Date.now()
@@ -59,6 +65,7 @@ async function waitForCompletion(taskId: string, t: TFunc, timeoutMs: number = D
       totalBytes: p.totalBytes,
       error: p.error || undefined,
     })
+    onProgress?.(p)
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
   }
 }
