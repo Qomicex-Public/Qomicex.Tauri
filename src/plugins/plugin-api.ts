@@ -186,12 +186,14 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       return res.json()
     },
     proxyFetchStream: async (req, onChunk, signal) => {
+      const parser = createSseParser(onChunk)
       const handle = openStream(
         '/plugins/proxy',
-        createSseParser(onChunk),
+        parser.feed,
         { method: 'POST', body: JSON.stringify({ ...req, stream: true }), signal },
       )
       await handle.done
+      parser.flush()
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     },
     registerMethod: (method, fn) => {

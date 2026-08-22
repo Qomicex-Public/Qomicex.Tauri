@@ -73,17 +73,30 @@ export interface StreamOptions {
   signal?: AbortSignal
 }
 
-/** SSE 行解析器：喂原始 chunk，按空行切分 data: 事件 */
-export function createSseParser(onData: (data: string) => void): (text: string) => void {
+/** SSE 行解析器：喂原始 chunk，按空行切分 data: 事件；flush 在流结束时吐出残留尾行 */
+export function createSseParser(onData: (data: string) => void): { feed: (text: string) => void; flush: () => void } {
   let buffer = ''
-  return text => {
-    buffer += text
-    let idx: number
-    while ((idx = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, idx).trim()
-      buffer = buffer.slice(idx + 1)
-      if (line.startsWith('data:')) onData(line.slice(5).trim())
-    }
+  const emitLine = (line: string) => {
+    const l = line.trim()
+    if (l.startsWith('data:')) onData(l.slice(5).trim())
+  }
+  return {
+    feed: text => {
+      buffer += text
+      let idx: number
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx)
+        buffer = buffer.slice(idx + 1)
+        emitLine(line)
+      }
+    },
+    flush: () => {
+      if (buffer.trim()) {
+        const rest = buffer
+        buffer = ''
+        emitLine(rest)
+      }
+    },
   }
 }
 

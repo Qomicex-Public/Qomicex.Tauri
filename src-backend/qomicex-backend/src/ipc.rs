@@ -21,14 +21,24 @@ use tower::Service;
 const MAX_FRAME_BODY: u32 = 1 << 30;
 
 #[cfg(windows)]
-pub async fn serve(app: Router, pipe_name: String) -> std::io::Result<()> {
+pub async fn serve(
+    app: Router,
+    pipe_name: String,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
         .create(&pipe_name)?;
     tracing::info!("qipc listening on named pipe {pipe_name}");
     loop {
-        server.connect().await?;
+        tokio::select! {
+            _ = shutdown.changed() => {
+                tracing::info!("qipc shutting down");
+                return Ok(());
+            }
+            r = server.connect() => r?,
+        }
         let client = server;
         server = ServerOptions::new().create(&pipe_name)?;
         let app = app.clone();
@@ -41,7 +51,11 @@ pub async fn serve(app: Router, pipe_name: String) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-pub async fn serve(app: Router, sock_path: String) -> std::io::Result<()> {
+pub async fn serve(
+    app: Router,
+    sock_path: String,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> std::io::Result<()> {
     use tokio::net::UnixListener;
     let _ = std::fs::remove_file(&sock_path); // 清理上次残留
     if let Some(parent) = std::path::Path::new(&sock_path).parent() {
@@ -50,7 +64,13 @@ pub async fn serve(app: Router, sock_path: String) -> std::io::Result<()> {
     let listener = UnixListener::bind(&sock_path)?;
     tracing::info!("qipc listening on unix socket {sock_path}");
     loop {
-        let (stream, _) = listener.accept().await?;
+        let (stream, _) = tokio::select! {
+            _ = shutdown.changed() => {
+                tracing::info!("qipc shutting down");
+                return Ok(());
+            }
+            r = listener.accept() => r?,
+        };
         let app = app.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_conn(app, stream).await {
@@ -85,22 +105,21 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<Q
     let mut cur = &buf[..];
 
     let method_len = read_u8(&mut cur)? as usize;
-    let method = Method::from_bytes(&cur[..method_len]).map_err(|e| bad("method", e))?;
-    cur = &cur[method_len..];
+    let method =
+        Method::from_bytes(take(&mut cur, method_len, "method")?).map_err(|e| bad("method", e))?;
     let path_len = read_u16(&mut cur)? as usize;
-    let path = std::str::from_utf8(&cur[..path_len])
+    let path = std::str::from_utf8(take(&mut cur, path_len, "path")?)
         .map_err(|e| bad("path", e))?
         .to_string();
-    cur = &cur[path_len..];
     let header_count = read_u16(&mut cur)?;
     let mut headers = Vec::with_capacity(header_count as usize);
     for _ in 0..header_count {
         let k_len = read_u16(&mut cur)? as usize;
-        let k = std::str::from_utf8(&cur[..k_len]).map_err(|e| bad("header name", e))?;
-        cur = &cur[k_len..];
+        let k = std::str::from_utf8(take(&mut cur, k_len, "header name")?)
+            .map_err(|e| bad("header name", e))?;
         let v_len = read_u16(&mut cur)? as usize;
-        let v = std::str::from_utf8(&cur[..v_len]).map_err(|e| bad("header value", e))?;
-        cur = &cur[v_len..];
+        let v = std::str::from_utf8(take(&mut cur, v_len, "header value")?)
+            .map_err(|e| bad("header value", e))?;
         headers.push((k.to_string(), v.to_string()));
     }
 
@@ -114,6 +133,16 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<Q
 
 fn bad(what: &str, e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, format!("bad {what}: {e}"))
+}
+
+/// 从缓冲区取出 n 字节；不足时返回 InvalidData（防御恶意/截断帧的越界切片）。
+fn take<'a>(b: &mut &'a [u8], n: usize, what: &str) -> std::io::Result<&'a [u8]> {
+    if b.len() < n {
+        return Err(bad(what, "truncated"));
+    }
+    let (head, rest) = b.split_at(n);
+    *b = rest;
+    Ok(head)
 }
 
 fn read_u8(b: &mut &[u8]) -> std::io::Result<u8> {
@@ -376,7 +405,9 @@ mod tests {
             .ok();
         let app = test_app();
         let name = pipe_name();
-        let server = tokio::spawn(serve(app, name.clone()));
+        // sender 必须保活：全部 drop 时 watch 的 changed() 立即就绪，serve 会直接退出
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // 缓冲 JSON 响应

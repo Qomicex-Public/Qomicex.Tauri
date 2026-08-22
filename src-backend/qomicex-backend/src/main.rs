@@ -81,6 +81,16 @@ async fn main() {
         .map(|v| v != "1")
         .unwrap_or(true);
 
+    // 共享 shutdown：TCP 的 graceful shutdown 与 qipc accept loop 同时退出，
+    // 避免双开场景下 tcp_task 结束后 pipe_task 永久挂起（进程无法退出）。
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let shutdown_for_pipe = shutdown_rx.clone();
+
+    let ctrl_c = async move {
+        tokio::signal::ctrl_c().await.ok();
+        let _ = shutdown_tx.send(true);
+    };
+
     let tcp_task = if tcp_enabled {
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
@@ -89,9 +99,7 @@ async fn main() {
         let app = app.clone();
         Some(tokio::spawn(async move {
             axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    tokio::signal::ctrl_c().await.ok();
-                })
+                .with_graceful_shutdown(ctrl_c)
                 .await
                 .expect("axum server error");
         }))
@@ -102,13 +110,17 @@ async fn main() {
     let pipe_task = pipe_name.map(|name| {
         let app = app.clone();
         tokio::spawn(async move {
-            if let Err(e) = ipc::serve(app, name).await {
+            if let Err(e) = ipc::serve(app, name, shutdown_for_pipe).await {
                 tracing::error!("qipc server failed: {e}");
             }
         })
     });
     drop(app);
 
+    if !tcp_enabled {
+        // 无 TCP 时没有 graceful shutdown 触发源，直接监听 Ctrl-C
+        tokio::signal::ctrl_c().await.ok();
+    }
     if let Some(t) = tcp_task {
         t.await.expect("axum server error");
     }

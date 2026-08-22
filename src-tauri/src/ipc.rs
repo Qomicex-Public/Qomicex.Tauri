@@ -20,13 +20,12 @@ impl IpcPipe {
     }
 }
 
-/// 流式任务注册表：id → JoinHandle，供 abort
-pub struct StreamRegistry(pub Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>);
-impl Default for StreamRegistry {
-    fn default() -> Self {
-        Self(Mutex::new(HashMap::new()))
-    }
-}
+/// 流式任务注册表：id → JoinHandle，供 abort。
+/// Arc 内层使运行中的任务能在结束时自行移除条目（防止注册表随流次数无限增长）。
+#[derive(Clone, Default)]
+pub struct StreamRegistry(
+    pub std::sync::Arc<Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>>,
+);
 
 pub fn pipe_name_for_pid(pid: u32) -> String {
     #[cfg(windows)]
@@ -310,13 +309,17 @@ pub async fn ipc_stream(
     on_event: Channel<String>,
 ) -> Result<String, String> {
     let pipe_name = pipe.get().ok_or("IPC_UNAVAILABLE")?;
+    let registry = state.0.clone();
+    let id2 = id.clone();
     let handle = tauri::async_runtime::spawn(async move {
         let emit = |e: String| on_event.send(e);
-        let result = run_stream(&pipe_name, req, emit).await;
+        let result = run_stream(&pipe_name, req, &emit).await;
         if let Err(e) = result {
             let _ =
                 on_event.send(serde_json::json!({ "t": "error", "d": e.to_string() }).to_string());
         }
+        // 任务结束（完成/出错/被 abort）后移除注册表条目，防泄漏
+        registry.lock().unwrap().remove(&id2);
     });
     state.0.lock().unwrap().insert(id.clone(), handle);
     Ok(id)
@@ -325,7 +328,7 @@ pub async fn ipc_stream(
 async fn run_stream(
     pipe_name: &str,
     req: StreamRequest,
-    emit: impl Fn(String) -> Result<(), tauri::Error>,
+    emit: &(impl Fn(String) -> Result<(), tauri::Error> + Sync),
 ) -> std::io::Result<()> {
     let method = req.method.unwrap_or_else(|| "GET".into());
     let headers: Vec<(String, String)> = req

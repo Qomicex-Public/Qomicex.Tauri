@@ -78,7 +78,7 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
 
   useEffect(() => {
     let handle: StreamHandle | null = null
-    const feed = createSseParser(text => {
+    const parser = createSseParser(text => {
       try {
         const d = JSON.parse(text)
         if (d.type === 'snapshot') {
@@ -93,11 +93,11 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
         }
       } catch { /* ignore malformed frame */ }
     })
-    handle = openStream(`/instance/${encodeURIComponent(instanceId)}/logs/stream`, feed)
+    handle = openStream(`/instance/${encodeURIComponent(instanceId)}/logs/stream`, parser.feed)
     setConnected(true)
     // 流断开（游戏退出/后端关闭）→ 断线重连拿最新 snapshot
     handle.done.then(
-      () => setConnected(false),
+      () => { parser.flush(); setConnected(false) },
       () => setConnected(false),
     )
     return () => handle?.close()
