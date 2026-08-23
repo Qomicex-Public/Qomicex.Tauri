@@ -120,6 +120,11 @@ function getSourceLabel(source: string): string {
   return map[source] ?? source
 }
 
+// 标签筛选仅对 Modrinth（及 all 聚合中的 Modrinth 部分）的 mod 分类生效。
+function tagsSupported(source: string, category: string): boolean {
+  return (source === 'modrinth' || source === 'all') && category === 'mod'
+}
+
 function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string, tags?: string[]): string {
   const params = new URLSearchParams()
   params.set('source', item.source)
@@ -259,9 +264,9 @@ export default function ResourceCenter() {
   const [gameVersion, setGameVersion] = useState(() => urlGameVersion ?? (!freshEntry ? snap?.gameVersion : undefined) ?? '')
   const [loader, setLoader] = useState(() => (urlLoader ?? (!freshEntry ? snap?.loader : undefined) ?? '').toLowerCase())
   const [tags, setTags] = useState<string[]>(() => {
-    if (urlTags) return urlTags.split(',').map((t) => t.trim()).filter(Boolean)
-    if (!freshEntry && snap?.tags) return snap.tags
-    return []
+    const raw = urlTags ? urlTags.split(',').map((t) => t.trim()).filter(Boolean)
+      : (!freshEntry && snap?.tags ? snap.tags : [])
+    return tagsSupported(categoryInit, source) ? raw : []
   })
   const instanceId = searchParams.get('instanceId') ?? ''
   const [items, setItems] = useState<ResourceItem[]>(() => freshEntry ? [] : (snap?.items ?? []))
@@ -288,7 +293,7 @@ export default function ResourceCenter() {
     if (keyword) params.set('keyword', keyword)
     if (gameVersion) params.set('gameVersion', gameVersion)
     if (loader) params.set('loader', loader)
-    if (tags.length > 0) params.set('tags', tags.join(','))
+    if (tags.length > 0 && tagsSupported(source, category)) params.set('tags', tags.join(','))
     if (instanceId) params.set('instanceId', instanceId)
     setSearchParams(params, { replace: true })
   }, [category, keyword, setSearchParams, sort, source, gameVersion, loader, tags, instanceId])
