@@ -361,11 +361,12 @@ fn cf_tag_alias(s: &str) -> Option<&'static str> {
     }
 }
 
-/// 全局缓存的 CurseForge 分类表（slug/name 规范化 → categoryId）。首次用时拉取，
-/// 之后复用；拉取失败则视为空表，标签对该次搜索不生效（与未支持时行为一致）。
-fn cf_category_cache() -> &'static Mutex<Option<HashMap<String, i32>>> {
-    static CACHE: OnceLock<Mutex<Option<HashMap<String, i32>>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(None))
+/// 全局缓存的 CurseForge 分类表，按 `class_id` 分键（slug/name 规范化 → categoryId）。
+/// CurseForge 的分类 ID 是类别相关的，跨类别复用会发错 ID，故必须按类别隔离缓存。
+/// 首次用时按类别拉取并缓存，之后复用；拉取失败则视为空表。
+fn cf_category_cache() -> &'static Mutex<HashMap<Option<i32>, HashMap<String, i32>>> {
+    static CACHE: OnceLock<Mutex<HashMap<Option<i32>, HashMap<String, i32>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 async fn fetch_cf_categories(
@@ -413,13 +414,16 @@ async fn cf_resolve_category_ids(
     }
     let cached = {
         let g = cf_category_cache().lock().unwrap();
-        g.clone()
+        g.get(&class_id).cloned()
     };
     let map = match cached {
         Some(m) => m,
         None => {
             let m = fetch_cf_categories(client, api_key, class_id).await;
-            *cf_category_cache().lock().unwrap() = Some(m.clone());
+            cf_category_cache()
+                .lock()
+                .unwrap()
+                .insert(class_id, m.clone());
             m
         }
     };
