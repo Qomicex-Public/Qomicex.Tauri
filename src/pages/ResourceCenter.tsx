@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowUpRightFromSquare, faDownload, faMagnifyingGlass, faRotate, faTag, faUser, faXmark } from '@fortawesome/free-solid-svg-icons'
@@ -16,6 +16,7 @@ import { batchLookupChineseNames } from '../api/mcmod.ts'
 import type { ResourceItem } from '../types/index.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
+import ModpackQuickInstallDialog from '../components/ModpackQuickInstallDialog.tsx'
 import { Tabs } from '../components/ui'
 
 interface PageCache {
@@ -215,7 +216,6 @@ function ResourceCard({
 }
 
 export default function ResourceCenter() {
-  const navigate = useNavigate()
   const { t } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const snap = savedSnapshot
@@ -252,6 +252,7 @@ export default function ResourceCenter() {
   const [isReplacing, setIsReplacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [installDialogItem, setInstallDialogItem] = useState<ResourceItem | null>(null)
+  const [modpackInstallItem, setModpackInstallItem] = useState<ResourceItem | null>(null)
   const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => freshEntry ? {} : (snap?.cnNames ?? {}))
   const pageSize = 20
 
@@ -373,7 +374,7 @@ export default function ResourceCenter() {
 
   const handleInstall = (item: ResourceItem) => {
     if (category === 'modpack') {
-      navigate(buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId), { state: { iconUrl: item.iconUrl } })
+      setModpackInstallItem(item)
     } else {
       setInstallDialogItem(item)
     }
@@ -523,6 +524,17 @@ export default function ResourceCenter() {
           source={installDialogItem.source}
           category={category}
           instanceId={instanceId}
+        />
+      )}
+
+      {modpackInstallItem && (
+        <ModpackQuickInstallDialog
+          open={true}
+          onClose={() => setModpackInstallItem(null)}
+          modpackName={modpackInstallItem.title}
+          projectId={modpackInstallItem.id}
+          source={modpackInstallItem.source}
+          iconUrl={modpackInstallItem.iconUrl}
         />
       )}
     </PageShell>
