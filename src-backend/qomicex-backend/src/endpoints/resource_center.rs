@@ -160,6 +160,9 @@ struct SearchQuery {
     category: Option<String>,
     #[serde(default)]
     sort: Option<String>,
+    /// 逗号分隔的标签（Modrinth categories facet），如 `library,optimization`。
+    #[serde(default)]
+    tags: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -335,6 +338,7 @@ async fn search(
     let game_version = q.game_version.clone();
     let loader = q.loader.clone();
     let sort = q.sort.clone();
+    let tags = q.tags.clone();
     let page = q.page.unwrap_or(1);
     let page_size = q.page_size.unwrap_or(20);
 
@@ -361,6 +365,7 @@ async fn search(
             game_version.as_deref(),
             loader.as_deref(),
             sort.as_deref(),
+            tags.as_deref(),
             page,
             page_size,
         )
@@ -386,6 +391,7 @@ async fn search(
             game_version.as_deref(),
             loader.as_deref(),
             sort.as_deref(),
+            tags.as_deref(),
             page,
             page_size,
         )
@@ -413,9 +419,25 @@ async fn search_one(
     game_version: Option<&str>,
     loader: Option<&str>,
     sort: Option<&str>,
+    tags: Option<&str>,
     page: i32,
     page_size: i32,
 ) -> ApiResult<(Vec<ResourceItemDto>, i32)> {
+    // 标签仅 Modrinth 支持（categories facet，string slug）；CurseForge 的
+    // categoryIds 为数字 ID，这里不映射，tags 对非 Modrinth 源忽略。
+    let tag_vec: Vec<String> = tags
+        .map(|t| {
+            t.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let categories: Option<&[String]> = if tag_vec.is_empty() {
+        None
+    } else {
+        Some(&tag_vec)
+    };
     if source.eq_ignore_ascii_case("modrinth") {
         let mr = state.core.create_modrinth_source();
         let loaders: Vec<String> = loader.map(|l| vec![l.to_string()]).unwrap_or_default();
@@ -424,7 +446,7 @@ async fn search_one(
                 keyword,
                 category,
                 game_version,
-                None,
+                categories,
                 if loaders.is_empty() {
                     None
                 } else {
