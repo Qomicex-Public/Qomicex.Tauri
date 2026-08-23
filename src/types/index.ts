@@ -364,6 +364,12 @@ export interface RepairResourcesResult {
   missingCount: number
 }
 
+export interface InstallStepInfo {
+  id: string
+  status: 'pending' | 'active' | 'done' | 'failed'
+  percent?: number
+}
+
 export interface InstallProgressResponse {
   instanceId: string
   status: string
@@ -401,6 +407,8 @@ export interface DownloadTask {
   completedAt?: string
   icon?: string
   instanceId?: string
+  /** 后端安装管线分步状态（game/modpack 任务；SSE 下发） */
+  steps?: InstallStepInfo[]
   /** for file downloads */
   taskId?: string
   /** for batch tasks - all child taskIds */

@@ -132,9 +132,44 @@ pub async fn run_install_pipeline(
         .map(|s| !s.is_empty())
         .unwrap_or(false);
 
+    // 分步计划（下载中心卡片步骤列表的数据源）。按入参静态推导各阶段是否出现；
+    // 整合包外层管线已定义计划时 define_steps 为 no-op，本管线的 begin_step 因
+    // id 不在外层计划中同样为 no-op（外层步骤状态不受嵌套阶段影响）。
+    let mut resolved_addons = merge_addons(&addons, loader.as_deref());
+    let has_loader_phase = has_loader && loader_version.is_some();
+    let optifine_standalone = optifine_version
+        .as_deref()
+        .map(|o| !o.trim().is_empty())
+        .unwrap_or(false)
+        && !is_forge
+        && !is_neoforge
+        && !has_loader;
+    {
+        let mut plan: Vec<&str> = vec!["fetch-json"];
+        if is_forge || is_neoforge || is_cleanroom {
+            plan.push("installer");
+        }
+        plan.push("game-files");
+        if has_loader_phase {
+            plan.push("loader-libs");
+        }
+        if optifine_standalone {
+            plan.push("install-optifine");
+        }
+        if !resolved_addons.is_empty() {
+            plan.push("download-addons");
+        }
+        if has_loader_phase {
+            plan.push("install-loader");
+        }
+        plan.push("finalize");
+        handle.define_steps(&plan);
+    }
+
     check_cancel(handle)?;
     handle.set_status(InstallStatus::Downloading);
     handle.set_stage("fetching-json");
+    handle.begin_step("fetch-json");
     handle.set_progress(0.0);
 
     // === Phase 1: 版本清单 + 原始版本 JSON ===
@@ -165,6 +200,7 @@ pub async fn run_install_pipeline(
     if is_forge || is_neoforge || is_cleanroom {
         handle.set_stage("downloading-installer");
         handle.set_progress(4.0);
+        handle.begin_step("installer");
 
         let loader_type = if is_forge {
             ModLoaderType::Forge
@@ -225,6 +261,7 @@ pub async fn run_install_pipeline(
     // === Phase 3: 扫描 + 下载 vanilla 基础文件 ===
     handle.set_stage("scanning-base");
     handle.set_progress(5.0);
+    handle.begin_step("game-files");
     let miss_files = install_core
         .locator()
         .get_miss_files_from_json(&base_json_content)
@@ -259,6 +296,7 @@ pub async fn run_install_pipeline(
     if has_loader && loader_version.is_some() {
         handle.set_stage("scanning-loader-libs");
         handle.set_progress(35.0);
+        handle.begin_step("loader-libs");
         let miss_libs = get_miss_loader_libraries(
             loader.as_deref().unwrap_or(""),
             loader_version.as_deref().unwrap_or(""),
@@ -295,7 +333,7 @@ pub async fn run_install_pipeline(
     }
 
     // === Goal 2: 合并 addons（用户 + 加载器默认）===
-    let mut resolved_addons = merge_addons(&addons, loader.as_deref());
+    // resolved_addons 已在计划推导时合并（见管线开头）
 
     // === Goal 3: OptiFine 特殊路径 ===
     if let Some(of) = optifine_version.as_deref() {
@@ -309,6 +347,7 @@ pub async fn run_install_pipeline(
                 // NotSupportedException；此处补全 optifine case）
                 handle.set_stage("installing-optifine");
                 handle.set_progress(70.0);
+                handle.begin_step("install-optifine");
                 install_loader(
                     &install_core,
                     &version_dir_name,
@@ -331,6 +370,7 @@ pub async fn run_install_pipeline(
     if !resolved_addons.is_empty() {
         handle.set_stage("downloading-addons");
         handle.set_progress(65.0);
+        handle.begin_step("download-addons");
         all_additional_files.extend(
             resolve_addons(
                 &http_client,
@@ -383,6 +423,7 @@ pub async fn run_install_pipeline(
     if has_loader && loader_version.is_some() {
         handle.set_stage("installing-loader");
         handle.set_progress(88.0);
+        handle.begin_step("install-loader");
         install_loader(
             &install_core,
             &version_dir_name,
@@ -403,6 +444,7 @@ pub async fn run_install_pipeline(
     // === Phase 5: 校验主 jar ===
     handle.set_stage("verifying-jar");
     handle.set_progress(92.0);
+    handle.begin_step("finalize");
     let miss_jar = install_core
         .locator()
         .get_miss_main_jar_from_json(&base_json_content)
@@ -1097,6 +1139,12 @@ pub(crate) async fn download_batch(
             f.current_file = current_file;
             // 当前批次（文件）的真实下载进度 0-100；批次结束清 0（阶段即将切换）
             f.current_file_progress = if done >= total { 0.0 } else { pct_in * 100.0 };
+            // 活跃步骤的精确百分比（同一字节插值源；无活跃步骤时为 no-op）
+            if done >= total {
+                f.set_active_step_percent(100.0);
+            } else {
+                f.set_active_step_percent(pct_in * 100.0);
+            }
             f.speed = current_speed;
             if paused_now {
                 f.stage = "paused".to_string();

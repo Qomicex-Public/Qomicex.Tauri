@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { openStream, createSseParser } from '../api/ipc.ts'
+import type { InstallStepInfo } from '../types/index.ts'
 
 export interface InstallState {
   instanceId: string
@@ -14,6 +15,7 @@ export interface InstallState {
   currentFileProgress: number
   speed: number
   isPaused: boolean
+  steps?: InstallStepInfo[]
 }
 
 export interface JavaDownloadState {

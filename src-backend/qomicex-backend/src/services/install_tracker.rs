@@ -79,6 +79,30 @@ impl InstallStatus {
     }
 }
 
+/// 安装管线分步状态（下载中心卡片渲染步骤列表的数据源）。
+///
+/// `id` 是稳定标识（如 "fetch-json"/"installer"），文案由前端 i18n 映射；
+/// `percent` 仅在 active 步骤有字节级进度时由 download_batch 推进（0-100），
+/// 扫描/安装等无字节进度的阶段保持 0，前端不渲染百分比。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallStep {
+    pub id: String,
+    /// pending | active | done | failed
+    pub status: String,
+    pub percent: f64,
+}
+
+impl InstallStep {
+    fn pending(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            status: "pending".to_string(),
+            percent: 0.0,
+        }
+    }
+}
+
 /// 对外进度 DTO（对应源 `InstallProgressResponse` 记录，字段逐一对齐，camelCase）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +121,9 @@ pub struct InstallProgress {
     pub speed: f64,
     pub is_paused: bool,
     pub stage: String,
+    /// 分步状态；未定义计划的旧任务/其他 kind 为空数组（序列化时省略）。
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub steps: Vec<InstallStep>,
 }
 
 /// 任务句柄（runner 与调用方读写进度的入口，对应源 `InstallState`）。
@@ -118,6 +145,24 @@ impl InstallHandle {
 
     pub fn set_stage(&self, stage: &str) {
         self.update(|f| f.stage = stage.to_string());
+    }
+
+    /// 定义分步计划（幂等：仅当尚未定义时生效）。
+    ///
+    /// 整合包管线先定义外层计划，内部嵌套的 `run_install_pipeline` 再次调用时
+    /// 不会覆盖外层计划；嵌套管线的 `begin_step` 因 id 不在外层计划中而为 no-op。
+    pub fn define_steps(&self, ids: &[&str]) {
+        self.update(|f| {
+            if f.steps.is_empty() && !ids.is_empty() {
+                f.steps = ids.iter().map(|id| InstallStep::pending(id)).collect();
+            }
+        });
+    }
+
+    /// 推进步骤：`id` 之前的全部置 done(100%)，`id` 置 active。
+    /// `id` 不在计划中（嵌套管线的内部阶段）时不做任何事。
+    pub fn begin_step(&self, id: &str) {
+        self.update(|f| f.begin_step(id));
     }
 
     pub fn set_progress(&self, progress: f64) {
@@ -168,6 +213,7 @@ pub struct ProgressField {
     pub failed_files: i32,
     pub current_file_progress: f64,
     pub speed: f64,
+    pub steps: Vec<InstallStep>,
 }
 
 impl ProgressField {
@@ -185,11 +231,49 @@ impl ProgressField {
             speed: self.speed,
             is_paused,
             stage: self.stage.clone(),
+            steps: self.steps.clone(),
         }
     }
 
     pub fn set_status(&mut self, status: InstallStatus) {
         self.status = status.as_str().to_string();
+    }
+
+    /// 推进步骤（见 `InstallHandle::begin_step`）。
+    pub fn begin_step(&mut self, id: &str) {
+        let Some(idx) = self.steps.iter().position(|s| s.id == id) else {
+            return;
+        };
+        for step in self.steps.iter_mut().take(idx) {
+            if step.status != "failed" {
+                step.status = "done".to_string();
+                step.percent = 100.0;
+            }
+        }
+        if let Some(step) = self.steps.get_mut(idx) {
+            step.status = "active".to_string();
+        }
+    }
+
+    /// 将活跃步骤的百分比推进到 `percent`（download_batch 字节插值处调用）。
+    pub fn set_active_step_percent(&mut self, percent: f64) {
+        for step in self.steps.iter_mut() {
+            if step.status == "active" {
+                step.percent = percent.clamp(0.0, 100.0);
+            }
+        }
+    }
+
+    /// 任务终态收尾：成功 → 全部 done；失败 → 活跃/未完成步置 failed。
+    pub fn finish_steps(&mut self, success: bool) {
+        for step in self.steps.iter_mut() {
+            if success {
+                step.status = "done".to_string();
+                step.percent = 100.0;
+            } else if step.status == "active" || step.status == "pending" {
+                step.status = "failed".to_string();
+            }
+        }
     }
 
     pub fn is_terminal(&self) -> bool {
@@ -228,6 +312,7 @@ impl InstallState {
                 failed_files: 0,
                 current_file_progress: 0.0,
                 speed: 0.0,
+                steps: Vec::new(),
             }),
             cancelled: AtomicBool::new(false),
             paused: AtomicBool::new(false),
@@ -307,6 +392,7 @@ impl InstallTracker {
                             f.stage = InstallStatus::Completed.as_str().to_string();
                             f.progress = 100.0;
                             f.current_file.clear();
+                            f.finish_steps(true);
                         });
                         tracing::info!(instance = %id_owned, kind = %kind_owned, "install: completed");
                     }
@@ -314,6 +400,7 @@ impl InstallTracker {
                         handle.update(|f| {
                             f.set_status(InstallStatus::Failed);
                             f.error = Some(msg.clone());
+                            f.finish_steps(false);
                         });
                         tracing::error!(instance = %id_owned, kind = %kind_owned, error = %msg, "install: failed");
                     }
@@ -441,5 +528,129 @@ impl std::fmt::Debug for InstallTracker {
         f.debug_struct("InstallTracker")
             .field("states", &"<map>")
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造一个仅含 ProgressField 的最小环境（绕过 tokio broadcast）。
+    fn field() -> ProgressField {
+        ProgressField {
+            status: "downloading".to_string(),
+            progress: 0.0,
+            error: None,
+            stage: String::new(),
+            current_file: String::new(),
+            total_files: 0,
+            completed_files: 0,
+            failed_files: 0,
+            current_file_progress: 0.0,
+            speed: 0.0,
+            steps: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn define_steps_is_idempotent() {
+        let (tx, _rx) = broadcast::channel(8);
+        let state = InstallState::new(
+            "t".to_string(),
+            "install".to_string(),
+            InstallStatus::Downloading,
+            "",
+            tx,
+        );
+        let handle = InstallHandle(std::sync::Arc::new(state));
+        handle.define_steps(&["download-modpack"]);
+        // 嵌套管线再次定义不得覆盖外层计划
+        handle.define_steps(&["fetch-json", "game-files"]);
+        let snap = handle.snapshot();
+        assert_eq!(snap.steps.len(), 1);
+        assert_eq!(snap.steps[0].id, "download-modpack");
+    }
+
+    #[test]
+    fn begin_step_marks_previous_done_and_self_active() {
+        let mut f = field();
+        f.steps = ["a", "b", "c"]
+            .iter()
+            .map(|id| InstallStep::pending(id))
+            .collect();
+        f.begin_step("b");
+        assert_eq!(f.steps[0].status, "done");
+        assert_eq!(f.steps[0].percent, 100.0);
+        assert_eq!(f.steps[1].status, "active");
+        assert_eq!(f.steps[2].status, "pending");
+
+        f.set_active_step_percent(42.0);
+        assert_eq!(f.steps[1].percent, 42.0);
+        assert_eq!(f.steps[2].percent, 0.0);
+    }
+
+    #[test]
+    fn begin_step_unknown_id_is_noop() {
+        let mut f = field();
+        f.steps = vec![InstallStep::pending("install-game")];
+        f.begin_step("game-files");
+        assert!(f.steps.iter().all(|s| s.status == "pending"));
+    }
+
+    #[test]
+    fn finish_steps_terminal_states() {
+        let mut f = field();
+        f.steps = ["a", "b"]
+            .iter()
+            .map(|id| InstallStep::pending(id))
+            .collect();
+        f.begin_step("b");
+        f.finish_steps(true);
+        assert!(f
+            .steps
+            .iter()
+            .all(|s| s.status == "done" && s.percent == 100.0));
+
+        let mut f = field();
+        f.steps = ["a", "b"]
+            .iter()
+            .map(|id| InstallStep::pending(id))
+            .collect();
+        f.begin_step("b");
+        f.finish_steps(false);
+        assert_eq!(f.steps[0].status, "done");
+        assert_eq!(f.steps[1].status, "failed");
+    }
+
+    #[test]
+    fn install_progress_serialization_omits_empty_steps() {
+        let p = InstallProgress {
+            instance_id: "x".to_string(),
+            status: "downloading".to_string(),
+            progress: 10.0,
+            error: None,
+            total_files: 0,
+            completed_files: 0,
+            failed_files: 0,
+            current_file: String::new(),
+            current_file_progress: 0.0,
+            speed: 0.0,
+            is_paused: false,
+            stage: "queued".to_string(),
+            steps: Vec::new(),
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(json.get("steps").is_none());
+
+        let mut p2 = p.clone();
+        p2.steps = vec![InstallStep {
+            id: "fetch-json".to_string(),
+            status: "active".to_string(),
+            percent: 30.0,
+        }];
+        let json2 = serde_json::to_value(&p2).unwrap();
+        assert_eq!(json2["steps"][0]["id"], "fetch-json");
+        assert_eq!(json2["steps"][0]["status"], "active");
+        assert_eq!(json2["steps"][0]["percent"], 30.0);
     }
 }

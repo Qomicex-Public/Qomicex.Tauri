@@ -914,12 +914,34 @@ pub(crate) async fn run_modpack_pipeline(
     let mut zip_path: Option<PathBuf> = None;
     let mut parsed: Option<ParsedModpack> = None;
 
+    // 分步计划（下载中心卡片步骤列表）。本地导入跳过包体下载/解析两步；
+    // 嵌套 run_install_pipeline 的内部阶段 id 不在本计划中，begin_step 为 no-op，
+    // 其下载批次仍会把字节百分比推进到活跃的 "install-game" 步骤上。
+    let mut plan: Vec<&str> = if local_pack_path.is_some() {
+        vec!["install-game", "download-files", "overrides"]
+    } else {
+        vec![
+            "download-modpack",
+            "parse-modpack",
+            "install-game",
+            "download-files",
+            "overrides",
+        ]
+    };
+    // FTB 等源无 zip 包体、无 overrides 释放段，计划中剔除该步（恒为末位）
+    let has_overrides = matches!(src.as_str(), "modrinth" | "curseforge" | "qml");
+    if !has_overrides {
+        plan.pop();
+    }
+    handle.define_steps(&plan);
+
     // === 1. 获取整合包包体（本地导入直接用已上传/给定文件；在线下载）===
     if let Some(local) = local_pack_path {
         zip_path = Some(PathBuf::from(local));
     } else if src == "modrinth" || src == "curseforge" {
         handle.set_stage("downloading-modpack");
         handle.set_progress(5.0);
+        handle.begin_step("download-modpack");
         let files = modpack_files.ok_or("整合包下载链接缺失")?;
         let first = files.first().ok_or("整合包下载链接缺失")?;
         let url = first
@@ -949,6 +971,7 @@ pub(crate) async fn run_modpack_pipeline(
         // === 2. 解析 manifest，补全游戏版本/加载器 ==="
         handle.set_stage("parsing-modpack");
         handle.set_progress(27.0);
+        handle.begin_step("parse-modpack");
         parsed = Some(if src == "modrinth" {
             parse_modrinth_index(&path)
                 .map_err(|e| format!("解析 modrinth.index.json 失败: {e}"))?
@@ -988,6 +1011,7 @@ pub(crate) async fn run_modpack_pipeline(
     };
 
     // === 4. 装游戏本体 + 加载器（复用实例安装流水线）===
+    handle.begin_step("install-game");
     handle.update(|f| {
         f.set_status(InstallStatus::Installing);
         f.current_file = format!("安装 Minecraft {game_version} + {loader}", loader = loader);
@@ -1009,6 +1033,7 @@ pub(crate) async fn run_modpack_pipeline(
     // === 5. 下载 mods / 整合包文件 ===
     handle.set_stage("modpack-files");
     handle.set_progress(68.0);
+    handle.begin_step("download-files");
     match src.as_str() {
         "modrinth" => {
             let p = parsed.as_ref().expect("modrinth 必有解析结果");
@@ -1171,6 +1196,7 @@ pub(crate) async fn run_modpack_pipeline(
     if src == "modrinth" || src == "curseforge" {
         handle.set_stage("modpack-overrides");
         handle.set_progress(92.0);
+        handle.begin_step("overrides");
         let factory = DefaultInstallerFactory;
         let zip_str = zip_path
             .as_ref()
@@ -1188,6 +1214,7 @@ pub(crate) async fn run_modpack_pipeline(
         // QML 结构简单（qmodpack.index.json + overrides/**），自行释放 overrides
         handle.set_stage("modpack-overrides");
         handle.set_progress(92.0);
+        handle.begin_step("overrides");
         let zip_str = zip_path
             .as_ref()
             .and_then(|p| p.to_str())

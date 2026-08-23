@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer, faCoffee } from '@fortawesome/free-solid-svg-icons'
+import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer, faCoffee, faCircleCheck, faListCheck } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { Button } from '../components/ui'
@@ -14,6 +14,9 @@ import { cancelResourceDownload, getResourceDownloadProgress } from '../api/reso
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
 import { useI18n } from '../i18n/index.tsx'
+import { formatBytes } from '../lib/download-format.ts'
+import InstallStepsList from '../components/InstallStepsList.tsx'
+import DownloadSpeedGraph from '../components/DownloadSpeedGraph.tsx'
 
 import type { DownloadTask } from '../types/index.ts'
 import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
@@ -38,22 +41,6 @@ function formatDate(dateStr: string): string {
   } catch { return dateStr }
 }
 
-function formatSpeed(bytesPerSec: number): string {
-  if (bytesPerSec <= 0) return ''
-  if (bytesPerSec >= 1_073_741_824) return `${(bytesPerSec / 1_073_741_824).toFixed(1)} GB/s`
-  if (bytesPerSec >= 1_048_576) return `${(bytesPerSec / 1_048_576).toFixed(1)} MB/s`
-  if (bytesPerSec >= 1024) return `${(bytesPerSec / 1024).toFixed(0)} KB/s`
-  return `${bytesPerSec.toFixed(0)} B/s`
-}
-
-function formatBytes(bytes: number | undefined): string {
-  if (bytes === undefined || bytes <= 0) return ''
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${bytes.toFixed(0)} B`
-}
-
 /** Re-verify an SSE-absent file task at most this often, at most this many times. */
 const STALE_FILE_RECHECK_MS = 2000
 const STALE_FILE_MAX_CHECKS = 10
@@ -67,17 +54,22 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   cancelled: { label: 'cancelled', color: 'text-gray-400 bg-gray-500/10 border-gray-500/25' },
 }
 
+/** 后端 install/modpack 管线实际会下发的 stage 值（install_service.rs / modpack.rs）。
+ *  仅作为 t(`downloads.stage.*`) 的存在性白名单；未列出时回退通用文案。 */
 const STAGE_LABELS: Record<string, string> = {
   'queued': 'queued',
-  'downloading-json': 'downloading-json',
-  'downloading': 'downloading',
-  'downloading-libraries': 'downloading-libraries',
-  'downloading-assets': 'downloading-assets',
-  'downloading-mainjar': 'downloading-mainjar',
-  'downloading-loader': 'downloading-loader',
+  'fetching-json': 'fetching-json',
+  'downloading-installer': 'downloading-installer',
+  'scanning-base': 'scanning-base',
+  'downloading-base': 'downloading-base',
+  'scanning-loader-libs': 'scanning-loader-libs',
   'downloading-loader-libs': 'downloading-loader-libs',
-  'installing-loader': 'installing-loader',
+  'installing-optifine': 'installing-optifine',
   'downloading-addons': 'downloading-addons',
+  'downloading-additional-files': 'downloading-additional-files',
+  'installing-loader': 'installing-loader',
+  'verifying-jar': 'verifying-jar',
+  'finishing': 'finishing',
   'downloading-modpack': 'downloading-modpack',
   'parsing-modpack': 'parsing-modpack',
   'modpack-files': 'modpack-files',
@@ -228,6 +220,7 @@ export default function DownloadCenter() {
             totalFiles: match.totalFiles || undefined,
             completedFiles: match.completedFiles || undefined,
             currentFileProgress: match.currentFileProgress,
+            steps: match.steps,
             error: match.error || undefined,
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
           })
@@ -333,6 +326,10 @@ export default function DownloadCenter() {
             const cfg = STATUS_CONFIG[task.status]
             const isActive = task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'
             const safeIcon = getSafeIconDataUrl(task.icon)
+            const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
+            const stepsLive = task.status === 'downloading' || task.status === 'paused'
+            const stepsDoneCount = steps?.filter((s) => s.status === 'done').length ?? 0
+            const showSpeedGraph = task.status === 'downloading' || task.status === 'paused'
             return (
               <div key={task.id} className="group glass-surface rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
                 <div className="flex items-start justify-between gap-4">
@@ -478,6 +475,29 @@ export default function DownloadCenter() {
                       style={{ width: `${task.progress}%` }}
                     />
                   </div>
+                  {(steps || showSpeedGraph) && (
+                    <div className="flex items-start gap-4 pt-1">
+                      {steps && (stepsLive ? (
+                        <InstallStepsList steps={steps} className="min-w-0 flex-1" />
+                      ) : (
+                        <div className={cn(
+                          'flex min-w-0 flex-1 items-center gap-1.5 text-xs',
+                          task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-muted-foreground'
+                        )}>
+                          <FontAwesomeIcon icon={task.status === 'completed' ? faCircleCheck : faListCheck} className="h-3 w-3 shrink-0" />
+                          <span className="truncate">
+                            {t('downloads.stepsDone', { done: stepsDoneCount, total: steps.length })}
+                          </span>
+                        </div>
+                      ))}
+                      {showSpeedGraph && (
+                        <DownloadSpeedGraph
+                          speed={task.speed ?? 0}
+                          className={cn('w-44 shrink-0', task.status === 'paused' ? 'text-amber-400' : 'text-primary')}
+                        />
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground/60">
                     <span className="min-w-0 truncate">
                       {task.status === 'completed' ? t('downloads.statusText.done') :
@@ -502,7 +522,6 @@ export default function DownloadCenter() {
                       {task.totalBytes !== undefined && task.totalBytes > 0 && (
                         <span className="tabular-nums">{formatBytes(task.downloadedBytes)} / {formatBytes(task.totalBytes)}</span>
                       )}
-                      {task.speed !== undefined && task.speed > 0 && <span className="tabular-nums">{formatSpeed(task.speed)}</span>}
                       {task.status === 'downloading' && task.progress > 0 && <span className="tabular-nums">{task.progress}%</span>}
                     </span>
                   </div>
