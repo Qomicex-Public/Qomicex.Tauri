@@ -1832,21 +1832,21 @@ export default function Settings() {
                           <FontAwesomeIcon icon={faImage} className="h-3 w-3 text-foreground" />
                         </button>
                       </Tooltip>
-                      {THEME_COLOR_PRESETS.map((p) => (
-                        <button
-                          key={p.value}
-                          type="button"
-                          title={p.label}
-                          onClick={() => update('themeColor', p.value)}
-                          className={cn(
-                            'h-7 w-7 rounded-full border-2 transition',
-                            (settings.themeColor && settings.themeColor.toLowerCase() === p.value)
-                              ? 'border-foreground ring-2 ring-primary/40'
-                              : 'border-border/60 hover:border-foreground/50'
-                          )}
-                          style={{ backgroundColor: p.value }}
-                        />
-                      ))}
+                        {THEME_COLOR_PRESETS.map((p) => (
+                          <Tooltip key={p.value} content={p.label}>
+                            <button
+                              type="button"
+                              onClick={() => update('themeColor', p.value)}
+                              className={cn(
+                                'h-7 w-7 rounded-full border-2 transition',
+                                (settings.themeColor && settings.themeColor.toLowerCase() === p.value)
+                                  ? 'border-foreground ring-2 ring-primary/40'
+                                  : 'border-border/60 hover:border-foreground/50'
+                              )}
+                              style={{ backgroundColor: p.value }}
+                            />
+                          </Tooltip>
+                        ))}
                       <Tooltip content={t('settings.appearance.themeColorCustom')}>
                         <div className="relative h-7 w-7 overflow-hidden rounded-full border border-border/60">
                           <input

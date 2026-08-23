@@ -214,16 +214,17 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
                 <div className="truncate">{inst.name}</div>
                 <div className="text-xs text-muted-foreground">{t('connect.modsInconsistent', { count: inst.modCount })}</div>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onLaunch(inst.instanceId)}
-                disabled={launching !== null}
-                title={t('connect.forceLaunchTitle')}
-              >
-                {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
-                {t('connect.forceLaunch')}
-              </Button>
+              <Tooltip content={t('connect.forceLaunchTitle')}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onLaunch(inst.instanceId)}
+                  disabled={launching !== null}
+                >
+                  {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
+                  {t('connect.forceLaunch')}
+                </Button>
+              </Tooltip>
             </div>
           ))}
         </div>

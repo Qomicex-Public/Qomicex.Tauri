@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { openStream, createSseParser, type StreamHandle } from '../api/ipc.ts'
 import { cancelLaunch, type GameLogLine } from '../api/instance.ts'
-import { Button, Input } from '../components/ui'
+import { Button, Input, Tooltip } from '../components/ui'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
 
@@ -167,17 +167,17 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
             {t('gameLog.all')}
           </button>
           {LEVELS.map(lv => (
-            <button
-              key={lv}
-              onClick={() => toggle(lv)}
-              title={lv}
-              className={cn(
-                'rounded px-2 py-1 text-xs',
-                visible[lv] ? 'bg-primary/15 text-foreground' : 'text-muted-foreground/40 hover:text-foreground',
-              )}
-            >
-              <span className={cn(visible[lv] && LEVEL_CLASS[lv])}>{t(`gameLog.${lv.toLowerCase()}`)}</span>
-            </button>
+            <Tooltip key={lv} content={lv}>
+              <button
+                onClick={() => toggle(lv)}
+                className={cn(
+                  'rounded px-2 py-1 text-xs',
+                  visible[lv] ? 'bg-primary/15 text-foreground' : 'text-muted-foreground/40 hover:text-foreground',
+                )}
+              >
+                <span className={cn(visible[lv] && LEVEL_CLASS[lv])}>{t(`gameLog.${lv.toLowerCase()}`)}</span>
+              </button>
+            </Tooltip>
           ))}
         </div>
         <div className="ml-auto flex items-center gap-3">
