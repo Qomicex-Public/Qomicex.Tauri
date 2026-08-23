@@ -5,9 +5,9 @@
 //! - `states`：`instanceId -> ProcessState`（运行中游戏进程的 PID / 启动时间）。
 //! - `cancels`：`instanceId -> Arc<AtomicBool>`（取消信号，对应 C# CancellationToken）。
 //!
-//! 语义与源逐字对齐：`GetProgress` 查进度快照；`GetState` 纯读查询进程存活状态
-//! （终态写入/结算由 `crash_watcher` 统一处理）；`Stop` 取消 + 杀进程 +
-//! 清进度；`CancelAndRemove` 置取消信号并清进度。
+//! 语义与源逐字对齐：`GetProgress` 查进度快照；`GetState` 纯读 `states` 映射
+//! （不含存活过滤/摘除；终态写入与结算统一由 `crash_watcher` 处理）；
+//! `Stop` 取消 + 杀进程 + 清进度；`CancelAndRemove` 置取消信号并清进度。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -164,6 +164,21 @@ impl LaunchTracker {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(instance_id.to_string(), state);
+    }
+
+    /// 仅当该实例进度仍处于 `running` 阶段时才原子写入快照，返回是否写入。
+    ///
+    /// 供崩溃监控写终态前声明有效性：若期间用户 stop/cancel 已清掉进度，
+    /// 写入被拒绝（否则已取消的流程会被复活成崩溃弹窗并多记游玩时长）。
+    pub fn set_progress_if_running(&self, instance_id: &str, state: LaunchProgress) -> bool {
+        let mut guard = self.progress.lock().unwrap_or_else(|p| p.into_inner());
+        match guard.get(instance_id) {
+            Some(p) if p.stage == "running" => {
+                guard.insert(instance_id.to_string(), state);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// 获取/创建取消信号（对应源 `GetOrCreateCts`）。

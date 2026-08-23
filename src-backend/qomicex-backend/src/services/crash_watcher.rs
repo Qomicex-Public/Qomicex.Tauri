@@ -10,6 +10,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
@@ -65,15 +66,19 @@ async fn handle_exit(
     tracing::info!(pid, code, "crash-watcher: game process exited");
 
     // stop/kill 场景 states 已清空，find_by_pid 为 None → 忽略（不算崩溃）。
-    let Some((instance_id, ps)) = tracker.find_by_pid(pid) else {
+    // 例外：事件可能先于 launch 流程的 track() 到达（进程秒退），短暂重试一次。
+    let located = match tracker.find_by_pid(pid) {
+        Some(found) => Some(found),
+        None => {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            tracker.find_by_pid(pid)
+        }
+    };
+    let Some((instance_id, ps)) = located else {
         return;
     };
     // 声明接管：查询路径发现 running + 进程死亡 + state 缺失时会等待终态而非兜底 completed。
     tracker.remove_state(&instance_id);
-    match tracker.get_progress(&instance_id) {
-        Some(p) if p.stage == "running" => {}
-        _ => return,
-    }
 
     let Some(inst) = instances.get_by_id(&instance_id) else {
         return;
@@ -115,7 +120,9 @@ async fn handle_exit(
         ("completed".to_string(), "游戏已退出".to_string())
     };
     let has_report = diagnostics.is_some();
-    tracker.set_progress(
+    // 条件写入：期间用户 stop/cancel 已清掉进度时拒绝（避免已取消流程被复活成
+    // 崩溃弹窗），此时也不结算时长。
+    let accepted = tracker.set_progress_if_running(
         &instance_id,
         LaunchProgress {
             stage,
@@ -128,14 +135,12 @@ async fn handle_exit(
             ..Default::default()
         },
     );
-
-    // 结算游玩时长（对应 C# WaitForExit 后的 PlayTime 累加）。
-    let elapsed = (Utc::now() - ps.started_at).num_minutes().max(1);
-    if let Some(mut updated) = instances.get_by_id(&instance_id) {
-        updated.play_time += elapsed as i64;
-        updated.last_played = Some(Utc::now().to_rfc3339());
-        instances.update(&instance_id, updated);
+    if !accepted {
+        tracing::info!(instance = %instance_id, pid, "crash-watcher: progress gone (stopped), skip");
+        return;
     }
+
+    settle_play_time(instances, &instance_id, ps.started_at);
     tracing::info!(
         instance = %instance_id,
         code,
@@ -143,6 +148,16 @@ async fn handle_exit(
         has_report,
         "crash-watcher: exit settled"
     );
+}
+
+/// 结算游玩时长（对应 C# WaitForExit 后的 PlayTime 累加）；兜底路径复用。
+pub fn settle_play_time(instances: &InstanceService, instance_id: &str, started_at: DateTime<Utc>) {
+    let elapsed = (Utc::now() - started_at).num_minutes().max(1);
+    if let Some(mut updated) = instances.get_by_id(instance_id) {
+        updated.play_time += elapsed as i64;
+        updated.last_played = Some(Utc::now().to_rfc3339());
+        instances.update(instance_id, updated);
+    }
 }
 
 /// 收集崩溃诊断文本（多段拼接，段间空行分隔；无任何证据返回 None）。
@@ -542,5 +557,76 @@ mod tests {
         // 时长已结算（至少记了 1 分钟）
         let updated = instances.get_by_id(&created.id).unwrap();
         assert!(updated.play_time >= 1);
+    }
+
+    /// 用户 stop 清掉进度后，watcher 迟到的退出事件不得复活成崩溃终态/结算时长
+    /// （Sourcery review 评论 2 的 stop 竞态回归）。
+    #[tokio::test]
+    async fn handle_exit_skips_when_progress_cleared_by_stop() {
+        use crate::services::instance::InstanceService;
+        use crate::services::launch_tracker::LaunchTracker;
+
+        let tracker = LaunchTracker::new();
+        let instances = InstanceService::new();
+        let game_log = GameLogService::new();
+
+        let created = instances.create(crate::services::instance::GameInstance {
+            name: "stop-race-inst".to_string(),
+            game_version: "1.20.1".to_string(),
+            ..Default::default()
+        });
+        tracker.track(&created.id, -1);
+        tracker.set_progress(
+            &created.id,
+            LaunchProgress {
+                stage: "running".to_string(),
+                message: "游戏运行中".to_string(),
+                progress: 100.0,
+                is_running: true,
+                process_id: Some(-1),
+                ..Default::default()
+            },
+        );
+
+        // 模拟 launch_cancel → tracker.stop：清取消位 + 进度 + states
+        tracker.stop(&created.id);
+
+        handle_exit(&tracker, &instances, &game_log, -1, 134).await;
+
+        assert!(
+            tracker.get_progress(&created.id).is_none(),
+            "不得写入崩溃终态"
+        );
+        let updated = instances.get_by_id(&created.id).unwrap();
+        assert_eq!(updated.play_time, 0, "不得结算游玩时长");
+    }
+
+    /// set_progress_if_running 仅接受 running 阶段（原子条件语义）。
+    #[test]
+    fn set_progress_if_running_rejects_non_running() {
+        use crate::services::launch_tracker::LaunchTracker;
+
+        let tracker = LaunchTracker::new();
+        tracker.set_progress(
+            "inst",
+            LaunchProgress {
+                stage: "failed".to_string(),
+                message: "启动失败".to_string(),
+                is_running: false,
+                ..Default::default()
+            },
+        );
+        let accepted = tracker.set_progress_if_running(
+            "inst",
+            LaunchProgress {
+                stage: "crashed".to_string(),
+                ..Default::default()
+            },
+        );
+        assert!(!accepted);
+        assert_eq!(tracker.get_progress("inst").unwrap().stage, "failed");
+
+        // 进度不存在同样拒绝
+        assert!(!tracker.set_progress_if_running("ghost", LaunchProgress::default()));
     }
 }

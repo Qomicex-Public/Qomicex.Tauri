@@ -796,11 +796,18 @@ async fn launch_progress(
     };
 
     if progress.stage == "running" {
-        // 终态/结算由 crash_watcher 统一处理。state 仍存在且进程已死 = 事件总线
-        // 失效的兜底场景，直接报 completed（不结算，避免与 watcher 双算）；state
-        // 缺失（已被 watcher 摘除接管中）则落到末尾继续返回 running 等终态。
+        // 终态/结算由 crash_watcher 统一处理。state 缺失（已被 watcher 摘除接管中）
+        // 则落到末尾继续返回 running 等终态；state 仍存在且进程已死 = 事件总线失效
+        // 的兜底场景（watcher 不会再来结算），此处报 completed 并代为结算时长
+        // （watcher 未接管 ⇒ 不存在双算）。
         if let Some(ps) = tracker.get_state(&instance_id) {
             if !crate::services::launch_tracker::process_alive(ps.process_id) {
+                tracker.remove_state(&instance_id);
+                crate::services::crash_watcher::settle_play_time(
+                    &state.instance,
+                    &instance_id,
+                    ps.started_at,
+                );
                 return Ok(Json(LaunchProgress {
                     stage: "completed".to_string(),
                     message: "游戏已退出".to_string(),
@@ -960,10 +967,15 @@ async fn export_diagnostics(
             cur = d.parent().map(Path::to_path_buf);
         }
 
-        // backend-trace.log：后端日志缓冲落盘后打包（失败不阻塞导出）
+        // backend-trace.log：后端日志缓冲落盘后打包（失败不阻塞导出；与其他
+        // 文本条目一致按 100K 截断，避免超大 trace 撑爆内存 zip）
         if let Ok(path) = trace_dump.dump("diagnostic-export") {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                add_text(&mut zw, "backend-trace.log", &content)?;
+                add_text(
+                    &mut zw,
+                    "backend-trace.log",
+                    &truncate_chars(&content, 100_000),
+                )?;
             }
         }
 
