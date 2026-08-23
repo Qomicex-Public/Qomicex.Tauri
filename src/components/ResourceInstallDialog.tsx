@@ -14,7 +14,6 @@ import { getInstalledFileNames, getModsMetadata } from '../api/instance-files.ts
 import { quickInstallViaDownloadCenter } from '../lib/quickInstall.ts'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
-import { useNavigate } from 'react-router-dom'
 import type { GameInstance, ModMetadata, ResourceVersion, ResolvedDependency } from '../types/index.ts'
 
 interface ResourceInstallDialogProps {
@@ -58,7 +57,6 @@ export default function ResourceInstallDialog({
   const [searchQuery, setSearchQuery] = useState('')
   const [installError, setInstallError] = useState<string | null>(null)
   const [loadStage, setLoadStage] = useState('')
-  const navigate = useNavigate()
 
   useEffect(() => {
     if (!open) return
@@ -238,13 +236,13 @@ export default function ResourceInstallDialog({
         t,
       })
       onClose()
-      navigate('/downloads')
+      notify(t('dialogs.resourceInstall.addedToDownloadCenter'), 'success')
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : t('dialogs.common.unknownError')
       setInstallError(errMsg)
       setStarting(false)
     }
-  }, [selectedInstance, selectedVersion, deps, installedByProjectId, depSelectedVersion, category, resourceTitle, onClose, navigate, t])
+  }, [selectedInstance, selectedVersion, deps, installedByProjectId, depSelectedVersion, category, resourceTitle, onClose, notify, t])
 
   return (
     <Dialog open={open} onClose={onClose}>
