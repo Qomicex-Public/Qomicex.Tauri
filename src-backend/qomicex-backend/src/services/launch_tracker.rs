@@ -5,8 +5,8 @@
 //! - `states`：`instanceId -> ProcessState`（运行中游戏进程的 PID / 启动时间）。
 //! - `cancels`：`instanceId -> Arc<AtomicBool>`（取消信号，对应 C# CancellationToken）。
 //!
-//! 语义与源逐字对齐：`GetProgress` 查进度快照；`GetState` 刷新进程存活状态，
-//! 已退出则从 map 摘除并返回（供上层结算游玩时长）；`Stop` 取消 + 杀进程 +
+//! 语义与源逐字对齐：`GetProgress` 查进度快照；`GetState` 纯读查询进程存活状态
+//! （终态写入/结算由 `crash_watcher` 统一处理）；`Stop` 取消 + 杀进程 +
 //! 清进度；`CancelAndRemove` 置取消信号并清进度。
 
 use std::collections::HashMap;
@@ -107,16 +107,32 @@ impl LaunchTracker {
             .insert(instance_id.to_string(), ProcessState::new(process_id));
     }
 
-    /// 查询进程状态；已退出则从 map 摘除并返回（对应源 `GetState`）。
+    /// 查询进程状态（对应源 `GetState`）。纯读：存活摘除与终态结算由
+    /// `crash_watcher` 在进程退出事件后统一处理，查询路径不再竞争摘除。
     pub fn get_state(&self, instance_id: &str) -> Option<ProcessState> {
-        let mut guard = self.states.lock().unwrap_or_else(|p| p.into_inner());
-        let state = guard.get(instance_id)?.clone();
-        if process_alive(state.process_id) {
-            Some(state)
-        } else {
-            guard.remove(instance_id);
-            Some(state)
-        }
+        self.states
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(instance_id)
+            .cloned()
+    }
+
+    /// 按 PID 反查运行中实例（供崩溃监控定位退出进程的归属实例）。
+    pub fn find_by_pid(&self, pid: i32) -> Option<(String, ProcessState)> {
+        self.states
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .find(|(_, s)| s.process_id == pid)
+            .map(|(id, s)| (id.clone(), s.clone()))
+    }
+
+    /// 移除运行状态记录（崩溃监控写完终态后调用，避免残留）。
+    pub fn remove_state(&self, instance_id: &str) {
+        self.states
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(instance_id);
     }
 
     /// 停止：取消信号 + 杀进程 + 清进度（对应源 `Stop`）。
