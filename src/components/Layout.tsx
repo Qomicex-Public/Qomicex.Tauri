@@ -11,6 +11,7 @@ import LogOverlay from './LogOverlay.tsx'
 import FpsOverlay from './FpsOverlay.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { PluginEventBridge } from './PluginEventBridge.tsx'
+import GlobalDropInstaller from './GlobalDropInstaller.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { setThemeBackground } from '../lib/themeColor.ts'
 
@@ -143,6 +144,7 @@ export default function Layout() {
     <div className="flex h-screen">
       <DebugEffects />
       <PluginEventBridge />
+      <GlobalDropInstaller />
       {bg && (
         <>
           <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: blur > 0 ? `blur(${blur}px)` : 'none' }} />

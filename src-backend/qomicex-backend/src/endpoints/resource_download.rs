@@ -10,7 +10,7 @@
 //! wire contract stays a string, as in the C# original.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -241,6 +241,7 @@ fn build_progress(task_id: TaskId) -> DownloadProgressResponse {
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/resource-download/start", post(start))
+        .route("/resource/classify-file", post(classify_file))
         .route("/resource-download/download-to", post(download_to))
         .route("/resource-download/{taskId}/progress", get(progress))
         .route("/resource-download/{taskId}/cancel", post(cancel))
@@ -460,4 +461,217 @@ async fn cancel_batch(
 fn is_cf_url(url: &str) -> bool {
     let lower = url.to_lowercase();
     lower.contains("forgecdn.net") || lower.contains("curseforge.com")
+}
+
+// =====================================================================
+// Local file classification (drag-and-drop install entry)
+// =====================================================================
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClassifyFileRequest {
+    path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClassifyFileResponse {
+    /// `modpack` | `mod` | `resourcepack` | `shaderpack` | `unknown`
+    file_type: String,
+    file_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pack_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    game_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    loader: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
+}
+
+/// POST /api/resource/classify-file — sniff a local file dropped onto the
+/// launcher window and report its installable type plus modpack preview
+/// metadata (name / game version / loader) for the confirm dialog.
+///
+/// Zip contents decide between the flavours: modpack markers first
+/// (`qmodpack.index.json`, `modrinth.index.json`, CF `manifest.json` with
+/// `manifestType == minecraftModpack`), then the `shaders/` layout, then a
+/// root `pack.mcmeta`.
+async fn classify_file(
+    Json(req): Json<ClassifyFileRequest>,
+) -> ApiResult<Json<ClassifyFileResponse>> {
+    let path = PathBuf::from(req.path.trim());
+    let file_name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad_request("CLASSIFY_PATH_INVALID", "Invalid file path"))?;
+    if !path.is_file() {
+        return Err(ApiError::not_found("FILE_NOT_FOUND", "File does not exist"));
+    }
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    let (file_type, meta) = match ext.as_str() {
+        "jar" | "litemod" => ("mod", None),
+        "zip" | "mrpack" => classify_zip(&path, ext == "mrpack"),
+        _ => ("unknown", None),
+    };
+    let meta = meta.unwrap_or_default();
+    Ok(Json(ClassifyFileResponse {
+        file_type: file_type.to_string(),
+        file_name,
+        pack_name: meta.name,
+        game_version: meta.game_version,
+        loader: meta.loader,
+        summary: meta.summary,
+    }))
+}
+
+#[derive(Default)]
+struct PackMeta {
+    name: Option<String>,
+    game_version: Option<String>,
+    loader: Option<String>,
+    summary: Option<String>,
+}
+
+fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackMeta>) {
+    let Ok(file) = std::fs::File::open(path) else {
+        return ("unknown", None);
+    };
+    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+        return ("unknown", None);
+    };
+
+    let mut has_mr = false;
+    let mut has_qml = false;
+    let mut has_cf_manifest = false;
+    let mut has_shaders = false;
+    let mut has_mcmeta = false;
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index(i) else {
+            continue;
+        };
+        match entry.name() {
+            "modrinth.index.json" => has_mr = true,
+            "qmodpack.index.json" => has_qml = true,
+            "manifest.json" => has_cf_manifest = true,
+            "pack.mcmeta" => has_mcmeta = true,
+            _ => {}
+        }
+        if entry.name().starts_with("shaders/") {
+            has_shaders = true;
+        }
+    }
+
+    // Modpack markers win. A stray `manifest.json` without the CF
+    // manifestType is not a modpack and falls through to the other flavours.
+    if has_mr || (is_mrpack_ext && !has_qml) {
+        return (
+            "modpack",
+            Some(pack_meta_from(
+                &mut archive,
+                "modrinth.index.json",
+                "modrinth",
+            )),
+        );
+    }
+    if has_qml {
+        return (
+            "modpack",
+            Some(pack_meta_from(
+                &mut archive,
+                "qmodpack.index.json",
+                "modrinth",
+            )),
+        );
+    }
+    if has_cf_manifest && is_cf_modpack_manifest(&mut archive) {
+        return (
+            "modpack",
+            Some(pack_meta_from(&mut archive, "manifest.json", "curseforge")),
+        );
+    }
+
+    if has_shaders {
+        return ("shaderpack", None);
+    }
+    if has_mcmeta {
+        return ("resourcepack", None);
+    }
+    ("unknown", None)
+}
+
+fn is_cf_modpack_manifest(archive: &mut zip::ZipArchive<std::fs::File>) -> bool {
+    read_entry_json(archive, "manifest.json")
+        .and_then(|v| {
+            v.get("manifestType")
+                .and_then(|t| t.as_str())
+                .map(String::from)
+        })
+        .as_deref()
+        == Some("minecraftModpack")
+}
+
+fn pack_meta_from(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    marker: &str,
+    kind: &str,
+) -> PackMeta {
+    let Some(root) = read_entry_json(archive, marker) else {
+        return PackMeta::default();
+    };
+    if kind == "curseforge" {
+        let mc = root.get("minecraft");
+        PackMeta {
+            name: str_field(&root, "name"),
+            game_version: mc.and_then(|m| str_field(m, "version")),
+            loader: mc
+                .and_then(|m| m.get("modLoaders"))
+                .and_then(|l| l.as_array())
+                .and_then(|a| a.first())
+                .and_then(|l| l.get("id"))
+                .and_then(|v| v.as_str())
+                .map(|v| short_loader_id(v.to_string())),
+            summary: None,
+        }
+    } else {
+        // Modrinth index: `dependencies` maps {minecraft, fabric-loader, ...};
+        // qmodpack.index.json keeps a compatible shape when present.
+        let deps = root.get("dependencies").and_then(|d| d.as_object());
+        PackMeta {
+            name: str_field(&root, "name"),
+            game_version: deps
+                .and_then(|d| d.get("minecraft"))
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            loader: deps
+                .and_then(|d| d.keys().find(|k| k.as_str() != "minecraft").cloned())
+                .map(short_loader_id),
+            summary: str_field(&root, "summary"),
+        }
+    }
+}
+
+fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|x| x.as_str()).map(String::from)
+}
+
+fn short_loader_id(id: String) -> String {
+    match id.as_str() {
+        "fabric-loader" => "fabric".to_string(),
+        "quilt-loader" => "quilt".to_string(),
+        _ => id.split('-').next().unwrap_or(&id).to_string(),
+    }
+}
+
+fn read_entry_json(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    entry_name: &str,
+) -> Option<serde_json::Value> {
+    let mut f = archive.by_name(entry_name).ok()?;
+    serde_json::from_reader(&mut f).ok()
 }
