@@ -17,6 +17,17 @@ export default function GlobalDropInstaller() {
   const [hover, setHover] = useState(false)
   const [group, setGroup] = useState<DropGroup | null>(null)
   const busyRef = useRef(false)
+  const groupRef = useRef<DropGroup | null>(null)
+
+  function openGroup(g: DropGroup) {
+    groupRef.current = g
+    setGroup(g)
+  }
+
+  function closeGroup() {
+    groupRef.current = null
+    setGroup(null)
+  }
 
   useEffect(() => {
     const unlisteners: Array<() => void> = []
@@ -27,7 +38,7 @@ export default function GlobalDropInstaller() {
       .catch(() => {})
     listen<string[]>('file-drop', e => {
       setHover(false)
-      if (busyRef.current) return
+      if (busyRef.current || groupRef.current) return
       const paths = e.payload
       if (!paths?.length) return
       busyRef.current = true
@@ -76,10 +87,10 @@ export default function GlobalDropInstaller() {
       if (skipped.length > 0) {
         notify(t('dialogs.dropInstall.modpackSingleHint', { count: skipped.length }), 'warning')
       }
-      setGroup({ kind, files: [installable[0]] })
+      openGroup({ kind, files: [installable[0]] })
       return
     }
-    setGroup({ kind, files: installable })
+    openGroup({ kind, files: installable })
   }
 
   return (
@@ -93,7 +104,7 @@ export default function GlobalDropInstaller() {
           </div>
         </div>
       )}
-      <DropInstallDialog group={group} onClose={() => setGroup(null)} />
+      <DropInstallDialog group={group} onClose={closeGroup} />
     </>
   )
 }

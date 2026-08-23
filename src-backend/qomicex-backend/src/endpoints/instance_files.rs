@@ -826,6 +826,12 @@ async fn import_local(
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default()
     });
+    if !schematic_assets::is_plain_file_name(&original) {
+        return Err(ApiError::bad_request(
+            "IMPORT_FILE_NAME_INVALID",
+            "fileName must be a plain file name without path separators",
+        ));
+    }
     let dest = unique_destination(&dir, &original);
     std::fs::copy(&src, &dest)?;
     Ok(Json(ImportLocalResponse {
