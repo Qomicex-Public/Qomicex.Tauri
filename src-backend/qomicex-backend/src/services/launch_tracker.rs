@@ -135,6 +135,16 @@ impl LaunchTracker {
             .remove(instance_id);
     }
 
+    /// 全部运行状态快照（供广播 Lagged 后的对账扫描）。
+    pub fn running_states(&self) -> Vec<(String, ProcessState)> {
+        self.states
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .map(|(id, s)| (id.clone(), s.clone()))
+            .collect()
+    }
+
     /// 停止：取消信号 + 杀进程 + 清进度（对应源 `Stop`）。
     pub fn stop(&self, instance_id: &str) -> Option<ProcessState> {
         self.cancel_and_remove(instance_id);

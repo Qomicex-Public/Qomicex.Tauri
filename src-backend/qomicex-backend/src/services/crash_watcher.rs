@@ -46,12 +46,48 @@ impl CrashWatcher {
             loop {
                 match rx.recv().await {
                     Ok(ev) => handle_exit(&tracker, &instances, &game_log, ev.pid, ev.code).await,
-                    // 消费者过慢丢弃旧事件：跳过续读即可。
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    // 消费者过慢：被丢弃的退出事件不会再有补发，扫描全部运行
+                    // 中状态做一次对账，避免实例永久卡在 running。
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        reconcile(&tracker, &instances).await;
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
         });
+    }
+}
+
+/// 广播 Lagged 兜底：扫描全部运行中状态，死亡进程按正常退出结算。
+///
+/// 拿不到真实退出码，保守记 `completed` 不误报崩溃；真崩溃的证据仍在磁盘
+/// crash-reports/latest.log 中，可经导出诊断或日志分析获取。
+async fn reconcile(tracker: &LaunchTracker, instances: &InstanceService) {
+    for (instance_id, ps) in tracker.running_states() {
+        if crate::services::launch_tracker::process_alive(ps.process_id) {
+            continue;
+        }
+        tracker.remove_state(&instance_id);
+        let accepted = tracker.set_progress_if_running(
+            &instance_id,
+            LaunchProgress {
+                stage: "completed".to_string(),
+                message: "游戏已退出".to_string(),
+                progress: 100.0,
+                is_running: false,
+                process_id: Some(ps.process_id),
+                exit_code: None,
+                ..Default::default()
+            },
+        );
+        if accepted {
+            settle_play_time(instances, &instance_id, ps.started_at);
+            tracing::warn!(
+                instance = %instance_id,
+                pid = ps.process_id,
+                "crash-watcher: lagged events reconciled as completed"
+            );
+        }
     }
 }
 
@@ -462,7 +498,7 @@ mod tests {
 
     #[test]
     fn collect_skips_stale_files_older_than_cutoff() {
-        let (root, cutoff) = temp_root("stale");
+        let (root, _cutoff) = temp_root("stale");
         // cutoff 之后才创建的目录里放"旧"报告不可行——直接用 mtime 断言：
         // 先写文件再回拨系统时间做不到，改为把 cutoff 设在未来验证过滤方向。
         write(
