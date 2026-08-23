@@ -389,7 +389,7 @@ export default function ResourceInstallDialog({
                           {depPickerOpen === d.projectId && createPortal(
                             <div
                               ref={depPickerRef}
-                              className="fixed z-[9999] rounded-lg border border-border/50 bg-popover/90 backdrop-blur-lg p-1 shadow-xl animate-in fade-in zoom-in-95"
+                              className="fixed z-[9999] rounded-lg border border-border/50 bg-popover p-1 shadow-xl animate-in fade-in zoom-in-95"
                               style={{
                                 top: (() => { const r = document.querySelector(`[data-dep-picker="${d.projectId}"]`)?.getBoundingClientRect(); return r ? r.bottom + 4 : 0 })(),
                                 left: (() => { const r = document.querySelector(`[data-dep-picker="${d.projectId}"]`)?.getBoundingClientRect(); return r ? r.left : 0 })(),

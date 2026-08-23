@@ -38,7 +38,7 @@ function Tooltip({ content, children, side = "top", delay = 300, className }: To
       {visible && createPortal(
         <div
           className={cn(
-            "pointer-events-none fixed z-[9999] rounded-md border border-border/50 bg-popover/90 backdrop-blur-lg px-2.5 py-1.5 text-xs font-medium text-popover-foreground shadow-md whitespace-nowrap animate-in zoom-in-95",
+            "pointer-events-none fixed z-[9999] rounded-md border border-border/50 bg-popover px-2.5 py-1.5 text-xs font-medium text-popover-foreground shadow-md whitespace-nowrap animate-in zoom-in-95",
             className
           )}
           style={
