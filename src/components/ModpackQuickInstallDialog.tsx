@@ -82,6 +82,7 @@ export default function ModpackQuickInstallDialog({
       gameVersion: selectedVersion.gameVersions[0] || '',
       status: 'queued',
       progress: 0,
+      icon: iconUrl,
       createdAt: new Date().toISOString(),
     })
 

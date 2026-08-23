@@ -109,6 +109,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
         progress: 0,
         createdAt: new Date().toISOString(),
         instanceId,
+        icon: parsed.iconData ?? undefined,
       })
       setInstallingInstanceId(instanceId)
     } catch (e: any) {

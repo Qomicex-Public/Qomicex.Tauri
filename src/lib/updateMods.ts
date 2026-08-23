@@ -98,6 +98,7 @@ export async function updateModsViaDownloadCenter(
         progress: 0,
         taskId,
         currentFile: u.newFileName,
+        icon: u.iconUrl,
         createdAt: new Date().toISOString(),
       })
       return { taskId, u }
@@ -114,6 +115,7 @@ export async function updateModsViaDownloadCenter(
         progress: 0,
         taskId: failedTaskId,
         currentFile: u.newFileName,
+        icon: u.iconUrl,
         createdAt: new Date().toISOString(),
         error: e instanceof Error ? `${tf('dialogs.common.startFailed')}：${e.message}` : tf('dialogs.common.startFailed'),
       })

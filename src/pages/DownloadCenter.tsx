@@ -23,11 +23,13 @@ import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
 
-function getSafeIconDataUrl(icon?: string): string | null {
+/** 资源图标可能是 data URL，也可能是 Modrinth/CurseForge 的 https CDN 地址（CSP img-src 已放行 https:）。 */
+function getSafeIconSrc(icon?: string): string | null {
   if (!icon) return null
   const trimmed = icon.trim()
   const safeDataImagePattern = /^data:image\/(?:png|jpeg|jpg|gif|webp|bmp|x-icon|vnd\.microsoft\.icon);base64,[a-z0-9+/=\s]+$/i
-  return safeDataImagePattern.test(trimmed) ? trimmed : null
+  if (safeDataImagePattern.test(trimmed)) return trimmed
+  return /^https?:\/\//i.test(trimmed) ? trimmed : null
 }
 
 function cn(...classes: (string | boolean | undefined | null)[]): string {
@@ -325,7 +327,7 @@ if (task.instanceId && task.type !== 'batch') {
           {filtered.map((task) => {
             const cfg = STATUS_CONFIG[task.status]
             const isActive = task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'
-            const safeIcon = getSafeIconDataUrl(task.icon)
+            const safeIcon = getSafeIconSrc(task.icon)
             const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
             const stepsLive = task.status === 'downloading' || task.status === 'paused'
             const stepsDoneCount = steps?.filter((s) => s.status === 'done').length ?? 0
