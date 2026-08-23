@@ -153,10 +153,11 @@ export default function AccountDetail() {
       notify(t('accountDetail.skinUploaded'), 'success')
       handleSkinRefresh()
     } catch (e) {
-      if (isMicrosoftAuthError(e)) { setShowMicrosoftReauth(true); return }
-      notify(t('accountDetail.skinUploadFailed'), 'error')
+      if (isMicrosoftAuthError(e)) setShowMicrosoftReauth(true)
+      else notify(t('accountDetail.skinUploadFailed'), 'error')
+    } finally {
+      setPendingFile(null)
     }
-    setPendingFile(null)
   }
 
   async function handleSkinReset() {

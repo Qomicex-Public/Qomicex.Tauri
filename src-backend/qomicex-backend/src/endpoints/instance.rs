@@ -959,13 +959,26 @@ fn instance_not_found(id: &str) -> ApiError {
 /// - 传输层失败（断网等，core 返回 Err）→ `Err(NETWORK_ERROR)` 阻止启动；
 ///   前端按 code 提示检查网络或改用离线登录。
 /// 非 Microsoft 账户或缺 refresh_token（历史数据）时不刷新、原样放行。
+///
+/// 全局锁串行化「读取→刷新→保存」窗口：微软会轮换 refresh_token，并发刷新
+/// 同一账户时慢者会把已轮换的旧 refresh_token 写回覆盖新值，导致后续刷新
+/// 永远失败；持锁后以最新持久化状态为准可避免该竞态。
+/// 全局微软刷新锁：串行化「读取→refresh_login→保存」窗口，防止并发刷新
+/// 同一账户时旧 refresh_token 覆盖微软轮换后的新值（详见 refresh_microsoft_token）。
+static MS_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub(crate) async fn refresh_microsoft_token(
     auth: &dyn qomicex_core::api::auth::AuthProvider,
     accounts: &crate::services::account::AccountService,
     account: Option<crate::services::account::StoredAccount>,
 ) -> Result<Option<crate::services::account::StoredAccount>, ApiError> {
-    let Some(mut acc) = account else {
+    let Some(incoming) = account else {
         return Ok(None);
+    };
+    let _guard = MS_REFRESH_LOCK.lock().await;
+    let mut acc = match accounts.get_account(&incoming.uuid).await? {
+        Some(latest) => latest,
+        None => incoming,
     };
     if !acc.login_method.eq_ignore_ascii_case("microsoft") || acc.refresh_token.is_empty() {
         return Ok(Some(acc));
@@ -1300,6 +1313,36 @@ mod refresh_tests {
         Success(AuthResult),
     }
 
+    /// 记录每次收到的 refresh_token 并返回轮换后的新值，用于验证并发刷新
+    /// 时第二次调用基于第一次落库的最新令牌而非过期快照。
+    struct RotatingAuth {
+        seen: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AuthProvider for RotatingAuth {
+        async fn authenticate(&self, _request: AuthRequest) -> Result<AuthResult, Error> {
+            panic!("refresh path must not call authenticate")
+        }
+        async fn validate(&self, _access_token: &str) -> Result<bool, Error> {
+            Ok(true)
+        }
+        async fn invalidate(&self, _access_token: &str) -> Result<(), Error> {
+            Ok(())
+        }
+        async fn refresh_login(&self, refresh_token: &str) -> Result<AuthResult, Error> {
+            let n = {
+                let mut seen = self.seen.lock().unwrap();
+                seen.push(refresh_token.to_string());
+                seen.len()
+            };
+            let mut r = auth_result(true);
+            r.access_token = Some(format!("access-{n}"));
+            r.refresh_token = Some(format!("rotated-{n}"));
+            Ok(r)
+        }
+    }
+
     struct MockAuth {
         scenario: Scenario,
     }
@@ -1343,20 +1386,32 @@ mod refresh_tests {
         }
     }
 
-    fn test_account_service(tag: &str) -> AccountService {
+    /// Drop 时恢复 QOMICEX_HOME，保证 panic unwind 也不残留进程级环境变量。
+    struct EnvGuard(Option<std::ffi::OsString>);
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            restore_env("QOMICEX_HOME", self.0.take());
+        }
+    }
+
+    fn test_account_service(tag: &str) -> (AccountService, EnvGuard) {
         let tmp = std::env::temp_dir().join(format!(
             "qomicex-refresh-test-{tag}-{}",
             uuid::Uuid::new_v4()
         ));
         let _ = std::fs::create_dir_all(&tmp);
-        set_env("QOMICEX_HOME", &tmp);
-        AccountService::new().expect("account service")
+        let old = set_env("QOMICEX_HOME", &tmp);
+        (
+            AccountService::new().expect("account service"),
+            EnvGuard(old),
+        )
     }
 
     #[tokio::test]
     async fn none_account_passthrough() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let accounts = test_account_service("none");
+        // into_inner：锁被 panic 毒化时仍继续执行，避免连锁失败掩盖根因
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("none");
         let out = refresh_microsoft_token(
             &MockAuth {
                 scenario: Scenario::NoCall,
@@ -1371,8 +1426,8 @@ mod refresh_tests {
 
     #[tokio::test]
     async fn non_microsoft_passthrough_without_refresh_call() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let accounts = test_account_service("offline");
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("offline");
         let mut acc = ms_account();
         acc.login_method = "Offline".into();
         let original = acc.clone();
@@ -1390,8 +1445,8 @@ mod refresh_tests {
 
     #[tokio::test]
     async fn microsoft_without_refresh_token_passthrough() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let accounts = test_account_service("no-rt");
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("no-rt");
         let mut acc = ms_account();
         acc.refresh_token.clear();
         let original = acc.clone();
@@ -1409,8 +1464,8 @@ mod refresh_tests {
 
     #[tokio::test]
     async fn rejected_refresh_blocks_with_token_expired() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let accounts = test_account_service("rejected");
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("rejected");
         let result = refresh_microsoft_token(
             &MockAuth {
                 scenario: Scenario::Rejected,
@@ -1424,8 +1479,8 @@ mod refresh_tests {
 
     #[tokio::test]
     async fn transport_error_blocks_with_network_error() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let accounts = test_account_service("transport");
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("transport");
         let result = refresh_microsoft_token(
             &MockAuth {
                 scenario: Scenario::TransportErr,
@@ -1441,8 +1496,8 @@ mod refresh_tests {
 
     #[tokio::test]
     async fn success_updates_fields_and_persists() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let accounts = test_account_service("success");
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("success");
         accounts.save_account(&mut ms_account()).await.unwrap();
 
         let mut fresh = auth_result(true);
@@ -1467,5 +1522,35 @@ mod refresh_tests {
         let persisted = accounts.get_account("test-uuid").await.unwrap().unwrap();
         assert_eq!(persisted.access_token, "new-access");
         assert_eq!(persisted.refresh_token, "new-refresh");
+    }
+
+    #[tokio::test]
+    async fn concurrent_refreshes_serialize_and_read_latest() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("race");
+        accounts.save_account(&mut ms_account()).await.unwrap();
+
+        let auth = std::sync::Arc::new(RotatingAuth {
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
+        let accounts = std::sync::Arc::new(accounts);
+        let a = auth.clone();
+        let b = auth.clone();
+        let ac = accounts.clone();
+        let (r1, r2) = tokio::join!(
+            async move { refresh_microsoft_token(a.as_ref(), ac.as_ref(), Some(ms_account())).await },
+            async move {
+                refresh_microsoft_token(b.as_ref(), accounts.as_ref(), Some(ms_account())).await
+            },
+        );
+        r1.unwrap();
+        r2.unwrap();
+
+        let seen = auth.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        // 第一次基于初始令牌；第二次必须基于第一次轮换并落库后的最新值，
+        // 否则旧 refresh_token 覆盖新值会导致后续刷新永久失败
+        assert_eq!(seen[0], "refresh-token");
+        assert_eq!(seen[1], "rotated-1");
     }
 }

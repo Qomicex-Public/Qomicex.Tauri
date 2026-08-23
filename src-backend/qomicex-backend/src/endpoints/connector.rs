@@ -663,7 +663,7 @@ async fn host_instance(
     let starting_id = instance.id.clone();
     // 与普通启动路径一致：用默认账号解析 auth（离线/微软/外置登录），
     // 否则 --accessToken 为空会被 joptsimple 拒绝（Missing required option）。
-    // 微软账户先刷新令牌（失效阻止建房，网络故障放行旧 token）
+    // 微软账户先刷新令牌；令牌失效或断网均阻止建房（不带着旧 token 白启）
     let host_auth_account = crate::endpoints::instance::refresh_microsoft_token(
         state.core.auth(),
         &state.account,
