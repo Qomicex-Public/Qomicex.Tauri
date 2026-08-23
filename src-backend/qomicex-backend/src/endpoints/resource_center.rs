@@ -18,8 +18,10 @@ use serde_json::Value;
 
 use qomicex_core::models::expansion::modrinth::SearchResultInfo;
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Mutex, OnceLock};
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
@@ -323,6 +325,121 @@ fn map_ft_sort(sort: Option<&str>) -> &'static str {
 }
 
 // =====================================================================
+// CurseForge category id 解析（tags slug → 数字 categoryId）
+// =====================================================================
+
+/// 规范化标签/category 名：小写、非字母数字折叠为单个连字符、去首尾连字符。
+/// 用于把 Modrinth slug 与 CurseForge 的 slug/name 对齐（如 `World Generation`
+/// 与 `world-generation` 都归一成 `world-generation`）。
+fn normalize_tag(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    while out.starts_with('-') {
+        out.remove(0);
+    }
+    out
+}
+
+/// Modrinth 风格 slug 到 CurseForge category key 的别名补偿（两边词汇不一致时使用）。
+fn cf_tag_alias(s: &str) -> Option<&'static str> {
+    match s {
+        "worldgen" => Some("world-generation"),
+        "library" => Some("libraries"),
+        "support" => Some("addons"),
+        "minigame" => Some("mini-game"),
+        _ => None,
+    }
+}
+
+/// 全局缓存的 CurseForge 分类表（slug/name 规范化 → categoryId）。首次用时拉取，
+/// 之后复用；拉取失败则视为空表，标签对该次搜索不生效（与未支持时行为一致）。
+fn cf_category_cache() -> &'static Mutex<Option<HashMap<String, i32>>> {
+    static CACHE: OnceLock<Mutex<Option<HashMap<String, i32>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+async fn fetch_cf_categories(
+    client: &reqwest::Client,
+    api_key: &str,
+    class_id: Option<i32>,
+) -> HashMap<String, i32> {
+    let mut url = "https://api.curseforge.com/v1/categories?gameId=432".to_string();
+    if let Some(c) = class_id {
+        url.push_str(&format!("&classId={}", c));
+    }
+    let body = match cf_get_raw(client, &url, api_key).await {
+        Some(b) => b,
+        None => return HashMap::new(),
+    };
+    let data = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut map = HashMap::new();
+    for c in &data {
+        let id = c.get("id").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        if id == 0 {
+            continue;
+        }
+        if let Some(slug) = c.get("slug").and_then(|v| v.as_str()) {
+            map.insert(normalize_tag(slug), id);
+        }
+        if let Some(name) = c.get("name").and_then(|v| v.as_str()) {
+            map.insert(normalize_tag(name), id);
+        }
+    }
+    map
+}
+
+async fn cf_resolve_category_ids(
+    client: &reqwest::Client,
+    api_key: &str,
+    tags: &[String],
+    class_id: Option<i32>,
+) -> Option<Vec<i32>> {
+    if tags.is_empty() {
+        return None;
+    }
+    let cached = {
+        let g = cf_category_cache().lock().unwrap();
+        g.clone()
+    };
+    let map = match cached {
+        Some(m) => m,
+        None => {
+            let m = fetch_cf_categories(client, api_key, class_id).await;
+            *cf_category_cache().lock().unwrap() = Some(m.clone());
+            m
+        }
+    };
+    let ids: Vec<i32> = tags
+        .iter()
+        .filter_map(|t| {
+            let key = normalize_tag(t);
+            cf_tag_alias(&key)
+                .and_then(|a| map.get(a))
+                .copied()
+                .or_else(|| map.get(&key).copied())
+        })
+        .collect();
+    if ids.is_empty() {
+        None
+    } else {
+        Some(ids)
+    }
+}
+
+// =====================================================================
 // Handlers: search
 // =====================================================================
 
@@ -423,8 +540,8 @@ async fn search_one(
     page: i32,
     page_size: i32,
 ) -> ApiResult<(Vec<ResourceItemDto>, i32)> {
-    // 标签仅 Modrinth 支持（categories facet，string slug）；CurseForge 的
-    // categoryIds 为数字 ID，这里不映射，tags 对非 Modrinth 源忽略。
+    // 标签：Modrinth 直接用 slug 作为 categories facet；CurseForge 的 categoryIds
+    // 为数字 ID，这里把 slug 映射到 CF 的 category id（按需拉取并缓存 CF 分类表）。
     let tag_vec: Vec<String> = tags
         .map(|t| {
             t.split(',')
@@ -471,11 +588,19 @@ async fn search_one(
         let cf_class_id = map_cf_class_id(category);
         let cf_url_slug = map_cf_url_slug(category);
         let loaders = loader.and_then(map_cf_loader).unwrap_or_default();
+        // 把标签 slug 解析为 CurseForge 数字 categoryId（无匹配则忽略，等价于不过滤）。
+        let cf_category_ids = cf_resolve_category_ids(
+            &state.http_client,
+            &state.curse_forge_api_key,
+            &tag_vec,
+            cf_class_id,
+        )
+        .await;
         let result = cf
             .search(
                 keyword,
                 game_version.map(|g| vec![g.to_string()]).as_deref(),
-                None,
+                cf_category_ids.as_deref(),
                 if loaders.is_empty() {
                     None
                 } else {

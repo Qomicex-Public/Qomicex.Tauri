@@ -100,8 +100,8 @@ const SORT_OPTIONS: Record<string, { key: string }[]> = {
   ],
 }
 
-// 常用 Modrinth 标签（category），用于资源中心按标签筛选。CurseForge 标签为
-// 数字 ID，无法在此直接映射，故仅对 Modrinth（及 all 聚合中的 Modrinth 部分）生效。
+// 常用标签（category），用于资源中心按标签筛选。对 Modrinth 直接使用 slug；
+// 对 CurseForge 由后端把 slug 映射到其数字 categoryId（词汇不一致处走别名补偿）。
 const MOD_TAGS = [
   'library', 'optimization', 'utility', 'adventure', 'magic', 'technology',
   'food', 'storage', 'worldgen', 'decoration', 'equipment', 'social',
@@ -120,9 +120,9 @@ function getSourceLabel(source: string): string {
   return map[source] ?? source
 }
 
-// 标签筛选仅对 Modrinth（及 all 聚合中的 Modrinth 部分）的 mod 分类生效。
+// 标签筛选对 Modrinth / CurseForge（及 all 聚合）的 mod 分类生效。
 function tagsSupported(source: string, category: string): boolean {
-  return (source === 'modrinth' || source === 'all') && category === 'mod'
+  return (source === 'modrinth' || source === 'curseforge' || source === 'all') && category === 'mod'
 }
 
 function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string, tags?: string[]): string {
@@ -487,7 +487,7 @@ export default function ResourceCenter() {
                 )}
               </div>
             </div>
-            {(source === 'modrinth' || source === 'all') && category === 'mod' && (
+            {(source === 'modrinth' || source === 'curseforge' || source === 'all') && category === 'mod' && (
               <div className="w-full space-y-1">
                 <p className="text-[11px] font-medium text-muted-foreground">标签</p>
                 <div className="flex flex-wrap gap-1.5">
