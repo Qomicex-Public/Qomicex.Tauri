@@ -356,6 +356,7 @@ fn cf_tag_alias(s: &str) -> Option<&'static str> {
         "library" => Some("libraries"),
         "support" => Some("addons"),
         "minigame" => Some("mini-game"),
+        "map-and-information" => Some("map-information"),
         _ => None,
     }
 }

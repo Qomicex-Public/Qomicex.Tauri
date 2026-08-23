@@ -100,14 +100,41 @@ const SORT_OPTIONS: Record<string, { key: string }[]> = {
   ],
 }
 
-// 常用标签（category），用于资源中心按标签筛选。对 Modrinth 直接使用 slug；
-// 对 CurseForge 由后端把 slug 映射到其数字 categoryId（词汇不一致处走别名补偿）。
+// 两套独立的标签体系：Modrinth 与 CurseForge 的 category 词汇完全不同。
+// 前端按来源展示对应的一套；后端各自解析（Modrinth 直接用 slug，CurseForge
+// 把 slug 映射到其数字 categoryId）。
+
+// Modrinth 模组分类 slug（直接作为 categories facet）。
 const MOD_TAGS = [
   'library', 'optimization', 'utility', 'adventure', 'magic', 'technology',
   'food', 'storage', 'worldgen', 'decoration', 'equipment', 'social',
   'support', 'cursed', 'combat', 'mobs', 'management', 'transportation',
   'economy', 'challenging', 'game-mechanics', 'minigame', 'quests',
 ]
+
+// CurseForge 模组分类 slug（classId=6），与后端 cf_resolve_category_ids 解析的
+// CF 实际 category slug 对齐，确保筛选能命中。
+const CF_TAGS = [
+  'addons', 'armor', 'bibliotheques', 'biomes', 'build-supports', 'config',
+  'cosmetic', 'cursed', 'dimensions', 'education', 'farming', 'food',
+  'game-mechanics', 'library', 'magic', 'map-and-information', 'mobs',
+  'multiplayer', 'ore', 'player-transport', 'redstone', 'science', 'storage',
+  'structures', 'technology', 'tools', 'utilities', 'world-generation',
+  'adventure',
+]
+
+// 根据来源返回对应的标签集合：CurseForge 用 CF 体系，其余（modrinth / all 聚合）
+// 用 Modrinth 体系。
+function tagsForSource(source: string): string[] {
+  return source === 'curseforge' ? CF_TAGS : MOD_TAGS
+}
+
+// 把标签列表过滤为当前来源支持的那一套，避免把 Modrinth 标签套到 CurseForge
+// （或反之），例如通过 URL / 快照恢复时来源与标签不匹配的情况。
+function normalizeTags(tags: string[], source: string): string[] {
+  const allowed = new Set(tagsForSource(source))
+  return tags.filter((t) => allowed.has(t))
+}
 
 function formatDownloads(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -266,7 +293,7 @@ export default function ResourceCenter() {
   const [tags, setTags] = useState<string[]>(() => {
     const raw = urlTags ? urlTags.split(',').map((t) => t.trim()).filter(Boolean)
       : (!freshEntry && snap?.tags ? snap.tags : [])
-    return tagsSupported(categoryInit, source) ? raw : []
+    return tagsSupported(categoryInit, source) ? normalizeTags(raw, source) : []
   })
   const instanceId = searchParams.get('instanceId') ?? ''
   const [items, setItems] = useState<ResourceItem[]>(() => freshEntry ? [] : (snap?.items ?? []))
@@ -386,18 +413,19 @@ export default function ResourceCenter() {
   }
 
   const handleSourceChange = (nextSource: string) => {
+    // 切换来源会改变标签体系（Modrinth / CurseForge），跨体系的标签 slug 不通用，
+    // 因此来源词汇变化时清空已选标签，避免误把一套标签发给另一套来源。
+    if (tagsForSource(nextSource) !== tagsForSource(source)) setTags([])
     setSource(nextSource)
     if (nextSource === 'ftb') {
       setCategory('modpack')
       setSort('relevance')
-      setTags([])
       return
     }
     if (nextSource === 'all') {
       setSort('downloads')
       return
     }
-    if (nextSource === 'curseforge') setTags([])
     if (category === 'save' && nextSource !== 'curseforge') setCategory('mod')
     setSort(nextSource === 'curseforge' ? 'downloads' : 'relevance')
   }
@@ -489,9 +517,11 @@ export default function ResourceCenter() {
             </div>
             {(source === 'modrinth' || source === 'curseforge' || source === 'all') && category === 'mod' && (
               <div className="w-full space-y-1">
-                <p className="text-[11px] font-medium text-muted-foreground">标签</p>
+                <p className="text-[11px] font-medium text-muted-foreground">
+                  {source === 'curseforge' ? 'CurseForge 标签' : '标签'}
+                </p>
                 <div className="flex flex-wrap gap-1.5">
-                  {MOD_TAGS.map((tag) => {
+                  {tagsForSource(source).map((tag) => {
                     const active = tags.includes(tag)
                     return (
                       <button
@@ -505,7 +535,7 @@ export default function ResourceCenter() {
                             : 'border-border/60 bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground',
                         )}
                       >
-                        {translateCategory(tag, 'modrinth', lang)}
+                        {translateCategory(tag, source === 'curseforge' ? 'curseforge' : 'modrinth', lang)}
                       </button>
                     )
                   })}
