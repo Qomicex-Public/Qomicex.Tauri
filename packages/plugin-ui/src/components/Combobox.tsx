@@ -98,7 +98,7 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
         <div
           ref={popupRef}
           style={{ position: 'fixed', top: pos.top, left: pos.left, width: Math.max(pos.width, 180), zIndex: 9999 }}
-          className="rounded-lg border border-border/50 bg-popover/90 backdrop-blur-lg p-1 shadow-xl animate-in fade-in zoom-in-95"
+          className="rounded-lg border border-border/50 bg-popover p-1 shadow-xl animate-in fade-in zoom-in-95"
           onMouseDown={(e) => e.preventDefault()}
         >
           <div className="max-h-60 overflow-y-auto">
