@@ -50,6 +50,7 @@ import { getRuntimes, getValidRuntimes, addRuntime, removeRuntime, scanRuntimes,
 import { addTask } from '../stores/downloadStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
+import { uploadFile } from '../api/ipc.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
@@ -688,11 +689,9 @@ export default function Settings() {
     input.onchange = async () => {
       const file = input.files?.[0]
       if (!file) return
-      const form = new FormData()
-      form.append('plugin', file)
       setPluginInstalling(true)
       try {
-        const res = await fetch(`${API_BASE}/plugins/upload`, { method: 'POST', body: form })
+        const res = await uploadFile('/plugins/upload', file, 'plugin')
         if (!res.ok) throw new Error(`Upload failed (${res.status})`)
         setPluginsMsg(t('settings.plugins.installSuccess'))
         setPluginDetail(null)

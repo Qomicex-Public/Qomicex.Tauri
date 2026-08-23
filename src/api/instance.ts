@@ -1,4 +1,5 @@
 import { get, post, put, del, API_BASE, ApiError } from './client.ts'
+import { uploadFile } from './ipc.ts'
 import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
@@ -144,10 +145,9 @@ export async function exportDiagnostics(id: string): Promise<void> {
 }
 
 export async function parseModpackFile(file: File): Promise<ModpackParseResult> {
-  const formData = new FormData()
-  formData.append('file', file)
   try {
-    const res = await fetch(`${API_BASE}/modpack/parse`, { method: 'POST', body: formData })
+    // IPC 模式下 multipart 走 ipc_stream 通道（WebView2 custom protocol 会丢 multipart body）
+    const res = await uploadFile('/modpack/parse', file)
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       if (err.message) throw new Error(String(err.message))

@@ -333,10 +333,17 @@ pub async fn ipc_stream(
             let _ =
                 on_event.send(serde_json::json!({ "t": "error", "d": e.to_string() }).to_string());
         }
-        // 任务结束（完成/出错/被 abort）后移除注册表条目，防泄漏
+        // 任务结束（完成/出错/被 abort）后移除注册表条目，防泄漏。
+        // 竞态说明：spawn 后 insert 之间任务可能已结束并 remove（map 空），
+        // 随后 insert 会把已完成 handle 放回造成残留。因此 insert 前先清理
+        // 同 id 旧条目（若存在则 abort），保证注册表不残留已完成任务。
         registry.lock().unwrap().remove(&id2);
     });
-    state.0.lock().unwrap().insert(id.clone(), handle);
+    let mut reg = state.0.lock().unwrap();
+    if let Some(old) = reg.remove(&id) {
+        old.abort();
+    }
+    reg.insert(id.clone(), handle);
     Ok(id)
 }
 
@@ -366,14 +373,39 @@ async fn run_stream(
         "h": resp_headers.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>(),
     });
     emit(head.to_string()).ok();
+    // 跨 chunk 保持 UTF-8 完整性：多字节字符被切到两个 chunk 时，
+    // 逐块独立 from_utf8_lossy 会产生 U+FFFD 乱码（破坏 SSE JSON 行）。
+    // 这里保留不完整尾部字节，与下一 chunk 合并后再解码。
+    let mut pending: Vec<u8> = Vec::new();
     read_chunks(&mut conn, |c| {
-        // ponytail: 按 UTF-8 lossy 切块推送；多字节字符跨块的极端场景由前端行缓冲兜底
-        let text = String::from_utf8_lossy(&c).into_owned();
-        emit(serde_json::json!({ "t": "chunk", "d": text }).to_string())
-            .map_err(|e| std::io::Error::other(e))?;
+        pending.extend_from_slice(&c);
+        let valid_len = match std::str::from_utf8(&pending) {
+            Ok(_) => pending.len(),
+            Err(e) => {
+                let v = e.valid_up_to();
+                // 非法字节开头时强制推进 1 字节（lossy 替换），避免残留不减少的死循环
+                if v == 0 && !pending.is_empty() {
+                    1
+                } else {
+                    v
+                }
+            }
+        };
+        if valid_len > 0 {
+            let text = String::from_utf8_lossy(&pending[..valid_len]).into_owned();
+            emit(serde_json::json!({ "t": "chunk", "d": text }).to_string())
+                .map_err(|e| std::io::Error::other(e))?;
+            pending.drain(..valid_len);
+        }
         Ok(())
     })
     .await?;
+    // 流结束：flush 残留字节（正常场景为不完整多字节尾部，lossy 兜底）
+    if !pending.is_empty() {
+        let text = String::from_utf8_lossy(&pending).into_owned();
+        emit(serde_json::json!({ "t": "chunk", "d": text }).to_string())
+            .map_err(|e| std::io::Error::other(e))?;
+    }
     emit(r#"{"t":"end"}"#.to_string()).ok();
     // 与后端约定：等对端断开再关（见后端 handle_conn 注释）
     let mut sink = [0u8; 64];

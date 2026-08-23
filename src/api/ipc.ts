@@ -134,6 +134,7 @@ function httpStream(path: string, onChunk: (text: string) => void, opts?: Stream
 interface StreamEvent {
   t: 'head' | 'chunk' | 'end' | 'error'
   status?: number
+  h?: string[]
   d?: string
 }
 
@@ -185,4 +186,84 @@ function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamO
     })
   })()
   return { done, close: () => closeFn?.() }
+}
+
+/**
+ * multipart 文件上传（统一入口）。
+ *
+ * 背景：WebView2 的 custom protocol（http://qomicex.localhost）对
+ * `multipart/form-data` Content-Type 的请求会丢弃 body（实测：后端收到空文件，
+ * 报 "invalid Zip archive: Could not find EOCD"；而 JSON/octet-stream body 完整）。
+ * 因此 IPC 模式下不能走 fetch + FormData，改为构造 multipart 字节经
+ * `ipc_stream` 命令（invoke 通道，不经过 custom protocol fetch）发送。
+ * HTTP 模式（纯浏览器/CI）保持原生 FormData。
+ *
+ * 返回与 fetch 对齐的 Response 对象，调用方用 res.ok / res.json() 消费。
+ */
+export async function uploadFile(path: string, file: File, fieldName = 'file'): Promise<Response> {
+  if (!isIpcMode()) {
+    const fd = new FormData()
+    fd.append(fieldName, file)
+    return fetch(`${API_BASE}${path}`, { method: 'POST', body: fd })
+  }
+
+  const boundary = `----qomicex-ipc-${Math.random().toString(36).slice(2)}`
+  const encoder = new TextEncoder()
+  const fileBytes = new Uint8Array(await file.arrayBuffer())
+  const head = encoder.encode(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="${fieldName}"; filename="${file.name}"\r\n` +
+    `Content-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`,
+  )
+  const tail = encoder.encode(`\r\n--${boundary}--\r\n`)
+  const body = new Uint8Array(head.length + fileBytes.length + tail.length)
+  body.set(head, 0)
+  body.set(fileBytes, head.length)
+  body.set(tail, head.length + fileBytes.length)
+
+  const { invoke, Channel } = await import('@tauri-apps/api/core')
+  const id = Math.random().toString(36).slice(2)
+  const chunks: string[] = []
+  let status = 0
+  let respHeaders: Record<string, string> = {}
+  await new Promise<void>((resolve, reject) => {
+    let dead = false
+    const channel = new Channel<string>()
+    channel.onmessage = msg => {
+      if (dead) return
+      let e: StreamEvent
+      try { e = JSON.parse(msg) as StreamEvent } catch { return }
+      if (e.t === 'head') {
+        status = e.status ?? 0
+        for (const h of e.h ?? []) {
+          const idx = h.indexOf(':')
+          if (idx > 0) respHeaders[h.slice(0, idx).trim().toLowerCase()] = h.slice(idx + 1).trim()
+        }
+        if (status < 200 || status >= 300) {
+          dead = true
+          invoke('ipc_stream_abort', { id }).catch(() => {})
+          reject(new StreamStatusError(status))
+        }
+      } else if (e.t === 'chunk') {
+        chunks.push(e.d ?? '')
+      } else if (e.t === 'error') {
+        dead = true
+        reject(new Error(e.d || 'stream failed'))
+      } else if (e.t === 'end') {
+        resolve()
+      }
+    }
+    invoke('ipc_stream', {
+      id,
+      req: {
+        method: 'POST',
+        path,
+        headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+        body: Array.from(body),
+      },
+      onEvent: channel,
+    }).catch(reject)
+  })
+  const text = chunks.join('')
+  return new Response(text, { status, headers: respHeaders })
 }

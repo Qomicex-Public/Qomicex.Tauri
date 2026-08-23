@@ -1,4 +1,5 @@
 import { get, API_BASE, ApiError } from './client.ts'
+import { uploadFile } from './ipc.ts'
 import type { SkinProfile, McCape } from '../types/index.ts'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
 
@@ -42,12 +43,10 @@ export function getSkinTextureUrl(uuid: string, type: string, server?: string | 
 }
 
 export async function uploadSkin(uuid: string, file: File, type: string, server?: string | null, model?: string | null): Promise<void> {
-  const form = new FormData()
-  form.append('file', file)
   const params = new URLSearchParams({ type })
   if (server) params.set('server', server)
   if (model) params.set('model', model)
-  const resp = await fetch(`${API_BASE}/skin/upload/${uuid}?${params.toString()}`, { method: 'POST', body: form })
+  const resp = await uploadFile(`/skin/upload/${uuid}?${params.toString()}`, file)
   if (!resp.ok) throw new ApiError({ code: 'SKIN_UPLOAD_FAILED', message: '上传失败', detail: null, traceId: '', timestamp: new Date().toISOString(), status: resp.status })
 }
 

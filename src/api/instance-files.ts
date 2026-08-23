@@ -1,4 +1,5 @@
 import { get, del, post, put, ApiError, API_BASE } from './client.ts'
+import { uploadFile } from './ipc.ts'
 import type { FileEntry, ModMetadata, ModEnrichEntry, ModUpdateEntry, ResourcePackMetadata, ShaderMetadata, SaveMetadata, SaveSettings, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState, LanGameEntry, SchematicAssetsBundle } from '../types/index.ts'
 
 /** 从非 JSON 错误响应构造 ApiError（表单上传等场景）。 */
@@ -189,9 +190,7 @@ export function renameSchematic(instanceId: string, oldName: string, newName: st
 
 /** 导入本地原理图文件（multipart）。同名报 409 SCHEMATIC_EXISTS。 */
 export async function importSchematic(instanceId: string, file: File): Promise<void> {
-  const form = new FormData()
-  form.append('file', file)
-  const res = await fetch(`${API_BASE}/instance/${instanceId}/files/schematics/import`, { method: 'POST', body: form })
+  const res = await uploadFile(`/instance/${instanceId}/files/schematics/import`, file)
   if (!res.ok) throw await apiErrorFrom(res, 'SCHEMATIC_IMPORT_FAILED', '导入失败')
 }
 

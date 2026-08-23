@@ -1,5 +1,5 @@
 import { API_BASE } from '../api/client.ts'
-import { openStream, createSseParser } from '../api/ipc.ts'
+import { openStream, createSseParser, uploadFile } from '../api/ipc.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
 import { resolveLang } from '../i18n/lang.ts'
@@ -169,10 +169,8 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       return res.status === 204 ? null : res.json()
     },
     uploadPlugin: async (fileData, fileName) => {
-      const blob = new Blob([new Uint8Array(fileData)])
-      const fd = new FormData()
-      fd.append('plugin', blob, fileName)
-      const res = await fetch(`${API_BASE}/plugins/upload`, { method: 'POST', body: fd })
+      const file = new File([new Uint8Array(fileData)], fileName)
+      const res = await uploadFile('/plugins/upload', file, 'plugin')
       if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
       return res.json()
     },

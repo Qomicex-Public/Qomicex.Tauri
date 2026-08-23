@@ -20,6 +20,10 @@ use tower::Service;
 /// 单请求 body 上限（导出包等大文件场景），防御异常连接撑爆内存。
 const MAX_FRAME_BODY: u32 = 1 << 30;
 
+/// 单帧读取超时：防御慢速/恶意客户端只发长度前缀后挂起（read_exact 永久等待
+/// 剩余字节会占用一个连接直到客户端断开）。正常请求远快于此阈值。
+const FRAME_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[cfg(windows)]
 pub async fn serve(
     app: Router,
@@ -101,7 +105,11 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<Q
         ));
     }
     let mut buf = vec![0u8; total as usize];
-    r.read_exact(&mut buf).await?;
+    // 超时防御：客户端声明长度后不发送剩余字节（截断帧）时，read_exact 会
+    // 永久挂起占用连接。加超时后超时即断开，释放连接。
+    tokio::time::timeout(FRAME_READ_TIMEOUT, r.read_exact(&mut buf))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "frame read timeout"))??;
     let mut cur = &buf[..];
 
     let method_len = read_u8(&mut cur)? as usize;
