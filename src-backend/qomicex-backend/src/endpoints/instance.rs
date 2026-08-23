@@ -875,6 +875,7 @@ async fn install_instance(
             http_client,
             &cf_api_key,
             data,
+            crate::services::install_service::INSTALL_STEP_BUDGET_TOP,
         )
         .await
     });

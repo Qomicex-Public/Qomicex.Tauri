@@ -79,11 +79,20 @@ impl InstallStatus {
     }
 }
 
+/// 安装管线分步计划项（define_steps 入参）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InstallStepSpec {
+    pub id: &'static str,
+    /// 权重（合成总进度用，任意正数；内部按 Σweight 归一化）
+    pub weight: f64,
+}
+
 /// 安装管线分步状态（下载中心卡片渲染步骤列表的数据源）。
 ///
 /// `id` 是稳定标识（如 "fetch-json"/"installer"），文案由前端 i18n 映射；
 /// `percent` 仅在 active 步骤有字节级进度时由 download_batch 推进（0-100），
 /// 扫描/安装等无字节进度的阶段保持 0，前端不渲染百分比。
+/// 并行管线中多个步骤可同时处于 active 状态。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallStep {
@@ -91,14 +100,17 @@ pub struct InstallStep {
     /// pending | active | done | failed
     pub status: String,
     pub percent: f64,
+    /// 合成总进度权重
+    pub weight: f64,
 }
 
 impl InstallStep {
-    fn pending(id: &str) -> Self {
+    fn pending(id: &str, weight: f64) -> Self {
         Self {
             id: id.to_string(),
             status: "pending".to_string(),
             percent: 0.0,
+            weight,
         }
     }
 }
@@ -147,22 +159,45 @@ impl InstallHandle {
         self.update(|f| f.stage = stage.to_string());
     }
 
-    /// 定义分步计划（幂等：仅当尚未定义时生效）。
+    /// 追加分步计划（可多次调用：嵌套管线把子步骤追加进同一张表）。
     ///
-    /// 整合包管线先定义外层计划，内部嵌套的 `run_install_pipeline` 再次调用时
-    /// 不会覆盖外层计划；嵌套管线的 `begin_step` 因 id 不在外层计划中而为 no-op。
-    pub fn define_steps(&self, ids: &[&str]) {
+    /// `budget` 为本组步骤的权重预算（顶层传 [`INSTALL_STEP_BUDGET_TOP`] = 100，
+    /// 因子 1.0；整合包内层传外层分配的预算如 40 → 实际权重 = 原始权重 × 40/100，
+    /// 即内层步骤合计占全局合成进度的 40%）。
+    pub fn define_steps(&self, specs: &[InstallStepSpec], budget: f64) {
+        let factor = budget / 100.0;
         self.update(|f| {
-            if f.steps.is_empty() && !ids.is_empty() {
-                f.steps = ids.iter().map(|id| InstallStep::pending(id)).collect();
+            for spec in specs {
+                f.steps
+                    .push(InstallStep::pending(spec.id, spec.weight * factor));
             }
         });
     }
 
-    /// 推进步骤：`id` 之前的全部置 done(100%)，`id` 置 active。
-    /// `id` 不在计划中（嵌套管线的内部阶段）时不做任何事。
-    pub fn begin_step(&self, id: &str) {
-        self.update(|f| f.begin_step(id));
+    /// 显式设置某步骤状态（active/done/failed），不影响其他步骤。
+    ///
+    /// 并行语义下取代旧线性 begin_step（其"前序全 done"会误杀同时活跃的兄弟分支）；
+    /// done 时 percent 置 100 并重算合成总进度。
+    pub fn mark_step(&self, id: &str, status: &str) {
+        self.update(|f| {
+            f.mark_step(id, status);
+            f.recompute_progress();
+        });
+    }
+
+    /// 定向更新某步骤的下载百分比并重算合成总进度（download_batch 调用）。
+    pub fn set_step_percent(&self, id: &str, percent: f64) {
+        self.update(|f| {
+            if let Some(step) = f.steps.iter_mut().find(|s| s.id == id) {
+                step.percent = percent.clamp(0.0, 100.0);
+            }
+            f.recompute_progress();
+        });
+    }
+
+    /// 请求取消（并行分支快速失败时置位，其余分支在轮询点自行退出）。
+    pub fn request_cancel(&self) {
+        self.0.cancelled.store(true, Ordering::SeqCst);
     }
 
     pub fn set_progress(&self, progress: f64) {
@@ -239,29 +274,41 @@ impl ProgressField {
         self.status = status.as_str().to_string();
     }
 
-    /// 推进步骤（见 `InstallHandle::begin_step`）。
-    pub fn begin_step(&mut self, id: &str) {
-        let Some(idx) = self.steps.iter().position(|s| s.id == id) else {
-            return;
-        };
-        for step in self.steps.iter_mut().take(idx) {
-            if step.status != "failed" {
-                step.status = "done".to_string();
+    /// 显式设置某步骤状态（done 时 percent=100），不影响其他步骤。
+    pub fn mark_step(&mut self, id: &str, status: &str) {
+        if let Some(step) = self.steps.iter_mut().find(|s| s.id == id) {
+            step.status = status.to_string();
+            if status == "done" {
                 step.percent = 100.0;
             }
         }
-        if let Some(step) = self.steps.get_mut(idx) {
-            step.status = "active".to_string();
-        }
     }
 
-    /// 将活跃步骤的百分比推进到 `percent`（download_batch 字节插值处调用）。
-    pub fn set_active_step_percent(&mut self, percent: f64) {
-        for step in self.steps.iter_mut() {
-            if step.status == "active" {
-                step.percent = percent.clamp(0.0, 100.0);
-            }
+    /// 定向更新某步骤百分比并重算合成总进度（update 闭包内使用，避免重锁）。
+    pub fn set_step_percent(&mut self, id: &str, percent: f64) {
+        if let Some(step) = self.steps.iter_mut().find(|s| s.id == id) {
+            step.percent = percent.clamp(0.0, 100.0);
         }
+        self.recompute_progress();
+    }
+
+    /// 合成总进度：Σ(done?w : active?w×pct/100 : 0) / Σw × 100。
+    /// pending/failed 计 0；全部 done 时恰为 100。
+    pub fn recompute_progress(&mut self) {
+        let total_w: f64 = self.steps.iter().map(|s| s.weight).sum();
+        if total_w <= 0.0 {
+            return;
+        }
+        let earned: f64 = self
+            .steps
+            .iter()
+            .map(|s| match s.status.as_str() {
+                "done" => s.weight,
+                "active" => s.weight * s.percent / 100.0,
+                _ => 0.0,
+            })
+            .sum();
+        self.progress = (earned / total_w * 100.0).clamp(0.0, 100.0);
     }
 
     /// 任务终态收尾：成功 → 全部 done；失败 → 活跃/未完成步置 failed。
@@ -274,6 +321,7 @@ impl ProgressField {
                 step.status = "failed".to_string();
             }
         }
+        self.recompute_progress();
     }
 
     pub fn is_terminal(&self) -> bool {
@@ -552,8 +600,12 @@ mod tests {
         }
     }
 
+    fn spec(id: &'static str, weight: f64) -> InstallStepSpec {
+        InstallStepSpec { id, weight }
+    }
+
     #[test]
-    fn define_steps_is_idempotent() {
+    fn define_steps_appends_and_scales_weights() {
         let (tx, _rx) = broadcast::channel(8);
         let state = InstallState::new(
             "t".to_string(),
@@ -563,63 +615,87 @@ mod tests {
             tx,
         );
         let handle = InstallHandle(std::sync::Arc::new(state));
-        handle.define_steps(&["download-modpack"]);
-        // 嵌套管线再次定义不得覆盖外层计划
-        handle.define_steps(&["fetch-json", "game-files"]);
+        handle.define_steps(&[spec("a", 10.0), spec("b", 30.0)], 100.0);
+        // 嵌套管线以预算缩放追加子步骤（40/100 → 因子 0.4）
+        handle.define_steps(&[spec("c", 50.0), spec("d", 50.0)], 40.0);
         let snap = handle.snapshot();
-        assert_eq!(snap.steps.len(), 1);
-        assert_eq!(snap.steps[0].id, "download-modpack");
+        let ids: Vec<&str> = snap.steps.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "c", "d"]);
+        assert_eq!(snap.steps[0].weight, 10.0);
+        assert_eq!(snap.steps[2].weight, 20.0);
+        assert_eq!(snap.steps[3].weight, 20.0);
     }
 
     #[test]
-    fn begin_step_marks_previous_done_and_self_active() {
+    fn mark_step_supports_parallel_actives_without_clobbering_siblings() {
         let mut f = field();
-        f.steps = ["a", "b", "c"]
+        f.steps = [spec("a", 25.0), spec("b", 25.0), spec("c", 50.0)]
             .iter()
-            .map(|id| InstallStep::pending(id))
+            .map(|s| InstallStep::pending(s.id, s.weight))
             .collect();
-        f.begin_step("b");
-        assert_eq!(f.steps[0].status, "done");
-        assert_eq!(f.steps[0].percent, 100.0);
-        assert_eq!(f.steps[1].status, "active");
+        f.mark_step("a", "active");
+        f.mark_step("b", "active");
+        // b done 不得影响同时活跃的 a
+        f.mark_step("b", "done");
+        assert_eq!(f.steps[0].status, "active");
+        assert_eq!(f.steps[1].status, "done");
+        assert_eq!(f.steps[1].percent, 100.0);
         assert_eq!(f.steps[2].status, "pending");
 
-        f.set_active_step_percent(42.0);
-        assert_eq!(f.steps[1].percent, 42.0);
-        assert_eq!(f.steps[2].percent, 0.0);
+        // 合成进度：a 活跃 40% + b 完成 = (25×0.4 + 25) / 100 × 100 = 35
+        f.set_step_percent("a", 40.0);
+        assert!((f.progress - 35.0).abs() < 1e-9, "progress={}", f.progress);
     }
 
     #[test]
-    fn begin_step_unknown_id_is_noop() {
+    fn mark_step_unknown_id_is_noop() {
         let mut f = field();
-        f.steps = vec![InstallStep::pending("install-game")];
-        f.begin_step("game-files");
+        f.steps = vec![InstallStep::pending("install-game", 100.0)];
+        f.mark_step("game-files", "active");
         assert!(f.steps.iter().all(|s| s.status == "pending"));
     }
 
     #[test]
     fn finish_steps_terminal_states() {
         let mut f = field();
-        f.steps = ["a", "b"]
+        f.steps = [spec("a", 50.0), spec("b", 50.0)]
             .iter()
-            .map(|id| InstallStep::pending(id))
+            .map(|s| InstallStep::pending(s.id, s.weight))
             .collect();
-        f.begin_step("b");
+        f.mark_step("b", "active");
         f.finish_steps(true);
         assert!(f
             .steps
             .iter()
             .all(|s| s.status == "done" && s.percent == 100.0));
+        assert!((f.progress - 100.0).abs() < 1e-9);
 
         let mut f = field();
-        f.steps = ["a", "b"]
+        f.steps = [spec("a", 50.0), spec("b", 50.0)]
             .iter()
-            .map(|id| InstallStep::pending(id))
+            .map(|s| InstallStep::pending(s.id, s.weight))
             .collect();
-        f.begin_step("b");
+        f.mark_step("a", "done");
+        f.mark_step("b", "active");
         f.finish_steps(false);
         assert_eq!(f.steps[0].status, "done");
         assert_eq!(f.steps[1].status, "failed");
+    }
+
+    #[test]
+    fn request_cancel_sets_flag() {
+        let (tx, _rx) = broadcast::channel(8);
+        let state = InstallState::new(
+            "t".to_string(),
+            "install".to_string(),
+            InstallStatus::Downloading,
+            "",
+            tx,
+        );
+        let handle = InstallHandle(std::sync::Arc::new(state));
+        assert!(!handle.is_cancelled());
+        handle.request_cancel();
+        assert!(handle.is_cancelled());
     }
 
     #[test]
@@ -647,6 +723,7 @@ mod tests {
             id: "fetch-json".to_string(),
             status: "active".to_string(),
             percent: 30.0,
+            weight: 5.0,
         }];
         let json2 = serde_json::to_value(&p2).unwrap();
         assert_eq!(json2["steps"][0]["id"], "fetch-json");

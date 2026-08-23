@@ -46,7 +46,10 @@ use qomicex_core::services::installers::factory::DefaultInstallerFactory;
 
 use crate::error::{ApiError, ApiResult};
 use crate::services::export_tracker::ExportTaskSnapshot;
-use crate::services::install_service::{download_batch, run_install_pipeline, InstallRequestData};
+use crate::services::install_service::{
+    download_batch, ensure_not_cancelled, run_install_pipeline, InstallRequestData,
+};
+use crate::services::install_tracker::InstallStepSpec;
 use crate::services::install_tracker::InstallTracker;
 use crate::services::install_tracker::{InstallHandle, InstallProgress, InstallStatus};
 use crate::services::instance::InstanceService;
@@ -915,33 +918,55 @@ pub(crate) async fn run_modpack_pipeline(
     let mut parsed: Option<ParsedModpack> = None;
 
     // 分步计划（下载中心卡片步骤列表）。本地导入跳过包体下载/解析两步；
-    // 嵌套 run_install_pipeline 的内部阶段 id 不在本计划中，begin_step 为 no-op，
-    // 其下载批次仍会把字节百分比推进到活跃的 "install-game" 步骤上。
-    let mut plan: Vec<&str> = if local_pack_path.is_some() {
-        vec!["install-game", "download-files", "overrides"]
+    // 游戏本体安装不设占位步骤——嵌套 run_install_pipeline 以 step_budget 权重
+    // 把自己的子步骤直接追加进同一张步骤表（平铺渲染、全局合成进度）。
+    let mut specs: Vec<InstallStepSpec> = if local_pack_path.is_some() {
+        vec![
+            InstallStepSpec {
+                id: "download-files",
+                weight: 30.0,
+            },
+            InstallStepSpec {
+                id: "overrides",
+                weight: 15.0,
+            },
+        ]
     } else {
         vec![
-            "download-modpack",
-            "parse-modpack",
-            "install-game",
-            "download-files",
-            "overrides",
+            InstallStepSpec {
+                id: "download-modpack",
+                weight: 12.0,
+            },
+            InstallStepSpec {
+                id: "parse-modpack",
+                weight: 3.0,
+            },
+            InstallStepSpec {
+                id: "download-files",
+                weight: 30.0,
+            },
+            InstallStepSpec {
+                id: "overrides",
+                weight: 15.0,
+            },
         ]
     };
-    // FTB 等源无 zip 包体、无 overrides 释放段，计划中剔除该步（恒为末位）
+    // FTB 等源无 zip 包体、无 overrides 释放段，计划中剔除该步
     let has_overrides = matches!(src.as_str(), "modrinth" | "curseforge" | "qml");
     if !has_overrides {
-        plan.pop();
+        specs.retain(|s| s.id != "overrides");
     }
-    handle.define_steps(&plan);
+    handle.define_steps(
+        &specs,
+        crate::services::install_service::INSTALL_STEP_BUDGET_TOP,
+    );
 
     // === 1. 获取整合包包体（本地导入直接用已上传/给定文件；在线下载）===
     if let Some(local) = local_pack_path {
         zip_path = Some(PathBuf::from(local));
     } else if src == "modrinth" || src == "curseforge" {
         handle.set_stage("downloading-modpack");
-        handle.set_progress(5.0);
-        handle.begin_step("download-modpack");
+        handle.mark_step("download-modpack", "active");
         let files = modpack_files.ok_or("整合包下载链接缺失")?;
         let first = files.first().ok_or("整合包下载链接缺失")?;
         let url = first
@@ -963,21 +988,21 @@ pub(crate) async fn run_modpack_pipeline(
             handle,
             mgr,
             vec![(mirror_url, path.clone(), modpack_headers(url, cf_api_key))],
-            5.0,
-            25.0,
+            Some("download-modpack"),
         )
         .await?;
+        handle.mark_step("download-modpack", "done");
 
         // === 2. 解析 manifest，补全游戏版本/加载器 ==="
         handle.set_stage("parsing-modpack");
-        handle.set_progress(27.0);
-        handle.begin_step("parse-modpack");
+        handle.mark_step("parse-modpack", "active");
         parsed = Some(if src == "modrinth" {
             parse_modrinth_index(&path)
                 .map_err(|e| format!("解析 modrinth.index.json 失败: {e}"))?
         } else {
             parse_curseforge_manifest(&path).map_err(|e| format!("解析 manifest.json 失败: {e}"))?
         });
+        handle.mark_step("parse-modpack", "done");
         zip_path = Some(path);
     }
 
@@ -1010,13 +1035,19 @@ pub(crate) async fn run_modpack_pipeline(
         Some(loader_version.clone())
     };
 
-    // === 4. 装游戏本体 + 加载器（复用实例安装流水线）===
-    handle.begin_step("install-game");
-    handle.update(|f| {
-        f.set_status(InstallStatus::Installing);
-        f.current_file = format!("安装 Minecraft {game_version} + {loader}", loader = loader);
-    });
-    let data = InstallRequestData {
+    // === 并行段 ================================================================
+    // [E] 游戏本体安装（嵌套实例管线，以 step_budget 把子步骤追加进步骤表）
+    // [G] 整合包文件/mods 下载（CF/QML 的链接反查保持串行防限流，下载本身并发）
+    // [F] overrides 解压释放
+    // 用户决策：三路全并行（放弃 overrides 对 mods 的覆盖优先保证，接受同名文件
+    // 写竞争的小概率风险）；任一分支失败快速失败。
+    const GAME_BUDGET: f64 = 40.0;
+
+    let h_e = handle.clone();
+    let mgr_e = mgr.clone();
+    let hc_e = http_client.clone();
+    let loader_msg = format!("安装 Minecraft {game_version} + {loader}");
+    let data_e = InstallRequestData {
         game_version: game_version.clone(),
         game_dir: game_dir.to_string(),
         version_dir_name: version_dir_name.to_string(),
@@ -1028,130 +1059,55 @@ pub(crate) async fn run_modpack_pipeline(
         download_source_id: 0,
         optifine_version: None,
     };
-    run_install_pipeline(handle, mgr.clone(), http_client.clone(), cf_api_key, data).await?;
+    let branch_game = async move {
+        h_e.update(|f| {
+            f.set_status(InstallStatus::Installing);
+            f.current_file = loader_msg;
+        });
+        run_install_pipeline(&h_e, mgr_e, hc_e, cf_api_key, data_e, GAME_BUDGET).await
+    };
 
-    // === 5. 下载 mods / 整合包文件 ===
-    handle.set_stage("modpack-files");
-    handle.set_progress(68.0);
-    handle.begin_step("download-files");
-    match src.as_str() {
-        "modrinth" => {
-            let p = parsed.as_ref().expect("modrinth 必有解析结果");
-            let files: Vec<(String, PathBuf, Vec<(String, String)>)> = p
-                .files
-                .iter()
-                .filter_map(|f| {
-                    let url = f.download_url.clone()?;
-                    if url.is_empty() {
-                        return None;
-                    }
-                    let dest =
-                        modpack_target_path(game_dir, version_dir_name, version_isolation, &f.path);
-                    let (url, headers) = mirror_mod_url(url, cf_api_key, file_download_source);
-                    Some((url, dest, headers))
-                })
-                .collect();
-            if !files.is_empty() {
-                download_batch(handle, mgr, files, 68.0, 85.0).await?;
-            } else {
-                handle.set_progress(85.0);
-            }
-        }
-        "curseforge" => {
-            let p = parsed.as_ref().expect("curseforge 必有解析结果");
-            // CF manifest 的 files 是 (projectID,fileID) 引用，逐个查下载链接（串行避免限流）
-            let cf = core.create_curseforge_source(cf_api_key);
-            let mut files = Vec::new();
-            for f in &p.files {
-                let coord = &f.path; // "projectID:fileID"
-                let Some((proj, fid)) = coord.split_once(':') else {
-                    continue;
-                };
-                let Ok(info) = cf.get_file_info(proj, fid).await else {
-                    continue;
-                };
-                let Ok(download_url) = cf.get_download_url(proj, fid).await else {
-                    continue;
-                };
-                if download_url.is_empty() {
-                    continue;
+    let h_g = handle.clone();
+    let mgr_g = mgr.clone();
+    let core_g = core.clone();
+    let hc_g = http_client.clone();
+    let gd_g = game_dir.to_string();
+    let vdn_g = version_dir_name.to_string();
+    let src_g = src.clone();
+    let zip_g = zip_path.clone();
+    let parsed_g = parsed.take();
+    let branch_files = async move {
+        h_g.mark_step("download-files", "active");
+        h_g.set_stage("modpack-files");
+        let result: Result<(), String> = match src_g.as_str() {
+            "modrinth" => {
+                let p = parsed_g.as_ref().expect("modrinth 必有解析结果");
+                let files: Vec<(String, PathBuf, Vec<(String, String)>)> = p
+                    .files
+                    .iter()
+                    .filter_map(|f| {
+                        let url = f.download_url.clone()?;
+                        if url.is_empty() {
+                            return None;
+                        }
+                        let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &f.path);
+                        let (url, headers) = mirror_mod_url(url, cf_api_key, file_download_source);
+                        Some((url, dest, headers))
+                    })
+                    .collect();
+                if !files.is_empty() {
+                    download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
                 }
-                let filename = info.file_name.unwrap_or_else(|| {
-                    download_url
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or("mod.jar")
-                        .to_string()
-                });
-                let dest = modpack_target_path(
-                    game_dir,
-                    version_dir_name,
-                    version_isolation,
-                    &format!("mods/{filename}"),
-                );
-                let (download_url, headers) =
-                    mirror_mod_url(download_url, cf_api_key, file_download_source);
-                files.push((download_url, dest, headers));
+                Ok(())
             }
-            if !files.is_empty() {
-                download_batch(handle, mgr, files, 68.0, 85.0).await?;
-            } else {
-                handle.set_progress(85.0);
-            }
-        }
-        "ftb" => {
-            // core FtbModpackInstaller：FTB API 文件清单 + CF 批量查询 mods 链接
-            let factory = DefaultInstallerFactory;
-            let inst = factory.create_ftb_modpack(
-                game_dir,
-                version_isolation,
-                http_client.clone(),
-                cf_api_key,
-            );
-            let libs = inst
-                .get_miss_libraries(Some(version_dir_name), project_id, file_id)
-                .await
-                .map_err(|e| format!("获取 FTB 整合包文件清单失败: {e}"))?;
-            let files: Vec<(String, PathBuf, Vec<(String, String)>)> = libs
-                .iter()
-                .map(|l| {
-                    let (url, headers) =
-                        mirror_mod_url(l.url.clone(), cf_api_key, file_download_source);
-                    (url, PathBuf::from(&l.path), headers)
-                })
-                .collect();
-            if !files.is_empty() {
-                download_batch(handle, mgr, files, 68.0, 88.0).await?;
-            } else {
-                handle.set_progress(88.0);
-            }
-        }
-        "qml" => {
-            // QML：files[] 混合来源——modrinth 直链（download_url 非空）+ curseforge
-            // projectID:fileID 占位（download_url 为空，逐个反查下载链接）。
-            let p: ParsedModpack = match parsed.as_ref() {
-                Some(p) => p.clone(),
-                None => {
-                    // 本地导入时管道未预解析：从包体 zip 现解析 qmodpack.index.json
-                    let zp = zip_path.as_ref().ok_or("整合包文件缺失")?;
-                    parse_qmodpack_index(zp)
-                        .map_err(|e| format!("解析 qmodpack.index.json 失败: {e}"))?
-                }
-            };
-            let cf = core.create_curseforge_source(cf_api_key);
-            let mut files = Vec::new();
-            for f in &p.files {
-                if let Some(url) = f.download_url.as_deref() {
-                    if url.is_empty() {
-                        continue;
-                    }
-                    let dest =
-                        modpack_target_path(game_dir, version_dir_name, version_isolation, &f.path);
-                    let (u, h) = mirror_mod_url(url.to_string(), cf_api_key, file_download_source);
-                    files.push((u, dest, h));
-                } else {
-                    // curseforge 占位：path = "projectID:fileID"
-                    let Some((proj, fid)) = f.path.split_once(':') else {
+            "curseforge" => {
+                let p = parsed_g.as_ref().expect("curseforge 必有解析结果");
+                // CF manifest 的 files 是 (projectID,fileID) 引用，逐个查下载链接（串行避免限流）
+                let cf = core_g.create_curseforge_source(cf_api_key);
+                let mut files = Vec::new();
+                for f in &p.files {
+                    let coord = &f.path; // "projectID:fileID"
+                    let Some((proj, fid)) = coord.split_once(':') else {
                         continue;
                     };
                     let Ok(info) = cf.get_file_info(proj, fid).await else {
@@ -1171,8 +1127,8 @@ pub(crate) async fn run_modpack_pipeline(
                             .to_string()
                     });
                     let dest = modpack_target_path(
-                        game_dir,
-                        version_dir_name,
+                        &gd_g,
+                        &vdn_g,
                         version_isolation,
                         &format!("mods/{filename}"),
                     );
@@ -1180,52 +1136,160 @@ pub(crate) async fn run_modpack_pipeline(
                         mirror_mod_url(download_url, cf_api_key, file_download_source);
                     files.push((download_url, dest, headers));
                 }
+                if !files.is_empty() {
+                    download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
+                }
+                Ok(())
             }
-            if !files.is_empty() {
-                download_batch(handle, mgr, files, 68.0, 85.0).await?;
-            } else {
-                handle.set_progress(85.0);
+            "ftb" => {
+                // core FtbModpackInstaller：FTB API 文件清单 + CF 批量查询 mods 链接
+                let factory = DefaultInstallerFactory;
+                let inst =
+                    factory.create_ftb_modpack(&gd_g, version_isolation, hc_g.clone(), cf_api_key);
+                let libs = inst
+                    .get_miss_libraries(Some(&vdn_g), project_id, file_id)
+                    .await
+                    .map_err(|e| format!("获取 FTB 整合包文件清单失败: {e}"))?;
+                let files: Vec<(String, PathBuf, Vec<(String, String)>)> = libs
+                    .iter()
+                    .map(|l| {
+                        let (url, headers) =
+                            mirror_mod_url(l.url.clone(), cf_api_key, file_download_source);
+                        (url, PathBuf::from(&l.path), headers)
+                    })
+                    .collect();
+                if !files.is_empty() {
+                    download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
+                }
+                Ok(())
             }
-        }
-        _ => {
-            handle.set_progress(85.0);
-        }
-    }
-
-    // === 6. 释放 overrides（core 安装器；FTB 无 zip → 跳过，与 core FTB 行为一致）===
-    if src == "modrinth" || src == "curseforge" {
-        handle.set_stage("modpack-overrides");
-        handle.set_progress(92.0);
-        handle.begin_step("overrides");
-        let factory = DefaultInstallerFactory;
-        let zip_str = zip_path
-            .as_ref()
-            .and_then(|p| p.to_str())
-            .ok_or("整合包文件缺失")?;
-        let inst = if src == "modrinth" {
-            factory.create_modrinth_modpack(game_dir, version_isolation, zip_str)
-        } else {
-            factory.create_curseforge_modpack(game_dir, version_isolation, zip_str)
+            "qml" => {
+                // QML：files[] 混合来源——modrinth 直链 + curseforge 占位反查
+                let p: ParsedModpack = match parsed_g {
+                    Some(p) => p,
+                    None => {
+                        // 本地导入时管道未预解析：从包体 zip 现解析 qmodpack.index.json
+                        let zp = zip_g.as_ref().ok_or("整合包文件缺失")?;
+                        parse_qmodpack_index(zp)
+                            .map_err(|e| format!("解析 qmodpack.index.json 失败: {e}"))?
+                    }
+                };
+                let cf = core_g.create_curseforge_source(cf_api_key);
+                let mut files = Vec::new();
+                for f in &p.files {
+                    if let Some(url) = f.download_url.as_deref() {
+                        if url.is_empty() {
+                            continue;
+                        }
+                        let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &f.path);
+                        let (u, h) =
+                            mirror_mod_url(url.to_string(), cf_api_key, file_download_source);
+                        files.push((u, dest, h));
+                    } else {
+                        // curseforge 占位：path = "projectID:fileID"
+                        let Some((proj, fid)) = f.path.split_once(':') else {
+                            continue;
+                        };
+                        let Ok(info) = cf.get_file_info(proj, fid).await else {
+                            continue;
+                        };
+                        let Ok(download_url) = cf.get_download_url(proj, fid).await else {
+                            continue;
+                        };
+                        if download_url.is_empty() {
+                            continue;
+                        }
+                        let filename = info.file_name.unwrap_or_else(|| {
+                            download_url
+                                .rsplit('/')
+                                .next()
+                                .unwrap_or("mod.jar")
+                                .to_string()
+                        });
+                        let dest = modpack_target_path(
+                            &gd_g,
+                            &vdn_g,
+                            version_isolation,
+                            &format!("mods/{filename}"),
+                        );
+                        let (download_url, headers) =
+                            mirror_mod_url(download_url, cf_api_key, file_download_source);
+                        files.push((download_url, dest, headers));
+                    }
+                }
+                if !files.is_empty() {
+                    download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
         };
-        inst.install(version_dir_name, "", None, None, None, None)
-            .await
-            .map_err(|e| format!("释放整合包覆盖文件失败: {e}"))?;
-    } else if src == "qml" {
-        // QML 结构简单（qmodpack.index.json + overrides/**），自行释放 overrides
-        handle.set_stage("modpack-overrides");
-        handle.set_progress(92.0);
-        handle.begin_step("overrides");
-        let zip_str = zip_path
-            .as_ref()
-            .and_then(|p| p.to_str())
-            .ok_or("整合包文件缺失")?;
-        release_qml_overrides(zip_str, game_dir, version_dir_name, version_isolation)?;
+        if result.is_ok() {
+            h_g.mark_step("download-files", "done");
+        }
+        result
+    };
+
+    let h_o = handle.clone();
+    let gd_o = game_dir.to_string();
+    let vdn_o = version_dir_name.to_string();
+    let src_o = src.clone();
+    let zip_o = zip_path.clone();
+    let branch_overrides = async move {
+        if !has_overrides {
+            return Ok(());
+        }
+        h_o.mark_step("overrides", "active");
+        h_o.set_stage("modpack-overrides");
+        if src_o == "modrinth" || src_o == "curseforge" {
+            let factory = DefaultInstallerFactory;
+            let zip_str = zip_o
+                .as_ref()
+                .and_then(|p| p.to_str())
+                .ok_or("整合包文件缺失")?;
+            let inst = if src_o == "modrinth" {
+                factory.create_modrinth_modpack(&gd_o, version_isolation, zip_str)
+            } else {
+                factory.create_curseforge_modpack(&gd_o, version_isolation, zip_str)
+            };
+            inst.install(&vdn_o, "", None, None, None, None)
+                .await
+                .map_err(|e| format!("释放整合包覆盖文件失败: {e}"))?;
+        } else if src_o == "qml" {
+            // QML 结构简单（qmodpack.index.json + overrides/**），自行释放 overrides
+            let zip_str = zip_o
+                .as_ref()
+                .and_then(|p| p.to_str())
+                .ok_or("整合包文件缺失")?;
+            release_qml_overrides(zip_str, &gd_o, &vdn_o, version_isolation)?;
+        }
+        h_o.mark_step("overrides", "done");
+        Ok(())
+    };
+
+    let (res_e, res_g, res_o) = tokio::join!(branch_game, branch_files, branch_overrides);
+    // 快速失败：首个非取消类错误胜出；同时置位取消标志让仍在跑的分支尽快退出
+    let first_err = [
+        res_e.as_ref().err(),
+        res_g.as_ref().err(),
+        res_o.as_ref().err(),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|e| e.as_str() != "安装已取消")
+    .cloned();
+    if let Some(e) = first_err {
+        handle.request_cancel();
+        return Err(e);
     }
+    ensure_not_cancelled(handle)?;
+    res_e?;
+    res_g?;
+    res_o?;
 
     handle.update(|f| {
         f.set_status(InstallStatus::Finishing);
         f.stage = "finishing".to_string();
-        f.progress = 98.0;
         f.current_file = "整合包安装完成".to_string();
     });
     Ok(())

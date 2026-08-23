@@ -27,7 +27,10 @@ use qomicex_core::services::installers::installer::{Installer, MissFileData};
 use qomicex_downloader::{DownloadEvent, DownloadManager, DownloadTask, TaskState};
 use serde_json::Value;
 
-use crate::services::install_tracker::{InstallHandle, InstallStatus};
+use crate::services::install_tracker::{InstallHandle, InstallStatus, InstallStepSpec};
+
+/// 顶层管线的步骤权重预算（合成总进度按 Σweight 归一化，任意正数均可）。
+pub const INSTALL_STEP_BUDGET_TOP: f64 = 100.0;
 
 /// 安装流水线输入参数（由 `install_instance` 从 `InstallerRequest` + 实例组装）。
 #[derive(Debug, Clone)]
@@ -92,12 +95,26 @@ pub fn build_repair_core(
 }
 
 /// 运行完整安装流水线。成功返回 `Ok(())`；失败返回错误消息（runner 会置 failed）。
+///
+/// 编排结构（DAG 并行，见 ADR 安装管线并行化）：
+/// ```text
+/// fetching-json（串行）
+///   ├─ [A] installer 下载 ──► loader-libs 扫描+下载（forge 系链式；Fabric 无 installer 直连）
+///   ├─ [B] base 扫描+下载（vanilla 含版本 JSON 写盘）
+///   └─ [C] addons 解析+下载
+/// （join，任一失败 request_cancel 让其余分支在轮询点退出）
+/// install-optifine? → installing-loader? → verifying-jar/finishing（串行尾）
+/// ```
+///
+/// `step_budget`：本管线步骤权重合计（顶层传 `STEP_BUDGET_TOP`；整合包外层嵌套调用时
+/// 传外层分配给"install-game"步骤的预算权重，子步骤按比例缩放追加进同一张步骤表）。
 pub async fn run_install_pipeline(
     handle: &InstallHandle,
     download_manager: Arc<DownloadManager>,
     http_client: reqwest::Client,
     curse_forge_api_key: &str,
     data: InstallRequestData,
+    step_budget: f64,
 ) -> Result<(), String> {
     let InstallRequestData {
         game_version,
@@ -133,8 +150,7 @@ pub async fn run_install_pipeline(
         .unwrap_or(false);
 
     // 分步计划（下载中心卡片步骤列表的数据源）。按入参静态推导各阶段是否出现；
-    // 整合包外层管线已定义计划时 define_steps 为 no-op，本管线的 begin_step 因
-    // id 不在外层计划中同样为 no-op（外层步骤状态不受嵌套阶段影响）。
+    // 权重为相对值（合成时按 Σweight 归一化），参照旧线性区间的跨度比例分配。
     let mut resolved_addons = merge_addons(&addons, loader.as_deref());
     let has_loader_phase = has_loader && loader_version.is_some();
     let optifine_standalone = optifine_version
@@ -145,32 +161,56 @@ pub async fn run_install_pipeline(
         && !is_neoforge
         && !has_loader;
     {
-        let mut plan: Vec<&str> = vec!["fetch-json"];
+        use InstallStepSpec as S;
+        let mut plan: Vec<InstallStepSpec> = vec![S {
+            id: "fetch-json",
+            weight: 4.0,
+        }];
         if is_forge || is_neoforge || is_cleanroom {
-            plan.push("installer");
+            plan.push(S {
+                id: "installer",
+                weight: 4.0,
+            });
         }
-        plan.push("game-files");
+        plan.push(S {
+            id: "game-files",
+            weight: 32.0,
+        });
         if has_loader_phase {
-            plan.push("loader-libs");
+            plan.push(S {
+                id: "loader-libs",
+                weight: 20.0,
+            });
         }
         if optifine_standalone {
-            plan.push("install-optifine");
+            plan.push(S {
+                id: "install-optifine",
+                weight: 16.0,
+            });
         }
         if !resolved_addons.is_empty() {
-            plan.push("download-addons");
+            plan.push(S {
+                id: "download-addons",
+                weight: 14.0,
+            });
         }
         if has_loader_phase {
-            plan.push("install-loader");
+            plan.push(S {
+                id: "install-loader",
+                weight: 18.0,
+            });
         }
-        plan.push("finalize");
-        handle.define_steps(&plan);
+        plan.push(S {
+            id: "finalize",
+            weight: 8.0,
+        });
+        handle.define_steps(&plan, step_budget);
     }
 
     check_cancel(handle)?;
     handle.set_status(InstallStatus::Downloading);
     handle.set_stage("fetching-json");
-    handle.begin_step("fetch-json");
-    handle.set_progress(0.0);
+    handle.mark_step("fetch-json", "active");
 
     // === Phase 1: 版本清单 + 原始版本 JSON ===
     let manifest = install_core
@@ -191,58 +231,7 @@ pub async fn run_install_pipeline(
         .text()
         .await
         .map_err(|e| format!("读取版本 JSON 失败: {e}"))?;
-    handle.set_progress(3.0);
-
-    check_cancel(handle)?;
-
-    // === Phase 2: 下载加载器安装器（forge / neoforge / cleanroom）===
-    let mut installer_path: Option<PathBuf> = None;
-    if is_forge || is_neoforge || is_cleanroom {
-        handle.set_stage("downloading-installer");
-        handle.set_progress(4.0);
-        handle.begin_step("installer");
-
-        let loader_type = if is_forge {
-            ModLoaderType::Forge
-        } else if is_neoforge {
-            ModLoaderType::NeoForge
-        } else {
-            ModLoaderType::Cleanroom
-        };
-        let loaders = install_core
-            .installer_provider()
-            .get_available_mod_loaders(&game_version, loader_type)
-            .await
-            .map_err(|e| format!("获取 {loader:?} 可用版本失败: {e}"))?;
-        let loader_version = loader_version.as_deref().unwrap_or("");
-        let matched = loaders
-            .iter()
-            .find(|l| l.version.eq_ignore_ascii_case(loader_version))
-            .ok_or_else(|| {
-                format!(
-                    "找不到 {} {} 的安装器",
-                    loader.as_deref().unwrap_or(""),
-                    loader_version
-                )
-            })?;
-        if matched.url.trim().is_empty() {
-            return Err(format!(
-                "{} {} 安装器的下载链接为空，可能是版本列表解析异常",
-                loader.as_deref().unwrap_or(""),
-                loader_version
-            ));
-        }
-
-        let temp_dir = game_root.join("temp");
-        std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建 temp 目录失败: {e}"))?;
-        let path = temp_dir.join(format!(
-            "{}-{}-installer.jar",
-            loader.as_deref().unwrap_or("loader"),
-            loader_version
-        ));
-        download_installer_jar(handle, &download_manager, &path, &matched.url, &cf_headers).await?;
-        installer_path = Some(path);
-    }
+    handle.mark_step("fetch-json", "done");
 
     // === 修正版本 JSON 的 id 与版本目录一致 ===
     let mut node: Value =
@@ -258,96 +247,241 @@ pub async fn run_install_pipeline(
     // 并在实例列表里出现损坏的原版实例。
     let base_json_content = json_content.clone();
 
-    // === Phase 3: 扫描 + 下载 vanilla 基础文件 ===
-    handle.set_stage("scanning-base");
-    handle.set_progress(5.0);
-    handle.begin_step("game-files");
-    let miss_files = install_core
-        .locator()
-        .get_miss_files_from_json(&base_json_content)
-        .await
-        .map_err(|e| format!("扫描缺失文件失败: {e}"))?;
-    let miss_files: Vec<MissFileInfo> = miss_files
-        .into_iter()
-        .filter(|f| !f.path.is_empty() && !f.url.is_empty())
-        .collect();
-
-    if !miss_files.is_empty() {
-        handle.set_stage("downloading-base");
-        let files: Vec<_> = miss_files
-            .iter()
-            .map(|f| {
-                let headers = if is_cf_domain(&f.url) {
-                    cf_headers.clone()
-                } else {
-                    Vec::new()
-                };
-                (f.url.clone(), game_root.join(&f.path), headers)
-            })
-            .collect();
-        download_batch(handle, &download_manager, files, 5.0, 35.0).await?;
-    } else {
-        handle.set_progress(35.0);
+    // Goal 3 前置：OptiFine 作为 mod 注入 forge/neoforge 时并入 addons，
+    // 必须发生在计划推导之后立刻补齐（download-addons 步骤的存在性依赖它）。
+    let is_forge_like = is_forge || is_neoforge;
+    if let Some(of) = optifine_version.as_deref() {
+        if !of.trim().is_empty() && is_forge_like {
+            resolved_addons.push(format!("optifine:{game_version}:{of}"));
+        }
     }
 
-    check_cancel(handle)?;
+    // === 并行段 ================================================================
+    // [A] installer 下载 ──► (forge 系) loader-libs 扫描+下载（同分支链式；
+    //     Fabric/Quilt 等无安装器加载器的 loader-libs 无前置依赖，直接在此执行）
+    // [B] base 扫描+下载（vanilla 含版本 JSON 写盘）
+    // [C] addons 解析 + additional-files 下载
+    // tokio::join! 并发推进全部分支；任一分支失败 → request_cancel 让其余分支在
+    // download_batch 轮询点自行退出，整体返回首个真实错误（快速失败）。
+    let h_a = handle.clone();
+    let mgr_a = download_manager.clone();
+    let core_a = install_core.clone();
+    let root_a = game_root.clone();
+    let hdrs_a = cf_headers.clone();
+    let loader_a = loader.clone();
+    let lv_a = loader_version.clone();
+    let gv_a = game_version.clone();
+    let vdn_a = version_dir_name.clone();
+    let branch_installer = async move {
+        let mut installer_path: Option<PathBuf> = None;
+        if is_forge_like {
+            h_a.mark_step("installer", "active");
+            h_a.set_stage("downloading-installer");
 
-    // === Phase 4: 加载器依赖库 ===
-    if has_loader && loader_version.is_some() {
-        handle.set_stage("scanning-loader-libs");
-        handle.set_progress(35.0);
-        handle.begin_step("loader-libs");
-        let miss_libs = get_miss_loader_libraries(
-            loader.as_deref().unwrap_or(""),
-            loader_version.as_deref().unwrap_or(""),
-            &game_version,
-            &game_root,
-            &version_dir_name,
-            installer_path.as_deref(),
-            download_source_id,
-        )
-        .await?;
+            let loader_type = if is_forge {
+                ModLoaderType::Forge
+            } else if is_neoforge {
+                ModLoaderType::NeoForge
+            } else {
+                ModLoaderType::Cleanroom
+            };
+            let loaders = core_a
+                .installer_provider()
+                .get_available_mod_loaders(&gv_a, loader_type)
+                .await
+                .map_err(|e| format!("获取 {loader_a:?} 可用版本失败: {e}"))?;
+            let lver = lv_a.as_deref().unwrap_or("");
+            let matched = loaders
+                .iter()
+                .find(|l| l.version.eq_ignore_ascii_case(lver))
+                .ok_or_else(|| {
+                    format!(
+                        "找不到 {} {} 的安装器",
+                        loader_a.as_deref().unwrap_or(""),
+                        lver
+                    )
+                })?;
+            if matched.url.trim().is_empty() {
+                return Err(format!(
+                    "{} {} 安装器的下载链接为空，可能是版本列表解析异常",
+                    loader_a.as_deref().unwrap_or(""),
+                    lver
+                ));
+            }
 
-        if !miss_libs.is_empty() {
-            handle.set_stage("downloading-loader-libs");
-            let files: Vec<_> = miss_libs
+            let temp_dir = root_a.join("temp");
+            std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建 temp 目录失败: {e}"))?;
+            let path = temp_dir.join(format!(
+                "{}-{}-installer.jar",
+                loader_a.as_deref().unwrap_or("loader"),
+                lver
+            ));
+            download_installer_jar(&h_a, &mgr_a, &path, &matched.url, &hdrs_a).await?;
+            h_a.mark_step("installer", "done");
+            installer_path = Some(path);
+        }
+        if has_loader_phase {
+            check_cancel(&h_a)?;
+            h_a.mark_step("loader-libs", "active");
+            h_a.set_stage("scanning-loader-libs");
+            let miss_libs = get_miss_loader_libraries(
+                loader_a.as_deref().unwrap_or(""),
+                lv_a.as_deref().unwrap_or(""),
+                &gv_a,
+                &root_a,
+                &vdn_a,
+                installer_path.as_deref(),
+                download_source_id,
+            )
+            .await?;
+
+            if !miss_libs.is_empty() {
+                h_a.set_stage("downloading-loader-libs");
+                let files: Vec<_> = miss_libs
+                    .iter()
+                    .map(|f| {
+                        let headers = if is_cf_domain(&f.url) {
+                            hdrs_a.clone()
+                        } else {
+                            Vec::new()
+                        };
+                        (f.url.clone(), root_a.join(&f.path), headers)
+                    })
+                    .collect();
+                download_batch(&h_a, &mgr_a, files, Some("loader-libs")).await?;
+            }
+            h_a.mark_step("loader-libs", "done");
+        }
+        Ok(installer_path)
+    };
+
+    let h_b = handle.clone();
+    let mgr_b = download_manager.clone();
+    let core_b = install_core.clone();
+    let root_b = game_root.clone();
+    let hdrs_b = cf_headers.clone();
+    let vdn_b = version_dir_name.clone();
+    let json_b = json_content.clone();
+    let bjc_b = base_json_content.clone();
+    let branch_base = async move {
+        h_b.mark_step("game-files", "active");
+        h_b.set_stage("scanning-base");
+        check_cancel(&h_b)?;
+        let miss_files = core_b
+            .locator()
+            .get_miss_files_from_json(&bjc_b)
+            .await
+            .map_err(|e| format!("扫描缺失文件失败: {e}"))?;
+        let miss_files: Vec<MissFileInfo> = miss_files
+            .into_iter()
+            .filter(|f| !f.path.is_empty() && !f.url.is_empty())
+            .collect();
+
+        if !miss_files.is_empty() {
+            h_b.set_stage("downloading-base");
+            let files: Vec<_> = miss_files
                 .iter()
                 .map(|f| {
                     let headers = if is_cf_domain(&f.url) {
-                        cf_headers.clone()
+                        hdrs_b.clone()
                     } else {
                         Vec::new()
                     };
-                    (f.url.clone(), game_root.join(&f.path), headers)
+                    (f.url.clone(), root_b.join(&f.path), headers)
                 })
                 .collect();
-            download_batch(handle, &download_manager, files, 35.0, 55.0).await?;
+            download_batch(&h_b, &mgr_b, files, Some("game-files")).await?;
         }
-    } else if !has_loader {
-        // === vanilla：写版本 JSON ===
-        let version_dir = game_root.join("versions").join(&version_dir_name);
-        std::fs::create_dir_all(&version_dir).map_err(|e| format!("创建版本目录失败: {e}"))?;
-        let json_path = version_dir.join(format!("{version_dir_name}.json"));
-        std::fs::write(&json_path, &json_content)
-            .map_err(|e| format!("写入版本 JSON 失败: {e}"))?;
+
+        if !has_loader {
+            // === vanilla：写版本 JSON ===
+            let version_dir = root_b.join("versions").join(&vdn_b);
+            std::fs::create_dir_all(&version_dir).map_err(|e| format!("创建版本目录失败: {e}"))?;
+            let json_path = version_dir.join(format!("{vdn_b}.json"));
+            std::fs::write(&json_path, &json_b).map_err(|e| format!("写入版本 JSON 失败: {e}"))?;
+        }
+        h_b.mark_step("game-files", "done");
+        Ok(())
+    };
+
+    let h_c = handle.clone();
+    let mgr_c = download_manager.clone();
+    let root_c = game_root.clone();
+    let gv_c = game_version.clone();
+    let hc_c = http_client.clone();
+    let key_c = curse_forge_api_key.to_string();
+    let addons_c = std::mem::take(&mut resolved_addons);
+    let branch_addons = async move {
+        if addons_c.is_empty() {
+            return Ok(());
+        }
+        h_c.mark_step("download-addons", "active");
+        h_c.set_stage("downloading-addons");
+        let all_additional_files =
+            resolve_addons(&hc_c, &addons_c, &gv_c, download_source_id).await;
+
+        if !all_additional_files.is_empty() {
+            h_c.set_stage("downloading-additional-files");
+            let files: Vec<_> = all_additional_files
+                .iter()
+                .map(|af| {
+                    let dest = root_c.join(
+                        af.relative_path
+                            .replace('/', &std::path::MAIN_SEPARATOR.to_string()),
+                    );
+                    let mut headers = Vec::new();
+                    if af.source.eq_ignore_ascii_case("modrinth") {
+                        headers.push((
+                            "User-Agent".to_string(),
+                            crate::state::USER_AGENT.to_string(),
+                        ));
+                    }
+                    let is_cf = af.source.eq_ignore_ascii_case("curseforge")
+                        || is_cf_domain(&af.identifier);
+                    if is_cf {
+                        headers.push(("x-api-key".to_string(), key_c.clone()));
+                        headers.push((
+                            "User-Agent".to_string(),
+                            crate::state::USER_AGENT.to_string(),
+                        ));
+                    }
+                    (af.identifier.clone(), dest, headers)
+                })
+                .collect();
+            download_batch(&h_c, &mgr_c, files, Some("download-addons")).await?;
+        }
+        h_c.mark_step("download-addons", "done");
+        Ok(())
+    };
+
+    let (res_a, res_b, res_c) = tokio::join!(branch_installer, branch_base, branch_addons);
+    // 快速失败：首个非取消类错误胜出；同时置位取消标志让仍在跑的分支尽快退出
+    let first_err = [
+        res_a.as_ref().err(),
+        res_b.as_ref().err(),
+        res_c.as_ref().err(),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|e| e.as_str() != "安装已取消")
+    .cloned();
+    if let Some(e) = first_err {
+        handle.request_cancel();
+        return Err(e);
     }
+    // 全部为取消类错误 → 用户手动取消路径
+    check_cancel(handle)?;
+    let installer_path = res_a?;
+    res_b?;
+    res_c?;
 
-    // === Goal 2: 合并 addons（用户 + 加载器默认）===
-    // resolved_addons 已在计划推导时合并（见管线开头）
-
-    // === Goal 3: OptiFine 特殊路径 ===
-    if let Some(of) = optifine_version.as_deref() {
-        if !of.trim().is_empty() {
-            let is_forge_like = is_forge || is_neoforge;
-            if is_forge_like {
-                // OptiFine 作为 mod 注入 forge/neoforge
-                resolved_addons.push(format!("optifine:{game_version}:{of}"));
-            } else if !has_loader {
-                // 无加载器 → 独立安装路径（源为 C# bug，会走 InstallLoader 抛
-                // NotSupportedException；此处补全 optifine case）
+    // === 串行尾：OptiFine 独立安装（无加载器场景；依赖 base 分支写盘的版本 JSON）===
+    if optifine_standalone {
+        if let Some(of) = optifine_version.as_deref() {
+            if !of.trim().is_empty() {
+                handle.mark_step("install-optifine", "active");
                 handle.set_stage("installing-optifine");
-                handle.set_progress(70.0);
-                handle.begin_step("install-optifine");
+                check_cancel(handle)?;
                 install_loader(
                     &install_core,
                     &version_dir_name,
@@ -360,70 +494,16 @@ pub async fn run_install_pipeline(
                     download_source_id,
                 )
                 .await?;
-                handle.set_progress(75.0);
+                handle.mark_step("install-optifine", "done");
             }
         }
     }
 
-    // === Goal 6: 解析 addons → AdditionalFile ===
-    let mut all_additional_files = Vec::new();
-    if !resolved_addons.is_empty() {
-        handle.set_stage("downloading-addons");
-        handle.set_progress(65.0);
-        handle.begin_step("download-addons");
-        all_additional_files.extend(
-            resolve_addons(
-                &http_client,
-                &resolved_addons,
-                &game_version,
-                download_source_id,
-            )
-            .await,
-        );
-    }
-
-    // === Goal 6: 下载附加文件 ===
-    if !all_additional_files.is_empty() {
-        handle.set_stage("downloading-additional-files");
-        handle.set_progress(70.0);
-        let files: Vec<_> = all_additional_files
-            .iter()
-            .map(|af| {
-                let dest = game_root.join(
-                    af.relative_path
-                        .replace('/', &std::path::MAIN_SEPARATOR.to_string()),
-                );
-                let mut headers = Vec::new();
-                if af.source.eq_ignore_ascii_case("modrinth") {
-                    headers.push((
-                        "User-Agent".to_string(),
-                        crate::state::USER_AGENT.to_string(),
-                    ));
-                }
-                let is_cf =
-                    af.source.eq_ignore_ascii_case("curseforge") || is_cf_domain(&af.identifier);
-                if is_cf {
-                    headers.push(("x-api-key".to_string(), curse_forge_api_key.to_string()));
-                    headers.push((
-                        "User-Agent".to_string(),
-                        crate::state::USER_AGENT.to_string(),
-                    ));
-                }
-                (af.identifier.clone(), dest, headers)
-            })
-            .collect();
-        download_batch(handle, &download_manager, files, 70.0, 85.0).await?;
-    } else {
-        handle.set_progress(85.0);
-    }
-
-    check_cancel(handle)?;
-
-    // === Phase 6: 安装加载器 ===
-    if has_loader && loader_version.is_some() {
+    // === 安装加载器（join 后：installer/loader-libs/base 均已就绪）===
+    if has_loader_phase {
+        handle.mark_step("install-loader", "active");
         handle.set_stage("installing-loader");
-        handle.set_progress(88.0);
-        handle.begin_step("install-loader");
+        check_cancel(handle)?;
         install_loader(
             &install_core,
             &version_dir_name,
@@ -436,15 +516,13 @@ pub async fn run_install_pipeline(
             download_source_id,
         )
         .await?;
-        handle.set_progress(92.0);
+        handle.mark_step("install-loader", "done");
     }
 
-    check_cancel(handle)?;
-
-    // === Phase 5: 校验主 jar ===
+    // === 校验主 jar ===
+    handle.mark_step("finalize", "active");
     handle.set_stage("verifying-jar");
-    handle.set_progress(92.0);
-    handle.begin_step("finalize");
+    check_cancel(handle)?;
     let miss_jar = install_core
         .locator()
         .get_miss_main_jar_from_json(&base_json_content)
@@ -460,19 +538,14 @@ pub async fn run_install_pipeline(
             handle,
             &download_manager,
             vec![(jar.url.clone(), game_root.join(&jar.path), headers)],
-            92.0,
-            98.0,
+            Some("finalize"),
         )
         .await?;
-    } else {
-        handle.set_progress(98.0);
     }
 
-    check_cancel(handle)?;
-
-    // === Phase 7: 收尾 ===
+    // === 收尾 ===
     handle.set_stage("finishing");
-    handle.set_progress(98.0);
+    check_cancel(handle)?;
 
     if version_isolation && has_loader {
         let iso_dir = game_root.join("versions").join(&version_dir_name);
@@ -494,7 +567,7 @@ pub async fn run_install_pipeline(
         let _ = std::fs::remove_file(path);
     }
 
-    handle.set_progress(100.0);
+    handle.mark_step("finalize", "done");
     let _ = download_threads;
     Ok(())
 }
@@ -572,6 +645,11 @@ fn check_cancel(handle: &InstallHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// modpack 外层并行编排复用同一取消检查语义。
+pub(crate) fn ensure_not_cancelled(handle: &InstallHandle) -> Result<(), String> {
+    check_cancel(handle)
+}
+
 /// 下载加载器安装器 jar；已存在且为有效 zip 时跳过（源 `DownloadLoaderJar`）。
 async fn download_installer_jar(
     handle: &InstallHandle,
@@ -600,8 +678,7 @@ async fn download_installer_jar(
         handle,
         mgr,
         vec![(url.to_string(), path.to_path_buf(), headers)],
-        4.0,
-        5.0,
+        Some("installer"),
     )
     .await
 }
@@ -939,8 +1016,9 @@ fn normalize_sep(dest: PathBuf) -> PathBuf {
     }
 }
 
-/// 批量下载（源 `RunBatchAsync(startPct, endPct)`）。进度按已下载字节映射到
-/// `[start_pct, end_pct]`；pause/cancel 由事件循环协作转发给 `DownloadManager`。
+/// 批量下载。进度按已下载字节比例写入 `step_id` 指定步骤的 percent，
+/// 并由 tracker 重算合成总进度（并行管线中多个批次各自驱动自己的步骤）。
+/// pause/cancel 由事件循环协作转发给 `DownloadManager`。
 /// 运行期 stall 超时：事件已开始流动后，若此期间无任何事件则判定卡死。
 /// 不用于冷启动：第一批任务在 semaphore 排队 + probe（HEAD + Range GET） +
 /// CurseForge CDN 重定向解析期间可能需要数十秒，用短超时会误杀。
@@ -954,11 +1032,12 @@ pub(crate) async fn download_batch(
     handle: &InstallHandle,
     mgr: &DownloadManager,
     files: Vec<(String, PathBuf, Vec<(String, String)>)>,
-    start_pct: f64,
-    end_pct: f64,
+    step_id: Option<&str>,
 ) -> Result<(), String> {
     if files.is_empty() {
-        handle.set_progress(end_pct);
+        if let Some(sid) = step_id {
+            handle.set_step_percent(sid, 100.0);
+        }
         return Ok(());
     }
 
@@ -1133,17 +1212,15 @@ pub(crate) async fn download_batch(
         let current_speed = task_speed.values().max().copied().unwrap_or(0) as f64;
 
         handle.update(|f| {
-            f.progress = (start_pct + pct_in * (end_pct - start_pct)).clamp(start_pct, end_pct);
             f.total_files = total as i32;
             f.completed_files = done as i32;
             f.current_file = current_file;
             // 当前批次（文件）的真实下载进度 0-100；批次结束清 0（阶段即将切换）
             f.current_file_progress = if done >= total { 0.0 } else { pct_in * 100.0 };
-            // 活跃步骤的精确百分比（同一字节插值源；无活跃步骤时为 no-op）
-            if done >= total {
-                f.set_active_step_percent(100.0);
-            } else {
-                f.set_active_step_percent(pct_in * 100.0);
+            // 字节比例写入本批次对应步骤并重算合成总进度
+            let pct = if done >= total { 100.0 } else { pct_in * 100.0 };
+            if let Some(sid) = step_id {
+                f.set_step_percent(sid, pct);
             }
             f.speed = current_speed;
             if paused_now {
