@@ -915,6 +915,9 @@ struct ModUpdateEntryDto {
     source: String,
     download_url: String,
     new_file_name: String,
+    /// 资源图标 URL（下载中心列表展示；default 兼容旧 update-cache）
+    #[serde(default)]
+    icon_url: Option<String>,
 }
 
 /// check-updates 响应：更新列表 + 本次是否真实联网（缓存命中时 refreshed=false）。
@@ -1184,6 +1187,7 @@ async fn refresh_mod_updates(
                 source: "modrinth".to_string(),
                 download_url: latest_file.download_url.clone(),
                 new_file_name: latest_file.filename.clone(),
+                icon_url: None,
             });
         }
     }
@@ -1265,12 +1269,106 @@ async fn refresh_mod_updates(
                     source: "curseforge".to_string(),
                     download_url: latest.download_url.clone().unwrap_or_default(),
                     new_file_name: latest.file_name.clone().unwrap_or_default(),
+                    icon_url: None,
                 });
             }
         }
     }
 
+    fill_mod_update_icons(&state.http_client, &state.curse_forge_api_key, &mut updates).await;
+
     Ok(updates)
+}
+
+/// check-updates 结果批量补图标：CF 按 modId、MR 按 projectId 各一次批次请求
+/// （与 fill_remote_icons 同款接口），失败静默——图标缺失只影响展示。
+async fn fill_mod_update_icons(
+    client: &reqwest::Client,
+    api_key: &str,
+    updates: &mut [ModUpdateEntryDto],
+) {
+    if updates.is_empty() {
+        return;
+    }
+    let cf_ids: Vec<i64> = updates
+        .iter()
+        .filter(|u| u.source == "curseforge")
+        .filter_map(|u| u.project_id.parse().ok())
+        .collect();
+    let mr_ids: Vec<String> = updates
+        .iter()
+        .filter(|u| u.source == "modrinth")
+        .map(|u| u.project_id.clone())
+        .collect();
+
+    let cf_fut = async {
+        if cf_ids.is_empty() || api_key.is_empty() {
+            return None;
+        }
+        let resp = client
+            .post("https://api.curseforge.com/v1/mods")
+            .header("x-api-key", api_key)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(serde_json::json!({ "modIds": cf_ids }).to_string())
+            .send()
+            .await
+            .ok()?;
+        let json = resp.json::<serde_json::Value>().await.ok()?;
+        json.get("data").and_then(|d| d.as_array()).cloned()
+    };
+    let mr_fut = async {
+        if mr_ids.is_empty() {
+            return None;
+        }
+        let resp = client
+            .get("https://api.modrinth.com/v2/projects")
+            .query(&[("ids", serde_json::json!(mr_ids).to_string())])
+            .send()
+            .await
+            .ok()?;
+        resp.json::<serde_json::Value>()
+            .await
+            .ok()?
+            .as_array()
+            .cloned()
+    };
+    let (cf_array, mr_array) = tokio::join!(cf_fut, mr_fut);
+
+    if let Some(array) = cf_array {
+        for item in array {
+            let id = item.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let url = item
+                .pointer("/logo/url")
+                .and_then(|u| u.as_str())
+                .filter(|s| !s.is_empty());
+            if let Some(url) = url {
+                let id_str = id.to_string();
+                for u in updates
+                    .iter_mut()
+                    .filter(|u| u.source == "curseforge" && u.project_id == id_str)
+                {
+                    u.icon_url = Some(url.to_string());
+                }
+            }
+        }
+    }
+    if let Some(array) = mr_array {
+        for item in array {
+            let url = item
+                .get("icon_url")
+                .and_then(|u| u.as_str())
+                .filter(|s| !s.is_empty());
+            let pid = item.get("id").and_then(|v| v.as_str());
+            if let (Some(pid), Some(url)) = (pid, url) {
+                for u in updates
+                    .iter_mut()
+                    .filter(|u| u.source == "modrinth" && u.project_id == pid)
+                {
+                    u.icon_url = Some(url.to_string());
+                }
+            }
+        }
+    }
 }
 
 async fn enable_mod(

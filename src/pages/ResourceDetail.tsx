@@ -911,6 +911,7 @@ export default function ResourceDetailPage() {
           selectedVersion={modpackInstallVersion}
           gameDir={modpackGameDir}
           versionIsolation={modpackIsolation}
+          iconUrl={detail?.iconUrl}
         />
       )}
 

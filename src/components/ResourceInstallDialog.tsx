@@ -233,6 +233,7 @@ export default function ResourceInstallDialog({
         main: { url: mainFile.url, fileName: mainFile.fileName, category, name: resourceTitle },
         toDelete,
         taskName: t('downloads.quickInstallName', { name: resourceTitle }),
+        icon: resourceIcon || undefined,
         t,
       })
       onClose()

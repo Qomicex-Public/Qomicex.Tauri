@@ -23,6 +23,8 @@ export interface QuickInstallOptions {
   /** 下载前需清理的旧文件（版本切换替换） */
   toDelete?: { fileName: string; category: string }[]
   taskName: string
+  /** 资源图标（https URL 或 data URL），显示在下载中心列表 */
+  icon?: string
   t: TFunc
 }
 
@@ -62,6 +64,7 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
     completedFiles: 0,
     createdAt: new Date().toISOString(),
     instanceId,
+    icon: opts.icon,
     steps,
     batchTaskIds: [],
   })

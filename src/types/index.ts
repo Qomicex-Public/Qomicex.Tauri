@@ -504,6 +504,8 @@ export interface ModUpdateEntry {
   source: string
   downloadUrl: string
   newFileName: string
+  /** 资源图标（调用方从 enrich 后的 mods 列表合并），显示在下载中心 */
+  iconUrl?: string
 }
 
 export interface ModMetadata {

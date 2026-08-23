@@ -629,7 +629,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 
   // 悬浮工具条「更新模组」：仅更新当前选中且存在 update 条目的模组
   const handleUpdateSelected = useCallback(async () => {
-    const toUpdate = updates.filter(u => selected.has(u.fileName))
+    const toUpdate = updates.filter(u => selected.has(u.fileName)).map(u => ({
+      ...u,
+      // 后端 check-updates 已带图标；旧缓存缺失时回退 enrich 后的 mods 列表
+      iconUrl: u.iconUrl ?? mods.find(m => m.fileName === u.fileName)?.iconUrl ?? undefined,
+    }))
     if (toUpdate.length === 0) return
     setUpdatingMods(true)
     try {

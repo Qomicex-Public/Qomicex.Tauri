@@ -19,10 +19,11 @@ interface ModpackInstallDialogProps {
   selectedVersion: ResourceVersion | null
   gameDir: string
   versionIsolation: boolean
+  iconUrl?: string
 }
 
 export default function ModpackInstallDialog({
-  open, onClose, modpackName, projectId, source, selectedVersion, gameDir, versionIsolation,
+  open, onClose, modpackName, projectId, source, selectedVersion, gameDir, versionIsolation, iconUrl,
 }: ModpackInstallDialogProps) {
   const { t } = useI18n()
   const navigate = useNavigate()
@@ -43,6 +44,7 @@ export default function ModpackInstallDialog({
       gameVersion: selectedVersion.gameVersions[0] || '',
       status: 'queued',
       progress: 0,
+      icon: iconUrl,
       createdAt: new Date().toISOString(),
     })
 
