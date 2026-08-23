@@ -35,6 +35,12 @@ const KIND_CATEGORY: Record<Exclude<DropGroupKind, 'modpack'>, 'mods' | 'resourc
   shaderpack: 'shaderpacks',
 }
 
+const KIND_CACHE_KEY: Record<Exclude<DropGroupKind, 'modpack'>, string> = {
+  mod: 'mods',
+  resourcepack: 'resourcepacks',
+  shaderpack: 'shaders',
+}
+
 interface Props {
   group: DropGroup | null
   onClose: () => void
@@ -115,9 +121,7 @@ export default function DropInstallDialog({ group, onClose }: Props) {
       }
     }
     if (group.kind !== 'modpack') {
-      cacheInvalidate(
-        `api-instance-${selectedInstance.id}-${KIND_CATEGORY[group.kind as Exclude<DropGroupKind, 'modpack'>]}`,
-      )
+      cacheInvalidate(`api-instance-${selectedInstance.id}-${KIND_CACHE_KEY[group.kind as Exclude<DropGroupKind, 'modpack'>]}`)
     }
     setInstalling(false)
     if (failed === 0) {
