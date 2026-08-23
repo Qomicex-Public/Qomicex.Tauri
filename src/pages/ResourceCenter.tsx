@@ -123,10 +123,17 @@ const CF_TAGS = [
   'adventure',
 ]
 
-// 根据来源返回对应的标签集合：CurseForge 用 CF 体系，其余（modrinth / all 聚合）
+// `all` 聚合搜索会同时向 Modrinth 和 CurseForge 发同一批标签，但 CurseForge 的
+// 分类词汇与 Modrinth 不同，无法表示的标签会被后端静默丢弃，导致聚合结果只有一半
+// 被过滤。因此 `all` 只暴露两套体系的交集标签，保证两边都按同一筛选条件过滤。
+const ALL_TAGS = MOD_TAGS.filter((t) => CF_TAGS.includes(t))
+
+// 根据来源返回对应的标签集合：CurseForge 用 CF 体系，all 聚合用交集，其余（modrinth）
 // 用 Modrinth 体系。
 function tagsForSource(source: string): string[] {
-  return source === 'curseforge' ? CF_TAGS : MOD_TAGS
+  if (source === 'curseforge') return CF_TAGS
+  if (source === 'all') return ALL_TAGS
+  return MOD_TAGS
 }
 
 // 把标签列表过滤为当前来源支持的那一套，避免把 Modrinth 标签套到 CurseForge
