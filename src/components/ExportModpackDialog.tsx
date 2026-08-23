@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Dialog, DialogBody, DialogHeader, DialogTitle } from '../components/ui'
+import { Dialog, DialogBody, DialogHeader, DialogTitle, Tooltip } from '../components/ui'
 import { Button } from '../components/ui'
 import { Label } from '../components/ui'
 import { Checkbox } from '../components/ui'
@@ -384,8 +384,10 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
             disabled={isDir && (node.children?.length ?? 0) === 0}
             onCheckedChange={() => toggleNode(node)}
           />
-          <span className="min-w-0 flex-1 truncate" title={node.path}>
-            {displayName}
+          <span className="min-w-0 flex-1 truncate">
+            <Tooltip content={node.path}>
+              <span className="block truncate">{displayName}</span>
+            </Tooltip>
           </span>
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
             {isDir

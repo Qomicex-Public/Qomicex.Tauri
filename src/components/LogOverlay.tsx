@@ -4,6 +4,7 @@ import { faBug, faXmark, faChevronDown, faChevronUp, faCopy } from '@fortawesome
 import { get } from '../api/client.ts'
 import { cn } from '../lib/utils.ts'
 import { useI18n } from '../i18n/index.tsx'
+import { Tooltip } from '../components/ui'
 
 const MAX_VISIBLE = 50
 
@@ -86,9 +87,11 @@ export default function LogOverlay() {
             {t('tools.logs.debugLogsCount', { count: logs.length })}
           </span>
           <div className="flex items-center gap-1">
-            <button onClick={handleCopy} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title={t('common.copy')}>
-              <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />
-            </button>
+            <Tooltip content={t('common.copy')}>
+              <button onClick={handleCopy} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
+                <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />
+              </button>
+            </Tooltip>
             <button onClick={() => setLogs([])} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
               <FontAwesomeIcon icon={faXmark} className="h-3 w-3" />
             </button>

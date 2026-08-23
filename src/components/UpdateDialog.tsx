@@ -3,7 +3,7 @@ import Markdown from 'react-markdown'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import type { Update } from '@tauri-apps/plugin-updater'
-import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
+import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Tooltip } from './ui'
 import { Button } from './ui'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowUp, faRotate, faDownload, faCheckCircle, faTriangleExclamation, faExternalLinkAlt, faBroom } from '@fortawesome/free-solid-svg-icons'
@@ -110,9 +110,11 @@ export default function UpdateDialog({ open, update, required = false, onClose }
         </div>
 
         {state === 'error' && error && (
-          <p className="mt-2 break-words text-xs text-destructive" title={error}>
-            {t('dialogs.update.downloadFailed')}：{error}
-          </p>
+          <Tooltip content={error}>
+            <span className="mt-2 block break-words text-xs text-destructive">
+              {t('dialogs.update.downloadFailed')}：{error}
+            </span>
+          </Tooltip>
         )}
       </DialogBody>
       <DialogFooter className="gap-2">

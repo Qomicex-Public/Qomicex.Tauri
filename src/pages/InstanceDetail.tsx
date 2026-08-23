@@ -2864,7 +2864,11 @@ export default function InstanceDetailPage() {
                       <p className="text-sm font-medium text-destructive">{t('instanceDetail.settingsTab.missingFiles', { count: verifyResult.missingFiles.length })}</p>
                       <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
                         {verifyResult.missingFiles.map((f, i) => (
-                          <li key={i} className="truncate" title={f.url}>{f.name} — {f.url}</li>
+                          <li key={i} className="truncate">
+                            <Tooltip content={f.url}>
+                              <span className="block truncate">{f.name} — {f.url}</span>
+                            </Tooltip>
+                          </li>
                         ))}
                       </ul>
                       <p className="mt-2 text-xs text-muted-foreground">{t('instanceDetail.settingsTab.autoRepairing')}</p>
