@@ -93,6 +93,9 @@ async fn handle_exit(
             .collect::<Vec<_>>(),
         300,
     );
+    // 取完即释放日志状态（PID 归属 + 缓冲）：防 OS 复用 PID 后输出串扰旧实例，
+    // 也避免跨启动累积过期缓冲。
+    game_log.release(&instance_id);
 
     let ctx = CollectCtx {
         version_isolation: inst

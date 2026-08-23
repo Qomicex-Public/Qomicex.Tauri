@@ -828,7 +828,7 @@ async fn launch_cancel(
     AxumPath(instance_id): AxumPath<String>,
 ) -> ApiResult<Json<MessageResponse>> {
     state.launch_tracker.stop(&instance_id);
-    state.game_log.remove(&instance_id);
+    state.game_log.release(&instance_id);
     Ok(Json(MessageResponse {
         message: format!("Launch cancelled for {instance_id}"),
     }))

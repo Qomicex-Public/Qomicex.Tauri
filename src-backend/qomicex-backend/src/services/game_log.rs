@@ -111,10 +111,20 @@ impl GameLogService {
             .unwrap_or_default()
     }
 
-    /// 释放一个实例的日志状态（停止/取消时调用，避免僵留）。
-    pub fn remove(&self, instance_id: &str) {
-        let mut guard = self.buffers.lock().unwrap_or_else(|p| p.into_inner());
-        guard.remove(instance_id);
+    /// 释放一个实例的全部日志状态：清缓冲 + 清除所有指向该实例的 PID 归属。
+    ///
+    /// 仅清 buffers 会留下 by_pid 条目：OS 复用 PID 后，无关进程的输出会被
+    /// 路由进旧实例（串扰）；跨启动不清缓冲则会累积过期日志。退出结算与
+    /// 停止/取消时都应调用本方法。
+    pub fn release(&self, instance_id: &str) {
+        self.by_pid
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|_, v| v != instance_id);
+        self.buffers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(instance_id);
     }
 
     /// 消费核心总线的一行输出：按 PID 归属到实例后写入缓冲并广播。
@@ -145,5 +155,62 @@ impl GameLogService {
 impl Default for GameLogService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn release_clears_pid_mapping_and_buffer() {
+        let svc = GameLogService::new();
+        svc.register("inst-a", 111);
+        svc.register("inst-b", 222);
+        svc.subscribe("inst-a");
+
+        // 经 forward 写入缓冲（直接构造总线行）
+        svc.forward(GameLogLine {
+            pid: 111,
+            is_stdout: true,
+            text: "hello".to_string(),
+        });
+        assert_eq!(svc.history("inst-a").len(), 1);
+
+        // 同一 PID 换绑到另一实例（模拟 register 覆盖）后释放 inst-b：
+        // 只有指向该实例的 PID 归属被清，不影响其他实例
+        svc.release("inst-b");
+        svc.forward(GameLogLine {
+            pid: 222,
+            is_stdout: true,
+            text: "orphan".to_string(),
+        });
+        // by_pid 已无 222 → 行被丢弃，不会串入任何实例
+        assert_eq!(svc.history("inst-a").len(), 1);
+        assert_eq!(svc.history("inst-b").len(), 0);
+
+        // 释放 inst-a 后缓冲与归属均清空
+        svc.release("inst-a");
+        assert_eq!(svc.history("inst-a").len(), 0);
+        svc.forward(GameLogLine {
+            pid: 111,
+            is_stdout: false,
+            text: "dropped-after-release".to_string(),
+        });
+        assert_eq!(svc.history("inst-a").len(), 0);
+    }
+
+    #[test]
+    fn register_rebinds_pid_to_new_instance() {
+        let svc = GameLogService::new();
+        svc.register("old", 42);
+        svc.register("new", 42);
+        svc.forward(GameLogLine {
+            pid: 42,
+            is_stdout: true,
+            text: "line".to_string(),
+        });
+        assert_eq!(svc.history("new").len(), 1);
+        assert_eq!(svc.history("old").len(), 0);
     }
 }
