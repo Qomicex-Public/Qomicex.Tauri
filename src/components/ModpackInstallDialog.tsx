@@ -117,7 +117,7 @@ export default function ModpackInstallDialog({
         )}
       </DialogBody>
       {step === 'config' && (
-        <DialogFooter className="border-0 px-0 pb-0">
+        <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
           <Button onClick={handleInstall}>{t('dialogs.modpackInstall.startInstall')}</Button>
         </DialogFooter>
