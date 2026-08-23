@@ -590,13 +590,14 @@ async fn search_one(
         let cf_url_slug = map_cf_url_slug(category);
         let loaders = loader.and_then(map_cf_loader).unwrap_or_default();
         // 把标签 slug 解析为 CurseForge 数字 categoryId（无匹配则忽略，等价于不过滤）。
-        let cf_category_ids = cf_resolve_category_ids(
+        let cf_category_ids: Option<Vec<Option<i32>>> = cf_resolve_category_ids(
             &state.http_client,
             &state.curse_forge_api_key,
             &tag_vec,
             cf_class_id,
         )
-        .await;
+        .await
+        .map(|ids| ids.into_iter().map(Some).collect());
         let result = cf
             .search(
                 keyword,
