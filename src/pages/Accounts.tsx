@@ -272,6 +272,7 @@ export default function Accounts() {
 
   async function handleOfflineAdd() {
     if (!offlineName.trim()) return
+    if (!/^[a-zA-Z0-9_]{3,16}$/.test(offlineName.trim()) && !(await msgConfirm(t('accounts.offline.idFormatWarning')))) return
     let uuid = offlineUuid.trim()
     if (!uuid) {
       try { const r = await accountApi.getOfflineUuid(offlineName.trim()); uuid = r.uuid } catch { uuid = crypto.randomUUID() }
