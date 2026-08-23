@@ -114,8 +114,10 @@ export default function DropInstallDialog({ group, onClose }: Props) {
         lastError = e instanceof Error ? e.message : String(e)
       }
     }
-    if (group.kind === 'mod') {
-      cacheInvalidate(`api-instance-${selectedInstance.id}-mods`)
+    if (group.kind !== 'modpack') {
+      cacheInvalidate(
+        `api-instance-${selectedInstance.id}-${KIND_CATEGORY[group.kind as Exclude<DropGroupKind, 'modpack'>]}`,
+      )
     }
     setInstalling(false)
     if (failed === 0) {
