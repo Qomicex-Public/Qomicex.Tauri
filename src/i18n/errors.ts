@@ -19,6 +19,7 @@ const CODE_TO_KEY: Record<string, string> = {
   LICENSE_REMOTE_CHECK_FAILED: 'errors.licenseRemoteCheckFailed',
   LICENSE_IO_ERROR: 'errors.licenseIoError',
   TOKEN_EXPIRED: 'errors.tokenExpired',
+  NETWORK_ERROR: 'errors.networkError',
   MC_API_ERROR: 'errors.mcApiError',
   FS_AUTHORIZATION_REQUIRED: 'errors.fsAuthRequired',
   PLUGIN_MISSING_DEPENDENCY: 'errors.pluginMissingDependency',

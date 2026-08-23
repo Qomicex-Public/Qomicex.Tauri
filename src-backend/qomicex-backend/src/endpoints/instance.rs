@@ -509,6 +509,7 @@ async fn launch_instance(
         Some(uuid) if !uuid.is_empty() => state.account.get_account(uuid).await?,
         _ => state.account.get_default().await?,
     };
+    let account = refresh_microsoft_token(state.core.auth(), &state.account, account).await?;
     let auth_options = resolve_auth_options(account);
 
     let tracker = state.launch_tracker.clone();
@@ -950,9 +951,64 @@ fn instance_not_found(id: &str) -> ApiError {
     ApiError::not_found("INSTANCE_NOT_FOUND", format!("Instance {id} not found"))
 }
 
+/// Microsoft 账户启动前强制刷新令牌并落库。
+///
+/// 失败分流：
+/// - 微软认证被拒（refresh_token 失效，success=false）→ `Err(TOKEN_EXPIRED)`
+///   阻止启动；前端按 code 弹出微软重新登录引导。
+/// - 传输层失败（断网等，core 返回 Err）→ `Err(NETWORK_ERROR)` 阻止启动；
+///   前端按 code 提示检查网络或改用离线登录。
+/// 非 Microsoft 账户或缺 refresh_token（历史数据）时不刷新、原样放行。
+pub(crate) async fn refresh_microsoft_token(
+    auth: &dyn qomicex_core::api::auth::AuthProvider,
+    accounts: &crate::services::account::AccountService,
+    account: Option<crate::services::account::StoredAccount>,
+) -> Result<Option<crate::services::account::StoredAccount>, ApiError> {
+    let Some(mut acc) = account else {
+        return Ok(None);
+    };
+    if !acc.login_method.eq_ignore_ascii_case("microsoft") || acc.refresh_token.is_empty() {
+        return Ok(Some(acc));
+    }
+    let result = match auth.refresh_login(acc.refresh_token.as_str()).await {
+        Ok(r) => r,
+        Err(_) => {
+            return Err(ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NETWORK_ERROR",
+                "Cannot reach the Microsoft authentication service, please check your network or switch to offline login",
+            ));
+        }
+    };
+    if !result.success {
+        return Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "TOKEN_EXPIRED",
+            format!(
+                "Microsoft login expired, please sign in again ({})",
+                result.error_message.unwrap_or_else(|| "unknown".into())
+            ),
+        ));
+    }
+    if let Some(t) = result.access_token {
+        acc.access_token = t;
+    }
+    if let Some(t) = result.refresh_token {
+        acc.refresh_token = t;
+    }
+    if let Some(n) = result.username {
+        acc.name = n;
+    }
+    if let Some(u) = result.uuid {
+        acc.uuid = u;
+    }
+    accounts.save_account(&mut acc).await?;
+    Ok(Some(acc))
+}
+
 /// Build core `AuthOptions` from a stored account (source: ResolveAuthOptions).
-/// Microsoft accounts refresh their token via the core auth provider; failures
-/// are swallowed (the stale token is still passed through, matching C# catch{}).
+/// Microsoft token refresh is handled by `refresh_microsoft_token` before this
+/// mapping (core launch itself never refreshes).
 pub(crate) fn resolve_auth_options(
     account: Option<crate::services::account::StoredAccount>,
 ) -> AuthOptions {
@@ -1195,5 +1251,221 @@ fn map_core_error(e: qomicex_core::error::Error) -> ApiError {
         ApiError::upstream(e.to_string())
     } else {
         ApiError::internal(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+
+    use qomicex_core::api::auth::AuthProvider;
+    use qomicex_core::error::Error;
+    use qomicex_core::models::auth::{AuthRequest, AuthResult};
+
+    use crate::services::account::{AccountService, StoredAccount};
+    // 复用全局唯一的 env 测试锁：QOMICEX_HOME 是进程全局的，cargo test 并行会互相串扰。
+    use crate::services::error_report::tests::ENV_LOCK;
+
+    fn set_env(key: &str, value: impl AsRef<std::ffi::OsStr>) -> Option<std::ffi::OsString> {
+        let old = std::env::var_os(key);
+        std::env::set_var(key, value);
+        old
+    }
+
+    fn restore_env(key: &str, old: Option<std::ffi::OsString>) {
+        match old {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    fn auth_result(success: bool) -> AuthResult {
+        AuthResult {
+            success,
+            username: None,
+            access_token: None,
+            client_token: None,
+            refresh_token: None,
+            uuid: None,
+            user_type: None,
+            expires_at: None,
+            error_message: None,
+        }
+    }
+
+    enum Scenario {
+        NoCall,
+        Rejected,
+        TransportErr,
+        Success(AuthResult),
+    }
+
+    struct MockAuth {
+        scenario: Scenario,
+    }
+
+    #[async_trait::async_trait]
+    impl AuthProvider for MockAuth {
+        async fn authenticate(&self, _request: AuthRequest) -> Result<AuthResult, Error> {
+            panic!("refresh path must not call authenticate")
+        }
+        async fn validate(&self, _access_token: &str) -> Result<bool, Error> {
+            Ok(true)
+        }
+        async fn invalidate(&self, _access_token: &str) -> Result<(), Error> {
+            Ok(())
+        }
+        async fn refresh_login(&self, _refresh_token: &str) -> Result<AuthResult, Error> {
+            match &self.scenario {
+                Scenario::NoCall => panic!("unexpected refresh_login call"),
+                Scenario::Rejected => Ok(auth_result(false)),
+                Scenario::TransportErr => Err(Error::Http {
+                    message: "connection refused".into(),
+                    status: None,
+                    source: None,
+                }),
+                Scenario::Success(r) => Ok(r.clone()),
+            }
+        }
+    }
+
+    fn ms_account() -> StoredAccount {
+        StoredAccount {
+            name: "Steve".into(),
+            uuid: "test-uuid".into(),
+            token: String::new(),
+            access_token: "stale-token".into(),
+            refresh_token: "refresh-token".into(),
+            login_method: "Microsoft".into(),
+            last_used: 0,
+            is_default: true,
+            server_url: None,
+        }
+    }
+
+    fn test_account_service(tag: &str) -> AccountService {
+        let tmp = std::env::temp_dir().join(format!(
+            "qomicex-refresh-test-{tag}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        set_env("QOMICEX_HOME", &tmp);
+        AccountService::new().expect("account service")
+    }
+
+    #[tokio::test]
+    async fn none_account_passthrough() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let accounts = test_account_service("none");
+        let out = refresh_microsoft_token(
+            &MockAuth {
+                scenario: Scenario::NoCall,
+            },
+            &accounts,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(out.is_none());
+    }
+
+    #[tokio::test]
+    async fn non_microsoft_passthrough_without_refresh_call() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let accounts = test_account_service("offline");
+        let mut acc = ms_account();
+        acc.login_method = "Offline".into();
+        let original = acc.clone();
+        let out = refresh_microsoft_token(
+            &MockAuth {
+                scenario: Scenario::NoCall,
+            },
+            &accounts,
+            Some(acc),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, Some(original));
+    }
+
+    #[tokio::test]
+    async fn microsoft_without_refresh_token_passthrough() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let accounts = test_account_service("no-rt");
+        let mut acc = ms_account();
+        acc.refresh_token.clear();
+        let original = acc.clone();
+        let out = refresh_microsoft_token(
+            &MockAuth {
+                scenario: Scenario::NoCall,
+            },
+            &accounts,
+            Some(acc),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, Some(original));
+    }
+
+    #[tokio::test]
+    async fn rejected_refresh_blocks_with_token_expired() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let accounts = test_account_service("rejected");
+        let result = refresh_microsoft_token(
+            &MockAuth {
+                scenario: Scenario::Rejected,
+            },
+            &accounts,
+            Some(ms_account()),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().code, "TOKEN_EXPIRED");
+    }
+
+    #[tokio::test]
+    async fn transport_error_blocks_with_network_error() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let accounts = test_account_service("transport");
+        let result = refresh_microsoft_token(
+            &MockAuth {
+                scenario: Scenario::TransportErr,
+            },
+            &accounts,
+            Some(ms_account()),
+        )
+        .await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "NETWORK_ERROR");
+        assert_eq!(err.status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn success_updates_fields_and_persists() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let accounts = test_account_service("success");
+        accounts.save_account(&mut ms_account()).await.unwrap();
+
+        let mut fresh = auth_result(true);
+        fresh.access_token = Some("new-access".into());
+        fresh.refresh_token = Some("new-refresh".into());
+        // 同一微软账户续期后 uuid 不变（仅 name 可因改名变化），保持原 uuid 走替换路径
+        fresh.username = Some("Alex".into());
+
+        let result = refresh_microsoft_token(
+            &MockAuth {
+                scenario: Scenario::Success(fresh),
+            },
+            &accounts,
+            Some(ms_account()),
+        )
+        .await;
+        let out = result.unwrap().expect("account");
+        assert_eq!(out.access_token, "new-access");
+        assert_eq!(out.refresh_token, "new-refresh");
+        assert_eq!(out.name, "Alex");
+
+        let persisted = accounts.get_account("test-uuid").await.unwrap().unwrap();
+        assert_eq!(persisted.access_token, "new-access");
+        assert_eq!(persisted.refresh_token, "new-refresh");
     }
 }
