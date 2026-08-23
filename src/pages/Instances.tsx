@@ -460,6 +460,10 @@ export default function Instances() {
         setShowMicrosoftReauth(true)
         return
       }
+      if (code.includes('NETWORK_ERROR')) {
+        await msgAlert(t('errors.networkError'))
+        return
+      }
       await msgAlert(t('instances.launchFailed', { error: e instanceof Error ? e.message : String(e) }))
     }
   }

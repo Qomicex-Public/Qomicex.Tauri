@@ -743,6 +743,8 @@ async fn unequip_cape(
 }
 
 /// Resolve the stored Microsoft account's access token (source: GetMicrosoftTokenAsync).
+/// 先强制刷新令牌：过期则续期（覆盖披风列表/切换/上传等鉴权操作），refresh_token
+/// 失效返回 TOKEN_EXPIRED、断网返回 NETWORK_ERROR（与启动链路同一分流策略）。
 async fn mc_token(state: &SharedState, uuid: &str) -> ApiResult<String> {
     let account: StoredAccount = state
         .account
@@ -755,6 +757,13 @@ async fn mc_token(state: &SharedState, uuid: &str) -> ApiResult<String> {
             "not a Microsoft account",
         ));
     }
+    let account = crate::endpoints::instance::refresh_microsoft_token(
+        state.core.auth(),
+        &state.account,
+        Some(account),
+    )
+    .await?
+    .ok_or_else(|| ApiError::not_found("ACCOUNT_NOT_FOUND", "account not found"))?;
     if account.access_token.is_empty() {
         return Err(ApiError {
             code: "TOKEN_EXPIRED".to_string(),

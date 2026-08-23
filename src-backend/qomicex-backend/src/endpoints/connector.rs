@@ -662,10 +662,15 @@ async fn host_instance(
     let instance_clone = instance.clone();
     let starting_id = instance.id.clone();
     // 与普通启动路径一致：用默认账号解析 auth（离线/微软/外置登录），
-    // 否则 --accessToken 为空会被 joptsimple 拒绝（Missing required option）
-    let auth_options = crate::endpoints::instance::resolve_auth_options(
+    // 否则 --accessToken 为空会被 joptsimple 拒绝（Missing required option）。
+    // 微软账户先刷新令牌；令牌失效或断网均阻止建房（不带着旧 token 白启）
+    let host_auth_account = crate::endpoints::instance::refresh_microsoft_token(
+        state.core.auth(),
+        &state.account,
         state.account.get_default().await.ok().flatten(),
-    );
+    )
+    .await?;
+    let auth_options = crate::endpoints::instance::resolve_auth_options(host_auth_account);
     // 记录 starting 实例，leave 取消时经 LaunchTracker 杀进程
     *conn.starting_instance.write().unwrap() = Some(starting_id.clone());
     tokio::spawn(async move {

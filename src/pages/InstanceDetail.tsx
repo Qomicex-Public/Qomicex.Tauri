@@ -2445,6 +2445,10 @@ export default function InstanceDetailPage() {
         setShowMicrosoftReauth(true)
         return
       }
+      if (code.includes('NETWORK_ERROR')) {
+        showLaunchError(t('instanceDetail.launch.launchFailed'), t('errors.networkError'))
+        return
+      }
       showLaunchError(t('instanceDetail.launch.launchFailed'), e instanceof Error ? e.message : String(e))
     }
   }, [id, instance?.name, needsAccount, resolveAccountCheck, ctxLaunchInstance, selectedAccountUuid, t])
@@ -2475,6 +2479,10 @@ export default function InstanceDetailPage() {
         setShowMicrosoftReauth(true)
         return
       }
+      if (code.includes('NETWORK_ERROR')) {
+        showLaunchError(t('instanceDetail.launch.launchFailed'), t('errors.networkError'))
+        return
+      }
       showLaunchError(t('instanceDetail.launch.launchFailed'), e instanceof Error ? e.message : String(e))
     }
   }, [id, instance?.name, instance?.javaPath, instance?.gameVersion, instance?.gameDir, needsAccount, resolveAccountCheck, ctxLaunchInstance, selectedAccountUuid, t])
@@ -2497,6 +2505,10 @@ export default function InstanceDetailPage() {
       const code = e instanceof ApiError ? e.code : ''
       if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
         setShowMicrosoftReauth(true)
+        return
+      }
+      if (code.includes('NETWORK_ERROR')) {
+        showLaunchError(t('instanceDetail.launch.launchFailed'), t('errors.networkError'))
         return
       }
       showLaunchError(t('instanceDetail.launch.launchFailed'), e instanceof Error ? e.message : String(e))

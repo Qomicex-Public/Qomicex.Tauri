@@ -109,6 +109,10 @@ export default function Dashboard() {
         setShowMicrosoftReauth(true)
         return
       }
+      if (code.includes('NETWORK_ERROR')) {
+        showLaunchError(t('running.launchFailedTitle'), t('errors.networkError'))
+        return
+      }
       showLaunchError(t('running.launchFailedTitle'), e instanceof Error ? e.message : String(e))
     }
   }

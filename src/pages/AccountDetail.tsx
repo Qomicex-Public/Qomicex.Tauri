@@ -5,16 +5,22 @@ import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo, faGlobe, faDownloa
 import { getAccount, deleteAccount } from '../api/account.ts'
 import { getSkinProfile, uploadSkin, resetSkin, saveSkinTo, getCapeBlobUrl, getMcCapes, getMcCapeImageUrl, equipMcCape, unequipMcCape, invalidateAvatarCache } from '../api/skin.ts'
 import { save } from '@tauri-apps/plugin-dialog'
-import { API_BASE } from '../api/client.ts'
+import { API_BASE, ApiError } from '../api/client.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { SkinViewer3D } from '../components/SkinViewer3D.tsx'
 import { CapeManageDialog } from '../components/CapeManageDialog.tsx'
+import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { useMessageBox } from '../components/ui'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui'
 import { PageShell } from '../components/PageShell.tsx'
 import { capeDisplayName } from '../lib/cape-names.ts'
 import { useI18n } from '../i18n/index.tsx'
 import type { Account, SkinProfile, McCape } from '../types/index.ts'
+
+// 后端 skin 端点已先自动续期；走到这两种错误说明 refresh_token 失效或断网
+function isMicrosoftAuthError(e: unknown): boolean {
+  return e instanceof ApiError && (e.code === 'TOKEN_EXPIRED' || e.code === 'NETWORK_ERROR')
+}
 
 export default function AccountDetail() {
   const { uuid } = useParams<{ uuid: string }>()
@@ -34,6 +40,7 @@ export default function AccountDetail() {
   const [skinVersion, setSkinVersion] = useState(0)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [modelDialogOpen, setModelDialogOpen] = useState(false)
+  const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const capeImagesRef = useRef<Map<string, string>>(new Map())
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -73,7 +80,8 @@ export default function AccountDetail() {
       for (const url of capeImagesRef.current.values()) URL.revokeObjectURL(url)
       capeImagesRef.current = next
       setCapeImages(next)
-    } catch {
+    } catch (e) {
+      if (isMicrosoftAuthError(e)) setShowMicrosoftReauth(true)
       setMcCapes([])
     } finally {
       setCapeBusy(false)
@@ -113,7 +121,8 @@ export default function AccountDetail() {
         notify(t('accountDetail.capeEquipped'), 'success')
       }
       await loadMcCapes()
-    } catch {
+    } catch (e) {
+      if (isMicrosoftAuthError(e)) { setShowMicrosoftReauth(true); return }
       notify(t('accountDetail.capeSwitchFailed'), 'error')
     } finally {
       setCapeBusy(false)
@@ -143,8 +152,12 @@ export default function AccountDetail() {
       await uploadSkin(uuid, pendingFile, account?.loginMethod ?? 'Microsoft', account?.serverUrl, model)
       notify(t('accountDetail.skinUploaded'), 'success')
       handleSkinRefresh()
-    } catch { notify(t('accountDetail.skinUploadFailed'), 'error') }
-    setPendingFile(null)
+    } catch (e) {
+      if (isMicrosoftAuthError(e)) setShowMicrosoftReauth(true)
+      else notify(t('accountDetail.skinUploadFailed'), 'error')
+    } finally {
+      setPendingFile(null)
+    }
   }
 
   async function handleSkinReset() {
@@ -155,7 +168,10 @@ export default function AccountDetail() {
       await resetSkin(uuid, account?.loginMethod ?? 'Microsoft', account?.serverUrl)
       notify(t('accountDetail.skinReset'), 'success')
       handleSkinRefresh()
-    } catch { notify(t('accountDetail.skinResetFailed'), 'error') }
+    } catch (e) {
+      if (isMicrosoftAuthError(e)) { setShowMicrosoftReauth(true); return }
+      notify(t('accountDetail.skinResetFailed'), 'error')
+    }
   }
 
   async function handleSkinDownload() {
@@ -326,6 +342,14 @@ export default function AccountDetail() {
         capeImages={capeImages}
         capeBusy={capeBusy}
         onToggle={handleCapeToggle}
+      />
+      <MicrosoftReauthDialog
+        open={showMicrosoftReauth}
+        onClose={() => setShowMicrosoftReauth(false)}
+        onReauth={() => {
+          setShowMicrosoftReauth(false)
+          navigate('/accounts')
+        }}
       />
     </PageShell>
   )
