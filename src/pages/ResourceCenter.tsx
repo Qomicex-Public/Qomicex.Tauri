@@ -11,6 +11,7 @@ import { Card } from '../components/ui'
 import { Badge } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Combobox } from '../components/ui'
+import { cn } from '../components/ui'
 import { searchResources } from '../api/resource.ts'
 import { batchLookupChineseNames } from '../api/mcmod.ts'
 import type { ResourceItem } from '../types/index.ts'
@@ -34,6 +35,7 @@ interface Snapshot {
   sort: string
   gameVersion: string
   loader: string
+  tags: string[]
   items: ResourceItem[]
   total: number
   page: number
@@ -43,8 +45,8 @@ interface Snapshot {
 }
 let savedSnapshot: Snapshot | null = null
 
-function cacheKey(category: string, keyword: string, sort: string, source: string, gameVersion: string, loader: string): string {
-  return `${source}|${category}|${keyword}|${sort}|${gameVersion}|${loader}`
+function cacheKey(category: string, keyword: string, sort: string, source: string, gameVersion: string, loader: string, tags: string[]): string {
+  return `${source}|${category}|${keyword}|${sort}|${gameVersion}|${loader}|${tags.join(',')}`
 }
 
 const CATEGORIES = [
@@ -98,6 +100,49 @@ const SORT_OPTIONS: Record<string, { key: string }[]> = {
   ],
 }
 
+// 两套独立的标签体系：Modrinth 与 CurseForge 的 category 词汇完全不同。
+// 前端按来源展示对应的一套；后端各自解析（Modrinth 直接用 slug，CurseForge
+// 把 slug 映射到其数字 categoryId）。
+
+// Modrinth 模组分类 slug（直接作为 categories facet）。
+const MOD_TAGS = [
+  'library', 'optimization', 'utility', 'adventure', 'magic', 'technology',
+  'food', 'storage', 'worldgen', 'decoration', 'equipment', 'social',
+  'support', 'cursed', 'combat', 'mobs', 'management', 'transportation',
+  'economy', 'challenging', 'game-mechanics', 'minigame', 'quests',
+]
+
+// CurseForge 模组分类 slug（classId=6），与后端 cf_resolve_category_ids 解析的
+// CF 实际 category slug 对齐，确保筛选能命中。
+const CF_TAGS = [
+  'addons', 'armor', 'bibliotheques', 'biomes', 'build-supports', 'config',
+  'cosmetic', 'cursed', 'dimensions', 'education', 'farming', 'food',
+  'game-mechanics', 'library', 'magic', 'map-and-information', 'mobs',
+  'multiplayer', 'ore', 'player-transport', 'redstone', 'science', 'storage',
+  'structures', 'technology', 'tools', 'utilities', 'world-generation',
+  'adventure',
+]
+
+// `all` 聚合搜索会同时向 Modrinth 和 CurseForge 发同一批标签，但 CurseForge 的
+// 分类词汇与 Modrinth 不同，无法表示的标签会被后端静默丢弃，导致聚合结果只有一半
+// 被过滤。因此 `all` 只暴露两套体系的交集标签，保证两边都按同一筛选条件过滤。
+const ALL_TAGS = MOD_TAGS.filter((t) => CF_TAGS.includes(t))
+
+// 根据来源返回对应的标签集合：CurseForge 用 CF 体系，all 聚合用交集，其余（modrinth）
+// 用 Modrinth 体系。
+function tagsForSource(source: string): string[] {
+  if (source === 'curseforge') return CF_TAGS
+  if (source === 'all') return ALL_TAGS
+  return MOD_TAGS
+}
+
+// 把标签列表过滤为当前来源支持的那一套，避免把 Modrinth 标签套到 CurseForge
+// （或反之），例如通过 URL / 快照恢复时来源与标签不匹配的情况。
+function normalizeTags(tags: string[], source: string): string[] {
+  const allowed = new Set(tagsForSource(source))
+  return tags.filter((t) => allowed.has(t))
+}
+
 function formatDownloads(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
@@ -109,7 +154,12 @@ function getSourceLabel(source: string): string {
   return map[source] ?? source
 }
 
-function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string): string {
+// 标签筛选对 Modrinth / CurseForge（及 all 聚合）的 mod 分类生效。
+function tagsSupported(source: string, category: string): boolean {
+  return (source === 'modrinth' || source === 'curseforge' || source === 'all') && category === 'mod'
+}
+
+function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string, tags?: string[]): string {
   const params = new URLSearchParams()
   params.set('source', item.source)
   params.set('category', category)
@@ -117,6 +167,7 @@ function buildDetailUrl(item: ResourceItem, category: string, keyword: string, s
   if (keyword) params.set('keyword', keyword)
   if (gameVersion) params.set('gameVersion', gameVersion)
   if (loader) params.set('loader', loader)
+  if (tags && tags.length > 0) params.set('tags', tags.join(','))
   if (instanceId) params.set('instanceId', instanceId)
   return `/resource-center/${encodeURIComponent(item.id)}?${params.toString()}`
 }
@@ -141,7 +192,7 @@ async function loadCnNames(items: ResourceItem[]): Promise<Record<string, string
 }
 
 function ResourceCard({
-  item, category, keyword, sort, gameVersion, loader, instanceId, onInstall, cnName,
+  item, category, keyword, sort, gameVersion, loader, instanceId, tags, onInstall, cnName,
 }: {
   item: ResourceItem
   category: string
@@ -150,6 +201,7 @@ function ResourceCard({
   gameVersion?: string
   loader?: string
   instanceId?: string
+  tags?: string[]
   onInstall: (item: ResourceItem) => void
   cnName?: string | null
 }) {
@@ -199,7 +251,7 @@ function ResourceCard({
             {t('resource.install')}
           </Button>
           <Button asChild variant="outline" className="flex-1 sm:w-full">
-            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>{t('resource.viewDetail')}</Link>
+            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId, tags) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>{t('resource.viewDetail')}</Link>
           </Button>
           {item.projectUrl && (
             <Button asChild variant="ghost" className="px-3 sm:w-full">
@@ -216,7 +268,7 @@ function ResourceCard({
 }
 
 export default function ResourceCenter() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const snap = savedSnapshot
   const urlCategory = searchParams.get('category')
@@ -225,13 +277,15 @@ export default function ResourceCenter() {
   const urlSort = searchParams.get('sort')
   const urlGameVersion = searchParams.get('gameVersion')
   const urlLoader = searchParams.get('loader')
+  const urlTags = searchParams.get('tags')
   // 快照仅用于"返回"场景（URL 筛选与快照一致）；带新筛选的跳转（如实例内
   // "安装"按钮）视为全新进入，URL 参数优先，不恢复快照。
-  const urlState: [keyof Snapshot, string | null][] = [
+  const urlState: [keyof Snapshot, string | string[] | null][] = [
     ['category', urlCategory], ['source', urlSource], ['keyword', urlKeyword],
     ['sort', urlSort], ['gameVersion', urlGameVersion], ['loader', urlLoader],
+    ['tags', urlTags === null ? null : urlTags.split(',').map((t) => t.trim()).filter(Boolean)],
   ]
-  const freshEntry = snap !== null && urlState.some(([k, v]) => v !== null && v !== snap[k])
+  const freshEntry = snap !== null && urlState.some(([k, v]) => v !== null && JSON.stringify(v) !== JSON.stringify(snap[k]))
   const categoryInit = urlCategory ?? (!freshEntry ? snap?.category : undefined) ?? 'mod'
   const [category, setCategory] = useState(categoryInit)
   const [source, setSource] = useState(() => {
@@ -243,6 +297,11 @@ export default function ResourceCenter() {
   const [sort, setSort] = useState(() => urlSort ?? (!freshEntry ? snap?.sort : undefined) ?? 'relevance')
   const [gameVersion, setGameVersion] = useState(() => urlGameVersion ?? (!freshEntry ? snap?.gameVersion : undefined) ?? '')
   const [loader, setLoader] = useState(() => (urlLoader ?? (!freshEntry ? snap?.loader : undefined) ?? '').toLowerCase())
+  const [tags, setTags] = useState<string[]>(() => {
+    const raw = urlTags ? urlTags.split(',').map((t) => t.trim()).filter(Boolean)
+      : (!freshEntry && snap?.tags ? snap.tags : [])
+    return tagsSupported(categoryInit, source) ? normalizeTags(raw, source) : []
+  })
   const instanceId = searchParams.get('instanceId') ?? ''
   const [items, setItems] = useState<ResourceItem[]>(() => freshEntry ? [] : (snap?.items ?? []))
   const [total, setTotal] = useState(() => freshEntry ? 0 : (snap?.total ?? 0))
@@ -257,8 +316,8 @@ export default function ResourceCenter() {
   const pageSize = 20
 
   const restoredRef = useRef(!freshEntry && !!snap)
-  const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, items, total, page, searchInput, cnNames })
-  useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, items, total, page, searchInput, cnNames } })
+  const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames })
+  useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames } })
 
   useEffect(() => {
     const params = new URLSearchParams()
@@ -268,14 +327,15 @@ export default function ResourceCenter() {
     if (keyword) params.set('keyword', keyword)
     if (gameVersion) params.set('gameVersion', gameVersion)
     if (loader) params.set('loader', loader)
+    if (tags.length > 0 && tagsSupported(source, category)) params.set('tags', tags.join(','))
     if (instanceId) params.set('instanceId', instanceId)
     setSearchParams(params, { replace: true })
-  }, [category, keyword, setSearchParams, sort, source, gameVersion, loader, instanceId])
+  }, [category, keyword, setSearchParams, sort, source, gameVersion, loader, tags, instanceId])
 
   const doSearch = useCallback(async (pageNum: number, append: boolean) => {
     setLoading(true)
     setError(null)
-    const key = cacheKey(category, keyword, sort, source, gameVersion, loader)
+    const key = cacheKey(category, keyword, sort, source, gameVersion, loader, tags)
     const cached = searchCache.get(key)?.get(pageNum)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       setItems((prev) => append ? [...prev, ...cached.items] : cached.items)
@@ -298,6 +358,7 @@ export default function ResourceCenter() {
         source,
         gameVersion: gameVersion || undefined,
         loader: (loader || '').toLowerCase() || undefined,
+        tags: tags.length > 0 ? tags.join(',') : undefined,
       })
       const pageItems = res.items
       if (!searchCache.has(key)) searchCache.set(key, new Map())
@@ -319,7 +380,7 @@ export default function ResourceCenter() {
     setLoading(false)
     setInitialLoading(false)
     setIsReplacing(false)
-  }, [category, keyword, sort, source, gameVersion, loader])
+  }, [category, keyword, sort, source, gameVersion, loader, tags])
 
   const scrollEl = () => document.querySelector('main')
 
@@ -348,6 +409,7 @@ export default function ResourceCenter() {
 
   const handleCategoryChange = (nextCategory: string) => {
     if (source === 'ftb' && nextCategory !== 'modpack') return
+    if (nextCategory !== 'mod') setTags([])
     if (nextCategory === 'save') {
       if (source !== 'curseforge' && source !== 'all') setSource('curseforge')
       setSort('downloads')
@@ -358,6 +420,9 @@ export default function ResourceCenter() {
   }
 
   const handleSourceChange = (nextSource: string) => {
+    // 切换来源会改变标签体系（Modrinth / CurseForge），跨体系的标签 slug 不通用，
+    // 因此来源词汇变化时清空已选标签，避免误把一套标签发给另一套来源。
+    if (tagsForSource(nextSource) !== tagsForSource(source)) setTags([])
     setSource(nextSource)
     if (nextSource === 'ftb') {
       setCategory('modpack')
@@ -370,6 +435,10 @@ export default function ResourceCenter() {
     }
     if (category === 'save' && nextSource !== 'curseforge') setCategory('mod')
     setSort(nextSource === 'curseforge' ? 'downloads' : 'relevance')
+  }
+
+  const toggleTag = (tag: string) => {
+    setTags((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag])
   }
 
   const handleInstall = (item: ResourceItem) => {
@@ -453,6 +522,43 @@ export default function ResourceCenter() {
                 )}
               </div>
             </div>
+            {(source === 'modrinth' || source === 'curseforge' || source === 'all') && category === 'mod' && (
+              <div className="w-full space-y-1">
+                <p className="text-[11px] font-medium text-muted-foreground">
+                  {source === 'curseforge' ? 'CurseForge 标签' : '标签'}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {tagsForSource(source).map((tag) => {
+                    const active = tags.includes(tag)
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => toggleTag(tag)}
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                          active
+                            ? 'border-primary/40 bg-primary/10 text-primary'
+                            : 'border-border/60 bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground',
+                        )}
+                      >
+                        {translateCategory(tag, source === 'curseforge' ? 'curseforge' : 'modrinth', lang)}
+                      </button>
+                    )
+                  })}
+                  {tags.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setTags([])}
+                      className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                    >
+                      <FontAwesomeIcon icon={faXmark} className="h-3 w-3" />
+                      清除标签
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </Card>
@@ -496,7 +602,7 @@ export default function ResourceCenter() {
         <>
           <div className="flex flex-col gap-3">
             {items.map((item) => (
-              <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} onInstall={handleInstall} cnName={cnNames[item.title]} />
+              <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} tags={tags} onInstall={handleInstall} cnName={cnNames[item.title]} />
             ))}
           </div>
 
