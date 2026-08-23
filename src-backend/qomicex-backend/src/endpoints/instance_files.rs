@@ -1173,8 +1173,15 @@ async fn check_mod_updates(
     let force = q.force.unwrap_or(0) != 0;
     if !force {
         if let Some(entry) = read_update_cache(&state.data_dir, &id) {
+            let mut updates = entry.updates;
+            // 旧缓存（添加 icon_url 之前写入）图标缺失：按需补全并回写，避免下载任务无图标
+            if updates.iter().any(|u| u.icon_url.is_none()) {
+                fill_mod_update_icons(&state.http_client, &state.curse_forge_api_key, &mut updates)
+                    .await;
+                write_update_cache(&state.data_dir, &id, updates.clone());
+            }
             return Ok(Json(ModUpdatesResponse {
-                updates: entry.updates,
+                updates,
                 refreshed: false,
             }));
         }
