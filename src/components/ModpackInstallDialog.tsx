@@ -1,21 +1,14 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
 import { Input } from './ui'
 import { Label } from './ui'
 import { Separator } from './ui'
-import { startModpackInstall, resolveModpack, getInstallProgress } from '../api/instance.ts'
-import type { ResourceVersion, InstallProgressResponse } from '../types/index.ts'
+import { startModpackInstall, resolveModpack } from '../api/instance.ts'
+import type { ResourceVersion } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
 import { addTask, updateTask, removeTask } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
-
-const STAGE_KEYS: readonly string[] = [
-  'queued', 'downloading-json', 'downloading', 'downloading-libraries',
-  'downloading-assets', 'downloading-mainjar', 'downloading-loader',
-  'downloading-loader-libs', 'installing-loader', 'downloading-addons',
-  'downloading-modpack', 'parsing-modpack', 'modpack-files', 'modpack-overrides',
-]
 
 interface ModpackInstallDialogProps {
   open: boolean
@@ -33,44 +26,14 @@ export default function ModpackInstallDialog({
 }: ModpackInstallDialogProps) {
   const { t } = useI18n()
   const navigate = useNavigate()
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [step, setStep] = useState<'config' | 'installing'>('config')
+  const [step, setStep] = useState<'config' | 'starting'>('config')
   const [instanceName, setInstanceName] = useState(modpackName)
-  const [installingInstanceId, setInstallingInstanceId] = useState<string | null>(null)
-  const [progress, setProgress] = useState<InstallProgressResponse | null>(null)
   const [error, setError] = useState('')
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
-  }, [])
-
-  useEffect(() => { return () => stopPolling() }, [stopPolling])
-
-  useEffect(() => {
-    if (step !== 'installing' || !installingInstanceId) { stopPolling(); return }
-    stopPolling()
-    pollRef.current = setInterval(async () => {
-      try {
-        const p = await getInstallProgress(installingInstanceId)
-        setProgress(p)
-        if (p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled') {
-          stopPolling()
-          if (p.status === 'completed') {
-            updateTask(installingInstanceId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
-          } else {
-            updateTask(installingInstanceId, { status: 'failed', progress: Math.round(p.progress), error: p.error || (p.status === 'cancelled' ? t('dialogs.modpackInstall.cancelled') : t('dialogs.modpackInstall.installFailed')) })
-          }
-        }
-      } catch { /* retry next tick */ }
-    }, 500)
-    return () => stopPolling()
-  }, [step, installingInstanceId, stopPolling])
 
   const handleInstall = async () => {
     if (!selectedVersion) return
-    setStep('installing')
+    setStep('starting')
     setError('')
-    setProgress(null)
 
     const taskId = `modpack-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
     addTask({
@@ -85,7 +48,7 @@ export default function ModpackInstallDialog({
 
     try {
       const resolved = await resolveModpack(source, projectId, selectedVersion.id)
-      const { instanceId } = await startModpackInstall({
+      await startModpackInstall({
         name: instanceName,
         gameVersion: selectedVersion.gameVersions[0] || resolved.gameVersion,
         loader: resolved.loader,
@@ -103,21 +66,9 @@ export default function ModpackInstallDialog({
         projectId,
         versionId: selectedVersion.id,
       })
-      addTask({
-        id: instanceId,
-        name: instanceName,
-        type: 'modpack',
-        gameVersion: selectedVersion.gameVersions[0] || '',
-        loader: resolved.loader,
-        loaderVersion: resolved.loaderVersion ?? undefined,
-        status: 'downloading',
-        progress: 0,
-        icon: resolved.iconData ?? undefined,
-        createdAt: new Date().toISOString(),
-        instanceId,
-      })
       removeTask(taskId)
-      setInstallingInstanceId(instanceId)
+      onClose()
+      navigate('/downloads')
     } catch (e: any) {
       updateTask(taskId, {
         status: 'failed',
@@ -128,12 +79,9 @@ export default function ModpackInstallDialog({
     }
   }
 
-  const isComplete = progress?.status === 'completed'
-  const isFailed = progress?.status === 'failed' || progress?.status === 'cancelled'
-
   return (
-    <Dialog open={open} onClose={() => { stopPolling(); onClose() }}>
-      <DialogHeader onClose={() => { stopPolling(); onClose() }}>
+    <Dialog open={open} onClose={() => { if (step === 'config') onClose() }}>
+      <DialogHeader onClose={() => { if (step === 'config') onClose() }}>
         <DialogTitle>{t('dialogs.modpackInstall.title')}</DialogTitle>
       </DialogHeader>
       <DialogBody className="space-y-4">
@@ -161,64 +109,19 @@ export default function ModpackInstallDialog({
               <Input id="inst-name" value={instanceName} onChange={e => setInstanceName(e.target.value)} />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
-            <DialogFooter className="border-0 px-0 pb-0">
-              <Button variant="outline" onClick={() => { stopPolling(); onClose() }}>{t('common.cancel')}</Button>
-              <Button onClick={handleInstall}>{t('dialogs.modpackInstall.startInstall')}</Button>
-            </DialogFooter>
           </>
         )}
 
-        {step === 'installing' && (
-          <>
-            {!progress && <p className="text-muted-foreground">{t('dialogs.modpackInstall.resolving')}</p>}
-            {progress && !isComplete && !isFailed && (
-              <>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">{t('dialogs.modpackInstall.installing', { name: instanceName })}</span>
-                    <span className="font-medium">{Math.round(progress.progress)}%</span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress.progress}%` }} />
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span>{STAGE_KEYS.includes(progress.stage) ? t(`dialogs.stage.${progress.stage}`) : (STAGE_KEYS.includes(progress.status) ? t(`dialogs.stage.${progress.status}`) : (progress.stage || progress.status))}</span>
-                  {progress.currentFileProgress > 0 && <span>({Math.round(progress.currentFileProgress)}%)</span>}
-                  {progress.totalFiles != null && progress.totalFiles > 0 && <span>{progress.completedFiles ?? 0}/{progress.totalFiles}</span>}
-                </div>
-                {progress.currentFile && (
-                  <p className="truncate text-xs text-muted-foreground">{progress.currentFile}</p>
-                )}
-              </>
-            )}
-            {isComplete && (
-              <div className="text-center text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">{t('dialogs.modpackInstall.completed')}</p>
-                <p className="mt-1">{t('dialogs.modpackInstall.completedDetail', { name: instanceName })}</p>
-              </div>
-            )}
-            {isFailed && (
-              <div className="text-sm text-destructive">
-                {t('dialogs.modpackInstall.failedWith', { error: progress?.error || error || t('dialogs.modpackInstall.seeDownloadPage') })}
-              </div>
-            )}
-            <DialogFooter className="border-0 px-0 pb-0">
-              {(isComplete || isFailed) && installingInstanceId && (
-                <Button variant="outline" onClick={() => { stopPolling(); onClose(); navigate(`/instances/${installingInstanceId}`) }}>
-                  {t('dialogs.modpackInstall.viewInstance')}
-                </Button>
-              )}
-              {!isComplete && !isFailed && (
-                <Button variant="outline" onClick={() => { stopPolling(); onClose() }}>{t('dialogs.modpackInstall.backgroundDownload')}</Button>
-              )}
-              {(isComplete || isFailed) && (
-                <Button onClick={() => { stopPolling(); onClose() }}>{t('common.close')}</Button>
-              )}
-            </DialogFooter>
-          </>
+        {step === 'starting' && (
+          <p className="text-muted-foreground">{t('dialogs.modpackInstall.resolving')}</p>
         )}
       </DialogBody>
+      {step === 'config' && (
+        <DialogFooter className="border-0 px-0 pb-0">
+          <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button onClick={handleInstall}>{t('dialogs.modpackInstall.startInstall')}</Button>
+        </DialogFooter>
+      )}
     </Dialog>
   )
 }

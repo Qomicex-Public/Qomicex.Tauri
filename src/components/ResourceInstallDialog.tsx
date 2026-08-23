@@ -10,13 +10,11 @@ import { Select, SelectOption } from './ui'
 import { getInstances } from '../api/instance.ts'
 import { getResourceVersions, getResourceDependencies } from '../api/resource.ts'
 import { loadSettings } from '../api/settings.ts'
-import { getInstalledFileNames, getModsMetadata, deleteMod } from '../api/instance-files.ts'
-import { startResourceDownload } from '../api/resource-download.ts'
-import { addTask, updateTask } from '../stores/downloadStore.ts'
-import { waitForCompletion } from '../lib/updateMods.ts'
-import { cacheInvalidate } from '../lib/simple-cache.ts'
+import { getInstalledFileNames, getModsMetadata } from '../api/instance-files.ts'
+import { quickInstallViaDownloadCenter } from '../lib/quickInstall.ts'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
+import { useNavigate } from 'react-router-dom'
 import type { GameInstance, ModMetadata, ResourceVersion, ResolvedDependency } from '../types/index.ts'
 
 interface ResourceInstallDialogProps {
@@ -29,12 +27,6 @@ interface ResourceInstallDialogProps {
   category: string
   instanceId?: string
   initialVersionId?: string
-}
-
-interface InstallProgress {
-  step: number
-  total: number
-  name: string
 }
 
 const versionCache = new Map<string, ResourceVersion[]>()
@@ -58,7 +50,7 @@ export default function ResourceInstallDialog({
   const [loadingInstance, setLoadingInstance] = useState(false)
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [loadingDeps, setLoadingDeps] = useState(false)
-  const [installing, setInstalling] = useState(false)
+  const [starting, setStarting] = useState(false)
   const [depVersionOptions, setDepVersionOptions] = useState<Record<string, ResourceVersion[]>>({})
   const [depSelectedVersion, setDepSelectedVersion] = useState<Record<string, { downloadUrl: string; fileName: string }>>({})
   const [depPickerOpen, setDepPickerOpen] = useState<string | null>(null)
@@ -66,7 +58,7 @@ export default function ResourceInstallDialog({
   const [searchQuery, setSearchQuery] = useState('')
   const [installError, setInstallError] = useState<string | null>(null)
   const [loadStage, setLoadStage] = useState('')
-  const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
     if (!open) return
@@ -76,9 +68,8 @@ export default function ResourceInstallDialog({
     setDeps([])
     setInstalledNames(new Set())
     setVersions([])
-    setInstalling(false)
+    setStarting(false)
     setInstallError(null)
-    setInstallProgress(null)
     setSearchQuery('')
     ;(async () => {
       setLoadingInstance(true)
@@ -215,9 +206,9 @@ export default function ResourceInstallDialog({
 
   const handleInstall = useCallback(async () => {
     if (!selectedInstance || !selectedVersion) return
-    setInstalling(true)
-    setInstallProgress(null)
-    const allItems: { url: string; fileName: string; category: string; name: string; oldFileName?: string }[] = []
+    setStarting(true)
+    setInstallError(null)
+    const depsItems: { url: string; fileName: string; category: string; name: string }[] = []
     const toDelete: { fileName: string; category: string }[] = []
 
     for (const dep of deps) {
@@ -230,77 +221,30 @@ export default function ResourceInstallDialog({
       const sel = depSelectedVersion[dep.projectId]
       const url = sel?.downloadUrl ?? dep.downloadUrl
       const fileName = sel?.fileName ?? dep.fileName
-      if (url) allItems.push({ url, fileName, category: dep.category, name: dep.name })
-    }
-    // clean up old files before downloading new ones
-    for (const d of toDelete) {
-      try { await deleteMod(selectedInstance.id, d.fileName) } catch { /* skip */ }
+      if (url) depsItems.push({ url, fileName, category: dep.category, name: dep.name })
     }
     const mainFile = selectedVersion.downloads[0]
-    if (!mainFile) { setInstallError(t('dialogs.resourceInstall.noDownloadableFile')); setInstalling(false); return }
-    allItems.push({ url: mainFile.url, fileName: mainFile.fileName, category, name: resourceTitle })
+    if (!mainFile) { setInstallError(t('dialogs.resourceInstall.noDownloadableFile')); setStarting(false); return }
 
-    const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const taskIds: string[] = []
-    addTask({
-      id: batchId,
-      name: resourceTitle,
-      type: 'batch',
-      gameVersion: selectedInstance.gameVersion,
-      status: 'downloading',
-      progress: 0,
-      totalFiles: allItems.length,
-      completedFiles: 0,
-      createdAt: new Date().toISOString(),
-      instanceId: selectedInstance.id,
-      batchTaskIds: taskIds,
-    })
-
-    for (let i = 0; i < allItems.length; i++) {
-      const item = allItems[i]
-      setInstallProgress({ step: i + 1, total: allItems.length, name: item.name })
-      try {
-        const result = await startResourceDownload(selectedInstance.id, item.url, item.fileName, item.category)
-        taskIds.push(result.taskId)
-        // 仅记录启动结果：start 成功 ≠ 下载完成，终态由下方 waitForCompletion 判定
-        updateTask(batchId, {
-          currentFile: item.name,
-          batchTaskIds: [...taskIds],
-        })
-      } catch (e) {
-        const errMsg = t('dialogs.resourceInstall.downloadFailedWith', { name: item.name, error: e instanceof Error ? e.message : t('dialogs.common.unknownError') })
-        updateTask(batchId, { status: 'failed', progress: (i / allItems.length) * 100, error: errMsg })
-        setInstallError(errMsg)
-        setInstalling(false)
-        setInstallProgress(null)
-        return
-      }
-    }
-    setInstallProgress(null)
-    // 等待全部文件真正下载完成（并行轮询后端会话状态），聚合真实进度到 batch 任务
-    const prog = new Map<string, number>()
-    const statuses = await Promise.all(taskIds.map(id =>
-      waitForCompletion(id, t, undefined, p => {
-        prog.set(id, p.progress)
-        updateTask(batchId, { progress: [...prog.values()].reduce((a, b) => a + b, 0) / taskIds.length })
+    try {
+      await quickInstallViaDownloadCenter({
+        instanceId: selectedInstance.id,
+        gameVersion: selectedInstance.gameVersion,
+        resourceTitle,
+        deps: depsItems,
+        main: { url: mainFile.url, fileName: mainFile.fileName, category, name: resourceTitle },
+        toDelete,
+        taskName: t('downloads.quickInstallName', { name: resourceTitle }),
+        t,
       })
-    ))
-    const failedCount = statuses.filter(s => s !== 'completed').length
-    if (failedCount === 0) {
-      updateTask(batchId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
-    } else {
-      updateTask(batchId, { status: 'failed', progress: 0, error: t('dialogs.common.downloadFailed') })
-    }
-    // 统一咽喉点：失效 mods 列表缓存（与模组更新路径同一语义）
-    cacheInvalidate(`api-instance-${selectedInstance.id}-mods`)
-    if (failedCount === 0) {
-      notify(t('dialogs.resourceInstall.installedDone', { name: resourceTitle }), 'success')
       onClose()
-    } else {
-      notify(t('dialogs.common.downloadFailed'), 'error')
+      navigate('/downloads')
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : t('dialogs.common.unknownError')
+      setInstallError(errMsg)
+      setStarting(false)
     }
-    setInstalling(false)
-  }, [selectedInstance, selectedVersion, deps, installedNames, installedByProjectId, category, resourceTitle, notify, onClose])
+  }, [selectedInstance, selectedVersion, deps, installedByProjectId, depSelectedVersion, category, resourceTitle, onClose, navigate, t])
 
   return (
     <Dialog open={open} onClose={onClose}>
@@ -497,22 +441,10 @@ export default function ResourceInstallDialog({
           </div>
         )}
 
-        {installing && installProgress && (
-          <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-4">
-            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
-                {t('dialogs.resourceInstall.downloading')}
-              </span>
-              <span className="font-medium text-foreground/80">{installProgress.step} / {installProgress.total}</span>
-            </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary transition-all duration-300"
-                style={{ width: `${(installProgress.step / installProgress.total) * 100}%` }}
-              />
-            </div>
-            <p className="truncate text-xs text-muted-foreground">{installProgress.name}</p>
+        {starting && (
+          <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/20 p-4 text-xs text-muted-foreground">
+            <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+            {t('dialogs.resourceInstall.installing')}
           </div>
         )}
       </DialogBody>
@@ -530,13 +462,13 @@ export default function ResourceInstallDialog({
       )}
 
       <DialogFooter>
-        <Button variant="secondary" onClick={onClose} disabled={installing}>{installError ? t('common.close') : t('common.cancel')}</Button>
+        <Button variant="secondary" onClick={onClose} disabled={starting}>{installError ? t('common.close') : t('common.cancel')}</Button>
         <Button
           onClick={handleInstall}
-          disabled={!selectedVersion || installing || loadingDeps || !!installError}
+          disabled={!selectedVersion || starting || loadingDeps || !!installError}
         >
-          <FontAwesomeIcon icon={installing ? faRotate : faDownload} className={cn('mr-1.5 h-3.5 w-3.5', installing && 'animate-spin')} />
-          {installing && installProgress ? t('dialogs.resourceInstall.installingWithName', { name: installProgress.name, step: installProgress.step, total: installProgress.total }) : installing ? t('dialogs.resourceInstall.installing') : t('dialogs.resourceInstall.installConfirm')}
+          <FontAwesomeIcon icon={starting ? faRotate : faDownload} className={cn('mr-1.5 h-3.5 w-3.5', starting && 'animate-spin')} />
+          {starting ? t('dialogs.resourceInstall.installing') : t('dialogs.resourceInstall.installConfirm')}
         </Button>
       </DialogFooter>
     </Dialog>

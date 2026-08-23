@@ -203,7 +203,7 @@ export default function DownloadCenter() {
         continue
       }
 
-      if (task.instanceId) {
+if (task.instanceId && task.type !== 'batch') {
         const match = sseData.installs.find((i) => i.instanceId === task.instanceId)
         if (match) {
           let newStatus: DownloadTask['status'] = 'downloading'
@@ -479,12 +479,17 @@ export default function DownloadCenter() {
                     <div className="flex items-start gap-4 pt-1">
                       {steps && (stepsLive ? (
                         <InstallStepsList steps={steps} className="min-w-0 flex-1" />
+                      ) : task.status === 'completed' ? (
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-emerald-400">
+                          <FontAwesomeIcon icon={faCircleCheck} className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{t('downloads.status.completed')}</span>
+                        </div>
                       ) : (
                         <div className={cn(
                           'flex min-w-0 flex-1 items-center gap-1.5 text-xs',
-                          task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-muted-foreground'
+                          task.status === 'failed' ? 'text-red-400' : 'text-muted-foreground'
                         )}>
-                          <FontAwesomeIcon icon={task.status === 'completed' ? faCircleCheck : faListCheck} className="h-3 w-3 shrink-0" />
+                          <FontAwesomeIcon icon={faListCheck} className="h-3 w-3 shrink-0" />
                           <span className="truncate">
                             {t('downloads.stepsDone', { done: stepsDoneCount, total: steps.length })}
                           </span>
@@ -516,7 +521,7 @@ export default function DownloadCenter() {
                        )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2 ml-2">
-                      {task.totalFiles !== undefined && task.totalFiles > 0 && task.stage && (
+                      {task.status === 'downloading' && task.totalFiles !== undefined && task.totalFiles > 0 && task.stage && (
                         <span>{t('downloads.filesCount', { done: task.completedFiles ?? 0, total: task.totalFiles })}</span>
                       )}
                       {task.totalBytes !== undefined && task.totalBytes > 0 && (
