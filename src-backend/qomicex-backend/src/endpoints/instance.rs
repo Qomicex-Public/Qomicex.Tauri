@@ -206,7 +206,8 @@ fn enrich_instance_icon(inst: &mut GameInstance) {
 
 /// GET /instance: list all instances.
 async fn list_instances(State(state): State<SharedState>) -> ApiResult<Json<Vec<GameInstance>>> {
-    let mut instances = state.instance.get_all();
+    // 以磁盘实际目录为主：过滤掉残留（下载失败/已删除文件但 JSON 未清理）的实例
+    let mut instances = state.instance.list_existing();
     for inst in &mut instances {
         enrich_instance_icon(inst);
     }

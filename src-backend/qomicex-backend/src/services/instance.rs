@@ -136,6 +136,28 @@ impl InstanceService {
         }
     }
 
+    /// 以磁盘实际目录为主过滤实例列表：version_isolation 开启（含全局默认）的实例，
+    /// 其 `{game_dir}/versions/{name}` 目录不存在时视为残留（安装下载失败、已手动
+    /// 删除文件或删除流程未落盘），从返回列表中剔除。隔离关闭（共享 game_dir）的
+    /// 实例无法用独立目录判断，一律保留。仅过滤显示、不改写磁盘 JSON，避免误删
+    /// 刚创建、版本目录尚未建立的实例。
+    pub fn list_existing(&self) -> Vec<GameInstance> {
+        let global_isolation = crate::settings::get_global_version_isolation();
+        self.get_all()
+            .into_iter()
+            .filter(|inst| {
+                let isolation = inst.version_isolation.unwrap_or(global_isolation);
+                if !isolation {
+                    return true;
+                }
+                std::path::Path::new(&inst.game_dir)
+                    .join("versions")
+                    .join(&inst.name)
+                    .is_dir()
+            })
+            .collect()
+    }
+
     pub fn get_by_id(&self, id: &str) -> Option<GameInstance> {
         match self.instances.lock() {
             Ok(g) => g.iter().find(|i| i.id == id).cloned(),
@@ -252,4 +274,63 @@ fn read_default_id(path: &PathBuf) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::error_report::tests::ENV_LOCK;
+
+    fn make_instance(name: &str, game_dir: &str, isolation: Option<bool>) -> GameInstance {
+        let mut inst = GameInstance::default();
+        inst.name = name.to_string();
+        inst.game_dir = game_dir.to_string();
+        inst.version_isolation = isolation;
+        inst
+    }
+
+    #[test]
+    fn list_existing_filters_missing_version_dirs() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-instance-test-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc1");
+        // 只有 Existing 有真实版本目录；Missing 是残留（下载失败/已删除）；Shared 隔离关闭
+        std::fs::create_dir_all(game_dir.join("versions").join("Existing")).unwrap();
+
+        let service = InstanceService::new();
+        service.create(make_instance(
+            "Existing",
+            game_dir.to_str().unwrap(),
+            Some(true),
+        ));
+        service.create(make_instance(
+            "Missing",
+            game_dir.to_str().unwrap(),
+            Some(true),
+        ));
+        service.create(make_instance(
+            "Shared",
+            game_dir.to_str().unwrap(),
+            Some(false),
+        ));
+
+        let existing = service.list_existing();
+        let names: Vec<&str> = existing.iter().map(|i| i.name.as_str()).collect();
+        assert!(names.contains(&"Existing"), "有目录的实例应保留: {names:?}");
+        assert!(
+            !names.contains(&"Missing"),
+            "目录不存在的残留实例应被过滤: {names:?}"
+        );
+        assert!(names.contains(&"Shared"), "隔离关闭的实例应保留: {names:?}");
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+    }
 }
