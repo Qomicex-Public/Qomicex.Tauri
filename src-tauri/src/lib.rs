@@ -217,11 +217,20 @@ pub fn run() {
                 let win = w.clone();
                 let emitter = w.clone();
                 win.on_window_event(move |event| {
-                    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
-                        paths, ..
-                    }) = event
-                    {
-                        let _ = emitter.emit("file-drop", paths);
+                    if let tauri::WindowEvent::DragDrop(drag) = event {
+                        match drag {
+                            tauri::DragDropEvent::Enter { .. } => {
+                                let _ = emitter.emit("file-drop-hover", true);
+                            }
+                            tauri::DragDropEvent::Leave => {
+                                let _ = emitter.emit("file-drop-hover", false);
+                            }
+                            tauri::DragDropEvent::Drop { paths, .. } => {
+                                let _ = emitter.emit("file-drop-hover", false);
+                                let _ = emitter.emit("file-drop", paths);
+                            }
+                            _ => {}
+                        }
                     }
                 });
             }

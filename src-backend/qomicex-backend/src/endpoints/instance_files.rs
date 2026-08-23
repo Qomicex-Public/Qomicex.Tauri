@@ -529,6 +529,7 @@ pub fn router() -> Router<SharedState> {
             "/instance/{id}/files/mods/batch-update",
             post(batch_update_mods),
         )
+        .route("/instance/{id}/files/import-local", post(import_local))
         // resourcepacks
         .route(
             "/instance/{id}/files/resourcepacks",
@@ -754,6 +755,107 @@ fn count_children(dir: &Path, ext: &str) -> i64 {
         }
     }
     n
+}
+
+// =====================================================================
+// Handler: local file import (drag-and-drop install)
+// =====================================================================
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportLocalRequest {
+    category: String,
+    source_path: String,
+    #[serde(default)]
+    file_name: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportLocalResponse {
+    file_name: String,
+    target_path: String,
+}
+
+/// POST /instance/{id}/files/import-local — copy a local file into the
+/// instance's (version-isolated) category directory. Backs the launcher's
+/// drag-and-drop installer; the source file is left untouched.
+async fn import_local(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Json(req): Json<ImportLocalRequest>,
+) -> ApiResult<Json<ImportLocalResponse>> {
+    let cat = match req.category.to_ascii_lowercase().as_str() {
+        "mods" => "mods",
+        "resourcepacks" | "resourcepack" => "resourcepacks",
+        "shaderpacks" | "shaderpack" | "shader" => "shaderpacks",
+        _ => {
+            return Err(ApiError::bad_request(
+                "IMPORT_CATEGORY_INVALID",
+                "category must be one of mods/resourcepacks/shaderpacks",
+            ))
+        }
+    };
+    let src = PathBuf::from(req.source_path.trim());
+    if !src.is_file() {
+        return Err(ApiError::not_found(
+            "FILE_NOT_FOUND",
+            "Source file does not exist",
+        ));
+    }
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    let allowed: &[&str] = if cat == "mods" {
+        &["jar", "litemod"]
+    } else {
+        &["zip"]
+    };
+    if !allowed.contains(&ext.as_str()) {
+        return Err(ApiError::bad_request(
+            "IMPORT_EXTENSION_MISMATCH",
+            format!(".{ext} is not a valid {cat} file"),
+        ));
+    }
+    let r = resolve(&id, &state)?;
+    let dir = category_dir(&r, cat);
+    let original = req.file_name.clone().unwrap_or_else(|| {
+        src.file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    let dest = unique_destination(&dir, &original);
+    std::fs::copy(&src, &dest)?;
+    Ok(Json(ImportLocalResponse {
+        file_name: dest
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        target_path: dest.to_string_lossy().into_owned(),
+    }))
+}
+
+/// `name (n).ext` suffixing so repeated drops never silently overwrite.
+fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
+    let mut n = 0u32;
+    loop {
+        let candidate = if n == 0 {
+            dir.join(file_name)
+        } else {
+            let p = Path::new(file_name);
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+            match p.extension().and_then(|s| s.to_str()) {
+                Some(ext) => dir.join(format!("{stem} ({n}).{ext}")),
+                None => dir.join(format!("{stem} ({n})")),
+            }
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 // =====================================================================
