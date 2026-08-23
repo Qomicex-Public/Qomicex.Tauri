@@ -173,6 +173,10 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/launch", post(launch_instance))
         .route("/instance/{id}/launch/progress", get(launch_progress))
         .route("/instance/{id}/launch/cancel", post(launch_cancel))
+        .route(
+            "/instance/{id}/export-diagnostics",
+            post(export_diagnostics),
+        )
         .route("/instance/{id}/install", post(install_instance))
         .route("/instance/{id}/install/progress", get(install_progress))
         .route("/instance/{id}/install/pause", post(install_pause))
@@ -792,17 +796,11 @@ async fn launch_progress(
     };
 
     if progress.stage == "running" {
-        let ps = tracker.get_state(&instance_id);
-        if let Some(ps) = ps {
+        // 终态/结算由 crash_watcher 统一处理。state 仍存在且进程已死 = 事件总线
+        // 失效的兜底场景，直接报 completed（不结算，避免与 watcher 双算）；state
+        // 缺失（已被 watcher 摘除接管中）则落到末尾继续返回 running 等终态。
+        if let Some(ps) = tracker.get_state(&instance_id) {
             if !crate::services::launch_tracker::process_alive(ps.process_id) {
-                // Process exited: settle play time then report completed.
-                if let Some(mut inst) = state.instance.get_by_id(&instance_id) {
-                    let elapsed = (chrono::Utc::now() - ps.started_at).num_minutes().max(1);
-                    inst.play_time += elapsed as i64;
-                    inst.last_played = Some(chrono::Utc::now().to_rfc3339());
-                    state.instance.update(&instance_id, inst);
-                }
-                tracker.cancel_and_remove(&instance_id);
                 return Ok(Json(LaunchProgress {
                     stage: "completed".to_string(),
                     message: "游戏已退出".to_string(),
@@ -827,6 +825,188 @@ async fn launch_cancel(
     Ok(Json(MessageResponse {
         message: format!("Launch cancelled for {instance_id}"),
     }))
+}
+
+/// POST /api/instance/{id}/export-diagnostics — 打包诊断信息为 zip 下载
+/// （对应 C# DiagnosticExportController.Export）。
+async fn export_diagnostics(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Response> {
+    let instance = state
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| instance_not_found(&instance_id))?;
+    let progress = state.launch_tracker.get_progress(&instance_id);
+    let trace_dump = state.trace_dump.clone();
+
+    let safe_name: String = instance
+        .name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "._- ".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let file_name = format!("diagnostics-{safe_name}-{stamp}.zip");
+
+    // 闭包内使用的实例字段提前解包，规避部分移动问题
+    let game_version = instance.game_version.clone();
+    let game_dir = PathBuf::from(&instance.game_dir);
+    let version_name = instance.name.clone();
+
+    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        use std::io::{Cursor, Write as _};
+        use zip::write::SimpleFileOptions;
+
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        fn add_text(
+            zw: &mut zip::ZipWriter<Cursor<Vec<u8>>>,
+            name: &str,
+            text: &str,
+        ) -> Result<(), String> {
+            zw.start_file(name, SimpleFileOptions::default())
+                .map_err(|e: zip::result::ZipError| e.to_string())?;
+            zw.write_all(text.as_bytes()).map_err(|e| e.to_string())
+        }
+
+        // system-info.json（对应 C# SystemInfoHelper 段）
+        let (total_mem, avail_mem) = crate::util::sysinfo::memory();
+        let sys_info = serde_json::json!({
+            "os": crate::util::sysinfo::os_name(),
+            "osName": crate::util::sysinfo::os_description(),
+            "osVersion": crate::util::sysinfo::os_version(),
+            "architecture": crate::util::sysinfo::architecture(),
+            "osVersionId": crate::util::sysinfo::os_version_id(),
+            "osDisplayName": crate::util::sysinfo::os_display_name(),
+            "gitCommit": option_env!("QOMICEX_GIT_HASH").unwrap_or("unknown"),
+            "memory": total_mem,
+            "availableMemory": avail_mem as f64 / (1024.0 * 1024.0),
+        });
+        add_text(&mut zw, "system-info.json", &sys_info.to_string())?;
+
+        // launcher-version.json
+        let version_info = serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "gitCommit": option_env!("QOMICEX_GIT_HASH").unwrap_or("unknown"),
+            "instanceGameVersion": game_version,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+        add_text(&mut zw, "launcher-version.json", &version_info.to_string())?;
+
+        // launch-error.json：仅 failed/crashed 终态时附带崩溃详情
+        if let Some(p) = &progress {
+            if p.stage == "failed" || p.stage == "crashed" {
+                let launch_error = serde_json::json!({
+                    "stage": p.stage,
+                    "error": p.error,
+                    "message": p.message,
+                    "exitCode": p.exit_code,
+                    "crashReport": p.crash_report,
+                });
+                add_text(&mut zw, "launch-error.json", &launch_error.to_string())?;
+            }
+        }
+
+        // crash-report.txt：最新崩溃报告，截断 100K
+        let crash_dir_candidates = [
+            game_dir
+                .join("versions")
+                .join(&version_name)
+                .join("crash-reports"),
+            game_dir.join("crash-reports"),
+        ];
+        for dir in crash_dir_candidates {
+            if let Some(latest) = latest_txt_file(&dir) {
+                if let Ok(content) = std::fs::read_to_string(&latest) {
+                    add_text(
+                        &mut zw,
+                        "crash-report.txt",
+                        &truncate_chars(&content, 100_000),
+                    )?;
+                }
+                break;
+            }
+        }
+
+        // hs_err.log：game_dir 向上遍历找最新 JVM 崩溃日志，截断 100K
+        let mut cur = Some(game_dir.clone());
+        while let Some(d) = cur {
+            if let Ok(entries) = std::fs::read_dir(&d) {
+                let mut hs_errs: Vec<PathBuf> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.is_file()
+                            && p.file_name()
+                                .and_then(|n| n.to_str())
+                                .map_or(false, |n| n.starts_with("hs_err_pid"))
+                    })
+                    .collect();
+                hs_errs.sort_by_key(|p| {
+                    std::cmp::Reverse(p.metadata().and_then(|m| m.modified()).ok())
+                });
+                if let Some(first) = hs_errs.first() {
+                    if let Ok(content) = std::fs::read_to_string(first) {
+                        add_text(&mut zw, "hs_err.log", &truncate_chars(&content, 100_000))?;
+                    }
+                    break;
+                }
+            }
+            cur = d.parent().map(Path::to_path_buf);
+        }
+
+        // backend-trace.log：后端日志缓冲落盘后打包（失败不阻塞导出）
+        if let Ok(path) = trace_dump.dump("diagnostic-export") {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                add_text(&mut zw, "backend-trace.log", &content)?;
+            }
+        }
+
+        let cursor = zw
+            .finish()
+            .map_err(|e: zip::result::ZipError| e.to_string())?;
+        Ok(cursor.into_inner())
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("诊断导出任务失败: {e}")))?
+    .map_err(|e| ApiError::internal(format!("诊断打包失败: {e}")))?;
+
+    let disposition = format!("attachment; filename=\"{file_name}\"");
+    let mut resp = (StatusCode::OK, buf).into_response();
+    resp.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/zip"),
+    );
+    resp.headers_mut().insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        axum::http::HeaderValue::from_str(&disposition)
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("attachment")),
+    );
+    Ok(resp)
+}
+
+/// 目录下最新修改的 *.txt（无则 None）。
+fn latest_txt_file(dir: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("txt"))
+        .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
+}
+
+/// 按字符数截断并追加省略标记（按字符边界，避免切断多字节字符）。
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max).collect();
+    format!("{cut}\n... (truncated)")
 }
 
 // =====================================================================

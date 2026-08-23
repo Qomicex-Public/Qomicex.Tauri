@@ -1,4 +1,5 @@
 pub mod account;
+pub mod crash_watcher;
 pub mod curseforge_fetch;
 pub mod error_report;
 pub mod export_tracker;
