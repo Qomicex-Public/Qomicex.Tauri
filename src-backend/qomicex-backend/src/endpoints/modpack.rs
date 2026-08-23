@@ -964,6 +964,23 @@ pub(crate) async fn run_modpack_pipeline(
     // === 1. 获取整合包包体（本地导入直接用已上传/给定文件；在线下载）===
     if let Some(local) = local_pack_path {
         zip_path = Some(PathBuf::from(local));
+        // 本地导入同样要解析 manifest：版本补全 + 文件清单都依赖 parsed。
+        // 此前仅在线路径解析，本地导入 CF/mrpack 会在文件下载分支因
+        // parsed=None 而失败（qml 分支本就有现解析 fallback，此处跳过）。
+        let local_src_ok = matches!(src.as_str(), "modrinth" | "curseforge");
+        if local_src_ok {
+            handle.set_stage("parsing-modpack");
+            handle.mark_step("parse-modpack", "active");
+            let path = PathBuf::from(local);
+            parsed = Some(if src == "modrinth" {
+                parse_modrinth_index(&path)
+                    .map_err(|e| format!("解析 modrinth.index.json 失败: {e}"))?
+            } else {
+                parse_curseforge_manifest(&path)
+                    .map_err(|e| format!("解析 manifest.json 失败: {e}"))?
+            });
+            handle.mark_step("parse-modpack", "done");
+        }
     } else if src == "modrinth" || src == "curseforge" {
         handle.set_stage("downloading-modpack");
         handle.mark_step("download-modpack", "active");
@@ -1101,25 +1118,44 @@ pub(crate) async fn run_modpack_pipeline(
                 Ok(())
             }
             "curseforge" => {
-                let p = parsed_g.as_ref().expect("curseforge 必有解析结果");
-                // CF manifest 的 files 是 (projectID,fileID) 引用，逐个查下载链接（串行避免限流）
+                let p = parsed_g.as_ref().ok_or("整合包清单未解析（curseforge）")?;
+                // CF manifest 的 files 是 (projectID,fileID) 引用：一次批量接口解析全部
+                // 链接/文件名（每批 100 自动分批；318 文件 ≈4 次调用 ≈4s，
+                // 替代此前 636 次串行查询 ≈10 分钟且零进度反馈）。
+                let fids: Vec<i64> = p
+                    .files
+                    .iter()
+                    .filter_map(|f| f.path.split_once(':'))
+                    .filter_map(|(_, fid)| fid.parse::<i64>().ok())
+                    .collect();
                 let cf = core_g.create_curseforge_source(cf_api_key);
+                h_g.update(|f| {
+                    f.current_file = format!("批量解析 CurseForge 文件链接 ({} 个)...", fids.len());
+                });
+                let info_map = cf
+                    .get_files_batch(&fids)
+                    .await
+                    .map_err(|e| format!("批量获取 CurseForge 文件信息失败: {e}"))?;
+
                 let mut files = Vec::new();
+                let mut missing = 0usize;
                 for f in &p.files {
-                    let coord = &f.path; // "projectID:fileID"
-                    let Some((proj, fid)) = coord.split_once(':') else {
+                    let Some((_, fid)) = f.path.split_once(':') else {
                         continue;
                     };
-                    let Ok(info) = cf.get_file_info(proj, fid).await else {
+                    let Ok(fidn) = fid.parse::<i64>() else {
                         continue;
                     };
-                    let Ok(download_url) = cf.get_download_url(proj, fid).await else {
+                    let Some(info) = info_map.get(&fidn) else {
+                        missing += 1;
                         continue;
                     };
-                    if download_url.is_empty() {
+                    let Some(download_url) = info.download_url.as_deref().filter(|u| !u.is_empty())
+                    else {
+                        missing += 1;
                         continue;
-                    }
-                    let filename = info.file_name.unwrap_or_else(|| {
+                    };
+                    let filename = info.file_name.clone().unwrap_or_else(|| {
                         download_url
                             .rsplit('/')
                             .next()
@@ -1133,8 +1169,14 @@ pub(crate) async fn run_modpack_pipeline(
                         &format!("mods/{filename}"),
                     );
                     let (download_url, headers) =
-                        mirror_mod_url(download_url, cf_api_key, file_download_source);
+                        mirror_mod_url(download_url.to_string(), cf_api_key, file_download_source);
                     files.push((download_url, dest, headers));
+                }
+                if missing > 0 {
+                    tracing::warn!(
+                        "CurseForge 整合包有 {missing}/{} 个文件未取得下载链接（已跳过）",
+                        p.files.len()
+                    );
                 }
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
@@ -1175,7 +1217,9 @@ pub(crate) async fn run_modpack_pipeline(
                     }
                 };
                 let cf = core_g.create_curseforge_source(cf_api_key);
+                // 先分拣：modrinth 直链直接入列；curseforge 占位收集 fileId 后一次批量解析
                 let mut files = Vec::new();
+                let mut placeholder_fids: Vec<i64> = Vec::new();
                 for f in &p.files {
                     if let Some(url) = f.download_url.as_deref() {
                         if url.is_empty() {
@@ -1185,21 +1229,37 @@ pub(crate) async fn run_modpack_pipeline(
                         let (u, h) =
                             mirror_mod_url(url.to_string(), cf_api_key, file_download_source);
                         files.push((u, dest, h));
-                    } else {
+                    } else if let Some((_, fid)) = f.path.split_once(':') {
                         // curseforge 占位：path = "projectID:fileID"
-                        let Some((proj, fid)) = f.path.split_once(':') else {
-                            continue;
-                        };
-                        let Ok(info) = cf.get_file_info(proj, fid).await else {
-                            continue;
-                        };
-                        let Ok(download_url) = cf.get_download_url(proj, fid).await else {
-                            continue;
-                        };
-                        if download_url.is_empty() {
-                            continue;
+                        if let Ok(fidn) = fid.parse::<i64>() {
+                            placeholder_fids.push(fidn);
                         }
-                        let filename = info.file_name.unwrap_or_else(|| {
+                    }
+                }
+                if !placeholder_fids.is_empty() {
+                    h_g.update(|f| {
+                        f.current_file = format!(
+                            "批量解析 CurseForge 文件链接 ({} 个)...",
+                            placeholder_fids.len()
+                        );
+                    });
+                    let info_map = cf
+                        .get_files_batch(&placeholder_fids)
+                        .await
+                        .map_err(|e| format!("批量获取 CurseForge 文件信息失败: {e}"))?;
+                    let mut missing = 0usize;
+                    for fidn in &placeholder_fids {
+                        let Some(info) = info_map.get(fidn) else {
+                            missing += 1;
+                            continue;
+                        };
+                        let Some(download_url) =
+                            info.download_url.as_deref().filter(|u| !u.is_empty())
+                        else {
+                            missing += 1;
+                            continue;
+                        };
+                        let filename = info.file_name.clone().unwrap_or_else(|| {
                             download_url
                                 .rsplit('/')
                                 .next()
@@ -1212,9 +1272,18 @@ pub(crate) async fn run_modpack_pipeline(
                             version_isolation,
                             &format!("mods/{filename}"),
                         );
-                        let (download_url, headers) =
-                            mirror_mod_url(download_url, cf_api_key, file_download_source);
+                        let (download_url, headers) = mirror_mod_url(
+                            download_url.to_string(),
+                            cf_api_key,
+                            file_download_source,
+                        );
                         files.push((download_url, dest, headers));
+                    }
+                    if missing > 0 {
+                        tracing::warn!(
+                            "QML 整合包有 {missing}/{} 个 CurseForge 占位文件未取得下载链接（已跳过）",
+                            placeholder_fids.len()
+                        );
                     }
                 }
                 if !files.is_empty() {
