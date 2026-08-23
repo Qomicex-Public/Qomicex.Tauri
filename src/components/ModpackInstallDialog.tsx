@@ -50,7 +50,7 @@ export default function ModpackInstallDialog({
 
     try {
       const resolved = await resolveModpack(source, projectId, selectedVersion.id)
-      await startModpackInstall({
+      const { instanceId } = await startModpackInstall({
         name: instanceName,
         gameVersion: selectedVersion.gameVersions[0] || resolved.gameVersion,
         loader: resolved.loader,
@@ -69,6 +69,19 @@ export default function ModpackInstallDialog({
         versionId: selectedVersion.id,
       })
       removeTask(taskId)
+      addTask({
+        id: instanceId,
+        name: instanceName,
+        type: 'modpack',
+        gameVersion: selectedVersion.gameVersions[0] || resolved.gameVersion,
+        loader: resolved.loader || undefined,
+        loaderVersion: resolved.loaderVersion || undefined,
+        status: 'downloading',
+        progress: 0,
+        icon: iconUrl,
+        createdAt: new Date().toISOString(),
+        instanceId,
+      })
       onClose()
       navigate('/downloads')
     } catch (e: any) {
