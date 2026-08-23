@@ -120,7 +120,7 @@ function getSourceLabel(source: string): string {
   return map[source] ?? source
 }
 
-function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string): string {
+function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string, tags?: string[]): string {
   const params = new URLSearchParams()
   params.set('source', item.source)
   params.set('category', category)
@@ -128,6 +128,7 @@ function buildDetailUrl(item: ResourceItem, category: string, keyword: string, s
   if (keyword) params.set('keyword', keyword)
   if (gameVersion) params.set('gameVersion', gameVersion)
   if (loader) params.set('loader', loader)
+  if (tags && tags.length > 0) params.set('tags', tags.join(','))
   if (instanceId) params.set('instanceId', instanceId)
   return `/resource-center/${encodeURIComponent(item.id)}?${params.toString()}`
 }
@@ -152,7 +153,7 @@ async function loadCnNames(items: ResourceItem[]): Promise<Record<string, string
 }
 
 function ResourceCard({
-  item, category, keyword, sort, gameVersion, loader, instanceId, onInstall, cnName,
+  item, category, keyword, sort, gameVersion, loader, instanceId, tags, onInstall, cnName,
 }: {
   item: ResourceItem
   category: string
@@ -161,6 +162,7 @@ function ResourceCard({
   gameVersion?: string
   loader?: string
   instanceId?: string
+  tags?: string[]
   onInstall: (item: ResourceItem) => void
   cnName?: string | null
 }) {
@@ -210,7 +212,7 @@ function ResourceCard({
             {t('resource.install')}
           </Button>
           <Button asChild variant="outline" className="flex-1 sm:w-full">
-            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>{t('resource.viewDetail')}</Link>
+            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId, tags) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>{t('resource.viewDetail')}</Link>
           </Button>
           {item.projectUrl && (
             <Button asChild variant="ghost" className="px-3 sm:w-full">
@@ -239,12 +241,12 @@ export default function ResourceCenter() {
   const urlTags = searchParams.get('tags')
   // 快照仅用于"返回"场景（URL 筛选与快照一致）；带新筛选的跳转（如实例内
   // "安装"按钮）视为全新进入，URL 参数优先，不恢复快照。
-  const urlState: [keyof Snapshot, string | null][] = [
+  const urlState: [keyof Snapshot, string | string[] | null][] = [
     ['category', urlCategory], ['source', urlSource], ['keyword', urlKeyword],
     ['sort', urlSort], ['gameVersion', urlGameVersion], ['loader', urlLoader],
-    ['tags', urlTags],
+    ['tags', urlTags === null ? null : urlTags.split(',').map((t) => t.trim()).filter(Boolean)],
   ]
-  const freshEntry = snap !== null && urlState.some(([k, v]) => v !== null && v !== snap[k])
+  const freshEntry = snap !== null && urlState.some(([k, v]) => v !== null && JSON.stringify(v) !== JSON.stringify(snap[k]))
   const categoryInit = urlCategory ?? (!freshEntry ? snap?.category : undefined) ?? 'mod'
   const [category, setCategory] = useState(categoryInit)
   const [source, setSource] = useState(() => {
@@ -558,7 +560,7 @@ export default function ResourceCenter() {
         <>
           <div className="flex flex-col gap-3">
             {items.map((item) => (
-              <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} onInstall={handleInstall} cnName={cnNames[item.title]} />
+              <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} tags={tags} onInstall={handleInstall} cnName={cnNames[item.title]} />
             ))}
           </div>
 
