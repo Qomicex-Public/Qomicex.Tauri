@@ -102,7 +102,8 @@ async fn upload_to_mclogs(client: &reqwest::Client, content: &str) -> Option<Str
     res.get("url").and_then(|u| u.as_str()).map(String::from)
 }
 
-/// 将 URL 渲染为灰度 PNG 二维码并返回 base64（对应 C# `CrashUploadService.CreateQrCode`：
+/// 将 URL 渲染为灰度 PNG 二维码，返回 `data:image/png;base64,...` data URI
+/// （对齐 C# 控制器拼接前缀的 `QrCodeBase64` 契约；对应 C# `CrashUploadService.CreateQrCode`：
 /// QRCoder ECC-Q + SkiaSharp 白底黑块；Rust 端零图像依赖——qrcodegen 出模块矩阵，
 /// 手写 8-bit 灰度 PNG 编码，zlib 压缩与 CRC32 复用 flate2）。
 fn create_qr_png_base64(url: &str) -> Option<String> {
@@ -145,7 +146,11 @@ fn create_qr_png_base64(url: &str) -> Option<String> {
     push_png_chunk(&mut png, b"IHDR", &ihdr);
     push_png_chunk(&mut png, b"IDAT", &idat);
     push_png_chunk(&mut png, b"IEND", &[]);
-    Some(base64::engine::general_purpose::STANDARD.encode(png))
+    // 对齐 C# 契约：返回完整 data URI，前端 <img src> 可直接使用
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png)
+    ))
 }
 
 fn push_png_chunk(out: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) {
@@ -226,10 +231,15 @@ mod tests {
 
     #[test]
     fn qr_png_structure_and_pixels_match_matrix() {
+        const DATA_URI_PREFIX: &str = "data:image/png;base64,";
         let url = "https://mclo.gs/AbCdEfG";
-        let b64 = create_qr_png_base64(url).expect("应成功生成二维码");
+        let data_uri = create_qr_png_base64(url).expect("应成功生成二维码");
+        assert!(
+            data_uri.starts_with(DATA_URI_PREFIX),
+            "应返回 data URI（前端 <img src> 直接可用）"
+        );
         let bytes = base64::engine::general_purpose::STANDARD
-            .decode(b64)
+            .decode(&data_uri[DATA_URI_PREFIX.len()..])
             .unwrap();
 
         let qr = qrcodegen::QrCode::encode_text(url, qrcodegen::QrCodeEcc::Quartile).unwrap();
