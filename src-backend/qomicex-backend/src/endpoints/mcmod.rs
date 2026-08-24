@@ -12,6 +12,7 @@
 //! Consequently `state.http_client` is not exercised by these handlers.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::OnceLock;
 
 use axum::extract::Query;
@@ -29,11 +30,11 @@ use flate2::read::GzDecoder;
 /// `src-backend/qomicex-backend/src/endpoints/` -> `src-backend/qomicex-backend/Resources/`.
 const EMBEDDED_MCMOD_JSON_GZ: &[u8] = include_bytes!("../../Resources/mcmod_data.json.gz");
 
-fn decompress_gzip(data: &[u8]) -> String {
+fn decompress_gzip(data: &[u8]) -> std::io::Result<String> {
     let mut decoder = GzDecoder::new(data);
     let mut buf = Vec::new();
-    std::io::Read::read_to_end(&mut decoder, &mut buf).unwrap_or(0);
-    String::from_utf8_lossy(&buf).to_string()
+    decoder.read_to_end(&mut buf)?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 /// Runtime override path: `{BaseDir}/QML/mcmod_data.json` (checked first).
@@ -60,7 +61,19 @@ impl McmodData {
             reverse: Vec::new(),
         };
 
-        let json = runtime_override().unwrap_or_else(|| decompress_gzip(EMBEDDED_MCMOD_JSON_GZ));
+        let json = match runtime_override() {
+            Some(j) => j,
+            None => match decompress_gzip(EMBEDDED_MCMOD_JSON_GZ) {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        "解压内置 mcmod_data.json.gz 失败，mcmod 查词功能不可用"
+                    );
+                    return data;
+                }
+            },
+        };
         let Ok(root) = serde_json::from_str::<Value>(&json) else {
             return data;
         };
