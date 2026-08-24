@@ -87,7 +87,9 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       try {
         const p = await getLaunchProgress(id)
         if (p.stage === 'crashed' || p.stage === 'failed') {
-          setLaunchProgress(p)
+          // 崩溃/失败走崩溃分析弹窗，不再保留 launchProgress（否则弹窗关闭后
+          // LaunchProgressDialog 会以 crashed 终态重新出现，造成二次弹窗）。
+          setLaunchProgress(null)
           clearInstancePoll(id)
           setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
           setLaunchingInstanceId(null)
