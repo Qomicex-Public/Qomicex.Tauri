@@ -246,10 +246,7 @@ export default function Dashboard() {
       <MicrosoftReauthDialog
         open={showMicrosoftReauth}
         onClose={() => setShowMicrosoftReauth(false)}
-        onReauth={() => {
-          setShowMicrosoftReauth(false)
-          navigate('/accounts')
-        }}
+        expiredAccountUuid={defaultAccount?.uuid}
       />
     </div>
   )

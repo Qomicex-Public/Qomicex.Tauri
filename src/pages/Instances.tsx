@@ -26,6 +26,7 @@ import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSe
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
+import { getAccounts, deleteAccount } from '../api/account.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
@@ -1315,9 +1316,13 @@ export default function Instances() {
       <MicrosoftReauthDialog
         open={showMicrosoftReauth}
         onClose={() => setShowMicrosoftReauth(false)}
-        onReauth={() => {
-          setShowMicrosoftReauth(false)
-          navigate('/accounts')
+        onReauth={async () => {
+          try {
+            const list = await getAccounts()
+            const def = list.find((a) => a.isDefault)
+            if (def) await deleteAccount(def.uuid)
+          } catch { /* 账号可能已不存在 */ }
+          navigate('/accounts?add=microsoft')
         }}
       />
       <ImportDialog
