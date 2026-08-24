@@ -81,10 +81,15 @@ async fn manifest(
 
     // download_url points to the Tauri latest.json manifest. This block maps
     // to the C# try/catch: any failure returns 204 NoContent.
-    let manifest = match fetch_tauri_manifest(&state.http_client, &download_url).await {
+    let mut manifest = match fetch_tauri_manifest(&state.http_client, &download_url).await {
         Ok(Some(m)) => m,
         _ => return Ok(StatusCode::NO_CONTENT.into_response()),
     };
+
+    // Tauri updater requires a signature for every platform entry it
+    // deserializes; release assets without one (Linux AppImage) would poison
+    // the whole platforms map. Drop them so signed platforms still update.
+    manifest.platforms.retain(|_, e| !e.signature.is_empty());
 
     if manifest.platforms.is_empty() || !manifest.platforms.contains_key(&q.target) {
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -155,7 +160,10 @@ async fn fetch_tauri_manifest(
     }
     match serde_json::from_str::<TauriManifestResponse>(&text) {
         Ok(m) => Ok(Some(m)),
-        Err(_) => Ok(None),
+        Err(e) => {
+            tracing::warn!("update manifest parse failed from {url}: {e}");
+            Ok(None)
+        }
     }
 }
 
@@ -336,8 +344,13 @@ struct TauriManifestResponse {
 }
 
 /// Per-platform entry in the Tauri manifest (source UpdateModels.cs).
+///
+/// `signature` defaults to empty: Linux AppImage release assets ship no
+/// signature (updater auto-update unsupported there), and a required field
+/// would fail the whole platforms map parse.
 #[derive(Serialize, Deserialize)]
 struct TauriPlatformEntry {
+    #[serde(default)]
     signature: String,
     url: String,
 }

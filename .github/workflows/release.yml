@@ -309,18 +309,16 @@ jobs:
           Write-Output "=== Bundle dir contents ==="
           $bundleDir = "src-tauri/target/release/bundle"
           Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
-          $archive = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.nsis.zip" | Select-Object -First 1
+          # createUpdaterArtifacts 产出 setup.exe.sig；从 sig 反推安装包名
+          $sigFile = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe.sig" | Select-Object -First 1
           $platform = "windows-x86_64"
-          if ($archive) {
-            $sigFile = Get-ChildItem -Path $bundleDir -Recurse -Filter "$($archive.Name).sig" | Select-Object -First 1
-            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($archive.Name)"
-            if ($sigFile) {
-              $signature = (Get-Content -Path $sigFile.FullName -Raw).Trim()
-              $fragment = @{ $platform = @{ url = $url; signature = $signature } }
-            } else {
-              $fragment = @{ $platform = @{ url = $url } }
-            }
+          if ($sigFile) {
+            $exeName = $sigFile.Name -replace '\.sig$',''
+            $signature = (Get-Content -Path $sigFile.FullName -Raw).Trim()
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$exeName"
+            $fragment = @{ $platform = @{ url = $url; signature = $signature } }
           } else {
+            Write-Warning "No .exe.sig found (TAURI_SIGNING_PRIVATE_KEY missing?); emitting unsigned fragment"
             $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
             if (-not $exe) { throw "No installer found" }
             $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
@@ -403,18 +401,16 @@ jobs:
           Write-Output "=== Bundle dir contents ==="
           $bundleDir = "src-tauri/target/aarch64-pc-windows-msvc/release/bundle"
           Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
-          $archive = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.nsis.zip" | Select-Object -First 1
+          # createUpdaterArtifacts 产出 setup.exe.sig；从 sig 反推安装包名
+          $sigFile = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe.sig" | Select-Object -First 1
           $platform = "windows-aarch64"
-          if ($archive) {
-            $sigFile = Get-ChildItem -Path $bundleDir -Recurse -Filter "$($archive.Name).sig" | Select-Object -First 1
-            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($archive.Name)"
-            if ($sigFile) {
-              $signature = (Get-Content -Path $sigFile.FullName -Raw).Trim()
-              $fragment = @{ $platform = @{ url = $url; signature = $signature } }
-            } else {
-              $fragment = @{ $platform = @{ url = $url } }
-            }
+          if ($sigFile) {
+            $exeName = $sigFile.Name -replace '\.sig$',''
+            $signature = (Get-Content -Path $sigFile.FullName -Raw).Trim()
+            $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$exeName"
+            $fragment = @{ $platform = @{ url = $url; signature = $signature } }
           } else {
+            Write-Warning "No .exe.sig found (TAURI_SIGNING_PRIVATE_KEY missing?); emitting unsigned fragment"
             $exe = Get-ChildItem -Path $bundleDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
             if (-not $exe) { throw "No installer found" }
             $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/$version/$($exe.Name)"
@@ -505,19 +501,15 @@ jobs:
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
           PLATFORM="linux-x86_64"
-          # Prefer update archive (.tar.gz) with signature
-          ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
-          if [ -n "$ARCHIVE" ]; then
-            ASSET_NAME=$(basename "$ARCHIVE")
+          # createUpdaterArtifacts 产出 AppImage.sig；从 sig 反推资产名
+          SIG_FILE=$(find "$BUNDLE_DIR" -name "*.AppImage.sig" 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ]; then
+            ASSET_NAME=$(basename "${SIG_FILE%.sig}")
             URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
-            SIG_FILE="${ARCHIVE}.sig"
-            if [ -f "$SIG_FILE" ]; then
-              SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
-              echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
-            else
-              echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
-            fi
+            SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
           else
+            echo "::warning::No .AppImage.sig found; emitting unsigned fragment"
             BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
             if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
             if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
@@ -609,18 +601,15 @@ jobs:
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
           PLATFORM="linux-aarch64"
-          ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
-          if [ -n "$ARCHIVE" ]; then
-            ASSET_NAME=$(basename "$ARCHIVE")
+          # createUpdaterArtifacts 产出 AppImage.sig；从 sig 反推资产名
+          SIG_FILE=$(find "$BUNDLE_DIR" -name "*.AppImage.sig" 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ]; then
+            ASSET_NAME=$(basename "${SIG_FILE%.sig}")
             URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
-            SIG_FILE="${ARCHIVE}.sig"
-            if [ -f "$SIG_FILE" ]; then
-              SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
-              echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
-            else
-              echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
-            fi
+            SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+            echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
           else
+            echo "::warning::No .AppImage.sig found; emitting unsigned fragment"
             BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
             if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
             if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi

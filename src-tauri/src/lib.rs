@@ -9,6 +9,8 @@ mod logger;
 mod dialog_cmd;
 mod ipc;
 mod plugin_gateway;
+#[doc(hidden)]
+pub mod version_order;
 
 #[cfg(all(windows, not(debug_assertions)))]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend.exe");
@@ -201,7 +203,14 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_updater::Builder::new()
+                // QML 版本号（betaN 序数进位）在纯 semver 比较下会倒退，见 version_order
+                .default_version_comparator(|current, release| {
+                    version_order::is_update_available(&current, &release)
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_process::init())
         .manage(BackendChild(Mutex::new(None)))
         .manage(ipc::IpcPipe(pipe_shared.clone()))
