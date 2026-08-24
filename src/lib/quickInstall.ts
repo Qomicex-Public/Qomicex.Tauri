@@ -112,6 +112,7 @@ async function aggregate(
   t: TFunc,
 ): Promise<void> {
   const prog = new Map<string, number>()
+  const speedMap = new Map<string, number>()
   const total = taskIds.length
   const setStep = (id: string, patch: Partial<InstallStepInfo>) => {
     const idx = steps.findIndex(s => s.id === id)
@@ -119,15 +120,19 @@ async function aggregate(
     steps[idx] = { ...steps[idx], ...patch }
     updateTask(batchId, { steps: steps.map(s => ({ ...s })) })
   }
+  const sumSpeed = () => [...speedMap.values()].reduce((a, b) => a + b, 0)
   const track = (stepId: string, ids: string[]) =>
     Promise.all(ids.map(async id => {
       const status = await waitForCompletion(id, t, undefined, p => {
         prog.set(id, p.progress)
+        speedMap.set(id, p.speed)
         const avg = ids.reduce((a, x) => a + (prog.get(x) ?? 0), 0) / ids.length
         setStep(stepId, { percent: avg })
         const overall = [...prog.values()].reduce((a, b) => a + b, 0) / total
-        updateTask(batchId, { progress: Math.round(overall) })
+        updateTask(batchId, { progress: Math.round(overall), speed: sumSpeed() })
       })
+      speedMap.set(id, 0)
+      updateTask(batchId, { speed: sumSpeed() })
       return status
     }))
   const [depsStatuses, mainStatus] = await Promise.all([
