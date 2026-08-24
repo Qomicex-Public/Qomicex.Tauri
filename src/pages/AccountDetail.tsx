@@ -346,10 +346,7 @@ export default function AccountDetail() {
       <MicrosoftReauthDialog
         open={showMicrosoftReauth}
         onClose={() => setShowMicrosoftReauth(false)}
-        onReauth={() => {
-          setShowMicrosoftReauth(false)
-          navigate('/accounts')
-        }}
+        expiredAccountUuid={uuid}
       />
     </PageShell>
   )

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { DragEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
 import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faStar, faRotate, faMagnifyingGlass, faGripVertical } from '@fortawesome/free-solid-svg-icons'
@@ -198,6 +198,18 @@ export default function Accounts() {
     }
   }, [])
 
+  // 从「重新登录」入口跳转而来：自动拉起微软登录流程
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get('add') === 'microsoft') {
+      startAdd()
+      setAddTab('microsoft')
+      searchParams.delete('add')
+      setSearchParams(searchParams, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   function startAdd() {
     setAddOpen(true)
     setOauthData(null)
@@ -210,6 +222,7 @@ export default function Accounts() {
     setTyPwd('')
     if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null }
   }
+
 
   async function handleOAuth() {
     setMicrosoftStep('fetching-oauth')

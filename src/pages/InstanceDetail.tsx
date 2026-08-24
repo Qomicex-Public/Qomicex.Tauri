@@ -3017,10 +3017,7 @@ export default function InstanceDetailPage() {
       <MicrosoftReauthDialog
         open={showMicrosoftReauth}
         onClose={() => setShowMicrosoftReauth(false)}
-        onReauth={() => {
-          setShowMicrosoftReauth(false)
-          navigate('/accounts')
-        }}
+        expiredAccountUuid={selectedAccountUuid}
       />
       <ConfirmDialog open={deleteConfirmOpen} title={t('instanceDetail.overview.deleteInstance')} message={t('instanceDetail.launch.deleteInstanceConfirm', { name: instance?.name ?? '' })} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
       <ExportModpackDialog
