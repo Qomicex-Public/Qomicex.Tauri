@@ -2,6 +2,7 @@
 "use strict";
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,9 +12,11 @@ const ROOT = resolve(__dirname, "..");
 const SEP_ALIAS = "\u00A8";
 
 function usage() {
-  console.log("Usage: node scripts/build-mcmod-data.mjs [WikiEntries.txt] [mcmod_data.json]");
-  console.log("  Rebuilds mcmod_data.json (new schema) by merging the existing file with");
-  console.log("  PCL's WikiEntries.txt, enriching each entry with platform slugs.");
+  console.log("Usage: node scripts/build-mcmod-data.mjs [WikiEntries.txt] [mcmod_data.json.gz]");
+  console.log("  Rebuilds mcmod_data.json.gz (gzip, new schema) by merging the existing");
+  console.log("  resource with PCL's WikiEntries.txt, enriching each entry with platform slugs.");
+  console.log("  Output is written gzip-compressed to match the embedded resource read by");
+  console.log("  endpoints/mcmod.rs (flate2 GzDecoder).");
   console.log("");
   console.log("  Schema per entry:");
   console.log('    { "id": <mcmod id>, "cn": { "name": <str|null>, "can_replace": <bool> },');
@@ -26,15 +29,31 @@ if (process.argv.includes("-h") || process.argv.includes("--help")) usage();
 const wikiPath = resolve(ROOT, process.argv[2] ?? "scripts/data/WikiEntries.txt");
 const jsonPath = resolve(
   ROOT,
-  process.argv[3] ?? "src-backend/Qomicex.Launcher.Backend/Resources/mcmod_data.json",
+  process.argv[3] ?? "src-backend/qomicex-backend/Resources/mcmod_data.json.gz",
 );
+
+// Load the legacy json for merging. Accepts either the gzip resource or a plain
+// .json (handy for local regeneration before recompressing).
+function loadInputJson(path) {
+  if (!existsSync(path)) {
+    const plain = path.replace(/\.gz$/, "");
+    if (plain !== path && existsSync(plain)) {
+      return JSON.parse(readFileSync(plain, "utf-8"));
+    }
+    return null;
+  }
+  const raw = readFileSync(path);
+  const text = path.endsWith(".gz") ? gunzipSync(raw).toString("utf-8") : raw.toString("utf-8");
+  return JSON.parse(text);
+}
 
 if (!existsSync(wikiPath)) {
   console.error(`WikiEntries.txt not found: ${wikiPath}`);
   process.exit(1);
 }
-if (!existsSync(jsonPath)) {
-  console.error(`mcmod_data.json not found: ${jsonPath}`);
+const legacy = loadInputJson(jsonPath);
+if (legacy == null) {
+  console.error(`mcmod resource not found: ${jsonPath} (or the plain .json fallback)`);
   process.exit(1);
 }
 
@@ -93,7 +112,6 @@ function dedupeSlugs(slugs) {
 }
 
 // ---- Load legacy json (id -> { cn_name, en_name }) ----
-const legacy = JSON.parse(readFileSync(jsonPath, "utf-8"));
 const legacyById = new Map();
 for (const m of legacy.mods ?? []) {
   legacyById.set(Number(m.id), { cn_name: m.cn_name ?? null, en_name: m.en_name ?? null });
@@ -177,7 +195,12 @@ const output = {
   mods,
 };
 
-writeFileSync(jsonPath, JSON.stringify(output, null, 2) + "\n");
+const outText = JSON.stringify(output, null, 2) + "\n";
+if (jsonPath.endsWith(".gz")) {
+  writeFileSync(jsonPath, gzipSync(outText));
+} else {
+  writeFileSync(jsonPath, outText);
+}
 
 console.log(`Wrote ${mods.length} entries to ${jsonPath}`);
 console.log(`  from wiki: ${fromWiki} (wiki-only new: ${wikiOnly})`);
