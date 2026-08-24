@@ -13,7 +13,7 @@ interface Props {
   /** 凭证过期的账号 uuid；若提供则在重新登录前先将其删除，避免过期账号残留。 */
   expiredAccountUuid?: string | null
   /** 自定义重新登录后的行为；不传则跳转到账户页并拉起微软登录流程。 */
-  onReauth?: () => void
+  onReauth?: () => void | Promise<void>
 }
 
 export function MicrosoftReauthDialog({ open, onClose, expiredAccountUuid, onReauth }: Props) {
@@ -27,7 +27,7 @@ export function MicrosoftReauthDialog({ open, onClose, expiredAccountUuid, onRea
       if (expiredAccountUuid) {
         try { await deleteAccount(expiredAccountUuid) } catch { /* 账号可能已不存在 */ }
       }
-      if (onReauth) onReauth()
+      if (onReauth) await onReauth()
       else navigate('/accounts?add=microsoft')
     } finally {
       setBusy(false)
