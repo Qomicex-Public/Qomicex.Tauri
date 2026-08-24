@@ -23,7 +23,7 @@ path = "src/main.rs"
 
 [dependencies]
 qomicex-core = { package = "qomicex-core-rust", path = "../../qomicex-core-rust" }
-qomicex-downloader = { path = "../../qomicex-downloader-rust", features = ["http3"] }
+qomicex-downloader = { path = "../../qomicex-downloader-rust" }
 qomicex-connector = { path = "../../qomicex-connector-rust/crates/qomicex-connector" }
 
 axum = { version = "0.8", features = ["multipart"] }
@@ -89,3 +89,7 @@ async-trait = "0.1"
 
 [profile.release]
 lto = true
+codegen-units = 1
+opt-level = "s"
+panic = "abort"
+strip = true

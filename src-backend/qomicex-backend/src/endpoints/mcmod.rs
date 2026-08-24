@@ -22,11 +22,19 @@ use serde_json::Value;
 
 use crate::error::ApiResult;
 use crate::state::SharedState;
+use flate2::read::GzDecoder;
 
-/// Embedded mcmod.cn data dump (same file the previous C# backend embedded).
+/// Embedded mcmod.cn data dump (gzipped, same file the previous C# backend embedded).
 /// Path resolved relative to this source file:
 /// `src-backend/qomicex-backend/src/endpoints/` -> `src-backend/qomicex-backend/Resources/`.
-const EMBEDDED_MCMOD_JSON: &str = include_str!("../../Resources/mcmod_data.json");
+const EMBEDDED_MCMOD_JSON_GZ: &[u8] = include_bytes!("../../Resources/mcmod_data.json.gz");
+
+fn decompress_gzip(data: &[u8]) -> String {
+    let mut decoder = GzDecoder::new(data);
+    let mut buf = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut buf).unwrap_or(0);
+    String::from_utf8_lossy(&buf).to_string()
+}
 
 /// Runtime override path: `{BaseDir}/QML/mcmod_data.json` (checked first).
 const RUNTIME_OVERRIDE_REL: &str = "QML/mcmod_data.json";
@@ -52,7 +60,7 @@ impl McmodData {
             reverse: Vec::new(),
         };
 
-        let json = runtime_override().unwrap_or_else(|| EMBEDDED_MCMOD_JSON.to_string());
+        let json = runtime_override().unwrap_or_else(|| decompress_gzip(EMBEDDED_MCMOD_JSON_GZ));
         let Ok(root) = serde_json::from_str::<Value>(&json) else {
             return data;
         };
