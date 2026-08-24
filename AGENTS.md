@@ -150,7 +150,7 @@ Exception: directory barrels like `src/components/ui` (its `index.ts`) resolve f
 - Router: `.nest("/api", ...)` + permissive CORS (`CorsLayer`) + `TraceLayer`; `/api/ping` (in `app.rs`) and `/api/health` (in `system.rs`) liveness probes — the frontend polls `/api/health`. `middleware/not_found.rs` handles 404 (registered before `.layer()` so CORS wraps fallback).
 - Data dir resolution (`settings.rs` `resolve_base_dir`): `QOMICEX_HOME` env → `.qomicex-bootstrap` file (content is the path) → `{LocalAppData}/qomicex-launcher`.
 - Shared services in `services/` and `state.rs` (`AppState`): reqwest HTTP clients (Modrinth, CurseForge, FTB, etc.), `InstallTracker`, `LaunchTracker`, account/skin services, trace buffer, plugin service. License core only under `--features license-required` (`#[cfg(feature = "license-required")]` in `license_core.rs`).
-- Embedded resources: `Resources/Alex.png`, `Resources/mcmod_data.json`, `appsettings.json` (via `include_bytes!` / `include_str!`).
+- Embedded resources: `Resources/Alex.png`, `Resources/mcmod_data.json.gz`（gzip 嵌入，运行时 flate2 解压）, `appsettings.json` (via `include_bytes!` / `include_str!`). 重新生成见 `scripts/build-mcmod-data.mjs`。
 - `appsettings.json` includes a `CurseForge:ApiKey` (set in repo).
 - No OpenAPI endpoint (C# `/openapi/v1.json` removed in the Rust rewrite).
 
