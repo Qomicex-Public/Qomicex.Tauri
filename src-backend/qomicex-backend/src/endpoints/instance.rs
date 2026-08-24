@@ -1204,9 +1204,9 @@ pub(crate) async fn refresh_microsoft_token(
     if let Some(n) = result.username {
         acc.name = n;
     }
-    if let Some(u) = result.uuid {
-        acc.uuid = u;
-    }
+    // 不覆盖 uuid：refresh 返回的 uuid 是微软 XUID，与启动器用作账户稳定标识的
+    // Minecraft profile UUID 并不一致；覆盖后会污染账户标识，使 save_account 按
+    // 新 uuid 追加重复账户，原账户令牌无人续期，导致「重新登录也修不好披风/启动」。
     accounts.save_account(&mut acc).await?;
     Ok(Some(acc))
 }

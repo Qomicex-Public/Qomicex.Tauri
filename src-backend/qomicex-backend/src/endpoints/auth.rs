@@ -434,9 +434,8 @@ async fn microsoft_refresh(
     if let Some(name) = result.username {
         account.name = name;
     }
-    if let Some(u) = result.uuid {
-        account.uuid = u;
-    }
+    // 不覆盖 uuid：refresh 返回的 uuid 是微软 XUID，与启动器用作账户稳定标识的
+    // Minecraft profile UUID 不一致；覆盖会污染账户标识，使重新登录/刷新修不好该账户。
     state.account.save_account(&mut account).await?;
     Ok(Json(MicrosoftRefreshResponse {
         success: true,
