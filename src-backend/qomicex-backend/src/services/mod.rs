@@ -17,6 +17,7 @@ pub mod log_analysis;
 pub mod modpack_export;
 pub mod options;
 pub mod plugin;
+pub mod plugin_store;
 pub mod schematic_assets;
 pub mod trace;
 pub mod translation;
