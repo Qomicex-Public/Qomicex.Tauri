@@ -6,6 +6,8 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft } from '@fortawesome/free-brands-svg-icons'
 import { useI18n } from '../i18n/index.tsx'
 import { deleteAccount } from '../api/account.ts'
+import { ApiError } from '../api/client.ts'
+import { useMessageBox } from '../components/ui'
 
 interface Props {
   open: boolean
@@ -19,13 +21,30 @@ interface Props {
 export function MicrosoftReauthDialog({ open, onClose, expiredAccountUuid, onReauth }: Props) {
   const { t } = useI18n()
   const navigate = useNavigate()
+  const { notify } = useMessageBox()
   const [busy, setBusy] = useState(false)
 
   async function handleReauth() {
     setBusy(true)
     try {
       if (expiredAccountUuid) {
-        try { await deleteAccount(expiredAccountUuid) } catch { /* 账号可能已不存在 */ }
+        try {
+          await deleteAccount(expiredAccountUuid)
+        } catch (e) {
+          // 仅当账号已不存在（确认 404）时忽略；其它失败（网络/临时 API 错误）需上报，
+          // 避免过期凭据残留并允许添加重复账户。
+          if (e instanceof ApiError && e.status === 404) {
+            /* 账号已不存在，继续重新登录 */
+          } else {
+            notify(
+              t('dialogs.common.deleteFailed', {
+                error: e instanceof ApiError ? e.displayMessage : t('dialogs.common.unknownError'),
+              }),
+              'error',
+            )
+            return
+          }
+        }
       }
       if (onReauth) await onReauth()
       else navigate('/accounts?add=microsoft')
