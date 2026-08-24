@@ -1,4 +1,4 @@
-**简体中文** | [English](README-EN.md) | [繁體中文](README-ZH_TW.md)
+**English** | [简体中文](README-ZH_CN.md) | [繁體中文](README-ZH_TW.md) | [日本語](README-JA_JP.md) | [Русский](README-RU_RU.md)
 
 <div align="center">
   
@@ -22,28 +22,26 @@
 
 <div align="center">
   
-[官方网站](https://www.qomicex.top)
-[立即下载](https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest)
+[Official Website](https://www.qomicex.top)
+[Download Latest](https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest)
 
 </div>
 
 </div>
 
-[Qomicex Minecraft Launcher](https://github.com/Qomicex-Public/Qomicex.Tauri) 简称 QML 目前处于测试阶段,欢迎大家来试试看
+[Qomicex Minecraft Launcher](https://github.com/Qomicex-Public/Qomicex.Tauri) (QML) is currently in beta — feel free to give it a try.
 
-**Qomicex Launcher 测试 ①群** [623362446](https://qm.qq.com/q/rKiwzrkg8w)
+> The backend has been fully rewritten in Rust (axum). Core libraries and downloader have been migrated to Rust submodules (`qomicex-core-rust` / `qomicex-connector-rust` / `qomicex-downloader-rust`), no longer depending on .NET SDK.
 
-> 启动器后端已用 Rust (axum) 完整重写，核心库与下载器也已迁移为 Rust 子模块（`qomicex-core-rust` / `qomicex-connector-rust` / `qomicex-downloader-rust`），不再依赖 .NET SDK。
+## ✨ Features
 
-## ✨ 功能特性
+> Desktop edition (Tauri v2), with all core logic implemented in Rust.
 
-> 桌面版（Tauri v2）当前能力，核心逻辑全部由 Rust 实现。
+Qomicex Launcher (QML) aims to make launching, installing, and managing instances as straightforward as possible — whether you're playing daily, installing modpacks, or playing online with friends.
 
-Qomicex Launcher（简称 QML）的目标，是让「启动、安装、管理实例」这些日常操作足够简单直接——无论你是日常游玩、装整合包，还是和朋友联机。
+### 🚀 Game Launch
 
-### 🚀 游戏启动
-
-支持启动原版 Minecraft，也支持绝大多数 Mod Loader 的**一键自动安装**：
+Supports launching vanilla Minecraft and most Mod Loaders with **one-click auto-install**:
 
 - Vanilla
 - Forge
@@ -54,244 +52,239 @@ Qomicex Launcher（简称 QML）的目标，是让「启动、安装、管理实
 - LegacyFabric
 - Cleanroom
 
-启动器会读取实例配置，自动组装游戏所需的 libraries、assets、natives、JVM 参数和游戏参数，启动后记录完整启动日志，方便排查崩溃或 Mod 冲突。
+The launcher reads instance configuration and automatically assembles libraries, assets, natives, JVM arguments, and game parameters. Launch logs are recorded in full for troubleshooting crashes and mod conflicts.
 
-### 🔐 账号登录
+### 🔐 Account Login
 
-支持多种登录方式：
+Multiple login methods are supported:
 
-- **Microsoft 正版**（OAuth 设备码登录）：一个一次性设备码即可授权，登录信息本地保存，下次直接使用
-- **离线玩家名**：适合本地测试、单机游玩或无需正版验证的环境
-- **Yggdrasil 皮肤站**：内置 LittleSkin、Blessing Skin 等常见皮肤站预设，也可快速导入其它服务器
+- **Microsoft (Premium)** — OAuth device code flow: one-time device code authorization, credentials saved locally for next login
+- **Offline player name** — for local testing, single-player, or environments without premium verification
+- **Yggdrasil skin servers** — built-in presets for LittleSkin, Blessing Skin, etc.; supports importing other servers
 
-皮肤站支持**拖入链接一键添加**：Yggdrasil 服务器地址会自动解析（authlib-injector 规范），省去手动填写的麻烦。
+Skin servers support **drag-and-drop link import**: Yggdrasil server addresses are automatically parsed (authlib-injector spec), no manual entry needed.
 
-### 🌐 内置联机
+### 🌐 Built-in Online Play
 
-QML 内置**Scaffolding 协议联机**，无需公网 IP 即可与好友组网联机：
+QML features **Scaffolding Protocol online play** — no public IP needed to play with friends:
 
-- 建房 / 加入房间、NAT 类型检测（STUN 多端口降级）、中继组网
-- 踢出升级为 **deny 持久物理封禁**：被踢的玩家即使重连、重启也无法再进入房间
-- 误踢可救：重连审核弹窗（允许 / 拒绝 / 拒绝且不再提示），房主黑名单列表可一键解除封禁
-- 主机 Mod 校验：缺失标记、与主机不一致时强制同步
-- 支持与HMCL、PCL-CE、PCL.Mac等基于陶瓦、实现了SCF协议的启动器互通联机
+- Host / join rooms, NAT type detection (STUN multi-port fallback), relay networking
+- **Persistent physical ban on kick**: kicked players cannot rejoin even after reconnecting or restarting
+- Accidental kick recovery: reconnection review popup (allow / reject / reject and don't remind again), room owner blacklist with one-click unban
+- Host mod verification: missing mods flagged, forced sync when inconsistent
+- Compatible with HMCL, PCL-CE, PCL.Mac, and other Scaffolding-compatible launchers
 
-### 📦 实例管理
+### 📦 Instance Management
 
-每个游戏版本或整合包都会作为一个**独立实例**保存，目录按版本隔离，互不干扰：
+Each game version or modpack is stored as an **independent instance** with isolated directories:
 
-- 一键安装版本与 Forge / Fabric / NeoForge / Quilt 等加载器
-- 每个实例单独管理 Mod、存档、材质包、光影包、配置文件、Java 与内存、JVM 参数
-- 实例自定义分组，让大量版本井井有条
+- One-click install for versions and loaders (Forge / Fabric / NeoForge / Quilt / etc.)
+- Per-instance management: mods, saves, resource packs, shader packs, config files, Java & memory, JVM arguments
+- Custom instance groups for organizing large numbers of versions
 
-### 📐 投影原理图管理 · Deepslate 3D 预览
+### 📐 Schematic Management · Deepslate 3D Preview
 
-实例详情页内置 **Litematica 投影原理图**管理与预览：
+The instance detail page includes built-in **Litematica schematic** management and preview:
 
-- 列表 / 搜索 / 打开文件夹 / 本地导入（multipart，扩展名白名单）/ 重命名 / 单个删除 + 批量删除
-- **Deepslate WebGL 3D 预览**：查看投影完整内容 + 材质面板 + Y 层滑块 + 多 region + 方块/材料统计列表
-- 材质从原理图调色板子集、按需从用户游戏 jar 运行时提取并本地缓存，**不捆绑 Mojang 素材**（版权合规）
-- schematics 目录纳入版本隔离，随实例独立存放
+- List / search / open folder / import (multipart, extension whitelist) / rename / single delete + batch delete
+- **Deepslate WebGL 3D preview**: view full schematic content + material palette + Y-layer slider + multi-region + block/material statistics
+- Materials extracted on-demand from the user's game jar at runtime and cached locally — **no bundled Mojang assets** (copyright compliant)
+- Schematics directory included in version isolation, stored per instance
 
-### 🗂️ 资源中心
+### 🗂️ Resource Center
 
-聚合 **Modrinth / CurseForge / FTB** 三大数据源，一站式查找资源：
+Aggregates **Modrinth / CurseForge / FTB** data sources for one-stop resource browsing:
 
-- 支持模组、整合包、光影、资源包、数据包、存档等分类检索
-- MC 百科中文名补全，浏览更友好
-- 在线搜索并安装 Mod、材质包、光影包
-- 资源详情一站式查看
+- Search mods, modpacks, shaders, resource packs, datapacks, saves
+- MC Wiki Chinese name completion for friendlier browsing
+- Online search and install for mods, resource packs, shader packs
+- One-stop resource detail view
 
-### ⬇️ 下载中心
+### ⬇️ Download Center
 
-统一下载器负责游戏文件、依赖库、资源文件、Loader 安装器、整合包与在线 Mod 下载：
+A unified downloader handles game files, libraries, resource files, loader installers, modpacks, and online mod downloads:
 
-- 自研高速下载引擎，多文件异步下载、单任务进度实时显示
-- 断点续传、暂停 / 恢复 / 取消
-- 慢速或失败时自动换源、当前源冷却，避免持续请求已限流的源
+- Custom high-speed download engine, multi-file async download, real-time progress per task
+- Resume on failure, pause / resume / cancel
+- Auto-fallback on slow/failure, source cooldown to avoid hitting rate-limited sources
 
-实例安装、模组下载、Java 运行时等所有下载任务都集中到下载中心统一管理，随时查看进度与失败原因。
+All download tasks — instance installs, mod downloads, Java runtimes — are managed in one place with full progress and error visibility.
 
-### 📥 整合包导入 / 导出
+### 📥 Modpack Import / Export
 
-- **导入**：本地 `zip` / Modrinth `.mrpack` 上传解析并一键安装，自动识别版本、Loader、Mod、配置与资源目录；安装中断或失败会自动清理半成品，不留残留
-- **导出**：可导出为 CurseForge `zip`、Modrinth `mrpack` 或 Qomicex 专属 `.qmodpack`，哈希反查自动生成文件清单
-- HMCL 风格**逐文件勾选**导出：自定义包名 / 版本 / 作者，异步任务带进度、可取消、可自定义保存路径
+- **Import**: local `zip` / Modrinth `.mrpack` upload, auto-parsed and one-click installed; auto-detects version, loader, mods, config, and resource directories; cleanup on cancel/failure
+- **Export**: CurseForge `zip`, Modrinth `mrpack`, or Qomicex-exclusive `.qmodpack`; hash reverse-lookup auto-generates file manifests
+- HMCL-style **per-file checkbox export**: custom package name / version / author, async tasks with progress, cancellable, custom save path
 
-### 🧩 Mod 管理
+### 🧩 Mod Management
 
-每个实例都有独立的管理页面：
+Each instance has its own management page:
 
-- 查看已安装 Mod、启用 / 禁用、删除
-- 打开实例目录，以及 mods、saves、resourcepacks、shaderpacks、config 等常用文件夹
-- 在线搜索并安装 Mod、下载材质包与光影包
-- **模组更新检查**：Modrinth / CurseForge 批量哈希匹配，列出变更后交给下载中心编排更新
+- View installed mods, enable / disable / delete
+- Open instance directory and common folders (mods, saves, resource packs, shader packs, config)
+- Online search and install for mods, resource packs, shader packs
+- **Mod update check**: Modrinth / CurseForge batch hash matching, change list fed to download center for update orchestration
 
-禁用 Mod 时保留文件、只改启用状态，方便排查冲突。
+Disabling a mod preserves the file — only the enabled state changes, making conflict diagnosis easy.
 
-### 📎 模组前置自动安装
+### 📎 Mod Dependency Auto-Install
 
-安装 Mod 时，QML 会自动解析其所在的 Modrinth / CurseForge 数据源的**依赖清单**：
+When installing a mod, QML automatically resolves its **dependency graph** from Modrinth / CurseForge:
 
-- 识别并展示**必需前置（required dependencies）**，支持递归解析深层依赖
-- 一键连同前置一起安装到目标实例，避免「缺前置开不了服、报红名错误」的困扰
-- 可选跳过非必需依赖，按需选择安装范围
+- Identifies and displays **required dependencies**, with recursive deep-dependency resolution
+- One-click install of prerequisites along with the target mod — no more "missing dependency" errors
+- Optional skip for non-required dependencies, choose your install scope
 
-### ☕ Java 运行时管理
+### ☕ Java Runtime Management
 
-不同版本需要不同 Java，QML 根据实例版本自动选择：
+Different versions require different Java versions. QML auto-selects the right Java per instance:
 
-- 自动扫描本机已安装的 Java
-- 缺失的 Java 8 / 17 / 21 在线下载
-- 手动指定 Java 路径、按实例单独设置
-- 启动时检查 Java 是否匹配当前游戏版本
+- Auto-scan locally installed Java
+- Auto-download missing Java 8 / 17 / 21
+- Manual Java path selection, per-instance override
+- Launch-time Java version validation
 
-### 💾 存档与游戏设置编辑
+### 💾 Save & Game Settings Editor
 
-- **存档设置编辑器（level.dat NBT）**：游戏模式、难度、天气、出生点、世界边界、游戏规则等可视化编辑，支持从 `level.dat_old` 恢复
-- **游戏设置**：`options.txt` 可视化编辑，带多语言描述，数组值（resourcePacks / datapacks 等）以 chips 形式增删
+- **Save settings editor (level.dat NBT)**: visual editing of game mode, difficulty, weather, spawn point, world border, game rules; supports restore from `level.dat_old`
+- **Game settings**: visual editing of `options.txt` with multi-language descriptions; array values (resourcePacks / datapacks) managed as chips
 
-### 🩺 日志分析与崩溃排查
+### 🩺 Log Analysis & Crash Troubleshooting
 
-游戏崩溃后可读取启动日志分析：
+After a game crash, the launcher can analyze launch logs:
 
-- **本地规则分析**：内置 44 种错误模式库，按 Critical > Error > Warning > Info 排序，无需额外配置
-- **AI 分析**（插件提供）：填写兼容 OpenAI 格式的 API 地址、Key 与模型名后调用
+- **Local rule-based analysis**: 44 built-in error patterns, sorted by Critical > Error > Warning > Info; no extra config needed
+- **AI analysis** (plugin-provided): fill in OpenAI-compatible API endpoint, key, and model name
 
-### 🧩 插件系统
+### 🧩 Plugin System
 
-QML 提供可扩展的插件生态：
+QML offers an extensible plugin ecosystem:
 
-- 清单贡献点、内联渲染 / iframe 浮层、插件间方法调用
-- **L3 WASM 插件网关**（wasmtime 沙箱，Rust 编写），插件以 WebAssembly 形式在受限沙箱内安全运行
-- 插件包（`.qplugin`）上传安装，状态本地持久化
+- Manifest contribution points, inline rendering / iframe overlays, inter-plugin method calls
+- **L3 WASM plugin gateway** (wasmtime sandbox, written in Rust): plugins run as WebAssembly in a restricted sandbox
+- Plugin packages (`.qplugin`) uploaded and installed, state persisted locally
 
-### 🎨 个性化与多语言
+### 🎨 Personalization & Multi-language
 
-- **I18N 国际化**：中 / 英 / 繁 / 日 / 俄等 **7 种语言**，支持「跟随系统」，运行时实时切换
-- 自定义 UI 字体（枚举系统字体、实时预览）
-- 内置 / 自定义背景、主题色等界面个性化选项
+- **I18N**: 7 languages — Chinese (Simplified / Traditional) / English (US / GB) / Japanese / Russian, with "follow system" option and real-time switching
+- Custom UI font (enumerates system fonts with live preview)
+- Built-in / custom background, theme color, and UI personalization options
 
-## 🔗 依赖与相关项目
+## 🔗 Dependencies & Related Projects
 
-QML 的核心能力由以下 **Rust 子模块**承载（仓库根 git submodule，`git submodule update --recursive` 拉取）：
+QML's core capabilities are provided by the following **Rust submodules** (git submodules at repo root, pulled via `git submodule update --recursive`):
 
-- [qomicex-core-rust](https://github.com/Qomicex-Public/qomicex-core-rust) — 核心库（GameCore 游戏核心、实例 / 账号 / Java / 下载等业务逻辑）
-- [qomicex-downloader-rust](https://github.com/Qomicex-Public/qomicex-downloader-rust) — 统一高速下载器
-- [qomicex-connector-rust](https://github.com/Qomicex-Public/qomicex-connector-rust) — 联机 / SCF 协议库（依赖 EasyTier4QML 分支）
-- [Qomicex.Tauri.i18n](https://github.com/Qomicex-Public/Qomicex.Tauri.i18n) — 前端多语言资源仓库
+- [qomicex-core-rust](https://github.com/Qomicex-Public/qomicex-core-rust) — core library (GameCore, instance / account / Java / download business logic)
+- [qomicex-downloader-rust](https://github.com/Qomicex-Public/qomicex-downloader-rust) — unified high-speed downloader
+- [qomicex-connector-rust](https://github.com/Qomicex-Public/qomicex-connector-rust) — online play / Scaffolding protocol library (depends on EasyTier4QML fork)
+- [Qomicex.Tauri.i18n](https://github.com/Qomicex-Public/Qomicex.Tauri.i18n) — frontend multi-language resource repository
 
-**合作 / 相关社区项目**：
+**Partner / Related community project**:
 
-- [EuoraCraft-Launcher（ECLteam）](https://github.com/ECLteam/EuoraCraft-Launcher) — ECLteam 维护的 Python + Tauri 第三方 Minecraft 启动器，与QML**共用联机节点**，并**兼容 SCF 拓展协议**实现互相联机
+- [EuoraCraft-Launcher (ECLteam)](https://github.com/ECLteam/EuoraCraft-Launcher) — ECLteam's Python + Tauri third-party Minecraft launcher, which **shares online nodes** with QML and is **compatible with the SCF protocol extension** for cross-launcher multiplayer
 
-## 🔗 相关链接
+## 🔗 Links
 
-| 链接 | 地址 |
+| Link | URL |
 |:--|:--|
-| 官方网站 | <https://www.qomicex.top> |
-| 项目仓库 | <https://github.com/Qomicex-Public/Qomicex.Tauri> |
-| 发布下载 | <https://github.com/Qomicex-Public/Qomicex.Tauri/releases> |
-| 问题反馈 | <https://github.com/Qomicex-Public/Qomicex.Tauri/issues> |
-| 多语言仓库 | <https://github.com/Qomicex-Public/Qomicex.Tauri.i18n> |
-| 测试反馈群 | [623362446](https://qm.qq.com/q/rKiwzrkg8w) |
+| Official Website | <https://www.qomicex.top> |
+| Repository | <https://github.com/Qomicex-Public/Qomicex.Tauri> |
+| Releases | <https://github.com/Qomicex-Public/Qomicex.Tauri/releases> |
+| Issues | <https://github.com/Qomicex-Public/Qomicex.Tauri/issues> |
+| i18n Repository | <https://github.com/Qomicex-Public/Qomicex.Tauri.i18n> |
+| QQ Test Group | [623362446](https://qm.qq.com/q/rKiwzrkg8w) |
 
-## 🎯 适合场景
+## 🎯 Use Cases
 
-QML 适合这些使用场景：
+QML is well-suited for:
 
-- 日常启动 Minecraft，管理多个版本与整合包
-- 与好友联机（无需公网 IP，内置组网）
-- 拖入整合包快速安装 / 一键导出分享
-- 管理 Mod、材质包、光影包与存档
-- 给不同实例分别配置 Java 与内存
-- 排查启动失败和崩溃日志
-- 使用带个性化界面与多语言支持的轻量启动器
+- Daily Minecraft launching with multiple version and modpack management
+- Playing online with friends (no public IP needed, built-in networking)
+- Drag-and-drop modpack install / one-click export and share
+- Managing mods, resource packs, shader packs, and saves
+- Per-instance Java and memory configuration
+- Troubleshooting launch failures and crash logs
+- A lightweight launcher with a personalized UI and multi-language support
 
-## ℹ️ 小Tips - 读音
+## ℹ️ Pronunciation Guide
+
 Qomicex
 /kˈɑːmaɪsˌɛks/
 ≈ q·om·ic·ex
 
-## 🖥️ 支持平台
+## 🖥️ Supported Platforms
 
-> 以下表格列出了当前支持的平台、最低版本要求和测试状态。
+> Minimum version requirements and test status:
 
- 平台 | 支持架构 | 最低系统版本 | 测试状态 | 安装包/方式 |
-| :--- | :--- | :--- | :--- | :--- |
-| **Windows** | `x64`, `ARM64` | Windows 10 1809+ | ✅ 稳定 | `.exe`（NSIS 安装器）|
-| **macOS** | `x64`（Intel）<br>`ARM64`（Apple Silicon） | macOS 10.15+ | ✅ 稳定 | `.dmg` / `.app` |
-| **Linux** | `x64`, `ARM64`<br>`LoongArch64` (理论可用但无机器)<br>`RISC-V 64`(实验性,推进中) | Ubuntu 20.04+ / Fedora 34+ / glibc 2.28+ | ✅ 稳定 | `.deb` / `.rpm` / AppImage |
+| Platform | Architectures | Minimum OS | Status | Package |
+|:---|:---|:---|:---|:---|
+| **Windows** | `x64`, `ARM64` | Windows 10 1809+ | ✅ Stable | `.exe` (NSIS installer) |
+| **macOS** | `x64` (Intel), `ARM64` (Apple Silicon) | macOS 10.15+ | ✅ Stable | `.dmg` / `.app` |
+| **Linux** | `x64`, `ARM64`, `LoongArch64` (untested), `RISC-V 64` (experimental) | Ubuntu 20.04+ / Fedora 34+ / glibc 2.28+ | ✅ Stable | `.deb` / `.rpm` / AppImage |
 
-
-> 您也可以通过下方的状态徽章快速查看支持情况：
-### 🚀 支持
 ![Windows](https://img.shields.io/badge/Windows-10%2B-blue?logo=windows)
 ![macOS](https://img.shields.io/badge/macOS-10.15%2B-black?logo=apple)
 ![Linux](https://img.shields.io/badge/Linux-Ubuntu%2020.04%2B-yellow?logo=linux)
 
+## 🔧 Development, Debugging & Build
 
-## 🔧 开发、调试与构建
+> Tech stack: **Rust** (axum backend + Tauri v2) + **React 19 / Vite / TypeScript** (frontend) + **pnpm** (workspace with `@qomicex/plugin-ui`). Core libraries and i18n resources are pulled as git submodules.
 
-> 技术栈：**Rust**（axum 后端 + Tauri v2）+ **React 19 / Vite / TypeScript**（前端）+ **pnpm**（workspace 依赖 `@qomicex/plugin-ui`）。核心库与多语言资源以 git submodule 引入。
+### Prerequisites
 
-### 环境要求
+- Rust toolchain (stable) + `cargo`; recommended: `rust-analyzer` (editor completion) and `codelldb` (debugging, see `.vscode/launch.json`)
+- Node.js + pnpm (workspace management)
+- Windows online play build requires npcap (`Packet.dll`) and other runtime dependencies — see `AGENTS.md` and CI `setup-connector-build`
 
-- Rust 工具链（stable）+ `cargo`；推荐 `rust-analyzer`（编辑器补全）与 `codelldb`（调试，可参考 `.vscode/launch.json` 的 Rust 后端调试配置）
-- Node.js + pnpm（workspace 管理）
-- Windows 联机构建需要 npcap（`Packet.dll`）等运行时，具体前置见 `AGENTS.md` 与 CI `setup-connector-build`
-
-### 初始化（全新检出）
+### Initialization (fresh checkout)
 
 ```bash
 git submodule update --recursive
 pnpm install --frozen-lockfile
-pnpm --filter @qomicex/plugin-ui build   # 组件库 dist/ 为 gitignored，前端依赖此产物
+pnpm --filter @qomicex/plugin-ui build   # plugin-ui dist/ is gitignored; frontend depends on it
 ```
 
-### 后端开发（Rust API）
+### Backend Development (Rust API)
 
 ```bash
 cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml
 ```
 
-默认监听 `127.0.0.1:5000`，可用环境变量 `QOMICEX_PORT` 覆盖端口；开发期可用 VS Code `codelldb` 附加断点调试 Rust 后端。
+Defaults to `127.0.0.1:5000`; override with `QOMICEX_PORT` env var; debug with VS Code `codelldb`.
 
-### 前端开发（Vite）
+### Frontend Development (Vite)
 
 ```bash
-pnpm run dev        # http://localhost:1420，/api 代理到 :5000
+pnpm run dev        # http://localhost:1420, /api proxied to :5000
 ```
 
-### 桌面开发（Tauri，集成窗口与后端进程）
+### Desktop Development (Tauri, integrated window + backend)
 
 ```bash
 pnpm run tauri dev
 ```
 
-### 测试
+### Testing
 
 ```bash
-cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml   # 后端单元测试（含 kick 审核状态机等）
-cd src-tauri && cargo test --lib plugin_gateway                      # Tauri WASM 插件网关测试
-pnpm exec tsc --noEmit                                                # 前端 + i18n 类型检查
-bash scripts/test-api-filters.sh    # 或 test-api-filters.ps1，针对 :5000 的行为验证
+cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml   # backend unit tests
+cd src-tauri && cargo test --lib plugin_gateway                      # Tauri WASM plugin gateway tests
+pnpm exec tsc --noEmit                                                # frontend + i18n type check
+bash scripts/test-api-filters.sh    # or .ps1; behavioral tests against :5000
 ```
 
-### 构建与格式
+### Build & Formatting
 
 ```bash
-pnpm run build    # 先 tsc 再 vite build，类型错误会中断构建
-cargo fmt         # 修改 Rust 代码后必跑，CI 会校验格式
+pnpm run build    # tsc then vite build; type errors will break the build
+cargo fmt         # must run after Rust changes; CI enforces formatting
 ```
 
-> 修改 `packages/plugin-ui/src/` 后需重建组件库；修改 i18n 需在 `qomicex-tauri-i18n` 子模块单独提交推送。
-
+> After editing `packages/plugin-ui/src/`, rebuild the plugin-ui package; i18n changes require a separate commit/push in the `qomicex-tauri-i18n` submodule.
 
 ---
 
-## ⭐ Star 趋势
-## Star History
+## ⭐ Star History
 
 <a href="https://www.star-history.com/?repos=Qomicex-Public%2FQomicex.Tauri&type=date&legend=bottom-right">
  <picture>
@@ -301,10 +294,10 @@ cargo fmt         # 修改 Rust 代码后必跑，CI 会校验格式
  </picture>
 </a>
 
-## 📄 许可证
+## 📄 License
 
 [GPLv3](LICENSE)
 
-## ❤️ 贡献者
+## ❤️ Contributors
 
 [![](https://contrib.rocks/image?repo=Qomicex-Public/Qomicex.Tauri)](https://github.com/Qomicex-Public/Qomicex.Tauri/graphs/contributors)
