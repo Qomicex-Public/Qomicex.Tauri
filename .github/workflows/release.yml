@@ -203,12 +203,6 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf
-      - name: Cargo check
-        env:
-          PROTOC: ${{ steps.connector.outputs.protoc-path }}
-          VC_LTL: ""
-          YY_THUNKS: ""
-        run: cargo check --manifest-path src-backend/qomicex-backend/Cargo.toml
       - name: Cargo test
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}
@@ -231,11 +225,14 @@ jobs:
         run: |
           cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
           cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
+      # 预编译二进制，省去 cargo install 源码编译（≈4-5 分钟）
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - name: Cargo audit
         run: |
           # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
           # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
-          cargo install cargo-audit
           cd src-backend/qomicex-backend && cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
       - uses: pnpm/action-setup@v6
         with:
@@ -256,7 +253,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'x64'))
-    needs: [setup, quality-gate]
+    # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
+    needs: [setup]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -349,7 +347,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'arm64'))
-    needs: [setup, quality-gate]
+    # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
+    needs: [setup]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -442,7 +441,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'x64'))
-    needs: [setup, quality-gate]
+    # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
+    needs: [setup]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -482,12 +482,22 @@ jobs:
           mv src-backend/qomicex-backend/target/x86_64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
-      - run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+      - name: Build bundles (retry on transient network errors)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          OK=0
+          for i in 1 2 3; do
+            if npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"; then
+              OK=1
+              break
+            fi
+            echo "::warning::Bundle attempt $i failed, retrying in 15s (likely transient network reset)..."
+            sleep 15
+          done
+          if [ "$OK" -ne 1 ]; then exit 1; fi
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -535,7 +545,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'arm64'))
-    needs: [setup, quality-gate]
+    # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
+    needs: [setup]
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
@@ -575,12 +586,22 @@ jobs:
           mv src-backend/qomicex-backend/target/aarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
-      - run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+      - name: Build bundles (retry on transient network errors)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          OK=0
+          for i in 1 2 3; do
+            if npm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"; then
+              OK=1
+              break
+            fi
+            echo "::warning::Bundle attempt $i failed, retrying in 15s (likely transient network reset)..."
+            sleep 15
+          done
+          if [ "$OK" -ne 1 ]; then exit 1; fi
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -626,7 +647,8 @@ jobs:
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'loongarch64'))
-    needs: [setup, quality-gate]
+    # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
+    needs: [setup]
     runs-on: ubuntu-latest
     env:
       IMAGE: ghcr.io/qomicex-public/qomicex-loong64-builder:latest
@@ -723,7 +745,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'arm64'))
-    needs: [setup, quality-gate]
+    # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
+    needs: [setup]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -835,7 +858,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
         (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'x64'))
-    needs: [setup, quality-gate]
+    # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
+    needs: [setup]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
