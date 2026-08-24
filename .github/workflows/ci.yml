@@ -58,12 +58,6 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf
-      - name: Cargo check
-        env:
-          PROTOC: ${{ steps.connector.outputs.protoc-path }}
-          VC_LTL: ""
-          YY_THUNKS: ""
-        run: cargo check --manifest-path src-backend/qomicex-backend/Cargo.toml
       - name: Cargo test
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}
@@ -86,11 +80,14 @@ jobs:
         run: |
           cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
           cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
+      # 预编译二进制，省去 cargo install 源码编译（≈4-5 分钟）
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - name: Cargo audit
         run: |
           # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
           # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
-          cargo install cargo-audit
           cd src-backend/qomicex-backend && cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
       - name: Install test dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl
