@@ -331,7 +331,11 @@ if (task.instanceId && task.type !== 'batch') {
             const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
             const stepsLive = task.status === 'downloading' || task.status === 'paused'
             const stepsDoneCount = steps?.filter((s) => s.status === 'done').length ?? 0
-            const showSpeedGraph = task.status === 'downloading' || task.status === 'paused'
+            // java/file 任务的 stage 即状态值（'downloading'）；install 任务的
+            // stage 是管线阶段，仅 downloading-* 表示字节在流动。
+            const stage = task.stage ?? ''
+            const isDownloadPhase = stage === 'downloading' || (STAGE_LABELS[stage]?.startsWith('downloading') ?? false)
+            const showSpeedGraph = (task.status === 'downloading' || task.status === 'paused') && isDownloadPhase
             return (
               <div key={task.id} className="group glass-surface rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
                 <div className="flex items-start justify-between gap-4">

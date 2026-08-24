@@ -1222,8 +1222,13 @@ pub(crate) async fn download_batch(
             if let Some(sid) = step_id {
                 f.set_step_percent(sid, pct);
             }
-            f.speed = current_speed;
+            // 批次冷启动（HEAD/Range 探测期）task_speed 为空：保留上一批次速度，
+            // 避免批次切换瞬间速度掉 0 让 UI 闪回 "—"；有真实事件后照常覆盖。
+            if !task_speed.is_empty() {
+                f.speed = current_speed;
+            }
             if paused_now {
+                f.speed = 0.0;
                 f.stage = "paused".to_string();
             }
         });
