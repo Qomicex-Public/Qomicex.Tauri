@@ -138,15 +138,18 @@ interface StreamEvent {
   d?: string
 }
 
+// 管道直连后端 axum 路由（挂在 /api 下），而调用方传的是与 HTTP 模式一致的
+// 相对路径（如 '/progress/stream'）——必须补上 API_BASE 的路径前缀，
+// 否则后端 404，SSE 消费者（下载进度/游戏日志/插件流）与 multipart 上传全部静默失效。
+function ipcApiPath(path: string): string {
+  return new URL(API_BASE).pathname.replace(/\/$/, '') + path
+}
+
 function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamOptions): StreamHandle {
   let closeFn: (() => void) | null = null
   const done = (async () => {
     const { invoke, Channel } = await import('@tauri-apps/api/core')
     const id = Math.random().toString(36).slice(2)
-    // 管道直连后端 axum 路由（挂在 /api 下），而调用方传的是与 HTTP 模式一致的
-    // 相对路径（如 '/progress/stream'）——必须补上 API_BASE 的路径前缀，
-    // 否则后端 404，SSE 消费者（下载进度/游戏日志/插件流）全部静默失效。
-    const prefix = new URL(API_BASE).pathname.replace(/\/$/, '')
     await new Promise<void>((resolve, reject) => {
       let dead = false
       const channel = new Channel<string>()
@@ -181,7 +184,7 @@ function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamO
         id,
         req: {
           method: opts?.method,
-          path: prefix + path,
+          path: ipcApiPath(path),
           headers: opts?.headers ?? {},
           body: opts?.body ? Array.from(new TextEncoder().encode(opts.body)) : undefined,
         },
@@ -261,7 +264,7 @@ export async function uploadFile(path: string, file: File, fieldName = 'file'): 
       id,
       req: {
         method: 'POST',
-        path,
+        path: ipcApiPath(path),
         headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
         body: Array.from(body),
       },
