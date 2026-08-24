@@ -442,6 +442,27 @@ pub fn install_from_package(package_bytes: &[u8]) -> Result<Option<PluginInfo>, 
         }
     }
 
+    // 依赖预检：与 install_from_dir 相同的必装前置检查（缺依赖拒装），
+    // 在替换目标目录之前执行，避免半安装状态。
+    let missing = PluginStore::new().resolve_missing_dependencies(&manifest);
+    if !missing.is_empty() {
+        let names = missing
+            .iter()
+            .map(|d| {
+                format!(
+                    "{}({})",
+                    d.id,
+                    d.version.clone().unwrap_or_else(|| "任意".into())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(ApiError::bad_request(
+            "PLUGIN_MISSING_DEPENDENCY",
+            format!("缺少必装前置插件: {names}"),
+        ));
+    }
+
     let target_dir = plugins_dir.join(&manifest.id);
     let temp_dir = plugins_dir.join(format!(
         ".{}.tmp-{}",
@@ -807,13 +828,18 @@ mod tests {
 
     #[test]
     fn install_accepts_safe_id() {
+        // 守卫：若配置目录已存在同名真实插件，跳过以免测试卸载用户数据。
+        let store = PluginStore::new();
+        if store.get_plugin("com.qomicex.demo").is_some() {
+            return;
+        }
         let pkg = minimal_package(
             r#"{"id":"com.qomicex.demo","name":"x","version":"1.0.0","entry":{},"layers":["l2"],"permissions":[]}"#,
         );
         // 依赖预检：无依赖 → 应安装成功
         let info = install_from_package(&pkg).unwrap().unwrap();
         assert_eq!(info.manifest.id, "com.qomicex.demo");
-        // 清理安装产物
-        crate::services::plugin::PluginStore::new().uninstall("com.qomicex.demo");
+        // 清理仅测试自己创建的产物
+        store.uninstall("com.qomicex.demo");
     }
 }

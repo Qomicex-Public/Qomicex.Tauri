@@ -141,9 +141,14 @@ pub struct StoreListQuery {
     pub tags: Option<String>,
     #[serde(default)]
     pub sort: Option<String>,
+    #[serde(default = "default_page")]
     pub page: i64,
     pub page_size: Option<i64>,
     pub min_launcher_version: Option<String>,
+}
+
+fn default_page() -> i64 {
+    1
 }
 
 /// GET /plugins 市场列表（仅已发布）。
@@ -539,7 +544,8 @@ pub async fn me(client: &reqwest::Client) -> Result<serde_json::Value, ApiError>
         return Ok(serde_json::json!({ "user": null }));
     }
     match authed_send(client, |t| store_get(client, "/auth/me").bearer_auth(t)).await {
-        Ok(v) => Ok(serde_json::json!({ "user": v })),
+        // 上游 /auth/me 本身返回 {user: {...}} 形状，直接透传（勿二次包装）。
+        Ok(v) => Ok(v),
         // 仅会话类失效映射为未登录；网络/上游故障向上传播，避免把故障伪装成登出。
         Err(e) => match e.code.as_str() {
             "STORE_UNAUTHORIZED" | "STORE_SESSION_EXPIRED" | "STORE_INVALID_REFRESH_TOKEN" => {

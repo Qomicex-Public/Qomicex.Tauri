@@ -147,6 +147,8 @@ async fn install(
     }
     let info =
         plugin_store::install(&state.http_client, req.slug.trim(), req.version.as_deref()).await?;
+    // 安装落盘后失效插件列表缓存，确保后续 /api/plugins 立即可见新插件。
+    state.plugin_store.invalidate_cache();
     Ok(Json(info))
 }
 
