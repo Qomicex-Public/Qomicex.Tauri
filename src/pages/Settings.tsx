@@ -18,13 +18,7 @@ import { PageShell } from '../components/PageShell.tsx'
 import DebugTab from '../components/DebugTab.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
-import { PluginCard } from '../components/PluginCard.tsx'
-import { PluginIcon } from '../components/PluginIcon.tsx'
-import { resolvePluginAssetUrl } from '../plugins/plugin-loader.tsx'
-import { usePluginStore } from '../stores/pluginStore.ts'
-import { deactivatePlugin } from '../plugins/plugin-loader.tsx'
-import { PERMISSION_CATALOG } from '../plugins/types.ts'
-import type { PluginInfo } from '../plugins/types.ts'
+import PluginStoreTab from '../components/PluginStoreTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { check } from '@tauri-apps/plugin-updater'
@@ -50,12 +44,10 @@ import { getRuntimes, getValidRuntimes, addRuntime, removeRuntime, scanRuntimes,
 import { addTask } from '../stores/downloadStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
-import { uploadFile } from '../api/ipc.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, setDataDir, getSystemFonts } from '../api/settings.ts'
-import { setPluginState as apiSetPluginState } from '../api/plugins.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
 import { LegalDialog } from '../components/LegalDialog.tsx'
@@ -614,11 +606,6 @@ export default function Settings() {
   const [modPingLoading, setModPingLoading] = useState(false)
   const [filePings, setFilePings] = useState<DownloadSourcePing[]>([])
   const [filePingLoading, setFilePingLoading] = useState(false)
-  const { plugins, loading, loadPlugins } = usePluginStore()
-  const [pluginsMsg, setPluginsMsg] = useState<string | null>(null)
-  const [pluginDetail, setPluginDetail] = useState<PluginInfo | null>(null)
-  const [pluginInstalling, setPluginInstalling] = useState(false)
-  const [pluginQuery, setPluginQuery] = useState('')
 
   useEffect(() => {
     apiLoadSettings().then((s) => {
@@ -657,65 +644,6 @@ export default function Settings() {
       fetchLicenseStatus().then(setLicenseStatus).catch(() => {})
     }
   }, [category])
-
-  const handlePluginToggle = useCallback(async (id: string, active: boolean) => {
-    try {
-      await apiSetPluginState(id, active ? 'active' : 'disabled')
-      await loadPlugins()
-      setPluginsMsg(t('settings.plugins.changesApplied'))
-      setTimeout(() => setPluginsMsg(null), 3000)
-    } catch {
-      setPluginsMsg(t('settings.plugins.saveFailed'))
-    }
-  }, [loadPlugins, t])
-
-  const handlePluginUninstall = useCallback(async (id: string) => {
-    if (!(await msgConfirm(t('settings.plugins.uninstallConfirm')))) return
-    deactivatePlugin(id)
-    try {
-      const res = await fetch(`${API_BASE}/plugins/${id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Uninstall failed')
-      setPluginsMsg(t('settings.plugins.uninstalled'))
-      await loadPlugins()
-    } catch {
-      setPluginsMsg(t('settings.plugins.uninstallFailed'))
-    }
-  }, [loadPlugins, msgConfirm, t])
-
-  const handlePluginInstall = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.qplugin,.zip'
-    input.onchange = async () => {
-      const file = input.files?.[0]
-      if (!file) return
-      setPluginInstalling(true)
-      try {
-        const res = await uploadFile('/plugins/upload', file, 'plugin')
-        if (!res.ok) throw new Error(`Upload failed (${res.status})`)
-        setPluginsMsg(t('settings.plugins.installSuccess'))
-        setPluginDetail(null)
-        await loadPlugins()
-        notify(t('settings.plugins.installSuccess'), 'success')
-      } catch (e) {
-        notify(t('settings.plugins.installFailed', { message: e instanceof Error ? e.message : 'Unknown' }), 'error')
-      } finally {
-        setPluginInstalling(false)
-      }
-    }
-    input.click()
-  }
-
-  const handlePluginRefresh = async () => {
-    setPluginsMsg(null)
-    await usePluginStore.getState().rescan()
-  }
-
-  useEffect(() => {
-    if (!pluginsMsg) return
-    const t = setTimeout(() => setPluginsMsg(null), 3000)
-    return () => clearTimeout(t)
-  }, [pluginsMsg])
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     const next = { ...settings, [key]: value }
@@ -2204,56 +2132,7 @@ export default function Settings() {
           </TabContent>
 
           <TabContent activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
-          <TabContent activeTab={category} tabId="plugins">
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <FontAwesomeIcon icon={faPuzzlePiece} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.plugins.title')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="mb-4 flex flex-wrap items-center gap-2">
-                    <span className="text-sm text-muted-foreground">{t('settings.plugins.installedCount', { count: plugins.length })}</span>
-                    <div className="ml-auto flex items-center gap-2">
-                      <Input
-                        value={pluginQuery}
-                        onChange={(e) => setPluginQuery(e.target.value)}
-                        placeholder={t('settings.plugins.searchPlaceholder')}
-                        className="h-8 w-52"
-                      />
-                      <Button onClick={handlePluginRefresh} size="sm" variant="outline" disabled={loading}>{t('common.refresh')}</Button>
-                      <Button onClick={handlePluginInstall} size="sm" disabled={pluginInstalling}>
-                        {pluginInstalling ? t('settings.plugins.installing') : t('settings.plugins.install')}
-                      </Button>
-                    </div>
-                  </div>
-                  {pluginsMsg && (
-                    <div className="rounded bg-primary/10 text-primary px-4 py-2 text-sm mb-4">{pluginsMsg}</div>
-                  )}
-                  {loading ? (
-                    <p className="text-muted-foreground">{t('common.loading')}</p>
-                  ) : plugins.length === 0 ? (
-                    <div className="flex items-center justify-center min-h-[200px]">
-                      <p className="text-muted-foreground">{t('settings.plugins.noneInstalled')}</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {plugins
-                        .filter(p => p.manifest.name.toLowerCase().includes(pluginQuery.trim().toLowerCase()))
-                        .map(p => (
-                          <PluginCard key={p.manifest.id} plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} onClick={() => setPluginDetail(p)} />
-                        ))}
-                    </div>
-                  )}
-                  {plugins.length > 0 && plugins.filter(p => p.manifest.name.toLowerCase().includes(pluginQuery.trim().toLowerCase())).length === 0 && (
-                    <p className="text-muted-foreground text-sm text-center py-6">{t('settings.plugins.noMatch')}</p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </TabContent>
+          <TabContent activeTab={category} tabId="plugins"><PluginStoreTab /></TabContent>
           <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} /></TabContent>
           <TabContent activeTab={category} tabId="logs"><LogTab /></TabContent>
           <TabContent activeTab={category} tabId="debug"><DebugTab /></TabContent>
@@ -2339,63 +2218,6 @@ export default function Settings() {
             }}
             onClose={() => setLicenseDialogOpen(false)}
           />
-
-          <Dialog open={pluginDetail !== null} onClose={() => setPluginDetail(null)}>
-            <DialogHeader onClose={() => setPluginDetail(null)}>
-              <DialogTitle>{pluginDetail?.manifest.name ?? ''}</DialogTitle>
-            </DialogHeader>
-            <DialogBody className="space-y-4">
-              {pluginDetail && (
-                <>
-                  <div className="text-sm text-muted-foreground">
-                    {pluginDetail.manifest.id}@{pluginDetail.manifest.version}
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {pluginDetail.manifest.layers.map(layer => (
-                      <span key={layer} className="text-xs px-1.5 py-0.5 rounded border border-border text-muted-foreground">{layer.toUpperCase()}</span>
-                    ))}
-                  </div>
-                  <Separator />
-                  {pluginDetail.manifest.permissions.length > 0 && (
-                    <div className="space-y-1">
-                      <p className="text-sm text-muted-foreground">{t('settings.plugins.permissions', { count: pluginDetail.manifest.permissions.length })}</p>
-                      {pluginDetail.manifest.permissions.map(p => {
-                        const info = PERMISSION_CATALOG[p]
-                        const colors: Record<string, string> = {
-                          normal: 'border-blue-500/30 text-blue-400',
-                          warning: 'border-yellow-500/30 text-yellow-400',
-                          danger: 'border-red-500/30 text-red-400',
-                        }
-                        return (
-                          <div key={p} className="flex items-center gap-2 text-sm">
-                            <span className={`text-xs px-1.5 py-0.5 rounded border ${colors[info?.risk ?? 'normal'] ?? ''}`}>
-                              {info?.risk ?? 'normal'}
-                            </span>
-                            <span>{info?.key ? t(info.key) : p}</span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                  {pluginDetail.manifest.contributes?.menuItems && pluginDetail.manifest.contributes.menuItems.length > 0 && (
-                    <div className="space-y-1">
-                      <p className="text-sm text-muted-foreground">{t('settings.plugins.contributes')}</p>
-                      {pluginDetail.manifest.contributes.menuItems.map(item => (
-                        <div key={item.path} className="flex items-center gap-2 text-sm">
-                          <PluginIcon icon={resolvePluginAssetUrl(pluginDetail.manifest.id, item.icon ?? '')} fallback="" />
-                          <span>{item.label}</span>
-                          <span className="text-xs text-muted-foreground">{item.path}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </DialogBody>
-            <DialogFooter>
-              <Button variant="secondary" onClick={() => setPluginDetail(null)}>{t('common.close')}</Button>
-            </DialogFooter>
-          </Dialog>
         </div>
       </div>
     </PageShell>
