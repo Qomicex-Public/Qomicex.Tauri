@@ -47,9 +47,37 @@ fn save_tokens(tokens: &StoredTokens) -> Result<(), ApiError> {
     let path = auth_file();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
+        // 凭据目录收紧为仅属主可访问（Unix；Windows 默认继承用户 profile ACL）。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
     }
     let json = serde_json::to_string(tokens).map_err(|e| ApiError::internal(e.to_string()))?;
-    std::fs::write(&path, json).map_err(ApiError::from)
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)?;
+        f.write_all(json.as_bytes())?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
 }
 
 fn clear_tokens() {
@@ -225,17 +253,27 @@ fn parse_download_info(v: &serde_json::Value) -> Result<DownloadInfo, ApiError> 
         .and_then(|u| u.as_str())
         .ok_or_else(|| ApiError::upstream("商店未返回下载地址"))?
         .to_string();
+    // 完整性校验是安装管线的强制环节：sha256 缺失或格式非法时拒绝，
+    // 绝不静默降级为"跳过校验"。
+    let sha256 = v
+        .get("sha256")
+        .and_then(|s| s.as_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    if sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "STORE_INVALID_CHECKSUM",
+            "商店未返回有效的 SHA-256 校验值，已拒绝安装",
+        ));
+    }
     Ok(DownloadInfo {
         url,
         mirror_url: v
             .get("mirrorUrl")
             .and_then(|u| u.as_str())
             .map(String::from),
-        sha256: v
-            .get("sha256")
-            .and_then(|s| s.as_str())
-            .unwrap_or_default()
-            .to_lowercase(),
+        sha256,
         size: v.get("size").and_then(|s| s.as_i64()).unwrap_or(0),
     })
 }
@@ -342,9 +380,39 @@ pub async fn install(
     let version = version.filter(|v| !v.trim().is_empty()).unwrap_or("latest");
     let info = download_info(client, slug, version).await?;
     let bytes = fetch_package(client, &info).await?;
+    verify_package_matches_slug(&bytes, slug)?;
     crate::services::plugin::install_from_package(&bytes)?.ok_or_else(|| {
         ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包无效（缺少 manifest.json）")
     })
+}
+
+/// 校验包内 manifest.id 与请求的商店 slug 对应，防止串包安装。
+fn verify_package_matches_slug(package_bytes: &[u8], slug: &str) -> Result<(), ApiError> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package_bytes))
+        .map_err(|_| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包无效"))?;
+    let id: String = {
+        let mut reader = archive.by_name("manifest.json").map_err(|_| {
+            ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包缺少 manifest.json")
+        })?;
+        let mut json = String::new();
+        std::io::Read::read_to_string(&mut reader, &mut json)
+            .map_err(|e| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", e.to_string()))?;
+        serde_json::from_str::<serde_json::Value>(&json)
+            .ok()
+            .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(String::from))
+            .ok_or_else(|| {
+                ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "manifest.json 缺少 id")
+            })?
+    };
+    let slug_l = slug.to_lowercase();
+    let matched = id == slug || id.to_lowercase().ends_with(&format!(".{slug_l}"));
+    if !matched {
+        return Err(ApiError::bad_request(
+            "STORE_SLUG_MISMATCH",
+            format!("包内插件 ID（{id}）与请求的商店插件（{slug}）不匹配"),
+        ));
+    }
+    Ok(())
 }
 
 // =====================================================================
@@ -472,7 +540,13 @@ pub async fn me(client: &reqwest::Client) -> Result<serde_json::Value, ApiError>
     }
     match authed_send(client, |t| store_get(client, "/auth/me").bearer_auth(t)).await {
         Ok(v) => Ok(serde_json::json!({ "user": v })),
-        Err(_) => Ok(serde_json::json!({ "user": null })),
+        // 仅会话类失效映射为未登录；网络/上游故障向上传播，避免把故障伪装成登出。
+        Err(e) => match e.code.as_str() {
+            "STORE_UNAUTHORIZED" | "STORE_SESSION_EXPIRED" | "STORE_INVALID_REFRESH_TOKEN" => {
+                Ok(serde_json::json!({ "user": null }))
+            }
+            _ => Err(e),
+        },
     }
 }
 
@@ -527,4 +601,35 @@ pub async fn my_plugins(client: &reqwest::Client) -> Result<serde_json::Value, A
         store_get(client, "/plugins/mine").bearer_auth(t)
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_info_requires_valid_sha256() {
+        let cases = vec![
+            serde_json::json!({"url": "https://x/y.qplugin"}),
+            serde_json::json!({"url": "https://x/y.qplugin", "sha256": ""}),
+            serde_json::json!({"url": "https://x/y.qplugin", "sha256": "abc123"}),
+            serde_json::json!({"url": "https://x/y.qplugin", "sha256": "zz86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}),
+        ];
+        for v in cases {
+            let err = parse_download_info(&v).unwrap_err();
+            assert_eq!(err.code, "STORE_INVALID_CHECKSUM");
+        }
+    }
+
+    #[test]
+    fn download_info_accepts_valid_sha256() {
+        let v = serde_json::json!({
+            "url": "https://x/y.qplugin",
+            "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "size": 123,
+        });
+        let info = parse_download_info(&v).unwrap();
+        assert_eq!(info.size, 123);
+        assert!(info.mirror_url.is_none());
+    }
 }

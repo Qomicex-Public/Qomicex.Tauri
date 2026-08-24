@@ -50,11 +50,13 @@ export default function PluginStoreAccount() {
   const [starting, setStarting] = useState(false)
   const [myPlugins, setMyPlugins] = useState<MyPluginItem[]>([])
   const [myLoading, setMyLoading] = useState(false)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stoppedRef = useRef(false)
 
   function stopPolling() {
+    stoppedRef.current = true
     if (pollRef.current) {
-      clearInterval(pollRef.current)
+      clearTimeout(pollRef.current)
       pollRef.current = null
     }
   }
@@ -91,7 +93,11 @@ export default function PluginStoreAccount() {
 
   function beginPolling(session: DeviceSession) {
     stopPolling()
-    pollRef.current = setInterval(async () => {
+    stoppedRef.current = false
+    // 单飞递归调度：上一请求完成（且未被停止）才排下一次，避免慢请求重叠；
+    // stoppedRef 使停止后仍在途的回调失效，防止重复成功通知。
+    const tick = async () => {
+      if (stoppedRef.current) return
       if (Date.now() - session.startedAt > session.code.expiresIn * 1000) {
         stopPolling()
         setExpired(true)
@@ -100,16 +106,22 @@ export default function PluginStoreAccount() {
       }
       try {
         const res = await storeDeviceToken(session.code.deviceCode)
+        if (stoppedRef.current) return
         if (res.status === 'ok') {
           stopPolling()
           setDevice(null)
           notify(t('settings.plugins.store.loginSuccess'), 'success')
           await refreshMe(true)
+          return
         }
       } catch {
         // 网络抖动等瞬时错误：继续轮询，直至过期
       }
-    }, Math.max(2, session.code.interval) * 1000)
+      if (!stoppedRef.current) {
+        pollRef.current = setTimeout(tick, Math.max(2, session.code.interval) * 1000)
+      }
+    }
+    pollRef.current = setTimeout(tick, Math.max(2, session.code.interval) * 1000)
   }
 
   async function startDeviceLogin() {
@@ -189,7 +201,15 @@ export default function PluginStoreAccount() {
             </div>
             <p className="text-sm text-muted-foreground">{t('settings.plugins.store.deviceSteps')}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={() => void openUrl(device.code.verificationUriComplete)}>
+              <Button
+                onClick={async () => {
+                  try {
+                    await openUrl(device.code.verificationUriComplete)
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e), 'error')
+                  }
+                }}
+              >
                 {t('settings.plugins.store.deviceOpenPage')}
               </Button>
               <span className="flex items-center gap-2 text-sm text-muted-foreground">

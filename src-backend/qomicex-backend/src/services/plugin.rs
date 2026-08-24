@@ -422,6 +422,25 @@ pub fn install_from_package(package_bytes: &[u8]) -> Result<Option<PluginInfo>, 
         serde_json::from_str(&json)
             .map_err(|e| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", e.to_string()))?
     };
+    manifest.id = manifest.id.trim().to_string();
+
+    // manifest.id 会被用作文件系统路径（安装目录名），必须先做格式校验，
+    // 拒绝路径穿越（../、绝对路径、盘符、隐藏分隔）等恶意 ID。
+    {
+        let id = &manifest.id;
+        let safe = !id.is_empty()
+            && id.len() <= 128
+            && !id.contains("..")
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+        if !safe {
+            return Err(ApiError::bad_request(
+                "INVALID_PLUGIN_PACKAGE",
+                format!("非法的插件 ID: \"{id}\""),
+            ));
+        }
+    }
 
     let target_dir = plugins_dir.join(&manifest.id);
     let temp_dir = plugins_dir.join(format!(
@@ -466,7 +485,6 @@ pub fn install_from_package(package_bytes: &[u8]) -> Result<Option<PluginInfo>, 
     }
     result?;
 
-    manifest.id = manifest.id.trim().to_string();
     Ok(Some(PluginInfo {
         manifest,
         dir: target_dir.to_string_lossy().into_owned(),
@@ -749,5 +767,53 @@ impl PluginGatewayClient {
             return None;
         }
         resp.json::<serde_json::Value>().await.ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造内存中的最小 .qplugin 包（仅根级 manifest.json）。
+    fn minimal_package(manifest_json: &str) -> Vec<u8> {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut buf);
+            let opts: zip::write::SimpleFileOptions = Default::default();
+            zip.start_file("manifest.json", opts).unwrap();
+            std::io::Write::write_all(&mut zip, manifest_json.as_bytes()).unwrap();
+            zip.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    #[test]
+    fn install_rejects_path_traversal_id() {
+        let pkg = minimal_package(r#"{"id":"../../evil","name":"x","version":"1.0.0"}"#);
+        let err = install_from_package(&pkg).unwrap_err();
+        assert_eq!(err.code, "INVALID_PLUGIN_PACKAGE");
+        assert!(err.message.contains("非法的插件 ID"));
+    }
+
+    #[test]
+    fn install_rejects_empty_and_absolute_ids() {
+        for id in ["", "C:\\Windows\\Temp", "/etc/passwd", "a..b"] {
+            let manifest = format!(r#"{{"id":"{id}","name":"x","version":"1.0.0"}}"#);
+            let pkg = minimal_package(&manifest);
+            let err = install_from_package(&pkg).unwrap_err();
+            assert_eq!(err.code, "INVALID_PLUGIN_PACKAGE", "id={id}");
+        }
+    }
+
+    #[test]
+    fn install_accepts_safe_id() {
+        let pkg = minimal_package(
+            r#"{"id":"com.qomicex.demo","name":"x","version":"1.0.0","entry":{},"layers":["l2"],"permissions":[]}"#,
+        );
+        // 依赖预检：无依赖 → 应安装成功
+        let info = install_from_package(&pkg).unwrap().unwrap();
+        assert_eq!(info.manifest.id, "com.qomicex.demo");
+        // 清理安装产物
+        crate::services::plugin::PluginStore::new().uninstall("com.qomicex.demo");
     }
 }
