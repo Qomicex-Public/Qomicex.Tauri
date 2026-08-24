@@ -119,7 +119,7 @@ type PageStep = 'list' | 'select-version' | 'configure'
 export default function Instances() {
   const navigate = useNavigate()
   const { t } = useI18n()
-  const { alert: msgAlert, prompt: msgPrompt } = useMessageBox()
+  const { alert: msgAlert, prompt: msgPrompt, notify } = useMessageBox()
   const { launchInstance: ctxLaunchInstance } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
 
@@ -1320,8 +1320,34 @@ export default function Instances() {
           try {
             const list = await getAccounts()
             const def = list.find((a) => a.isDefault)
-            if (def) await deleteAccount(def.uuid)
-          } catch { /* 账号可能已不存在 */ }
+            if (def) {
+              try {
+                await deleteAccount(def.uuid)
+              } catch (e) {
+                // 仅当账号已不存在（确认 404）时忽略；其它失败（网络/临时 API 错误）需上报，
+                // 避免过期凭据残留并允许添加重复账号。
+                if (e instanceof ApiError && e.status === 404) {
+                  /* 账号已不存在，继续重新登录 */
+                } else {
+                  notify(
+                    t('dialogs.common.deleteFailed', {
+                      error: e instanceof ApiError ? e.displayMessage : t('dialogs.common.unknownError'),
+                    }),
+                    'error',
+                  )
+                  return
+                }
+              }
+            }
+          } catch (e) {
+            notify(
+              t('dialogs.common.deleteFailed', {
+                error: e instanceof ApiError ? e.displayMessage : t('dialogs.common.unknownError'),
+              }),
+              'error',
+            )
+            return
+          }
           navigate('/accounts?add=microsoft')
         }}
       />
