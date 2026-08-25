@@ -14,6 +14,8 @@ import { Label } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
 import { Tooltip } from '../components/ui'
+import { ContextMenu } from '../components/ContextMenu.tsx'
+import type { ContextMenuItem } from '../components/ContextMenu.tsx'
 import { useMessageBox } from '../components/ui'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
 import { createInstance, startInstall, getInstances, syncScan, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
@@ -114,6 +116,13 @@ function dirName(path: string): string {
   return path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || path
 }
 
+function truncateMiddle(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text
+  const keep = Math.max(0, maxLen - 3)
+  const head = Math.ceil(keep / 2)
+  return text.slice(0, head) + '…' + text.slice(text.length - (keep - head))
+}
+
 type PageStep = 'list' | 'select-version' | 'configure'
 
 export default function Instances() {
@@ -154,6 +163,8 @@ export default function Instances() {
   }, [currentDir])
   const [dirManager, setDirManager] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const [editingPath, setEditingPath] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
 
   const [step, setStep] = useState<PageStep>('list')
   const [versionSearch, setVersionSearch] = useState('')
@@ -293,6 +304,30 @@ export default function Instances() {
 
   function removeDir(path: string) {
     setManagedDirs((prev) => { const next = prev.filter((d) => d.path !== path); saveDirs(next); return next })
+  }
+
+  function moveDir(from: number, to: number) {
+    if (from === to) return
+    setManagedDirs((prev) => {
+      const next = [...prev]
+      const [item] = next.splice(from, 1)
+      next.splice(to, 0, item)
+      saveDirs(next)
+      return next
+    })
+  }
+
+  function startEdit(d: ManagedDir) {
+    setEditingPath(d.path)
+    setEditName(d.name)
+  }
+
+  function commitEdit() {
+    const name = editName.trim()
+    if (editingPath && name) {
+      setManagedDirs((prev) => { const next = prev.map((dd) => dd.path === editingPath ? { ...dd, name } : dd); saveDirs(next); return next })
+    }
+    setEditingPath(null)
   }
 
   async function addDirManually() {
@@ -906,24 +941,7 @@ export default function Instances() {
         <DialogHeader onClose={() => setDirManager(false)}>
           <DialogTitle>{t('instances.dirManagerTitle')}</DialogTitle>
         </DialogHeader>
-        <DialogBody className="space-y-2">
-          <div className="space-y-1">
-            <p className="px-1 text-xs text-muted-foreground">{t('instances.currentDir')}</p>
-            <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 p-3">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                <FontAwesomeIcon icon={faCheck} className="h-3.5 w-3.5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium leading-7">{currentDir ? dirName(currentDir) : t('instances.selectGameDir')}</div>
-                <div className="mt-0.5 truncate text-xs text-muted-foreground">{currentDir || '-'}</div>
-              </div>
-              <Tooltip content={t('instances.openDir')}>
-                <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => currentDir && openFolder(currentDir).catch(() => {})}>
-                  <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
-                </Button>
-              </Tooltip>
-            </div>
-          </div>
+        <DialogBody>
           {managedDirs.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-8">
               <FontAwesomeIcon icon={faFolder} className="h-10 w-10 text-muted-foreground/40" />
@@ -931,34 +949,87 @@ export default function Instances() {
               <p className="text-xs text-muted-foreground/60">{t('instances.noDirHint')}</p>
             </div>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-3">
               <p className="px-1 text-xs text-muted-foreground">{t('instances.dirCount', { count: managedDirs.length })}</p>
-              {managedDirs.map((d) => (
-                <div key={d.path} className={cn('flex items-center gap-2 rounded-lg border p-3 transition-colors', currentDir === d.path && 'border-primary/40 bg-primary/5')}>
-                  <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-md', currentDir === d.path ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
-                    <FontAwesomeIcon icon={currentDir === d.path ? faCheck : faFolder} className="h-3.5 w-3.5" />
+              {managedDirs.map((d, i) => {
+                const active = currentDir === d.path
+                const editing = editingPath === d.path
+                const contextItems: ContextMenuItem[] = [
+                  { label: t('instances.setCurrent'), onClick: () => switchDir(d.path), disabled: active },
+                  { label: t('instances.rename'), onClick: () => startEdit(d) },
+                  { label: t('instances.moveUp'), onClick: () => moveDir(i, i - 1), disabled: i === 0 },
+                  { label: t('instances.moveDown'), onClick: () => moveDir(i, i + 1), disabled: i === managedDirs.length - 1 },
+                  { label: t('instances.openDir'), onClick: () => { openFolder(d.path).catch(() => {}) } },
+                  { label: t('instances.remove'), onClick: () => removeDir(d.path), danger: true },
+                ]
+                return (
+                  <div
+                    key={d.path}
+                    className={cn(
+                      'rounded-lg border transition-colors',
+                      active ? 'border-primary/40 bg-primary/5' : 'border-border bg-muted/20 hover:bg-muted/40'
+                    )}
+                  >
+                    <ContextMenu items={contextItems}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => switchDir(d.path)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchDir(d.path) } }}
+                        className="cursor-pointer space-y-1 p-3"
+                      >
+                        <div className="flex items-center gap-2">
+                          <FontAwesomeIcon icon={faFolder} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          {editing ? (
+                            <Input
+                              autoFocus
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              onBlur={commitEdit}
+                              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingPath(null) }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="h-7 text-sm font-medium"
+                            />
+                          ) : (
+                            <>
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">{d.name || dirName(d.path)}</span>
+                              <Tooltip content={t('instances.rename')}>
+                                <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); startEdit(d) }}>
+                                  <FontAwesomeIcon icon={faPencil} className="h-3 w-3" />
+                                </Button>
+                              </Tooltip>
+                            </>
+                          )}
+                          {active && (
+                            <span className="shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+                              <FontAwesomeIcon icon={faCheck} className="mr-1 h-3 w-3" />
+                              {t('instances.inUse')}
+                            </span>
+                          )}
+                          <Tooltip content={t('instances.openDir')}>
+                            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); openFolder(d.path).catch(() => {}) }}>
+                              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                            </Button>
+                          </Tooltip>
+                          <Tooltip content={t('instances.remove')}>
+                            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={(e) => { e.stopPropagation(); removeDir(d.path) }}>
+                              <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                            </Button>
+                          </Tooltip>
+                        </div>
+                        <Tooltip content={d.path}>
+                          <p className="truncate pl-6 text-xs text-muted-foreground">{truncateMiddle(d.path, 48)}</p>
+                        </Tooltip>
+                      </div>
+                    </ContextMenu>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <Input value={d.name} onChange={(e) => { setManagedDirs((prev) => { const next = prev.map((dd) => dd.path === d.path ? { ...dd, name: e.target.value } : dd); saveDirs(next); return next }) }} className="h-7 text-sm" />
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">{d.path}</div>
-                  </div>
-                  <Tooltip content={t('instances.openDir')}>
-                    <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => openFolder(d.path).catch(() => {})}>
-                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
-                    </Button>
-                  </Tooltip>
-                  <Tooltip content={t('instances.remove')}>
-                    <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => removeDir(d.path)}>
-                      <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
-                    </Button>
-                  </Tooltip>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </DialogBody>
-        <DialogFooter>
-          <Button variant="secondary" onClick={addDirManually} className="gap-1.5"><FontAwesomeIcon icon={faPlus} className="h-4 w-4" />{t('instances.manualAdd')}</Button>
+        <DialogFooter className="justify-between">
+          <Button variant="link" onClick={addDirManually} className="gap-1.5 px-2"><FontAwesomeIcon icon={faPlus} className="h-4 w-4" />{t('instances.manualAdd')}</Button>
           <Button onClick={() => { handlePickDir(); setDirManager(false) }} className="gap-1.5"><FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />{t('instances.browseAdd')}</Button>
         </DialogFooter>
       </Dialog>
