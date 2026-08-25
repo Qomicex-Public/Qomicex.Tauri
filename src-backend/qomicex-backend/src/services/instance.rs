@@ -332,13 +332,17 @@ impl InstanceService {
                 .is_dir()
         });
 
-        // 2. 按 (game_dir, name) 索引 JSON 实例
+        // 2. 跟踪已扫描的游戏目录
+        let scanned_dirs: std::collections::HashSet<String> =
+            scanned.iter().map(|s| s.game_dir.clone()).collect();
+
+        // 3. 按 (game_dir, name) 索引 JSON 实例
         let mut json_index: HashMap<(String, String), usize> = HashMap::new();
         for (idx, inst) in json_instances.iter().enumerate() {
             json_index.insert((inst.game_dir.clone(), inst.name.clone()), idx);
         }
 
-        // 3. 遍历磁盘扫描结果，合并或创建实例
+        // 4. 遍历磁盘扫描结果，合并或创建实例
         let mut result: Vec<GameInstance> = Vec::new();
         let mut seen_keys: HashMap<(String, String), usize> = HashMap::new();
 
@@ -412,17 +416,17 @@ impl InstanceService {
             }
         }
 
-        // 4. 将 JSON 中未被扫描覆盖的实例追加到结果中
-        //    （保留其他目录的实例，避免扫描一个目录导致其他目录实例丢失）
+        // 5. 将未被扫描的游戏目录的 JSON 实例追加到结果中
+        //    （只保留未被扫描的目录的实例，已扫描目录中不存在的 JSON 条目视为残留，不保留）
         for inst in &json_instances {
             let key = (inst.game_dir.clone(), inst.name.clone());
-            if !seen_keys.contains_key(&key) {
+            if !seen_keys.contains_key(&key) && !scanned_dirs.contains(&inst.game_dir) {
                 seen_keys.insert(key, result.len());
                 result.push(inst.clone());
             }
         }
 
-        // 5. 写回 JSON
+        // 6. 写回 JSON
         {
             let mut guard = match self.instances.lock() {
                 Ok(g) => g,
