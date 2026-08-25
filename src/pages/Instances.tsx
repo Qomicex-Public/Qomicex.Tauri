@@ -536,8 +536,9 @@ export default function Instances() {
 
   const getVersionType = useCallback((v: ScannedVersion): string => {
     if (v.state !== 'Available') return 'broken'
-    if (v.loaders && v.loaders.length > 0) return 'modded'
-    const rt = versionTypeMap.get(v.gameVersion)
+    // Vanilla/Unknown 不算 modded——后端对所有原版版本都会返回 [Vanilla] loader 条目
+    if (firstRealLoader(v).type) return 'modded'
+    const rt = versionTypeMap.get(v.name) ?? versionTypeMap.get(v.gameVersion)
     if (rt === 'snapshot') return 'snapshot'
     if (rt === 'april_fools') return 'april_fools'
     return 'vanilla'
