@@ -30,3 +30,9 @@ export async function rescanPlugins(): Promise<{ scanned: number }> {
   const res = await fetch(`${base()}/rescan`, { method: 'POST' })
   return res.json()
 }
+
+export async function rollbackPlugin(id: string): Promise<PluginInfo> {
+  const res = await fetch(`${base()}/${encodeURIComponent(id)}/rollback`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Plugin rollback failed: ${res.status}`)
+  return res.json()
+}
