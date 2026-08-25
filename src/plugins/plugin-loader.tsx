@@ -64,7 +64,7 @@ export async function activatePlugin(plugin: PluginInfo) {
     return
   }
 
-  const useSandbox = plugin.manifest.layers.includes('l2')
+  const useSandbox = plugin.manifest.render !== 'inline'
 
   if (plugin.manifest.entry.frontend) {
     if (useSandbox) {

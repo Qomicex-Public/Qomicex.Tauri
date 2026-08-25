@@ -3,7 +3,6 @@ default = []
 # Mirrors the C# LICENSE_REQUIRED build flag: only when enabled is the closed
 # license core (Ed25519 verify + remote check) compiled in.
 license-required = [
-  "dep:ed25519-dalek",
   "dep:hmac",
   "dep:pbkdf2",
   "dep:hkdf",
@@ -47,8 +46,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "5"
 open = "5"
 
-# --- License core (only when feature `license-required` is enabled) ---
-ed25519-dalek = { version = "2", optional = true }
+# --- 插件签名（ADR-050）与 License core 共用 ed25519-dalek ---
+ed25519-dalek = "2"
 sha2 = "0.10"
 hmac = { version = "0.12", optional = true }
 pbkdf2 = { version = "0.12", optional = true }

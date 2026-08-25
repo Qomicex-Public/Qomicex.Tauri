@@ -1,5 +1,6 @@
 import type { PluginInfo } from '../plugins/types.ts'
 import { cn } from '../lib/utils.ts'
+import { useI18n } from '../i18n/index.tsx'
 import { PluginIcon } from './PluginIcon.tsx'
 import { resolvePluginAssetUrl } from '../plugins/plugin-loader.tsx'
 
@@ -8,9 +9,17 @@ interface PluginCardProps {
   onToggle: (id: string, active: boolean) => void
   onUninstall: (id: string) => void
   onClick: () => void
+  /** 有可升级版本时显示升级按钮 */
+  upgradeTo?: string
+  upgrading?: boolean
+  onUpgrade?: (id: string) => void
+  /** 存在升级快照时显示回滚按钮 */
+  rollingBack?: boolean
+  onRollback?: (id: string) => void
 }
 
-export function PluginCard({ plugin, onToggle, onUninstall, onClick }: PluginCardProps) {
+export function PluginCard({ plugin, onToggle, onUninstall, onClick, upgradeTo, upgrading, onUpgrade, rollingBack, onRollback }: PluginCardProps) {
+  const { t } = useI18n()
   const { manifest, state } = plugin
   const isActive = state === 'active'
 
@@ -30,6 +39,26 @@ export function PluginCard({ plugin, onToggle, onUninstall, onClick }: PluginCar
         <div className="font-medium text-sm truncate">{manifest.name}</div>
         <div className="text-xs text-muted-foreground truncate">{manifest.id}@{manifest.version}</div>
       </div>
+      {plugin.hasRollback && onRollback && (
+        <button
+          type="button"
+          disabled={rollingBack}
+          onClick={(e) => { e.stopPropagation(); onRollback(manifest.id) }}
+          className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-60"
+        >
+          {rollingBack ? t('settings.plugins.store.installing') : t('settings.plugins.store.rollbackBtn')}
+        </button>
+      )}
+      {upgradeTo && onUpgrade && (
+        <button
+          type="button"
+          disabled={upgrading}
+          onClick={(e) => { e.stopPropagation(); onUpgrade(manifest.id) }}
+          className="shrink-0 rounded-md border border-primary/40 px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/10 disabled:opacity-60"
+        >
+          {upgrading ? t('settings.plugins.store.installing') : t('settings.plugins.store.updateBtn')}
+        </button>
+      )}
       <button
         type="button"
         role="switch"

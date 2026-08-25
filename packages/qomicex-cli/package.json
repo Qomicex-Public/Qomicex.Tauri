@@ -1,0 +1,25 @@
+{
+  "name": "@qomicex/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Qomicex 插件生态 CLI：create / dev / pack / verify / publish",
+  "bin": {
+    "qomicex": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "~5.8.3"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "catppuccin-mocha",
+  "name": "Catppuccin Mocha",
+  "type": "color",
+  "scheme": "dark",
+  "colors": {
+    "background": "240 23% 9%",
+    "foreground": "226 64% 88%",
+    "card": "237 16% 23%",
+    "card-foreground": "226 64% 88%",
+    "popover": "237 16% 23%",
+    "popover-foreground": "226 64% 88%",
+    "primary": "217 92% 76%",
+    "primary-foreground": "240 23% 9%",
+    "secondary": "233 12% 39%",
+    "secondary-foreground": "226 64% 88%",
+    "muted": "228 17% 64%",
+    "muted-foreground": "231 11% 47%",
+    "accent": "233 12% 39%",
+    "accent-foreground": "226 64% 88%",
+    "destructive": "0 84% 60%",
+    "destructive-foreground": "226 64% 88%",
+    "border": "230 13% 55%",
+    "input": "230 13% 55%",
+    "ring": "217 92% 76%"
+  }
+}

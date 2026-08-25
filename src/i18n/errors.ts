@@ -29,6 +29,11 @@ const CODE_TO_KEY: Record<string, string> = {
   SKIN_UPLOAD_FAILED: 'errors.skinUploadFailed',
   SKIN_SAVE_FAILED: 'errors.skinSaveFailed',
   SKIN_RESET_FAILED: 'errors.skinResetFailed',
+  PLUGIN_SIGNATURE_MISSING: 'errors.pluginSignatureMissing',
+  PLUGIN_SIGNATURE_INVALID: 'errors.pluginSignatureInvalid',
+  PLUGIN_SIGNATURE_CERT_INVALID: 'errors.pluginSignatureCertInvalid',
+  PLUGIN_SIGNATURE_HASH_MISMATCH: 'errors.pluginSignatureHashMismatch',
+  NO_ROLLBACK_SNAPSHOT: 'errors.noRollbackSnapshot',
 }
 
 /** 按语言翻译后端错误；未映射的错误码返回 null（调用方回退后端 message） */

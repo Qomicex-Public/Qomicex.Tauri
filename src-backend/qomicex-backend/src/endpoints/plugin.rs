@@ -322,6 +322,7 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/install", post(install))
         .route("/plugins/upload", post(upload))
         .route("/plugins/{id}/state", put(set_state))
+        .route("/plugins/{id}/rollback", post(rollback))
         .route("/plugins/{id}/files/{*path}", get(plugin_file))
         .route(
             "/plugins/settings/{id}",
@@ -414,7 +415,7 @@ async fn upload(
     let bytes = plugin_bytes
         .ok_or_else(|| ApiError::bad_request("NO_PLUGIN_FILE", "No plugin file uploaded"))?;
 
-    let plugin = install_from_package(&bytes)?
+    let plugin = install_from_package(&bytes, true)?
         .ok_or_else(|| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "Invalid plugin package"))?;
     state.plugin_store.invalidate_cache();
     Ok(Json(plugin))
@@ -432,6 +433,18 @@ async fn set_state(
         .ok_or_else(|| ApiError::not_found("PLUGIN_NOT_FOUND", "Plugin not found"))?;
     state.plugin_store.set_state(&id, &req.state);
     plugin.state = req.state;
+    Ok(Json(plugin).into_response())
+}
+
+/// POST /api/plugins/{id}/rollback — 用最新 `.bak-*` 升级快照恢复插件目录。
+async fn rollback(
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+) -> ApiResult<Response> {
+    let plugin = state
+        .plugin_store
+        .rollback(&id)?
+        .ok_or_else(|| ApiError::not_found("PLUGIN_NOT_FOUND", "Plugin not found"))?;
     Ok(Json(plugin).into_response())
 }
 

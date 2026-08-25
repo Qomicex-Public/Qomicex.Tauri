@@ -40,6 +40,8 @@ pub struct PluginManifest {
     pub entry: PluginEntry,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contributes: Option<PluginContributes>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +114,8 @@ pub struct PluginInfo {
     pub dir: String,
     pub state: String,
     pub installed_at: String,
+    /// 是否存在可回滚的 `.bak-*` 升级快照（前端据此显示「回滚」入口）
+    pub has_rollback: bool,
 }
 
 // =====================================================================
@@ -270,17 +274,17 @@ impl PluginStore {
         }
 
         let target = self.plugins_dir.join(&manifest.id);
-        if target.is_dir() {
-            let _ = std::fs::remove_dir_all(&target);
-        }
+        snapshot_existing_dir(&target, &self.plugins_dir)?;
         copy_dir_recursive(source_dir, &target)?;
 
+        let has_rollback = find_latest_snapshot(&self.plugins_dir, &manifest.id).is_some();
         self.invalidate_cache();
         Ok(Some(PluginInfo {
             manifest,
             dir: target.to_string_lossy().into_owned(),
             state: "installed".to_string(),
             installed_at: now_o(),
+            has_rollback,
         }))
     }
 
@@ -349,6 +353,19 @@ impl PluginStore {
         self.invalidate_cache();
     }
 
+    /// 把最新 `.bak-*` 升级快照替换回插件目录（回滚），返回回滚后的 PluginInfo。
+    /// 无快照时返回 `NO_ROLLBACK_SNAPSHOT`（404）。
+    pub fn rollback(&self, id: &str) -> Result<Option<PluginInfo>, ApiError> {
+        if !restore_snapshot(&self.plugins_dir, id)? {
+            return Err(ApiError::not_found(
+                "NO_ROLLBACK_SNAPSHOT",
+                "没有可回滚的版本快照",
+            ));
+        }
+        self.invalidate_cache();
+        Ok(self.get_plugin(id))
+    }
+
     fn scan_plugins(&self) -> Vec<PluginInfo> {
         let mut result = Vec::new();
         if !self.plugins_dir.is_dir() {
@@ -385,11 +402,13 @@ impl PluginStore {
                 .and_then(|m| m.created().ok())
                 .map(created_time_o)
                 .unwrap_or_else(|| now_o());
+            let has_rollback = find_latest_snapshot(&self.plugins_dir, &manifest.id).is_some();
             result.push(PluginInfo {
                 manifest,
                 dir: dir.to_string_lossy().into_owned(),
                 state,
                 installed_at,
+                has_rollback,
             });
         }
         let mut g = match self.states_cache.lock() {
@@ -404,7 +423,15 @@ impl PluginStore {
 /// Install a .qplugin/.zip package from raw bytes (`POST /upload`). The package
 /// is extracted into a same-volume temp dir then atomically moved over the
 /// target plugin dir. Returns `Ok(None)` for an invalid package.
-pub fn install_from_package(package_bytes: &[u8]) -> Result<Option<PluginInfo>, ApiError> {
+///
+/// `require_signature`（ADR-050）：true=签名缺失拒绝（upload）；false=无签名放行
+/// （老版本/商店历史版本），有签名则必须通过。
+pub fn install_from_package(
+    package_bytes: &[u8],
+    require_signature: bool,
+) -> Result<Option<PluginInfo>, ApiError> {
+    crate::services::plugin_signature::verify_package_signature(package_bytes, require_signature)?;
+
     let plugins_dir = settings::plugins_dir();
     let _ = std::fs::create_dir_all(&plugins_dir);
 
@@ -495,7 +522,7 @@ pub fn install_from_package(package_bytes: &[u8]) -> Result<Option<PluginInfo>, 
             let mut out = std::fs::File::create(&out_path)?;
             std::io::copy(&mut entry, &mut out)?;
         }
-        delete_recursively_with_retry(&target_dir)?;
+        snapshot_existing_dir(&target_dir, &plugins_dir)?;
         std::fs::rename(&temp_dir, &target_dir)?;
         moved = true;
         Ok(())
@@ -506,28 +533,105 @@ pub fn install_from_package(package_bytes: &[u8]) -> Result<Option<PluginInfo>, 
     }
     result?;
 
+    let has_rollback = find_latest_snapshot(&plugins_dir, &manifest.id).is_some();
     Ok(Some(PluginInfo {
         manifest,
         dir: target_dir.to_string_lossy().into_owned(),
         state: "installed".to_string(),
         installed_at: now_o(),
+        has_rollback,
     }))
 }
 
-fn delete_recursively_with_retry(dir: &Path) -> Result<(), ApiError> {
-    if !dir.exists() {
+/// 升级覆盖前把旧版本目录快照为 `{id}.bak-{version}`（同卷 rename，原子）以便回滚。
+/// 全新安装（无旧目录）不产生 .bak；version 取旧目录内 manifest.json，读不出用时间戳兜底。
+fn snapshot_existing_dir(target_dir: &Path, plugins_dir: &Path) -> Result<(), ApiError> {
+    if !target_dir.is_dir() {
         return Ok(());
     }
-    let mut attempt = 0;
-    loop {
-        match std::fs::remove_dir_all(dir) {
-            Ok(()) => return Ok(()),
-            Err(_) if attempt < 4 => {
-                attempt += 1;
-                std::thread::sleep(std::time::Duration::from_millis(200 * attempt as u64));
+    let version = read_installed_version(target_dir).unwrap_or_else(now_o);
+    let name = target_dir.file_name().unwrap_or_default().to_string_lossy();
+    let bak_dir = plugins_dir.join(format!("{name}.bak-{}", safe_bak_suffix(&version)));
+    // 清除所有旧版 .bak（同一插件不同版本），保证最多一份快照
+    if let Ok(entries) = std::fs::read_dir(plugins_dir) {
+        for entry in entries.flatten() {
+            let fname = match entry.file_name().to_str() {
+                Some(f) => f.to_string(),
+                None => continue,
+            };
+            if fname.starts_with(&format!("{name}.bak-")) && plugins_dir.join(&fname) != bak_dir {
+                let _ = std::fs::remove_dir_all(entry.path());
             }
-            Err(e) => return Err(ApiError::internal(e.to_string())),
         }
+    }
+    std::fs::rename(target_dir, &bak_dir)?;
+    Ok(())
+}
+
+/// 在 `plugins/` 下查找某插件最新版本的 `.bak-*` 快照（按版本号降序取第一份）。
+/// 无快照返回 `None`。
+fn find_latest_snapshot(plugins_dir: &Path, id: &str) -> Option<PathBuf> {
+    let prefix = format!("{id}.bak-");
+    let mut snaps: Vec<(String, PathBuf)> = std::fs::read_dir(plugins_dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let fname = e.file_name().to_string_lossy().into_owned();
+            let ver = fname.strip_prefix(&prefix)?.to_string();
+            Some((ver, e.path()))
+        })
+        .collect();
+    snaps.sort_by(|a, b| version_compare(&b.0, &a.0).cmp(&0));
+    snaps.first().map(|(_, p)| p.clone())
+}
+
+/// 把 `{id}.bak-*` 快照替换回 `{id}` 目录：当前目录先改名到临时位，快照
+/// rename 回正位后再删临时（与 `install_from_package` 同卷原子替换思路）。
+/// 返回 `true`=已回滚，`false`=无快照。
+fn restore_snapshot(plugins_dir: &Path, id: &str) -> Result<bool, ApiError> {
+    let Some(snapshot) = find_latest_snapshot(plugins_dir, id) else {
+        return Ok(false);
+    };
+    let target = plugins_dir.join(id);
+    let temp = plugins_dir.join(format!(
+        ".{}.rollback-{}",
+        id,
+        uuid::Uuid::new_v4().simple()
+    ));
+    if target.is_dir() {
+        std::fs::rename(&target, &temp)?;
+    }
+    if let Err(e) = std::fs::rename(&snapshot, &target) {
+        let _ = std::fs::rename(&temp, &target); // 还原当前版本，避免丢数据
+        return Err(e.into());
+    }
+    let _ = std::fs::remove_dir_all(&temp);
+    Ok(true)
+}
+
+/// 读已安装目录里 manifest.json 的 version（供 .bak 命名）。
+fn read_installed_version(dir: &Path) -> Option<String> {
+    let json = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&json).ok()?;
+    v.get("version")?.as_str().map(str::to_string)
+}
+
+/// 保证 .bak 后缀仅含合法文件名字符（Windows 禁 `/ \ : * ? " < > |` 等）。
+fn safe_bak_suffix(version: &str) -> String {
+    let s: String = version
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if s.is_empty() {
+        now_o()
+    } else {
+        s
     }
 }
 
@@ -811,7 +915,7 @@ mod tests {
     #[test]
     fn install_rejects_path_traversal_id() {
         let pkg = minimal_package(r#"{"id":"../../evil","name":"x","version":"1.0.0"}"#);
-        let err = install_from_package(&pkg).unwrap_err();
+        let err = install_from_package(&pkg, false).unwrap_err();
         assert_eq!(err.code, "INVALID_PLUGIN_PACKAGE");
         assert!(err.message.contains("非法的插件 ID"));
     }
@@ -821,7 +925,7 @@ mod tests {
         for id in ["", "C:\\Windows\\Temp", "/etc/passwd", "a..b"] {
             let manifest = format!(r#"{{"id":"{id}","name":"x","version":"1.0.0"}}"#);
             let pkg = minimal_package(&manifest);
-            let err = install_from_package(&pkg).unwrap_err();
+            let err = install_from_package(&pkg, false).unwrap_err();
             assert_eq!(err.code, "INVALID_PLUGIN_PACKAGE", "id={id}");
         }
     }
@@ -837,9 +941,143 @@ mod tests {
             r#"{"id":"com.qomicex.demo","name":"x","version":"1.0.0","entry":{},"layers":["l2"],"permissions":[]}"#,
         );
         // 依赖预检：无依赖 → 应安装成功
-        let info = install_from_package(&pkg).unwrap().unwrap();
+        let info = install_from_package(&pkg, false).unwrap().unwrap();
         assert_eq!(info.manifest.id, "com.qomicex.demo");
         // 清理仅测试自己创建的产物
         store.uninstall("com.qomicex.demo");
+    }
+
+    #[test]
+    fn snapshot_new_dir_noop() {
+        // 目录不存在 → snapshot 是空操作
+        let (tmp, _guard) = make_temp_root();
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        let target = plugins_dir.join("my.plugin");
+        snapshot_existing_dir(&target, &plugins_dir).unwrap();
+        assert!(!target.is_dir());
+        assert!(plugins_dir.read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn snapshot_creates_bak_with_version() {
+        let (tmp, _guard) = make_temp_root();
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        let target = plugins_dir.join("my.plugin");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(
+            target.join("manifest.json"),
+            r#"{"id":"my.plugin","version":"2.0.0"}"#,
+        )
+        .unwrap();
+        snapshot_existing_dir(&target, &plugins_dir).unwrap();
+        // 原目录已被改名
+        assert!(!target.is_dir());
+        // .bak 目录存在
+        let bak = plugins_dir.join("my.plugin.bak-2.0.0");
+        assert!(bak.is_dir());
+        // 快照内容包含 manifest.json
+        assert!(bak.join("manifest.json").is_file());
+    }
+
+    #[test]
+    fn snapshot_twice_replaces_old_bak() {
+        let (tmp, _guard) = make_temp_root();
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        let target = plugins_dir.join("my.plugin");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(
+            target.join("manifest.json"),
+            r#"{"id":"my.plugin","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        // 第一次快照
+        snapshot_existing_dir(&target, &plugins_dir).unwrap();
+        let bak1 = plugins_dir.join("my.plugin.bak-1.0.0");
+        assert!(bak1.is_dir());
+        // 重新创建 target（模拟第二次安装）
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(
+            target.join("manifest.json"),
+            r#"{"id":"my.plugin","version":"2.0.0"}"#,
+        )
+        .unwrap();
+        snapshot_existing_dir(&target, &plugins_dir).unwrap();
+        let bak2 = plugins_dir.join("my.plugin.bak-2.0.0");
+        assert!(bak2.is_dir());
+        // 旧 .bak 已被删除，新 .bak 存在
+        assert!(!bak1.is_dir());
+        assert!(bak2.is_dir());
+    }
+
+    #[test]
+    fn find_latest_snapshot_picks_newest_version() {
+        let (tmp, _guard) = make_temp_root();
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        for v in ["1.0.0", "2.5.0", "1.9.0"] {
+            std::fs::create_dir_all(plugins_dir.join(format!("my.plugin.bak-{v}"))).unwrap();
+        }
+        let snap = find_latest_snapshot(&plugins_dir, "my.plugin").unwrap();
+        assert_eq!(
+            snap.file_name().unwrap().to_string_lossy(),
+            "my.plugin.bak-2.5.0"
+        );
+        assert!(find_latest_snapshot(&plugins_dir, "other.plugin").is_none());
+    }
+
+    #[test]
+    fn restore_snapshot_replaces_current_dir() {
+        let (tmp, _guard) = make_temp_root();
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        // 快照 1.0.0
+        let bak = plugins_dir.join("my.plugin.bak-1.0.0");
+        std::fs::create_dir_all(&bak).unwrap();
+        std::fs::write(bak.join("marker.txt"), "v1").unwrap();
+        // 当前 2.0.0
+        let target = plugins_dir.join("my.plugin");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("marker.txt"), "v2").unwrap();
+
+        assert!(restore_snapshot(&plugins_dir, "my.plugin").unwrap());
+        assert!(target.is_dir());
+        assert_eq!(
+            std::fs::read_to_string(target.join("marker.txt")).unwrap(),
+            "v1"
+        );
+        assert!(!bak.is_dir());
+        // 快照已被消费，再次调用返回 false
+        assert!(!restore_snapshot(&plugins_dir, "my.plugin").unwrap());
+    }
+
+    #[test]
+    fn restore_snapshot_no_snapshot_is_false() {
+        let (tmp, _guard) = make_temp_root();
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        std::fs::create_dir_all(plugins_dir.join("my.plugin")).unwrap();
+        assert!(!restore_snapshot(&plugins_dir, "my.plugin").unwrap());
+    }
+
+    /// std 版临时根目录：唯一子目录 + Drop 时清理。
+    fn make_temp_root() -> (std::path::PathBuf, DropGuard) {
+        let root = std::env::temp_dir().join(format!(
+            "qomicex-plugin-snapshot-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        (root.clone(), DropGuard(root))
+    }
+
+    struct DropGuard(std::path::PathBuf);
+
+    impl Drop for DropGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 }

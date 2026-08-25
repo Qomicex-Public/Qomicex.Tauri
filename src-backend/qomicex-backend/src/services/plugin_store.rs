@@ -18,7 +18,15 @@ use crate::error::ApiError;
 use crate::settings;
 use crate::state::APP_VERSION;
 
-pub const STORE_API_BASE: &str = "https://plugins.qomicex.top/api/v1";
+/// 商店 API base。生产默认 `https://plugins.qomicex.top/api/v1`，
+/// 本地联调可用 `QOMICEX_STORE_API_BASE` 覆盖（如 `http://127.0.0.1:8787/api/v1`）。
+pub fn store_api_base() -> &'static str {
+    static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| {
+        std::env::var("QOMICEX_STORE_API_BASE")
+            .unwrap_or_else(|_| "https://plugins.qomicex.top/api/v1".to_string())
+    })
+}
 
 /// 商店包体上限（上游文档：413 too_large = 超 50MB）。
 const MAX_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
@@ -119,11 +127,11 @@ async fn store_send(builder: reqwest::RequestBuilder) -> Result<serde_json::Valu
 }
 
 fn store_get(client: &reqwest::Client, path: &str) -> reqwest::RequestBuilder {
-    client.get(format!("{STORE_API_BASE}{path}"))
+    client.get(format!("{}{path}", store_api_base()))
 }
 
 fn store_post(client: &reqwest::Client, path: &str) -> reqwest::RequestBuilder {
-    client.post(format!("{STORE_API_BASE}{path}"))
+    client.post(format!("{}{path}", store_api_base()))
 }
 
 // =====================================================================
@@ -386,7 +394,8 @@ pub async fn install(
     let info = download_info(client, slug, version).await?;
     let bytes = fetch_package(client, &info).await?;
     verify_package_matches_slug(&bytes, slug)?;
-    crate::services::plugin::install_from_package(&bytes)?.ok_or_else(|| {
+    // 商店路径：有签名则验、无签名放行（老版本不强制重签，ADR-050 降级策略）
+    crate::services::plugin::install_from_package(&bytes, false)?.ok_or_else(|| {
         ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包无效（缺少 manifest.json）")
     })
 }

@@ -35,12 +35,14 @@ import { check } from '@tauri-apps/plugin-updater'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { checkRequired } from './api/update.ts'
 import { applyThemeColor } from './lib/themeColor.ts'
+import { restoreSavedTheme } from './theme/index.ts'
 
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
 import { SplashScreen } from './components/SplashScreen.tsx'
 import { InitialSetupWizard } from './components/InitialSetupWizard.tsx'
-import { usePluginStore } from './stores/pluginStore.ts'
+import { usePluginStore, collectInstalledPlugins, buildUpdatesMap } from './stores/pluginStore.ts'
 import { activatePlugin, deactivatePlugin, sortByDependencies } from './plugins/plugin-loader.tsx'
+import { checkStoreUpdates } from './api/pluginStore.ts'
 import './plugins/plugin-registry.ts'
 import type { PluginState } from './plugins/types.ts'
 
@@ -78,6 +80,8 @@ function AppContent() {
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
   const [pendingUpdateRequired, setPendingUpdateRequired] = useState(false)
   const autoCheckDone = useRef(false)
+  /** 插件更新静默轮询只做一次（与 autoCheckDone/javaChecked 同模式） */
+  const pluginUpdatesChecked = useRef(false)
   const { loadPlugins } = usePluginStore()
   const [showWizard, setShowWizard] = useState(false)
   const [settingsReady, setSettingsReady] = useState(false)
@@ -195,6 +199,15 @@ function AppContent() {
           activatePlugin(p)
         }
       }
+      // 插件更新静默轮询：一次性、异步不阻塞、失败零影响（不发 toast，仅存全局供管理 tab badge 显示）
+      if (pluginUpdatesChecked.current) return
+      pluginUpdatesChecked.current = true
+      checkStoreUpdates(collectInstalledPlugins(loaded))
+        .then((res) => {
+          const map = buildUpdatesMap(res.updates ?? [], loaded)
+          if (Object.keys(map).length > 0) usePluginStore.getState().setUpdates(map)
+        })
+        .catch((e) => console.warn('[plugins] silent update check failed:', e))
     })
   }, [backendState, loadPlugins])
 
@@ -412,6 +425,11 @@ function App() {
       applyGlassMaterial(s.componentMaterial, s.glassBlur)
     })
     return unsub
+  }, [])
+
+  // 恢复持久化的自定义 .qtheme（无已保存主题时 no-op，不影响既有 light/dark/预设流）。
+  useEffect(() => {
+    restoreSavedTheme()
   }, [])
 
   useEffect(() => {

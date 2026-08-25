@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "catppuccin-macchiato",
+  "name": "Catppuccin Macchiato",
+  "type": "color",
+  "scheme": "dark",
+  "colors": {
+    "background": "236 23% 12%",
+    "foreground": "227 68% 88%",
+    "card": "230 19% 26%",
+    "card-foreground": "227 68% 88%",
+    "popover": "230 19% 26%",
+    "popover-foreground": "227 68% 88%",
+    "primary": "220 83% 75%",
+    "primary-foreground": "236 23% 12%",
+    "secondary": "230 14% 41%",
+    "secondary-foreground": "227 68% 88%",
+    "muted": "228 20% 65%",
+    "muted-foreground": "230 12% 49%",
+    "accent": "230 14% 41%",
+    "accent-foreground": "227 68% 88%",
+    "destructive": "0 84% 60%",
+    "destructive-foreground": "227 68% 88%",
+    "border": "228 15% 57%",
+    "input": "228 15% 57%",
+    "ring": "220 83% 75%"
+  }
+}

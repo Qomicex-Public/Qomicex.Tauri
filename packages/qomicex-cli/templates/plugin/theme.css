@@ -1,0 +1,7 @@
+/* 插件主题：只消费主题语义 token（见 docs/junsi-dev-docs/2-架构设计/主题语义Token规范v1.md）。
+   v1 以 CSS 变量覆盖为主，全部 var() 引用，禁止内联色值。 */
+:root[data-theme] {
+  /* 可选：覆盖默认 HSL token 例如
+     --primary: 142 71% 48%;
+  */
+}

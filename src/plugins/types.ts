@@ -7,6 +7,7 @@ export interface PluginManifest {
   permissions: string[]
   dependencies?: PluginDependency[]
   entry: PluginEntry
+  render?: 'inline' | 'iframe'
   contributes?: PluginContributes
   icon?: string
 }
@@ -45,6 +46,7 @@ export interface PluginInfo {
   dir: string
   state: PluginState
   installedAt: string
+  hasRollback?: boolean
 }
 
 export type PluginState = 'installed' | 'active' | 'disabled'

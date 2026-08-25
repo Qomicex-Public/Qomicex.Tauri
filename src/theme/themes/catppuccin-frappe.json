@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "catppuccin-frappe",
+  "name": "Catppuccin Frappé",
+  "type": "color",
+  "scheme": "dark",
+  "colors": {
+    "background": "229 20% 17%",
+    "foreground": "227 70% 87%",
+    "card": "230 16% 30%",
+    "card-foreground": "227 70% 87%",
+    "popover": "230 16% 30%",
+    "popover-foreground": "227 70% 87%",
+    "primary": "222 74% 74%",
+    "primary-foreground": "229 20% 17%",
+    "secondary": "228 13% 44%",
+    "secondary-foreground": "227 70% 87%",
+    "muted": "228 22% 66%",
+    "muted-foreground": "229 13% 52%",
+    "accent": "228 13% 44%",
+    "accent-foreground": "227 70% 87%",
+    "destructive": "0 84% 60%",
+    "destructive-foreground": "227 70% 87%",
+    "border": "227 17% 58%",
+    "input": "227 17% 58%",
+    "ring": "222 74% 74%"
+  }
+}

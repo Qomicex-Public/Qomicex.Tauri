@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "catppuccin-latte",
+  "name": "Catppuccin Latte",
+  "type": "color",
+  "scheme": "light",
+  "colors": {
+    "background": "220 23% 95%",
+    "foreground": "234 16% 35%",
+    "card": "220 22% 92%",
+    "card-foreground": "234 16% 35%",
+    "popover": "220 22% 92%",
+    "popover-foreground": "234 16% 35%",
+    "primary": "266 85% 58%",
+    "primary-foreground": "0 0% 100%",
+    "secondary": "223 16% 83%",
+    "secondary-foreground": "234 16% 35%",
+    "muted": "227 12% 71%",
+    "muted-foreground": "232 10% 53%",
+    "accent": "223 16% 83%",
+    "accent-foreground": "234 16% 35%",
+    "destructive": "0 84% 60%",
+    "destructive-foreground": "234 16% 35%",
+    "border": "228 11% 65%",
+    "input": "228 11% 65%",
+    "ring": "266 85% 58%"
+  }
+}

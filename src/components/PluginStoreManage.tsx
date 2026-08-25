@@ -6,30 +6,27 @@ import { useI18n } from '../i18n/index.tsx'
 import { PluginCard } from './PluginCard.tsx'
 import { PluginIcon } from './PluginIcon.tsx'
 import { resolvePluginAssetUrl, deactivatePlugin } from '../plugins/plugin-loader.tsx'
-import { usePluginStore } from '../stores/pluginStore.ts'
+import { usePluginStore, collectInstalledPlugins, buildUpdatesMap } from '../stores/pluginStore.ts'
 import { PERMISSION_CATALOG, type PluginInfo } from '../plugins/types.ts'
-import { setPluginState as apiSetPluginState } from '../api/plugins.ts'
+import { setPluginState as apiSetPluginState, rollbackPlugin } from '../api/plugins.ts'
 import { API_BASE } from '../api/client.ts'
 import { uploadFile } from '../api/ipc.ts'
-import { checkStoreUpdates, type StoreUpdateEntry } from '../api/pluginStore.ts'
-
-/** 商店 slug ↔ 本地 manifest.id 匹配（与浏览子 tab 同规则） */
-function matchesLocalId(slug: string, localId: string): boolean {
-  return localId === slug || localId.toLowerCase().endsWith(`.${slug.toLowerCase()}`)
-}
+import { checkStoreUpdates, installStorePlugin, type StoreUpdateEntry } from '../api/pluginStore.ts'
 
 export default function PluginStoreManage() {
   const { t } = useI18n()
   const { confirm: msgConfirm, notify } = useMessageBox()
-  const { plugins, loading, loadPlugins } = usePluginStore()
+  const { plugins, loading, loadPlugins, updates, setUpdates } = usePluginStore()
 
   const [pluginQuery, setPluginQuery] = useState('')
   const [pluginsMsg, setPluginsMsg] = useState<string | null>(null)
   const [pluginDetail, setPluginDetail] = useState<PluginInfo | null>(null)
   const [pluginInstalling, setPluginInstalling] = useState(false)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
-  /** localId → 可更新的最新版本 */
-  const [updates, setUpdates] = useState<Record<string, string>>({})
+  /** localId → 升级中 */
+  const [upgrading, setUpgrading] = useState<Record<string, boolean>>({})
+  /** localId → 回滚中 */
+  const [rollingBack, setRollingBack] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     if (!pluginsMsg) return
@@ -103,26 +100,9 @@ export default function PluginStoreManage() {
   async function handleCheckUpdates() {
     setCheckingUpdates(true)
     try {
-      const seen = new Set<string>()
-      const installed: { slug: string; version: string }[] = []
-      for (const p of plugins) {
-        const id = p.manifest.id
-        for (const slug of [id, id.includes('.') ? id.split('.').pop()! : '']) {
-          if (!slug || seen.has(slug)) continue
-          seen.add(slug)
-          installed.push({ slug, version: p.manifest.version })
-        }
-      }
+      const installed = collectInstalledPlugins(plugins)
       const res: { updates: StoreUpdateEntry[] } = await checkStoreUpdates(installed)
-      const map: Record<string, string> = {}
-      for (const u of res.updates ?? []) {
-        for (const p of plugins) {
-          if (matchesLocalId(u.slug, p.manifest.id)) {
-            map[p.manifest.id] = u.latestVersion
-            break
-          }
-        }
-      }
+      const map = buildUpdatesMap(res.updates ?? [], plugins)
       setUpdates(map)
       notify(
         Object.keys(map).length > 0
@@ -136,6 +116,59 @@ export default function PluginStoreManage() {
       setCheckingUpdates(false)
     }
   }
+
+  const handlePluginUpgrade = useCallback(
+    async (localId: string) => {
+      const entry = updates[localId]
+      if (!entry) return
+      const plugin = plugins.find((p) => p.manifest.id === localId)
+      const name = plugin?.manifest.name ?? localId
+      if (!(await msgConfirm(t('settings.plugins.store.installConfirmDesc', { name, version: entry.latestVersion }), t('settings.plugins.store.updateConfirmTitle')))) return
+      setUpgrading((prev) => ({ ...prev, [localId]: true }))
+      try {
+        await installStorePlugin(entry.slug, entry.latestVersion)
+        setUpdates((prev) => {
+          const next = { ...prev }
+          delete next[localId]
+          return next
+        })
+        await loadPlugins()
+        notify(t('settings.plugins.store.installSuccess'), 'success')
+      } catch (e) {
+        notify(t('settings.plugins.store.installFailed', { message: e instanceof Error ? e.message : String(e) }), 'error')
+      } finally {
+        setUpgrading((prev) => {
+          const next = { ...prev }
+          delete next[localId]
+          return next
+        })
+      }
+    },
+    [updates, plugins, msgConfirm, notify, t, loadPlugins, setUpdates]
+  )
+
+  const handlePluginRollback = useCallback(
+    async (localId: string) => {
+      const plugin = plugins.find((p) => p.manifest.id === localId)
+      const name = plugin?.manifest.name ?? localId
+      if (!(await msgConfirm(t('settings.plugins.store.rollbackConfirm', { name })))) return
+      setRollingBack((prev) => ({ ...prev, [localId]: true }))
+      try {
+        await rollbackPlugin(localId)
+        await loadPlugins()
+        notify(t('settings.plugins.store.rollbackSuccess'), 'success')
+      } catch (e) {
+        notify(t('settings.plugins.store.rollbackFailed', { message: e instanceof Error ? e.message : String(e) }), 'error')
+      } finally {
+        setRollingBack((prev) => {
+          const next = { ...prev }
+          delete next[localId]
+          return next
+        })
+      }
+    },
+    [plugins, msgConfirm, notify, t, loadPlugins]
+  )
 
   const filtered = plugins.filter((p) =>
     p.manifest.name.toLowerCase().includes(pluginQuery.trim().toLowerCase())
@@ -186,10 +219,20 @@ export default function PluginStoreManage() {
                 <div key={p.manifest.id} className="relative">
                   {updateTo && (
                     <span className="absolute -right-1.5 -top-1.5 z-10 rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground shadow">
-                      v{updateTo}
+                      v{updateTo.latestVersion}
                     </span>
                   )}
-                  <PluginCard plugin={p} onToggle={handlePluginToggle} onUninstall={handlePluginUninstall} onClick={() => setPluginDetail(p)} />
+                  <PluginCard
+                    plugin={p}
+                    onToggle={handlePluginToggle}
+                    onUninstall={handlePluginUninstall}
+                    onClick={() => setPluginDetail(p)}
+                    upgradeTo={updateTo?.latestVersion}
+                    upgrading={!!upgrading[p.manifest.id]}
+                    onUpgrade={handlePluginUpgrade}
+                    rollingBack={!!rollingBack[p.manifest.id]}
+                    onRollback={handlePluginRollback}
+                  />
                 </div>
               )
             })}
