@@ -112,6 +112,36 @@ struct InstallerRequest {
     optifine_version: Option<String>,
 }
 
+/// POST /api/instance/sync-scan body：前端扫描结果。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncScanRequest {
+    game_dir: String,
+    versions: Vec<SyncScanVersion>,
+}
+
+/// 前端扫描的版本条目。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncScanVersion {
+    name: String,
+    game_version: String,
+    #[serde(default)]
+    loader: Option<String>,
+    #[serde(default)]
+    loader_version: Option<String>,
+    #[serde(default)]
+    icon_data: Option<String>,
+    #[serde(default)]
+    modpack_name: Option<String>,
+    #[serde(default)]
+    modpack_version: Option<String>,
+    #[serde(default)]
+    modpack_author: Option<String>,
+    #[serde(default)]
+    modpack_summary: Option<String>,
+}
+
 /// GET /api/instance/{id}/install/progress response (source: InstallProgressResponse).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -182,6 +212,8 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/install/pause", post(install_pause))
         .route("/instance/{id}/install/resume", post(install_resume))
         .route("/instance/{id}/install/cancel", post(install_cancel))
+        // 实例扫描同步
+        .route("/instance/sync-scan", post(sync_scan))
         // 实例自定义分组
         .route("/instance-groups", get(list_groups).post(create_group))
         .route(
@@ -211,6 +243,40 @@ fn enrich_instance_icon(inst: &mut GameInstance) {
 /// GET /instance: list all instances.
 async fn list_instances(State(state): State<SharedState>) -> ApiResult<Json<Vec<GameInstance>>> {
     // 以磁盘实际目录为主：过滤掉残留（下载失败/已删除文件但 JSON 未清理）的实例
+    let mut instances = state.instance.list_existing();
+    for inst in &mut instances {
+        enrich_instance_icon(inst);
+    }
+    Ok(Json(instances))
+}
+
+/// POST /instance/sync-scan: 更新扫描缓存并返回同步后的实例列表。
+async fn sync_scan(
+    State(state): State<SharedState>,
+    Json(req): Json<SyncScanRequest>,
+) -> ApiResult<Json<Vec<GameInstance>>> {
+    // 将前端扫描结果转换为 ScannedVersionInfo
+    let scanned: Vec<crate::services::instance::ScannedVersionInfo> = req
+        .versions
+        .into_iter()
+        .map(|v| crate::services::instance::ScannedVersionInfo {
+            name: v.name,
+            game_version: v.game_version,
+            game_dir: req.game_dir.clone(),
+            loader: v.loader,
+            loader_version: v.loader_version,
+            icon_data: v.icon_data,
+            modpack_name: v.modpack_name,
+            modpack_version: v.modpack_version,
+            modpack_author: v.modpack_author,
+            modpack_summary: v.modpack_summary,
+        })
+        .collect();
+
+    // 更新扫描缓存
+    state.instance.update_scan_cache(&req.game_dir, scanned);
+
+    // 返回同步后的实例列表
     let mut instances = state.instance.list_existing();
     for inst in &mut instances {
         enrich_instance_icon(inst);
