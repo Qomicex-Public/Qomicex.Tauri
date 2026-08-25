@@ -1,9 +1,32 @@
 import { get, post, put, del, API_BASE, ApiError } from './client.ts'
 import { uploadFile } from './ipc.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode, ScannedVersion } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
+}
+
+/// 将前端扫描结果同步到后端，返回同步后的实例列表。
+/// 这是实例列表的核心同步入口，所有使用实例列表的地方都应通过此方法或 getInstances 获取数据。
+export async function syncScan(gameDir: string, versions: ScannedVersion[]): Promise<GameInstance[]> {
+  return post<GameInstance[]>('/instance/sync-scan', {
+    gameDir,
+    versions: versions.map(v => {
+      // 复用 firstRealLoader 逻辑：取第一个非 Vanilla/非 Unknown 的加载器
+      const realLoader = v.loaders?.find(l => l.type && l.type !== 'Vanilla' && l.type !== 'Unknown')
+      return {
+        name: v.name,
+        gameVersion: v.gameVersion,
+        loader: realLoader?.type,
+        loaderVersion: realLoader?.version,
+        iconData: v.iconData,
+        modpackName: v.modpack?.modpackName,
+        modpackVersion: v.modpack?.modpackVersion,
+        modpackAuthor: v.modpack?.modpackAuthor,
+        modpackSummary: v.modpack?.modpackSummary,
+      }
+    }),
+  })
 }
 
 export async function getInstance(id: string): Promise<GameInstance> {

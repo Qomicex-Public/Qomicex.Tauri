@@ -16,7 +16,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
+import { createInstance, startInstall, getInstances, syncScan, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui'
@@ -184,27 +184,9 @@ export default function Instances() {
     setScannedLocal(versions)
 
     try {
-      const instances = await getInstances()
+      // 使用 syncScan 将扫描结果同步到后端，返回同步后的实例列表
+      const instances = await syncScan(dir, versions)
       setBackedInstances(instances)
-      const existingNames = new Set(instances.filter((i) => i.gameDir === dir).map((i) => i.name))
-      const toCreate = versions.filter((v) => !existingNames.has(v.name))
-      if (toCreate.length > 0) {
-        const created = await Promise.all(toCreate.map((v) => createInstance({
-          name: v.name,
-          gameVersion: v.gameVersion,
-          loader: firstRealLoader(v).type,
-          loaderVersion: firstRealLoader(v).version,
-          gameDir: dir,
-          maxMemory: 4096,
-          iconData: v.iconData,
-          modpackName: v.modpack?.modpackName,
-          modpackVersion: v.modpack?.modpackVersion,
-          modpackAuthor: v.modpack?.modpackAuthor,
-          modpackSummary: v.modpack?.modpackSummary,
-        }).catch(() => null)))
-        const valid = created.filter((c): c is GameInstance => c !== null)
-        if (valid.length > 0) setBackedInstances((prev) => [...prev, ...valid])
-      }
     } catch {}
     finally { setScanning(false) }
   }, [])
