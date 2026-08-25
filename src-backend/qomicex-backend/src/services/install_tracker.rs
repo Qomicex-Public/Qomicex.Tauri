@@ -372,6 +372,22 @@ impl InstallState {
 /// runner 结果：`Ok(())` 成功 → 置 completed；`Err(msg)` = 失败/取消 → 置 failed。
 pub type InstallOutcome = Result<(), String>;
 
+/// 根据取消标志与 runner 结果判定任务终态。
+///
+/// 并行分支快速失败会 `request_cancel()` 置位取消标志，但此时 `outcome` 携带真实错误
+/// （非取消哨兵 `"安装已取消"`）——若仅凭取消标志就判 cancelled，会吞掉真实失败原因。
+/// 因此只有「取消标志置位 **且** outcome 为取消哨兵」才视为用户取消。
+fn classify_outcome(cancelled: bool, outcome: &InstallOutcome) -> InstallStatus {
+    if cancelled && matches!(outcome, Err(m) if m == "安装已取消") {
+        InstallStatus::Cancelled
+    } else {
+        match outcome {
+            Ok(()) => InstallStatus::Completed,
+            Err(_) => InstallStatus::Failed,
+        }
+    }
+}
+
 /// 安装任务跟踪器（对应源 `InstallTracker`）。
 ///
 /// 以 `HashMap<instanceId, InstallHandle>` 维护全部任务，持有一个全局
@@ -426,32 +442,40 @@ impl InstallTracker {
 
         tokio::spawn(async move {
             let outcome = runner(handle.clone()).await;
-            if handle.is_cancelled() {
-                handle.update(|f| {
-                    f.set_status(InstallStatus::Cancelled);
-                    f.error = Some("安装已取消".to_string());
-                });
-                tracing::warn!(instance = %id_owned, kind = %kind_owned, "install: cancelled");
-            } else {
-                match outcome {
-                    Ok(()) => {
-                        handle.update(|f| {
-                            f.set_status(InstallStatus::Completed);
-                            f.stage = InstallStatus::Completed.as_str().to_string();
-                            f.progress = 100.0;
-                            f.current_file.clear();
-                            f.finish_steps(true);
-                        });
-                        tracing::info!(instance = %id_owned, kind = %kind_owned, "install: completed");
-                    }
-                    Err(msg) => {
-                        handle.update(|f| {
-                            f.set_status(InstallStatus::Failed);
-                            f.error = Some(msg.clone());
-                            f.finish_steps(false);
-                        });
-                        tracing::error!(instance = %id_owned, kind = %kind_owned, error = %msg, "install: failed");
-                    }
+            // 区分「用户主动取消」与「真实失败」：并行分支快速失败时会 request_cancel
+            // 置位让其余分支退出，此时 outcome 携带真实错误——不能因 is_cancelled 被置位
+            // 就吞掉真实原因误报为 cancelled。仅当 outcome 为取消哨兵（"安装已取消"）
+            // 时才视为用户取消；其余一律按结果报 completed/failed。
+            let status = classify_outcome(handle.is_cancelled(), &outcome);
+            match status {
+                InstallStatus::Cancelled => {
+                    handle.update(|f| {
+                        f.set_status(InstallStatus::Cancelled);
+                        f.error = Some("安装已取消".to_string());
+                    });
+                    tracing::warn!(instance = %id_owned, kind = %kind_owned, "install: cancelled");
+                }
+                InstallStatus::Completed => {
+                    handle.update(|f| {
+                        f.set_status(InstallStatus::Completed);
+                        f.stage = InstallStatus::Completed.as_str().to_string();
+                        f.progress = 100.0;
+                        f.current_file.clear();
+                        f.finish_steps(true);
+                    });
+                    tracing::info!(instance = %id_owned, kind = %kind_owned, "install: completed");
+                }
+                _ => {
+                    let msg = match &outcome {
+                        Err(m) => m.clone(),
+                        Ok(()) => String::new(),
+                    };
+                    handle.update(|f| {
+                        f.set_status(InstallStatus::Failed);
+                        f.error = Some(msg.clone());
+                        f.finish_steps(false);
+                    });
+                    tracing::error!(instance = %id_owned, kind = %kind_owned, error = %msg, "install: failed");
                 }
             }
         });
@@ -696,6 +720,25 @@ mod tests {
         assert!(!handle.is_cancelled());
         handle.request_cancel();
         assert!(handle.is_cancelled());
+    }
+
+    #[test]
+    fn classify_outcome_real_failure_is_failed_not_cancelled() {
+        // 回归（issue #59）：并行分支快速失败 request_cancel 置位后，真实错误必须报 failed
+        // 并保留真实原因，不得因取消标志误报为 cancelled。修复前此用例 FAILED（误判 Cancelled）。
+        let status = classify_outcome(true, &Err("下载文件校验失败".to_string()));
+        assert_eq!(status, InstallStatus::Failed);
+
+        // 用户主动取消：取消标志置位且 outcome 为取消哨兵 → cancelled
+        let status = classify_outcome(true, &Err("安装已取消".to_string()));
+        assert_eq!(status, InstallStatus::Cancelled);
+
+        // 未取消时的常规结果
+        assert_eq!(classify_outcome(false, &Ok(())), InstallStatus::Completed);
+        assert_eq!(
+            classify_outcome(false, &Err("boom".to_string())),
+            InstallStatus::Failed
+        );
     }
 
     #[test]
