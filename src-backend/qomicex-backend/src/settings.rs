@@ -103,6 +103,8 @@ pub struct SettingsResponse {
     pub directories: Option<Vec<String>>,
     pub custom_java_runtimes: Option<Vec<CustomJavaEntryDto>>,
     pub theme: Option<String>,
+    #[serde(default)]
+    pub theme_preset: Option<String>,
     pub log_level: Option<String>,
     pub translation_provider: String,
     pub bing_api_key: Option<String>,
@@ -202,6 +204,7 @@ impl Default for SettingsResponse {
             directories: None,
             custom_java_runtimes: None,
             theme: None,
+            theme_preset: None,
             log_level: Some("info".to_string()),
             translation_provider: "mymemory".to_string(),
             bing_api_key: None,

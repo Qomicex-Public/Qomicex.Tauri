@@ -32,6 +32,7 @@ export interface AppSettings {
   autoSelectFileDownloadSource: boolean
   downloadTimeout: number
   theme: 'dark' | 'light'
+  themePreset: 'default' | 'latte' | 'frappe' | 'macchiato' | 'mocha'
   animationsEnabled: boolean
   animationSpeed: number
   maxFrameRate: number
@@ -95,6 +96,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSelectFileDownloadSource: false,
   downloadTimeout: 15,
   theme: 'dark',
+  themePreset: 'default',
   animationsEnabled: true,
   animationSpeed: 1,
   maxFrameRate: 0,
@@ -138,7 +140,16 @@ export async function loadSettings(): Promise<AppSettings> {
         get<Partial<AppSettings>>('/settings'),
         get<{ path: string }>('/settings/data-dir'),
       ])
-      cached = { ...DEFAULT_SETTINGS, ...data, dataDir, theme: data.theme ?? cached.theme ?? DEFAULT_SETTINGS.theme }
+      cached = {
+        ...DEFAULT_SETTINGS,
+        ...data,
+        dataDir,
+        theme: data.theme ?? cached.theme ?? DEFAULT_SETTINGS.theme,
+        themePreset:
+          data.themePreset ??
+          (localStorage.getItem('qomicex-theme-preset') as AppSettings['themePreset'] | null) ??
+          DEFAULT_SETTINGS.themePreset,
+      }
       loaded = true
       listeners.forEach(fn => fn(cached))
       break

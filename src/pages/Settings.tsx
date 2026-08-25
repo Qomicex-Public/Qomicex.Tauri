@@ -70,16 +70,22 @@ const DOWNLOAD_SOURCES = [
 
 /** 主题色默认值（未设置时回落到 CSS 默认绿，仅用于取色器占位显示）。 */
 const DEFAULT_THEME_COLOR = '#22c55e'
-/** 预设主题色板（Tailwind 500 系）。 */
+/** 预设主题色板（默认绿 + Catppuccin Mocha）。 */
 const THEME_COLOR_PRESETS: { value: string; label: string }[] = [
   { value: '#22c55e', label: 'Green' },
-  { value: '#3b82f6', label: 'Blue' },
-  { value: '#8b5cf6', label: 'Violet' },
-  { value: '#f97316', label: 'Orange' },
-  { value: '#ef4444', label: 'Red' },
-  { value: '#14b8a6', label: 'Teal' },
-  { value: '#ec4899', label: 'Pink' },
-  { value: '#f59e0b', label: 'Amber' },
+  { value: '#89b4fa', label: 'Blue' },
+  { value: '#cba6f7', label: 'Mauve' },
+  { value: '#fab387', label: 'Peach' },
+  { value: '#f38ba8', label: 'Red' },
+  { value: '#94e2d5', label: 'Teal' },
+  { value: '#f5c2e7', label: 'Pink' },
+  { value: '#f9e2af', label: 'Yellow' },
+]
+const THEME_PRESETS: { value: AppSettings['themePreset']; label: string }[] = [
+  { value: 'latte', label: 'Catppuccin Latte' },
+  { value: 'frappe', label: 'Catppuccin Frappé' },
+  { value: 'macchiato', label: 'Catppuccin Macchiato' },
+  { value: 'mocha', label: 'Catppuccin Mocha' },
 ]
 
 // 关于页 credits 数据 → i18n key 映射（credits.ts 数据对象保持中文，渲染处查表翻译）
@@ -649,6 +655,9 @@ export default function Settings() {
     const next = { ...settings, [key]: value }
     setSettings(next)
     saveSettings(next)
+    if (key === 'themePreset') {
+      localStorage.setItem('qomicex-theme-preset', value as string)
+    }
     notify(t('settings.saved'), 'success')
   }
 
@@ -1734,13 +1743,13 @@ export default function Settings() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-5">
-                  <div className="space-y-2">
-                    <Label>{t('settings.appearance.theme')}</Label>
-                    <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
-                      <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>
-                      <SelectOption value="light">{t('settings.appearance.light')}</SelectOption>
-                    </Select>
-                  </div>
+                   <div className="space-y-2">
+                     <Label>{t('settings.appearance.theme')} preset</Label>
+                     <Select value={settings.themePreset} onChange={(v) => update('themePreset', v as AppSettings['themePreset'])} className="w-56">
+                       <SelectOption value="default">Qomicex Default</SelectOption>
+                       {THEME_PRESETS.map((preset) => <SelectOption key={preset.value} value={preset.value}>{preset.label}</SelectOption>)}
+                     </Select>
+                   </div>
 
                   <div className="space-y-2">
                     <Label>{t('settings.appearance.themeColor')}</Label>
@@ -1845,8 +1854,17 @@ export default function Settings() {
                     </Select>
                     <p className="text-xs text-muted-foreground">{t('settings.appearance.maxFrameRateDesc')}</p>
                   </div>
-                </CardContent>
-              </Card>
+                 </CardContent>
+               </Card>
+               <Card>
+                 <CardHeader><CardTitle>{t('settings.appearance.theme')} mode</CardTitle></CardHeader>
+                 <CardContent>
+                   <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
+                     <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>
+                     <SelectOption value="light">{t('settings.appearance.light')}</SelectOption>
+                   </Select>
+                 </CardContent>
+               </Card>
 
               <Card>
                 <CardHeader>

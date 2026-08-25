@@ -380,6 +380,13 @@ function App() {
         root.style.removeProperty('--app-font')
       }
     }
+    function applyThemePreset(preset: AppSettings['themePreset'] | undefined) {
+      const root = document.documentElement
+      // 后端缺 themePreset（旧后端丢弃该字段）时回退到前端本地存储，避免切页即回默认。
+      const effective = preset ?? (localStorage.getItem('qomicex-theme-preset') as AppSettings['themePreset'] | null) ?? 'default'
+      if (effective && effective !== 'default') root.dataset.theme = effective
+      else delete root.dataset.theme
+    }
     function applyGlassMaterial(material: string | undefined, blur: number | undefined) {
       const root = document.documentElement
       root.dataset.material = material ?? 'default'
@@ -399,6 +406,7 @@ function App() {
       window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
       setConsoleLevel(s.logLevel ?? 'info')
       setTheme(s.theme ?? 'dark')
+      applyThemePreset(s.themePreset)
       applyFont(s.fontFamily)
       applyThemeColor(s.themeColor)
       applyGlassMaterial(s.componentMaterial, s.glassBlur)

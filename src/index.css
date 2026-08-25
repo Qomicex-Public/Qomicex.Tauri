@@ -61,6 +61,31 @@
     --ring: 142 71% 42%;
   }
 
+  :root[data-theme="latte"] {
+    --background: 220 23% 95%; --foreground: 234 16% 35%; --card: 220 22% 92%; --card-foreground: 234 16% 35%;
+    --popover: 220 22% 92%; --popover-foreground: 234 16% 35%; --primary: 266 85% 58%; --primary-foreground: 0 0% 100%;
+    --secondary: 223 16% 83%; --secondary-foreground: 234 16% 35%; --muted: 227 12% 71%; --muted-foreground: 232 10% 53%;
+    --accent: 223 16% 83%; --accent-foreground: 234 16% 35%; --border: 228 11% 65%; --input: 228 11% 65%; --ring: 266 85% 58%;
+  }
+  :root[data-theme="frappe"] {
+    --background: 229 20% 17%; --foreground: 227 70% 87%; --card: 230 16% 30%; --card-foreground: 227 70% 87%;
+    --popover: 230 16% 30%; --popover-foreground: 227 70% 87%; --primary: 222 74% 74%; --primary-foreground: 229 20% 17%;
+    --secondary: 228 13% 44%; --secondary-foreground: 227 70% 87%; --muted: 228 22% 66%; --muted-foreground: 229 13% 52%;
+    --accent: 228 13% 44%; --accent-foreground: 227 70% 87%; --border: 227 17% 58%; --input: 227 17% 58%; --ring: 222 74% 74%;
+  }
+  :root[data-theme="macchiato"] {
+    --background: 236 23% 12%; --foreground: 227 68% 88%; --card: 230 19% 26%; --card-foreground: 227 68% 88%;
+    --popover: 230 19% 26%; --popover-foreground: 227 68% 88%; --primary: 220 83% 75%; --primary-foreground: 236 23% 12%;
+    --secondary: 230 14% 41%; --secondary-foreground: 227 68% 88%; --muted: 228 20% 65%; --muted-foreground: 230 12% 49%;
+    --accent: 230 14% 41%; --accent-foreground: 227 68% 88%; --border: 228 15% 57%; --input: 228 15% 57%; --ring: 220 83% 75%;
+  }
+  :root[data-theme="mocha"] {
+    --background: 240 23% 9%; --foreground: 226 64% 88%; --card: 237 16% 23%; --card-foreground: 226 64% 88%;
+    --popover: 237 16% 23%; --popover-foreground: 226 64% 88%; --primary: 217 92% 76%; --primary-foreground: 240 23% 9%;
+    --secondary: 233 12% 39%; --secondary-foreground: 226 64% 88%; --muted: 228 17% 64%; --muted-foreground: 231 11% 47%;
+    --accent: 233 12% 39%; --accent-foreground: 226 64% 88%; --border: 230 13% 55%; --input: 230 13% 55%; --ring: 217 92% 76%;
+  }
+
   :root[data-anim-enabled="false"] {
     --anim-duration-multiplier: 0;
   }
