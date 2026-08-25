@@ -163,6 +163,15 @@ impl InstanceService {
         cache.insert(game_dir.to_string(), scanned);
     }
 
+    /// 使指定 game_dir 的扫描缓存失效。
+    pub fn invalidate_scan_cache(&self, game_dir: &str) {
+        let mut cache = match self.scan_cache.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        cache.remove(game_dir);
+    }
+
     /// 以磁盘实际目录为主过滤实例列表：version_isolation 开启（含全局默认）的实例，
     /// 其 `{game_dir}/versions/{name}` 目录不存在时视为残留（安装下载失败、已手动
     /// 删除文件或删除流程未落盘），从返回列表中剔除。隔离关闭（共享 game_dir）的
@@ -221,6 +230,8 @@ impl InstanceService {
         guard.push(instance.clone());
         drop(guard);
         self.save_to_file();
+        // 使该 game_dir 的扫描缓存失效
+        self.invalidate_scan_cache(&instance.game_dir);
         instance
     }
 
@@ -232,6 +243,8 @@ impl InstanceService {
         guard[index] = instance.clone();
         drop(guard);
         self.save_to_file();
+        // 使该 game_dir 的扫描缓存失效
+        self.invalidate_scan_cache(&instance.game_dir);
         Some(instance)
     }
 
@@ -256,6 +269,9 @@ impl InstanceService {
         if version_dir.is_dir() {
             let _ = std::fs::remove_dir_all(&version_dir);
         }
+
+        // 使该 game_dir 的扫描缓存失效
+        self.invalidate_scan_cache(&instance.game_dir);
 
         Some(instance)
     }
@@ -384,6 +400,10 @@ impl InstanceService {
                         loader: scanned.loader.clone(),
                         loader_version: scanned.loader_version.clone(),
                         icon_data: scanned.icon_data.clone(),
+                        modpack_name: scanned.modpack_name.clone(),
+                        modpack_version: scanned.modpack_version.clone(),
+                        modpack_author: scanned.modpack_author.clone(),
+                        modpack_summary: scanned.modpack_summary.clone(),
                         ..Default::default()
                     };
                     seen_keys.insert(key, result.len());
@@ -392,7 +412,17 @@ impl InstanceService {
             }
         }
 
-        // 4. 写回 JSON（包含清理后的残留）
+        // 4. 将 JSON 中未被扫描覆盖的实例追加到结果中
+        //    （保留其他目录的实例，避免扫描一个目录导致其他目录实例丢失）
+        for inst in &json_instances {
+            let key = (inst.game_dir.clone(), inst.name.clone());
+            if !seen_keys.contains_key(&key) {
+                seen_keys.insert(key, result.len());
+                result.push(inst.clone());
+            }
+        }
+
+        // 5. 写回 JSON
         {
             let mut guard = match self.instances.lock() {
                 Ok(g) => g,

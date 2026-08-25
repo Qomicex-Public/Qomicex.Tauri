@@ -11,17 +11,21 @@ export async function getInstances(): Promise<GameInstance[]> {
 export async function syncScan(gameDir: string, versions: ScannedVersion[]): Promise<GameInstance[]> {
   return post<GameInstance[]>('/instance/sync-scan', {
     gameDir,
-    versions: versions.map(v => ({
-      name: v.name,
-      gameVersion: v.gameVersion,
-      loader: v.loaders?.[0]?.type,
-      loaderVersion: v.loaders?.[0]?.version,
-      iconData: v.iconData,
-      modpackName: v.modpack?.modpackName,
-      modpackVersion: v.modpack?.modpackVersion,
-      modpackAuthor: v.modpack?.modpackAuthor,
-      modpackSummary: v.modpack?.modpackSummary,
-    })),
+    versions: versions.map(v => {
+      // 复用 firstRealLoader 逻辑：取第一个非 Vanilla/非 Unknown 的加载器
+      const realLoader = v.loaders?.find(l => l.type && l.type !== 'Vanilla' && l.type !== 'Unknown')
+      return {
+        name: v.name,
+        gameVersion: v.gameVersion,
+        loader: realLoader?.type,
+        loaderVersion: realLoader?.version,
+        iconData: v.iconData,
+        modpackName: v.modpack?.modpackName,
+        modpackVersion: v.modpack?.modpackVersion,
+        modpackAuthor: v.modpack?.modpackAuthor,
+        modpackSummary: v.modpack?.modpackSummary,
+      }
+    }),
   })
 }
 
