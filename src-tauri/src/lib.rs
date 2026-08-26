@@ -136,12 +136,13 @@ fn spawn_backend(app: &tauri::App, pipe_name: &Option<String>) {
         let _ = std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755));
     }
     let mut cmd = std::process::Command::new(&exe_path);
-    // IPC 模式：release 由启动器注入管道名。保留 TCP 监听作兜底——
-    // 部分环境的 WebView2 对 custom protocol（含 Tauri 内建 ipc://）fetch
-    // 整体返回 net::ERR_FAILED，若关闭 TCP 且探测失败将直接无法启动。
+    // IPC 模式（纯管道）：启动器注入管道名并禁用 TCP 监听，彻底消除端口占用
+    // 冲突（旧后端残留进程抢占 127.0.0.1:5000 时新后端 bind 失败 panic 退出，
+    // 管道随之消失，前端 qomicex:// 探测失败回退 HTTP 连到旧后端 → 405 版本错配）。
     if let Some(name) = pipe_name {
         cmd.env("QOMICEX_IPC_PIPE", name);
-        tauri_log!("backend", "ipc pipe: {name} (tcp fallback kept)");
+        cmd.env("QOMICEX_NO_TCP", "1");
+        tauri_log!("backend", "ipc pipe: {name} (tcp disabled, ipc-only)");
     }
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
