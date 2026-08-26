@@ -60,8 +60,8 @@ component（组件消费层 = CSS 变量，唯一被 var() 读取）
   theme.json        ← 颜色主题（本任务，schema v1，手写校验）
   theme.css         ← 可选，命名空间注入（--qtx- 前缀 / scoped），v2
   theme.mjs         ← 可选，CSS-in-JS 计算层（沙箱），TODO（v2）
-  icon-theme.json   ← 图标主题，v2
-  fonts/            ← 字体贡献，v2
+  icon-theme.json   ← 图标主题（v1.5，已实现，见 icon-theme.ts）
+  fonts/            ← 字体贡献（v1.5，经 contributes.fontLinks 注入）
 ```
 
 ### theme.json schema v1
@@ -91,9 +91,19 @@ component（组件消费层 = CSS 变量，唯一被 var() 读取）
 - `clearTheme()`：移除自定义主题，回到设置层 light/dark/预设。
 - `restoreSavedTheme()`：启动时恢复已注册主题（App.tsx mount 调用）。
 - `useTheme()`：订阅变更事件驱动重渲染。
-- `registerTheme()`：注册打包内置 `.qtheme`（含 Catppuccin 四预设）。
+- `registerTheme(raw, iconRaw?)`：注册打包内置 `.qtheme`（含 Catppuccin 四预设）；可同时携带 icon-theme.json。
+- `registerIconTheme(themeId, raw)` / `getActiveIconTheme()` / `useIconTheme()`：v1.5 图标主题注册与读取。
 
-## 6. plugin-ui var() 消费审计
+## 6. 图标主题 v1.5（src/theme/icon-theme.ts）
+
+- 格式：`{ schemaVersion: 1, fonts?: string[], icons: { "<图标名>": { type: "svg"|"char"|"url", ... } } }`。
+- 键为 FontAwesome 类名或自定义图标 ID；值为 SVG path / 自定义字体 codepoint / 图片 URL。
+- `PluginIcon` 渲染优先级：icon-theme 映射 → URL → FontAwesome 类名 → null。
+- 校验器 `validateIconTheme`（手写，禁新依赖），非法抛 `IconThemeError`。
+- manifest `contributes.iconTheme`（`.qtheme` 包内相对路径）声明 + `contributes.fontLinks`（激活注入 `<link>`）。
+- 连字作用域：启动器 `.font-ligatures` / 插件 `.p-font-ligatures`（`font-feature-settings: "liga" 1, "calt" 1`）。
+
+## 7. plugin-ui var() 消费审计
 
 **结论：通过。** 对 `packages/plugin-ui/src/` 全量（.tsx/.ts/.css）扫描内联色值字面量（`#hex`、`rgb(`、`rgba(`、`hsl(数字`、`colorScheme`、`backgroundColor`），仅命中：
 - `tailwind-preset.ts`：全部 `hsl(var(--...))`，var() 消费 ✓
@@ -101,15 +111,16 @@ component（组件消费层 = CSS 变量，唯一被 var() 读取）
 
 组件零内联色值 → 换主题 = 即时换肤，无需重建 dist。
 
-## 7. 验证
+## 8. 验证
 
 - `node --experimental-strip-types src/theme/selfcheck.ts` → `ok`（解析/归一化/非法拒绝）
 - `pnpm run build`（tsc + vite）通过
 - `pnpm --filter @qomicex/plugin-ui build` 通过（本任务未改组件）
 
-## 8. v2 待办
+## 9. v2 待办
 
 - `theme.mjs` 计算层（沙箱，读启动器 accent/背景推导派生 token）
-- 图标主题 `icon-theme.json`、字体贡献 `fonts/`
 - 非色 token 全量（space/font/motion/shadow）
 - Settings UI 选择器接入（本任务仅提供 useTheme 能力，未接 UI）
+- icon-theme UI 管理（主题选择器、图标预览）后置
+- icon-theme 的 plugin-ui 侧消费（当前仅 PluginIcon 查表回退）

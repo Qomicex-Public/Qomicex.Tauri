@@ -247,6 +247,23 @@ pub async fn check_updates(
     store_send(store_post(client, "/plugins/check-updates").json(&body)).await
 }
 
+/// POST /telemetry/plugin-error：匿名插件错误遥测转发（方案 §3.3）。
+/// launcherVersion 由后端注入；仅转发匿名字段，绝不附加路径/堆栈/设备信息。
+pub async fn report_plugin_error(
+    client: &reqwest::Client,
+    plugin_id: &str,
+    version: &str,
+    error_type: &str,
+) -> Result<serde_json::Value, ApiError> {
+    let body = serde_json::json!({
+        "pluginId": plugin_id,
+        "version": version,
+        "errorType": error_type,
+        "launcherVersion": APP_VERSION,
+    });
+    store_send(store_post(client, "/telemetry/plugin-error").json(&body)).await
+}
+
 // =====================================================================
 // 安装管线
 // =====================================================================

@@ -132,6 +132,10 @@ pub struct SettingsResponse {
     /// 自动上报严重错误日志（崩溃类恶性 bug）。`None` 视为开启（默认开）；
     /// 关闭时前后端都不上报。
     pub auto_report_errors: Option<bool>,
+    /// 匿名插件错误遥测（opt-in）。`None`/`Some(false)` = 关闭（默认，绝不默认收集）；
+    /// `Some(true)` = 前端在插件加载/运行出错时上报匿名错误类别
+    /// （仅插件 id + 版本 + launcher 版本 + error_type 白名单，无路径/堆栈/隐私数据）。
+    pub telemetry_enabled: Option<bool>,
     /// 启用 HTTP/3 文件下载（实验性）。`None`/`Some(false)` = 关闭（默认，走 HTTP/2）；
     /// `Some(true)` = 下载强制走 HTTP/3 且不支持回退（服务器不支持则下载失败）。
     /// 需后端以 `http3` feature + `--cfg reqwest_unstable` 编译才真正生效。
@@ -218,6 +222,7 @@ impl Default for SettingsResponse {
             glass_blur: None,
             initialized: Some(false),
             auto_report_errors: Some(true),
+            telemetry_enabled: None,
             enable_http3: None,
             proxy_mode: "system".to_string(),
             proxy_host: String::new(),

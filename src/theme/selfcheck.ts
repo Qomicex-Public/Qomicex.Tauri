@@ -6,6 +6,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { validateTheme, themeToCssVars, themeToCssBlock, ThemeError } from './schema.ts'
+import { validateIconTheme, IconThemeError } from './icon-theme.ts'
 
 const mocha = JSON.parse(readFileSync(new URL('./themes/catppuccin-mocha.json', import.meta.url), 'utf8'))
 
@@ -54,6 +55,38 @@ expectError({ schemaVersion: 1, id: 'x', name: '', colors: { background: '0 0% 0
 expectError({ schemaVersion: 1, id: 'x', name: 'x', colors: {} }, '空 colors')
 expectError({ schemaVersion: 1, id: 'x', name: 'x', colors: { background: '' } }, '空值')
 expectError('not json', '非 JSON 字符串') // validateTheme 不 parse 字符串 → 顶层非对象
+
+// 4) icon-theme.json 校验
+const it = validateIconTheme({
+  schemaVersion: 1,
+  fonts: ['MyIcons'],
+  icons: {
+    'fa-solid fa-robot': { type: 'svg', path: 'M0 0h24v24H0z' },
+    'fa-solid fa-cog': { type: 'char', codepoint: '⚙', fontFamily: 'MyIcons' },
+    'my-custom': { type: 'url', url: 'https://example.com/icon.png' },
+  },
+})
+assert(it.schemaVersion === 1, 'icon-theme schemaVersion')
+assert(it.fonts?.[0] === 'MyIcons', 'icon-theme fonts')
+assert(it.icons['fa-solid fa-robot'].type === 'svg', 'icon svg')
+assert(it.icons['fa-solid fa-cog'].type === 'char', 'icon char')
+assert(it.icons['my-custom'].type === 'url', 'icon url')
+
+function expectIconError(raw: unknown, probe: string): void {
+  try {
+    validateIconTheme(raw)
+    failed++
+    console.error('FAIL: 应抛错', probe)
+  } catch (e) {
+    assert(e instanceof IconThemeError, `错误类型(${probe})`)
+  }
+}
+expectIconError({ schemaVersion: 2, icons: {} }, 'icon-theme schemaVersion=2')
+expectIconError({ schemaVersion: 1, icons: {} }, '空 icons')
+expectIconError({ schemaVersion: 1, icons: { x: {} } }, '无 type')
+expectIconError({ schemaVersion: 1, icons: { x: { type: 'svg' } } }, 'svg 缺 path')
+expectIconError({ schemaVersion: 1, icons: { x: { type: 'char' } } }, 'char 缺 codepoint')
+expectIconError({ schemaVersion: 1, icons: { x: { type: 'url' } } }, 'url 缺 url')
 
 if (failed > 0) {
   console.error(`${failed} 项失败`)
