@@ -30,7 +30,7 @@ const TOKEN_WHITELIST = new Set([
 ])
 
 function normalizeToken(token: string): string {
-  return token.replaceAll('.', '-')
+  return token.replace(/\./g, '-')
 }
 
 export function applyThemeOverride(vars: Record<string, string>): void {
