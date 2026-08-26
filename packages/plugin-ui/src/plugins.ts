@@ -9,6 +9,7 @@ export interface PluginManifest {
   permissions: string[]
   dependencies?: PluginDependency[]
   entry: PluginEntry
+  render?: 'inline' | 'iframe'
   contributes?: PluginContributes
   icon?: string
 }
