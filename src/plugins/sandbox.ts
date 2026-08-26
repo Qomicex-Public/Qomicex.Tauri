@@ -3,6 +3,8 @@ import { usePluginStore } from '../stores/pluginStore.ts'
 import { createPluginBridge } from './plugin-api.ts'
 import { injectCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
 import { API_BASE } from '../api/client.ts'
+import type { PluginErrorType } from '../api/telemetry.ts'
+import { reportPluginError } from '../lib/telemetry.ts'
 
 export interface SandboxInstance {
   iframe: HTMLIFrameElement
@@ -17,11 +19,18 @@ export interface InlineInstance {
   destroy: () => void
 }
 
+/** l4：插件托管在独立 WebviewWindow 中（跨窗口桥代理）。 */
+export interface WebviewInstance {
+  plugin: PluginInfo
+  destroy: () => void
+}
+
 const sandboxes = new Map<string, SandboxInstance>()
 const inlineInstances = new Map<string, InlineInstance>()
+const webviewInstances = new Map<string, WebviewInstance>()
 const sourceMap = new WeakMap<Window, string>()
 
-function getFileUrl(pluginId: string, frontend: string, path: string) {
+export function getFileUrl(pluginId: string, frontend: string, path: string) {
   const base = frontend.split('/').slice(0, -1).join('/')
   return `${API_BASE}/plugins/${pluginId}/files/${base ? base + '/' + path : path}`
 }
@@ -31,11 +40,11 @@ function toAssetUrl(src: string, fileUrl: (p: string) => string): string {
   return fileUrl(src.replace(/^\.\//, ''))
 }
 
-function convertScriptSrcs(html: string, fileUrl: (p: string) => string): string {
+export function convertScriptSrcs(html: string, fileUrl: (p: string) => string): string {
   return html.replace(/(<script\b[^>]*\bsrc\s*=\s*)(["'])([^"']+)\2([^>]*>\s*<\/script\b[^>]*>)/gi, (_, pre, quote, src, post) => pre + quote + toAssetUrl(src, fileUrl) + quote + post)
 }
 
-function convertCssLinks(html: string, fileUrl: (p: string) => string): string {
+export function convertCssLinks(html: string, fileUrl: (p: string) => string): string {
   return html.replace(/(<link[^>]+href=")([^"]+)("[^>]*>)/g, (_, pre, href, post) => pre + toAssetUrl(href, fileUrl) + post)
 }
 
@@ -90,6 +99,8 @@ window.__PLUGIN_API_BASE__ = '__API_BASE_TOKEN__'
     }
   })
 })()
+window.addEventListener('error', function () { parent.postMessage({ type: '__plugin_runtime_error', pluginId: '__PLUGIN_ID_TOKEN__', pluginVersion: '__PLUGIN_VERSION_TOKEN__' }, '*') })
+window.addEventListener('unhandledrejection', function () { parent.postMessage({ type: '__plugin_runtime_error', pluginId: '__PLUGIN_ID_TOKEN__', pluginVersion: '__PLUGIN_VERSION_TOKEN__' }, '*') })
 window.__PLUGIN_API__ = {
   call: (method, ...args) => {
     return new Promise((resolve, reject) => {
@@ -196,8 +207,7 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
     html = convertScriptSrcs(html, fileUrl)
     html = convertCssLinks(html, fileUrl)
 
-    const themeInit = `<style data-theme-vars>${getThemeVarsCss()}</style><script>document.documentElement.classList.toggle('dark',getComputedStyle(document.documentElement).colorScheme==='dark');document.documentElement.classList.toggle('light',getComputedStyle(document.documentElement).colorScheme==='light')</script>`
-    html = html.replace('</head>', themeInit + '\n' + injectCss + '\n' + apiBridgeScript.replace('__PLUGIN_ID_TOKEN__', plugin.manifest.id).replace('__API_BASE_TOKEN__', `${API_BASE}/plugins/${plugin.manifest.id}/files`) + '\n' + themeBridgeScript + '\n</head>')
+    html = buildPluginDoc(plugin, html)
 
     iframe.onload = () => {
       if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
@@ -206,7 +216,14 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
     iframe.srcdoc = html
   } catch (e) {
     console.error('[sandbox] loadSandboxContent failed for', plugin.manifest.id, e)
+    reportPluginError(plugin.manifest.id, plugin.manifest.version, 'plugin_load_failed')
   }
+}
+
+/** 向插件页面注入主题初始化 + 通用样式 + API 桥 + 主题桥，返回最终 srcdoc。 */
+export function buildPluginDoc(plugin: PluginInfo, html: string): string {
+  const themeInit = `<style data-theme-vars>${getThemeVarsCss()}</style><script>document.documentElement.classList.toggle('dark',getComputedStyle(document.documentElement).colorScheme==='dark');document.documentElement.classList.toggle('light',getComputedStyle(document.documentElement).colorScheme==='light')</script>`
+  return html.replace('</head>', themeInit + '\n' + injectCss + '\n' + apiBridgeScript.replace('__PLUGIN_ID_TOKEN__', plugin.manifest.id).replace('__PLUGIN_VERSION_TOKEN__', plugin.manifest.version).replace('__API_BASE_TOKEN__', `${API_BASE}/plugins/${plugin.manifest.id}/files`) + '\n' + themeBridgeScript + '\n</head>')
 }
 
 export function renderInline(plugin: PluginInfo): InlineInstance {
@@ -319,6 +336,8 @@ window.__PLUGIN_API__ = {
     })
   }
 }
+window.addEventListener('error', function () { window.dispatchEvent(new CustomEvent('qomicex:plugin-error', { detail: { pluginId: '${plugin.manifest.id}', pluginVersion: '${plugin.manifest.version}', errorType: 'plugin_runtime_error' } })) })
+window.addEventListener('unhandledrejection', function () { window.dispatchEvent(new CustomEvent('qomicex:plugin-error', { detail: { pluginId: '${plugin.manifest.id}', pluginVersion: '${plugin.manifest.version}', errorType: 'plugin_runtime_error' } })) })
 `
     // script 元素必须在已连接 document 中才会执行：临时挂到隐藏节点，执行后移除宿主（容器不留在 body，避免撑出滚动条）
     const hiddenHost = document.createElement('div')
@@ -338,11 +357,28 @@ window.__PLUGIN_API__ = {
     hiddenHost.remove()
   } catch (e) {
     console.error('[sandbox] loadInlineContent failed for', plugin.manifest.id, e)
+    reportPluginError(plugin.manifest.id, plugin.manifest.version, 'plugin_load_failed')
   }
 }
 
-export function getInstance(pluginId: string): SandboxInstance | InlineInstance | undefined {
-  return sandboxes.get(pluginId) || inlineInstances.get(pluginId)
+export function getInstance(pluginId: string): SandboxInstance | InlineInstance | WebviewInstance | undefined {
+  return sandboxes.get(pluginId) || inlineInstances.get(pluginId) || webviewInstances.get(pluginId)
+}
+
+export function registerWebviewInstance(pluginId: string, inst: WebviewInstance) {
+  webviewInstances.set(pluginId, inst)
+}
+
+export function getWebviewInstance(pluginId: string): WebviewInstance | undefined {
+  return webviewInstances.get(pluginId)
+}
+
+export function destroyWebviewInstance(pluginId: string) {
+  const inst = webviewInstances.get(pluginId)
+  webviewInstances.delete(pluginId)
+  if (inst) {
+    try { inst.destroy() } catch { /* already destroyed */ }
+  }
 }
 
 export function registerOverlayIframe(contentWindow: Window, pluginId: string) {
@@ -356,14 +392,28 @@ window.addEventListener('message', (e) => {
     if (pluginId) handleApiCall(id, method, args, pluginId, e.source as Window)
   }
   if (e.data?.type === '__plugin_api_abort') {
-    const controller = streamAborters.get(e.data.id)
-    if (controller) controller.abort()
+    abortStream(e.data.id)
+  }
+  if (e.data?.type === '__plugin_runtime_error') {
+    reportPluginError(e.data.pluginId, e.data.pluginVersion, 'plugin_runtime_error')
   }
 })
 
+// 内联渲染桥脚本注入的运行时错误 → 转发遥测（无 iframe 边界，用 CustomEvent 中转）
+window.addEventListener('qomicex:plugin-error', ((e: Event) => {
+  const d = (e as CustomEvent<{ pluginId: string; pluginVersion: string; errorType: PluginErrorType }>).detail
+  reportPluginError(d.pluginId, d.pluginVersion, d.errorType)
+}) as EventListener)
+
 const streamAborters = new Map<string, AbortController>()
 
-async function handleApiCall(callId: string, method: string, args: unknown[], pluginId: string, source: Window) {
+/** 取消指定 callId 的流式调用（l4 跨窗口桥经 Tauri 事件转发到这里）。 */
+export function abortStream(callId: string) {
+  const controller = streamAborters.get(callId)
+  if (controller) controller.abort()
+}
+
+export async function handleApiCall(callId: string, method: string, args: unknown[], pluginId: string, source: Window) {
   if (
     typeof method !== 'string' ||
     !Object.prototype.hasOwnProperty.call(METHOD_PERMISSIONS, method)

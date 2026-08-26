@@ -366,6 +366,13 @@
   -webkit-user-select: text !important;
 }
 
+/* 连字作用域约定（contributes.fontLinks 注入的字体在此启用连字）：
+   预定义区域（控制台 / 版本 diff 等）添加 .font-ligatures 类即启用。 */
+.font-ligatures {
+  font-feature-settings: "liga" 1, "calt" 1;
+  font-variant-ligatures: common-ligatures contextual;
+}
+
 
 
 /* 组件材质规则（非分层，确保优先覆盖 Tailwind utilities） */

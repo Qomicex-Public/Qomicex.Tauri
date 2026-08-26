@@ -64,6 +64,8 @@ export interface AppSettings {
   initialized?: boolean
   /** 自动上报严重错误日志（崩溃类恶性 bug）；缺失 = 开启（默认开） */
   autoReportErrors?: boolean
+  /** 匿名插件错误遥测（opt-in，默认关闭）：仅上报插件 id+版本+error_type 白名单，无路径/堆栈/隐私数据 */
+  telemetryEnabled?: boolean
   /** 启用 HTTP/3 文件下载（实验性）；缺失 = 关闭（默认走 HTTP/2） */
   enableHttp3?: boolean
   /** 代理模式：'off' = 不使用代理；'system' = 使用系统代理；'http' = 自定义 HTTP(S) 代理；'socks5' = SOCKS5 代理 */
@@ -120,6 +122,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   glassBlur: 18,
   initialized: false,
   autoReportErrors: true,
+  telemetryEnabled: false,
   enableHttp3: false,
   proxyMode: 'system',
   proxyHost: '',

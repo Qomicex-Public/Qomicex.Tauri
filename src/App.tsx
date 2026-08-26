@@ -14,6 +14,7 @@ import Connect from './pages/Connect.tsx'
 import Settings from './pages/Settings.tsx'
 import RunningInstances from './pages/RunningInstances.tsx'
 import PluginPage from './pages/PluginPage.tsx'
+import PluginWebviewPage from './pages/PluginWebviewPage.tsx'
 import LogAnalysis from './pages/LogAnalysis.tsx'
 import GameLogWindow from './pages/GameLogWindow.tsx'
 import PluginOverlayManager from './components/PluginOverlayManager.tsx'
@@ -52,6 +53,15 @@ const LOG_WINDOW_INSTANCE: string | null =
     ? (() => {
         const p = new URLSearchParams(window.location.search)
         return p.get('logWindow') === '1' ? p.get('instance') || '' : null
+      })()
+    : null
+
+/** l4 插件独立窗口模式：`?pluginWebview=1&pluginId=<id>`（由 createRemoteWebview 打开）。 */
+const PLUGIN_WEBVIEW_PLUGIN_ID: string | null =
+  typeof window !== 'undefined'
+    ? (() => {
+        const p = new URLSearchParams(window.location.search)
+        return p.get('pluginWebview') === '1' ? p.get('pluginId') || '' : null
       })()
     : null
 
@@ -454,6 +464,15 @@ function App() {
     return (
       <I18nProvider>
         <GameLogWindow instanceId={LOG_WINDOW_INSTANCE} />
+      </I18nProvider>
+    )
+  }
+
+  // l4 插件独立窗口：轻量启动，只渲染插件页 + 跨窗口桥（见 PluginWebviewPage）。
+  if (PLUGIN_WEBVIEW_PLUGIN_ID !== null) {
+    return (
+      <I18nProvider>
+        <PluginWebviewPage pluginId={PLUGIN_WEBVIEW_PLUGIN_ID} />
       </I18nProvider>
     )
   }

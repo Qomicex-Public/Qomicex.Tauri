@@ -1,13 +1,16 @@
 import { Tooltip } from '../components/ui/index.ts'
 import type { PluginInfo, PluginMenuItem, PluginContributes } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { createSandbox, renderInline, getInstance } from './sandbox.ts'
+import { createSandbox, renderInline, getInstance, registerWebviewInstance, destroyWebviewInstance } from './sandbox.ts'
+import { initL4Bridge } from './webview-bridge.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
 import { NavItem } from '../components/Sidebar.tsx'
 import { PluginIcon } from '../components/PluginIcon.tsx'
 import { API_BASE } from '../api/client.ts'
+import { reportPluginError } from '../lib/telemetry.ts'
 
 const activeThemes = new Map<string, HTMLStyleElement>()
+const activeFontLinks = new Map<string, HTMLLinkElement[]>()
 
 export function resolvePluginAssetUrl(pluginId: string, icon: string): string {
   if (/^(https?:\/\/|data:)/i.test(icon)) return icon
@@ -54,6 +57,64 @@ function satisfiesSingle(installed: string, constraint: string): boolean {
   return cmp(installed, constraint) === 0
 }
 
+/** l4 渲染判定：manifest.render==='webview' 或 layers 含 l4。 */
+function useWebview(plugin: PluginInfo): boolean {
+  return plugin.manifest.render === 'webview' || plugin.manifest.layers.includes('l4')
+}
+
+const pendingWebviews = new Set<string>()
+
+/**
+ * l4：把插件托管到独立 Tauri WebviewWindow（独立 renderer 进程）。
+ * 加载启动器路由 `/plugins/p/:id?pluginWebview=1`，插件 API 经跨窗口事件桥
+ * 代理回主窗口执行（见 webview-bridge.ts）。幂等：窗口已存在则 focus。
+ * 非 Tauri（纯浏览器 pnpm dev）降级为同窗口 iframe。
+ */
+export async function createRemoteWebview(plugin: PluginInfo) {
+  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+  if (!isTauri) {
+    createSandbox(plugin)
+    return
+  }
+
+  const label = `plugin-webview-${plugin.manifest.id}`
+  if (pendingWebviews.has(label)) return
+
+  const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+  const existing = await WebviewWindow.getByLabel(label).catch(() => null)
+  if (existing) {
+    try { await existing.setFocus() } catch { /* ignore */ }
+    return
+  }
+
+  pendingWebviews.add(label)
+  initL4Bridge()
+
+  const win = new WebviewWindow(label, {
+    url: `/plugins/p/${encodeURIComponent(plugin.manifest.id)}?pluginWebview=1`,
+    title: plugin.manifest.name,
+    width: 1200,
+    height: 800,
+    minWidth: 480,
+    minHeight: 320,
+  })
+
+  win.once('tauri://created', () => {
+    pendingWebviews.delete(label)
+    registerWebviewInstance(plugin.manifest.id, {
+      plugin,
+      destroy: () => { win.close().catch(() => {}) },
+    })
+    // 用户手动关闭 l4 窗口 → 清理实例表，避免去重时误判仍存活
+    win.once('tauri://destroyed', () => destroyWebviewInstance(plugin.manifest.id))
+  })
+  win.once('tauri://error', (e) => {
+    pendingWebviews.delete(label)
+    console.error('[plugin] l4 webview 创建失败，降级为 iframe', plugin.manifest.id, e)
+    if (!getInstance(plugin.manifest.id)) createSandbox(plugin)
+  })
+}
+
 export async function activatePlugin(plugin: PluginInfo) {
   if (getInstance(plugin.manifest.id)) return
 
@@ -65,12 +126,22 @@ export async function activatePlugin(plugin: PluginInfo) {
   }
 
   const useSandbox = plugin.manifest.render !== 'inline'
+  const useWebviewRender = useWebview(plugin)
 
   if (plugin.manifest.entry.frontend) {
-    if (useSandbox) {
-      createSandbox(plugin)
-    } else {
-      renderInline(plugin)
+    try {
+      if (useWebviewRender) {
+        await createRemoteWebview(plugin)
+      } else if (useSandbox) {
+        createSandbox(plugin)
+      } else {
+        renderInline(plugin)
+      }
+    } catch (e) {
+      console.error(`[plugin] 激活失败 ${plugin.manifest.id}`, e)
+      usePluginStore.getState().setPluginState(plugin.manifest.id, 'disabled')
+      reportPluginError(plugin.manifest.id, plugin.manifest.version, 'plugin_load_failed')
+      throw e
     }
 
     const { menuItems, overlay } = plugin.manifest.contributes ?? {}
@@ -108,16 +179,38 @@ export async function activatePlugin(plugin: PluginInfo) {
       }
     } catch { /* theme CSS not available */ }
   }
+
+  // fontLinks 注入（contributes.fontLinks — 字体 CSS/CDN URL）
+  const fontLinks = plugin.manifest.contributes?.fontLinks
+  if (fontLinks && fontLinks.length > 0) {
+    const els = fontLinks.map((href) => {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.href = href
+      link.setAttribute('data-plugin-font', plugin.manifest.id)
+      document.head.appendChild(link)
+      return link
+    })
+    activeFontLinks.set(plugin.manifest.id, els)
+  }
 }
 
 export function deactivatePlugin(pluginId: string) {
   const inst = getInstance(pluginId)
-  if (inst) inst.destroy()
+  if (inst) {
+    try { inst.destroy() } catch { /* ignore */ }
+  }
+  destroyWebviewInstance(pluginId)
   unregisterPluginSlots(pluginId)
   const themeStyle = activeThemes.get(pluginId)
   if (themeStyle) {
     themeStyle.remove()
     activeThemes.delete(pluginId)
+  }
+  const fontEls = activeFontLinks.get(pluginId)
+  if (fontEls) {
+    fontEls.forEach((el) => el.remove())
+    activeFontLinks.delete(pluginId)
   }
   usePluginStore.getState().destroyPluginOverlays(pluginId)
   usePluginStore.getState().setPluginState(pluginId, 'disabled')

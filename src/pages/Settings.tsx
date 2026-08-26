@@ -1015,6 +1015,17 @@ export default function Settings() {
                   </div>
                 </label>
 
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <Checkbox
+                    checked={settings.telemetryEnabled === true}
+                    onCheckedChange={(c) => update('telemetryEnabled', c === true)}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{t('settings.launcher.telemetry')}</div>
+                    <div className="text-xs text-muted-foreground">{t('settings.launcher.telemetryDesc')}</div>
+                  </div>
+                </label>
+
                 <div className="space-y-2">
                   <Label>{t('settings.launcher.logLevelLabel')}</Label>
                   <Select

@@ -7,7 +7,7 @@ export interface PluginManifest {
   permissions: string[]
   dependencies?: PluginDependency[]
   entry: PluginEntry
-  render?: 'inline' | 'iframe'
+  render?: 'inline' | 'iframe' | 'webview'
   contributes?: PluginContributes
   icon?: string
 }
@@ -18,7 +18,7 @@ export interface PluginDependency {
   optional?: boolean
 }
 
-export type PluginLayer = 'l0' | 'l1' | 'l2' | 'l3'
+export type PluginLayer = 'l0' | 'l1' | 'l2' | 'l3' | 'l4'
 
 export interface PluginEntry {
   backend?: string
@@ -32,6 +32,10 @@ export interface PluginContributes {
   settingsPages?: string[]
   menuItems?: PluginMenuItem[]
   overlay?: { file: string; title?: string; width?: number; height?: number; minimizable?: boolean; resizable?: boolean }
+  /** 图标主题：`.qtheme` 包内 icon-theme.json 的相对路径（如 `"dist/icon-theme.json"`）。 */
+  iconTheme?: string
+  /** 字体/连字贡献：激活时注入 `<link rel="stylesheet">` 的 CSS/CDN URL 列表。 */
+  fontLinks?: string[]
 }
 
 export interface PluginMenuItem {

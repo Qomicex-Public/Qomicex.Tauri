@@ -1,8 +1,16 @@
 import { useParams } from 'react-router-dom'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { getInstance } from '../plugins/sandbox.ts'
-import { useLayoutEffect, useRef } from 'react'
+import { getInstance, getWebviewInstance } from '../plugins/sandbox.ts'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n/index.tsx'
+
+async function focusPluginWebview(pluginId: string) {
+  try {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+    const win = await WebviewWindow.getByLabel(`plugin-webview-${pluginId}`)
+    if (win) await win.setFocus()
+  } catch { /* ignore */ }
+}
 
 function activateInlineScripts(container: HTMLElement) {
   const origGetElementById = document.getElementById.bind(document)
@@ -37,6 +45,7 @@ export default function PluginPage() {
   const plugin = usePluginStore(s => s.plugins.find(p => p.manifest.id === pluginId))
   const containerRef = useRef<HTMLDivElement>(null)
   const { t } = useI18n()
+  const [webview, setWebview] = useState(false)
 
   useLayoutEffect(() => {
     if (!pluginId) return
@@ -66,6 +75,10 @@ export default function PluginPage() {
           c.dataset.scriptsActivated = 'true'
           activateInlineScripts(c)
         }
+      } else {
+        // l4 webview：插件在独立窗口渲染，主窗口仅显示占位
+        clearInterval(timer)
+        setWebview(true)
       }
     }, 50)
 
@@ -89,6 +102,28 @@ export default function PluginPage() {
         </div>
         <div className="flex flex-1 items-center justify-center">
           <p className="text-muted-foreground">{t('plugins.notActivated')}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (webview) {
+    return (
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex items-center gap-3 border-b border-border/50 px-6 py-3">
+          <h2 className="text-sm font-medium">{plugin.manifest.name}</h2>
+          <span className="text-xs text-muted-foreground">v{plugin.manifest.version}</span>
+        </div>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3">
+          <p className="text-sm text-muted-foreground">{t('plugins.webviewPlaceholder')}</p>
+          {getWebviewInstance(pluginId ?? '') && (
+            <button
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              onClick={() => focusPluginWebview(pluginId ?? '')}
+            >
+              {t('plugins.webviewFocus')}
+            </button>
+          )}
         </div>
       </div>
     )

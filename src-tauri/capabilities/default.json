@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main and game-log windows",
-  "windows": ["main", "game-log-window"],
+  "description": "Capability for the main, game-log and plugin l4 webview windows",
+  "windows": ["main", "game-log-window", "plugin-webview-*"],
   "permissions": [
     "core:default",
     "core:webview:allow-create-webview-window",
@@ -12,6 +12,7 @@
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",
     "core:window:allow-set-theme",
+    "core:window:allow-set-focus",
     "opener:default",
     "opener:allow-open-path",
     "opener:allow-reveal-item-in-dir",

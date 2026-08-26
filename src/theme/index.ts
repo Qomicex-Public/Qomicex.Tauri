@@ -9,13 +9,23 @@ export {
   type ColorTheme,
 } from './schema.ts'
 export {
+  validateIconTheme,
+  IconThemeError,
+  ICON_THEME_SCHEMA_VERSION,
+  type IconThemeEntry,
+  type IconThemeDefinition,
+} from './icon-theme.ts'
+export {
   registerTheme,
+  registerIconTheme,
   applyTheme,
   clearTheme,
   getActiveTheme,
+  getActiveIconTheme,
   restoreSavedTheme,
   subscribeThemeChange,
   useTheme,
+  useIconTheme,
   type UseThemeResult,
 } from './manager.ts'
 

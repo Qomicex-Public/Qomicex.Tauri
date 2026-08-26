@@ -42,6 +42,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(endpoints::plugin::router())
         .merge(endpoints::plugin_store::router())
         .merge(endpoints::connector::router())
+        .merge(endpoints::telemetry::router())
         .route("/ping", get(|| async { "pong" })); // 通用存活探针
 
     let app = Router::new()

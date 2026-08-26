@@ -142,6 +142,10 @@ body{font-family:system-ui,sans-serif;color:hsl(var(--foreground));background:tr
 .p-mt-1{margin-top:4px}.p-mt-2{margin-top:8px}.p-mt-3{margin-top:12px}
 .p-mb-1{margin-bottom:4px}.p-mb-2{margin-bottom:8px}.p-mb-3{margin-bottom:12px}
 .p-gap-1{gap:4px}.p-gap-2{gap:8px}.p-gap-3{gap:12px}
+/* 连字作用域约定：插件经 contributes.fontLinks 注入字体后，在此类作用域内启用连字。 */
+.p-font-ligatures{font-feature-settings:"liga" 1,"calt" 1;font-variant-ligatures:common-ligatures contextual}
+
+/* 其它工具类 */
 .p-text-center{text-align:center}
 .p-text-muted{color:hsl(var(--muted-foreground))}
 .p-text-sm{font-size:12px}

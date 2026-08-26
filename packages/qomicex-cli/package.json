@@ -1,7 +1,9 @@
 {
   "name": "@qomicex/cli",
   "version": "0.1.0",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "description": "Qomicex 插件生态 CLI：create / dev / pack / verify / publish",
   "bin": {
@@ -9,7 +11,8 @@
   },
   "files": [
     "dist",
-    "templates"
+    "templates",
+    "skills"
   ],
   "scripts": {
     "build": "tsc",

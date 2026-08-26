@@ -62,6 +62,37 @@ qomicex publish --api http://127.0.0.1:8787/api/v1   # 本地商店（wrangler d
 4. 查找/创建插件记录（`/plugins/mine` → 无则 `POST /plugins`），确认后 `POST /plugins/:id/versions` multipart 上传。
 5. 成功后将签名包存为 `release/<id>-<version>.signed.qplugin` 供复验。
 
+## AI 辅助开发
+
+CLI 随包分发 **AI skill 包**（`skills/qomicex-plugin/`），供 AI agent（Claude / opencode / Cursor 等）在写插件时加载，获得准确且不过时的 manifest 字段、权限目录、桥 API 签名、主题 token、签名与调试流程——避免 AI 臆造字段。安装 CLI 后本地路径为 `node_modules/@qomicex/cli/skills/qomicex-plugin/`（npm 包内，随 `files` 分发）。
+
+`qomicex create` 默认**不自动复制** skill 包到项目目录（保持项目最小化）；需要时手动复制即可。
+
+在 AI 会话中这样用：
+
+```text
+你是 Qomicex 插件开发工程师。请先阅读 <CLI 安装路径>/skills/qomicex-plugin/SKILL.md
+（及其余分册，尤其 rules.md），然后帮我做一个「XXX」插件：
+1. qomicex create com.example.xxx 生成项目
+2. 实现功能（manifest / 权限 / API 签名以技能包文档为准，不臆造）
+3. qomicex verify 过 0 error
+4. qomicex pack 出包
+```
+
+skill 包结构：
+
+```text
+skills/qomicex-plugin/
+  SKILL.md            # 主文档：何时用、快速开始、常见错误
+  manifest-schema.md  # manifest.json 全字段 + layers + render + dependencies + contributes
+  permissions.md      # 权限目录（39 项，normal/warning/danger）+ 方法→权限映射
+  plugin-api.md       # 桥 API 签名速查（完整文档见 D:\docs\docs\plugins\plugin-api.md）
+  theme.md            # 三级语义 token + var() 消费约定
+  signing.md          # Ed25519 签名流程（生成密钥 → pack --key → publish）
+  debugging.md        # harness 热重载调试
+  rules.md            # AI 生成插件的硬性规则
+```
+
 ## 签名密钥
 
 生成 Ed25519 密钥对（PKCS#8 PEM 或 raw 32 字节 seed base64）：

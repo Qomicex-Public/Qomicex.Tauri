@@ -1,0 +1,17 @@
+{
+  "id": "l4-demo-plugin",
+  "name": "L4 隔离演示",
+  "version": "0.1.0",
+  "minLauncherVersion": "0.1.0",
+  "layers": ["l4"],
+  "render": "webview",
+  "permissions": ["system:info", "ui:toast", "plugin:list"],
+  "entry": {
+    "frontend": "dist/index.html"
+  },
+  "contributes": {
+    "menuItems": [
+      { "path": "/plugins/p/l4-demo-plugin", "label": "L4 演示", "icon": "🧪", "action": "page" }
+    ]
+  }
+}
