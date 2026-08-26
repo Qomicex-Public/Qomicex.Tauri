@@ -48,6 +48,9 @@ const registry = new Map<string, ColorTheme>()
 /** 已注册的图标主题（theme id → icon-theme.json）。 */
 const iconRegistry = new Map<string, IconThemeDefinition>()
 
+/** 插件贡献的图标主题（plugin id → icon-theme.json）。优先级高于颜色主题映射。 */
+const pluginIconRegistry = new Map<string, IconThemeDefinition>()
+
 function emit(): void {
   listeners.forEach((fn) => fn())
 }
@@ -119,6 +122,31 @@ export function getActiveTheme(): ColorTheme | null {
 export function getActiveIconTheme(): IconThemeDefinition | null {
   if (!activeTheme) return null
   return iconRegistry.get(activeTheme.id) ?? null
+}
+
+/** 注册某插件贡献的 icon-theme.json（键为插件 id）。激活插件时调用。 */
+export function registerPluginIconTheme(pluginId: string, iconRaw: unknown): IconThemeDefinition {
+  const def = validateIconTheme(iconRaw)
+  pluginIconRegistry.set(pluginId, def)
+  emit()
+  return def
+}
+
+/** 取某插件贡献的图标主题（无则 null）。 */
+export function getPluginIconTheme(pluginId: string): IconThemeDefinition | null {
+  return pluginIconRegistry.get(pluginId) ?? null
+}
+
+/** 停用插件时移除其图标主题。 */
+export function unregisterPluginIconTheme(pluginId: string): void {
+  if (pluginIconRegistry.delete(pluginId)) emit()
+}
+
+/** 合并查表：插件图标优先，其次当前颜色主题的图标映射，最后 null。 */
+export function resolvePluginIcon(pluginId: string, iconKey: string): IconThemeDefinition['icons'][string] | null {
+  const def = getPluginIconTheme(pluginId) ?? getActiveIconTheme()
+  if (!def) return null
+  return def.icons[iconKey] ?? null
 }
 
 /** 启动时恢复持久化的自定义主题（仅对已注册主题生效；无则 no-op）。 */

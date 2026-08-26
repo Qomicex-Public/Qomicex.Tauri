@@ -4,7 +4,7 @@ import { PERMISSION_CATALOG } from './permissions.ts'
 
 export const ID_RE = /^(?!.*\.\.)[a-z0-9]+([.-][a-z0-9]+)*$/
 export const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
-export const LAYERS = ['l0', 'l1', 'l2', 'l3']
+export const LAYERS = ['l0', 'l1', 'l2', 'l3', 'l4']
 
 export interface ManifestIssue {
   severity: 'error' | 'warning'
@@ -53,11 +53,11 @@ export function validateManifest(raw: unknown): ManifestCheck {
       if (!LAYERS.includes(l as string)) add('error', 'layers', `未知 layer: ${String(l)}（可用 ${LAYERS.join('/')}）`)
     }
     const hasFrontend = !!(m.entry as Record<string, unknown> | undefined)?.frontend
-    if (!m.layers.includes('l2') && !m.layers.includes('l3') && hasFrontend) {
-      add('warning', 'layers', '声明了 frontend 入口但 layers 无 l2/l3，将无法渲染 UI')
+    if (!m.layers.includes('l2') && !m.layers.includes('l3') && !m.layers.includes('l4') && hasFrontend) {
+      add('warning', 'layers', '声明了 frontend 入口但 layers 无 l2/l3/l4，将无法渲染 UI')
     }
-    if (!m.layers.includes('l2') && hasFrontend) {
-      add('warning', 'layers', 'UI 插件建议声明 l2（iframe 沙箱）')
+    if (!m.layers.includes('l2') && !m.layers.includes('l4') && hasFrontend) {
+      add('warning', 'layers', 'UI 插件建议声明 l2（iframe 沙箱）或 l4（独立 WebView 窗口）')
     }
   }
 
@@ -85,8 +85,8 @@ export function validateManifest(raw: unknown): ManifestCheck {
   }
 
   if (m.dependencies !== undefined && !Array.isArray(m.dependencies)) add('error', 'dependencies', 'dependencies 必须是数组')
-  if (m.render !== undefined && m.render !== 'inline' && m.render !== 'iframe') {
-    add('warning', 'render', "render 仅支持 'inline' / 'iframe'")
+  if (m.render !== undefined && m.render !== 'inline' && m.render !== 'iframe' && m.render !== 'webview') {
+    add('warning', 'render', "render 仅支持 'inline' / 'iframe' / 'webview'")
   }
 
   if (m.contributes !== undefined) {

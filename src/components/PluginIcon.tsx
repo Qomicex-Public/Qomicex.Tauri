@@ -1,7 +1,7 @@
 import { cn } from '../lib/utils.ts'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { resolveFaIcon } from './BuiltinIcons.tsx'
-import { useIconTheme, type IconThemeEntry } from '../theme/index.ts'
+import { resolvePluginIcon, type IconThemeEntry } from '../theme/index.ts'
 
 function isImageUrl(s: string): boolean {
   return /^(https?:\/\/|[\w.-]+\/.+\.\w+)/.test(s)
@@ -31,12 +31,11 @@ function ThemeEntryIcon({ entry, className }: { entry: IconThemeEntry; className
   return <img src={entry.url} alt="" className={cn('object-contain', className)} />
 }
 
-export function PluginIcon({ icon, fallback, className }: { icon?: string; fallback: string; className?: string }) {
+export function PluginIcon({ icon, fallback, pluginId, className }: { icon?: string; fallback: string; pluginId?: string; className?: string }) {
   const src = icon || fallback
-  const iconTheme = useIconTheme()
 
-  if (iconTheme) {
-    const entry = iconTheme.icons[src]
+  if (pluginId) {
+    const entry = resolvePluginIcon(pluginId, src)
     if (entry) return <ThemeEntryIcon entry={entry} className={className} />
   }
 

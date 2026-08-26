@@ -18,6 +18,10 @@ export {
 export {
   registerTheme,
   registerIconTheme,
+  registerPluginIconTheme,
+  getPluginIconTheme,
+  unregisterPluginIconTheme,
+  resolvePluginIcon,
   applyTheme,
   clearTheme,
   getActiveTheme,
