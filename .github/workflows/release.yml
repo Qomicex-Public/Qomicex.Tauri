@@ -1070,3 +1070,9 @@ jobs:
       - name: Trigger website rebuild
         run: curl -X POST ${{ secrets.VERCEL_DEPLOY_HOOK }}
 
+      - name: Sync releases
+        run: |
+          curl -X POST https://api.qomicex.top/api/internal/releases/sync \
+            -H "Authorization: Bearer ${{ secrets.RELEASE_SYNC_TOKEN }}"
+
+
