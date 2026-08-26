@@ -9,6 +9,7 @@ import { PluginIcon } from '../components/PluginIcon.tsx'
 import { API_BASE } from '../api/client.ts'
 import { reportPluginError } from '../lib/telemetry.ts'
 import { registerPluginIconTheme, unregisterPluginIconTheme } from '../theme/index.ts'
+import { clearThemeOverride } from '../theme/override.ts'
 
 const activeThemes = new Map<string, HTMLStyleElement>()
 const activeFontLinks = new Map<string, HTMLLinkElement[]>()
@@ -238,6 +239,7 @@ export function deactivatePlugin(pluginId: string) {
   destroyWebviewInstance(pluginId)
   unregisterPluginSlots(pluginId)
   unregisterPluginIconTheme(pluginId)
+  clearThemeOverride()
   const themeStyle = activeThemes.get(pluginId)
   if (themeStyle) {
     themeStyle.remove()
