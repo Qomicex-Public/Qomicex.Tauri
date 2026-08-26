@@ -3,6 +3,9 @@ import { usePluginStore } from '../stores/pluginStore.ts'
 import { createPluginBridge } from './plugin-api.ts'
 import { injectCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
 import { API_BASE } from '../api/client.ts'
+import { applyThemeOverride, clearThemeOverride } from '../theme/override.ts'
+import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
+import { getSettings as getAppSettings } from '../api/settings.ts'
 import type { PluginErrorType } from '../api/telemetry.ts'
 import { reportPluginError } from '../lib/telemetry.ts'
 
@@ -462,10 +465,45 @@ const METHOD_PERMISSIONS: Record<string, string> = {
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
   readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', execCommand: 'shell:execute',
   navigate: 'config:read', showToast: 'ui:toast', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
+  getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
   'download.addTask': 'download:manage', 'download.progress': 'download:manage', 'download.cancel': 'download:manage', 'download.list': 'download:manage', 'download.registerInstall': 'instance:write',
   'modpack.install': 'instance:write',
+}
+
+/** "H S% L%" → #rrggbb。非法返回 null。 */
+function hslStringToHex(hsl: string): string | null {
+  const m = /^(\d{1,3})\s+(\d{1,3})%\s+(\d{1,3})%$/.exec(hsl.trim())
+  if (!m) return null
+  const h = +m[1]!
+  const s = +m[2]! / 100
+  const l = +m[3]! / 100
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const mm = l - c / 2
+  let r = 0
+  let g = 0
+  let b = 0
+  if (h < 60) { r = c; g = x; b = 0 }
+  else if (h < 120) { r = x; g = c; b = 0 }
+  else if (h < 180) { r = 0; g = c; b = x }
+  else if (h < 240) { r = 0; g = x; b = c }
+  else if (h < 300) { r = x; g = 0; b = c }
+  else { r = c; g = 0; b = x }
+  const to = (v: number) => Math.round((v + mm) * 255).toString(16).padStart(2, '0')
+  return `#${to(r)}${to(g)}${to(b)}`
+}
+
+/** 返回插件主题的种子色 hex：优先外观设置 themeColor，'background'(Monet) 时取当前 --primary（themeColor.ts 已 inline 应用）。无则 null。 */
+function getCurrentThemeColorHex(): string | null {
+  const mode = getAppSettings().themeColor ?? ''
+  if (mode === THEME_COLOR_MODE_BACKGROUND) {
+    const primary = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()
+    return primary ? hslStringToHex(primary) : null
+  }
+  if (mode) return normalizeHex(mode)
+  return null
 }
 
 async function executePluginMethod(pluginId: string, method: string, args: unknown[]): Promise<unknown> {
@@ -500,6 +538,9 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'listPlugins': return bridge.listPlugins()
     case 'navigate': bridge.navigate(args[0] as string); return
     case 'showToast': bridge.showToast(args[0] as string, args[1] as 'info' | 'error' | 'success' | undefined); return
+    case 'getThemeColor': return getCurrentThemeColorHex()
+    case 'applyThemeOverride': applyThemeOverride(args[0] as Record<string, string>); return
+    case 'clearThemeOverride': clearThemeOverride(); return
     case 'overlay.create': return bridge.createOverlay(args[0] as any)
     case 'overlay.show': bridge.showOverlay(args[0] as string); return
     case 'overlay.hide': bridge.hideOverlay(args[0] as string); return
