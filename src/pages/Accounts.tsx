@@ -233,7 +233,7 @@ export default function Accounts() {
       setMicrosoftMsg(t('accounts.microsoft.openingBrowser'))
 
       try { await navigator.clipboard.writeText(data.userCode) } catch { /* clipboard not available */ }
-      try { await openUrl(data.verificationUri) } catch { window.open(data.verificationUri, '_blank') }
+      try { await openUrl(data.verificationUriComplete || data.verificationUri) } catch { window.open(data.verificationUriComplete || data.verificationUri, '_blank') }
 
       setMicrosoftStep('waiting-auth')
       setMicrosoftMsg(t('accounts.microsoft.codeCopied', { code: data.userCode }))
