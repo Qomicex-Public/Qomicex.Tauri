@@ -2043,9 +2043,3 @@ Yggdrasil 外置登录的 **ALI（API 地址指示）** 解析：把用户输入
 | insecure | boolean | apiRoot 是否为明文 `http://`（前端据此显示明文传输警告） |
 
 **错误：** 空 url → `400 BAD_REQUEST`；网络/TLS/DNS 等传输失败 → `502 UPSTREAM_ERROR`（非 2xx 响应不算失败，仍按上述规则检查 ALI 头）。
-
-
-### 2026-08-26 更新
-**响应：** `AuthResponse`（包含 `deviceCode`, `userCode`, `verificationUri`, `verificationUriComplete`）
-
-> `verificationUriComplete` 为微软返回的预填地址（形如 `https://www.microsoft.com/link?otc=<userCode>`），浏览器直接打开即可免手工输入验证码；旧后端/未支持时缺省，前端回退到 `verificationUri`。

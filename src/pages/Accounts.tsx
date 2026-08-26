@@ -30,18 +30,6 @@ function fmtErr(e: unknown): string {
   return String(e)
 }
 
-/** 仅使用与微软官方 verification_uri 同源的完整验证地址，
- *  防后端响应被篡改/伪造时把用户导向攻击者控制的站点。 */
-function safeVerifyUrl(complete: string | undefined, fallback: string): string {
-  if (!complete) return fallback
-  try {
-    if (new URL(complete).origin === new URL(fallback).origin) return complete
-  } catch {
-    return fallback
-  }
-  return fallback
-}
-
 /** authlib-injector 技术规范 §通过拖拽设置：拖动数据为 text/plain，
  *  内容形如 `authlib-injector:yggdrasil-server:{URI 编码的 API 地址}`。 */
 const YGG_DND_PREFIX = 'authlib-injector:yggdrasil-server:'
@@ -245,8 +233,7 @@ export default function Accounts() {
       setMicrosoftMsg(t('accounts.microsoft.openingBrowser'))
 
       try { await navigator.clipboard.writeText(data.userCode) } catch { /* clipboard not available */ }
-      const verifyUrl = safeVerifyUrl(data.verificationUriComplete, data.verificationUri)
-      try { await openUrl(verifyUrl) } catch { window.open(verifyUrl, '_blank') }
+      try { await openUrl(data.verificationUri) } catch { window.open(data.verificationUri, '_blank') }
 
       setMicrosoftStep('waiting-auth')
       setMicrosoftMsg(t('accounts.microsoft.codeCopied', { code: data.userCode }))

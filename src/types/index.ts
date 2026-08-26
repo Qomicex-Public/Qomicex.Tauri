@@ -90,7 +90,6 @@ export interface MicrosoftOAuthResponse {
   deviceCode: string
   userCode: string
   verificationUri: string
-  verificationUriComplete?: string
   expiresIn: number
   interval: number
 }

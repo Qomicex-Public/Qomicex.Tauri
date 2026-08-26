@@ -117,8 +117,6 @@ pub struct AuthResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_uri: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub verification_uri_complete: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub interval: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_in: Option<i32>,
@@ -191,7 +189,6 @@ async fn offline(
         device_code: None,
         user_code: None,
         verification_uri: None,
-        verification_uri_complete: None,
         interval: None,
         expires_in: None,
         is_pending: None,
@@ -265,7 +262,6 @@ async fn microsoft_device_code(State(state): State<SharedState>) -> ApiResult<Js
         device_code: Some(device.device_code),
         user_code: Some(device.user_code),
         verification_uri: Some(device.verification_uri),
-        verification_uri_complete: Some(device.verification_uri_complete),
         interval: Some(device.interval),
         expires_in: Some(device.expires_in),
         is_pending: None,
@@ -320,7 +316,6 @@ async fn microsoft_poll(
                 device_code: None,
                 user_code: None,
                 verification_uri: None,
-                verification_uri_complete: None,
                 interval: None,
                 expires_in: None,
                 is_pending: None,
@@ -338,7 +333,6 @@ async fn microsoft_poll(
         device_code: None,
         user_code: None,
         verification_uri: None,
-        verification_uri_complete: None,
         interval: None,
         expires_in: None,
         is_pending: Some(poll.is_pending),
