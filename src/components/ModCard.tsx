@@ -1,7 +1,7 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Box, RotateCw } from 'lucide-react'
-import { Card, CardContent } from './ui'
+import { Box } from 'lucide-react'
+import { Card, CardContent, Switch } from './ui'
 import { Tooltip } from './ui'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
@@ -148,17 +148,12 @@ export default function ModCard({
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-start gap-2">
-                <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="truncate text-sm font-semibold text-foreground leading-snug">
                   {lang.startsWith('zh') && mod.chineseName ? (
-                    <>
-                      <h3 className="truncate text-sm font-semibold text-foreground leading-snug">{mod.chineseName}</h3>
-                      <p className="truncate text-xs font-normal text-muted-foreground/60 leading-snug">{mod.name}</p>
-                    </>
-                  ) : (
-                    <h3 className="truncate text-sm font-semibold text-foreground leading-snug">{mod.name}</h3>
-                  )}
-                </div>
+                    <>{mod.chineseName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {mod.name}</span></>
+                  ) : mod.name}
+                </h3>
                 {hasUpdate && (
                   <Tooltip content={update ? t('dialogs.mod.updateAvailableTo', { version: update.latestVersion }) : ''}>
                     <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-blue-500" />
@@ -181,25 +176,12 @@ export default function ModCard({
               )}
             </div>
             <Tooltip content={mod.active ? t('common.enabled') : t('common.disabled')}>
-              <button
-                onClick={(e) => { e.stopPropagation(); handleToggle() }}
+              <Switch
+                checked={mod.active}
+                onCheckedChange={() => handleToggle()}
                 disabled={toggling}
-                className={cn(
-                  'relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors duration-200',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                  'ring-1 ring-inset ring-white/[0.06]',
-                  mod.active ? 'bg-primary' : 'bg-muted-foreground/25',
-                  toggling && 'opacity-50 cursor-wait'
-                )}
-              >
-                <span
-                  className={cn(
-                    'inline-block h-4 w-4 rounded-full bg-white transition-all duration-200',
-                    mod.active ? 'translate-x-[22px] shadow-md' : 'translate-x-[4px] shadow-sm'
-                  )}
-                />
-                {toggling && <RotateCw className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />}
-              </button>
+                aria-label={mod.active ? t('common.disabled') : t('common.enabled')}
+              />
             </Tooltip>
           </CardContent>
         </Card>
