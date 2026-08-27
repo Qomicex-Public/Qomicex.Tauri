@@ -60,6 +60,7 @@ pub struct LoaderAddonInfo {
 struct VersionsQuery {
     game_version: Option<String>,
     loader: Option<String>,
+    lang: Option<String>,
 }
 
 /// `/loader/addons` 查询参数。
@@ -97,12 +98,23 @@ async fn loader_versions(
         )
     })?;
 
-    let results = state
-        .core
-        .installer_provider()
-        .get_available_mod_loaders(&game_version, loader_type)
-        .await
-        .map_err(map_core_error)?;
+    // NeoForge：中文环境（zh* 变体）优先 BMCLAPI（ENH-07）
+    let results = if loader_type == ModLoaderType::NeoForge {
+        let prefer_bmclapi = is_chinese_lang(q.lang.as_deref().unwrap_or(""));
+        state
+            .core
+            .installer_provider()
+            .get_neoforge_versions_with_priority(&game_version, prefer_bmclapi)
+            .await
+            .map_err(map_core_error)?
+    } else {
+        state
+            .core
+            .installer_provider()
+            .get_available_mod_loaders(&game_version, loader_type)
+            .await
+            .map_err(map_core_error)?
+    };
 
     let infos = results
         .into_iter()
@@ -192,6 +204,11 @@ async fn loader_addons(
     }
 
     Ok(Json(result))
+}
+
+/// 判断语言是否为中文（覆盖 zh / zh-CN / zh_CN / zh-TW / zh-HK 等变体，GC-05）。
+fn is_chinese_lang(lang: &str) -> bool {
+    lang.trim().to_ascii_lowercase().starts_with("zh")
 }
 
 /// 解析加载器类型字符串（源 `Enum.Parse<ModLoaderType>(ignoreCase: true)`）。

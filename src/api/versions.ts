@@ -14,6 +14,6 @@ export function getLoaderAddons(loader: string, gameVersion?: string): Promise<L
   return get<LoaderAddonInfo[]>(`/loaders/addons?loader=${encodeURIComponent(loader)}${gameVersion ? `&gameVersion=${encodeURIComponent(gameVersion)}` : ''}`)
 }
 
-export function getLoaderVersions(gameVersion: string, loader: string): Promise<LoaderVersionInfo[]> {
-  return get<LoaderVersionInfo[]>(`/loaders/versions?gameVersion=${encodeURIComponent(gameVersion)}&loader=${encodeURIComponent(loader)}`)
+export function getLoaderVersions(gameVersion: string, loader: string, lang?: string): Promise<LoaderVersionInfo[]> {
+  return get<LoaderVersionInfo[]>(`/loaders/versions?gameVersion=${encodeURIComponent(gameVersion)}&loader=${encodeURIComponent(loader)}${lang ? `&lang=${encodeURIComponent(lang)}` : ''}`)
 }

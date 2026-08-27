@@ -130,7 +130,7 @@ type PageStep = 'list' | 'select-version' | 'configure'
 
 export default function Instances() {
   const navigate = useNavigate()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const { alert: msgAlert, prompt: msgPrompt, confirm: msgConfirm, notify } = useMessageBox()
   const { launchInstance: ctxLaunchInstance, runningInstances } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
@@ -243,7 +243,7 @@ export default function Instances() {
     if (!form.loader || !form.gameVersion) { setLoaderVersions([]); return }
     let cancelled = false
     setLoadingVersions(true)
-    getLoaderVersions(form.gameVersion, form.loader)
+    getLoaderVersions(form.gameVersion, form.loader, lang)
       .then((versions) => { if (!cancelled) setLoaderVersions(versions) })
       .catch(() => { if (!cancelled) setLoaderVersions([]) })
       .finally(() => { if (!cancelled) setLoadingVersions(false) })
