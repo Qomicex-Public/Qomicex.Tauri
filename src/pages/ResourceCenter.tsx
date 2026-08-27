@@ -19,6 +19,7 @@ import { translateCategory } from '../lib/categoryTranslations.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 import ModpackQuickInstallDialog from '../components/ModpackQuickInstallDialog.tsx'
 import { Tabs } from '../components/ui'
+import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 
 interface PageCache {
   items: ResourceItem[]
@@ -317,6 +318,7 @@ export default function ResourceCenter() {
 
   const restoredRef = useRef(!freshEntry && !!snap)
   const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames })
+  const listRef = useAnimatedList<HTMLDivElement>([items.length, category, source, keyword, sort, initialLoading, isReplacing], { y: 12, scale: 0.97, duration: 0.25 })
   useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames } })
 
   useEffect(() => {
@@ -600,9 +602,11 @@ export default function ResourceCenter() {
         </div>
       ) : (
         <>
-          <div className="flex flex-col gap-3">
+          <div ref={listRef} className="flex flex-col gap-3">
             {items.map((item) => (
-              <ResourceCard key={`${item.source}-${item.id}`} item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} tags={tags} onInstall={handleInstall} cnName={cnNames[item.title]} />
+              <div key={`${item.source}-${item.id}`} data-key={`${item.source}-${item.id}`}>
+              <ResourceCard item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} tags={tags} onInstall={handleInstall} cnName={cnNames[item.title]} />
+              </div>
             ))}
           </div>
 

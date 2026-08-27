@@ -152,6 +152,8 @@ export async function loadSettings(): Promise<AppSettings> {
           data.themePreset ??
           (localStorage.getItem('qomicex-theme-preset') as AppSettings['themePreset'] | null) ??
           DEFAULT_SETTINGS.themePreset,
+        animationSpeed: data.animationSpeed ?? cached.animationSpeed ?? DEFAULT_SETTINGS.animationSpeed,
+        animationsEnabled: data.animationsEnabled ?? cached.animationsEnabled ?? DEFAULT_SETTINGS.animationsEnabled,
       }
       loaded = true
       listeners.forEach(fn => fn(cached))

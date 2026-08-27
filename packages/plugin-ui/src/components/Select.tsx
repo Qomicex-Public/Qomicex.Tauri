@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../lib/cn.js'
+import gsap from 'gsap'
 
 interface SelectOptionProps {
   value: string
@@ -27,11 +28,14 @@ interface SelectProps {
 
 export function Select({ value, onChange, children, className, placeholder, disabled }: SelectProps) {
   const [open, setOpen] = useState(false)
+  const [isClosing, setIsClosing] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
   const [search, setSearch] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const popupAnimRef = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef<() => void>(() => {})
 
   const options: { value: string; label: string; disabled: boolean; isDivider: boolean }[] = []
   let selectedLabel = placeholder || ''
@@ -55,7 +59,41 @@ export function Select({ value, onChange, children, className, placeholder, disa
   }
   collect(children)
 
-  const close = useCallback(() => { setOpen(false); setSearch('') }, [])
+  const close = useCallback(() => {
+    const popup = popupAnimRef.current
+    if (!popup) {
+      setOpen(false)
+      setSearch('')
+      return
+    }
+
+    // 检查动画是否启用
+    const animEnabled = document.documentElement.getAttribute('data-anim-enabled') !== 'false'
+    if (!animEnabled) {
+      setOpen(false)
+      setSearch('')
+      return
+    }
+
+    setIsClosing(true)
+
+    const speedStr = getComputedStyle(document.documentElement).getPropertyValue('--anim-duration-multiplier')
+    const speed = speedStr ? parseFloat(speedStr) : 1
+    const duration = 0.1 / (speed || 1)
+
+    gsap.to(popup, {
+      opacity: 0,
+      scale: 0.9,
+      y: -4,
+      duration,
+      ease: 'power2.in',
+      onComplete: () => {
+        setIsClosing(false)
+        setOpen(false)
+        setSearch('')
+      }
+    })
+  }, [])
 
   const handleClickOutside = useCallback((e: MouseEvent) => {
     if (triggerRef.current?.contains(e.target as Node)) return
@@ -83,6 +121,29 @@ export function Select({ value, onChange, children, className, placeholder, disa
       window.removeEventListener('scroll', reposition, true)
       window.removeEventListener('resize', reposition)
     }
+  }, [open])
+
+  // GSAP 弹出动画
+  useEffect(() => {
+    if (!open || !popupAnimRef.current) return
+
+    const animEnabled = document.documentElement.getAttribute('data-anim-enabled') !== 'false'
+    if (!animEnabled) return
+
+    const speedStr = getComputedStyle(document.documentElement).getPropertyValue('--anim-duration-multiplier')
+    const speed = speedStr ? parseFloat(speedStr) : 1
+    const duration = 0.15 / (speed || 1)
+
+    gsap.fromTo(popupAnimRef.current,
+      { opacity: 0, scale: 0.9, y: -4 },
+      {
+        opacity: 1,
+        scale: 1,
+        y: 0,
+        duration,
+        ease: 'power2.out'
+      }
+    )
   }, [open])
 
   function openPopup() {
@@ -118,11 +179,14 @@ export function Select({ value, onChange, children, className, placeholder, disa
         <svg className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
       </button>
 
-      {open && createPortal(
+      {(open || isClosing) && createPortal(
         <div
-          ref={popupRef}
+          ref={(el) => {
+            popupRef.current = el
+            popupAnimRef.current = el
+          }}
           style={{ position: 'fixed', top: pos.top, left: pos.left, width: Math.max(pos.width, 180), zIndex: 9999 }}
-          className="rounded-lg border border-border/50 bg-popover p-1 shadow-xl animate-in fade-in zoom-in-95"
+          className="rounded-lg border border-border/50 bg-popover p-1 shadow-xl"
         >
           <div className="max-h-72 overflow-y-auto">
             {options.length > 6 && (
