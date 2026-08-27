@@ -15,9 +15,10 @@ import { Separator } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { Tabs, TabContent } from '../components/ui'
-import { Checkbox } from '../components/ui'
+import { Switch } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
+import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
 import DebugTab from '../components/DebugTab.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
@@ -956,16 +957,10 @@ export default function Settings() {
         <div className="flex-1 min-w-0 space-y-4">
           <TabContent activeTab={category} tabId="launcher">
             <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <SettingsIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.category.basic')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label>{t('settings.appearance.language')}</Label>
+            <SettingSection title={t('settings.category.basic')} icon={<SettingsIcon className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.appearance.language')}
+                control={
                   <Select
                     value={settings.language}
                     onChange={(v) => {
@@ -979,9 +974,12 @@ export default function Settings() {
                     ))}
                     <SelectOption value="system">{t('settings.appearance.followSystem')}</SelectOption>
                   </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('settings.launcher.translationProvider')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.translationProvider')}
+                description={t('settings.launcher.translationProviderDesc')}
+                control={
                   <Select
                     value={settings.translationProvider}
                     onChange={(v) => update('translationProvider', v)}
@@ -991,49 +989,48 @@ export default function Settings() {
                     <SelectOption value="google">{t('settings.launcher.translationGoogle')}</SelectOption>
                     <SelectOption value="bing">Bing Translator</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.translationProviderDesc')}</p>
-                  {settings.translationProvider === 'bing' && (
-                    <div className="mt-3">
-                      <Label htmlFor="bingApiKey">Bing API Key</Label>
-                      <Input
-                        id="bingApiKey"
-                        type="password"
-                        value={settings.bingApiKey || ''}
-                        onChange={(e) => update('bingApiKey', e.target.value)}
-                        placeholder={t('settings.launcher.bingApiKeyPlaceholder')}
-                        className="mt-1 max-w-sm"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {t('settings.launcher.bingApiKeyDesc')}
-                      </p>
-                    </div>
-                  )}
+                }
+              />
+              {settings.translationProvider === 'bing' && (
+                <div className="space-y-2 px-4 py-3">
+                  <Label htmlFor="bingApiKey">Bing API Key</Label>
+                  <Input
+                    id="bingApiKey"
+                    type="password"
+                    value={settings.bingApiKey || ''}
+                    onChange={(e) => update('bingApiKey', e.target.value)}
+                    placeholder={t('settings.launcher.bingApiKeyPlaceholder')}
+                    className="max-w-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t('settings.launcher.bingApiKeyDesc')}
+                  </p>
                 </div>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+              )}
+              <SettingRow
+                label={t('settings.launcher.autoReportErrors')}
+                description={t('settings.launcher.autoReportErrorsDesc')}
+                control={
+                  <Switch
                     checked={settings.autoReportErrors !== false}
                     onCheckedChange={(c) => update('autoReportErrors', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.autoReportErrors')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.autoReportErrorsDesc')}</div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.telemetry')}
+                description={t('settings.launcher.telemetryDesc')}
+                control={
+                  <Switch
                     checked={settings.telemetryEnabled === true}
                     onCheckedChange={(c) => update('telemetryEnabled', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.telemetry')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.telemetryDesc')}</div>
-                  </div>
-                </label>
-
-                <div className="space-y-2">
-                  <Label>{t('settings.launcher.logLevelLabel')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.logLevelLabel')}
+                description={t('settings.launcher.logLevelDesc')}
+                control={
                   <Select
                     value={settings.logLevel}
                     onChange={(v) => update('logLevel', v)}
@@ -1045,53 +1042,38 @@ export default function Settings() {
                     <SelectOption value="debug">{t('settings.launcher.logLevel.debug')}</SelectOption>
                     <SelectOption value="trace">{t('settings.launcher.logLevel.trace')}</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.logLevelDesc')}</p>
-                </div>
-              </CardContent>
-            </Card>
+                }
+              />
+            </SettingSection>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <Rocket className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.category.launch')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+            <SettingSection title={t('settings.category.launch')} icon={<Rocket className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.launcher.versionIsolation')}
+                description={t('settings.launcher.versionIsolationDesc')}
+                control={
+                  <Switch
                     checked={settings.versionIsolation}
                     onCheckedChange={(c) => update('versionIsolation', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.versionIsolation')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.versionIsolationDesc')}</div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.closeAfterLaunch')}
+                description={t('settings.launcher.closeAfterLaunchDesc')}
+                control={
+                  <Switch
                     checked={settings.closeAfterLaunch}
                     onCheckedChange={(c) => update('closeAfterLaunch', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.closeAfterLaunch')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.closeAfterLaunchDesc')}</div>
-                  </div>
-                </label>
-              </CardContent>
-            </Card>
+                }
+              />
+            </SettingSection>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <Download className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.category.download')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label htmlFor="downloadThreads">{t('settings.launcher.downloadThreads')}</Label>
+            <SettingSection title={t('settings.category.download')} icon={<Download className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.launcher.downloadThreads')}
+                description={t('settings.launcher.downloadThreadsDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadThreads', Math.max(1, settings.downloadThreads - 1))} disabled={settings.downloadThreads <= 1}>
                       <Minus className="h-3.5 w-3.5" />
@@ -1109,11 +1091,12 @@ export default function Settings() {
                       <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadThreadsDesc')}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="fileChunkThreads">{t('settings.launcher.fileChunkThreads')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.fileChunkThreads')}
+                description={t('settings.launcher.fileChunkThreadsDesc')}
+                control={
                   <Select
                     value={String(settings.fileChunkThreads)}
                     onChange={(v) => update('fileChunkThreads', Number(v))}
@@ -1125,11 +1108,12 @@ export default function Settings() {
                       <SelectOption key={n} value={String(n)}>{n}</SelectOption>
                     ))}
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.fileChunkThreadsDesc')}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="downloadTimeout">{t('settings.launcher.downloadTimeout')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.downloadTimeout')}
+                description={t('settings.launcher.downloadTimeoutDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.max(0, settings.downloadTimeout - 5))} disabled={settings.downloadTimeout <= 0}>
                       <Minus className="h-3.5 w-3.5" />
@@ -1147,46 +1131,32 @@ export default function Settings() {
                       <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadTimeoutDesc')}</p>
-                </div>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.enableHttp3')}
+                description={t('settings.launcher.enableHttp3Desc')}
+                control={
+                  <Switch
+                    checked={settings.enableHttp3 === true}
+                    onCheckedChange={(c) => update('enableHttp3', c === true)}
+                  />
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.http1Parallel')}
+                description={t('settings.launcher.http1ParallelDesc')}
+                control={
+                  <Switch
+                    checked={settings.http1Parallel === true}
+                    onCheckedChange={(c) => update('http1Parallel', c === true)}
+                  />
+                }
+              />
+            </SettingSection>
 
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
-                      checked={settings.enableHttp3 === true}
-                      onCheckedChange={(c) => update('enableHttp3', c === true)}
-                    />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-medium">{t('settings.launcher.enableHttp3')}</span>
-                    </div>
-                  </label>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.enableHttp3Desc')}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
-                      checked={settings.http1Parallel === true}
-                      onCheckedChange={(c) => update('http1Parallel', c === true)}
-                    />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-medium">{t('settings.launcher.http1Parallel')}</span>
-                    </div>
-                  </label>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.http1ParallelDesc')}</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <Globe className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.launcher.downloadSource')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
+            <SettingSection title={t('settings.launcher.downloadSource')} icon={<Globe className="h-4 w-4" />}>
+                <div className="space-y-2 px-4 py-3">
                   <Label>{t('settings.launcher.downloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {DOWNLOAD_SOURCES.map((s) => {
@@ -1230,7 +1200,7 @@ export default function Settings() {
                     </Tooltip>
                   </div>
                   <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+                    <Switch
                       checked={settings.autoSelectDownloadSource}
                       onCheckedChange={(c) => update('autoSelectDownloadSource', c === true)}
                     />
@@ -1242,7 +1212,7 @@ export default function Settings() {
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectDownloadSourceDesc')}</p>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2 px-4 py-3">
                   <Label>{t('settings.launcher.resourceDownloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {[0, 1, 2].map((s) => {
@@ -1286,7 +1256,7 @@ export default function Settings() {
                     </Tooltip>
                   </div>
                   <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+                    <Switch
                       checked={settings.autoSelectFileDownloadSource}
                       onCheckedChange={(c) => update('autoSelectFileDownloadSource', c === true)}
                     />
@@ -1298,7 +1268,7 @@ export default function Settings() {
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.resourceDownloadSourceDesc')}</p>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2 px-4 py-3">
                   <Label>{t('settings.launcher.modSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {[
@@ -1345,7 +1315,7 @@ export default function Settings() {
                     </Tooltip>
                   </div>
                   <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+                    <Switch
                       checked={settings.autoSelectModMirror}
                       onCheckedChange={(c) => update('autoSelectModMirror', c === true)}
                     />
@@ -1356,19 +1326,13 @@ export default function Settings() {
                   </label>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectModSourceDesc')}</p>
                 </div>
-              </CardContent>
-            </Card>
+            </SettingSection>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <Globe className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.network.proxy')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label>{t('settings.network.proxyMode')}</Label>
+            <SettingSection title={t('settings.network.proxy')} icon={<Globe className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.network.proxyMode')}
+                description={t('settings.network.proxyModeDesc')}
+                control={
                   <Select
                     value={settings.proxyMode}
                     onChange={(v) => update('proxyMode', v as AppSettings['proxyMode'])}
@@ -1379,46 +1343,40 @@ export default function Settings() {
                     <SelectOption value="http">HTTP(S)</SelectOption>
                     <SelectOption value="socks5">SOCKS5</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.network.proxyModeDesc')}</p>
-                </div>
-
-                {(settings.proxyMode === 'http' || settings.proxyMode === 'socks5') && (
-                  <div className="space-y-2">
-                    <Label htmlFor="proxyHost">{t('settings.network.proxyHost')}</Label>
+                }
+              />
+              {(settings.proxyMode === 'http' || settings.proxyMode === 'socks5') && (
+                <SettingRow
+                  label={t('settings.network.proxyHost')}
+                  description={t('settings.network.proxyHostDesc')}
+                  control={
                     <Input
                       id="proxyHost"
                       value={settings.proxyHost}
                       onChange={(e) => update('proxyHost', e.target.value)}
                       placeholder={t('settings.network.proxyHostPlaceholder')}
-                      className="mt-1 max-w-sm font-mono"
+                      className="max-w-sm font-mono"
                     />
-                    <p className="text-xs text-muted-foreground">{t('settings.network.proxyHostDesc')}</p>
-                  </div>
-                )}
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+                  }
+                />
+              )}
+              <SettingRow
+                label={t('settings.network.ignoreSslCert')}
+                description={t('settings.network.ignoreSslCertDesc')}
+                control={
+                  <Switch
                     checked={settings.ignoreSslCert === true}
                     onCheckedChange={(c) => update('ignoreSslCert', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.network.ignoreSslCert')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.network.ignoreSslCertDesc')}</div>
-                  </div>
-                </label>
-              </CardContent>
-            </Card>
+                }
+              />
+            </SettingSection>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <Database className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.category.storage')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label>{t('settings.launcher.dataDir')}</Label>
+            <SettingSection title={t('settings.category.storage')} icon={<Database className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.launcher.dataDir')}
+                description={t('settings.launcher.dataDirDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Input value={settings.dataDir} readOnly className="font-mono text-xs" />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={async () => {
@@ -1437,22 +1395,22 @@ export default function Settings() {
                       <FolderOpen className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.dataDirDesc')}</p>
-                </div>
-
-                <div className="flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <Label>{t('settings.launcher.versionListCache')}</Label>
-                    <p className="text-xs text-muted-foreground">{t('settings.launcher.versionListCacheDesc')}</p>
-                  </div>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.versionListCache')}
+                description={t('settings.launcher.versionListCacheDesc')}
+                control={
                   <Button size="sm" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
                     <MorphActionIcon active={clearingCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
                     {t('settings.launcher.clearCache')}
                   </Button>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="curseforgeVersionFetchConcurrency">{t('settings.launcher.curseforgeConcurrency')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.curseforgeConcurrency')}
+                description={t('settings.launcher.curseforgeConcurrencyDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionFetchConcurrency', Math.max(1, Math.min(20, settings.curseforgeVersionFetchConcurrency - 1)))} disabled={settings.curseforgeVersionFetchConcurrency <= 1}>
                       <Minus className="h-3.5 w-3.5" />
@@ -1470,11 +1428,12 @@ export default function Settings() {
                       <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeConcurrencyDesc')}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="curseforgeVersionCacheTtlSeconds">{t('settings.launcher.curseforgeTtl')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.curseforgeTtl')}
+                description={t('settings.launcher.curseforgeTtlDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionCacheTtlSeconds', Math.max(0, settings.curseforgeVersionCacheTtlSeconds - 10))} disabled={settings.curseforgeVersionCacheTtlSeconds <= 0}>
                       <Minus className="h-3.5 w-3.5" />
@@ -1492,40 +1451,26 @@ export default function Settings() {
                       <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeTtlDesc')}</p>
-                </div>
-
-                <div className="flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <Label>{t('settings.launcher.curseforgeCache')}</Label>
-                    <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeCacheDesc')}</p>
-                  </div>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.curseforgeCache')}
+                description={t('settings.launcher.curseforgeCacheDesc')}
+                control={
                   <Button size="sm" variant="outline" onClick={handleClearCurseForgeCache} disabled={clearingCurseForgeCache}>
                     <MorphActionIcon active={clearingCurseForgeCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
                     {t('settings.launcher.clearCurseforgeCache')}
                   </Button>
-                </div>
-              </CardContent>
-            </Card>
+                }
+              />
+            </SettingSection>
 
             </div>
           </TabContent>
           <TabContent activeTab={category} tabId="java">
             <div className="space-y-6">
-              <Card>
-                <CardHeader className="flex-row items-center justify-between">
-                  <div>
-                    <CardTitle>
-                      <Coffee className="mr-2 h-4 w-4 text-muted-foreground" />
-                      {t('settings.java.title')}
-                    </CardTitle>
-                  </div>
-                  <div className="flex items-center gap-3 text-sm">
-                    <span className="text-muted-foreground">{t('settings.java.detected')} <span className="font-medium text-foreground">{runtimes.length}</span></span>
-                    <span className="text-muted-foreground">{t('settings.java.available')} <span className="font-medium text-primary">{validCount}</span></span>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
+              <SettingSection title={t('settings.java.title')} icon={<Coffee className="h-4 w-4" />}>
+                <div className="flex items-center justify-between gap-4 px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" onClick={() => handleScan('quick')} disabled={scanning !== 'idle'}>
                       <MorphActionIcon active={scanning === 'quick'} busy={RotateCwData} rest={SearchData} className="h-4 w-4" />
@@ -1549,10 +1494,15 @@ export default function Settings() {
                       </Button>
                     </Tooltip>
                     <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Checkbox checked={showInvalid} onCheckedChange={(v) => setShowInvalid(v === true)} />
+                      <Switch checked={showInvalid} onCheckedChange={(v) => setShowInvalid(v === true)} />
                       {t('settings.java.showInvalid')}
                     </label>
                   </div>
+                  <div className="flex shrink-0 items-center gap-3 text-sm">
+                    <span className="text-muted-foreground">{t('settings.java.detected')} <span className="font-medium text-foreground">{runtimes.length}</span></span>
+                    <span className="text-muted-foreground">{t('settings.java.available')} <span className="font-medium text-primary">{validCount}</span></span>
+                  </div>
+                </div>
 
                   {scanning !== 'idle' && (
                     <div className="flex items-center gap-3 rounded-lg bg-muted px-4 py-3">
@@ -1641,29 +1591,23 @@ export default function Settings() {
                       {runtimes.length > 0 && t('settings.java.availableCount', { valid: validCount, total: runtimes.length })}
                     </span>
                   </div>
-                </CardContent>
-              </Card>
+              </SettingSection>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>{t('settings.java.defaultConfig')}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  <div className="space-y-2">
-                    <Label>{t('settings.java.defaultRuntime')}</Label>
+              <SettingSection title={t('settings.java.defaultConfig')}>
+                <SettingRow
+                  label={t('settings.java.defaultRuntime')}
+                  description={t('settings.java.defaultRuntimeDesc')}
+                  control={
                     <Select value={settings.defaultJavaPath} onChange={(v) => update('defaultJavaPath', v)}>
                       <SelectOption value="">{t('settings.java.autoSelect')}</SelectOption>
                       {getValidRuntimes().map((j, i) => (
                         <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                       ))}
                     </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {t('settings.java.defaultRuntimeDesc')}
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>{t('settings.java.memoryAllocation')}</Label>
+                  }
+                />
+                <div className="space-y-2 px-4 py-3">
+                  <Label>{t('settings.java.memoryAllocation')}</Label>
                     <div className="flex items-center gap-2">
                       <button onClick={() => {
                         const next = { ...settings, memoryMode: 'auto' as const }
@@ -1740,37 +1684,35 @@ export default function Settings() {
                     )}
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="jvmArgs">{t('settings.java.jvmArgs')}</Label>
+                <SettingRow
+                  label={t('settings.java.jvmArgs')}
+                  description={t('settings.java.jvmArgsDesc')}
+                  control={
                     <Input id="jvmArgs" value={settings.jvmArgs} onChange={(e) => update('jvmArgs', e.target.value)} placeholder="-XX:+UseG1GC -Dfml.ignoreInvalidMinecraftCertificates=true" />
-                    <p className="text-xs text-muted-foreground">{t('settings.java.jvmArgsDesc')}</p>
-                  </div>
-                </CardContent>
-              </Card>
+                  }
+                />
+              </SettingSection>
             </div>
           </TabContent>
 
           <TabContent activeTab={category} tabId="appearance">
             <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <Palette className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.title')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                   <div className="space-y-2">
-                     <Label>{t('settings.appearance.theme')} preset</Label>
-                     <Select value={settings.themePreset} onChange={(v) => update('themePreset', v as AppSettings['themePreset'])} className="w-56">
-                       <SelectOption value="default">Qomicex Default</SelectOption>
-                       {THEME_PRESETS.map((preset) => <SelectOption key={preset.value} value={preset.value}>{preset.label}</SelectOption>)}
-                     </Select>
-                   </div>
+              <SettingSection title={t('settings.appearance.title')} icon={<Palette className="h-4 w-4" />}>
+                <SettingRow
+                  label={`${t('settings.appearance.theme')} preset`}
+                  control={
+                    <Select value={settings.themePreset} onChange={(v) => update('themePreset', v as AppSettings['themePreset'])} className="w-56">
+                      <SelectOption value="default">Qomicex Default</SelectOption>
+                      {THEME_PRESETS.map((preset) => <SelectOption key={preset.value} value={preset.value}>{preset.label}</SelectOption>)}
+                    </Select>
+                  }
+                />
 
-                  <div className="space-y-2">
-                    <Label>{t('settings.appearance.themeColor')}</Label>
-                    <div className="flex flex-wrap items-center gap-2">
+                <SettingRow
+                  label={t('settings.appearance.themeColor')}
+                  description={t('settings.appearance.themeColorDesc')}
+                  control={
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <Tooltip content={t('settings.appearance.themeColorBackground')}>
                         <button
                           type="button"
@@ -1822,46 +1764,45 @@ export default function Settings() {
                         </Button>
                       </Tooltip>
                     </div>
-                    <p className="text-xs text-muted-foreground">{t('settings.appearance.themeColorDesc')}</p>
-                  </div>
+                  }
+                />
 
-                  <div className="space-y-3">
-                    <Label>{t('settings.appearance.animations')}</Label>
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <Checkbox
-                        checked={settings.animationsEnabled}
-                        onCheckedChange={(c) => update('animationsEnabled', c === true)}
+                <SettingRow
+                  label={t('settings.appearance.animations')}
+                  description={t('settings.appearance.animationsDesc')}
+                  control={
+                    <Switch
+                      checked={settings.animationsEnabled}
+                      onCheckedChange={(c) => update('animationsEnabled', c === true)}
+                    />
+                  }
+                />
+                {settings.animationsEnabled && (
+                  <div className="space-y-2 px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min={0.25}
+                        max={2}
+                        step={0.25}
+                        value={settings.animationSpeed}
+                        onChange={(e) => update('animationSpeed', parseFloat(e.target.value))}
+                        className="flex-1"
                       />
-                      <div>
-                        <div className="text-sm font-medium">{t('settings.appearance.animations')}</div>
-                        <div className="text-xs text-muted-foreground">{t('settings.appearance.animationsDesc')}</div>
-                      </div>
-                    </label>
-                    {settings.animationsEnabled && (
-                      <div className="space-y-2 pl-7">
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="range"
-                            min={0.25}
-                            max={2}
-                            step={0.25}
-                            value={settings.animationSpeed}
-                            onChange={(e) => update('animationSpeed', parseFloat(e.target.value))}
-                            className="flex-1"
-                          />
-                          <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.animationSpeed}x</span>
-                        </div>
-                        <div className="flex justify-between text-[11px] text-muted-foreground">
-                          <span>{t('settings.appearance.slow')}</span>
-                          <span>{t('settings.appearance.normal')}</span>
-                          <span>{t('settings.appearance.fast')}</span>
-                        </div>
-                      </div>
-                    )}
+                      <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.animationSpeed}x</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-muted-foreground">
+                      <span>{t('settings.appearance.slow')}</span>
+                      <span>{t('settings.appearance.normal')}</span>
+                      <span>{t('settings.appearance.fast')}</span>
+                    </div>
                   </div>
+                )}
 
-                  <div className="space-y-2 pt-3 border-t border-border/50">
-                    <Label>{t('settings.appearance.maxFrameRate')}</Label>
+                <SettingRow
+                  label={t('settings.appearance.maxFrameRate')}
+                  description={t('settings.appearance.maxFrameRateDesc')}
+                  control={
                     <Select value={String(settings.maxFrameRate)} onChange={(v) => update('maxFrameRate', Number(v))} className="w-48">
                       <SelectOption value="0">{t('settings.appearance.maxFrameRateUnlimited')}</SelectOption>
                       <SelectOption value="30">30 FPS</SelectOption>
@@ -1869,29 +1810,25 @@ export default function Settings() {
                       <SelectOption value="120">120 FPS</SelectOption>
                       <SelectOption value="144">144 FPS</SelectOption>
                     </Select>
-                    <p className="text-xs text-muted-foreground">{t('settings.appearance.maxFrameRateDesc')}</p>
-                  </div>
-                 </CardContent>
-               </Card>
-               <Card>
-                 <CardHeader><CardTitle>{t('settings.appearance.theme')} mode</CardTitle></CardHeader>
-                 <CardContent>
-                   <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
-                     <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>
-                     <SelectOption value="light">{t('settings.appearance.light')}</SelectOption>
-                   </Select>
-                 </CardContent>
-               </Card>
+                  }
+                />
+              </SettingSection>
+              <SettingSection title={`${t('settings.appearance.theme')} mode`}>
+                <SettingRow
+                  label={`${t('settings.appearance.theme')} mode`}
+                  control={
+                    <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
+                      <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>
+                      <SelectOption value="light">{t('settings.appearance.light')}</SelectOption>
+                    </Select>
+                  }
+                />
+              </SettingSection>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <SlidersHorizontal className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.componentMaterial')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="space-y-2">
+              <SettingSection title={t('settings.appearance.componentMaterial')} icon={<SlidersHorizontal className="h-4 w-4" />}>
+                <SettingRow
+                  label={t('settings.appearance.componentMaterial')}
+                  control={
                     <Select
                       value={settings.componentMaterial ?? 'default'}
                       onChange={(v) => {
@@ -1911,88 +1848,78 @@ export default function Settings() {
                       <SelectOption value="aero">{t('settings.appearance.componentMaterialAero')}</SelectOption>
                       <SelectOption value="liquid">{t('settings.appearance.componentMaterialLiquidPreview')}</SelectOption>
                     </Select>
-                    {settings.componentMaterial === 'liquid' && (
-                      <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                        <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
-                        <span>{t('settings.appearance.componentMaterialLiquidWarning')}</span>
-                      </div>
-                    )}
+                  }
+                />
+                {settings.componentMaterial === 'liquid' && (
+                  <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-600 dark:text-amber-400">
+                    <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span>{t('settings.appearance.componentMaterialLiquidWarning')}</span>
                   </div>
-                  {settings.componentMaterial !== 'default' && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="range"
-                          min={2}
-                          max={40}
-                          step={1}
-                          value={settings.glassBlur ?? 18}
-                          onChange={(e) => update('glassBlur', parseInt(e.target.value))}
-                          className="flex-1"
-                        />
-                        <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.glassBlur ?? 18}px</span>
-                      </div>
-                      <div className="flex justify-between text-[11px] text-muted-foreground">
-                        <span>{t('settings.appearance.glassBlurLow')}</span>
-                        <span>{t('settings.appearance.glassBlurHigh')}</span>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <Monitor className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.cornerRadius')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
-                      checked={settings.windowCorners}
-                      onCheckedChange={(c) => update('windowCorners', c === true)}
-                    />
-                    <div>
-                      <div className="text-sm font-medium">{t('settings.appearance.windowCorners')}</div>
-                      <div className="text-xs text-muted-foreground">{t('settings.appearance.windowCornersDesc')}</div>
-                    </div>
-                  </label>
-                  <Separator />
-                  <div className="space-y-2">
+                )}
+                {settings.componentMaterial !== 'default' && (
+                  <div className="space-y-2 px-4 py-3">
                     <div className="flex items-center gap-3">
                       <input
                         type="range"
-                        min={0}
-                        max={16}
+                        min={2}
+                        max={40}
                         step={1}
-                        value={settings.cornerRadius}
-                        onChange={(e) => update('cornerRadius', parseInt(e.target.value))}
+                        value={settings.glassBlur ?? 18}
+                        onChange={(e) => update('glassBlur', parseInt(e.target.value))}
                         className="flex-1"
                       />
-                      <span className="w-10 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.cornerRadius}px</span>
+                      <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.glassBlur ?? 18}px</span>
                     </div>
                     <div className="flex justify-between text-[11px] text-muted-foreground">
-                      <span>{t('settings.appearance.cornerSharp')}</span>
-                      <span>{t('settings.appearance.cornerDefault')}</span>
-                      <span>{t('settings.appearance.cornerLarge')}</span>
+                      <span>{t('settings.appearance.glassBlurLow')}</span>
+                      <span>{t('settings.appearance.glassBlurHigh')}</span>
                     </div>
-
                   </div>
-                </CardContent>
-              </Card>
+                )}
+              </SettingSection>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <Palette className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.font')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="space-y-2">
-                    <Label>{t('settings.appearance.fontFamily')}</Label>
+              <SettingSection title={t('settings.appearance.cornerRadius')} icon={<Monitor className="h-4 w-4" />}>
+                <SettingRow
+                  label={t('settings.appearance.windowCorners')}
+                  description={t('settings.appearance.windowCornersDesc')}
+                  control={
+                    <Switch
+                      checked={settings.windowCorners}
+                      onCheckedChange={(c) => update('windowCorners', c === true)}
+                    />
+                  }
+                />
+                <SettingRow
+                  label={t('settings.appearance.cornerRadius')}
+                  control={
+                    <div className="w-44 space-y-1">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={0}
+                          max={16}
+                          step={1}
+                          value={settings.cornerRadius}
+                          onChange={(e) => update('cornerRadius', parseInt(e.target.value))}
+                          className="flex-1"
+                        />
+                        <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground">{settings.cornerRadius}px</span>
+                      </div>
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>{t('settings.appearance.cornerSharp')}</span>
+                        <span>{t('settings.appearance.cornerDefault')}</span>
+                        <span>{t('settings.appearance.cornerLarge')}</span>
+                      </div>
+                    </div>
+                  }
+                />
+              </SettingSection>
+
+              <SettingSection title={t('settings.appearance.font')} icon={<Palette className="h-4 w-4" />}>
+                <SettingRow
+                  label={t('settings.appearance.fontFamily')}
+                  description={t('settings.appearance.fontDesc')}
+                  control={
                     <Select
                       value={settings.fontFamily || ''}
                       onChange={(v) => update('fontFamily', v || '')}
@@ -2007,99 +1934,88 @@ export default function Settings() {
                         ))
                       )}
                     </Select>
-                    <p className="text-xs text-muted-foreground">{t('settings.appearance.fontDesc')}</p>
-                  </div>
+                  }
+                />
+                <div className="mx-4 my-3 rounded-lg border px-4 py-3"
+                  style={{ fontFamily: settings.fontFamily ? `'${settings.fontFamily.replace(/['"]/g, '')}', sans-serif` : undefined }}
+                >
+                  <div className="text-sm font-medium">{t('settings.appearance.fontPreviewTitle')}</div>
+                  <div className="text-xs text-muted-foreground">{t('settings.appearance.fontPreviewText')}</div>
+                </div>
+                <div className="flex items-center gap-2 px-4 py-3">
+                  {settings.fontFamily && (
+                    <Button variant="outline" size="sm" onClick={() => update('fontFamily', '')} className="gap-1">
+                      <RotateCw className="h-3 w-3" />
+                      {t('settings.appearance.fontReset')}
+                    </Button>
+                  )}
+                </div>
+              </SettingSection>
 
-                  {/* 字体预览 */}
-                  <div
-                    className="rounded-lg border px-4 py-3"
-                    style={{ fontFamily: settings.fontFamily ? `'${settings.fontFamily.replace(/['"]/g, '')}', sans-serif` : undefined }}
-                  >
-                    <div className="text-sm font-medium">{t('settings.appearance.fontPreviewTitle')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.appearance.fontPreviewText')}</div>
+              <SettingSection title={t('settings.appearance.background')} icon={<Palette className="h-4 w-4" />}>
+                <div className="space-y-2 px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <Label>{t('settings.appearance.backgroundImage')}</Label>
+                    <Button variant="ghost" size="sm" onClick={() => get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})}>
+                      <RotateCw className="h-3 w-3" />
+                    </Button>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    {settings.fontFamily && (
-                      <Button variant="outline" size="sm" onClick={() => update('fontFamily', '')} className="gap-1">
-                        <RotateCw className="h-3 w-3" />
-                        {t('settings.appearance.fontReset')}
-                      </Button>
+                  <div className="flex flex-wrap gap-2">
+                    {backgrounds.length === 0 ? (
+                      <p className="w-full text-xs text-muted-foreground">{t('settings.appearance.noBackgrounds')}</p>
+                    ) : (
+                      backgrounds.map((name) => (
+                        <button
+                          key={name}
+                          onClick={() => {
+                            const next = { ...settings, backgroundImage: name, backgroundRandom: false }
+                            setSettings(next)
+                            saveSettings(next)
+                            notify(t('settings.saved'), 'success')
+                          }}
+                          className={cn(
+                            'group relative h-16 w-28 overflow-hidden rounded-lg border-2 transition-colors',
+                            !settings.backgroundRandom && settings.backgroundImage === name
+                              ? 'border-primary'
+                              : 'border-border hover:border-muted-foreground/30'
+                          )}
+                        >
+                          <img
+                            src={`${API_BASE}/settings/backgrounds/${encodeURIComponent(name)}`}
+                            alt={name}
+                            className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
+                          />
+                          <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-3 text-[10px] leading-tight text-white">
+                            {name}
+                          </span>
+                        </button>
+                      ))
                     )}
                   </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <Palette className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.background')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label>{t('settings.appearance.backgroundImage')}</Label>
-                      <Button variant="ghost" size="sm" onClick={() => get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})}>
-                        <RotateCw className="h-3 w-3" />
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {backgrounds.length === 0 ? (
-                        <p className="w-full text-xs text-muted-foreground">{t('settings.appearance.noBackgrounds')}</p>
-                      ) : (
-                        backgrounds.map((name) => (
-                          <button
-                            key={name}
-                            onClick={() => {
-                              const next = { ...settings, backgroundImage: name, backgroundRandom: false }
-                              setSettings(next)
-                              saveSettings(next)
-                              notify(t('settings.saved'), 'success')
-                            }}
-                            className={cn(
-                              'group relative h-16 w-28 overflow-hidden rounded-lg border-2 transition-colors',
-                              !settings.backgroundRandom && settings.backgroundImage === name
-                                ? 'border-primary'
-                                : 'border-border hover:border-muted-foreground/30'
-                            )}
-                          >
-                            <img
-                              src={`${API_BASE}/settings/backgrounds/${encodeURIComponent(name)}`}
-                              alt={name}
-                              className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
-                            />
-                            <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-3 text-[10px] leading-tight text-white">
-                              {name}
-                            </span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 pt-0.5">
-                      <Button variant="outline" size="sm" onClick={handleOpenBackgrounds}>
-                        <FolderOpen className="mr-1 h-3 w-3" /> {t('settings.appearance.openFolder')}
-                      </Button>
-                      <p className="text-xs text-muted-foreground">{t('settings.appearance.backgroundsHint')}</p>
-                    </div>
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <Button variant="outline" size="sm" onClick={handleOpenBackgrounds}>
+                      <FolderOpen className="mr-1 h-3 w-3" /> {t('settings.appearance.openFolder')}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">{t('settings.appearance.backgroundsHint')}</p>
                   </div>
+                </div>
 
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+                <SettingRow
+                  label={t('settings.appearance.backgroundRandom')}
+                  description={t('settings.appearance.backgroundRandomDesc')}
+                  control={
+                    <Switch
                       checked={settings.backgroundRandom}
                       onCheckedChange={(c) => {
                         update('backgroundRandom', c === true)
                         if (c && !settings.backgroundImage) update('backgroundImage', 'random')
                       }}
                     />
-                    <div>
-                      <div className="text-sm font-medium">{t('settings.appearance.backgroundRandom')}</div>
-                      <div className="text-xs text-muted-foreground">{t('settings.appearance.backgroundRandomDesc')}</div>
-                    </div>
-                  </label>
+                  }
+                />
 
-                  {settings.backgroundImage && (
+                {settings.backgroundImage && (
+                  <div className="px-4 py-3">
                     <>
                       {!settings.backgroundRandom && (
                         <Button variant="ghost" size="sm" onClick={() => update('backgroundImage', '')}>
@@ -2131,38 +2047,30 @@ export default function Settings() {
                         </div>
                       </div>
                     </>
-                  )}
-                </CardContent>
-              </Card>
+                  </div>
+                )}
+              </SettingSection>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <Palette className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.watermark')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+              <SettingSection title={t('settings.appearance.watermark')} icon={<Palette className="h-4 w-4" />}>
+                <SettingRow
+                  label={t('settings.appearance.watermarkEnabled')}
+                  description={t('settings.appearance.watermarkEnabledDesc')}
+                  control={
+                    <Switch
                       checked={settings.watermarkEnabled}
                       onCheckedChange={(c) => update('watermarkEnabled', c === true)}
                     />
-                    <div>
-                      <div className="text-sm font-medium">{t('settings.appearance.watermarkEnabled')}</div>
-                      <div className="text-xs text-muted-foreground">{t('settings.appearance.watermarkEnabledDesc')}</div>
-                    </div>
-                  </label>
-                  {settings.watermarkEnabled && (
-                    <div className="space-y-2 pl-7">
-                      <Label htmlFor="watermarkText">{t('settings.appearance.watermarkText')}</Label>
-                      <Input id="watermarkText" value={settings.watermarkText} onChange={(e) => update('watermarkText', e.target.value)} placeholder="Qomicex" />
-                      <Label htmlFor="watermarkSubtext">{t('settings.appearance.watermarkSubtext')}</Label>
-                      <Input id="watermarkSubtext" value={settings.watermarkSubtext} onChange={(e) => update('watermarkSubtext', e.target.value)} placeholder={t('settings.appearance.watermarkSubtextPlaceholder')} />
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                  }
+                />
+                {settings.watermarkEnabled && (
+                  <div className="space-y-2 px-4 py-3">
+                    <Label htmlFor="watermarkText">{t('settings.appearance.watermarkText')}</Label>
+                    <Input id="watermarkText" value={settings.watermarkText} onChange={(e) => update('watermarkText', e.target.value)} placeholder="Qomicex" />
+                    <Label htmlFor="watermarkSubtext">{t('settings.appearance.watermarkSubtext')}</Label>
+                    <Input id="watermarkSubtext" value={settings.watermarkSubtext} onChange={(e) => update('watermarkSubtext', e.target.value)} placeholder={t('settings.appearance.watermarkSubtextPlaceholder')} />
+                  </div>
+                )}
+              </SettingSection>
             </div>
           </TabContent>
 
