@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { ChevronDown, ChevronRight, Download, Eye, FileText, FolderOpen, Info, RotateCw, Search, Trash2, X } from 'lucide-react'
+import { Download, Eye, FileText, FolderOpen, Info, RotateCw, Search, Trash2, X } from 'lucide-react'
+import { ChevronDown as ChevronDownData, ChevronRight as ChevronRightData } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
 import { Card, CardHeader, CardTitle, CardContent } from './ui'
 import { Button } from './ui'
 import { Badge } from './ui'
@@ -277,7 +279,7 @@ export default function LogTab() {
                   onClick={() => setPreviewExpanded(!previewExpanded)}
                   className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-foreground hover:text-primary"
                 >
-                  {previewExpanded ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                  <MorphIcon icon={previewExpanded ? ChevronDownData : ChevronRightData} className="h-3 w-3 shrink-0 text-muted-foreground" spring="snappy" reducedMotion="user" />
                   <span className="truncate">{preview.path.split(/[/\\]/).pop()}</span>
                   {preview.truncated && (
                     <Badge variant="secondary" className="shrink-0 h-4 px-1.5 text-[9px]">{t('tools.logs.truncated')}</Badge>

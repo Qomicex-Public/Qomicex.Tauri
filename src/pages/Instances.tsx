@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import gsap from 'gsap'
 
-import { ArrowLeft, Box, Bug, Calendar, Check, ChevronDown, Download, FileInput, Folder, FolderOpen, FolderPlus, Ghost, Grip, Hammer, Layers, List, Pen, Pencil, Play, Plus, RotateCw, Search, Settings, Star, Tag, Trash2, TriangleAlert, Wrench } from 'lucide-react'
+import { ArrowLeft, Box, Bug, Calendar, Check, ChevronDown, Download, FileInput, Folder, FolderOpen, FolderPlus, Ghost, Hammer, Layers, Pen, Pencil, Play, Plus, RotateCw, Search, Settings, Star, Tag, Trash2, TriangleAlert, Wrench } from 'lucide-react'
+import { Grip as GripData, List as ListData } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { invoke } from '@tauri-apps/api/core'
@@ -694,7 +696,7 @@ export default function Instances() {
             </Select>
 
             <button onClick={() => setRemoteViewMode(remoteViewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', remoteViewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
-              {remoteViewMode === 'grid' ? <Grip className="h-3.5 w-3.5" /> : <List className="h-3.5 w-3.5" />}
+              <MorphIcon icon={remoteViewMode === 'grid' ? GripData : ListData} className="h-3.5 w-3.5" spring="snappy" reducedMotion="user" />
             </button>
           </div>
 
@@ -1232,7 +1234,7 @@ export default function Instances() {
           </Button>
         </Tooltip>
         <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-background text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', viewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
-          {viewMode === 'grid' ? <Grip className="h-3.5 w-3.5" /> : <List className="h-3.5 w-3.5" />}
+          <MorphIcon icon={viewMode === 'grid' ? GripData : ListData} className="h-3.5 w-3.5" spring="snappy" reducedMotion="user" />
         </button>
       </div>
 

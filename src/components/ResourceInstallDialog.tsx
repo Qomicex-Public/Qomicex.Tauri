@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { CheckCircle2, ChevronDown, Circle, Download, Layers, RotateCw, Search } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Circle, Layers, RotateCw, Search } from 'lucide-react'
+import { Download as DownloadData, RotateCw as RotateCwData } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
 import { cn } from '../lib/utils.ts'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
@@ -465,7 +467,7 @@ export default function ResourceInstallDialog({
           onClick={handleInstall}
           disabled={!selectedVersion || starting || loadingDeps || !!installError}
         >
-          {starting ? <RotateCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+          <MorphIcon icon={starting ? RotateCwData : DownloadData} className={cn('mr-1.5 h-3.5 w-3.5', starting && 'animate-spin')} spring="snappy" reducedMotion="user" />
           {starting ? t('dialogs.resourceInstall.installing') : t('dialogs.resourceInstall.installConfirm')}
         </Button>
       </DialogFooter>

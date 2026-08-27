@@ -62,6 +62,9 @@ importers:
       gsap:
         specifier: ^3.15.0
         version: 3.15.0
+      lucide:
+        specifier: ^1.34.0
+        version: 1.34.0
       lucide-react:
         specifier: ^1.34.0
         version: 1.34.0(react@19.2.8)
@@ -1197,6 +1200,9 @@ packages:
     resolution: {integrity: sha512-vnjGJNI7Htk5+oWW8gXGuaLgwgAb0T6/iZbBrp9JCfRFwdNWZ0YTm3eyxjOLgwN6r8iyAf3UA70zNmBRBNv7yg==}
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  lucide@1.34.0:
+    resolution: {integrity: sha512-OOPdNzu3Ocs9lLPOu1sWVIp4sue3HXYjZThAmSXu/NhBJ9ZnfLQhCGfbQRYvsVJvSKwi/KtLE5pNbS4fYl5zrA==}
 
   markdown-table@3.0.4:
     resolution: {integrity: sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==}
@@ -2643,6 +2649,8 @@ snapshots:
   lucide-react@1.34.0(react@19.2.8):
     dependencies:
       react: 19.2.8
+
+  lucide@1.34.0: {}
 
   markdown-table@3.0.4: {}
 

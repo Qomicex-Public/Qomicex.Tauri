@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download, Image, Layers, PackageOpen, Puzzle, RotateCw, Search, WandSparkles } from 'lucide-react'
+import { Image, Layers, PackageOpen, Puzzle, RotateCw, Search, WandSparkles } from 'lucide-react'
+import { Download as DownloadData, RotateCw as RotateCwData } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
 import { cn } from '../lib/utils.ts'
 import { cacheInvalidate } from '../lib/simple-cache.ts'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
@@ -287,12 +289,12 @@ export default function DropInstallDialog({ group, onClose }: Props) {
         <Button variant="secondary" onClick={onClose} disabled={installing}>{t('common.cancel')}</Button>
         {isModpack ? (
           <Button onClick={handleInstallModpack} disabled={!instanceName.trim() || installing}>
-            {installing ? <RotateCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+            <MorphIcon icon={installing ? RotateCwData : DownloadData} className={cn('mr-1.5 h-3.5 w-3.5', installing && 'animate-spin')} spring="snappy" reducedMotion="user" />
             {t('dialogs.resourceInstall.installConfirm')}
           </Button>
         ) : (
           <Button onClick={handleInstallFiles} disabled={!selectedInstance || installing}>
-            {installing ? <RotateCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+            <MorphIcon icon={installing ? RotateCwData : DownloadData} className={cn('mr-1.5 h-3.5 w-3.5', installing && 'animate-spin')} spring="snappy" reducedMotion="user" />
             {t('dialogs.resourceInstall.installConfirm')}
           </Button>
         )}

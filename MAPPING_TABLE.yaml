@@ -1,149 +1,61 @@
-# FA → Lucide 图标迁移映射表（唯一事实源）
-# 所有映射决策必须先查本表，新增映射先更新本表再写代码。
-migration:
-  source_pkg: "@fortawesome/free-solid-svg-icons + @fortawesome/react-fontawesome"
-  target_pkg: "lucide-react"
-  exception_files:
-    - file: "src/components/BuiltinIcons.tsx"
-      reason: "插件 fa-* 类名→图标的运行时字符串查找契约，迁移会破坏插件兼容，保持 FA"
-    - file: "src/components/PluginIcon.tsx"
-      reason: "依赖 BuiltinIcons.resolveFaIcon()，保持 FA"
-  exception_brands:
-    - faMicrosoft
-    - faGithub
-    - faJava
-    - faKeycdn
-    reason: "品牌图标无 Lucide 对应，保留 @fortawesome/free-brands-svg-icons + @fortawesome/react-fontawesome"
+# MAPPING_TABLE.yaml — icon ternary → <MorphIcon> 状态切换图标动画化
+# 迁移方向：icon↔icon 三元表达式 → 单一 <MorphIcon icon={cond ? XData : YData}>
 
-# 图标映射：fa<X> → lucide-react 组件名
-icon_map:
-  faArrowLeft: ArrowLeft
-  faArrowRight: ArrowRight
-  faArrowRightArrowLeft: ArrowLeftRight
-  faArrowsRotate: RefreshCw
-  faArrowUp: ArrowUp
-  faArrowUpRightFromSquare: ExternalLink
-  faBan: Ban
-  faBolt: Zap
-  faBox: Package
-  faBoxOpen: PackageOpen
-  faBroom: Eraser
-  faBug: Bug
-  faBullhorn: Megaphone
-  faCalendar: Calendar
-  faCamera: Camera
-  faCheck: Check
-  faCheckCircle: CheckCircle2
-  faChevronDown: ChevronDown
-  faChevronRight: ChevronRight
-  faChevronUp: ChevronUp
-  faCircle: Circle
-  faCircleCheck: CheckCircle2
-  faCircleNotch: Loader2
-  faCircleXmark: XCircle
-  faClipboard: Clipboard
-  faClone: CopyPlus
-  faCloud: Cloud
-  faCloudArrowDown: CloudDownload
-  faCoffee: Coffee
-  faCompass: Compass
-  faCopy: Copy
-  faCube: Box
-  faDatabase: Database
-  faDesktop: Monitor
-  faDoorOpen: DoorOpen
-  faDownload: Download
-  faDrawPolygon: PenTool
-  faExpand: Expand
-  faExternalLinkAlt: ExternalLink
-  faEye: Eye
-  faFileArrowDown: FileDown
-  faFileContract: FileSignature
-  faFileExport: FileOutput
-  faFileImport: FileInput
-  faFileLines: FileText
-  faFingerprint: Fingerprint
-  faFolder: Folder
-  faFolderOpen: FolderOpen
-  faFolderPlus: FolderPlus
-  faGamepad: Gamepad2
-  faGear: Settings
-  faGhost: Ghost
-  faGlobe: Globe
-  faGrip: Grip
-  faGripVertical: GripVertical
-  faHammer: Hammer
-  faHeart: Heart
-  faHouse: House
-  faImage: Image
-  faInfoCircle: Info
-  faKey: Key
-  faLayerGroup: Layers
-  faLightning: Zap
-  faLink: Link
-  faList: List
-  faListCheck: ListChecks
-  faMagnifyingGlass: Search
-  faMinus: Minus
-  faNetworkWired: Network
-  faPalette: Palette
-  faPen: Pen
-  faPencil: Pencil
-  faPlay: Play
-  faPlus: Plus
-  faPuzzlePiece: Puzzle
-  faRightFromBracket: LogOut
-  faRightToBracket: LogIn
-  faRobot: Bot
-  faRocket: Rocket
-  faRotate: RotateCw
-  faSave: Save
-  faScaleBalanced: Scale
-  faSearch: Search
-  faServer: Server
-  faShieldHalved: ShieldHalf
-  faShirt: Shirt
-  faSliders: SlidersHorizontal
-  faSpinner: Loader2
-  faStar: Star
-  faStop: Square
-  faSun: Sun
-  faTag: Tag
-  faTerminal: SquareTerminal
-  faTrashCan: Trash2
-  faTriangleExclamation: TriangleAlert
-  faUndo: Undo2
-  faUpload: Upload
-  faUser: User
-  faUserLarge: CircleUser
-  faUserSlash: UserX
-  faWandMagicSparkles: WandSparkles
-  faWifi: Wifi
-  faWrench: Wrench
-  faXmark: X
+# 通用规则（所有文件一致）
+morphicon_pattern:
+  before: "{cond ? <X className=\"...\" /> : <Y className=\"...\" />}"
+  after: "<MorphIcon icon={cond ? XData : YData} className={cn('<shared>', cond && 'animate-spin')} spring=\"snappy\" reducedMotion=\"user\" />"
+  notes:
+    - spring="snappy" + reducedMotion="user" 每处必带
+    - animate-spin 按需放 className（仅 loading/active 态生效），保证 morph 在完成时触发
+    - className 其余部分（h/w、颜色、mr 等）原样保留
+    - 两分支 className 相同时可不用 cn，直接用字面量
 
-transform_rules:
-  - rule: "import"
-    detail: "删除 '@fortawesome/react-fontawesome' 与 '@fortawesome/free-solid-svg-icons' 导入，改为 import { A, B, ... } from 'lucide-react'（按 icon_map 取组件名，去重，按字母序）。若文件仍使用品牌图标（faMicrosoft 等），保留 '@fortawesome/react-fontawesome' + '@fortawesome/free-brands-svg-icons' 导入（仅保留实际用到的）。"
-  - rule: "jsx"
-    detail: "<FontAwesomeIcon icon={faX} className=\"...\" /> → <X className=\"...\" />。保留原 className 原样（Tailwind h/w 类控制尺寸，等价于 FA 行为）。不加 size 属性。"
-  - rule: "spin_prop"
-    detail: "<FontAwesomeIcon icon={faSpinner} spin ... /> → <Loader2 className=\"animate-spin ...\" />（spin 属性替换为 className 追加 animate-spin）。"
-  - rule: "dynamic_icon_array"
-    detail: "文件内 `icon: faX`（IconDefinition 引用）形式的数组/对象字段 → 改为存 lucide 组件引用 `icon: X`（引用，不实例化）；渲染处 `<FontAwesomeIcon icon={o.icon} className=\"...\" />` → `<o.icon className=\"...\" />`。"
-  - rule: "account_select_dialog_special"
-    detail: "Accounts.tsx getAccountIcon(loginMethod) 返回 { icon, color } 中 faMicrosoft/faKeycdn 为品牌保持 FA，faUserLarge 改 CircleUser；将返回类型改为 ReactNode 图标元素（品牌返回 <FontAwesomeIcon icon={faX} className=\"h-2.5 w-2.5\" />，faUserLarge 返回 <CircleUser className=\"h-2.5 w-2.5\" />），调用处 `<span className={cn('h-2.5 w-2.5', icon.color)}>{icon.icon}</span>` 去 class。"
-  - rule: "no_size_prop"
-    detail: "不要给 lucide 组件加 size/strokeWidth 属性（默认即可），唯一例外：插件 UI 内 `[&_svg]:size-4` 已统一控制 Button 内图标为 16px。"
-  - rule: "cleanup"
-    detail: "迁移后删除未使用的 import（项目 strict noUnusedLocals，tsc 会报错）。不要改动任何非图标逻辑、className、结构。"
-  - rule: "brands_mixed_file"
-    detail: "文件同时用 solid+brand（Accounts/Settings/MicrosoftReauthDialog）：solid 全部转 lucide，brand 保留 FA 渲染（保留 FontAwesomeIcon 导入）。"
-  - rule: "name_conflict"
-    detail: "若 lucide 组件名与文件内已有标识符冲突（如 Settings.tsx 的页面组件 Settings ↔ lucide Settings），用别名导入 `Settings as SettingsIcon`，替换对应 JSX。"
-  - rule: "ternary_narrowing"
-    detail: "含字符串字面量联合类型的三元（如 `updateState === 'checking' ? faA : faB`、`scanning === 'quick'`）转 JSX 三元时，两分支 className 里的条件表达式会触发 TS2367 窄化报错：true 分支写死 animate-spin，false 分支不写，如 `{cond ? <RotateCw className=\"h-4 w-4 animate-spin\" /> : <Search className=\"h-4 w-4\" />}`。"
+imports:
+  lucide_react: "import { X } from 'lucide-react'  # 静态图标保留原样"
+  lucide_data: "import { X as XData, Y as YData } from 'lucide'  # Data 后缀别名避免命名冲突"
+  morphicon: "import { MorphIcon } from 'morphicons/react'"
 
-verification:
-  - "pnpm run build（tsc + vite）通过"
-  - "grep 确认：迁移文件内无残留 '<FontAwesomeIcon'（品牌除外）"
+# 图标映射：lucide-react 组件 → lucide data 别名
+icon_mapping:
+  Loader2: Loader2Data
+  Play: PlayData
+  Wifi: WifiData
+  RotateCw: RotateCwData
+  Download: DownloadData
+  ChevronDown: ChevronDownData
+  ChevronRight: ChevronRightData
+
+# 文件级改动清单
+files:
+  src/pages/Connect.tsx:
+    - L203, L226: launching===inst.instanceId ? Loader2Data : PlayData; className=cn('mr-1', cond && 'animate-spin')
+    - L505: natTypeBusy ? Loader2Data : WifiData; className=cn('mr-1', cond && 'animate-spin')
+    - imports_added: "Loader2Data, PlayData, WifiData (lucide); MorphIcon; cn (../lib/utils.ts, 原无)"
+    - lucide_react_removed: Wifi（仅 ternary 使用，转为 WifiData）
+    - lucide_react_kept: Loader2, Play（其他位置仍用）
+  src/pages/Accounts.tsx:
+    - L514: loading ? Loader2Data : RotateCwData; className=cn('h-3.5 w-3.5', cond && 'animate-spin')
+    - imports_added: "Loader2Data, RotateCwData (lucide); MorphIcon"
+    - lucide_react_removed: RotateCw（仅 ternary 使用）；Loader2 保留（L493 仍用）
+  src/components/LogTab.tsx:
+    - L282: previewExpanded ? ChevronDownData : ChevronRightData; className 两分支相同用字面量
+    - imports_added: "ChevronDownData, ChevronRightData (lucide); MorphIcon"
+    - lucide_react_removed: ChevronDown, ChevronRight
+  src/components/CrashAnalysisDialog.tsx:
+    - L163: exporting ? Loader2Data : DownloadData; className=cn('h-3 w-3', cond && 'animate-spin')
+    - imports_added: "DownloadData, Loader2Data (lucide); MorphIcon; cn (../lib/utils.ts, 原无)"
+    - lucide_react_removed: Download；Loader2 保留（L127 仍用）
+  src/components/DropInstallDialog.tsx:
+    - L292, L297: installing ? RotateCwData : DownloadData; className=cn('mr-1.5 h-3.5 w-3.5', cond && 'animate-spin')（两处相同）
+    - imports_added: "DownloadData, RotateCwData (lucide); MorphIcon"
+    - lucide_react_removed: Download；RotateCw 保留（L233 仍用）
+  src/components/ResourceInstallDialog.tsx:
+    - L470: starting ? RotateCwData : DownloadData; className=cn('mr-1.5 h-3.5 w-3.5', cond && 'animate-spin')
+    - imports_added: "DownloadData, RotateCwData (lucide); MorphIcon"
+    - lucide_react_removed: Download；RotateCw 保留（多处仍用）
+
+# 明确不改（非 icon↔icon 切换，维持原样）
+not_converted:
+  - "Connect.tsx L556/599/618/690：ternary 一侧为 null 或文本，非两图标切换"
+  - "静态图标用法（无状态切换）"

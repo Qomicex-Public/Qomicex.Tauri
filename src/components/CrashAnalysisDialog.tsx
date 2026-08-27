@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Bug, Copy, Download, Link, Loader2, TriangleAlert, X } from 'lucide-react'
+import { Bug, Copy, Link, Loader2, TriangleAlert, X } from 'lucide-react'
+import { Download as DownloadData, Loader2 as Loader2Data } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
+import { cn } from '../lib/utils.ts'
 import { Button } from './ui'
 import { Tooltip } from './ui'
 import { Separator } from './ui'
@@ -157,7 +160,7 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
           </Button>
           {instanceId && (
             <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-1.5 h-7 text-xs">
-              {exporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+              <MorphIcon icon={exporting ? Loader2Data : DownloadData} className={cn('h-3 w-3', exporting && 'animate-spin')} spring="snappy" reducedMotion="user" />
               {exporting ? t('dialogs.crashAnalysis.exporting') : t('dialogs.crashAnalysis.exportReport')}
             </Button>
           )}

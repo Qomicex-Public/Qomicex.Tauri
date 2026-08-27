@@ -3,7 +3,9 @@ import type { DragEvent, ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
-import { Check, CircleUser, Cloud, Copy, ExternalLink, Fingerprint, GripVertical, Loader2, LogIn, Plus, RotateCw, Search, Star, Trash2, User } from 'lucide-react'
+import { Check, CircleUser, Cloud, Copy, ExternalLink, Fingerprint, GripVertical, Loader2, LogIn, Plus, Search, Star, Trash2, User } from 'lucide-react'
+import { Loader2 as Loader2Data, RotateCw as RotateCwData } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
 import { Button } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
@@ -513,7 +515,7 @@ export default function Accounts() {
             <>
               <Tooltip content={t('accounts.refresh')}>
                 <button onClick={forceRefresh} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-                  {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+                  <MorphIcon icon={loading ? Loader2Data : RotateCwData} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} spring="snappy" reducedMotion="user" />
                 </button>
               </Tooltip>
               <Tooltip content={t('accounts.addAccount')}>

@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowLeft, Copy, DoorOpen, Loader2, LogIn, Minus, Play, Plus, UserX, Wifi } from 'lucide-react'
+import { ArrowLeft, Copy, DoorOpen, Loader2, LogIn, Minus, Play, Plus, UserX } from 'lucide-react'
+import { Loader2 as Loader2Data, Play as PlayData, Wifi as WifiData } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
+import { cn } from '../lib/utils.ts'
 import { Tabs, TabContent, Tooltip, Dialog, DialogHeader, DialogTitle, DialogDescription } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
@@ -197,7 +200,7 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
                 </div>
               </div>
               <Button size="sm" onClick={() => onLaunch(inst.instanceId)} disabled={launching !== null}>
-                {launching === inst.instanceId ? <Loader2 className="animate-spin" /> : <Play className="mr-1" />}
+                <MorphIcon icon={launching === inst.instanceId ? Loader2Data : PlayData} className={cn('mr-1', launching === inst.instanceId && 'animate-spin')} spring="snappy" reducedMotion="user" />
                 {t('connect.quickLaunch')}
               </Button>
             </div>
@@ -220,7 +223,7 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
                   onClick={() => onLaunch(inst.instanceId)}
                   disabled={launching !== null}
                 >
-                  {launching === inst.instanceId ? <Loader2 className="animate-spin" /> : <Play className="mr-1" />}
+                  <MorphIcon icon={launching === inst.instanceId ? Loader2Data : PlayData} className={cn('mr-1', launching === inst.instanceId && 'animate-spin')} spring="snappy" reducedMotion="user" />
                   {t('connect.forceLaunch')}
                 </Button>
               </Tooltip>
@@ -499,7 +502,7 @@ export default function Connect() {
         <div className="flex items-center gap-2">
           {natTypeBadge}
           <Button variant="outline" size="sm" onClick={testNatType} disabled={natTypeBusy}>
-            {natTypeBusy ? <Loader2 className="mr-1 animate-spin" /> : <Wifi className="mr-1" />}
+            <MorphIcon icon={natTypeBusy ? Loader2Data : WifiData} className={cn('mr-1', natTypeBusy && 'animate-spin')} spring="snappy" reducedMotion="user" />
             {t('connect.natCheck')}
           </Button>
         </div>
