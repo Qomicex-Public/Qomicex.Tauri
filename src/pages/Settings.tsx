@@ -53,6 +53,7 @@ import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, setDataDir, getSystemFonts } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
+import { FILE_NAMING_OPTIONS } from '../lib/download-naming.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
 import { LegalDialog } from '../components/LegalDialog.tsx'
 
@@ -1110,6 +1111,21 @@ export default function Settings() {
                     checked={settings.http1Parallel === true}
                     onCheckedChange={(c) => update('http1Parallel', c === true)}
                   />
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.fileNaming')}
+                description={t('settings.launcher.fileNamingDesc')}
+                control={
+                  <Select
+                    value={settings.fileNaming || (settings.language.startsWith('zh') ? '[{cn}]{name}-{version}' : '{name}-{version}')}
+                    onChange={(v) => update('fileNaming', v)}
+                    className="w-56"
+                  >
+                    {(settings.language.startsWith('zh') ? FILE_NAMING_OPTIONS : FILE_NAMING_OPTIONS.filter(o => o.key === '{name}-{version}' || o.key === '{name}')).map((opt) => (
+                      <SelectOption key={opt.key} value={opt.key}>{t(`settings.launcher.${opt.label}`)}</SelectOption>
+                    ))}
+                  </Select>
                 }
               />
             </SettingSection>

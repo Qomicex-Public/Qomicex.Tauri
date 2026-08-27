@@ -76,6 +76,8 @@ export interface AppSettings {
   ignoreSslCert?: boolean
   /** 强制所有下载用 HTTP/1.1 并行连接；false（默认）= 按来源自动（Modrinth 用并行，其余用 HTTP/2） */
   http1Parallel: boolean
+  /** 资源文件下载命名格式（ENH-10）：cn-name-ver / name-cn-ver / cn-name / name-ver / name */
+  fileNaming?: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

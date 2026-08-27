@@ -38,7 +38,7 @@ function versionCacheKey(resourceId: string, gameVersion: string, loader: string
 export default function ResourceInstallDialog({
   open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId, initialVersionId,
 }: ResourceInstallDialogProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const { notify } = useMessageBox()
   const [instances, setInstances] = useState<GameInstance[]>([])
   const [selectedInstance, setSelectedInstance] = useState<GameInstance | null>(null)
@@ -236,6 +236,7 @@ export default function ResourceInstallDialog({
         taskName: t('downloads.quickInstallName', { name: resourceTitle }),
         icon: resourceIcon || undefined,
         t,
+        lang,
       })
       onClose()
       notify(t('dialogs.resourceInstall.addedToDownloadCenter'), 'success')
