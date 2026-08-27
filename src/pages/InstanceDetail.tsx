@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Globe, Info, Layers, List, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCw, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, User, Wifi, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Globe, Info, Layers, List, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
 import { ArrowUp as ArrowUpData, RotateCw as RotateCwData, Upload as UploadData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
@@ -220,8 +220,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
   }, [saves, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
+    <SettingSection title={t('instanceDetail.tabs.saves')} icon={<Save className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
             <Save className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.saves')}
@@ -254,7 +253,6 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             ))}
           </div>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
@@ -279,7 +277,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -342,8 +340,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
   }, [screenshots, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
+    <SettingSection title={t('instanceDetail.tabs.screenshots')} icon={<Camera className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
             <Camera className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.screenshots')}
@@ -384,7 +381,6 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             ))}
           </div>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
@@ -409,7 +405,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -677,8 +673,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 
   if (!loader) {
     return (
-      <Card>
-        <CardContent className="p-5">
+      <SettingSection title={t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
               <Box className="h-5 w-5" />
@@ -688,15 +683,13 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               <p className="mt-0.5 text-xs text-muted-foreground">{t('instanceDetail.mods.noModsHint')}</p>
             </div>
           </div>
-        </CardContent>
-      </Card>
+      </SettingSection>
     )
   }
 
   return (
     <>
-      <Card>
-        <CardContent className="p-5">
+      <SettingSection title={t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
           <div className="mb-3 flex items-center justify-between gap-3">
             <h3 className="text-sm font-medium shrink-0">
               <Box className="mr-2 h-4 w-4 text-muted-foreground" />Mod
@@ -811,8 +804,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               </div>
             </DragSelectArea>
           )}
-        </CardContent>
-      </Card>
+      </SettingSection>
 
       <I18nBatchToolbar
         selectedCount={selected.size}
@@ -953,8 +945,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
   }, [packs, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
+    <SettingSection title={t('instanceDetail.tabs.resourcepacks')} icon={<Package className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
             <Package className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.resourcepacks')}
@@ -1009,7 +1000,6 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             </div>
           </DragSelectArea>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
@@ -1034,7 +1024,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -1121,8 +1111,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
   }, [shaders, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
+    <SettingSection title={t('instanceDetail.tabs.shaderpacks')} icon={<Sun className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
             <Sun className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.shaderpacks')}
@@ -1177,7 +1166,6 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             </div>
           </DragSelectArea>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
@@ -1202,7 +1190,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -1285,8 +1273,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
   }, [packs, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
+    <SettingSection title={t('instanceDetail.tabs.datapacks')} icon={<Database className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
             <Database className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.datapacks')}
@@ -1341,7 +1328,6 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
             </div>
           </DragSelectArea>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
@@ -1366,7 +1352,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -1468,8 +1454,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
   }, [files, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
+    <SettingSection title={t('instanceDetail.tabs.schematics')} icon={<PenTool className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium shrink-0">
             <PenTool className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.schematics')}
@@ -1557,7 +1542,6 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
             ))}
           </div>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
@@ -1608,7 +1592,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
         fileName={previewFile ?? ''}
         onClose={() => setPreviewFile(null)}
       />
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -1719,8 +1703,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
 
   return (
     <>
-      <Card>
-        <CardContent className="p-5">
+      <SettingSection title={t('instanceDetail.tabs.servers')} icon={<Server className="h-4 w-4" />}>
           <div className="mb-3 flex items-center justify-between gap-3">
             <h3 className="text-sm font-medium shrink-0">
               <Globe className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.servers')}
@@ -1882,8 +1865,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingSection>
       <ConfirmDialog open={confirmIp !== null} title={t('instanceDetail.servers.deleteTitle')} message={t('instanceDetail.servers.deleteConfirm', { ip: confirmIp ?? '' })} onConfirm={() => confirmIp && handleDelete(confirmIp)} onCancel={() => setConfirmIp(null)} />
       <Dialog open={showAdd} onClose={() => { setShowAdd(false); setEditServer(null) }}>
         <DialogHeader onClose={() => { setShowAdd(false); setEditServer(null) }}><DialogTitle>{editServer ? t('instanceDetail.servers.editTitle') : t('instanceDetail.servers.addTitle')}</DialogTitle></DialogHeader>
@@ -2309,6 +2291,7 @@ export default function InstanceDetailPage() {
   const [, setRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
   const [accounts, setAccounts] = useState<Account[]>([])
   const [form, setForm] = useState<GameInstance | null>(null)
+  const initialFormRef = useRef<GameInstance | null>(null)
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [memoryMode, setMemoryMode] = useState<'auto' | 'custom'>('auto')
   const [isDefault, setIsDefault] = useState(false)
@@ -2360,11 +2343,12 @@ export default function InstanceDetailPage() {
       try {
         const cacheKey = `api-instance-${id}`
         const cached = cacheGet<GameInstance>(cacheKey)
-        if (cached) { setInstance(cached); setForm({ ...cached }) }
+        if (cached) { setInstance(cached); setForm({ ...cached }); initialFormRef.current = cached }
         const [inst, accts, sys, def] = await Promise.all([getInstance(id!), getAccounts(), getSystemInfo(), getDefaultInstance()])
         if (cancelled) return
         setInstance(inst)
         setForm({ ...inst })
+        initialFormRef.current = inst
         cacheSet(cacheKey, inst)
         setRuntimes([...getRuntimes()])
         setAccounts(accts)
@@ -2429,7 +2413,30 @@ export default function InstanceDetailPage() {
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
   const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
-  const { confirm } = useMessageBox()
+  const { confirm, notify } = useMessageBox()
+
+  const handleResetSection = useCallback(async (fields: (keyof GameInstance)[]) => {
+    const ok = await confirm(t('instanceDetail.settingsTab.resetConfirm'), t('instanceDetail.settingsTab.resetSection'))
+    if (!ok || !initialFormRef.current) return
+    setForm((f) => {
+      if (!f) return f
+      const next = { ...f }
+      for (const k of fields) (next as any)[k] = (initialFormRef.current as any)[k]
+      return next
+    })
+    notify(t('instanceDetail.settingsTab.resetDone'), 'success')
+  }, [confirm, notify, t])
+
+  const ResetButton = ({ fields }: { fields: (keyof GameInstance)[] }) => (
+    <button
+      type="button"
+      onClick={() => handleResetSection(fields)}
+      className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <RotateCcw className="h-3 w-3" />
+      {t('instanceDetail.settingsTab.resetSection')}
+    </button>
+  )
 
   const handleLaunch = useCallback(async () => {
     if (!id) return
@@ -2804,7 +2811,7 @@ export default function InstanceDetailPage() {
 
           {tab === 'settings' && (
             <div className="space-y-4">
-              <SettingSection title={t('instanceDetail.settingsTab.instanceName')} icon={<Settings className="h-4 w-4" />}>
+              <SettingSection title={t('instanceDetail.settingsTab.instanceName')} icon={<Settings className="h-4 w-4" />} action={<ResetButton fields={['name', 'icon', 'javaPath']} />}>
                 <SettingRow label={t('instanceDetail.settingsTab.instanceName')} control={<Input value={form.name} onChange={(e) => update('name', e.target.value)} />} />
                 <SettingRow label={t('instanceDetail.settingsTab.instanceIcon')} control={
                   <div className="grid grid-cols-8 gap-2">
@@ -2835,7 +2842,7 @@ export default function InstanceDetailPage() {
                 } />
               </SettingSection>
 
-              <SettingSection title={t('instanceDetail.settingsTab.integrity')} icon={<ShieldCheck className="h-4 w-4" />}>
+              <SettingSection title={t('instanceDetail.settingsTab.integrity')} icon={<ShieldCheck className="h-4 w-4" />} action={<ResetButton fields={['versionIsolation', 'skipIntegrityCheck']} />}>
                 <SettingRow label={t('instanceDetail.settingsTab.checkIntegrity')} control={
                   <div className="flex items-center gap-2">
                     <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing}>
@@ -2880,17 +2887,17 @@ export default function InstanceDetailPage() {
                 <SettingRow label={t('instanceDetail.settingsTab.skipIntegrity')} description={t('instanceDetail.settingsTab.skipIntegrityDesc')} control={<Switch checked={form.skipIntegrityCheck === true} onCheckedChange={(c) => update('skipIntegrityCheck', c === true)} />} />
               </SettingSection>
 
-              <SettingSection title={t('instanceDetail.settingsTab.memoryAllocation')} icon={<MemoryStick className="h-4 w-4" />}>
+              <SettingSection title={t('instanceDetail.settingsTab.memoryAllocation')} icon={<MemoryStick className="h-4 w-4" />} action={<ResetButton fields={['maxMemory']} />}>
                 <div className="space-y-3 px-4 py-3">
                   <div className="flex items-center gap-2">
                     <button onClick={() => {
                       setMemoryMode('auto')
                       if (sysInfo) update('maxMemory', Math.max(512, Math.floor(sysInfo.availableMemory * 0.7)))
-                    }} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                      <Bot className="mr-1.5 h-3.5 w-3.5" />{t('instanceDetail.settingsTab.auto')}
+                    }} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                      <Bot className="h-3.5 w-3.5" />{t('instanceDetail.settingsTab.auto')}
                     </button>
-                    <button onClick={() => setMemoryMode('custom')} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                      <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />{t('instanceDetail.settingsTab.custom')}
+                    <button onClick={() => setMemoryMode('custom')} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                      <SlidersHorizontal className="h-3.5 w-3.5" />{t('instanceDetail.settingsTab.custom')}
                     </button>
                   </div>
 
@@ -2935,16 +2942,20 @@ export default function InstanceDetailPage() {
                 </div>
               </SettingSection>
 
-              <SettingSection title={t('instanceDetail.settingsTab.jvmArgs')} icon={<SquareTerminal className="h-4 w-4" />}>
-                <SettingRow label={t('instanceDetail.settingsTab.jvmArgs')} control={
+              <SettingSection title={t('instanceDetail.settingsTab.jvmArgs')} icon={<SquareTerminal className="h-4 w-4" />} action={<ResetButton fields={['jvmArgs', 'accountUuid', 'accountName', 'accessToken']} />}>
+                <div className="px-4 py-3">
+                  <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400">
+                    <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{t('instanceDetail.settingsTab.jvmArgsWarning')}</span>
+                  </div>
                   <textarea
                     value={form.jvmArgs ?? ''}
                     onChange={(e) => update('jvmArgs', e.target.value)}
                     placeholder="-Xmx2G -XX:+UseG1GC"
-                    rows={3}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                    rows={4}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y font-mono"
                   />
-                } />
+                </div>
                 <SettingRow label={t('instanceDetail.settingsTab.linkedAccount')} control={
                   <Select value={form.accountUuid ?? ''} onChange={(v) => {
                     const acc = accounts.find((a) => a.uuid === v)

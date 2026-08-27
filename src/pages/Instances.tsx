@@ -723,7 +723,7 @@ export default function Instances() {
                 <div className="flex items-center gap-1.5">
                   <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{t(TYPE_LABEL[v.type] ?? v.type)}</span>
                 </div>
-                <span className="text-[10px] text-muted-foreground/60"><Calendar className="mr-0.5 h-2.5 w-2.5" />{formatDate(v.releaseTime)}</span>
+                <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/60"><Calendar className="h-2.5 w-2.5 shrink-0" />{formatDate(v.releaseTime)}</span>
               </button>
             ))}
           </div>
@@ -739,8 +739,8 @@ export default function Instances() {
                     </div>
                     <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{t(TYPE_LABEL[v.type] ?? v.type)}</span>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground/70">
-                    <Calendar className="mr-1 h-2.5 w-2.5" />
+                  <div className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground/70">
+                    <Calendar className="h-2.5 w-2.5 shrink-0" />
                     {t('instances.releaseDate', { date: formatDate(v.releaseTime) })}
                   </div>
                 </div>
@@ -1059,8 +1059,8 @@ export default function Instances() {
                             </>
                           )}
                           {active && (
-                            <span className="shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
-                              <Check className="mr-1 h-3 w-3" />
+                            <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+                              <Check className="h-3 w-3" />
                               {t('instances.inUse')}
                             </span>
                           )}
