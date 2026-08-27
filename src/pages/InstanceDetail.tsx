@@ -1,14 +1,15 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Globe, Info, Layers, List, Package, Pen, PenTool, Play, Plus, RotateCw, Save, Search, Server, Settings, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, User, Wifi, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Globe, Info, Layers, List, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCw, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, User, Wifi, X } from 'lucide-react'
 import { ArrowUp as ArrowUpData, RotateCw as RotateCwData, Upload as UploadData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
+import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Separator } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
-import { Checkbox } from '../components/ui'
+import { Checkbox, Switch } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { Tabs, TabContent } from '../components/ui'
@@ -2171,20 +2172,16 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
   }, [listeningKey, handleChange])
 
   return (
-    <Card>
-      <CardContent className="p-5 overflow-hidden">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <Gamepad2 className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.gamesettings')}
-            {!loading && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({settings.length})</span>}
-          </h3>
-          <div className="flex items-center gap-2 flex-1 max-w-sm">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.gamesettings.search')} className="h-8 pl-8 text-xs" />
-            </div>
+    <SettingSection title={t('instanceDetail.tabs.gamesettings')} icon={<Gamepad2 className="h-4 w-4" />}>
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center gap-2 flex-1 max-w-sm">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.gamesettings.search')} className="h-8 pl-8 text-xs" />
           </div>
         </div>
+        {!loading && <span className="shrink-0 text-xs font-normal text-muted-foreground">({settings.length})</span>}
+      </div>
         {loading ? (
           <div className="space-y-3">
             {Array.from({ length: 8 }).map((_, i) => (
@@ -2281,8 +2278,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
             })}
           </div>
         )}
-      </CardContent>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -2807,15 +2803,10 @@ export default function InstanceDetailPage() {
           </TabContent>
 
           {tab === 'settings' && (
-            <Card>
-              <CardContent className="p-5 space-y-5">
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.instanceName')}</Label>
-                  <Input value={form.name} onChange={(e) => update('name', e.target.value)} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.instanceIcon')}</Label>
+            <div className="space-y-4">
+              <SettingSection title={t('instanceDetail.settingsTab.instanceName')} icon={<Settings className="h-4 w-4" />}>
+                <SettingRow label={t('instanceDetail.settingsTab.instanceName')} control={<Input value={form.name} onChange={(e) => update('name', e.target.value)} />} />
+                <SettingRow label={t('instanceDetail.settingsTab.instanceIcon')} control={
                   <div className="grid grid-cols-8 gap-2">
                     {ICON_NAMES.map((name) => (
                       <button
@@ -2832,25 +2823,20 @@ export default function InstanceDetailPage() {
                       </button>
                     ))}
                   </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.gameVersion')}</Label>
-                  <Input value={form.gameVersion} disabled className="text-muted-foreground" />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.javaRuntime')}</Label>
+                } />
+                <SettingRow label={t('instanceDetail.settingsTab.gameVersion')} control={<Input value={form.gameVersion} disabled className="text-muted-foreground" />} />
+                <SettingRow label={t('instanceDetail.settingsTab.javaRuntime')} control={
                   <Select value={form.javaPath ?? ''} onChange={(v) => update('javaPath', v || null)}>
                     <SelectOption value="">{t('instanceDetail.settingsTab.autoSelect')}</SelectOption>
                     {getValidRuntimes().map((j, i) => (
                       <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                     ))}
                   </Select>
-                </div>
+                } />
+              </SettingSection>
 
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.integrity')}</Label>
+              <SettingSection title={t('instanceDetail.settingsTab.integrity')} icon={<ShieldCheck className="h-4 w-4" />}>
+                <SettingRow label={t('instanceDetail.settingsTab.checkIntegrity')} control={
                   <div className="flex items-center gap-2">
                     <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing}>
                       <RotateCw className={cn('h-4 w-4', verifying && 'animate-spin')} />
@@ -2860,6 +2846,8 @@ export default function InstanceDetailPage() {
                       <span className="text-sm text-muted-foreground">{t('instanceDetail.settingsTab.repairing', { progress: repairProgress })}</span>
                     )}
                   </div>
+                } />
+                <div className="px-4 pb-3">
                   {verifyResult && !verifyResult.complete && (
                     <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
                       <p className="text-sm font-medium text-destructive">{t('instanceDetail.settingsTab.missingFiles', { count: verifyResult.missingFiles.length })}</p>
@@ -2879,9 +2867,7 @@ export default function InstanceDetailPage() {
                     <p className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.integrityOk')}</p>
                   )}
                 </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.versionIsolation')}</Label>
+                <SettingRow label={t('instanceDetail.settingsTab.versionIsolation')} description={t('instanceDetail.settingsTab.isolationDesc')} control={
                   <Select
                     value={form.versionIsolation == null ? 'global' : form.versionIsolation ? 'on' : 'off'}
                     onChange={(v) => update('versionIsolation', v === 'global' ? null : v === 'on')}
@@ -2890,22 +2876,12 @@ export default function InstanceDetailPage() {
                     <SelectOption value="on">{t('instanceDetail.settingsTab.on')}</SelectOption>
                     <SelectOption value="off">{t('instanceDetail.settingsTab.off')}</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.isolationDesc')}</p>
-                </div>
+                } />
+                <SettingRow label={t('instanceDetail.settingsTab.skipIntegrity')} description={t('instanceDetail.settingsTab.skipIntegrityDesc')} control={<Switch checked={form.skipIntegrityCheck === true} onCheckedChange={(c) => update('skipIntegrityCheck', c === true)} />} />
+              </SettingSection>
 
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
-                    checked={form.skipIntegrityCheck === true}
-                    onCheckedChange={(c) => update('skipIntegrityCheck', c === true)}
-                  />
-                  <div>
-                    <div className="text-sm font-medium">{t('instanceDetail.settingsTab.skipIntegrity')}</div>
-                    <div className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.skipIntegrityDesc')}</div>
-                  </div>
-                </label>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.memoryAllocation')}</Label>
+              <SettingSection title={t('instanceDetail.settingsTab.memoryAllocation')} icon={<MemoryStick className="h-4 w-4" />}>
+                <div className="space-y-3 px-4 py-3">
                   <div className="flex items-center gap-2">
                     <button onClick={() => {
                       setMemoryMode('auto')
@@ -2957,9 +2933,10 @@ export default function InstanceDetailPage() {
                     )
                   })()}
                 </div>
+              </SettingSection>
 
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.jvmArgs')}</Label>
+              <SettingSection title={t('instanceDetail.settingsTab.jvmArgs')} icon={<SquareTerminal className="h-4 w-4" />}>
+                <SettingRow label={t('instanceDetail.settingsTab.jvmArgs')} control={
                   <textarea
                     value={form.jvmArgs ?? ''}
                     onChange={(e) => update('jvmArgs', e.target.value)}
@@ -2967,10 +2944,8 @@ export default function InstanceDetailPage() {
                     rows={3}
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
                   />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.linkedAccount')}</Label>
+                } />
+                <SettingRow label={t('instanceDetail.settingsTab.linkedAccount')} control={
                   <Select value={form.accountUuid ?? ''} onChange={(v) => {
                     const acc = accounts.find((a) => a.uuid === v)
                     update('accountUuid', v || null)
@@ -2982,15 +2957,14 @@ export default function InstanceDetailPage() {
                       <SelectOption key={a.uuid} value={a.uuid}>{a.name}</SelectOption>
                     ))}
                   </Select>
-                </div>
-
+                } />
                 {saving && (
-                  <div className="flex justify-end pt-2">
+                  <div className="flex justify-end px-4 pb-3">
                     <span className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.saving')}</span>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </SettingSection>
+            </div>
           )}
 
           <TabContent activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} onQuickJoinWorld={(name) => handleQuickLaunch({ joinWorld: name })} running={runningInstances.some(r => r.instanceId === id)} /></TabContent>
