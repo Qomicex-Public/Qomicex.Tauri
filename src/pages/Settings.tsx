@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
-import { ArrowUp, Bot, Bug, Check, CheckCircle2, ChevronRight, Coffee, Copy, Database, Download, ExternalLink, FileSignature, FileText, Folder, FolderOpen, Globe, Heart, Image, Info, Key, Loader2, Minus, Monitor, Palette, Plus, Puzzle, Rocket, RotateCw, Scale, Search, Settings as SettingsIcon, ShieldHalf, SlidersHorizontal, Tag, Trash2, TriangleAlert, Zap } from 'lucide-react'
+import { ArrowUp, Bot, Bug, Check, CheckCircle2, ChevronRight, Coffee, Copy, Database, Download, ExternalLink, FileText, Folder, FolderOpen, Globe, Heart, Image, Info, Key, Loader2, Minus, Monitor, Palette, Plus, Puzzle, Rocket, RotateCw, Scale, Search, Settings as SettingsIcon, ShieldHalf, SlidersHorizontal, Tag, Trash2, TriangleAlert, Zap } from 'lucide-react'
 import { ArrowUp as ArrowUpData, ChevronDown as ChevronDownData, ChevronRight as ChevronRightData, RotateCw as RotateCwData, Search as SearchData, Trash2 as Trash2Data, Zap as ZapData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { MorphIcon } from 'morphicons/react'
 import { Button } from '../components/ui'
-import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
@@ -199,14 +198,8 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   return (
     <div key="about" className="animate-in slide-up space-y-4">
       {/* Header */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <Info className="mr-2 h-4 w-4 text-muted-foreground" />
-            {t('settings.about.aboutApp', { name: APP_INFO.name })}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <SettingSection title={t('settings.about.aboutApp', { name: APP_INFO.name })} icon={<Info className="h-4 w-4" />}>
+        <div className="space-y-4 p-4">
           <div className="flex items-center gap-4">
             <img src="/logo.svg" alt={APP_INFO.name} className="h-14 w-14 rounded-2xl" />
             <div className="flex-1 min-w-0">
@@ -226,13 +219,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             </div>
           </div>
           <p className="text-sm leading-relaxed text-muted-foreground">{t('settings.about.appDescription')}</p>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Version Info */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.versionInfo')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.versionInfo')}>
+        <div className="p-4">
           <div className="rounded-lg bg-background p-4 text-sm">
             <div className="grid grid-cols-2 gap-3">
               <div><div className="text-xs text-muted-foreground">{t('settings.about.appVersion')}</div><div className="mt-0.5 flex items-center gap-2 font-medium">{APP_INFO.version}<span className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted">{versionType}</span></div></div>
@@ -242,16 +234,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               <div><div className="text-xs text-muted-foreground">{t('settings.about.memory')}</div><div className="mt-0.5 font-medium">{sysInfo ? `${(sysInfo.memory / 1024).toFixed(1)} GB` : t('common.loading')}</div></div>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {licenseStatus && !(licenseStatus.valid && !licenseStatus.licenseId) && (
-      <Card>
-        <CardHeader><CardTitle>
-          <ShieldHalf className="mr-2 h-4 w-4 text-muted-foreground" />
-          {t('settings.about.license')}
-        </CardTitle></CardHeader>
-        <CardContent className="space-y-3">
+      <SettingSection title={t('settings.about.license')} icon={<ShieldHalf className="h-4 w-4" />}>
+        <div className="space-y-3 p-4">
           <div className="flex items-center gap-3">
             {licenseStatus.valid ? (
               <Badge variant="default" className="gap-1">
@@ -302,17 +290,13 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               </Button>
             </Tooltip>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
       )}
 
       {/* Update */}
-      <Card>
-        <CardHeader><CardTitle>
-          <ArrowUp className="mr-2 h-4 w-4 text-muted-foreground" />
-          {t('settings.about.update')}
-        </CardTitle></CardHeader>
-        <CardContent className="space-y-3">
+      <SettingSection title={t('settings.about.update')} icon={<ArrowUp className="h-4 w-4" />}>
+        <div className="space-y-3 p-4">
           <div className="flex items-center gap-3">
 <Select value={channel} onChange={setChannelAndSave} className="w-28">
   <SelectOption value="stable">{t('settings.about.stable')}</SelectOption>
@@ -336,8 +320,8 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             )}
           </div>
 
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       <UpdateDialog
         open={updateDialogOpen}
@@ -350,12 +334,11 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       />
 
       {/* Contributors */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.developers')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.developers')}>
+        <div className="p-2">
           <div className="space-y-3">
             {CONTRIBUTORS.map((c) => (
-                <div key={c.name} className="flex items-center gap-3">
+                <div key={c.name} className="flex items-center gap-3 px-2 py-1">
                   {c.avatar ? (
                     <img src={c.avatar} alt={c.name} className="h-10 w-10 rounded-full object-cover" />
                   ) : (
@@ -373,13 +356,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                 </div>
                 ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Services Credits */}
-      <Card>
-        <CardHeader><CardTitle><Heart className="mr-2 h-4 w-4 text-destructive" />{t('settings.about.acknowledgements')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.acknowledgements')} icon={<Heart className="h-4 w-4 text-destructive" />}>
+        <div className="p-4">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {SERVICES.map((svc) => (
               <button
@@ -400,13 +382,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               </button>
             ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Reference Projects */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.referenceProjects')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.referenceProjects')}>
+        <div className="p-2">
           <div className="space-y-2">
             {REFERENCE_PROJECTS.map((proj) => (
               <button
@@ -423,13 +404,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               </button>
             ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Backend Dependencies */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.backendDependencies')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.backendDependencies')}>
+        <div className="p-2">
           <div className="space-y-1">
             {Object.entries(BACKEND_DEPENDENCIES).map(([category, deps]) => {
               const expandRef = useExpandAnimation(expandedDep === category)
@@ -469,13 +449,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               )
             })}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Frontend Dependencies */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.frontendDependencies')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.frontendDependencies')}>
+        <div className="p-2">
           <div className="space-y-1">
             {Object.entries(DEPENDENCIES).map(([category, deps]) => {
               const expandRef = useExpandAnimation(expandedDep === category)
@@ -511,13 +490,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               )
             })}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* License */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.openSourceLicense')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.openSourceLicense')}>
+        <div className="p-4">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium">{LICENSE.name}</div>
@@ -527,48 +505,29 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               <ExternalLink className="h-3 w-3" />{t('settings.about.viewLicense')}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* 版权与隐私 */}
-      <Card>
-        <CardHeader><CardTitle><Scale className="mr-2 h-4 w-4 text-muted-foreground" />{t('settings.about.copyrightPrivacy')}</CardTitle></CardHeader>
-        <CardContent className="space-y-1">
-          <button
-            onClick={() => setLegalDialogOpen(true)}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
-          >
-            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{t('settings.about.copyrightStatement')}</div>
-              <div className="truncate text-xs text-muted-foreground">{t('settings.about.copyrightStatementDesc')}</div>
-            </div>
-            <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-          </button>
-          <button
-            onClick={() => openUrl(USER_AGREEMENT_URL).catch(() => window.open(USER_AGREEMENT_URL, '_blank'))}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
-          >
-            <FileSignature className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{t('settings.about.userAgreement')}</div>
-              <div className="truncate text-xs text-muted-foreground">qomicex.top/legal/user-agreement</div>
-            </div>
-            <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-          </button>
-          <button
-            disabled
-            className="flex w-full cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm opacity-50"
-          >
-            <ShieldHalf className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{t('settings.about.privacyPolicy')}</div>
-              <div className="truncate text-xs text-muted-foreground">{t('common.comingSoon')}</div>
-            </div>
-            <Badge variant="secondary" className="h-5 shrink-0 text-[10px]">{t('common.comingSoon')}</Badge>
-          </button>
-        </CardContent>
-      </Card>
+      <SettingSection title={t('settings.about.copyrightPrivacy')} icon={<Scale className="h-4 w-4" />}>
+        <SettingRow
+          label={t('settings.about.copyrightStatement')}
+          description={t('settings.about.copyrightStatementDesc')}
+          onClick={() => setLegalDialogOpen(true)}
+          control={<ChevronRight className="h-3 w-3 text-muted-foreground/50" />}
+        />
+        <SettingRow
+          label={t('settings.about.userAgreement')}
+          description="qomicex.top/legal/user-agreement"
+          onClick={() => openUrl(USER_AGREEMENT_URL).catch(() => window.open(USER_AGREEMENT_URL, '_blank'))}
+          control={<ExternalLink className="h-3 w-3 text-muted-foreground/50" />}
+        />
+        <SettingRow
+          label={t('settings.about.privacyPolicy')}
+          description={t('common.comingSoon')}
+          control={<Badge variant="secondary" className="h-5 shrink-0 text-[10px]">{t('common.comingSoon')}</Badge>}
+        />
+      </SettingSection>
 
       <LegalDialog open={legalDialogOpen} onClose={() => setLegalDialogOpen(false)} />
     </div>

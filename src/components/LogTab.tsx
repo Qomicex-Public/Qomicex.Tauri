@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { Download, Eye, FileText, FolderOpen, Info, RotateCw, Search, Trash2, X } from 'lucide-react'
 import { ChevronDown as ChevronDownData, ChevronRight as ChevronRightData } from 'lucide'
 import { MorphIcon } from 'morphicons/react'
-import { Card, CardHeader, CardTitle, CardContent } from './ui'
 import { Button } from './ui'
 import { Badge } from './ui'
 import { Tooltip } from './ui'
@@ -13,6 +12,7 @@ import {
 } from '../api/logs.ts'
 import type { LogEntry, LogContent } from '../api/logs.ts'
 import { save } from '@tauri-apps/plugin-dialog'
+import { SettingSection } from './settings/SettingRow.tsx'
 import { useI18n } from '../i18n/index.tsx'
 
 function formatSize(bytes: number): string {
@@ -174,14 +174,8 @@ export default function LogTab() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <FileText className="mr-2 h-4 w-4 text-muted-foreground" />
-            {t('tools.logs.title')}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <SettingSection title={t('tools.logs.title')} icon={<FileText className="h-4 w-4" />}>
+        <div className="space-y-4 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={fetchLogs} disabled={loading}>
@@ -342,8 +336,8 @@ export default function LogTab() {
               </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {contextMenu && (
         <div
