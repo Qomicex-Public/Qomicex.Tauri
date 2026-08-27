@@ -37,3 +37,15 @@ Settings 页重构为 Split View + 扁平 List：保留左 Tabs 导航，右侧�
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-08-27 | v1.0 | 初版创建 | AI Agent |
+
+### 2026-08-27 更新
+## 范围扩展（b7000ec）
+
+原 ADR 限 launcher/java/appearance 三 tab。用户验收效果好，要求覆盖其余设置页。现已全部完成：
+
+- **AboutTab**（Settings.tsx 内）：11 个 Card → SettingSection，版权/隐私行用 SettingRow
+- **ToolboxTab / PluginStoreTab / LogTab**：各 1 个 Card → SettingSection
+- **DebugTab**：4 个 Card → SettingSection，1 个 Checkbox → Switch
+- **结果**：Settings.tsx + 4 个子组件全部 Card-free（0 残留）
+- 复杂内层布局（info grids、依赖 accordion、日志列表、avatar 列表、按钮组）保持原样，仅去 Card 边框
+
