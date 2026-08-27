@@ -20,7 +20,7 @@ import { ContextMenu } from '../components/ContextMenu.tsx'
 import type { ContextMenuItem } from '../components/ContextMenu.tsx'
 import { useMessageBox } from '../components/ui'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, syncScan, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
+import { createInstance, startInstall, getInstances, syncScan, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, deleteInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui'
@@ -131,8 +131,8 @@ type PageStep = 'list' | 'select-version' | 'configure'
 export default function Instances() {
   const navigate = useNavigate()
   const { t } = useI18n()
-  const { alert: msgAlert, prompt: msgPrompt, notify } = useMessageBox()
-  const { launchInstance: ctxLaunchInstance } = useRunning()
+  const { alert: msgAlert, prompt: msgPrompt, confirm: msgConfirm, notify } = useMessageBox()
+  const { launchInstance: ctxLaunchInstance, runningInstances } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
 
   const [scannedLocal, setScannedLocal] = useState<ScannedVersion[]>([])
@@ -904,6 +904,32 @@ export default function Instances() {
     return backedInstances.find((i) => i.gameDir === currentDir && i.name === v.name)
   }
 
+  /** 删除实例：二次确认后调用后端（后端会删除版本隔离目录，破坏性操作）。 */
+  async function handleDeleteInstance(v: ScannedVersion) {
+    const inst = getInstanceForVersion(v)
+    if (!inst) return
+    const ok = await msgConfirm(t('instances.deleteInstanceConfirm', { name: v.name }))
+    if (!ok) return
+    try {
+      await deleteInstance(inst.id)
+      refreshInstances()
+      if (currentDir) await doScan(currentDir)
+    } catch (e) {
+      await msgAlert(t('dialogs.common.deleteFailed', { error: e instanceof Error ? e.message : String(e) }))
+    }
+  }
+
+  /** 实例卡片右键菜单：启动（运行中禁用）/ 详情 / 删除（未创建或运行中禁用 + 二次确认）。 */
+  function buildInstanceContextItems(v: ScannedVersion): ContextMenuItem[] {
+    const inst = getInstanceForVersion(v)
+    const running = inst ? runningInstances.some((r) => r.instanceId === inst.id) : false
+    return [
+      { label: t('instances.launch'), onClick: () => handleLaunch(v), disabled: running },
+      { label: t('instances.settings'), onClick: () => openVersionSettings(v) },
+      { label: t('common.delete'), onClick: () => handleDeleteInstance(v), disabled: !inst || running, danger: true },
+    ]
+  }
+
   function getLoadersForVersion(v: ScannedVersion) {
     const inst = getInstanceForVersion(v)
     if (inst?.loader) return [{ type: inst.loader, version: inst.loaderVersion ?? '' }]
@@ -1306,7 +1332,8 @@ export default function Instances() {
           {scannedLocal.length > 0 && (viewMode === 'grid' ? (
           <div ref={gridAnimRef} className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
-              <div key={v.name} data-key={v.name} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
+              <ContextMenu key={v.name} items={buildInstanceContextItems(v)}>
+                <div data-key={v.name} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 <div className="mt-1 flex flex-wrap justify-center gap-1">
@@ -1348,14 +1375,16 @@ export default function Instances() {
                       <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {}) }}><FolderOpen className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
+                  </div>
                 </div>
-              </div>
+              </ContextMenu>
             ))}
           </div>
         ) : (
           <div ref={listAnimRef} className="space-y-3">
             {filtered.map((v) => (
-              <div key={v.name} data-key={v.name} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
+              <ContextMenu key={v.name} items={buildInstanceContextItems(v)}>
+                <div data-key={v.name} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -1406,9 +1435,10 @@ export default function Instances() {
                   )})()}
                    <Tooltip content={t('instances.openFolder')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {})}><FolderOpen className="h-3.5 w-3.5" /></Button>
-                   </Tooltip>
-                </div>
-              </div>
+</Tooltip>
+                 </div>
+               </div>
+              </ContextMenu>
             ))}
           </div>
         ))}
