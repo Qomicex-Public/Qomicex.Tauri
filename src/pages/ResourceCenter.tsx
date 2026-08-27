@@ -11,7 +11,7 @@ import { Badge } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Combobox } from '../components/ui'
 import { cn } from '../components/ui'
-import { searchResources } from '../api/resource.ts'
+import { searchResources, getResourceCategories, type ResourceCategory } from '../api/resource.ts'
 import { batchLookupChineseNames } from '../api/mcmod.ts'
 import type { ResourceItem } from '../types/index.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
@@ -128,18 +128,17 @@ const CF_TAGS = [
 // 被过滤。因此 `all` 只暴露两套体系的交集标签，保证两边都按同一筛选条件过滤。
 const ALL_TAGS = MOD_TAGS.filter((t) => CF_TAGS.includes(t))
 
-// 根据来源返回对应的标签集合：CurseForge 用 CF 体系，all 聚合用交集，其余（modrinth）
-// 用 Modrinth 体系。
-function tagsForSource(source: string): string[] {
+// 根据来源+资源类型返回对应的静态标签集合（动态类别加载失败时的兜底；非 mod 无静态列表）。
+function tagsForSource(source: string, category: string): string[] {
+  if (category !== 'mod') return []
   if (source === 'curseforge') return CF_TAGS
   if (source === 'all') return ALL_TAGS
   return MOD_TAGS
 }
 
-// 把标签列表过滤为当前来源支持的那一套，避免把 Modrinth 标签套到 CurseForge
-// （或反之），例如通过 URL / 快照恢复时来源与标签不匹配的情况。
-function normalizeTags(tags: string[], source: string): string[] {
-  const allowed = new Set(tagsForSource(source))
+// 把标签列表过滤为当前来源+类型支持的那一套，避免 URL / 快照恢复时标签与来源不匹配。
+function normalizeTags(tags: string[], source: string, category: string): string[] {
+  const allowed = new Set(tagsForSource(source, category))
   return tags.filter((t) => allowed.has(t))
 }
 
@@ -154,9 +153,24 @@ function getSourceLabel(source: string): string {
   return map[source] ?? source
 }
 
-// 标签筛选对 Modrinth / CurseForge（及 all 聚合）的 mod 分类生效。
+// 标签/类别筛选对哪些资源类型生效（ENH-04：全类型类别筛选）。
+// - save：无类别体系
+// - ftb：用自身分类（暂不扩展）
+// - curseforge：仅 mod/modpack 有 classId 分类
+// - 其余（modrinth / all 聚合）：mod/modpack/shader/resourcepack/datapack 均支持
 function tagsSupported(source: string, category: string): boolean {
-  return (source === 'modrinth' || source === 'curseforge' || source === 'all') && category === 'mod'
+  if (category === 'save') return false
+  if (source === 'ftb') return false
+  if (source === 'curseforge') return category === 'mod' || category === 'modpack'
+  return category === 'mod' || category === 'modpack' || category === 'shader' || category === 'resourcepack' || category === 'datapack'
+}
+
+/** 类别筛选的静态回退（仅 mod 有内置列表；后端动态类别失败时兜底）。 */
+function staticTagsFor(source: string, category: string): string[] {
+  if (category !== 'mod') return []
+  if (source === 'curseforge') return CF_TAGS
+  if (source === 'all') return ALL_TAGS
+  return MOD_TAGS
 }
 
 function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string, tags?: string[]): string {
@@ -300,7 +314,7 @@ export default function ResourceCenter() {
   const [tags, setTags] = useState<string[]>(() => {
     const raw = urlTags ? urlTags.split(',').map((t) => t.trim()).filter(Boolean)
       : (!freshEntry && snap?.tags ? snap.tags : [])
-    return tagsSupported(categoryInit, source) ? normalizeTags(raw, source) : []
+    return tagsSupported(categoryInit, source) ? normalizeTags(raw, source, categoryInit) : []
   })
   const instanceId = searchParams.get('instanceId') ?? ''
   const [items, setItems] = useState<ResourceItem[]>(() => freshEntry ? [] : (snap?.items ?? []))
@@ -314,6 +328,21 @@ export default function ResourceCenter() {
   const [modpackInstallItem, setModpackInstallItem] = useState<ResourceItem | null>(null)
   const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => freshEntry ? {} : (snap?.cnNames ?? {}))
   const pageSize = 20
+
+  // 动态类别列表（按 source+category 拉取；失败时回退静态列表 staticTagsFor）
+  const [categoryOptions, setCategoryOptions] = useState<ResourceCategory[] | null>(null)
+
+  useEffect(() => {
+    if (!tagsSupported(source, category)) {
+      setCategoryOptions(null)
+      return
+    }
+    let cancelled = false
+    getResourceCategories(source === 'curseforge' ? 'curseforge' : 'modrinth', category)
+      .then((list) => { if (!cancelled) setCategoryOptions(list) })
+      .catch(() => { if (!cancelled) setCategoryOptions(null) })
+    return () => { cancelled = true }
+  }, [source, category])
 
   const restoredRef = useRef(!freshEntry && !!snap)
   const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames })
@@ -423,7 +452,7 @@ export default function ResourceCenter() {
   const handleSourceChange = (nextSource: string) => {
     // 切换来源会改变标签体系（Modrinth / CurseForge），跨体系的标签 slug 不通用，
     // 因此来源词汇变化时清空已选标签，避免误把一套标签发给另一套来源。
-    if (tagsForSource(nextSource) !== tagsForSource(source)) setTags([])
+    if (tagsForSource(nextSource, category) !== tagsForSource(source, category)) setTags([])
     setSource(nextSource)
     if (nextSource === 'ftb') {
       setCategory('modpack')
@@ -523,19 +552,19 @@ export default function ResourceCenter() {
                 )}
               </div>
             </div>
-            {(source === 'modrinth' || source === 'curseforge' || source === 'all') && category === 'mod' && (
+            {tagsSupported(source, category) && (
               <div className="w-full space-y-1">
                 <p className="text-[11px] font-medium text-muted-foreground">
-                  {source === 'curseforge' ? 'CurseForge 标签' : '标签'}
+                  {t('resource.categoryFilterLabel')}
                 </p>
                 <div className="flex flex-wrap gap-1.5">
-                  {tagsForSource(source).map((tag) => {
-                    const active = tags.includes(tag)
+                  {(categoryOptions ? categoryOptions.map(o => o.slug) : staticTagsFor(source, category)).map((slug) => {
+                    const active = tags.includes(slug)
                     return (
                       <button
-                        key={tag}
+                        key={slug}
                         type="button"
-                        onClick={() => toggleTag(tag)}
+                        onClick={() => toggleTag(slug)}
                         className={cn(
                           'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
                           active
@@ -543,7 +572,7 @@ export default function ResourceCenter() {
                             : 'border-border/60 bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground',
                         )}
                       >
-                        {translateCategory(tag, source === 'curseforge' ? 'curseforge' : 'modrinth', lang)}
+                        {translateCategory(slug, source === 'curseforge' ? 'curseforge' : 'modrinth', lang)}
                       </button>
                     )
                   })}
@@ -554,7 +583,7 @@ export default function ResourceCenter() {
                       className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
                     >
                       <X className="h-3 w-3" />
-                      清除标签
+                      {t('resource.clearFilter')}
                     </button>
                   )}
                 </div>

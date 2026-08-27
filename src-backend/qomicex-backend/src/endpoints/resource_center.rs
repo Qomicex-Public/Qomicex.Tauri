@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
@@ -136,6 +137,20 @@ struct TranslateResponse {
     translated_at: Option<String>,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ResourceCategoryDto {
+    slug: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CategoriesQuery {
+    source: Option<String>,
+    category: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TranslateTextRequest {
@@ -234,6 +249,7 @@ struct StartFetchQuery {
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/resources/search", get(search))
+        .route("/resources/categories", get(categories))
         .route("/resources/{id}", get(detail))
         .route("/resources/{id}/versions", get(versions))
         .route(
@@ -445,6 +461,137 @@ async fn cf_resolve_category_ids(
     } else {
         Some(ids)
     }
+}
+
+// =====================================================================
+// Handlers: categories (resource-type category list for filtering)
+// =====================================================================
+
+/// 全局缓存的 Modrinth 分类表（tag/category 为全局资源，含 project_type 分组）。
+fn mr_categories_cache() -> &'static Mutex<Option<(Instant, Vec<(String, String, String)>)>> {
+    // (project_type, slug, name)
+    static CACHE: OnceLock<Mutex<Option<(Instant, Vec<(String, String, String)>)>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+async fn fetch_mr_categories(client: &reqwest::Client) -> Vec<(String, String, String)> {
+    const TTL: Duration = Duration::from_secs(6 * 3600);
+    {
+        let g = mr_categories_cache().lock().unwrap();
+        if let Some((ts, list)) = g.as_ref() {
+            if ts.elapsed() < TTL {
+                return list.clone();
+            }
+        }
+    }
+    let list: Vec<(String, String, String)> = match client
+        .get("https://api.modrinth.com/v3/tag/category")
+        .header("Accept", "application/json")
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let arr: Vec<Value> = r.json().await.unwrap_or_default();
+            arr.into_iter()
+                .filter_map(|v| {
+                    let name = v
+                        .get("name")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if name.is_empty() {
+                        return None;
+                    }
+                    // v3 的 category 对象无 slug 字段 → 用 name 规范化生成
+                    let slug = v
+                        .get("slug")
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| normalize_tag(&name));
+                    let pt = v
+                        .get("project_type")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some((pt, slug, name))
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    if !list.is_empty() {
+        let mut g = mr_categories_cache().lock().unwrap();
+        *g = Some((Instant::now(), list.clone()));
+    }
+    list
+}
+
+/// GET /api/resources/categories?source={modrinth|curseforge}&category={...}
+/// 返回某资源类型的类别（slug）列表，供前端渲染筛选按钮。
+/// Modrinth 按 project_type 过滤；CurseForge 按 class_id 拉取（复用已有缓存）。
+async fn categories(
+    State(state): State<SharedState>,
+    Query(q): Query<CategoriesQuery>,
+) -> ApiResult<Json<Vec<ResourceCategoryDto>>> {
+    let source = q.source.clone().unwrap_or_else(|| "modrinth".to_string());
+    let category = q.category.clone().unwrap_or_else(|| "mod".to_string());
+
+    if source.eq_ignore_ascii_case("curseforge") {
+        let mut out: Vec<ResourceCategoryDto> = Vec::new();
+        if let Some(class_id) = map_cf_class_id(Some(&category)) {
+            let client = &state.http_client;
+            let api_key = &state.curse_forge_api_key;
+            let cached = {
+                let g = cf_category_cache().lock().unwrap();
+                g.get(&Some(class_id)).cloned()
+            };
+            let map = match cached {
+                Some(m) => m,
+                None => {
+                    let m = fetch_cf_categories(client, api_key, Some(class_id)).await;
+                    if !m.is_empty() {
+                        cf_category_cache()
+                            .lock()
+                            .unwrap()
+                            .insert(Some(class_id), m.clone());
+                    }
+                    m
+                }
+            };
+            out = map
+                .keys()
+                .map(|k| ResourceCategoryDto {
+                    slug: k.clone(),
+                    name: k.clone(),
+                })
+                .collect();
+            out.sort_by(|a, b| a.slug.cmp(&b.slug));
+        }
+        return Ok(Json(out));
+    }
+
+    let all = fetch_mr_categories(&state.http_client).await;
+    let mut filtered: Vec<ResourceCategoryDto> = all
+        .iter()
+        .filter(|(pt, _, _)| pt.eq_ignore_ascii_case(&category))
+        .map(|(_, slug, name)| ResourceCategoryDto {
+            slug: slug.clone(),
+            name: name.clone(),
+        })
+        .collect();
+    // datapack 无专属类别（v3 tag/category 无 datapack project_type）→ 复用 mod 类别
+    if filtered.is_empty() && category.eq_ignore_ascii_case("datapack") {
+        filtered = all
+            .iter()
+            .filter(|(pt, _, _)| pt.eq_ignore_ascii_case("mod"))
+            .map(|(_, slug, name)| ResourceCategoryDto {
+                slug: slug.clone(),
+                name: name.clone(),
+            })
+            .collect();
+    }
+    Ok(Json(filtered))
 }
 
 // =====================================================================
