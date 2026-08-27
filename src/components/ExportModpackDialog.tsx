@@ -408,7 +408,7 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
       closeOnBackdrop={exportStatus !== 'running'}
       closeOnEsc={exportStatus !== 'running'}
     >
-      <DialogHeader onClose={exportStatus === 'running' ? undefined : onClose}>
+      <DialogHeader onClose={exportStatus === 'running' ? undefined : () => { reset(); onClose() }}>
         <DialogTitle>
           {exportStatus === 'running' ? t('dialogs.modpackExport.exportingTitle') : t('dialogs.modpackExport.title')}
         </DialogTitle>

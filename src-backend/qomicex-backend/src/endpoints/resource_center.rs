@@ -716,10 +716,15 @@ async fn detail(
                 .map(|a| a.name.clone())
                 .unwrap_or_default(),
             icon_url: info
-                .screenshots
+                .logo
                 .as_ref()
-                .and_then(|s| s.first())
-                .and_then(|s| s.thumbnail_url.clone())
+                .and_then(|l| l.url.clone())
+                .or_else(|| {
+                    info.screenshots
+                        .as_ref()
+                        .and_then(|s| s.first())
+                        .and_then(|s| s.thumbnail_url.clone())
+                })
                 .unwrap_or_default(),
             download_count: info.download_count as i64,
             source: "curseforge".to_string(),
