@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Globe, Info, Layers, List, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Info, Layers, List, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
 import { ArrowUp as ArrowUpData, RotateCw as RotateCwData, Upload as UploadData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
@@ -25,7 +25,7 @@ import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, getValidRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto, FileEntry } from '../types/index.ts'
+import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, GameSettingDto, FileEntry } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates, getSchematics, deleteSchematic, renameSchematic, importSchematic } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
@@ -220,12 +220,8 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
   }, [saves, search])
 
   return (
-    <SettingSection title={t('instanceDetail.tabs.saves')} icon={<Save className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <Save className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.saves')}
-            {saves.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({saves.length})</span>}
-          </h3>
+    <SettingSection title={saves.length > 0 ? `${t('instanceDetail.tabs.saves')} (${saves.length})` : t('instanceDetail.tabs.saves')} icon={<Save className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-end gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -340,12 +336,8 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
   }, [screenshots, search])
 
   return (
-    <SettingSection title={t('instanceDetail.tabs.screenshots')} icon={<Camera className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <Camera className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.screenshots')}
-            {screenshots.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({screenshots.length})</span>}
-          </h3>
+    <SettingSection title={screenshots.length > 0 ? `${t('instanceDetail.tabs.screenshots')} (${screenshots.length})` : t('instanceDetail.tabs.screenshots')} icon={<Camera className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-end gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -691,12 +683,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 
   return (
     <>
-      <SettingSection title={t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-medium shrink-0">
-              <Box className="mr-2 h-4 w-4 text-muted-foreground" />Mod
-              {mods.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({mods.length})</span>}
-            </h3>
+      <SettingSection title={mods.length > 0 ? `${t('instanceDetail.tabs.mods')} (${mods.length})` : t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
+          <div className="mb-3 flex items-center justify-end gap-3">
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -947,12 +935,8 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
   }, [packs, search])
 
   return (
-    <SettingSection title={t('instanceDetail.tabs.resourcepacks')} icon={<Package className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <Package className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.resourcepacks')}
-            {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
-          </h3>
+    <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.resourcepacks')} (${packs.length})` : t('instanceDetail.tabs.resourcepacks')} icon={<Package className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-end gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1113,12 +1097,8 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
   }, [shaders, search])
 
   return (
-    <SettingSection title={t('instanceDetail.tabs.shaderpacks')} icon={<Sun className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <Sun className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.shaderpacks')}
-            {shaders.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({shaders.length})</span>}
-          </h3>
+    <SettingSection title={shaders.length > 0 ? `${t('instanceDetail.tabs.shaderpacks')} (${shaders.length})` : t('instanceDetail.tabs.shaderpacks')} icon={<Sun className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-end gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1275,12 +1255,8 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
   }, [packs, search])
 
   return (
-    <SettingSection title={t('instanceDetail.tabs.datapacks')} icon={<Database className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <Database className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.datapacks')}
-            {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
-          </h3>
+    <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.datapacks')} (${packs.length})` : t('instanceDetail.tabs.datapacks')} icon={<Database className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-end gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1456,12 +1432,8 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
   }, [files, search])
 
   return (
-    <SettingSection title={t('instanceDetail.tabs.schematics')} icon={<PenTool className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <PenTool className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.schematics')}
-            {files.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({files.length})</span>}
-          </h3>
+    <SettingSection title={files.length > 0 ? `${t('instanceDetail.tabs.schematics')} (${files.length})` : t('instanceDetail.tabs.schematics')} icon={<PenTool className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-end gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1705,12 +1677,8 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
 
   return (
     <>
-      <SettingSection title={t('instanceDetail.tabs.servers')} icon={<Server className="h-4 w-4" />}>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-medium shrink-0">
-              <Globe className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.servers')}
-              {servers.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({servers.length})</span>}
-            </h3>
+      <SettingSection title={servers.length > 0 ? `${t('instanceDetail.tabs.servers')} (${servers.length})` : t('instanceDetail.tabs.servers')} icon={<Server className="h-4 w-4" />}>
+          <div className="mb-3 flex items-center justify-end gap-3">
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -2298,7 +2266,6 @@ export default function InstanceDetailPage() {
   const [memoryMode, setMemoryMode] = useState<'auto' | 'custom'>('auto')
   const [isDefault, setIsDefault] = useState(false)
   const [verifying, setVerifying] = useState(false)
-  const [verifyResult, setVerifyResult] = useState<{ complete: boolean; missingFiles: MissingFile[] } | null>(null)
   const [repairing, setRepairing] = useState(false)
   const [repairProgress, setRepairProgress] = useState(0)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
@@ -2525,23 +2492,6 @@ export default function InstanceDetailPage() {
     }
   }, [id, instance?.name, instance?.javaPath, instance?.gameVersion, instance?.gameDir, needsAccount, resolveAccountCheck, ctxLaunchInstance, runningInstances, confirm, showLaunchError, t])
 
-  const handleVerifyResources = useCallback(async () => {
-    if (!id) return
-    setVerifying(true)
-    setVerifyResult(null)
-    try {
-      const result = await verifyResources(id)
-      setVerifyResult({ complete: result.complete, missingFiles: result.missingFiles })
-      if (!result.complete && result.missingFiles.length > 0) {
-        await handleRepairResources()
-      }
-    } catch {
-      setVerifyResult({ complete: true, missingFiles: [] })
-    } finally {
-      setVerifying(false)
-    }
-  }, [id])
-
   const handleRepairResources = useCallback(async () => {
     if (!id) return
     setRepairing(true)
@@ -2555,7 +2505,6 @@ export default function InstanceDetailPage() {
             setRepairProgress(100)
             clearInterval(poll)
             setRepairing(false)
-            setVerifyResult(null)
           } else if (progress.status === 'failed') {
             clearInterval(poll)
             setRepairing(false)
@@ -2571,6 +2520,24 @@ export default function InstanceDetailPage() {
       setRepairing(false)
     }
   }, [id])
+
+  const handleVerifyResources = useCallback(async () => {
+    if (!id) return
+    setVerifying(true)
+    try {
+      const result = await verifyResources(id)
+      if (result.complete) {
+        notify(t('instanceDetail.settingsTab.integrityOk'), 'success')
+      } else if (result.missingFiles.length > 0) {
+        notify(t('instanceDetail.settingsTab.missingFiles', { count: result.missingFiles.length }), 'warning')
+        await handleRepairResources()
+      }
+    } catch {
+      notify(t('instanceDetail.settingsTab.integrityOk'), 'success')
+    } finally {
+      setVerifying(false)
+    }
+  }, [id, notify, t, handleRepairResources])
 
   const confirmDelete = useCallback(async () => {
     if (!id || !instance) return
@@ -2820,13 +2787,20 @@ export default function InstanceDetailPage() {
                     {ICON_NAMES.map((name) => (
                       <button
                         key={name}
+                        type="button"
                         onClick={async () => {
                           if (!id) return
-                          update('icon', name)
-                          const updated = await updateInstance(id, { icon: name })
-                          setInstance(updated)
+                          try {
+                            update('icon', name)
+                            const updated = await updateInstance(id, { icon: name })
+                            setInstance(updated)
+                            cacheSet(`api-instance-${id}`, updated)
+                          } catch (e) { console.error('Update icon failed:', e) }
                         }}
-                        className="flex items-center justify-center rounded-lg border border-transparent p-1 transition-colors hover:border-muted-foreground/30"
+                        className={cn(
+                          'flex items-center justify-center rounded-lg border p-1 transition-colors hover:border-muted-foreground/30',
+                          form.icon === name ? 'border-primary bg-primary/10' : 'border-transparent'
+                        )}
                       >
                         <InstanceIcon icon={name} className="h-8 w-8" />
                       </button>
@@ -2856,26 +2830,6 @@ export default function InstanceDetailPage() {
                     )}
                   </div>
                 } />
-                <div className="px-4 pb-3">
-                  {verifyResult && !verifyResult.complete && (
-                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-                      <p className="text-sm font-medium text-destructive">{t('instanceDetail.settingsTab.missingFiles', { count: verifyResult.missingFiles.length })}</p>
-                      <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
-                        {verifyResult.missingFiles.map((f, i) => (
-                          <li key={i} className="truncate">
-                            <Tooltip content={f.url}>
-                              <span className="block truncate">{f.name} — {f.url}</span>
-                            </Tooltip>
-                          </li>
-                        ))}
-                      </ul>
-                      <p className="mt-2 text-xs text-muted-foreground">{t('instanceDetail.settingsTab.autoRepairing')}</p>
-                    </div>
-                  )}
-                  {verifyResult && verifyResult.complete && (
-                    <p className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.integrityOk')}</p>
-                  )}
-                </div>
                 <SettingRow label={t('instanceDetail.settingsTab.versionIsolation')} description={t('instanceDetail.settingsTab.isolationDesc')} control={
                   <Select
                     value={form.versionIsolation == null ? 'global' : form.versionIsolation ? 'on' : 'off'}
