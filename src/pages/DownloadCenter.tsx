@@ -484,7 +484,7 @@ if (task.instanceId && task.type !== 'batch') {
                     />
                   </div>
                   {(steps || showSpeedGraph) && (
-                    <div className="flex items-start gap-4 pt-1">
+                    <div className={cn('flex items-start gap-4 pt-1', !steps && showSpeedGraph && 'justify-end')}>
                       {steps && (stepsLive ? (
                         <InstallStepsList steps={steps} className="min-w-0 flex-1" />
                       ) : task.status === 'completed' ? (

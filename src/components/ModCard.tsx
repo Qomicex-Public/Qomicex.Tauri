@@ -34,7 +34,7 @@ export default function ModCard({
   mod, instanceId, gameVersion, loader, onRefresh, onToggle, onChangeVersion,
   selected, onSelect, update, onUpdated,
 }: ModCardProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const hasUpdate = !!update
@@ -148,10 +148,17 @@ export default function ModCard({
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <h3 className="truncate text-sm font-semibold text-foreground">
-                  {mod.chineseName ? <>{mod.chineseName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {mod.name}</span></> : mod.name}
-                </h3>
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  {lang.startsWith('zh') && mod.chineseName ? (
+                    <>
+                      <h3 className="truncate text-sm font-semibold text-foreground leading-snug">{mod.chineseName}</h3>
+                      <p className="truncate text-xs font-normal text-muted-foreground/60 leading-snug">{mod.name}</p>
+                    </>
+                  ) : (
+                    <h3 className="truncate text-sm font-semibold text-foreground leading-snug">{mod.name}</h3>
+                  )}
+                </div>
                 {hasUpdate && (
                   <Tooltip content={update ? t('dialogs.mod.updateAvailableTo', { version: update.latestVersion }) : ''}>
                     <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-blue-500" />

@@ -419,7 +419,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 }) {
   const navigate = useNavigate()
   const { notify } = useMessageBox()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [search, setSearch] = useState('')
   const [mods, setMods] = useState<ModMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -561,9 +561,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const filtered = useMemo(() => {
     let result = [...mods]
     const q = search.toLowerCase()
+    // 中文环境匹配中文名；非中文环境仅英文名（ENH-05）
+    const matchCnName = lang.startsWith('zh')
     if (q) result = result.filter(m =>
       m.name.toLowerCase().includes(q) ||
-      (m.chineseName?.toLowerCase().includes(q)) ||
+      (matchCnName && m.chineseName?.toLowerCase().includes(q)) ||
       m.fileName.toLowerCase().includes(q)
     )
     if (filterType === 'active') result = result.filter(m => m.active)
@@ -584,7 +586,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       return 0
     })
     return result
-  }, [mods, search, filterType, sortBy, updateFileNames])
+  }, [mods, search, filterType, sortBy, updateFileNames, lang])
 
   const lastClickedRef = useRef(-1)
   const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
