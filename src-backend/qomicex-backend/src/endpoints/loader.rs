@@ -61,6 +61,7 @@ struct VersionsQuery {
     game_version: Option<String>,
     loader: Option<String>,
     lang: Option<String>,
+    refresh: Option<String>,
 }
 
 /// `/loader/addons` 查询参数。
@@ -98,13 +99,14 @@ async fn loader_versions(
         )
     })?;
 
-    // NeoForge：中文环境（zh* 变体）优先 BMCLAPI（ENH-07）
+    // NeoForge：中文环境（zh* 变体）优先 BMCLAPI（ENH-07）+ 版本缓存（ENH-09）
     let results = if loader_type == ModLoaderType::NeoForge {
         let prefer_bmclapi = is_chinese_lang(q.lang.as_deref().unwrap_or(""));
+        let force_refresh = q.refresh.as_deref() == Some("1");
         state
             .core
             .installer_provider()
-            .get_neoforge_versions_with_priority(&game_version, prefer_bmclapi)
+            .get_neoforge_versions_with_priority(&game_version, prefer_bmclapi, force_refresh)
             .await
             .map_err(map_core_error)?
     } else {
