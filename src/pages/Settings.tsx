@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
 import { ArrowUp, Bot, Bug, Check, CheckCircle2, ChevronRight, Coffee, Copy, Database, Download, ExternalLink, FileSignature, FileText, Folder, FolderOpen, Globe, Heart, Image, Info, Key, Loader2, Minus, Monitor, Palette, Plus, Puzzle, Rocket, RotateCw, Scale, Search, Settings as SettingsIcon, ShieldHalf, SlidersHorizontal, Tag, Trash2, TriangleAlert, Zap } from 'lucide-react'
 import { ArrowUp as ArrowUpData, ChevronDown as ChevronDownData, ChevronRight as ChevronRightData, RotateCw as RotateCwData, Search as SearchData, Trash2 as Trash2Data, Zap as ZapData } from 'lucide'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { MorphIcon } from 'morphicons/react'
 import { Button } from '../components/ui'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
@@ -318,7 +319,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   <SelectOption value="alpha">Alpha</SelectOption>
 </Select>
             <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
-              <MorphIcon icon={updateState === 'checking' ? RotateCwData : ArrowUpData} className={cn('mr-1 h-3 w-3', updateState === 'checking' && 'animate-spin')} spring="snappy" reducedMotion="user" />
+              <MorphActionIcon active={updateState === 'checking'} busy={RotateCwData} rest={ArrowUpData} className="mr-1 h-3 w-3" />
               {updateState === 'checking' ? t('settings.about.checking') : t('settings.about.checkUpdate')}
             </Button>
             {updateState === 'uptodate' && (
@@ -1445,7 +1446,7 @@ export default function Settings() {
                     <p className="text-xs text-muted-foreground">{t('settings.launcher.versionListCacheDesc')}</p>
                   </div>
                   <Button size="sm" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
-                    <MorphIcon icon={clearingCache ? RotateCwData : Trash2Data} className={cn('h-4 w-4', clearingCache && 'animate-spin')} spring="snappy" reducedMotion="user" />
+                    <MorphActionIcon active={clearingCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
                     {t('settings.launcher.clearCache')}
                   </Button>
                 </div>
@@ -1500,7 +1501,7 @@ export default function Settings() {
                     <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeCacheDesc')}</p>
                   </div>
                   <Button size="sm" variant="outline" onClick={handleClearCurseForgeCache} disabled={clearingCurseForgeCache}>
-                    <MorphIcon icon={clearingCurseForgeCache ? RotateCwData : Trash2Data} className={cn('h-4 w-4', clearingCurseForgeCache && 'animate-spin')} spring="snappy" reducedMotion="user" />
+                    <MorphActionIcon active={clearingCurseForgeCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
                     {t('settings.launcher.clearCurseforgeCache')}
                   </Button>
                 </div>
@@ -1527,11 +1528,11 @@ export default function Settings() {
                 <CardContent className="space-y-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" onClick={() => handleScan('quick')} disabled={scanning !== 'idle'}>
-                      <MorphIcon icon={scanning === 'quick' ? RotateCwData : SearchData} className={cn('h-4 w-4', scanning === 'quick' && 'animate-spin')} spring="snappy" reducedMotion="user" />
+                      <MorphActionIcon active={scanning === 'quick'} busy={RotateCwData} rest={SearchData} className="h-4 w-4" />
                       {t('settings.java.quickScan')}
                     </Button>
                     <Button size="sm" variant="secondary" onClick={() => handleScan('deep')} disabled={scanning !== 'idle'}>
-                      <MorphIcon icon={scanning === 'deep' ? RotateCwData : ZapData} className={cn('h-4 w-4', scanning === 'deep' && 'animate-spin')} spring="snappy" reducedMotion="user" />
+                      <MorphActionIcon active={scanning === 'deep'} busy={RotateCwData} rest={ZapData} className="h-4 w-4" />
                       {t('settings.java.deepScan')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={handleManualAdd} disabled={scanning !== 'idle'}>

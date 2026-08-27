@@ -5,7 +5,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
 import { Check, CircleUser, Cloud, Copy, ExternalLink, Fingerprint, GripVertical, Loader2, LogIn, Plus, Search, Star, Trash2, User } from 'lucide-react'
 import { Loader2 as Loader2Data, RotateCw as RotateCwData } from 'lucide'
-import { MorphIcon } from 'morphicons/react'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Button } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
@@ -515,7 +515,7 @@ export default function Accounts() {
             <>
               <Tooltip content={t('accounts.refresh')}>
                 <button onClick={forceRefresh} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-                  <MorphIcon icon={loading ? Loader2Data : RotateCwData} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} spring="snappy" reducedMotion="user" />
+                  <MorphActionIcon active={loading} busy={Loader2Data} rest={RotateCwData} className="h-3.5 w-3.5" />
                 </button>
               </Tooltip>
               <Tooltip content={t('accounts.addAccount')}>

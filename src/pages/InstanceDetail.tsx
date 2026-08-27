@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Globe, Info, Layers, List, Package, Pen, PenTool, Play, Plus, RotateCw, Save, Search, Server, Settings, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, User, Wifi, X } from 'lucide-react'
 import { ArrowUp as ArrowUpData, RotateCw as RotateCwData, Upload as UploadData } from 'lucide'
-import { MorphIcon } from 'morphicons/react'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Separator } from '../components/ui'
@@ -821,7 +821,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'enable' })}>{t('instanceDetail.mods.enable')}</Button>
         <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'disable' })}>{t('instanceDetail.mods.disable')}</Button>
         <Button variant="ghost" size="sm" onClick={handleUpdateSelected} disabled={updatingMods || updateTargets.length === 0} className="gap-1.5">
-          <MorphIcon icon={updatingMods ? RotateCwData : ArrowUpData} className={cn('h-3.5 w-3.5', updatingMods && 'animate-spin')} spring="snappy" reducedMotion="user" />
+          <MorphActionIcon active={updatingMods} busy={RotateCwData} rest={ArrowUpData} className="h-3.5 w-3.5" />
           {t('instanceDetail.mods.updateMods')}
         </Button>
         <Button variant="destructive" size="sm" onClick={() => setBatchConfirm({ type: 'delete' })}>
@@ -1485,7 +1485,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={importing} className="gap-1.5 h-7 text-xs">
-              <MorphIcon icon={importing ? RotateCwData : UploadData} className={cn('h-3.5 w-3.5', importing && 'animate-spin')} spring="snappy" reducedMotion="user" />
+              <MorphActionIcon active={importing} busy={RotateCwData} rest={UploadData} className="h-3.5 w-3.5" />
               {t('instanceDetail.schematics.import')}
             </Button>
             <input
