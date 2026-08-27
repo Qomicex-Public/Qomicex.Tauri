@@ -1,5 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
+import gsap from 'gsap'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad, faNetworkWired, faFileLines } from '@fortawesome/free-solid-svg-icons'
 import { Tooltip } from './ui'
@@ -7,6 +9,7 @@ import { useRunning } from '../contexts/RunningContext.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
 import { PluginSidebarItems } from './PluginSidebarItems.tsx'
+import { getSettings } from '../api/settings.ts'
 
 interface NavLinkDef {
   to: string
@@ -97,6 +100,30 @@ export default function Sidebar() {
   const { t } = useI18n()
   const hasRunning = runningInstances.length > 0
   const links = NAV_LINKS.map(l => ({ ...l, label: t(`layout.sidebar.${l.key}`) }))
+  const navRef = useRef<HTMLUListElement>(null)
+
+  // 侧边栏入场动画
+  useEffect(() => {
+    const el = navRef.current
+    if (!el) return
+
+    const settings = getSettings()
+    if (!settings.animationsEnabled) return
+
+    const speed = settings.animationSpeed ?? 1
+    const children = Array.from(el.querySelectorAll('li'))
+
+    gsap.fromTo(children,
+      { opacity: 0, x: -8 },
+      {
+        opacity: 1,
+        x: 0,
+        duration: 0.25 / speed,
+        stagger: 0.03 / speed,
+        ease: 'power2.out'
+      }
+    )
+  }, [])
 
   return (
     <nav className="flex w-16 flex-col items-center border-r border-border/50 bg-card/80 backdrop-blur-xl shadow-xl shadow-black/20">
@@ -106,7 +133,7 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <ul className="flex w-full flex-1 flex-col items-center gap-0.5 px-2 py-2">
+      <ul ref={navRef} className="flex w-full flex-1 flex-col items-center gap-0.5 px-2 py-2">
         {links.map((link) => (
           <NavItem key={link.to} to={link.to} label={link.label} icon={link.icon} end={link.end} />
         ))}

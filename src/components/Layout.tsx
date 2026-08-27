@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useMemo } from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Outlet, useNavigate, useLocation } from 'react-router-dom'
+import gsap from 'gsap'
 import Sidebar from './Sidebar.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import ScrollToTop from './ScrollToTop.tsx'
@@ -82,6 +83,9 @@ export default function Layout() {
   const prevBgRef = useRef({ image: '', random: false })
   const { confirm: msgConfirm } = useMessageBox()
   const { t } = useI18n()
+  const location = useLocation()
+  const mainRef = useRef<HTMLElement>(null)
+  const prevPathRef = useRef(location.pathname)
 
   async function resolveBg(s = getSettings()) {
     let filename = s.backgroundImage || randomBgRef.current || ''
@@ -115,6 +119,30 @@ export default function Layout() {
       }
     })
   }, [])
+
+  // 页面切换动画
+  useEffect(() => {
+    if (location.pathname === prevPathRef.current) return
+    prevPathRef.current = location.pathname
+
+    const el = mainRef.current
+    if (!el) return
+
+    const settings = getSettings()
+    if (!settings.animationsEnabled) return
+
+    const speed = settings.animationSpeed ?? 1
+
+    // 立即设置 opacity: 0，避免内容闪现
+    gsap.set(el, { opacity: 0, y: 8 })
+
+    // 等待 DOM 更新后执行动画
+    requestAnimationFrame(() => {
+      gsap.to(el,
+        { opacity: 1, y: 0, duration: 0.25 / speed, ease: 'power2.out' }
+      )
+    })
+  }, [location.pathname])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -157,7 +185,7 @@ export default function Layout() {
           {!isLinux && !isMacos && <TitleBar />}
           <div className="relative flex flex-1 min-w-0 overflow-hidden">
             <div className="absolute inset-0 bg-background/50" style={{ backdropFilter: blur > 0 ? `blur(${blur}px)` : 'none' }} />
-            <main className="relative z-10 flex min-h-0 overflow-hidden flex-1">
+            <main ref={mainRef} className="relative z-10 flex min-h-0 overflow-hidden flex-1">
               <Outlet />
             </main>
           </div>
