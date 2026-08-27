@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faTrashCan, faExpand } from '@fortawesome/free-solid-svg-icons'
+import { Expand, Trash2 } from 'lucide-react'
 import { Tooltip } from './ui'
 import { Button } from './ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
@@ -49,7 +48,7 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh, sele
         <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <Tooltip content={t('common.delete')}>
             <button onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">
-              <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
         </div>
@@ -59,7 +58,7 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh, sele
             <p className="text-[11px] text-muted-foreground">{(screenshot.fileSize / 1024 / 1024).toFixed(1)} MB</p>
           </div>
           <button onClick={(e) => { e.stopPropagation(); setPreview(true) }} className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">
-            <FontAwesomeIcon icon={faExpand} className="h-3.5 w-3.5" />
+            <Expand className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>

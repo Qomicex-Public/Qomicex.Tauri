@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowsRotate } from '@fortawesome/free-solid-svg-icons'
+import { RefreshCw } from 'lucide-react'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Separator, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { PluginCard } from './PluginCard.tsx'
@@ -193,7 +192,7 @@ export default function PluginStoreManage() {
               className="h-8 w-52"
             />
             <Button onClick={() => void handleCheckUpdates()} size="sm" variant="outline" disabled={checkingUpdates}>
-              <FontAwesomeIcon icon={faArrowsRotate} className={`mr-1.5 h-3.5 w-3.5 ${checkingUpdates ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${checkingUpdates ? 'animate-spin' : ''}`} />
               {checkingUpdates ? t('settings.plugins.store.checkingUpdates') : t('settings.plugins.store.checkUpdates')}
             </Button>
             <Button onClick={handlePluginRefresh} size="sm" variant="outline" disabled={loading}>{t('common.refresh')}</Button>
@@ -285,7 +284,7 @@ export default function PluginStoreManage() {
                   <p className="text-sm text-muted-foreground">{t('settings.plugins.contributes')}</p>
                   {pluginDetail.manifest.contributes.menuItems.map((item) => (
                     <div key={item.path} className="flex items-center gap-2 text-sm">
-                      <PluginIcon icon={resolvePluginAssetUrl(pluginDetail.manifest.id, item.icon ?? '')} fallback="" />
+                      <PluginIcon pluginId={pluginDetail.manifest.id} icon={resolvePluginAssetUrl(pluginDetail.manifest.id, item.icon ?? '')} fallback="" />
                       <span>{item.label}</span>
                       <span className="text-xs text-muted-foreground">{item.path}</span>
                     </div>

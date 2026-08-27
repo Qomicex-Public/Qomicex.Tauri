@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import type { DragEvent } from 'react'
+import type { DragEvent, ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
-import { faPlus, faUser, faRightToBracket, faFingerprint, faTrashCan, faUserLarge, faSpinner, faCheck, faCopy, faExternalLinkAlt, faCloud, faStar, faRotate, faMagnifyingGlass, faGripVertical } from '@fortawesome/free-solid-svg-icons'
+import { Check, CircleUser, Cloud, Copy, ExternalLink, Fingerprint, GripVertical, Loader2, LogIn, Plus, RotateCw, Search, Star, Trash2, User } from 'lucide-react'
 import { Button } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
@@ -53,10 +53,10 @@ interface YggResolvedInfo {
   error: boolean
 }
 
-function getAccountIcon(loginMethod: string): { icon: typeof faUser; color: string } {
-  if (loginMethod === 'Microsoft') return { icon: faMicrosoft, color: 'text-green-400' }
-  if (loginMethod === 'Offline') return { icon: faUserLarge, color: 'text-yellow-400' }
-  return { icon: faKeycdn, color: 'text-purple-400' }
+function getAccountIcon(loginMethod: string): { icon: ReactNode; color: string } {
+  if (loginMethod === 'Microsoft') return { icon: <FontAwesomeIcon icon={faMicrosoft} className="h-2.5 w-2.5" />, color: 'text-green-400' }
+  if (loginMethod === 'Offline') return { icon: <CircleUser className="h-2.5 w-2.5" />, color: 'text-yellow-400' }
+  return { icon: <FontAwesomeIcon icon={faKeycdn} className="h-2.5 w-2.5" />, color: 'text-purple-400' }
 }
 
 type MicrosoftStep = 'idle' | 'fetching-oauth' | 'waiting-auth' | 'fetching-info' | 'done' | 'error'
@@ -492,16 +492,16 @@ export default function Accounts() {
 
   function StatusDot({ step, active }: { step: MicrosoftStep; active: MicrosoftStep }) {
     if (step === active) {
-      if (step === 'done') return <FontAwesomeIcon icon={faCheck} className="h-3 w-3 text-emerald-400" />
-      if (step === 'error') return <FontAwesomeIcon icon={faUser} className="h-3 w-3 text-red-400" />
-      return <FontAwesomeIcon icon={faSpinner} className="h-3 w-3 animate-spin text-primary" />
+      if (step === 'done') return <Check className="h-3 w-3 text-emerald-400" />
+      if (step === 'error') return <User className="h-3 w-3 text-red-400" />
+      return <Loader2 className="h-3 w-3 animate-spin text-primary" />
     }
     const order: MicrosoftStep[] = ['fetching-oauth', 'waiting-auth', 'fetching-info', 'done']
     const idx = order.indexOf(step)
     const activeIdx = order.indexOf(active)
-    if (active === 'error') return <FontAwesomeIcon icon={faUser} className="h-3 w-3 text-muted-foreground" />
-    if (idx < activeIdx) return <FontAwesomeIcon icon={faCheck} className="h-3 w-3 text-emerald-400" />
-    return <FontAwesomeIcon icon={faUser} className="h-3 w-3 text-muted-foreground" />
+    if (active === 'error') return <User className="h-3 w-3 text-muted-foreground" />
+    if (idx < activeIdx) return <Check className="h-3 w-3 text-emerald-400" />
+    return <User className="h-3 w-3 text-muted-foreground" />
   }
 
   return (
@@ -513,12 +513,12 @@ export default function Accounts() {
             <>
               <Tooltip content={t('accounts.refresh')}>
                 <button onClick={forceRefresh} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-                  <FontAwesomeIcon icon={loading ? faSpinner : faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                  {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
                 </button>
               </Tooltip>
               <Tooltip content={t('accounts.addAccount')}>
                 <button onClick={startAdd} className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-                  <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                  <Plus className="h-3.5 w-3.5" />
                   <span className="text-sm">{t('accounts.add')}</span>
                 </button>
               </Tooltip>
@@ -534,7 +534,7 @@ export default function Accounts() {
             <SelectOption value="server">{t('accounts.filterServer')}</SelectOption>
           </Select>
           <div className="relative flex-1">
-            <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('accounts.searchPlaceholder')} className="h-9 pl-9" />
           </div>
         </div>
@@ -544,7 +544,7 @@ export default function Accounts() {
         <div ref={listRef} className="flex flex-col gap-1.5 pt-4">
           {filteredAccounts.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-              <FontAwesomeIcon icon={faUser} className="h-10 w-10 opacity-30" />
+              <User className="h-10 w-10 opacity-30" />
               <p className="text-sm">{search ? t('accounts.noMatch') : t('accounts.noAccounts')}</p>
             </div>
           ) : filteredAccounts.map((acc, index) => {
@@ -572,13 +572,13 @@ export default function Accounts() {
                     isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30 hover:border-foreground/50'
                   )}
                 >
-                  {isSelected && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+                  {isSelected && <Check className="h-3 w-3" />}
                 </button>
                 <AccountAvatar account={acc} className="h-10 w-10 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{acc.name}</div>
                   <div className="flex items-center gap-1">
-                    <FontAwesomeIcon icon={icon.icon} className={cn('h-2.5 w-2.5', icon.color)} />
+                    <span className={icon.color}>{icon.icon}</span>
                     <Tooltip content={acc.serverUrl}>
                       <span className="text-[11px] text-muted-foreground">{getAccountLabel(acc.loginMethod, acc.serverUrl)}</span>
                     </Tooltip>
@@ -587,7 +587,7 @@ export default function Accounts() {
                 <div className="flex items-center gap-1 shrink-0">
                   {isDefault ? (
                     <span className="flex h-7 w-7 items-center justify-center">
-                      <FontAwesomeIcon icon={faStar} className="h-3 w-3 text-amber-400" />
+                      <Star className="h-3 w-3 text-amber-400" />
                     </span>
                   ) : (
                     <Tooltip content={t('accounts.setDefault')}>
@@ -596,7 +596,7 @@ export default function Accounts() {
                         onClick={(e) => { e.stopPropagation(); handleSetDefault(acc.uuid) }}
                         className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-primary/10 hover:text-primary group-hover:opacity-100"
                       >
-                        <FontAwesomeIcon icon={faStar} className="h-3 w-3" />
+                        <Star className="h-3 w-3" />
                       </button>
                     </Tooltip>
                   )}
@@ -605,7 +605,7 @@ export default function Accounts() {
                     onClick={(e) => { e.stopPropagation(); handleDelete(acc.uuid) }}
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
                   >
-                    <FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" />
+                    <Trash2 className="h-3 w-3" />
                   </button>
                 </div>
               </div>
@@ -621,7 +621,7 @@ export default function Accounts() {
       onClear={() => setSelected(new Set())}
     >
       <Button variant="destructive" size="sm" onClick={handleBatchDelete} disabled={loading}>
-        <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+        <Trash2 className="h-3.5 w-3.5" />
         {t('accounts.deleteSelected', { count: selected.size })}
       </Button>
     </I18nBatchToolbar>
@@ -642,9 +642,9 @@ export default function Accounts() {
                 )}
               >
                 {tab === 'microsoft' && <FontAwesomeIcon icon={faMicrosoft} className="h-3 w-3" />}
-                {tab === 'offline' && <FontAwesomeIcon icon={faUserLarge} className="h-3 w-3" />}
+                {tab === 'offline' && <CircleUser className="h-3 w-3" />}
                 {tab === 'yggdrasil' && <FontAwesomeIcon icon={faKeycdn} className="h-3 w-3" />}
-                {tab === 'tongyi' && <FontAwesomeIcon icon={faCloud} className="h-3 w-3" />}
+                {tab === 'tongyi' && <Cloud className="h-3 w-3" />}
                 {tab === 'microsoft' && 'Microsoft'}
                 {tab === 'offline' && t('accounts.tabOffline')}
                 {tab === 'yggdrasil' && 'Yggdrasil'}
@@ -657,7 +657,7 @@ export default function Accounts() {
             <div key="microsoft" className="animate-in slide-up space-y-4">
               {microsoftStep === 'idle' && (
                 <Button className="w-full" onClick={handleOAuth}>
-                  <FontAwesomeIcon icon={faRightToBracket} className="h-4 w-4" />
+                  <LogIn className="h-4 w-4" />
                   {t('accounts.unified.oauthLogin')}
                 </Button>
               )}
@@ -680,14 +680,14 @@ export default function Accounts() {
                   {microsoftStep === 'waiting-auth' && (
                     <div className="mt-3 space-y-2 rounded-md bg-muted p-3">
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />
+                        <Copy className="h-3 w-3" />
                         {t('accounts.microsoft.codeCopiedShort')}
                       </div>
                       <code className="block rounded bg-background px-3 py-2 text-center text-lg font-bold tracking-widest text-primary">
                         {oauthData?.userCode}
                       </code>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3" />
+                        <ExternalLink className="h-3 w-3" />
                         {t('accounts.microsoft.browserOpened')}
                       </div>
                     </div>
@@ -722,7 +722,7 @@ export default function Accounts() {
                 <Input id="offline-uuid" value={offlineUuid} onChange={(e) => setOfflineUuid(e.target.value)} placeholder={t('accounts.offline.uuidPlaceholder')} />
               </div>
               <Button className="w-full" onClick={handleOfflineAdd} disabled={!offlineName.trim()}>
-                <FontAwesomeIcon icon={faPlus} className="h-4 w-4" />
+                <Plus className="h-4 w-4" />
                 {t('accounts.offline.add')}
               </Button>
             </div>
@@ -731,7 +731,7 @@ export default function Accounts() {
           {addTab === 'yggdrasil' && (
             <div key="yggdrasil" className="animate-in slide-up space-y-4" onDragOver={onYggDragOver} onDrop={onYggDrop}>
               <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/40 px-3 py-3 text-center text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5">
-                <FontAwesomeIcon icon={faGripVertical} className="h-3.5 w-3.5 shrink-0" />
+                <GripVertical className="h-3.5 w-3.5 shrink-0" />
                 {t('accounts.ygg.dndHint')}
               </div>
               {yggStep === 'form' && (
@@ -786,7 +786,7 @@ export default function Accounts() {
                     )}
                   </div>
                   <Button className="w-full" onClick={handleYggdrasilLogin} disabled={loading}>
-                    <FontAwesomeIcon icon={faFingerprint} className="h-4 w-4" />
+                    <Fingerprint className="h-4 w-4" />
                     {loading ? t('accounts.ygg.loginLoading') : t('accounts.ygg.login')}
                   </Button>
                 </>
@@ -808,7 +808,7 @@ export default function Accounts() {
                             yggSelected.has(p.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30'
                           )}
                         >
-                          {yggSelected.has(p.id) && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+                          {yggSelected.has(p.id) && <Check className="h-3 w-3" />}
                         </div>
                         <AccountAvatar account={{ uuid: p.id, name: p.name, loginMethod: 'Yggdrasil', serverUrl: yggServer }} className="h-8 w-8 shrink-0" />
                         <span className="flex-1 truncate font-medium">{p.name}</span>
@@ -820,7 +820,7 @@ export default function Accounts() {
                       {t('accounts.ygg.back')}
                     </Button>
                     <Button className="flex-1" onClick={handleYggdrasilConfirm} disabled={yggSelected.size === 0 || loading}>
-                      <FontAwesomeIcon icon={faCheck} className="h-4 w-4" />
+                      <Check className="h-4 w-4" />
                       {loading ? t('accounts.ygg.saving') : t('accounts.ygg.confirmCount', { count: yggSelected.size })}
                     </Button>
                   </div>
@@ -847,7 +847,7 @@ export default function Accounts() {
                 <Input id="ty-pwd" type="password" value={tyPwd} onChange={(e) => setTyPwd(e.target.value)} />
               </div>
               <Button className="w-full" onClick={handleTongyiLogin} disabled={loading}>
-                <FontAwesomeIcon icon={faCloud} className="h-4 w-4" />
+                <Cloud className="h-4 w-4" />
                 {loading ? t('accounts.unified.loginLoading') : t('accounts.unified.login')}
               </Button>
             </div>

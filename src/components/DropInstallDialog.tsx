@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faDownload, faSearch, faLayerGroup, faBoxOpen, faPuzzlePiece, faImage, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
+import { Download, Image, Layers, PackageOpen, Puzzle, RotateCw, Search, WandSparkles } from 'lucide-react'
 import { cn } from '../lib/utils.ts'
 import { cacheInvalidate } from '../lib/simple-cache.ts'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
@@ -166,13 +165,13 @@ export default function DropInstallDialog({ group, onClose }: Props) {
     }
   }
 
-  const kindIcon = isModpack ? faBoxOpen : group?.kind === 'shaderpack' ? faWandMagicSparkles : group?.kind === 'resourcepack' ? faImage : faPuzzlePiece
+  const KindIcon = isModpack ? PackageOpen : group?.kind === 'shaderpack' ? WandSparkles : group?.kind === 'resourcepack' ? Image : Puzzle
 
   return (
     <Dialog open={open} onClose={onClose}>
       <DialogHeader onClose={onClose}>
         <DialogTitle className="flex items-center gap-2">
-          <FontAwesomeIcon icon={kindIcon} className="h-4 w-4 text-muted-foreground" />
+          <KindIcon className="h-4 w-4 text-muted-foreground" />
           {t('dialogs.dropInstall.title')}
         </DialogTitle>
       </DialogHeader>
@@ -185,7 +184,7 @@ export default function DropInstallDialog({ group, onClose }: Props) {
           <div className="grid gap-1 max-h-[100px] overflow-y-auto rounded-lg border border-border/60 p-2">
             {(group?.files ?? []).map(f => (
               <div key={f.path} className="flex items-center gap-2 text-xs">
-                <FontAwesomeIcon icon={faLayerGroup} className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <Layers className="h-3 w-3 shrink-0 text-muted-foreground" />
                 <span className="truncate">{f.fileName}</span>
               </div>
             ))}
@@ -231,7 +230,7 @@ export default function DropInstallDialog({ group, onClose }: Props) {
             <span className="text-xs font-medium text-muted-foreground">{t('dialogs.resourceInstall.selectInstance')}</span>
             {loadingInstances ? (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+                <RotateCw className="h-3 w-3 animate-spin" />
                 {t('common.loading')}
               </div>
             ) : instances.length === 0 ? (
@@ -241,7 +240,7 @@ export default function DropInstallDialog({ group, onClose }: Props) {
             ) : (
               <div className="space-y-1.5">
                 <div className="relative">
-                  <FontAwesomeIcon icon={faSearch} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
@@ -288,12 +287,12 @@ export default function DropInstallDialog({ group, onClose }: Props) {
         <Button variant="secondary" onClick={onClose} disabled={installing}>{t('common.cancel')}</Button>
         {isModpack ? (
           <Button onClick={handleInstallModpack} disabled={!instanceName.trim() || installing}>
-            <FontAwesomeIcon icon={installing ? faRotate : faDownload} className={cn('mr-1.5 h-3.5 w-3.5', installing && 'animate-spin')} />
+            {installing ? <RotateCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
             {t('dialogs.resourceInstall.installConfirm')}
           </Button>
         ) : (
           <Button onClick={handleInstallFiles} disabled={!selectedInstance || installing}>
-            <FontAwesomeIcon icon={installing ? faRotate : faDownload} className={cn('mr-1.5 h-3.5 w-3.5', installing && 'animate-spin')} />
+            {installing ? <RotateCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
             {t('dialogs.resourceInstall.installConfirm')}
           </Button>
         )}

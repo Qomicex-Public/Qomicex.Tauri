@@ -1,8 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { Sun } from 'lucide-react'
 import { MinecraftText } from './MinecraftText.tsx'
-import { faSun } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { useMessageBox } from './ui'
@@ -85,7 +84,7 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
             {shader.iconBase64 ? (
               <img src={`data:image/png;base64,${shader.iconBase64}`} alt={shader.name} className="h-full w-full object-cover" loading="lazy" />
             ) : (
-              <FontAwesomeIcon icon={faSun} className="h-5 w-5 opacity-50" />
+              <Sun className="h-5 w-5 opacity-50" />
             )}
           </div>
           <div className="min-w-0 flex-1">

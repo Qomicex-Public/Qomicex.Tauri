@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faDownload, faTrashCan, faBug, faCircleCheck, faCircleXmark, faServer, faCopy } from '@fortawesome/free-solid-svg-icons'
+import { Bug, CheckCircle2, Copy, Download, RotateCw, Server, Trash2, XCircle } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from './ui'
 import { Button } from './ui'
 import { Checkbox } from './ui'
@@ -83,24 +82,24 @@ function LogCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faServer} className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.liveLogs')}</CardTitle>
+        <CardTitle><Server className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.liveLogs')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant={autoScroll ? 'default' : 'outline'} onClick={() => setAutoScroll(!autoScroll)} className="gap-1">
-            <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', autoScroll && 'animate-spin')} />{t('tools.debug.autoScroll')}
+            <RotateCw className={cn('h-4 w-4', autoScroll && 'animate-spin')} />{t('tools.debug.autoScroll')}
           </Button>
           <Button size="sm" variant="outline" onClick={() => setLogs([])} className="gap-1">
-            <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />{t('tools.debug.clear')}
+            <Trash2 className="h-4 w-4" />{t('tools.debug.clear')}
           </Button>
           <Button size="sm" variant="outline" onClick={handleExport} disabled={logs.length === 0} className="gap-1">
-            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('tools.debug.exportLogs')}
+            <Download className="h-4 w-4" />{t('tools.debug.exportLogs')}
           </Button>
           <Button size="sm" variant="outline" onClick={handleCopy} disabled={logs.length === 0} className="gap-1">
-            <FontAwesomeIcon icon={faCopy} className="h-4 w-4" />{t('common.copy')}
+            <Copy className="h-4 w-4" />{t('common.copy')}
           </Button>
           <Button size="sm" variant="outline" onClick={handleDump} className="gap-1">
-            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('tools.debug.triggerDump')}
+            <Download className="h-4 w-4" />{t('tools.debug.triggerDump')}
           </Button>
         </div>
         <div className="overflow-hidden rounded-lg border">
@@ -172,11 +171,11 @@ function DiagnosticsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.diagnostics')}</CardTitle>
+        <CardTitle><Bug className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.diagnostics')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         {loading ? (
-          <div className="flex items-center gap-2 text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('common.loading')}</div>
+          <div className="flex items-center gap-2 text-muted-foreground"><RotateCw className="h-4 w-4 animate-spin" />{t('common.loading')}</div>
         ) : (
           <>
             {sysInfo && (
@@ -192,16 +191,16 @@ function DiagnosticsCard() {
             <div>
               <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.connectivity')}</p>
               <p className="text-xs space-x-3">
-                <span><FontAwesomeIcon icon={backendOk ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', backendOk ? 'text-green-500' : 'text-red-500')} />Backend</span>
+                <span>{backendOk ? <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" /> : <XCircle className="h-3 w-3 mr-1 text-red-500" />}Backend</span>
                 {health ? (
                   <>
-                    <span><FontAwesomeIcon icon={health.modrinth?.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', health.modrinth?.ok ? 'text-green-500' : 'text-red-500')} />Modrinth ({health.modrinth?.latency ?? '?'}ms)</span>
-                    <span><FontAwesomeIcon icon={health.curseforge?.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', health.curseforge?.ok ? 'text-green-500' : 'text-red-500')} />CurseForge ({health.curseforge?.latency ?? '?'}ms)</span>
+                    <span>{health.modrinth?.ok ? <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" /> : <XCircle className="h-3 w-3 mr-1 text-red-500" />}Modrinth ({health.modrinth?.latency ?? '?'}ms)</span>
+                    <span>{health.curseforge?.ok ? <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" /> : <XCircle className="h-3 w-3 mr-1 text-red-500" />}CurseForge ({health.curseforge?.latency ?? '?'}ms)</span>
                   </>
                 ) : (
                   <>
-                    <span className="text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-3 w-3 mr-1 animate-spin" />Modrinth</span>
-                    <span className="text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-3 w-3 mr-1 animate-spin" />CurseForge</span>
+                    <span className="text-muted-foreground"><RotateCw className="h-3 w-3 mr-1 animate-spin" />Modrinth</span>
+                    <span className="text-muted-foreground"><RotateCw className="h-3 w-3 mr-1 animate-spin" />CurseForge</span>
                   </>
                 )}
               </p>
@@ -210,7 +209,7 @@ function DiagnosticsCard() {
               <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.apiHealthCheck')}</p>
               <div className="space-y-0.5">
                 {Object.entries(apiTests).map(([ep, r]) => (
-                  <p key={ep} className="text-xs"><FontAwesomeIcon icon={r.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', r.ok ? 'text-green-500' : 'text-red-500')} />{ep} {r.ok ? `${r.latency}ms` : 'FAILED'}</p>
+                  <p key={ep} className="text-xs">{r.ok ? <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" /> : <XCircle className="h-3 w-3 mr-1 text-red-500" />}{ep} {r.ok ? `${r.latency}ms` : 'FAILED'}</p>
                 ))}
               </div>
             </div>
@@ -242,7 +241,7 @@ function TogglesCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.togglesTitle')}</CardTitle>
+        <CardTitle><Bug className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.togglesTitle')}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 gap-3">
@@ -272,7 +271,7 @@ function ClearDataCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-destructive" />{t('tools.debug.dataManagement')}</CardTitle>
+        <CardTitle><Trash2 className="mr-2 h-4 w-4 text-destructive" />{t('tools.debug.dataManagement')}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="flex items-center justify-between gap-4">
@@ -281,7 +280,7 @@ function ClearDataCard() {
             <p className="text-xs text-muted-foreground">{t('tools.debug.clearTasksDescription')}</p>
           </div>
           <Button size="sm" variant="destructive" onClick={handleClearDownloadTasks} className="gap-1.5 shrink-0">
-            <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />
+            <Trash2 className="h-4 w-4" />
             {t('tools.debug.clearTasksButton')}
           </Button>
         </div>

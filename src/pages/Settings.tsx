@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract, faGear, faDatabase, faImage, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
+import { ArrowUp, Bot, Bug, Check, CheckCircle2, ChevronDown, ChevronRight, Coffee, Copy, Database, Download, ExternalLink, FileSignature, FileText, Folder, FolderOpen, Globe, Heart, Image, Info, Key, Loader2, Minus, Monitor, Palette, Plus, Puzzle, Rocket, RotateCw, Scale, Search, Settings as SettingsIcon, ShieldHalf, SlidersHorizontal, Tag, Trash2, TriangleAlert, Zap } from 'lucide-react'
 import { Button } from '../components/ui'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
 import { Input } from '../components/ui'
@@ -54,14 +54,14 @@ import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, L
 import { LegalDialog } from '../components/LegalDialog.tsx'
 
 const CATEGORIES = [
-  { id: 'launcher', icon: faRocket },
-  { id: 'java', icon: faCoffee },
-  { id: 'plugins', icon: faPuzzlePiece },
-  { id: 'appearance', icon: faPalette },
-  { id: 'toolbox', icon: faDownload },
-  { id: 'logs', icon: faFileLines },
-  { id: 'about', icon: faInfoCircle },
-  { id: 'debug', icon: faBug },
+  { id: 'launcher', icon: Rocket },
+  { id: 'java', icon: Coffee },
+  { id: 'plugins', icon: Puzzle },
+  { id: 'appearance', icon: Palette },
+  { id: 'toolbox', icon: Download },
+  { id: 'logs', icon: FileText },
+  { id: 'about', icon: Info },
+  { id: 'debug', icon: Bug },
 ] as const
 
 const DOWNLOAD_SOURCES = [
@@ -198,7 +198,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       <Card>
         <CardHeader>
           <CardTitle>
-            <FontAwesomeIcon icon={faInfoCircle} className="mr-2 h-4 w-4 text-muted-foreground" />
+            <Info className="mr-2 h-4 w-4 text-muted-foreground" />
             {t('settings.about.aboutApp', { name: APP_INFO.name })}
           </CardTitle>
         </CardHeader>
@@ -214,7 +214,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             </div>
             <div className="flex items-center gap-1 shrink-0">
               <Button size="sm" variant="ghost" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faBug} className="h-3 w-3" />{t('settings.about.feedback')}
+                <Bug className="h-3 w-3" />{t('settings.about.feedback')}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => openUrl(REPOSITORY_URL).catch(() => window.open(REPOSITORY_URL, '_blank'))} className="gap-1.5 h-7 text-xs">
                 <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />{t('settings.about.viewRepository')}
@@ -244,14 +244,14 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       {licenseStatus && !(licenseStatus.valid && !licenseStatus.licenseId) && (
       <Card>
         <CardHeader><CardTitle>
-          <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-muted-foreground" />
+          <ShieldHalf className="mr-2 h-4 w-4 text-muted-foreground" />
           {t('settings.about.license')}
         </CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
             {licenseStatus.valid ? (
               <Badge variant="default" className="gap-1">
-                <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />
+                <Check className="h-3 w-3" />
                 {t('settings.about.licenseActivated')}
               </Badge>
             ) : (
@@ -279,7 +279,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={onOpenLicenseDialog} className="gap-1.5">
-              <FontAwesomeIcon icon={faKey} className="h-3 w-3" />
+              <Key className="h-3 w-3" />
               {licenseStatus.valid ? t('settings.about.changeLicense') : t('settings.about.activateLicense')}
             </Button>
             <Tooltip content={licenseCopied ? t('common.copied') : t('settings.about.copyMachineCode')}>
@@ -294,7 +294,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   setTimeout(() => setLicenseCopied(false), 2000)
                 }}
               >
-                <FontAwesomeIcon icon={licenseCopied ? faCheck : faCopy} className="h-3 w-3" />
+                {licenseCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
               </Button>
             </Tooltip>
           </div>
@@ -305,7 +305,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       {/* Update */}
       <Card>
         <CardHeader><CardTitle>
-          <FontAwesomeIcon icon={faArrowUp} className="mr-2 h-4 w-4 text-muted-foreground" />
+          <ArrowUp className="mr-2 h-4 w-4 text-muted-foreground" />
           {t('settings.about.update')}
         </CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -316,12 +316,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   <SelectOption value="alpha">Alpha</SelectOption>
 </Select>
             <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
-              <FontAwesomeIcon icon={updateState === 'checking' ? faRotate : faArrowUp} className={cn('mr-1 h-3 w-3', updateState === 'checking' && 'animate-spin')} />
+              {updateState === 'checking' ? <RotateCw className="mr-1 h-3 w-3 animate-spin" /> : <ArrowUp className="mr-1 h-3 w-3" />}
               {updateState === 'checking' ? t('settings.about.checking') : t('settings.about.checkUpdate')}
             </Button>
             {updateState === 'uptodate' && (
               <span className="flex items-center gap-1 text-sm text-muted-foreground">
-                <FontAwesomeIcon icon={faCircleCheck} className="h-3.5 w-3.5 text-primary" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
                 {t('settings.about.upToDate')}
               </span>
             )}
@@ -374,7 +374,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* Services Credits */}
       <Card>
-        <CardHeader><CardTitle><FontAwesomeIcon icon={faHeart} className="mr-2 h-4 w-4 text-destructive" />{t('settings.about.acknowledgements')}</CardTitle></CardHeader>
+        <CardHeader><CardTitle><Heart className="mr-2 h-4 w-4 text-destructive" />{t('settings.about.acknowledgements')}</CardTitle></CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {SERVICES.map((svc) => (
@@ -386,13 +386,13 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                 {svc.icon ? (
                   <img src={svc.icon} alt={svc.name} className="h-6 w-6 shrink-0 rounded object-contain" />
                 ) : (
-                  <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{t(SERVICE_NAME_KEYS[svc.name] ?? svc.name)}</div>
                   <div className="truncate text-xs text-muted-foreground">{t(SERVICE_DESC_KEYS[svc.name] ?? svc.description)}</div>
                 </div>
-                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50" />
               </button>
             ))}
           </div>
@@ -415,7 +415,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   <div className="font-medium">{proj.name}</div>
                   <div className="truncate text-xs text-muted-foreground">{t(REF_DESC_KEYS[proj.name] ?? proj.description)}</div>
                 </div>
-                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50" />
               </button>
             ))}
           </div>
@@ -438,7 +438,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   <span>{t(DEP_CATEGORY_KEYS[category] ?? category)}</span>
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary" className="h-5 text-[10px]">{deps.length}</Badge>
-                    <FontAwesomeIcon icon={expandedDep === category ? faChevronDown : faChevronRight} className="h-3 w-3 text-muted-foreground" />
+                    {expandedDep === category ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
                   </div>
                 </button>
                 <div ref={expandRef} className="mt-1 space-y-1 pl-2">
@@ -455,7 +455,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                           {dep.license === '自研' && <Badge variant="outline" className="h-4 px-1 text-[9px] border-primary/30 text-primary">{t('settings.about.depInHouse')}</Badge>}
                         </div>
                         {dep.url.startsWith('http') ? (
-                          <FontAwesomeIcon icon={faExternalLinkAlt} className="h-2.5 w-2.5 text-muted-foreground/50 cursor-pointer" onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))} />
+                          <ExternalLink className="h-2.5 w-2.5 text-muted-foreground/50 cursor-pointer" onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))} />
                         ) : null}
                       </div>
                     ))}
@@ -484,7 +484,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   <span>{t(DEP_CATEGORY_KEYS[category] ?? category)}</span>
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary" className="h-5 text-[10px]">{deps.length}</Badge>
-                    <FontAwesomeIcon icon={expandedDep === category ? faChevronDown : faChevronRight} className="h-3 w-3 text-muted-foreground" />
+                    {expandedDep === category ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
                   </div>
                 </button>
                 <div ref={expandRef} className="mt-1 space-y-1 pl-2">
@@ -497,7 +497,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                         <span className="text-muted-foreground">{dep.name}</span>
                         <div className="flex items-center gap-2">
                           <span className="text-muted-foreground/70">{dep.license}</span>
-                          <FontAwesomeIcon icon={faExternalLinkAlt} className="h-2.5 w-2.5 text-muted-foreground/50" />
+                          <ExternalLink className="h-2.5 w-2.5 text-muted-foreground/50" />
                         </div>
                       </button>
                     ))}
@@ -520,7 +520,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               <div className="text-xs text-muted-foreground">{t('settings.about.licenseNotice', { name: LICENSE.name })}</div>
             </div>
             <Button size="sm" variant="outline" onClick={() => openUrl(LICENSE.url).catch(() => window.open(LICENSE.url, '_blank'))} className="gap-1.5 h-8 text-xs">
-              <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3" />{t('settings.about.viewLicense')}
+              <ExternalLink className="h-3 w-3" />{t('settings.about.viewLicense')}
             </Button>
           </div>
         </CardContent>
@@ -528,35 +528,35 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       {/* 版权与隐私 */}
       <Card>
-        <CardHeader><CardTitle><FontAwesomeIcon icon={faScaleBalanced} className="mr-2 h-4 w-4 text-muted-foreground" />{t('settings.about.copyrightPrivacy')}</CardTitle></CardHeader>
+        <CardHeader><CardTitle><Scale className="mr-2 h-4 w-4 text-muted-foreground" />{t('settings.about.copyrightPrivacy')}</CardTitle></CardHeader>
         <CardContent className="space-y-1">
           <button
             onClick={() => setLegalDialogOpen(true)}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
           >
-            <FontAwesomeIcon icon={faFileLines} className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <div className="font-medium">{t('settings.about.copyrightStatement')}</div>
               <div className="truncate text-xs text-muted-foreground">{t('settings.about.copyrightStatementDesc')}</div>
             </div>
-            <FontAwesomeIcon icon={faChevronRight} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+            <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50" />
           </button>
           <button
             onClick={() => openUrl(USER_AGREEMENT_URL).catch(() => window.open(USER_AGREEMENT_URL, '_blank'))}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
           >
-            <FontAwesomeIcon icon={faFileContract} className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <FileSignature className="h-4 w-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <div className="font-medium">{t('settings.about.userAgreement')}</div>
               <div className="truncate text-xs text-muted-foreground">qomicex.top/legal/user-agreement</div>
             </div>
-            <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+            <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50" />
           </button>
           <button
             disabled
             className="flex w-full cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm opacity-50"
           >
-            <FontAwesomeIcon icon={faShieldHalved} className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <ShieldHalf className="h-4 w-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <div className="font-medium">{t('settings.about.privacyPolicy')}</div>
               <div className="truncate text-xs text-muted-foreground">{t('common.comingSoon')}</div>
@@ -943,7 +943,7 @@ export default function Settings() {
       <div className="flex gap-4">
         <div className="sticky top-0 self-start flex w-48 shrink-0 flex-col">
           <Tabs
-            tabs={CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map(cat => ({ id: cat.id, label: t(`settings.category.${cat.id}`), icon: <FontAwesomeIcon icon={cat.icon} className="h-4 w-4" /> }))}
+            tabs={CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map(cat => ({ id: cat.id, label: t(`settings.category.${cat.id}`), icon: <cat.icon className="h-4 w-4" /> }))}
             activeTab={category}
             onChange={(id) => setCategory(id)}
             orientation="vertical"
@@ -956,7 +956,7 @@ export default function Settings() {
             <Card>
               <CardHeader>
                 <CardTitle>
-                  <FontAwesomeIcon icon={faGear} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  <SettingsIcon className="mr-2 h-4 w-4 text-muted-foreground" />
                   {t('settings.category.basic')}
                 </CardTitle>
               </CardHeader>
@@ -1050,7 +1050,7 @@ export default function Settings() {
             <Card>
               <CardHeader>
                 <CardTitle>
-                  <FontAwesomeIcon icon={faRocket} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  <Rocket className="mr-2 h-4 w-4 text-muted-foreground" />
                   {t('settings.category.launch')}
                 </CardTitle>
               </CardHeader>
@@ -1082,7 +1082,7 @@ export default function Settings() {
             <Card>
               <CardHeader>
                 <CardTitle>
-                  <FontAwesomeIcon icon={faDownload} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  <Download className="mr-2 h-4 w-4 text-muted-foreground" />
                   {t('settings.category.download')}
                 </CardTitle>
               </CardHeader>
@@ -1091,7 +1091,7 @@ export default function Settings() {
                   <Label htmlFor="downloadThreads">{t('settings.launcher.downloadThreads')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadThreads', Math.max(1, settings.downloadThreads - 1))} disabled={settings.downloadThreads <= 1}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                      <Minus className="h-3.5 w-3.5" />
                     </Button>
                     <Input
                       id="downloadThreads"
@@ -1103,7 +1103,7 @@ export default function Settings() {
                       className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadThreads', Math.min(512, settings.downloadThreads + 1))} disabled={settings.downloadThreads >= 512}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadThreadsDesc')}</p>
@@ -1129,7 +1129,7 @@ export default function Settings() {
                   <Label htmlFor="downloadTimeout">{t('settings.launcher.downloadTimeout')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.max(0, settings.downloadTimeout - 5))} disabled={settings.downloadTimeout <= 0}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                      <Minus className="h-3.5 w-3.5" />
                     </Button>
                     <Input
                       id="downloadTimeout"
@@ -1141,7 +1141,7 @@ export default function Settings() {
                       className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.min(120, settings.downloadTimeout + 5))} disabled={settings.downloadTimeout >= 120}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadTimeoutDesc')}</p>
@@ -1178,7 +1178,7 @@ export default function Settings() {
             <Card>
               <CardHeader>
                 <CardTitle>
-                  <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  <Globe className="mr-2 h-4 w-4 text-muted-foreground" />
                   {t('settings.launcher.downloadSource')}
                 </CardTitle>
               </CardHeader>
@@ -1208,7 +1208,7 @@ export default function Settings() {
                           )}
                         >
                           {t(`settings.launcher.downloadSourceName.${s.value}`)}
-                          {pingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
+                          {pingLoading && <RotateCw className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!pingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
                               {ping.latency}ms
@@ -1222,7 +1222,7 @@ export default function Settings() {
                     })}
                     <Tooltip content={t('settings.launcher.refreshLatency')}>
                       <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshPings} disabled={pingLoading}>
-                        <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', pingLoading && 'animate-spin')} />
+                        <RotateCw className={cn('h-3.5 w-3.5', pingLoading && 'animate-spin')} />
                       </Button>
                     </Tooltip>
                   </div>
@@ -1232,7 +1232,7 @@ export default function Settings() {
                       onCheckedChange={(c) => update('autoSelectDownloadSource', c === true)}
                     />
                     <div className="flex items-center gap-1.5">
-                      <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
+                      <Zap className="h-3.5 w-3.5 text-amber-400" />
                       <span className="text-sm font-medium">{t('settings.launcher.autoSelectDownloadSource')}</span>
                     </div>
                   </label>
@@ -1264,7 +1264,7 @@ export default function Settings() {
                           )}
                         >
                           {t(`settings.launcher.resourceDownloadSourceName.${s}`)}
-                          {filePingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
+                          {filePingLoading && <RotateCw className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!filePingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
                               {ping.latency}ms
@@ -1278,7 +1278,7 @@ export default function Settings() {
                     })}
                     <Tooltip content={t('settings.launcher.refreshLatency')}>
                       <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshFilePings} disabled={filePingLoading}>
-                        <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', filePingLoading && 'animate-spin')} />
+                        <RotateCw className={cn('h-3.5 w-3.5', filePingLoading && 'animate-spin')} />
                       </Button>
                     </Tooltip>
                   </div>
@@ -1288,7 +1288,7 @@ export default function Settings() {
                       onCheckedChange={(c) => update('autoSelectFileDownloadSource', c === true)}
                     />
                     <div className="flex items-center gap-1.5">
-                      <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
+                      <Zap className="h-3.5 w-3.5 text-amber-400" />
                       <span className="text-sm font-medium">{t('settings.launcher.autoSelectFileDownloadSource')}</span>
                     </div>
                   </label>
@@ -1323,7 +1323,7 @@ export default function Settings() {
                           )}
                         >
                           {t(`settings.launcher.modSourceName.${s.value}`)}
-                          {modPingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
+                          {modPingLoading && <RotateCw className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!modPingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
                               {ping.latency}ms
@@ -1337,7 +1337,7 @@ export default function Settings() {
                     })}
                     <Tooltip content={t('settings.launcher.refreshLatency')}>
                       <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshModPings} disabled={modPingLoading}>
-                        <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', modPingLoading && 'animate-spin')} />
+                        <RotateCw className={cn('h-3.5 w-3.5', modPingLoading && 'animate-spin')} />
                       </Button>
                     </Tooltip>
                   </div>
@@ -1347,7 +1347,7 @@ export default function Settings() {
                       onCheckedChange={(c) => update('autoSelectModMirror', c === true)}
                     />
                     <div className="flex items-center gap-1.5">
-                      <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
+                      <Zap className="h-3.5 w-3.5 text-amber-400" />
                       <span className="text-sm font-medium">{t('settings.launcher.autoSelectModSource')}</span>
                     </div>
                   </label>
@@ -1359,7 +1359,7 @@ export default function Settings() {
             <Card>
               <CardHeader>
                 <CardTitle>
-                  <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  <Globe className="mr-2 h-4 w-4 text-muted-foreground" />
                   {t('settings.network.proxy')}
                 </CardTitle>
               </CardHeader>
@@ -1409,7 +1409,7 @@ export default function Settings() {
             <Card>
               <CardHeader>
                 <CardTitle>
-                  <FontAwesomeIcon icon={faDatabase} className="mr-2 h-4 w-4 text-muted-foreground" />
+                  <Database className="mr-2 h-4 w-4 text-muted-foreground" />
                   {t('settings.category.storage')}
                 </CardTitle>
               </CardHeader>
@@ -1431,7 +1431,7 @@ export default function Settings() {
                         }
                       }
                     }}>
-                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                      <FolderOpen className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.dataDirDesc')}</p>
@@ -1443,7 +1443,7 @@ export default function Settings() {
                     <p className="text-xs text-muted-foreground">{t('settings.launcher.versionListCacheDesc')}</p>
                   </div>
                   <Button size="sm" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
-                    <FontAwesomeIcon icon={clearingCache ? faRotate : faTrashCan} className={cn('h-4 w-4', clearingCache && 'animate-spin')} />
+                    {clearingCache ? <RotateCw className={cn('h-4 w-4', clearingCache && 'animate-spin')} /> : <Trash2 className={cn('h-4 w-4', clearingCache && 'animate-spin')} />}
                     {t('settings.launcher.clearCache')}
                   </Button>
                 </div>
@@ -1452,7 +1452,7 @@ export default function Settings() {
                   <Label htmlFor="curseforgeVersionFetchConcurrency">{t('settings.launcher.curseforgeConcurrency')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionFetchConcurrency', Math.max(1, Math.min(20, settings.curseforgeVersionFetchConcurrency - 1)))} disabled={settings.curseforgeVersionFetchConcurrency <= 1}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                      <Minus className="h-3.5 w-3.5" />
                     </Button>
                     <Input
                       id="curseforgeVersionFetchConcurrency"
@@ -1464,7 +1464,7 @@ export default function Settings() {
                       className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionFetchConcurrency', Math.min(20, settings.curseforgeVersionFetchConcurrency + 1))} disabled={settings.curseforgeVersionFetchConcurrency >= 20}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeConcurrencyDesc')}</p>
@@ -1474,7 +1474,7 @@ export default function Settings() {
                   <Label htmlFor="curseforgeVersionCacheTtlSeconds">{t('settings.launcher.curseforgeTtl')}</Label>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionCacheTtlSeconds', Math.max(0, settings.curseforgeVersionCacheTtlSeconds - 10))} disabled={settings.curseforgeVersionCacheTtlSeconds <= 0}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                      <Minus className="h-3.5 w-3.5" />
                     </Button>
                     <Input
                       id="curseforgeVersionCacheTtlSeconds"
@@ -1486,7 +1486,7 @@ export default function Settings() {
                       className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionCacheTtlSeconds', Math.min(3600, settings.curseforgeVersionCacheTtlSeconds + 10))} disabled={settings.curseforgeVersionCacheTtlSeconds >= 3600}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeTtlDesc')}</p>
@@ -1498,7 +1498,7 @@ export default function Settings() {
                     <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeCacheDesc')}</p>
                   </div>
                   <Button size="sm" variant="outline" onClick={handleClearCurseForgeCache} disabled={clearingCurseForgeCache}>
-                    <FontAwesomeIcon icon={clearingCurseForgeCache ? faRotate : faTrashCan} className={cn('h-4 w-4', clearingCurseForgeCache && 'animate-spin')} />
+                    {clearingCurseForgeCache ? <RotateCw className={cn('h-4 w-4', clearingCurseForgeCache && 'animate-spin')} /> : <Trash2 className={cn('h-4 w-4', clearingCurseForgeCache && 'animate-spin')} />}
                     {t('settings.launcher.clearCurseforgeCache')}
                   </Button>
                 </div>
@@ -1513,7 +1513,7 @@ export default function Settings() {
                 <CardHeader className="flex-row items-center justify-between">
                   <div>
                     <CardTitle>
-                      <FontAwesomeIcon icon={faCoffee} className="mr-2 h-4 w-4 text-muted-foreground" />
+                      <Coffee className="mr-2 h-4 w-4 text-muted-foreground" />
                       {t('settings.java.title')}
                     </CardTitle>
                   </div>
@@ -1525,24 +1525,24 @@ export default function Settings() {
                 <CardContent className="space-y-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" onClick={() => handleScan('quick')} disabled={scanning !== 'idle'}>
-                      <FontAwesomeIcon icon={scanning === 'quick' ? faRotate : faMagnifyingGlass} className={cn('h-4 w-4', scanning === 'quick' && 'animate-spin')} />
+                      {scanning === 'quick' ? <RotateCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                       {t('settings.java.quickScan')}
                     </Button>
                     <Button size="sm" variant="secondary" onClick={() => handleScan('deep')} disabled={scanning !== 'idle'}>
-                      <FontAwesomeIcon icon={scanning === 'deep' ? faRotate : faBolt} className={cn('h-4 w-4', scanning === 'deep' && 'animate-spin')} />
+                      {scanning === 'deep' ? <RotateCw className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
                       {t('settings.java.deepScan')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={handleManualAdd} disabled={scanning !== 'idle'}>
-                      <FontAwesomeIcon icon={faPlus} className="h-4 w-4" />
+                      <Plus className="h-4 w-4" />
                       {t('settings.java.manualAdd')}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={handleOpenJavaDownload} disabled={downloadLoading}>
-                      <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />
+                      <Download className="h-4 w-4" />
                       {t('settings.java.downloadJava')}
                     </Button>
                     <Tooltip content={t('settings.java.refreshList')}>
                       <Button size="sm" variant="ghost" onClick={handleRefresh} disabled={scanning !== 'idle'}>
-                        <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', scanning !== 'idle' && 'animate-spin')} />
+                        <RotateCw className={cn('h-4 w-4', scanning !== 'idle' && 'animate-spin')} />
                       </Button>
                     </Tooltip>
                     <label className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1553,7 +1553,7 @@ export default function Settings() {
 
                   {scanning !== 'idle' && (
                     <div className="flex items-center gap-3 rounded-lg bg-muted px-4 py-3">
-                      <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin text-primary" />
+                      <RotateCw className="h-4 w-4 animate-spin text-primary" />
                       <span className="text-sm text-muted-foreground">{t('settings.java.scanningRuntime')}</span>
                     </div>
                   )}
@@ -1561,14 +1561,14 @@ export default function Settings() {
                   {scanning === 'idle' && listRuntimes.length === 0 && (
                     <div className="flex flex-col items-center gap-4 py-12 text-center">
                       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
-                        <FontAwesomeIcon icon={faCoffee} className="h-7 w-7 text-muted-foreground" />
+                        <Coffee className="h-7 w-7 text-muted-foreground" />
                       </div>
                       <div>
                         <p className="text-sm font-medium text-foreground">{t('settings.java.noRuntimeDetected')}</p>
                         <p className="mt-1 text-xs text-muted-foreground">{t('settings.java.noRuntimeHint')}</p>
                       </div>
                       <Button size="sm" onClick={() => handleScan('quick')}>
-                        <FontAwesomeIcon icon={faMagnifyingGlass} className="h-4 w-4" />
+                        <Search className="h-4 w-4" />
                         {t('settings.java.startScan')}
                       </Button>
                     </div>
@@ -1598,16 +1598,16 @@ export default function Settings() {
                             </div>
                             <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
                               <span className="flex items-center gap-1">
-                                <FontAwesomeIcon icon={faTag} className="h-3 w-3" />
+                                <Tag className="h-3 w-3" />
                                 {t('common.version')} {j.version}
                               </span>
                               <span className="flex items-center gap-1">
-                                <FontAwesomeIcon icon={faDesktop} className="h-3 w-3" />
+                                <Monitor className="h-3 w-3" />
                                 {j.arch}
                               </span>
                             </div>
                             <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/60">
-                              <FontAwesomeIcon icon={faFolder} className="h-3 w-3 shrink-0" />
+                              <Folder className="h-3 w-3 shrink-0" />
                               <span className="truncate">{j.path}</span>
                             </div>
                           </div>
@@ -1615,13 +1615,13 @@ export default function Settings() {
                           <div className="flex shrink-0 items-center gap-0.5">
                             <Tooltip content={t('settings.java.openFolder')}>
                               <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleOpenFolder(j.path)}>
-                                <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                                <FolderOpen className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
                             {j.discoveredBy === 'Custom' && (
                               <Tooltip content={t('common.delete')}>
                                 <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive/70 hover:text-destructive" onClick={() => handleDelete(j.path)} disabled={removingPath === j.path}>
-                                  <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                                  <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                               </Tooltip>
                             )}
@@ -1632,7 +1632,7 @@ export default function Settings() {
                   )}
 
                   <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
-                    <FontAwesomeIcon icon={faInfoCircle} className="h-3.5 w-3.5 text-primary" />
+                    <Info className="h-3.5 w-3.5 text-primary" />
                     <span>{javaStatus}</span>
                     <span className="ml-auto">
                       {runtimes.length > 0 && t('settings.java.availableCount', { valid: validCount, total: runtimes.length })}
@@ -1669,10 +1669,10 @@ export default function Settings() {
                         saveSettings(next)
                         notify(t('settings.saved'), 'success')
                       }} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                        <FontAwesomeIcon icon={faRobot} className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryAuto')}
+                        <Bot className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryAuto')}
                       </button>
                       <button onClick={() => update('memoryMode', 'custom')} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                        <FontAwesomeIcon icon={faSliders} className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryCustom')}
+                        <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryCustom')}
                       </button>
                     </div>
 
@@ -1752,7 +1752,7 @@ export default function Settings() {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <Palette className="mr-2 h-4 w-4 text-muted-foreground" />
                     {t('settings.appearance.title')}
                   </CardTitle>
                 </CardHeader>
@@ -1780,7 +1780,7 @@ export default function Settings() {
                           )}
                           style={{ background: 'conic-gradient(#f87171,#fbbf24,#34d399,#60a5fa,#a78bfa,#f87171)' }}
                         >
-                          <FontAwesomeIcon icon={faImage} className="h-3 w-3 text-foreground" />
+                          <Image className="h-3 w-3 text-foreground" />
                         </button>
                       </Tooltip>
                         {THEME_COLOR_PRESETS.map((p) => (
@@ -1883,7 +1883,7 @@ export default function Settings() {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    <FontAwesomeIcon icon={faSliders} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <SlidersHorizontal className="mr-2 h-4 w-4 text-muted-foreground" />
                     {t('settings.appearance.componentMaterial')}
                   </CardTitle>
                 </CardHeader>
@@ -1910,7 +1910,7 @@ export default function Settings() {
                     </Select>
                     {settings.componentMaterial === 'liquid' && (
                       <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                        <FontAwesomeIcon icon={faTriangleExclamation} className="mt-0.5 h-3 w-3 shrink-0" />
+                        <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
                         <span>{t('settings.appearance.componentMaterialLiquidWarning')}</span>
                       </div>
                     )}
@@ -1941,7 +1941,7 @@ export default function Settings() {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    <FontAwesomeIcon icon={faDesktop} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <Monitor className="mr-2 h-4 w-4 text-muted-foreground" />
                     {t('settings.appearance.cornerRadius')}
                   </CardTitle>
                 </CardHeader>
@@ -1983,7 +1983,7 @@ export default function Settings() {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <Palette className="mr-2 h-4 w-4 text-muted-foreground" />
                     {t('settings.appearance.font')}
                   </CardTitle>
                 </CardHeader>
@@ -2019,7 +2019,7 @@ export default function Settings() {
                   <div className="flex items-center gap-2">
                     {settings.fontFamily && (
                       <Button variant="outline" size="sm" onClick={() => update('fontFamily', '')} className="gap-1">
-                        <FontAwesomeIcon icon={faRotate} className="h-3 w-3" />
+                        <RotateCw className="h-3 w-3" />
                         {t('settings.appearance.fontReset')}
                       </Button>
                     )}
@@ -2030,7 +2030,7 @@ export default function Settings() {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <Palette className="mr-2 h-4 w-4 text-muted-foreground" />
                     {t('settings.appearance.background')}
                   </CardTitle>
                 </CardHeader>
@@ -2039,7 +2039,7 @@ export default function Settings() {
                     <div className="flex items-center justify-between">
                       <Label>{t('settings.appearance.backgroundImage')}</Label>
                       <Button variant="ghost" size="sm" onClick={() => get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})}>
-                        <FontAwesomeIcon icon={faRotate} className="h-3 w-3" />
+                        <RotateCw className="h-3 w-3" />
                       </Button>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -2076,7 +2076,7 @@ export default function Settings() {
                     </div>
                     <div className="flex items-center gap-2 pt-0.5">
                       <Button variant="outline" size="sm" onClick={handleOpenBackgrounds}>
-                        <FontAwesomeIcon icon={faFolderOpen} className="mr-1 h-3 w-3" /> {t('settings.appearance.openFolder')}
+                        <FolderOpen className="mr-1 h-3 w-3" /> {t('settings.appearance.openFolder')}
                       </Button>
                       <p className="text-xs text-muted-foreground">{t('settings.appearance.backgroundsHint')}</p>
                     </div>
@@ -2100,7 +2100,7 @@ export default function Settings() {
                     <>
                       {!settings.backgroundRandom && (
                         <Button variant="ghost" size="sm" onClick={() => update('backgroundImage', '')}>
-                          <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> {t('settings.appearance.clearBackground')}
+                          <Trash2 className="mr-1 h-3 w-3" /> {t('settings.appearance.clearBackground')}
                         </Button>
                       )}
                       <div className="grid grid-cols-2 gap-4 pt-1">
@@ -2135,7 +2135,7 @@ export default function Settings() {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <Palette className="mr-2 h-4 w-4 text-muted-foreground" />
                     {t('settings.appearance.watermark')}
                   </CardTitle>
                 </CardHeader>
@@ -2237,7 +2237,7 @@ export default function Settings() {
             </DialogBody>
             <DialogFooter>
               <Button onClick={handleStartJavaDownload} disabled={!selectedVendor || startDownloadLoading}>
-                {startDownloadLoading ? <><FontAwesomeIcon icon={faSpinner} className="h-4 w-4 animate-spin mr-2" />{t('settings.java.resolving')}</> : t('settings.java.startDownload')}
+                {startDownloadLoading ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />{t('settings.java.resolving')}</> : t('settings.java.startDownload')}
               </Button>
             </DialogFooter>
           </Dialog>

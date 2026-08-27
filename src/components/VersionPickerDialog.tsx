@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faArrowRightArrowLeft } from '@fortawesome/free-solid-svg-icons'
+import { ArrowLeftRight, RotateCw } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
 import { cn } from '../lib/utils.ts'
@@ -67,7 +66,7 @@ export default function VersionPickerDialog({
       <DialogBody>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('dialogs.versionPicker.loadingVersions')}
+            <RotateCw className="h-4 w-4 animate-spin" />{t('dialogs.versionPicker.loadingVersions')}
           </div>
         ) : versions.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">{t('dialogs.versionPicker.noVersions')}</div>
@@ -91,9 +90,9 @@ export default function VersionPickerDialog({
                   disabled={installing !== null}
                 >
                   {installing === v.id ? (
-                    <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />{t('dialogs.versionPicker.switching')}</>
+                    <><RotateCw className="h-3 w-3 animate-spin" />{t('dialogs.versionPicker.switching')}</>
                   ) : (
-                    <><FontAwesomeIcon icon={faArrowRightArrowLeft} className="h-3 w-3" />{t('dialogs.versionPicker.switch')}</>
+                    <><ArrowLeftRight className="h-3 w-3" />{t('dialogs.versionPicker.switch')}</>
                   )}
                 </Button>
               </div>

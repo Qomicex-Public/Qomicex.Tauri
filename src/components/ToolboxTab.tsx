@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faDownload, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
+import { Download, FolderOpen } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from './ui'
 import { Button } from './ui'
 import { Input } from './ui'
@@ -95,7 +94,7 @@ export default function ToolboxTab() {
       <Card>
         <CardHeader>
           <CardTitle>
-            <FontAwesomeIcon icon={faDownload} className="mr-2 h-4 w-4 text-muted-foreground" />
+            <Download className="mr-2 h-4 w-4 text-muted-foreground" />
             {t('tools.toolbox.title')}
           </CardTitle>
         </CardHeader>
@@ -127,7 +126,7 @@ export default function ToolboxTab() {
               />
               <Tooltip content={t('tools.toolbox.pickFolder')}>
                 <Button variant="outline" size="icon" onClick={handlePickFolder} className="shrink-0">
-                  <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
+                  <FolderOpen className="h-4 w-4" />
                 </Button>
               </Tooltip>
             </div>
@@ -144,7 +143,7 @@ export default function ToolboxTab() {
             disabled={downloading || !validCount || !targetDir}
             className="w-full"
           >
-            <FontAwesomeIcon icon={faDownload} className={cn('h-4 w-4', downloading && 'animate-spin')} />
+            <Download className={cn('h-4 w-4', downloading && 'animate-spin')} />
             <span>
               {downloading
                 ? t('tools.toolbox.submitting')

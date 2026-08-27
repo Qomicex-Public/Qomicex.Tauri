@@ -1,8 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { Package } from 'lucide-react'
 import { MinecraftText } from './MinecraftText.tsx'
-import { faBox } from '@fortawesome/free-solid-svg-icons'
 import { Card, CardContent } from './ui'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { useMessageBox } from './ui'
@@ -85,7 +84,7 @@ export default function ResourcePackCard({ pack, instanceId, gameDir, gameVersio
             {pack.iconBase64 ? (
               <img src={`data:image/png;base64,${pack.iconBase64}`} alt={pack.name} className="h-full w-full object-cover" loading="lazy" />
             ) : (
-              <FontAwesomeIcon icon={faBox} className="h-5 w-5 opacity-50" />
+              <Package className="h-5 w-5 opacity-50" />
             )}
           </div>
           <div className="min-w-0 flex-1">

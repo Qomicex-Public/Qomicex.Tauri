@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faDownload, faCube, faBox, faRotate, faTrashCan, faArrowRight, faPause, faPlay, faStop, faHammer, faCoffee, faCircleCheck, faListCheck } from '@fortawesome/free-solid-svg-icons'
+import { ArrowRight, Box, CheckCircle2, Coffee, Download, Hammer, ListChecks, Package, RotateCw, Square, Trash2 } from 'lucide-react'
+import { MorphIcon } from 'morphicons/react'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { Button } from '../components/ui'
@@ -43,9 +43,25 @@ function formatDate(dateStr: string): string {
   } catch { return dateStr }
 }
 
+const TYPE_ICON: Record<string, typeof Box> = {
+  java: Coffee,
+  resource: Package,
+  repair: Hammer,
+  batch: Download,
+  file: Box,
+}
+
+function TypeIcon({ taskType, className }: { taskType: string; className?: string }) {
+  const Icon = TYPE_ICON[taskType] ?? Box
+  return <Icon className={className} />
+}
+
 /** Re-verify an SSE-absent file task at most this often, at most this many times. */
 const STALE_FILE_RECHECK_MS = 2000
 const STALE_FILE_MAX_CHECKS = 10
+
+const PLAY_ICON = 'M7 4l10 8-10 8z'
+const PAUSE_ICON = 'M7 4v16M17 4v16'
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   queued: { label: 'queued', color: 'text-muted-foreground bg-muted border-border' },
@@ -302,7 +318,7 @@ if (task.instanceId && task.type !== 'batch') {
             m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued').forEach(t => m.removeTask(t.id))
           })
         }} className="gap-1.5">
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />{t('downloads.clearFinished')}
+          <Trash2 className="h-3.5 w-3.5" />{t('downloads.clearFinished')}
         </Button>
       } />
 
@@ -315,11 +331,11 @@ if (task.instanceId && task.type !== 'batch') {
 
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-24 text-center">
-          <FontAwesomeIcon icon={faDownload} className="mb-3 h-10 w-10 text-muted-foreground/30" />
+          <Download className="mb-3 h-10 w-10 text-muted-foreground/30" />
           <p className="text-sm font-medium text-muted-foreground">{t('downloads.empty')}</p>
           <p className="mt-1 text-xs text-muted-foreground/70">{t('downloads.emptyHint')}</p>
           <Button variant="outline" size="sm" onClick={() => navigate('/instances')} className="mt-4 gap-1.5">
-            <FontAwesomeIcon icon={faArrowRight} className="h-3 w-3" />{t('downloads.goToInstances')}
+            <ArrowRight className="h-3 w-3" />{t('downloads.goToInstances')}
           </Button>
         </div>
       ) : (
@@ -349,8 +365,8 @@ if (task.instanceId && task.type !== 'batch') {
                       {safeIcon ? (
                         <img src={safeIcon} alt="" className="h-full w-full object-cover" />
                       ) : (
-                        <FontAwesomeIcon
-                            icon={task.type === 'java' ? faCoffee : task.type === 'resource' ? faBox : task.type === 'repair' ? faHammer : task.type === 'batch' ? faDownload : faCube}
+                        <TypeIcon
+                          taskType={task.type}
                           className={cn(
                             'h-5 w-5',
                             task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-primary'
@@ -377,19 +393,11 @@ if (task.instanceId && task.type !== 'batch') {
                   <div className="flex shrink-0 items-center gap-1">
                     {isActive && task.type === 'java' && task.status !== 'queued' && (
                       <>
-                        {task.status === 'paused' ? (
-                          <Tooltip content={t('downloads.resume')}>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => task.taskId && resumeJavaDownload(task.taskId).catch(() => updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskInvalid') }))}>
-                              <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
-                            </Button>
-                          </Tooltip>
-                        ) : (
-                          <Tooltip content={t('downloads.pause')}>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-amber-400" onClick={() => task.taskId && pauseJavaDownload(task.taskId).catch(() => updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskInvalid') }))}>
-                              <FontAwesomeIcon icon={faPause} className="h-3.5 w-3.5" />
-                            </Button>
-                          </Tooltip>
-                        )}
+                        <Tooltip content={t(task.status === 'paused' ? 'downloads.resume' : 'downloads.pause')}>
+                          <Button variant="ghost" size="icon" className={cn('h-8 w-8 text-muted-foreground', task.status === 'paused' ? 'hover:text-primary' : 'hover:text-amber-400')} onClick={() => task.taskId && (task.status === 'paused' ? resumeJavaDownload(task.taskId) : pauseJavaDownload(task.taskId)).catch(() => updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskInvalid') }))}>
+                            <MorphIcon icon={task.status === 'paused' ? PLAY_ICON : PAUSE_ICON} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
+                          </Button>
+                        </Tooltip>
                         <Tooltip content={t('downloads.cancel')}>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
                             if (task.type === 'java' && task.taskId) {
@@ -404,7 +412,7 @@ if (task.instanceId && task.type !== 'batch') {
                               cancelInstall(task.instanceId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
                             }
                           }}>
-                            <FontAwesomeIcon icon={faStop} className="h-3.5 w-3.5" />
+                            <Square className="h-3.5 w-3.5" />
                           </Button>
                         </Tooltip>
                       </>
@@ -418,25 +426,17 @@ if (task.instanceId && task.type !== 'batch') {
                             removeTask(task.id)
                           }
                         }}>
-                          <FontAwesomeIcon icon={faStop} className="h-3.5 w-3.5" />
+                          <Square className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
                     )}
                     {isActive && task.type !== 'file' && task.type !== 'java' && task.status !== 'queued' && (
                       <>
-                        {task.status === 'paused' ? (
-                          <Tooltip content={t('downloads.resume')}>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => task.instanceId && resumeInstall(task.instanceId)}>
-                              <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
-                            </Button>
-                          </Tooltip>
-                        ) : (
-                          <Tooltip content={t('downloads.pause')}>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-amber-400" onClick={() => task.instanceId && pauseInstall(task.instanceId)}>
-                              <FontAwesomeIcon icon={faPause} className="h-3.5 w-3.5" />
-                            </Button>
-                          </Tooltip>
-                        )}
+                        <Tooltip content={t(task.status === 'paused' ? 'downloads.resume' : 'downloads.pause')}>
+                          <Button variant="ghost" size="icon" className={cn('h-8 w-8 text-muted-foreground', task.status === 'paused' ? 'hover:text-primary' : 'hover:text-amber-400')} onClick={() => task.instanceId && (task.status === 'paused' ? resumeInstall(task.instanceId) : pauseInstall(task.instanceId))}>
+                            <MorphIcon icon={task.status === 'paused' ? PLAY_ICON : PAUSE_ICON} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
+                          </Button>
+                        </Tooltip>
                         <Tooltip content={t('downloads.cancel')}>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
                             if (task.type === 'java' && task.taskId) {
@@ -451,7 +451,7 @@ if (task.instanceId && task.type !== 'batch') {
                               cancelInstall(task.instanceId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
                             }
                           }}>
-                            <FontAwesomeIcon icon={faStop} className="h-3.5 w-3.5" />
+                            <Square className="h-3.5 w-3.5" />
                           </Button>
                         </Tooltip>
                       </>
@@ -459,14 +459,14 @@ if (task.instanceId && task.type !== 'batch') {
                     {task.status === 'failed' && (
                       <Tooltip content={t('downloads.retry')}>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => removeTask(task.id)}>
-                          <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5" />
+                          <RotateCw className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
                     )}
                     {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'queued') && (
                       <Tooltip content={t('downloads.remove')}>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => removeTask(task.id)}>
-                          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
                     )}
@@ -489,7 +489,7 @@ if (task.instanceId && task.type !== 'batch') {
                         <InstallStepsList steps={steps} className="min-w-0 flex-1" />
                       ) : task.status === 'completed' ? (
                         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-emerald-400">
-                          <FontAwesomeIcon icon={faCircleCheck} className="h-3 w-3 shrink-0" />
+                          <CheckCircle2 className="h-3 w-3 shrink-0" />
                           <span className="truncate">{t('downloads.status.completed')}</span>
                         </div>
                       ) : (
@@ -497,7 +497,7 @@ if (task.instanceId && task.type !== 'batch') {
                           'flex min-w-0 flex-1 items-center gap-1.5 text-xs',
                           task.status === 'failed' ? 'text-red-400' : 'text-muted-foreground'
                         )}>
-                          <FontAwesomeIcon icon={faListCheck} className="h-3 w-3 shrink-0" />
+                          <ListChecks className="h-3 w-3 shrink-0" />
                           <span className="truncate">
                             {t('downloads.stepsDone', { done: stepsDoneCount, total: steps.length })}
                           </span>

@@ -2,8 +2,7 @@ import { NavLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
 import gsap from 'gsap'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faHouse, faCube, faDownload, faUser, faGear, faCompass, faGamepad, faNetworkWired, faFileLines } from '@fortawesome/free-solid-svg-icons'
+import { Box, Compass, Download, FileText, Gamepad2, House, Network, Settings, User, type LucideIcon } from 'lucide-react'
 import { Tooltip } from './ui'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { useI18n } from '../i18n/index.tsx'
@@ -19,13 +18,13 @@ interface NavLinkDef {
 }
 
 const NAV_LINKS: readonly NavLinkDef[] = [
-  { to: '/', key: 'home', icon: <FontAwesomeIcon icon={faHouse} className="h-5 w-5" />, end: true },
-  { to: '/instances', key: 'instances', icon: <FontAwesomeIcon icon={faCube} className="h-5 w-5" /> },
-  { to: '/downloads', key: 'downloads', icon: <FontAwesomeIcon icon={faDownload} className="h-5 w-5" /> },
-  { to: '/accounts', key: 'accounts', icon: <FontAwesomeIcon icon={faUser} className="h-5 w-5" /> },
-  { to: '/resource-center', key: 'resourceCenter', icon: <FontAwesomeIcon icon={faCompass} className="h-5 w-5" /> },
-  { to: '/connect', key: 'connect', icon: <FontAwesomeIcon icon={faNetworkWired} className="h-5 w-5" />, end: true },
-  { to: '/log-analysis', key: 'logAnalysis', icon: <FontAwesomeIcon icon={faFileLines} className="h-5 w-5" /> },
+  { to: '/', key: 'home', icon: <House className="h-5 w-5" />, end: true },
+  { to: '/instances', key: 'instances', icon: <Box className="h-5 w-5" /> },
+  { to: '/downloads', key: 'downloads', icon: <Download className="h-5 w-5" /> },
+  { to: '/accounts', key: 'accounts', icon: <User className="h-5 w-5" /> },
+  { to: '/resource-center', key: 'resourceCenter', icon: <Compass className="h-5 w-5" /> },
+  { to: '/connect', key: 'connect', icon: <Network className="h-5 w-5" />, end: true },
+  { to: '/log-analysis', key: 'logAnalysis', icon: <FileText className="h-5 w-5" /> },
 ]
 
 export function NavItem({ to, label, icon, end }: { to: string; label: string; icon: React.ReactNode; end?: boolean }) {
@@ -59,7 +58,7 @@ export function NavItem({ to, label, icon, end }: { to: string; label: string; i
   )
 }
 
-function BottomNavItem({ to, label, icon, showPingDot }: { to: string; label: string; icon: typeof faGamepad; showPingDot?: boolean }) {
+function BottomNavItem({ to, label, icon: IconComp, showPingDot }: { to: string; label: string; icon: LucideIcon; showPingDot?: boolean }) {
   return (
     <div className="w-full flex justify-center relative">
       <NavLink to={to} className="w-full flex justify-center">
@@ -82,7 +81,7 @@ function BottomNavItem({ to, label, icon, showPingDot }: { to: string; label: st
                       : 'text-muted-foreground hover:bg-accent hover:text-foreground'
                 )}
               >
-                <FontAwesomeIcon icon={icon} className="h-4 w-4" />
+                <IconComp className="h-4 w-4" />
                 {showPingDot && (
                   <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-green-500 animate-ping" />
                 )}
@@ -140,8 +139,8 @@ export default function Sidebar() {
         <PluginSidebarItems />
       </ul>
       <div className="flex w-full flex-col items-center border-t border-border px-2 py-2 pb-4 gap-1">
-        <BottomNavItem to="/running" label={t('layout.sidebar.running')} icon={faGamepad} showPingDot={hasRunning} />
-        <BottomNavItem to="/settings" label={t('layout.sidebar.settings')} icon={faGear} />
+        <BottomNavItem to="/running" label={t('layout.sidebar.running')} icon={Gamepad2} showPingDot={hasRunning} />
+        <BottomNavItem to="/settings" label={t('layout.sidebar.settings')} icon={Settings} />
       </div>
     </nav>
   )

@@ -1,5 +1,4 @@
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCircleCheck, faCircleNotch, faCircle, faCircleXmark } from '@fortawesome/free-solid-svg-icons'
+import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react'
 import { useI18n } from '../i18n/index.tsx'
 import type { InstallStepInfo } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
@@ -19,13 +18,13 @@ export default function InstallStepsList({ steps, className }: InstallStepsListP
         return (
           <li key={step.id} className="flex items-center gap-2 text-xs">
             {step.status === 'done' ? (
-              <FontAwesomeIcon icon={faCircleCheck} className="h-3 w-3 shrink-0 text-emerald-400" />
+              <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-400" />
             ) : step.status === 'active' ? (
-              <FontAwesomeIcon icon={faCircleNotch} className="h-3 w-3 shrink-0 animate-spin text-primary" />
+              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
             ) : step.status === 'failed' ? (
-              <FontAwesomeIcon icon={faCircleXmark} className="h-3 w-3 shrink-0 text-red-400" />
+              <XCircle className="h-3 w-3 shrink-0 text-red-400" />
             ) : (
-              <FontAwesomeIcon icon={faCircle} className="h-3 w-3 shrink-0 text-muted-foreground/30" />
+              <Circle className="h-3 w-3 shrink-0 text-muted-foreground/30" />
             )}
             <span
               className={cn(

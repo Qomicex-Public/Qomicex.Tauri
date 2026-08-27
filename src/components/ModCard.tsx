@@ -1,7 +1,6 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCube, faRotate } from '@fortawesome/free-solid-svg-icons'
+import { Box, RotateCw } from 'lucide-react'
 import { Card, CardContent } from './ui'
 import { Tooltip } from './ui'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
@@ -142,10 +141,10 @@ export default function ModCard({
                 ) : mod.iconUrl && !imgError ? (
                   <img src={mod.iconUrl} alt={mod.name} className="h-full w-full object-cover" loading="lazy" onError={() => setImgError(true)} />
                 ) : (
-                  <FontAwesomeIcon icon={faCube} className="h-5 w-5 opacity-50" />
+                  <Box className="h-5 w-5 opacity-50" />
                 )
               ) : (
-                <FontAwesomeIcon icon={faCube} className="h-5 w-5 opacity-50" />
+                <Box className="h-5 w-5 opacity-50" />
               )}
             </div>
             <div className="min-w-0 flex-1">
@@ -192,7 +191,7 @@ export default function ModCard({
                     mod.active ? 'translate-x-[22px] shadow-md' : 'translate-x-[4px] shadow-sm'
                   )}
                 />
-                {toggling && <FontAwesomeIcon icon={faRotate} className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />}
+                {toggling && <RotateCw className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />}
               </button>
             </Tooltip>
           </CardContent>

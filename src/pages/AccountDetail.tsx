@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faRotate, faTrashCan, faUpload, faUndo, faGlobe, faDownload, faShirt } from '@fortawesome/free-solid-svg-icons'
+import { ArrowLeft, Download, Globe, RotateCw, Shirt, Trash2, Undo2, Upload } from 'lucide-react'
 import { getAccount, deleteAccount } from '../api/account.ts'
 import { getSkinProfile, uploadSkin, resetSkin, saveSkinTo, getCapeBlobUrl, getMcCapes, getMcCapeImageUrl, equipMcCape, unequipMcCape, invalidateAvatarCache } from '../api/skin.ts'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -216,7 +215,7 @@ export default function AccountDetail() {
     <PageShell className="space-y-6 p-8 overflow-y-auto scroll-fade-mask">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/accounts')}>
-          <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
+          <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-2xl font-semibold tracking-tight">{account.name}</h1>
       </div>
@@ -239,7 +238,7 @@ export default function AccountDetail() {
                   {t('accountDetail.showCape')}
                 </button>
                 <Button variant="ghost" size="sm" onClick={handleSkinDownload} className="text-xs">
-                  <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />
+                  <Download className="h-3.5 w-3.5" />
                   {t('accountDetail.downloadSkin')}
                 </Button>
 
@@ -293,16 +292,16 @@ export default function AccountDetail() {
 
           <div className="flex gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={handleSkinRefresh}>
-              <FontAwesomeIcon icon={faRotate} className="mr-1 h-3 w-3" /> {t('accountDetail.refreshSkin')}
+              <RotateCw className="mr-1 h-3 w-3" /> {t('accountDetail.refreshSkin')}
             </Button>
             {account.loginMethod === 'Microsoft' ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => setCapeDialogOpen(true)}>
-                  <FontAwesomeIcon icon={faShirt} className="mr-1 h-3 w-3" /> {t('accountDetail.switchCape')}
+                  <Shirt className="mr-1 h-3 w-3" /> {t('accountDetail.switchCape')}
                 </Button>
                 <input ref={fileRef} type="file" accept="image/png" className="hidden" onChange={handleSkinUpload} />
                 <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-                  <FontAwesomeIcon icon={faUpload} className="mr-1 h-3 w-3" /> {t('accountDetail.uploadSkin')}
+                  <Upload className="mr-1 h-3 w-3" /> {t('accountDetail.uploadSkin')}
                 </Button>
                 <Dialog open={modelDialogOpen} onClose={() => setModelDialogOpen(false)} className="max-w-sm">
                   <DialogHeader onClose={() => setModelDialogOpen(false)}>
@@ -320,17 +319,17 @@ export default function AccountDetail() {
                 </Dialog>
                 {profile?.skinSource === 'local' && (
                   <Button variant="outline" size="sm" onClick={handleSkinReset}>
-                    <FontAwesomeIcon icon={faUndo} className="mr-1 h-3 w-3" /> {t('accountDetail.resetSkin')}
+                    <Undo2 className="mr-1 h-3 w-3" /> {t('accountDetail.resetSkin')}
                   </Button>
                 )}
               </>
             ) : account.serverUrl ? (
               <Button variant="outline" size="sm" onClick={() => { const url = new URL(account.serverUrl!).origin; openUrl(url).catch(() => window.open(url, '_blank')) }}>
-                <FontAwesomeIcon icon={faGlobe} className="mr-1 h-3 w-3" /> {t('accountDetail.goToSkinSite')}
+                <Globe className="mr-1 h-3 w-3" /> {t('accountDetail.goToSkinSite')}
               </Button>
             ) : null}
             <Button variant="destructive" size="sm" onClick={handleDelete}>
-              <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> {t('accountDetail.deleteAccount')}
+              <Trash2 className="mr-1 h-3 w-3" /> {t('accountDetail.deleteAccount')}
             </Button>
           </div>
         </div>

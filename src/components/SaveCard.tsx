@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faSave, faCopy, faPen, faTrashCan, faPlay, faGear } from '@fortawesome/free-solid-svg-icons'
+import { Copy, Pen, Play, Save, Settings, Trash2 } from 'lucide-react'
 import { Card, CardContent } from './ui'
 import { Tooltip } from './ui'
 import { Input } from './ui'
@@ -82,7 +81,7 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
           {save.iconBase64 ? (
             <img src={`data:image/png;base64,${save.iconBase64}`} alt={save.name} className="h-full w-full object-cover" loading="lazy" />
           ) : (
-            <FontAwesomeIcon icon={faSave} className="h-5 w-5 opacity-50" />
+            <Save className="h-5 w-5 opacity-50" />
           )}
         </div>
         <div className="min-w-0 flex-1">
@@ -110,29 +109,29 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           <Tooltip content={t('dialogs.save.settings')}>
             <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
-              <FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" />
+              <Settings className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
           <Tooltip content={t('dialogs.save.backup')}>
             <button onClick={(e) => { e.stopPropagation(); handleBackup() }} disabled={backingUp} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-              <FontAwesomeIcon icon={faCopy} className="h-3.5 w-3.5" />
+              <Copy className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
           <Tooltip content={t('dialogs.save.rename')}>
             <button onClick={(e) => { e.stopPropagation(); setRenameValue(save.name); setRenaming(true) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-              <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
+              <Pen className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
           {onQuickJoin && (
             <Tooltip content={t('dialogs.save.quickJoin')}>
               <button onClick={(e) => { e.stopPropagation(); onQuickJoin() }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
-                <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
+                <Play className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
           )}
           <Tooltip content={t('common.delete')}>
             <button onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-              <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
         </div>

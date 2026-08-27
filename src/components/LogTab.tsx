@@ -1,10 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import {
-  faFileLines, faDownload, faTrashCan, faRotate,
-  faEye, faFolderOpen, faInfoCircle, faMagnifyingGlass,
-  faChevronDown, faChevronRight, faXmark,
-} from '@fortawesome/free-solid-svg-icons'
+import { ChevronDown, ChevronRight, Download, Eye, FileText, FolderOpen, Info, RotateCw, Search, Trash2, X } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from './ui'
 import { Button } from './ui'
 import { Badge } from './ui'
@@ -180,7 +175,7 @@ export default function LogTab() {
       <Card>
         <CardHeader>
           <CardTitle>
-            <FontAwesomeIcon icon={faFileLines} className="mr-2 h-4 w-4 text-muted-foreground" />
+            <FileText className="mr-2 h-4 w-4 text-muted-foreground" />
             {t('tools.logs.title')}
           </CardTitle>
         </CardHeader>
@@ -188,11 +183,11 @@ export default function LogTab() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={fetchLogs} disabled={loading}>
-                <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', loading && 'animate-spin')} />
+                <RotateCw className={cn('h-4 w-4', loading && 'animate-spin')} />
                 {t('common.refresh')}
               </Button>
               <Button size="sm" variant="outline" onClick={handleExportAll} disabled={logs.length === 0}>
-                <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />
+                <Download className="h-4 w-4" />
                 {t('tools.logs.exportAll')}
               </Button>
             </div>
@@ -207,7 +202,7 @@ export default function LogTab() {
           {logs.length === 0 ? (
             <div className="flex flex-col items-center gap-4 py-12 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
-                <FontAwesomeIcon icon={faFileLines} className="h-7 w-7 text-muted-foreground" />
+                <FileText className="h-7 w-7 text-muted-foreground" />
               </div>
               <div>
                 <p className="text-sm font-medium text-foreground">{t('tools.logs.none')}</p>
@@ -224,7 +219,7 @@ export default function LogTab() {
                     className="flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors cursor-pointer hover:border-muted-foreground/30 border-border bg-background"
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                      <FontAwesomeIcon icon={faFileLines} className="h-4 w-4" />
+                      <FileText className="h-4 w-4" />
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -242,17 +237,17 @@ export default function LogTab() {
                     <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                       <Tooltip content={t('tools.logs.open')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openLog(entry.path).catch(() => notify(t('tools.logs.openFailed'), 'error'))}>
-                          <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />
+                          <Eye className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
                       <Tooltip content={t('tools.logs.exportGz')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleExport(entry)}>
-                          <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />
+                          <Download className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
                       <Tooltip content={t('common.delete')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive/70 hover:text-destructive" onClick={() => handleDelete(entry)}>
-                          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </Tooltip>
                     </div>
@@ -265,7 +260,7 @@ export default function LogTab() {
 
           {logs.length > 0 && (
             <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
-              <FontAwesomeIcon icon={faInfoCircle} className="h-3.5 w-3.5 text-primary" />
+              <Info className="h-3.5 w-3.5 text-primary" />
               <span>
                 {t('tools.logs.retentionHint')}
                 {currentSessionCount > 0 && ` · ${t('tools.logs.currentSessionSuffix', { count: currentSessionCount })}`}
@@ -282,7 +277,7 @@ export default function LogTab() {
                   onClick={() => setPreviewExpanded(!previewExpanded)}
                   className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-foreground hover:text-primary"
                 >
-                  <FontAwesomeIcon icon={previewExpanded ? faChevronDown : faChevronRight} className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  {previewExpanded ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
                   <span className="truncate">{preview.path.split(/[/\\]/).pop()}</span>
                   {preview.truncated && (
                     <Badge variant="secondary" className="shrink-0 h-4 px-1.5 text-[9px]">{t('tools.logs.truncated')}</Badge>
@@ -290,7 +285,7 @@ export default function LogTab() {
                 </button>
                 <div className="flex items-center gap-1.5">
                   <div className="relative">
-                    <FontAwesomeIcon icon={faMagnifyingGlass} className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
                     <input
                       value={previewSearch}
                       onChange={(e) => setPreviewSearch(e.target.value)}
@@ -310,7 +305,7 @@ export default function LogTab() {
                   </select>
                   <Tooltip content={t('common.close')}>
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setPreview(null)}>
-                      <FontAwesomeIcon icon={faXmark} className="h-3.5 w-3.5" />
+                      <X className="h-3.5 w-3.5" />
                     </Button>
                   </Tooltip>
                 </div>
@@ -321,7 +316,7 @@ export default function LogTab() {
               >
                 {previewLoading ? (
                   <div className="flex items-center gap-2 text-muted-foreground">
-                    <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin" />
+                    <RotateCw className="h-3.5 w-3.5 animate-spin" />
                     {t('common.loading')}
                   </div>
                 ) : previewLines.length === 0 ? (
@@ -358,26 +353,26 @@ export default function LogTab() {
             onClick={() => { openLog(contextMenu.entry.path).catch(() => {}); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
-            <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />{t('tools.logs.open')}
+            <Eye className="h-3.5 w-3.5" />{t('tools.logs.open')}
           </button>
           <button
             onClick={() => { handleOpenDir(contextMenu.entry); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
-            <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('tools.logs.openContainingDir')}
+            <FolderOpen className="h-3.5 w-3.5" />{t('tools.logs.openContainingDir')}
           </button>
           <button
             onClick={async () => { await handleExport(contextMenu.entry); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-accent"
           >
-            <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('tools.logs.exportGz')}
+            <Download className="h-3.5 w-3.5" />{t('tools.logs.exportGz')}
           </button>
           <div className="my-1 border-t border-border" />
           <button
             onClick={() => { handleDelete(contextMenu.entry); setContextMenu(null) }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50"
           >
-            <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />{t('common.delete')}
+            <Trash2 className="h-3.5 w-3.5" />{t('common.delete')}
           </button>
         </div>
       )}

@@ -5,8 +5,7 @@ import { Input } from './ui'
 import { Label } from './ui'
 import { Separator } from './ui'
 import { Select, SelectOption } from './ui'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faLayerGroup, faRotate } from '@fortawesome/free-solid-svg-icons'
+import { Layers, RotateCw } from 'lucide-react'
 import { startModpackInstall, resolveModpack } from '../api/instance.ts'
 import { getResourceVersions } from '../api/resource.ts'
 import { loadSettings } from '../api/settings.ts'
@@ -139,7 +138,7 @@ export default function ModpackQuickInstallDialog({
           {iconUrl ? (
             <img src={iconUrl} alt="" className="h-5 w-5 rounded object-cover" />
           ) : (
-            <FontAwesomeIcon icon={faLayerGroup} className="h-4 w-4 text-muted-foreground" />
+            <Layers className="h-4 w-4 text-muted-foreground" />
           )}
           {t('dialogs.modpackInstall.title')}
         </DialogTitle>
@@ -155,7 +154,7 @@ export default function ModpackQuickInstallDialog({
               <Label>{t('dialogs.resourceInstall.selectVersion')}</Label>
               {loadingVersions ? (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+                  <RotateCw className="h-3 w-3 animate-spin" />
                   {t('dialogs.resourceInstall.loadingVersions')}
                 </div>
               ) : (

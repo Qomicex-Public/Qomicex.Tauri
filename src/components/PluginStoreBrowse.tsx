@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import {
-  faCloudArrowDown,
-  faMagnifyingGlass,
-  faRotate,
-  faStar,
-} from '@fortawesome/free-solid-svg-icons'
+import { CloudDownload, RotateCw, Search, Star } from 'lucide-react'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Select, SelectOption, Separator, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
@@ -185,7 +179,7 @@ export default function PluginStoreBrowse() {
       <div>
         <div className="mb-4 flex flex-wrap items-center gap-2">
             <div className="relative">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -205,7 +199,7 @@ export default function PluginStoreBrowse() {
               <SelectOption value="downloads">{t('settings.plugins.store.sortDownloads')}</SelectOption>
             </Select>
             <Button size="sm" variant="outline" className="ml-auto" onClick={() => void load(page)} disabled={loading}>
-              <FontAwesomeIcon icon={faRotate} className="mr-1.5 h-3.5 w-3.5" />
+              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
               {t('common.refresh')}
             </Button>
           </div>
@@ -263,7 +257,7 @@ export default function PluginStoreBrowse() {
                         <span className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
                           {typeof item.ratingAverage === 'number' && (
                             <span className="flex items-center gap-1">
-                              <FontAwesomeIcon icon={faStar} className="h-3 w-3 text-yellow-500" />
+                              <Star className="h-3 w-3 text-yellow-500" />
                               {item.ratingAverage.toFixed(1)}
                             </span>
                           )}
@@ -278,7 +272,7 @@ export default function PluginStoreBrowse() {
                           void openInstallConfirm(item, !!updatable)
                         }}
                       >
-                        <FontAwesomeIcon icon={faCloudArrowDown} className="mr-1.5 h-3.5 w-3.5" />
+                        <CloudDownload className="mr-1.5 h-3.5 w-3.5" />
                         {updatable ? t('settings.plugins.store.updateBtn') : installed ? t('settings.plugins.store.reinstallBtn') : t('settings.plugins.store.installBtn')}
                       </Button>
                     </div>
@@ -394,7 +388,7 @@ export default function PluginStoreBrowse() {
                         <span className="font-medium">{r.username}</span>
                         <span className="flex items-center gap-0.5 text-yellow-500">
                           {Array.from({ length: 5 }, (_, i) => (
-                            <FontAwesomeIcon key={i} icon={faStar} className={`h-3 w-3 ${i < r.rating ? '' : 'opacity-25'}`} />
+                            <Star key={i} className={`h-3 w-3 ${i < r.rating ? '' : 'opacity-25'}`} />
                           ))}
                         </span>
                       </div>

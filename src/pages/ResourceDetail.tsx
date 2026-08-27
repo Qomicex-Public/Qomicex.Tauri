@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { ArrowLeft, ChevronDown, Download, ExternalLink, Languages, Layers, RotateCw, Save, Tag, User } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
@@ -8,18 +8,6 @@ import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { Button } from '../components/ui'
 import { MinecraftText } from '../components/MinecraftText.tsx'
-import {
-  faArrowLeft,
-  faArrowUpRightFromSquare,
-  faDownload,
-  faFloppyDisk,
-  faLanguage,
-  faLayerGroup,
-  faRotate,
-  faTag,
-  faUser,
-  faChevronDown,
-} from '@fortawesome/free-solid-svg-icons'
 import { Select, SelectOption } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Badge } from '../components/ui'
@@ -122,7 +110,7 @@ function DependenciesCard({ resourceId, source, versions, gameVersion, loader }:
         </div>
         {deps === null ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+            <RotateCw className="h-3 w-3 animate-spin" />
             {t('resourceDetail.parsingPrereq')}
           </div>
         ) : deps.length === 0 ? (
@@ -139,7 +127,7 @@ function DependenciesCard({ resourceId, source, versions, gameVersion, loader }:
                   <img src={d.iconUrl} alt="" className="h-6 w-6 rounded object-cover" loading="lazy" />
                 ) : (
                   <div className="flex h-6 w-6 items-center justify-center rounded bg-muted text-muted-foreground">
-                    <FontAwesomeIcon icon={faLayerGroup} className="h-3 w-3" />
+                    <Layers className="h-3 w-3" />
                   </div>
                 )}
                 <span className="min-w-0 flex-1 truncate font-medium">{d.name}</span>
@@ -469,7 +457,7 @@ export default function ResourceDetailPage() {
           title={
             <>
               <Link to={backHref} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
-                <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
+                <ArrowLeft className="h-4 w-4" />
               </Link>
               <span className="ml-2">{t('resourceDetail.title')}</span>
             </>
@@ -478,13 +466,13 @@ export default function ResourceDetailPage() {
             <div className="flex items-center gap-2">
               <Tooltip content={t('resourceDetail.refresh')}>
                 <Button variant="outline" size="sm" onClick={refreshDetail}>
-                  <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                  <RotateCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
                 </Button>
               </Tooltip>
               {detail?.projectUrl ? (
                 <Button asChild variant="outline" size="sm">
                   <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
-                    <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3.5 w-3.5" />
+                    <ExternalLink className="h-3.5 w-3.5" />
                     {t('resourceDetail.originalPage')}
                   </a>
                 </Button>
@@ -560,7 +548,7 @@ export default function ResourceDetailPage() {
                     <img src={detail.iconUrl || navIconUrl} alt={detail.title} className="h-36 w-36 rounded-2xl object-cover ring-1 ring-border/50" />
                   ) : (
                     <div className="flex h-36 w-36 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-                      <FontAwesomeIcon icon={faLayerGroup} className="h-10 w-10 opacity-50" />
+                      <Layers className="h-10 w-10 opacity-50" />
                     </div>
                   )}
                 </div>
@@ -592,7 +580,7 @@ export default function ResourceDetailPage() {
                           }}
                           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                         >
-                          <FontAwesomeIcon icon={faLanguage} className="h-3 w-3" />
+                          <Languages className="h-3 w-3" />
                           {translating ? t('resourceDetail.translating') : translation ? t('resourceDetail.collapseTranslation') : t('resourceDetail.translateDescription')}
                         </button>
                         {translation && (
@@ -607,11 +595,11 @@ export default function ResourceDetailPage() {
 
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5">
-                      <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
+                      <User className="h-3 w-3" />
                       {detail.author || t('resourceDetail.unknownAuthor')}
                     </span>
                     <span className="inline-flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5">
-                      <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                      <Download className="h-3 w-3" />
                       {formatDownloads(detail.downloadCount)}
                     </span>
                   </div>
@@ -622,7 +610,7 @@ export default function ResourceDetailPage() {
                       <div className="flex flex-wrap gap-2">
                         {detail.categories.map((item) => (
                           <Badge key={item} variant="outline" className="gap-1 rounded-full px-3 py-1">
-                            <FontAwesomeIcon icon={faTag} className="h-2.5 w-2.5" />
+                            <Tag className="h-2.5 w-2.5" />
                             {translateCategory(item, detail.source, lang)}
                           </Badge>
                         ))}
@@ -659,12 +647,12 @@ export default function ResourceDetailPage() {
                       }}
                       className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                     >
-                      <FontAwesomeIcon icon={faLanguage} className="h-3 w-3" />
+                      <Languages className="h-3 w-3" />
                       {translatingBody ? t('resourceDetail.translating') : bodyTranslation ? t('resourceDetail.showOriginal') : t('resourceDetail.translateBody')}
                     </button>
                     <button onClick={() => setBodyCollapsed(!bodyCollapsed)} className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
                       {bodyCollapsed ? t('resourceDetail.expand') : t('resourceDetail.collapse')}
-                      <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 transition-transform', !bodyCollapsed && 'rotate-180')} />
+                      <ChevronDown className={cn('h-3 w-3 transition-transform', !bodyCollapsed && 'rotate-180')} />
                     </button>
                   </div>
                 </div>
@@ -729,7 +717,7 @@ export default function ResourceDetailPage() {
                     <div className="space-y-2">
                       {versionFetchProgress && (
                         <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                          <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+                          <RotateCw className="h-3 w-3 animate-spin" />
                           {t('resourceDetail.fetchingVersions')}
                           <span className="font-medium text-foreground/80">
                             {versionFetchProgress.loaded} / {versionFetchProgress.total}
@@ -802,7 +790,7 @@ export default function ResourceDetailPage() {
                                       setModpackInstallVersion(version)
                                     }}
                                   >
-                                    <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                    <Download className="h-3 w-3" />
                                     {t('resourceDetail.install')}
                                   </Button>
                                   <Tooltip content={t('resourceDetail.saveAs')}>
@@ -812,7 +800,7 @@ export default function ResourceDetailPage() {
                                         variant="outline"
                                         onClick={() => handleFtbExportJson(version.id, version.name)}
                                       >
-                                        <FontAwesomeIcon icon={faFloppyDisk} className="h-3 w-3" />
+                                        <Save className="h-3 w-3" />
                                       </Button>
                                     ) : version.downloads?.[0]?.url ? (
                                       <Button
@@ -820,7 +808,7 @@ export default function ResourceDetailPage() {
                                         variant="outline"
                                         onClick={() => handleDownload(version.id, version.downloads[0].url, version.downloads[0].fileName)}
                                       >
-                                        <FontAwesomeIcon icon={faFloppyDisk} className="h-3 w-3" />
+                                        <Save className="h-3 w-3" />
                                       </Button>
                                     ) : null}
                                   </Tooltip>
@@ -832,7 +820,7 @@ export default function ResourceDetailPage() {
                                     className="shrink-0"
                                     onClick={() => handleDownload(version.id, downloadsByVersion[version.id][0].url, downloadsByVersion[version.id][0].fileName)}
                                   >
-                                    <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                    <Download className="h-3 w-3" />
                                     {t('resourceDetail.install')}
                                   </Button>
                                 ) : (
@@ -842,7 +830,7 @@ export default function ResourceDetailPage() {
                                     disabled={loadingDownloadsFor === version.id}
                                     onClick={() => handleLoadDownloads(version.id)}
                                   >
-                                    <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                    <Download className="h-3 w-3" />
                                     {loadingDownloadsFor === version.id ? t('resourceDetail.loading') : t('resourceDetail.getDownload')}
                                   </Button>
                                 )
@@ -852,7 +840,7 @@ export default function ResourceDetailPage() {
                                     size="sm"
                                     onClick={() => setInstallVersion(version)}
                                   >
-                                    <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                    <Download className="h-3 w-3" />
                                     {t('resourceDetail.install')}
                                   </Button>
                                   <Tooltip content={t('resourceDetail.saveAs')}>
@@ -861,7 +849,7 @@ export default function ResourceDetailPage() {
                                       variant="outline"
                                       onClick={() => handleDownload(version.id, version.downloads[0].url, version.downloads[0].fileName)}
                                     >
-                                      <FontAwesomeIcon icon={faFloppyDisk} className="h-3 w-3" />
+                                      <Save className="h-3 w-3" />
                                     </Button>
                                   </Tooltip>
                                 </div>
@@ -871,7 +859,7 @@ export default function ResourceDetailPage() {
                                   className="shrink-0"
                                   disabled
                                 >
-                                  <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                                  <Download className="h-3 w-3" />
                                   {t('resourceDetail.noDownload')}
                                 </Button>
                               )}
@@ -883,7 +871,7 @@ export default function ResourceDetailPage() {
                             onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
                             className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 p-3 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
                           >
-                            <FontAwesomeIcon icon={faChevronDown} className="h-3 w-3" />
+                            <ChevronDown className="h-3 w-3" />
                             {t('resourceDetail.loadMore', { count: filteredVersions.length - visibleCount })}
                           </button>
                         )}

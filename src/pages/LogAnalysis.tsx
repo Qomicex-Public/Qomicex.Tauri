@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFileLines, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
+import { FileText, Search } from 'lucide-react'
 import { Button } from '../components/ui'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
 import { Badge } from '../components/ui'
@@ -64,7 +63,7 @@ export default function LogAnalysis() {
       <Card>
         <CardHeader>
           <CardTitle>
-            <FontAwesomeIcon icon={faFileLines} className="mr-2 h-4 w-4" />
+            <FileText className="mr-2 h-4 w-4" />
             {t('tools.analysis.inputTitle')}
           </CardTitle>
         </CardHeader>
@@ -77,7 +76,7 @@ export default function LogAnalysis() {
             className="font-mono text-xs leading-relaxed"
           />
           <Button onClick={handleAnalyze} disabled={loading || !logContent.trim()}>
-            <FontAwesomeIcon icon={faMagnifyingGlass} className="h-4 w-4" />
+            <Search className="h-4 w-4" />
             {loading ? t('tools.analysis.analyzing') : t('tools.analysis.analyzeButton')}
           </Button>
           {error && <p className="text-sm text-destructive">{error}</p>}

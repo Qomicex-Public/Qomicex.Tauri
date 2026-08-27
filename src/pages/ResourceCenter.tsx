@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowUpRightFromSquare, faDownload, faMagnifyingGlass, faRotate, faTag, faUser, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { Download, ExternalLink, RotateCw, Search, Tag, User, X } from 'lucide-react'
 import { Input } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
@@ -215,7 +214,7 @@ function ResourceCard({
             <img src={item.iconUrl} alt={item.title} className="h-16 w-16 flex-shrink-0 rounded-2xl object-cover ring-1 ring-border/40" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
           ) : (
             <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-              <FontAwesomeIcon icon={faTag} className="h-5 w-5 opacity-50" />
+              <Tag className="h-5 w-5 opacity-50" />
             </div>
           )}
           <div className="min-w-0 flex-1 space-y-3">
@@ -229,11 +228,11 @@ function ResourceCard({
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1">
-                <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
+                <User className="h-3 w-3" />
                 {item.author || t('resource.unknownAuthor')}
               </span>
               <span className="inline-flex items-center gap-1">
-                <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                <Download className="h-3 w-3" />
                 {formatDownloads(item.downloadCount)}
               </span>
             </div>
@@ -248,7 +247,7 @@ function ResourceCard({
         </div>
         <div className="flex flex-row gap-2 sm:min-w-[148px] sm:flex-col sm:items-stretch sm:self-stretch">
           <Button className="flex-1 sm:w-full" onClick={() => onInstall(item)}>
-            <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+            <Download className="h-3 w-3" />
             {t('resource.install')}
           </Button>
           <Button asChild variant="outline" className="flex-1 sm:w-full">
@@ -257,7 +256,7 @@ function ResourceCard({
           {item.projectUrl && (
             <Button asChild variant="ghost" className="px-3 sm:w-full">
               <a href={item.projectUrl} target="_blank" rel="noopener noreferrer">
-                <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3 w-3" />
+                <ExternalLink className="h-3 w-3" />
                 {t('resource.originalSite')}
               </a>
             </Button>
@@ -483,7 +482,7 @@ export default function ResourceCenter() {
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_110px]">
             <div className="relative">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
               <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={t('resource.searchPlaceholder', { category: activeCategoryLabel })} className="h-10 rounded-xl border-border/60 bg-background pl-9" />
             </div>
             <Select value={sort} onChange={setSort} className="h-10">
@@ -492,7 +491,7 @@ export default function ResourceCenter() {
               ))}
             </Select>
             <Button onClick={handleSearch} className="h-10 rounded-xl">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="h-3.5 w-3.5" />
+              <Search className="h-3.5 w-3.5" />
               {t('resource.search')}
             </Button>
           </div>
@@ -504,7 +503,7 @@ export default function ResourceCenter() {
                 <Combobox value={gameVersion} onChange={setGameVersion} options={GAME_VERSIONS.map((v) => ({ value: v, label: v }))} placeholder={t('resource.allVersions')} emptyText={t('common.noMatch')} className="w-[150px]" />
                 {gameVersion && (
                   <button onClick={clearVersion} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                    <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+                    <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
@@ -519,7 +518,7 @@ export default function ResourceCenter() {
                 </Select>
                 {loader && (
                   <button onClick={clearLoader} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                    <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+                    <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
@@ -554,7 +553,7 @@ export default function ResourceCenter() {
                       onClick={() => setTags([])}
                       className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
                     >
-                      <FontAwesomeIcon icon={faXmark} className="h-3 w-3" />
+                      <X className="h-3 w-3" />
                       清除标签
                     </button>
                   )}
@@ -583,19 +582,19 @@ export default function ResourceCenter() {
       ) : error ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
-            <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 text-destructive/60" />
+            <Search className="h-6 w-6 text-destructive/60" />
           </div>
           <p className="text-sm font-medium text-foreground/80">{t('resource.searchFailed')}</p>
           <p className="mt-1 text-xs text-muted-foreground/60">{error}</p>
           <Button size="sm" variant="outline" onClick={() => doSearch(1, false)} className="mt-4">
-            <FontAwesomeIcon icon={faRotate} className="mr-1.5 h-3 w-3" />
+            <RotateCw className="mr-1.5 h-3 w-3" />
             {t('resource.retry')}
           </Button>
         </div>
       ) : items.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-            <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 opacity-40" />
+            <Search className="h-6 w-6 opacity-40" />
           </div>
           <p className="text-sm font-medium text-foreground/80">{t('resource.notFound')}</p>
           <p className="mt-1 text-xs text-muted-foreground/60">{t('resource.notFoundHint')}</p>
@@ -614,7 +613,7 @@ export default function ResourceCenter() {
             items.length < total ? (
               <div className="mt-5 flex justify-center">
                 <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
-                  {loading ? <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />{t('resource.loading')}</> : <>{t('resource.loadMore', { current: items.length, total })}</>}
+                  {loading ? <><RotateCw className="h-3 w-3 animate-spin" />{t('resource.loading')}</> : <>{t('resource.loadMore', { current: items.length, total })}</>}
                 </Button>
               </div>
             ) : (

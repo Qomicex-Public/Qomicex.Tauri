@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCopy, faRightFromBracket, faUser } from '@fortawesome/free-solid-svg-icons'
+import { Copy, LogOut, User } from 'lucide-react'
 import { Button, Label, Separator, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { openUrl } from '@tauri-apps/plugin-opener'
@@ -194,7 +193,7 @@ export default function PluginStoreAccount() {
                   variant="outline"
                   onClick={() => void copyUserCode(device.code.userCode)}
                 >
-                  <FontAwesomeIcon icon={faCopy} className="mr-1.5 h-3.5 w-3.5" />
+                  <Copy className="mr-1.5 h-3.5 w-3.5" />
                   {t('settings.plugins.store.deviceCopy')}
                 </Button>
               </div>
@@ -233,7 +232,7 @@ export default function PluginStoreAccount() {
           {user.avatarUrl ? (
             <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
           ) : (
-            <FontAwesomeIcon icon={faUser} className="h-5 w-5 text-primary" />
+            <User className="h-5 w-5 text-primary" />
           )}
         </div>
         <div className="min-w-0 flex-1">
@@ -245,7 +244,7 @@ export default function PluginStoreAccount() {
           </div>
         </div>
         <Button variant="outline" size="sm" onClick={() => void handleLogout()}>
-          <FontAwesomeIcon icon={faRightFromBracket} className="mr-1.5 h-3.5 w-3.5" />
+          <LogOut className="mr-1.5 h-3.5 w-3.5" />
           {t('settings.plugins.store.logout')}
         </Button>
       </div>

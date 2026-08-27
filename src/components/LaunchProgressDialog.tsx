@@ -1,5 +1,4 @@
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate } from '@fortawesome/free-solid-svg-icons'
+import { RotateCw } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from './ui'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { useI18n } from '../i18n/index.tsx'
@@ -60,7 +59,7 @@ export default function LaunchProgressDialog() {
         {!isFinal ? (
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
             <span className="flex items-center gap-2">
-              <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+              <RotateCw className="h-3 w-3 animate-spin" />
               {t('dialogs.launchProgress.startingUp')}
             </span>
             <button onClick={() => cancelLaunch()} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground">{t('common.cancel')}</button>

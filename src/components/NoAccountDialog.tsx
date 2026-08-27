@@ -1,7 +1,6 @@
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
 import { Button } from '../components/ui'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faUser, faPlus } from '@fortawesome/free-solid-svg-icons'
+import { Plus, User } from 'lucide-react'
 import { useI18n } from '../i18n/index.tsx'
 
 interface Props {
@@ -26,11 +25,11 @@ export function NoAccountDialog({ open, onClose, onAddAccount, onGoToAccounts }:
       <DialogFooter>
         <Button variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
         <Button variant="outline" onClick={onGoToAccounts} className="gap-1.5">
-          <FontAwesomeIcon icon={faUser} className="h-3.5 w-3.5" />
+          <User className="h-3.5 w-3.5" />
           {t('dialogs.noAccount.goToAccounts')}
         </Button>
         <Button onClick={onAddAccount} className="gap-1.5">
-          <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+          <Plus className="h-3.5 w-3.5" />
           {t('dialogs.noAccount.addAccount')}
         </Button>
       </DialogFooter>

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChevronUp } from '@fortawesome/free-solid-svg-icons'
+import { ChevronUp } from 'lucide-react'
 import { cn } from '../lib/utils.ts'
 
 function getScrollEl(): HTMLElement {
@@ -39,7 +38,7 @@ export default function ScrollToTop() {
         visible ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-2 opacity-0'
       )}
     >
-      <FontAwesomeIcon icon={faChevronUp} className="h-4 w-4" />
+      <ChevronUp className="h-4 w-4" />
     </button>
   )
 }

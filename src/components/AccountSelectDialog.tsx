@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faStar, faUser } from '@fortawesome/free-solid-svg-icons'
+import { Star, User } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
 import { Button } from '../components/ui'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
@@ -71,12 +70,12 @@ export function AccountSelectDialog({ open, onClose, onSelect }: Props) {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{acc.name}</div>
                     <div className="flex items-center gap-1">
-                      <FontAwesomeIcon icon={acc.loginMethod === 'Microsoft' ? faStar : faUser} className="h-2 w-2 text-muted-foreground" />
+                      {acc.loginMethod === 'Microsoft' ? <Star className="h-2 w-2 text-muted-foreground" /> : <User className="h-2 w-2 text-muted-foreground" />}
                       <span className="text-[10px] text-muted-foreground">{acc.loginMethod}</span>
                     </div>
                   </div>
                   {isSelected && (
-                    <FontAwesomeIcon icon={faStar} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <Star className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   )}
                 </button>
               )
