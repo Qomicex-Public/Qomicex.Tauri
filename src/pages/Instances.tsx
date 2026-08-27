@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import gsap from 'gsap'
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faArrowLeft, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar, faBug, faGhost, faWrench, faLayerGroup, faFolderPlus, faPencil } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar, faBug, faGhost, faWrench, faLayerGroup, faFolderPlus, faPencil } from '@fortawesome/free-solid-svg-icons'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { invoke } from '@tauri-apps/api/core'
@@ -32,6 +33,7 @@ import { getAccounts, deleteAccount } from '../api/account.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import ImportDialog from '../components/ImportDialog.tsx'
 import { cacheInvalidate, cacheGet, cacheSet } from '../lib/simple-cache.ts'
 import { useRunning } from '../contexts/RunningContext.tsx'
@@ -163,6 +165,9 @@ export default function Instances() {
   }, [currentDir])
   const [dirManager, setDirManager] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const dirPopoverRef = useRef<HTMLDivElement>(null)
+  const selectVersionRef = useRef<HTMLDivElement>(null)
+  const configureRef = useRef<HTMLDivElement>(null)
   const [editingPath, setEditingPath] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
 
@@ -584,6 +589,35 @@ export default function Instances() {
     return list
   }, [scannedLocal, search, filterType, groupFilter, getVersionType, getInstanceForVersion])
 
+  // 卡片列表 GSAP stagger 动画（性能版：只动画视口内条目 + 滚动暂停）
+  // loading/scanning 进 deps：骨架图→内容切换时加载状态翻转触发动画
+  const gridAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, viewMode, loading, scanning], { y: 12, scale: 0.95 })
+
+  // 列表视图 GSAP stagger 动画（性能版）
+  const listAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, viewMode, loading, scanning], { x: -12, duration: 0.25 })
+
+  // 目录下拉框弹出动画
+  useEffect(() => {
+    if (!dirPopover || !dirPopoverRef.current) return
+
+    const settings = getSettings()
+    if (!settings.animationsEnabled) return
+
+    const speed = settings.animationSpeed ?? 1
+    const el = dirPopoverRef.current
+
+    gsap.fromTo(el,
+      { opacity: 0, scale: 0.95, y: -4 },
+      {
+        opacity: 1,
+        scale: 1,
+        y: 0,
+        duration: 0.15 / speed,
+        ease: 'power2.out'
+      }
+    )
+  }, [dirPopover])
+
   const filteredRemote = useMemo(() => remoteVersions
     .filter((v) => remoteCategory === 'all' || v.type === remoteCategory)
     .filter((v) => !versionSearch || v.id.toLowerCase().includes(versionSearch.toLowerCase())),
@@ -608,16 +642,41 @@ export default function Instances() {
     return ta !== tb ? ta - tb : new Date(b.releaseTime).getTime() - new Date(a.releaseTime).getTime()
   }), [filteredRemote, remoteSort])
 
+  // 远程版本列表 GSAP stagger 动画（性能版：只动画视口内条目 + 滚动暂停）
+  const remoteGridAnimRef = useAnimatedList<HTMLDivElement>([sortedRemote.length, remoteViewMode], { y: 12, scale: 0.95 })
+  const remoteListAnimRef = useAnimatedList<HTMLDivElement>([sortedRemote.length, remoteViewMode], { y: 12, scale: 0.95 })
+
+  // 步骤切换动画
+  useEffect(() => {
+    if (step === 'list') return
+
+    const el = step === 'select-version' ? selectVersionRef.current : configureRef.current
+    if (!el) return
+
+    const settings = getSettings()
+    if (!settings.animationsEnabled) return
+
+    const speed = settings.animationSpeed ?? 1
+
+    gsap.fromTo(el,
+      { opacity: 0, x: 20 },
+      {
+        opacity: 1,
+        x: 0,
+        duration: 0.3 / speed,
+        ease: 'power2.out'
+      }
+    )
+  }, [step])
+
   if (step === 'select-version') {
     return (
-      <PageShell className="p-8 space-y-5 overflow-y-auto scroll-fade-mask">
-        <div className="flex items-center gap-3">
-          <button onClick={() => setStep('list')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
-            <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
-          </button>
-          <h2 className="text-lg font-semibold">{t('instances.downloadTitle')}</h2>
-        </div>
-        <div className="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-4">
+      <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
+        <PageHeader
+          title={t('instances.downloadTitle')}
+          onBack={() => setStep('list')}
+        />
+        <div ref={selectVersionRef} className="glass-surface rounded-xl border border-border/60 bg-card/80 p-4 space-y-4">
           <div className="space-y-2">
             <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('instances.categoryLabel')}</p>
             <Tabs tabs={REMOTE_VERSION_CATEGORIES.map(c => ({ id: c.key, label: t(`instances.category.${c.key}`) }))} activeTab={remoteCategory} onChange={setRemoteCategory} />
@@ -653,9 +712,9 @@ export default function Instances() {
             <p className="mt-1 text-xs text-muted-foreground/70">{t('instances.noRemoteMatchHint')}</p>
           </div>
         ) : remoteViewMode === 'grid' ? (
-          <div className="grid max-h-[520px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+          <div ref={remoteGridAnimRef} className="grid max-h-[520px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {sortedRemote.map((v) => (
-              <button key={v.id} onClick={() => selectRemoteVersion(v)} className="group flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-all hover:border-primary/30 hover:bg-accent/50">
+              <button key={v.id} data-key={v.id} onClick={() => selectRemoteVersion(v)} className="group glass-surface flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-left transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
                 <div className="flex items-center gap-1.5">
                   <FontAwesomeIcon icon={faCube} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="truncate text-sm font-medium">{v.id}</span>
@@ -668,9 +727,9 @@ export default function Instances() {
             ))}
           </div>
         ) : (
-          <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
+          <div ref={remoteListAnimRef} className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
             {sortedRemote.map((v) => (
-              <button key={v.id} onClick={() => selectRemoteVersion(v)} className="group flex w-full items-center justify-between gap-4 rounded-xl border p-4 text-left transition-all hover:border-primary/30 hover:bg-accent/50">
+              <div key={v.id} data-key={v.id} role="button" tabIndex={0} onClick={() => selectRemoteVersion(v)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRemoteVersion(v) } }} className="group glass-surface flex w-full cursor-pointer items-center justify-between gap-4 rounded-xl border bg-card p-4 text-left transition-all hover:border-primary/30 hover:shadow-sm">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex items-center gap-2">
@@ -685,7 +744,7 @@ export default function Instances() {
                   </div>
                 </div>
                 <Button size="sm" className="shrink-0">{t('instances.select')}</Button>
-              </button>
+              </div>
             ))}
           </div>
         )}
@@ -696,14 +755,12 @@ export default function Instances() {
   if (step === 'configure') {
     const selectedVer = remoteVersions.find((v) => v.id === form.gameVersion)
     return (
-      <PageShell className="p-8 space-y-5 overflow-y-auto scroll-fade-mask">
-        <div className="flex items-center gap-3">
-            <button onClick={() => { setStep('select-version'); setLoaderVersions([]) }} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-            <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
-          </button>
-          <h2 className="text-lg font-semibold">{t('instances.configTitle')}</h2>
-        </div>
-        <Card>
+      <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
+        <PageHeader
+          title={t('instances.configTitle')}
+          onBack={() => { setStep('select-version'); setLoaderVersions([]) }}
+        />
+        <Card ref={configureRef}>
           <CardContent className="space-y-5 p-6">
             <div className="space-y-2">
               <Label htmlFor="iname">{t('instances.instanceName')}</Label>
@@ -722,7 +779,7 @@ export default function Instances() {
                 )}
               </div>
             </div>
-          <div className="anim-stagger space-y-3">
+           <div className="space-y-3">
               <Label>{t('instances.loader')}</Label>
               <div className="grid grid-cols-[1fr_1fr] gap-3">
                 <Select
@@ -1127,7 +1184,7 @@ export default function Instances() {
               <FontAwesomeIcon icon={faChevronDown} className={cn('h-2.5 w-2.5 text-muted-foreground transition-transform', dirPopover && 'rotate-180')} />
             </button>
             {dirPopover && (
-              <div className="absolute left-0 top-full z-50 mt-1 w-96 rounded-xl border bg-popover p-2 shadow-xl">
+              <div ref={dirPopoverRef} className="absolute left-0 top-full z-50 mt-1 w-96 rounded-xl border bg-popover p-2 shadow-xl">
                 <div className="mb-1 flex items-center justify-between px-2 py-1">
                   <span className="text-xs font-medium text-muted-foreground">{t('instances.savedDirs')}</span>
                   <button onClick={() => setDirManager(true)} className="text-xs text-muted-foreground hover:text-foreground">{t('instances.manage')}</button>
@@ -1246,9 +1303,9 @@ export default function Instances() {
       ) : (
         <div className="space-y-6">
           {scannedLocal.length > 0 && (viewMode === 'grid' ? (
-          <div className="anim-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          <div ref={gridAnimRef} className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
-              <div key={v.name} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
+              <div key={v.name} data-key={v.name} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 <div className="mt-1 flex flex-wrap justify-center gap-1">
@@ -1295,9 +1352,9 @@ export default function Instances() {
             ))}
           </div>
         ) : (
-          <div className="space-y-3">
+          <div ref={listAnimRef} className="space-y-3">
             {filtered.map((v) => (
-              <div key={v.name} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
+              <div key={v.name} data-key={v.name} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">

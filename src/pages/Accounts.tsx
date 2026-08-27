@@ -23,6 +23,7 @@ import * as accountApi from '../api/account.ts'
 import type { MicrosoftOAuthResponse, Account, YggdrasilProfileInfo } from '../types/index.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useI18n } from '../i18n/index.tsx'
+import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 
 function fmtErr(e: unknown): string {
   if (e instanceof ApiError) return e.displayMessage
@@ -108,6 +109,9 @@ export default function Accounts() {
         (a.serverUrl || '').toLowerCase().includes(q)
     })
   }, [accounts, search, filterType, t])
+
+  // 账户列表 GSAP stagger 动画（性能版：只动画视口内条目 + 滚动暂停）
+  const listRef = useAnimatedList<HTMLDivElement>([filteredAccounts.length, search, filterType], { x: -12, duration: 0.25 })
 
   const [oauthData, setOauthData] = useState<MicrosoftOAuthResponse | null>(null)
   const [microsoftStep, setMicrosoftStep] = useState<MicrosoftStep>('idle')
@@ -537,7 +541,7 @@ export default function Accounts() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-8 pb-8">
-        <div className="flex flex-col gap-1.5 pt-4">
+        <div ref={listRef} className="flex flex-col gap-1.5 pt-4">
           {filteredAccounts.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
               <FontAwesomeIcon icon={faUser} className="h-10 w-10 opacity-30" />
@@ -550,6 +554,7 @@ export default function Accounts() {
             return (
               <div
                 key={acc.uuid}
+                data-key={acc.uuid}
                 onClick={() => { if (selected.size > 0) toggleSelect(acc.uuid, index, false); else navigate(`/accounts/${acc.uuid}`) }}
                 className={cn(
                   'group glass-surface flex w-full cursor-pointer items-center gap-3 rounded-lg border bg-card px-3.5 py-3 text-left transition-colors hover:border-border',

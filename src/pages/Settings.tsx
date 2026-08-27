@@ -28,6 +28,7 @@ import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui'
+import { useExpandAnimation } from '../hooks/useGsapAnimations.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { LANGS } from '../i18n/lang.ts'
 import type { LangChoice } from '../i18n/lang.ts'
@@ -426,7 +427,9 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
         <CardHeader><CardTitle>{t('settings.about.backendDependencies')}</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-1">
-            {Object.entries(BACKEND_DEPENDENCIES).map(([category, deps]) => (
+            {Object.entries(BACKEND_DEPENDENCIES).map(([category, deps]) => {
+              const expandRef = useExpandAnimation(expandedDep === category)
+              return (
               <div key={category}>
                 <button
                   onClick={() => setExpandedDep(expandedDep === category ? null : category)}
@@ -438,8 +441,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                     <FontAwesomeIcon icon={expandedDep === category ? faChevronDown : faChevronRight} className="h-3 w-3 text-muted-foreground" />
                   </div>
                 </button>
-                {expandedDep === category && (
-                  <div className="mt-1 space-y-1 pl-2">
+                <div ref={expandRef} className="mt-1 space-y-1 pl-2">
                     {deps.map((dep) => (
                       <div
                         key={dep.name}
@@ -457,11 +459,11 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                         ) : null}
                       </div>
                     ))}
-                  </div>
-                )}
+                </div>
                 <Separator className="my-1" />
               </div>
-            ))}
+              )
+            })}
           </div>
         </CardContent>
       </Card>
@@ -471,7 +473,9 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
         <CardHeader><CardTitle>{t('settings.about.frontendDependencies')}</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-1">
-            {Object.entries(DEPENDENCIES).map(([category, deps]) => (
+            {Object.entries(DEPENDENCIES).map(([category, deps]) => {
+              const expandRef = useExpandAnimation(expandedDep === category)
+              return (
               <div key={category}>
                 <button
                   onClick={() => setExpandedDep(expandedDep === category ? null : category)}
@@ -483,8 +487,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                     <FontAwesomeIcon icon={expandedDep === category ? faChevronDown : faChevronRight} className="h-3 w-3 text-muted-foreground" />
                   </div>
                 </button>
-                {expandedDep === category && (
-                  <div className="mt-1 space-y-1 pl-2">
+                <div ref={expandRef} className="mt-1 space-y-1 pl-2">
                     {deps.map((dep) => (
                       <button
                         key={dep.name}
@@ -498,11 +501,11 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                         </div>
                       </button>
                     ))}
-                  </div>
-                )}
+                </div>
                 <Separator className="my-1" />
               </div>
-            ))}
+              )
+            })}
           </div>
         </CardContent>
       </Card>
