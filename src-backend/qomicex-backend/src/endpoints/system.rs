@@ -510,7 +510,10 @@ async fn get_process_resource_usage(
     let mut sys = sysinfo::System::new();
     let syspid = sysinfo::Pid::from_u32(pid as u32);
 
-    // 刷新进程信息
+    // 进程 CPU 使用率是两次采样间的差值：先刷新建立基线，等待最小采样间隔后
+    // 再次刷新，`cpu_usage()` 才有效（单次刷新恒为 0）。
+    sys.refresh_process(syspid);
+    tokio::time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
     sys.refresh_process(syspid);
 
     let process = sys.process(syspid).ok_or_else(|| {
@@ -520,7 +523,8 @@ async fn get_process_resource_usage(
         )
     })?;
 
-    let cpu_usage = process.cpu_usage();
+    // sysinfo 返回 0~100*ncpu（多核合计），归一化为整体占用百分比 0~100。
+    let cpu_usage = (process.cpu_usage() / sys.cpus().len().max(1) as f32).clamp(0.0, 100.0);
     let memory_usage = process.memory(); // 字节
 
     Ok(Json(ProcessResourceUsageResponse {
