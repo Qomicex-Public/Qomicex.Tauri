@@ -41,7 +41,6 @@ struct ResourceItemDto {
     icon_url: String,
     download_count: i64,
     source: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     categories: Vec<String>,
     project_url: String,
     slug: String,
@@ -66,7 +65,6 @@ struct ResourceDetailDto {
     icon_url: String,
     download_count: i64,
     source: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     categories: Vec<String>,
     project_url: String,
     slug: String,
