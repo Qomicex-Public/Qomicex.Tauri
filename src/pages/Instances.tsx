@@ -184,6 +184,14 @@ export default function Instances() {
   const [groups, setGroups] = useState<InstanceGroup[]>([])
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [groupsDirty, setGroupsDirty] = useState(0)
+  const groupCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const i of backedInstances) {
+      if (i.gameDir !== currentDir) continue
+      for (const gid of i.customGroupIds ?? []) counts[gid] = (counts[gid] ?? 0) + 1
+    }
+    return counts
+  }, [backedInstances, currentDir])
   const [manageGroupsOpen, setManageGroupsOpen] = useState(false)
   const [assignGroupVersion, setAssignGroupVersion] = useState<ScannedVersion | null>(null)
   const [form, setForm] = useState({ name: '', gameVersion: '', loader: '', loaderVersion: '' })
@@ -1512,6 +1520,7 @@ export default function Instances() {
         open={manageGroupsOpen}
         groups={groups}
         colors={GROUP_COLORS}
+        groupCounts={groupCounts}
         onClose={() => setManageGroupsOpen(false)}
         onCreate={handleCreateGroup}
         onRename={handleRenameGroup}
@@ -1529,10 +1538,11 @@ export default function Instances() {
   }
 
 /** 管理自定义分组弹窗：创建 / 重命名 / 改色 / 删除 */
-function ManageGroupsDialog({ open, groups, colors, onClose, onCreate, onRename, onDelete }: {
+function ManageGroupsDialog({ open, groups, colors, groupCounts, onClose, onCreate, onRename, onDelete }: {
   open: boolean
   groups: InstanceGroup[]
   colors: string[]
+  groupCounts?: Record<string, number>
   onClose: () => void
   onCreate: (name: string, color: string) => void
   onRename: (id: string, name: string, color: string) => void
@@ -1559,35 +1569,50 @@ function ManageGroupsDialog({ open, groups, colors, onClose, onCreate, onRename,
   return (
     <Dialog open={open} onClose={onClose}>
       <DialogHeader onClose={onClose}>
-        <DialogTitle><Layers className="mr-2 h-4 w-4 text-muted-foreground" />{t('instances.manageGroups')}</DialogTitle>
+        <DialogTitle className="flex items-center gap-2">
+          <Layers className="h-4 w-4 text-muted-foreground" />
+          {t('instances.manageGroups')}
+        </DialogTitle>
       </DialogHeader>
       <DialogBody className="space-y-4">
         {/* 新建 */}
-        <div className="space-y-2 rounded-lg border p-3">
-          <div className="flex items-center gap-2">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('instances.groupNamePlaceholder')} className="flex-1" />
-            <div className="flex items-center gap-1">
-              {colors.slice(0, 4).map(c => (
-                <button key={c} type="button" onClick={() => setColor(c)} className={cn('h-5 w-5 rounded-full border-2 transition-transform', color === c ? 'scale-110 border-primary' : 'border-transparent hover:scale-110')} style={{ backgroundColor: c }} />
+        <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t('instances.groupNamePlaceholder')}
+          />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              {colors.map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setColor(c)}
+                  className={cn('h-5 w-5 rounded-full border-2 transition-transform', color === c ? 'scale-110 border-primary ring-2 ring-primary/20' : 'border-transparent hover:scale-110')}
+                  style={{ backgroundColor: c }}
+                />
               ))}
             </div>
-            <Button size="sm" disabled={!name.trim()} onClick={() => { onCreate(name, color); setName('') }}>{t('common.create')}</Button>
+            <Button size="sm" disabled={!name.trim()} onClick={() => { onCreate(name, color); setName('') }}>
+              {t('common.create')}
+            </Button>
           </div>
         </div>
 
         {/* 列表 */}
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           {groups.length === 0 ? (
             <p className="py-6 text-center text-xs text-muted-foreground">{t('instances.noGroups')}</p>
           ) : groups.map((g) => (
-            <div key={g.id} className="flex items-center gap-2 rounded-lg border px-3 py-2">
-              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: g.color }} />
+            <div key={g.id} className="flex items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors hover:bg-muted/20">
+              <span className="h-3 w-3 shrink-0 rounded-full ring-1 ring-black/10" style={{ backgroundColor: g.color }} />
               {editingId === g.id ? (
                 <>
                   <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-8 flex-1 text-sm" autoFocus />
                   <div className="flex items-center gap-1">
-                    {colors.slice(0, 4).map(c => (
-                      <button key={c} type="button" onClick={() => setEditColor(c)} className={cn('h-4 w-4 rounded-full border-2', editColor === c ? 'border-primary' : 'border-transparent')} style={{ backgroundColor: c }} />
+                    {colors.map(c => (
+                      <button key={c} type="button" onClick={() => setEditColor(c)} className={cn('h-4 w-4 rounded-full border-2', editColor === c ? 'border-primary scale-110' : 'border-transparent')} style={{ backgroundColor: c }} />
                     ))}
                   </div>
                   <Button size="sm" variant="default" onClick={() => { onRename(g.id, editName, editColor); setEditingId(null) }}><Check className="h-3 w-3" /></Button>
@@ -1595,7 +1620,10 @@ function ManageGroupsDialog({ open, groups, colors, onClose, onCreate, onRename,
                 </>
               ) : (
                 <>
-                  <span className="flex-1 truncate text-sm">{g.name}</span>
+                  <span className="flex-1 truncate text-sm font-medium">{g.name}</span>
+                  {groupCounts && groupCounts[g.id] !== undefined && (
+                    <span className="text-xs text-muted-foreground/60">{groupCounts[g.id] + '个'}</span>
+                  )}
                   <Tooltip content={t('common.edit')}>
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEdit(g)}><Pencil className="h-3 w-3" /></Button>
                   </Tooltip>
@@ -1628,7 +1656,10 @@ function AssignGroupDialog({ version, groups, instance, onClose, onToggle }: {
   return (
     <Dialog open={!!version} onClose={onClose}>
       <DialogHeader onClose={onClose}>
-        <DialogTitle><Layers className="mr-2 h-4 w-4 text-muted-foreground" />{t('instances.groups')}</DialogTitle>
+        <DialogTitle className="flex items-center gap-2">
+          <Layers className="h-4 w-4 text-muted-foreground" />
+          {t('instances.groups')}
+        </DialogTitle>
       </DialogHeader>
       <DialogBody className="space-y-3">
         <p className="truncate text-sm font-medium">{version?.name}</p>
