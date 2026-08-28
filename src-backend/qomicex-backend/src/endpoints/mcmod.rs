@@ -42,8 +42,24 @@ const RUNTIME_OVERRIDE_REL: &str = "QML/mcmod_data.json";
 
 struct ReverseEntry {
     aliases: Vec<String>,
+    /// CF 搜索词（首个非空 slug 连字符转空格）。
     search_term: String,
+    /// Modrinth 侧完整 slug（both 优先，其次 mr），用于批量取工程。
+    mr_slug: Option<String>,
+    /// CurseForge 侧完整 slug（both 优先，其次 cf）。
+    cf_slug: Option<String>,
     id: i32,
+}
+
+/// 中文关键词解析出的一个候选 mod：携带平台 slug 供按平台检索。
+#[derive(Clone, Debug)]
+pub(crate) struct CnSearchCandidate {
+    /// Modrinth 侧 slug（可能不存在于 Modrinth）。
+    pub mr_slug: Option<String>,
+    /// CurseForge 侧 slug。
+    pub cf_slug: Option<String>,
+    /// 英文搜索词（CF 搜索用，slug 连字符转空格）。
+    pub term: String,
 }
 
 /// Immutable offline index built once from the mcmod.cn dump.
@@ -95,24 +111,30 @@ impl McmodData {
         resolve_with(&self.forward, en_name)
     }
 
-    /// Reverse resolution of a Chinese keyword to an English slug term.
-    /// Kept for parity with McmodService.ResolveChineseSearch; not wired to any
-    /// route in the source.
-    #[allow(dead_code)]
-    fn resolve_chinese_search(&self, keyword: &str) -> Option<&str> {
+    /// Reverse resolution of a Chinese keyword to English slug terms.
+    /// Used by the resource-center search to translate Chinese keywords before
+    /// querying Modrinth / CurseForge (parity with McmodService.ResolveChineseSearch).
+    ///
+    /// 两级策略：
+    /// 1. 存在精确别名匹配（score 1000）时，只返回精确命中的候选（高置信，如「匠魂」）。
+    /// 2. 否则宽召回：收集所有得分 >= 30 的子串匹配候选，按 mcmod id 升序（保留 C# 收录
+    ///    顺序语义），去重后最多返回 `limit` 个。让「通用」这类泛词能同时命中多个相关 mod
+    ///    （通用机械 / 通用拼音搜索等），由调用方按平台批量检索合并展示。
+    pub(crate) fn resolve_chinese_search_candidates(
+        &self,
+        keyword: &str,
+        limit: usize,
+    ) -> Vec<CnSearchCandidate> {
         let keyword = keyword.trim();
-        if keyword.is_empty() || !contains_chinese(keyword) {
-            return None;
+        if keyword.is_empty() || !contains_chinese(keyword) || limit == 0 {
+            return Vec::new();
         }
         let query: String = keyword.chars().filter(|c| !c.is_whitespace()).collect();
         if query.is_empty() {
-            return None;
+            return Vec::new();
         }
 
-        let mut best: Option<&ReverseEntry> = None;
-        let mut best_score = 0usize;
-        let mut best_alias_len = usize::MAX;
-
+        let mut scored: Vec<(usize, i32, &ReverseEntry)> = Vec::new();
         for entry in &self.reverse {
             for alias in &entry.aliases {
                 let score: usize = if alias == &query {
@@ -124,27 +146,49 @@ impl McmodData {
                 } else {
                     continue;
                 };
-
-                if score < 50 {
-                    continue;
-                }
-
-                let alias_len = alias.chars().count();
-                let better = score > best_score
-                    || (score == best_score && alias_len < best_alias_len)
-                    || (score == best_score
-                        && alias_len == best_alias_len
-                        && best.is_some()
-                        && entry.id < best.as_ref().expect("best already bound").id);
-                if better {
-                    best = Some(entry);
-                    best_score = score;
-                    best_alias_len = alias_len;
-                }
+                scored.push((score, entry.id, entry));
             }
         }
+        if scored.is_empty() {
+            return Vec::new();
+        }
 
-        best.map(|e| e.search_term.as_str())
+        let to_candidate = |e: &ReverseEntry| CnSearchCandidate {
+            mr_slug: e.mr_slug.clone(),
+            cf_slug: e.cf_slug.clone(),
+            term: e.search_term.clone(),
+        };
+
+        // 精确命中优先：只返回精确命中的候选（别名与关键词完全一致的 mod）。
+        if scored.iter().any(|(s, _, _)| *s == 1000) {
+            let mut out: Vec<CnSearchCandidate> = Vec::new();
+            for (_, _, e) in scored.iter().filter(|(s, _, _)| *s == 1000) {
+                let cand = to_candidate(e);
+                if !out.iter().any(|c| c.term == cand.term) {
+                    out.push(cand);
+                }
+            }
+            return out;
+        }
+
+        // 宽召回：score >= 30，按 id 升序去重取前 limit。
+        let mut candidates: Vec<(i32, &ReverseEntry)> = scored
+            .into_iter()
+            .filter(|(s, _, _)| *s >= 30)
+            .map(|(_, id, e)| (id, e))
+            .collect();
+        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut out: Vec<CnSearchCandidate> = Vec::new();
+        for (_, e) in candidates {
+            let cand = to_candidate(e);
+            if !out.iter().any(|c| c.term == cand.term) {
+                out.push(cand);
+            }
+            if out.len() >= limit {
+                break;
+            }
+        }
+        out
     }
 }
 
@@ -201,6 +245,8 @@ fn index_entry(data: &mut McmodData, entry: &Value) {
         .map(|s| s.to_string());
 
     let mut slugs: Vec<String> = Vec::new();
+    let mut mr_slug: Option<String> = None;
+    let mut cf_slug: Option<String> = None;
     if let Some(arr) = entry.get("slug").and_then(Value::as_array) {
         for slug in arr {
             for key in ["both", "cf", "mr"] {
@@ -208,6 +254,34 @@ fn index_entry(data: &mut McmodData, entry: &Value) {
                     let trimmed = val.trim();
                     if !trimmed.is_empty() {
                         slugs.push(trimmed.to_string());
+                    }
+                }
+            }
+            // 平台 slug 提取：both 优先，其次平台专用；跨多个 slug 对象取首个可用值。
+            if let Some(both) = slug.get("both").and_then(Value::as_str) {
+                let both = both.trim();
+                if !both.is_empty() {
+                    if mr_slug.is_none() {
+                        mr_slug = Some(both.to_string());
+                    }
+                    if cf_slug.is_none() {
+                        cf_slug = Some(both.to_string());
+                    }
+                }
+            }
+            if mr_slug.is_none() {
+                if let Some(m) = slug.get("mr").and_then(Value::as_str) {
+                    let m = m.trim();
+                    if !m.is_empty() {
+                        mr_slug = Some(m.to_string());
+                    }
+                }
+            }
+            if cf_slug.is_none() {
+                if let Some(c) = slug.get("cf").and_then(Value::as_str) {
+                    let c = c.trim();
+                    if !c.is_empty() {
+                        cf_slug = Some(c.to_string());
                     }
                 }
             }
@@ -244,6 +318,8 @@ fn index_entry(data: &mut McmodData, entry: &Value) {
     data.reverse.push(ReverseEntry {
         aliases,
         search_term,
+        mr_slug,
+        cf_slug,
         id,
     });
 }

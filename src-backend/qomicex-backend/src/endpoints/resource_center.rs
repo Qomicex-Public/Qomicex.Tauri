@@ -16,9 +16,9 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use qomicex_core::models::expansion::modrinth::SearchResultInfo;
+use qomicex_core::models::expansion::modrinth::{ProjectInfo, SearchResultInfo};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Mutex, OnceLock};
@@ -602,17 +602,50 @@ async fn search(
     State(state): State<SharedState>,
     Query(q): Query<SearchQuery>,
 ) -> ApiResult<Json<ResourceSearchResponse>> {
-    // NOTE: source McmodService.ResolveChineseSearch is not ported; the raw
-    // keyword is passed through unchanged (TODO: integrate Chinese->en alias).
-    let keyword = q.keyword.clone().unwrap_or_default();
     let src = q.source.clone().unwrap_or_else(|| "modrinth".to_string());
     let category = q.category.clone();
+    let keyword = q.keyword.clone().unwrap_or_default();
     let game_version = q.game_version.clone();
     let loader = q.loader.clone();
     let sort = q.sort.clone();
     let tags = q.tags.clone();
     let page = q.page.unwrap_or(1);
     let page_size = q.page_size.unwrap_or(20);
+
+    // 对齐 C# McmodService.ResolveChineseSearch 接线：category 为 mod/datapack 时，
+    // 用内置 mcmod 数据把中文关键词解析为英文候选（多候选，按平台 slug 批量检索）。
+    // 解析不到时保持原文（与 C# 一致，仅替换命中项）。
+    let cn_candidates = if category
+        .as_deref()
+        .map(|c| c.eq_ignore_ascii_case("mod") || c.eq_ignore_ascii_case("datapack"))
+        .unwrap_or(false)
+    {
+        crate::endpoints::mcmod::mcmod_data()
+            .resolve_chinese_search_candidates(&keyword, CN_CANDIDATE_LIMIT)
+    } else {
+        Vec::new()
+    };
+    if !cn_candidates.is_empty() {
+        let (items, total) = search_cn_candidates(
+            &state,
+            &cn_candidates,
+            &src,
+            category.as_deref(),
+            game_version.as_deref(),
+            loader.as_deref(),
+            sort.as_deref(),
+            tags.as_deref(),
+            page,
+            page_size,
+        )
+        .await;
+        return Ok(Json(ResourceSearchResponse {
+            items,
+            total,
+            page,
+            page_size,
+        }));
+    }
 
     // "all" = 聚合源：按分类决定可聚合的源。save 仅 CurseForge；
     // modpack 额外含 FTB；其余为 Modrinth + CurseForge。
@@ -681,6 +714,187 @@ async fn search(
         page,
         page_size,
     }))
+}
+
+/// 中文关键词候选检索：Modrinth 批量取回候选 slug + 首候选搜索补充；
+/// CurseForge 对前几个候选逐个搜索；跨源/跨候选按 (source, id) 去重，按下载量排序截断。
+const CN_CANDIDATE_LIMIT: usize = 20;
+const CN_CF_MAX_SEARCH: usize = 5;
+
+async fn search_cn_candidates(
+    state: &SharedState,
+    candidates: &[crate::endpoints::mcmod::CnSearchCandidate],
+    src: &str,
+    category: Option<&str>,
+    game_version: Option<&str>,
+    loader: Option<&str>,
+    sort: Option<&str>,
+    tags: Option<&str>,
+    page: i32,
+    page_size: i32,
+) -> (Vec<ResourceItemDto>, i32) {
+    let sources: Vec<&str> = if src.eq_ignore_ascii_case("all") {
+        // 中文搜索仅作用于 mod/datapack，不含 FTB（modpack 不解析中文）。
+        vec!["modrinth", "curseforge"]
+    } else {
+        vec![src]
+    };
+
+    let mut merged: Vec<ResourceItemDto> = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut push_items = |merged: &mut Vec<ResourceItemDto>, items: Vec<ResourceItemDto>| {
+        for it in items {
+            let key = (it.source.clone(), it.id.clone());
+            if seen.insert(key) {
+                merged.push(it);
+            }
+        }
+    };
+
+    for source in sources {
+        if source.eq_ignore_ascii_case("modrinth") {
+            let slugs: Vec<String> = candidates
+                .iter()
+                .filter_map(|c| c.mr_slug.clone())
+                .collect();
+            let items =
+                fetch_mr_projects_by_slugs(&state.http_client, &slugs, game_version, loader).await;
+            push_items(&mut merged, items);
+            // 首候选（含 mr slug 或非空 term）搜索补充：让主 mod 相关结果也能出现。
+            let first = candidates.iter().find_map(|c| {
+                c.mr_slug
+                    .clone()
+                    .or_else(|| Some(c.term.clone()))
+                    .filter(|s| !s.is_empty())
+            });
+            if let Some(term) = first {
+                if let Ok((items, _)) = search_one(
+                    state,
+                    "modrinth",
+                    &term,
+                    category,
+                    game_version,
+                    loader,
+                    sort,
+                    tags,
+                    page,
+                    page_size,
+                )
+                .await
+                {
+                    push_items(&mut merged, items);
+                }
+            }
+        } else if source.eq_ignore_ascii_case("curseforge") {
+            for cand in candidates.iter().take(CN_CF_MAX_SEARCH) {
+                let term = cand.term.trim();
+                if term.is_empty() {
+                    continue;
+                }
+                if let Ok((items, _)) = search_one(
+                    state,
+                    "curseforge",
+                    term,
+                    category,
+                    game_version,
+                    loader,
+                    sort,
+                    tags,
+                    page,
+                    page_size,
+                )
+                .await
+                {
+                    push_items(&mut merged, items);
+                }
+            }
+        }
+    }
+
+    merged.sort_by(|a, b| b.download_count.cmp(&a.download_count));
+    merged.truncate(page_size as usize);
+    let total = merged.len() as i32;
+    (merged, total)
+}
+
+/// 按 Modrinth slug 批量取回工程（`/v2/projects?ids=[...]`），按游戏版本/加载器过滤。
+/// 批量接口返回的 project 与 `/project/{id}` 同结构，可反序列化为 `ProjectInfo`。
+async fn fetch_mr_projects_by_slugs(
+    client: &reqwest::Client,
+    slugs: &[String],
+    game_version: Option<&str>,
+    loader: Option<&str>,
+) -> Vec<ResourceItemDto> {
+    if slugs.is_empty() {
+        return Vec::new();
+    }
+    let mut unique: Vec<&str> = Vec::new();
+    for s in slugs {
+        if !unique.contains(&s.as_str()) && unique.len() < 200 {
+            unique.push(s.as_str());
+        }
+    }
+    if unique.is_empty() {
+        return Vec::new();
+    }
+    let ids_json = unique
+        .iter()
+        .map(|s| format!("\"{}\"", s))
+        .collect::<Vec<_>>()
+        .join(",");
+    let url = format!("https://api.modrinth.com/v2/projects?ids=[{}]", ids_json);
+    let resp = match client
+        .get(&url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Vec::new(),
+    };
+    let projects: Vec<ProjectInfo> = match resp.json().await {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    projects
+        .into_iter()
+        .filter(|p| {
+            let gv_ok = match game_version {
+                Some(g) => p
+                    .game_version_ids
+                    .as_ref()
+                    .map(|v| v.iter().any(|x| x == g))
+                    .unwrap_or(true),
+                None => true,
+            };
+            let l_ok = match loader {
+                Some(l) => p
+                    .loaders
+                    .as_ref()
+                    .map(|v| v.iter().any(|x| x == l))
+                    .unwrap_or(true),
+                None => true,
+            };
+            gv_ok && l_ok
+        })
+        .map(project_info_to_item)
+        .collect()
+}
+
+fn project_info_to_item(p: ProjectInfo) -> ResourceItemDto {
+    let slug = p.slug.clone().unwrap_or_else(|| p.id.clone());
+    ResourceItemDto {
+        id: p.id.clone(),
+        title: p.name.clone(),
+        description: p.description.clone(),
+        author: String::new(),
+        icon_url: p.icon_url.clone().unwrap_or_default(),
+        download_count: p.download_count as i64,
+        source: "modrinth".to_string(),
+        categories: p.categories.clone().unwrap_or_default(),
+        project_url: format!("https://modrinth.com/project/{}", slug),
+        slug,
+    }
 }
 
 async fn search_one(
