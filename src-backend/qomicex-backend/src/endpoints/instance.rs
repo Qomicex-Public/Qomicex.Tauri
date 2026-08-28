@@ -76,6 +76,9 @@ struct UpdateInstanceRequest {
     version_isolation: Option<bool>,
     #[serde(default)]
     custom_group_ids: Option<Vec<String>>,
+    /// 用户自定义备注：缺失=不修改；null=清除；Some(Some(v))=设置。
+    #[serde(default)]
+    remark: Option<Option<String>>,
 }
 
 #[derive(Serialize)]
@@ -396,6 +399,9 @@ async fn update_instance(
     }
     if let Some(v) = req.custom_group_ids {
         existing.custom_group_ids = v;
+    }
+    if let Some(v) = req.remark {
+        existing.remark = v;
     }
     let updated = state
         .instance
