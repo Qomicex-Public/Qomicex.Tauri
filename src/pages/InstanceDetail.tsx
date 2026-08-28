@@ -221,7 +221,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
 
   return (
     <SettingSection title={saves.length > 0 ? `${t('instanceDetail.tabs.saves')} (${saves.length})` : t('instanceDetail.tabs.saves')} icon={<Save className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -337,7 +337,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
 
   return (
     <SettingSection title={screenshots.length > 0 ? `${t('instanceDetail.tabs.screenshots')} (${screenshots.length})` : t('instanceDetail.tabs.screenshots')} icon={<Camera className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -684,7 +684,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   return (
     <>
       <SettingSection title={mods.length > 0 ? `${t('instanceDetail.tabs.mods')} (${mods.length})` : t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -710,7 +710,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             </div>
           </div>
 
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
             <Tabs
               tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" /> }))}
               activeTab={filterType}
@@ -936,7 +936,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
 
   return (
     <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.resourcepacks')} (${packs.length})` : t('instanceDetail.tabs.resourcepacks')} icon={<Package className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1098,7 +1098,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
 
   return (
     <SettingSection title={shaders.length > 0 ? `${t('instanceDetail.tabs.shaderpacks')} (${shaders.length})` : t('instanceDetail.tabs.shaderpacks')} icon={<Sun className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1256,7 +1256,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
 
   return (
     <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.datapacks')} (${packs.length})` : t('instanceDetail.tabs.datapacks')} icon={<Database className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1433,7 +1433,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
 
   return (
     <SettingSection title={files.length > 0 ? `${t('instanceDetail.tabs.schematics')} (${files.length})` : t('instanceDetail.tabs.schematics')} icon={<PenTool className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1678,7 +1678,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
   return (
     <>
       <SettingSection title={servers.length > 0 ? `${t('instanceDetail.tabs.servers')} (${servers.length})` : t('instanceDetail.tabs.servers')} icon={<Server className="h-4 w-4" />}>
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
