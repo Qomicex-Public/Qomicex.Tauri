@@ -1659,13 +1659,19 @@ export default function Settings() {
                     )}
                   </div>
 
-                <SettingRow
-                  label={t('settings.java.jvmArgs')}
-                  description={t('settings.java.jvmArgsDesc')}
-                  control={
-                    <Input id="jvmArgs" value={settings.jvmArgs} onChange={(e) => update('jvmArgs', e.target.value)} placeholder="-XX:+UseG1GC -Dfml.ignoreInvalidMinecraftCertificates=true" />
-                  }
-                />
+                <div className="px-4 py-3">
+                  <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400">
+                    <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{t('settings.java.jvmArgsWarning')}</span>
+                  </div>
+                  <textarea
+                    value={settings.jvmArgs}
+                    onChange={(e) => update('jvmArgs', e.target.value)}
+                    placeholder="-Xmx2G -XX:+UseG1GC"
+                    rows={4}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y font-mono"
+                  />
+                </div>
               </SettingSection>
             </div>
           </TabContent>
