@@ -14,14 +14,19 @@ export interface ContextMenuProps {
   children: React.ReactNode
 }
 
+const MENU_MAX_H = 320
+const EDGE_MARGIN = 8
+
 export function ContextMenu({ items, children }: ContextMenuProps) {
   const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const [pos, setPos] = useState({ x: 0, y: 0, flipY: false })
   const menuRef = useRef<HTMLDivElement>(null)
 
   const onContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
-    setPos({ x: e.clientX, y: e.clientY })
+    const vh = window.innerHeight
+    const flipY = e.clientY + MENU_MAX_H > vh && e.clientY - MENU_MAX_H > 0
+    setPos({ x: e.clientX, y: e.clientY, flipY })
     setOpen(true)
   }, [])
 
@@ -40,8 +45,15 @@ export function ContextMenu({ items, children }: ContextMenuProps) {
     if (!open || !menuRef.current) return
     const rect = menuRef.current.getBoundingClientRect()
     let { x, y } = pos
-    if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 8
-    if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 8
+    // 水平夹紧
+    if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - EDGE_MARGIN
+    if (x < EDGE_MARGIN) x = EDGE_MARGIN
+    // 垂直：flipY 时从 y 向上展开，否则向下
+    if (pos.flipY) {
+      y = y - rect.height
+    }
+    if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - EDGE_MARGIN
+    if (y < EDGE_MARGIN) y = EDGE_MARGIN
     menuRef.current.style.left = `${x}px`
     menuRef.current.style.top = `${y}px`
   }, [open, pos])
@@ -52,7 +64,7 @@ export function ContextMenu({ items, children }: ContextMenuProps) {
       {open && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-50 min-w-[160px] rounded-lg border border-border bg-popover p-1 shadow-lg animate-in fade-in zoom-in-95"
+          className="fixed z-50 min-w-[160px] max-h-[min(320px,calc(100vh-16px))] overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg animate-in fade-in zoom-in-95"
           style={{ left: pos.x, top: pos.y }}
         >
           {items.map((item, i) => (
