@@ -1530,7 +1530,7 @@ export default function Settings() {
                   )}
 
                   {scanning === 'idle' && listRuntimes.length > 0 && (
-                    <div className="space-y-1">
+                    <div className="space-y-1 p-4">
                       {listRuntimes.map((j, i) => (
                         <div
                           key={i}
@@ -1586,7 +1586,7 @@ export default function Settings() {
                     </div>
                   )}
 
-                  <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
+                  <div className="mx-4 mb-4 flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
                     <Info className="h-3.5 w-3.5 text-primary" />
                     <span>{javaStatus}</span>
                     <span className="ml-auto">
