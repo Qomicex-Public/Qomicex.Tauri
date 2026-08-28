@@ -105,7 +105,10 @@ pub fn router() -> Router<SharedState> {
             post(clear_curseforge_cache),
         )
         .route("/settings/clear-neoforge-cache", post(clear_neoforge_cache))
-        .route("/process/{pid}/resource-usage", get(get_process_resource_usage))
+        .route(
+            "/process/{pid}/resource-usage",
+            get(get_process_resource_usage),
+        )
 }
 
 async fn health() -> ApiResult<Json<HealthResponse>> {
@@ -511,7 +514,10 @@ async fn get_process_resource_usage(
     sys.refresh_process(syspid);
 
     let process = sys.process(syspid).ok_or_else(|| {
-        ApiError::not_found("PROCESS_NOT_FOUND", &format!("Process with PID {} not found", pid))
+        ApiError::not_found(
+            "PROCESS_NOT_FOUND",
+            &format!("Process with PID {} not found", pid),
+        )
     })?;
 
     let cpu_usage = process.cpu_usage();
