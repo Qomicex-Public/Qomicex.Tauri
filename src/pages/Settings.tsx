@@ -135,6 +135,10 @@ function saveSettings(settings: AppSettings) {
   document.documentElement.dataset.maxFps = String(maxFps)
   document.documentElement.style.setProperty('--anim-duration-multiplier', String((1 / speed) * fpsScale))
   document.documentElement.style.setProperty('--radius', `${settings.cornerRadius ?? 8}px`)
+  // 组件材质：与 App.tsx onSettingsChange 的 applyGlassMaterial 同步，
+  // 确保设置页修改后立即生效（apiSaveSettings 的监听器链是异步的）。
+  document.documentElement.dataset.material = settings.componentMaterial ?? 'default'
+  document.documentElement.style.setProperty('--glass-blur', `${Math.max(0, settings.glassBlur ?? 18)}px`)
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
 
