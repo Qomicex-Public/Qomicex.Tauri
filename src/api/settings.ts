@@ -269,4 +269,8 @@ export async function clearCurseForgeCache(): Promise<{ deleted: number }> {
   return post<{ deleted: number }>('/settings/clear-curseforge-cache', {})
 }
 
+export async function clearNeoForgeCache(): Promise<{ deleted: number }> {
+  return post<{ deleted: number }>('/settings/clear-neoforge-cache', {})
+}
+
 

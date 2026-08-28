@@ -480,6 +480,10 @@ impl ModpackServiceData {
         }];
         let file_count = files.len() as i32;
 
+        // 下载 CurseForge 模组图标（与 Modrinth/FTB 保持一致）
+        let icon_url = mod_info.logo.as_ref().and_then(|l| l.url.clone());
+        let icon_data = self.download_icon_as_data_uri(icon_url.as_deref()).await;
+
         Ok(ModpackParseResult {
             name: mod_info.name,
             summary: mod_info.summary.clone(),
@@ -499,7 +503,7 @@ impl ModpackServiceData {
             has_overrides: false,
             file_count,
             overrides_zip: None,
-            icon_data: None,
+            icon_data,
             file_id: None,
         })
     }

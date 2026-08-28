@@ -104,6 +104,7 @@ pub fn router() -> Router<SharedState> {
             "/settings/clear-curseforge-cache",
             post(clear_curseforge_cache),
         )
+        .route("/settings/clear-neoforge-cache", post(clear_neoforge_cache))
 }
 
 async fn health() -> ApiResult<Json<HealthResponse>> {
@@ -454,4 +455,29 @@ async fn clear_curseforge_cache(
 ) -> ApiResult<Json<ClearCurseForgeCacheResponse>> {
     let deleted = state.curseforge_fetch.clear_cache();
     Ok(Json(ClearCurseForgeCacheResponse { deleted }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClearNeoForgeCacheResponse {
+    deleted: usize,
+}
+
+/// 清理 NeoForge 版本缓存（%TEMP%/NeoForgeVersionCache/ 下所有 .json 文件）。
+async fn clear_neoforge_cache() -> ApiResult<Json<ClearNeoForgeCacheResponse>> {
+    let cache_dir = std::env::temp_dir().join("NeoForgeVersionCache");
+    let mut deleted = 0usize;
+    if cache_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    if std::fs::remove_file(&path).is_ok() {
+                        deleted += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok(Json(ClearNeoForgeCacheResponse { deleted }))
 }

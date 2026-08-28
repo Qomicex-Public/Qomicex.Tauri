@@ -51,7 +51,7 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, setDataDir, getSystemFonts } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, setDataDir, getSystemFonts } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { FILE_NAMING_OPTIONS } from '../lib/download-naming.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
@@ -135,6 +135,10 @@ function saveSettings(settings: AppSettings) {
   document.documentElement.dataset.maxFps = String(maxFps)
   document.documentElement.style.setProperty('--anim-duration-multiplier', String((1 / speed) * fpsScale))
   document.documentElement.style.setProperty('--radius', `${settings.cornerRadius ?? 8}px`)
+  // 组件材质：与 App.tsx onSettingsChange 中 applyGlassMaterial 同步，
+  // 确保设置页修改后立即生效（apiSaveSettings 的监听器链是异步的）。
+  document.documentElement.dataset.material = settings.componentMaterial ?? 'default'
+  document.documentElement.style.setProperty('--glass-blur', `${Math.max(0, settings.glassBlur ?? 18)}px`)
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
 
@@ -540,6 +544,7 @@ export default function Settings() {
   const { t, setLanguage } = useI18n()
   const [clearingCache, setClearingCache] = useState(false)
   const [clearingCurseForgeCache, setClearingCurseForgeCache] = useState(false)
+  const [clearingNeoForgeCache, setClearingNeoForgeCache] = useState(false)
   const { state: debugState } = useDebug()
   const [category, setCategory] = useState(() => {
     const params = new URLSearchParams(window.location.search)
@@ -878,6 +883,18 @@ export default function Settings() {
       await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.curseforgeCacheClearFailed'))
     } finally {
       setClearingCurseForgeCache(false)
+    }
+  }
+
+  async function handleClearNeoForgeCache() {
+    setClearingNeoForgeCache(true)
+    try {
+      const { deleted } = await clearNeoForgeCache()
+      notify(t('settings.launcher.neoforgeCacheCleared', { count: deleted }), 'success')
+    } catch (e) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.neoforgeCacheClearFailed'))
+    } finally {
+      setClearingNeoForgeCache(false)
     }
   }
 
@@ -1438,6 +1455,16 @@ export default function Settings() {
                   </Button>
                 }
               />
+              <SettingRow
+                label={t('settings.launcher.neoforgeCache')}
+                description={t('settings.launcher.neoforgeCacheDesc')}
+                control={
+                  <Button size="sm" variant="outline" onClick={handleClearNeoForgeCache} disabled={clearingNeoForgeCache}>
+                    <MorphActionIcon active={clearingNeoForgeCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
+                    {t('settings.launcher.clearNeoforgeCache')}
+                  </Button>
+                }
+              />
             </SettingSection>
 
             </div>
@@ -1503,11 +1530,11 @@ export default function Settings() {
                   )}
 
                   {scanning === 'idle' && listRuntimes.length > 0 && (
-                    <div className="space-y-1">
+                    <div className="space-y-px">
                       {listRuntimes.map((j, i) => (
                         <div
                           key={i}
-                          className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 transition-colors hover:border-muted-foreground/30"
+                          className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50"
                         >
                           <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', j.state === 'Valid' ? 'bg-green-500/10 text-green-600' : 'bg-destructive/15 text-destructive')}>
                             <FontAwesomeIcon icon={faJava} className="h-5 w-5" />

@@ -386,6 +386,17 @@ function I18nMessageBoxProvider({ children }: { children: ReactNode }) {
 
 function App() {
   useEffect(() => {
+    console.log(` ██████╗   ██████╗  ███╗   ███╗ ██╗  ██████╗ ███████╗ ██╗    ██╗
+██╔═══██╗ ██╔═══██╗ ████╗ ████║ ██║ ██╔════╝ ██╔════╝  ╚██╗ ██╔╝
+██║   ██║ ██║   ██║ ██╔████╔██║ ██║ ██║      █████╗      ╚██╔╝
+██║ █╗██║ ██║   ██║ ██║╚██╔╝██║ ██║ ██║      ██╔══╝      █╔ █╗
+██║ ╚██╔╝ ██║   ██║ ██║ ╚═╝ ██║ ██║ ██║      ██║       ██╔╝  ██╗
+╚█████╔█╗ ╚██████╔╝ ██║     ██║ ██║ ╚██████╗ ███████╗ ██╔╝    ██╗
+ ╚════╝╚╝  ╚═════╝  ╚═╝     ╚═╝ ╚═╝  ╚═════╝  ╚═════╝ ╚═╝     ╚═╝
+Console - Qomicex Launcher ======================================`)
+  }, [])
+
+  useEffect(() => {
     async function setTheme(theme: 'dark' | 'light') {
       document.documentElement.classList.toggle('dark', theme === 'dark')
       document.documentElement.classList.toggle('light', theme === 'light')
