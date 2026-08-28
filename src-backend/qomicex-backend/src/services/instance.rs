@@ -59,6 +59,9 @@ pub struct GameInstance {
     /// 所属自定义分组 id 列表（多对多，引用 groups.json）。
     #[serde(default)]
     pub custom_group_ids: Vec<String>,
+    /// 用户自定义备注名（ENH-01）；为空时实例列表显示原版本名。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remark: Option<String>,
 }
 
 impl Default for GameInstance {
@@ -90,6 +93,7 @@ impl Default for GameInstance {
             skip_integrity_check: false,
             resolved_game_dir: None,
             custom_group_ids: Vec::new(),
+            remark: None,
         }
     }
 }

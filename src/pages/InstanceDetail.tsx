@@ -2283,6 +2283,8 @@ export default function InstanceDetailPage() {
   const [detailRefreshKey, setDetailRefreshKey] = useState(0)
   const [selectedAccountUuid, setSelectedAccountUuid] = useState<string | null>(null)
   const [groups, setGroups] = useState<InstanceGroup[]>([])
+  const [editingRemark, setEditingRemark] = useState(false)
+  const [remarkValue, setRemarkValue] = useState('')
 
   const refreshDetail = useCallback(() => {
     cacheInvalidate('api-instance-')
@@ -2383,6 +2385,27 @@ export default function InstanceDetailPage() {
 
   const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
   const { confirm, notify } = useMessageBox()
+
+  // 保存备注
+  const saveRemark = useCallback(async () => {
+    if (!id || !instance) return
+    const trimmed = remarkValue.trim()
+    if (trimmed === (instance.remark || '')) {
+      setEditingRemark(false)
+      return
+    }
+    try {
+      const updated = await updateInstance(id, { remark: trimmed || null })
+      setInstance(updated)
+      cacheSet(`api-instance-${id}`, updated)
+      setEditingRemark(false)
+      if (trimmed) {
+        notify(t('instanceDetail.overview.remarkSaved'), 'success')
+      }
+    } catch (e) {
+      notify(t('instanceDetail.overview.remarkSaveFailed') + ': ' + (e instanceof ApiError ? e.displayMessage : String(e)), 'error')
+    }
+  }, [id, instance, remarkValue, notify, t])
 
   const handleResetSection = useCallback(async (fields: (keyof GameInstance)[]) => {
     const ok = await confirm(t('instanceDetail.settingsTab.resetConfirm'), t('instanceDetail.settingsTab.resetSection'))
@@ -2669,6 +2692,47 @@ export default function InstanceDetailPage() {
                       <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.totalPlayTime')}</p>
                       <p className="font-medium">{formatPlayTime(instance.playTime, t)}</p>
                     </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 备注区域 */}
+              <Card>
+                <CardContent className="p-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.remark')}</p>
+                      {editingRemark ? (
+                        <Input
+                          value={remarkValue}
+                          onChange={(e) => setRemarkValue(e.target.value)}
+                          onBlur={() => saveRemark()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveRemark()
+                            if (e.key === 'Escape') { setEditingRemark(false); setRemarkValue(instance.remark || '') }
+                          }}
+                          className="mt-1 h-7 text-sm"
+                          autoFocus
+                        />
+                      ) : (
+                        <p
+                          className="font-medium cursor-pointer hover:text-muted-foreground transition-colors"
+                          onClick={() => { setEditingRemark(true); setRemarkValue(instance.remark || '') }}
+                        >
+                          {instance.remark || <span className="text-muted-foreground italic">{t('instanceDetail.overview.remarkPlaceholder')}</span>}
+                        </p>
+                      )}
+                    </div>
+                    {!editingRemark && (
+                      <Tooltip content={t('instanceDetail.overview.editRemark')}>
+                        <button
+                          onClick={() => { setEditingRemark(true); setRemarkValue(instance.remark || '') }}
+                          className="ml-2 h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                        >
+                          <Pen className="h-3.5 w-3.5" />
+                        </button>
+                      </Tooltip>
+                    )}
                   </div>
                 </CardContent>
               </Card>

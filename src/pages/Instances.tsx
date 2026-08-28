@@ -1336,6 +1336,9 @@ export default function Instances() {
                 <div data-key={v.name} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
+                {getInstanceForVersion(v)?.remark && (
+                  <p className="mt-0.5 w-full truncate text-xs text-muted-foreground italic">{getInstanceForVersion(v)!.remark}</p>
+                )}
                 <div className="mt-1 flex flex-wrap justify-center gap-1">
                   {getLoadersForVersion(v).length > 0 ? (
                     getLoadersForVersion(v).map((l) => (

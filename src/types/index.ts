@@ -248,6 +248,8 @@ export interface GameInstance {
   resolvedGameDir: string | null
   /** 所属自定义分组 id 列表（多对多） */
   customGroupIds?: string[]
+  /** 用户自定义备注名（ENH-01） */
+  remark?: string | null
 }
 
 export interface CreateInstanceRequest {
@@ -268,10 +270,11 @@ export interface CreateInstanceRequest {
   iconData?: string
   modpackName?: string
   modpackVersion?: string
-  modpackAuthor?: string
   modpackSummary?: string
-  /** 所属自定义分组 id 列表（多对多） */
+  modpackAuthor?: string
   customGroupIds?: string[]
+  /** 用户自定义备注名（ENH-01） */
+  remark?: string | null
 }
 
 export interface LaunchResult {
