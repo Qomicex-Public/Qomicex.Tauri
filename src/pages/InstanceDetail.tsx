@@ -221,14 +221,14 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
 
   return (
     <SettingSection title={saves.length > 0 ? `${t('instanceDetail.tabs.saves')} (${saves.length})` : t('instanceDetail.tabs.saves')} icon={<Save className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-end gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.saves.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
@@ -337,14 +337,14 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
 
   return (
     <SettingSection title={screenshots.length > 0 ? `${t('instanceDetail.tabs.screenshots')} (${screenshots.length})` : t('instanceDetail.tabs.screenshots')} icon={<Camera className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-end gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.screenshots.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
@@ -684,14 +684,14 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   return (
     <>
       <SettingSection title={mods.length > 0 ? `${t('instanceDetail.tabs.mods')} (${mods.length})` : t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
-          <div className="mb-3 flex items-center justify-end gap-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.mods.search')} className="h-8 pl-8 text-xs" />
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
                 <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
               </Button>
@@ -936,14 +936,14 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
 
   return (
     <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.resourcepacks')} (${packs.length})` : t('instanceDetail.tabs.resourcepacks')} icon={<Package className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-end gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.resourcepacks.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
@@ -1098,14 +1098,14 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
 
   return (
     <SettingSection title={shaders.length > 0 ? `${t('instanceDetail.tabs.shaderpacks')} (${shaders.length})` : t('instanceDetail.tabs.shaderpacks')} icon={<Sun className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-end gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.shaderpacks.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
@@ -1256,14 +1256,14 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
 
   return (
     <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.datapacks')} (${packs.length})` : t('instanceDetail.tabs.datapacks')} icon={<Database className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-end gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.datapacks.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
@@ -1433,14 +1433,14 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
 
   return (
     <SettingSection title={files.length > 0 ? `${t('instanceDetail.tabs.schematics')} (${files.length})` : t('instanceDetail.tabs.schematics')} icon={<PenTool className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-end gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.schematics.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/schematics').catch(() => {})} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
@@ -1678,14 +1678,14 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
   return (
     <>
       <SettingSection title={servers.length > 0 ? `${t('instanceDetail.tabs.servers')} (${servers.length})` : t('instanceDetail.tabs.servers')} icon={<Server className="h-4 w-4" />}>
-          <div className="mb-3 flex items-center justify-end gap-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.servers.search')} className="h-8 pl-8 text-xs" />
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <Tooltip content={t('instanceDetail.servers.pingAll')}>
                 <Button size="sm" variant="ghost" onClick={() => {
                   servers.forEach(s => handlePing(s.ip))
