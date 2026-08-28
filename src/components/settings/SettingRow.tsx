@@ -9,7 +9,7 @@ export function SettingSection({ title, icon, children, action }: { title: strin
         <h3 className="flex-1 text-sm font-semibold text-foreground/90">{title}</h3>
         {action && <div className="flex shrink-0 items-center">{action}</div>}
       </div>
-      <div className="divide-y divide-border/60 rounded-xl border border-border/60 bg-card/40">
+      <div className="glass-surface divide-y divide-border/60 rounded-xl border border-border/60 bg-card/40">
         {children}
       </div>
     </section>
