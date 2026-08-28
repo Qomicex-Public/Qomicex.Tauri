@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFileArrowDown } from '@fortawesome/free-solid-svg-icons'
+import { FileDown } from 'lucide-react'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { classifyFile } from '../api/drop-install.ts'
@@ -98,7 +97,7 @@ export default function GlobalDropInstaller() {
       {hover && !group && (
         <div className="pointer-events-none fixed inset-0 z-[200] flex items-center justify-center bg-background/70 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-primary/60 bg-background/80 px-16 py-12 shadow-2xl">
-            <FontAwesomeIcon icon={faFileArrowDown} className="h-10 w-10 text-primary" />
+            <FileDown className="h-10 w-10 text-primary" />
             <span className="text-lg font-semibold text-foreground">{t('dialogs.dropInstall.dropHere')}</span>
             <span className="text-xs text-muted-foreground">{t('dialogs.dropInstall.dropHint')}</span>
           </div>

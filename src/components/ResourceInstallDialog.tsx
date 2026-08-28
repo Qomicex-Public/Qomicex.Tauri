@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faDownload, faCheckCircle, faCircle, faLayerGroup, faChevronDown, faSearch } from '@fortawesome/free-solid-svg-icons'
+import { CheckCircle2, ChevronDown, Circle, Layers, RotateCw, Search } from 'lucide-react'
+import { Download as DownloadData, RotateCw as RotateCwData } from 'lucide'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { cn } from '../lib/utils.ts'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
@@ -37,7 +38,7 @@ function versionCacheKey(resourceId: string, gameVersion: string, loader: string
 export default function ResourceInstallDialog({
   open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId, initialVersionId,
 }: ResourceInstallDialogProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const { notify } = useMessageBox()
   const [instances, setInstances] = useState<GameInstance[]>([])
   const [selectedInstance, setSelectedInstance] = useState<GameInstance | null>(null)
@@ -235,6 +236,7 @@ export default function ResourceInstallDialog({
         taskName: t('downloads.quickInstallName', { name: resourceTitle }),
         icon: resourceIcon || undefined,
         t,
+        lang,
       })
       onClose()
       notify(t('dialogs.resourceInstall.addedToDownloadCenter'), 'success')
@@ -252,7 +254,7 @@ export default function ResourceInstallDialog({
           {resourceIcon ? (
             <img src={resourceIcon} alt="" className="h-5 w-5 rounded object-cover" />
           ) : (
-            <FontAwesomeIcon icon={faLayerGroup} className="h-4 w-4 text-muted-foreground" />
+            <Layers className="h-4 w-4 text-muted-foreground" />
           )}
           {t('dialogs.resourceInstall.title', { name: resourceTitle })}
         </DialogTitle>
@@ -263,7 +265,7 @@ export default function ResourceInstallDialog({
           <span className="text-xs font-medium text-muted-foreground">{t('dialogs.resourceInstall.selectInstance')}</span>
           {loadingInstance ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+              <RotateCw className="h-3 w-3 animate-spin" />
               {loadStage || t('common.loading')}
             </div>
           ) : instances.length === 0 ? (
@@ -273,7 +275,7 @@ export default function ResourceInstallDialog({
           ) : (
             <div className="space-y-1.5">
               <div className="relative">
-                <FontAwesomeIcon icon={faSearch} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
@@ -318,7 +320,7 @@ export default function ResourceInstallDialog({
             </div>
           ) : loadingVersions ? (
             <div className="flex items-center gap-2 rounded-lg border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+              <RotateCw className="h-3 w-3 animate-spin" />
               {t('dialogs.resourceInstall.loadingVersions')}
             </div>
           ) : (
@@ -344,11 +346,11 @@ export default function ResourceInstallDialog({
         {selectedVersion && category === 'mod' && (
           <div className="space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">
-              {t('dialogs.resourceInstall.depsTitle')} {loadingDeps && <FontAwesomeIcon icon={faRotate} className="ml-1 h-3 w-3 animate-spin" />}
+              {t('dialogs.resourceInstall.depsTitle')} {loadingDeps && <RotateCw className="ml-1 h-3 w-3 animate-spin" />}
             </span>
             {loadingDeps ? (
               <div className="flex items-center gap-2 rounded-lg border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
-                <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+                <RotateCw className="h-3 w-3 animate-spin" />
                 {t('dialogs.resourceInstall.parsingDeps')}
               </div>
             ) : deps.length === 0 ? (
@@ -371,7 +373,7 @@ export default function ResourceInstallDialog({
                         <img src={d.iconUrl} alt="" className="h-5 w-5 rounded object-cover" />
                       ) : (
                         <div className="flex h-5 w-5 items-center justify-center rounded bg-muted text-muted-foreground">
-                          <FontAwesomeIcon icon={faLayerGroup} className="h-3 w-3" />
+                          <Layers className="h-3 w-3" />
                         </div>
                       )}
                       <span className="min-w-0 flex-1 truncate">{d.name}</span>
@@ -384,7 +386,7 @@ export default function ResourceInstallDialog({
                             className="flex h-6 items-center gap-1 rounded-md border border-input bg-background px-2 text-[11px] shadow-sm transition-colors hover:bg-accent/30"
                           >
                             <span className="max-w-[80px] truncate">{depSelectedVersion[d.projectId]?.downloadUrl ? depVersions.find(v => v.downloads[0]?.url === depSelectedVersion[d.projectId].downloadUrl)?.versionNumber : d.versionNumber}</span>
-                            <FontAwesomeIcon icon={faChevronDown} className="h-2.5 w-2.5 shrink-0 text-muted-foreground" />
+                            <ChevronDown className="h-2.5 w-2.5 shrink-0 text-muted-foreground" />
                           </button>
                           {depPickerOpen === d.projectId && createPortal(
                             <div
@@ -423,12 +425,12 @@ export default function ResourceInstallDialog({
                       ) : null}
                       {installed ? (
                         <span className="inline-flex items-center gap-1 text-emerald-400 shrink-0">
-                          <FontAwesomeIcon icon={faCheckCircle} className="h-3 w-3" />
+                          <CheckCircle2 className="h-3 w-3" />
                           {t('dialogs.resourceInstall.installed')}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-amber-400 shrink-0">
-                          <FontAwesomeIcon icon={faCircle} className="h-3 w-3" />
+                          <Circle className="h-3 w-3" />
                           {t('dialogs.resourceInstall.pending')}
                         </span>
                       )}
@@ -442,7 +444,7 @@ export default function ResourceInstallDialog({
 
         {starting && (
           <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/20 p-4 text-xs text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+            <RotateCw className="h-3 w-3 animate-spin" />
             {t('dialogs.resourceInstall.installing')}
           </div>
         )}
@@ -455,7 +457,7 @@ export default function ResourceInstallDialog({
             variant="ghost" size="sm" className="h-7 text-xs"
             onClick={() => { setInstallError(null); handleInstall() }}
           >
-            <FontAwesomeIcon icon={faRotate} className="mr-1 h-3 w-3" /> {t('common.retry')}
+            <RotateCw className="mr-1 h-3 w-3" /> {t('common.retry')}
           </Button>
         </div>
       )}
@@ -466,7 +468,7 @@ export default function ResourceInstallDialog({
           onClick={handleInstall}
           disabled={!selectedVersion || starting || loadingDeps || !!installError}
         >
-          <FontAwesomeIcon icon={starting ? faRotate : faDownload} className={cn('mr-1.5 h-3.5 w-3.5', starting && 'animate-spin')} />
+          <MorphActionIcon active={starting} busy={RotateCwData} rest={DownloadData} className="mr-1.5 h-3.5 w-3.5" />
           {starting ? t('dialogs.resourceInstall.installing') : t('dialogs.resourceInstall.installConfirm')}
         </Button>
       </DialogFooter>

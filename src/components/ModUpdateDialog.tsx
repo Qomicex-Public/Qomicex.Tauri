@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate } from '@fortawesome/free-solid-svg-icons'
+import { RotateCw } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
 import { checkModUpdates } from '../api/instance-files.ts'
@@ -81,7 +80,7 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
       <DialogBody>
         {loading ? (
           <div className="flex items-center justify-center py-8">
-            <FontAwesomeIcon icon={faRotate} className="h-5 w-5 animate-spin text-muted-foreground" />
+            <RotateCw className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         ) : updates.length === 0 ? (
           <p className="py-4 text-center text-sm text-muted-foreground">{t('dialogs.modUpdate.allUpToDate')}</p>

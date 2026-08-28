@@ -1,161 +1,61 @@
-# Qomicex.Downloader → Qomicex.Downloader.Refactor 映射表
-# 生成时间: 2026-07-25
-# 迁移分支: migrate/downloader-refactor
+# MAPPING_TABLE.yaml — icon ternary → <MorphIcon> 状态切换图标动画化
+# 迁移方向：icon↔icon 三元表达式 → 单一 <MorphIcon icon={cond ? XData : YData}>
 
-namespaces:
-  old: Qomicex.Downloader
-  new: Qomicex.Downloader.Refactor
-  additional:
-    - Qomicex.Downloader.Refactor.Model
-    - Qomicex.Downloader.Refactor.Progress
-    - Qomicex.Downloader.Refactor.Configuration
+# 通用规则（所有文件一致）
+morphicon_pattern:
+  before: "{cond ? <X className=\"...\" /> : <Y className=\"...\" />}"
+  after: "<MorphIcon icon={cond ? XData : YData} className={cn('<shared>', cond && 'animate-spin')} spring=\"snappy\" reducedMotion=\"user\" />"
+  notes:
+    - spring="snappy" + reducedMotion="user" 每处必带
+    - animate-spin 按需放 className（仅 loading/active 态生效），保证 morph 在完成时触发
+    - className 其余部分（h/w、颜色、mr 等）原样保留
+    - 两分支 className 相同时可不用 cn，直接用字面量
 
-classes:
-  DownloadManager:
-    new: Downloader
-    notes: "入口类改名，不再区分 Manager/Core，统一为 Downloader"
-  
-  Core:
-    new: Downloader
-    notes: "DownloadCore 合并到 Downloader 类"
-    method_mapping:
-      DownloadFileAsync(url, path, progress, ct, userAgent, headers):
-        new: DownloadAsync(task, ct)
-        notes: "进度从 IProgress<DownloadProgress> 改为 IProgress<FileProgressInfo>，UA/headers 改为 Builder 配置"
+imports:
+  lucide_react: "import { X } from 'lucide-react'  # 静态图标保留原样"
+  lucide_data: "import { X as XData, Y as YData } from 'lucide'  # Data 后缀别名避免命名冲突"
+  morphicon: "import { MorphIcon } from 'morphicons/react'"
 
-  DownloadOptions:
-    new: DownloaderOptions
-    notes: "重命名，字段名和结构有变化"
+# 图标映射：lucide-react 组件 → lucide data 别名
+icon_mapping:
+  Loader2: Loader2Data
+  Play: PlayData
+  Wifi: WifiData
+  RotateCw: RotateCwData
+  Download: DownloadData
+  ChevronDown: ChevronDownData
+  ChevronRight: ChevronRightData
 
-  DownloadTask:
-    new: DownloadTask
-    notes: "同名但属性变化：Id 自动生成，Url→Url, Path→SavePath, 新增 MirrorUrls/Headers/Priority"
-    property_mapping:
-      Url: Url  (不变)
-      Path: SavePath
-      task_id (int): Id (string, 自动 GUID)
+# 文件级改动清单
+files:
+  src/pages/Connect.tsx:
+    - L203, L226: launching===inst.instanceId ? Loader2Data : PlayData; className=cn('mr-1', cond && 'animate-spin')
+    - L505: natTypeBusy ? Loader2Data : WifiData; className=cn('mr-1', cond && 'animate-spin')
+    - imports_added: "Loader2Data, PlayData, WifiData (lucide); MorphIcon; cn (../lib/utils.ts, 原无)"
+    - lucide_react_removed: Wifi（仅 ternary 使用，转为 WifiData）
+    - lucide_react_kept: Loader2, Play（其他位置仍用）
+  src/pages/Accounts.tsx:
+    - L514: loading ? Loader2Data : RotateCwData; className=cn('h-3.5 w-3.5', cond && 'animate-spin')
+    - imports_added: "Loader2Data, RotateCwData (lucide); MorphIcon"
+    - lucide_react_removed: RotateCw（仅 ternary 使用）；Loader2 保留（L493 仍用）
+  src/components/LogTab.tsx:
+    - L282: previewExpanded ? ChevronDownData : ChevronRightData; className 两分支相同用字面量
+    - imports_added: "ChevronDownData, ChevronRightData (lucide); MorphIcon"
+    - lucide_react_removed: ChevronDown, ChevronRight
+  src/components/CrashAnalysisDialog.tsx:
+    - L163: exporting ? Loader2Data : DownloadData; className=cn('h-3 w-3', cond && 'animate-spin')
+    - imports_added: "DownloadData, Loader2Data (lucide); MorphIcon; cn (../lib/utils.ts, 原无)"
+    - lucide_react_removed: Download；Loader2 保留（L127 仍用）
+  src/components/DropInstallDialog.tsx:
+    - L292, L297: installing ? RotateCwData : DownloadData; className=cn('mr-1.5 h-3.5 w-3.5', cond && 'animate-spin')（两处相同）
+    - imports_added: "DownloadData, RotateCwData (lucide); MorphIcon"
+    - lucide_react_removed: Download；RotateCw 保留（L233 仍用）
+  src/components/ResourceInstallDialog.tsx:
+    - L470: starting ? RotateCwData : DownloadData; className=cn('mr-1.5 h-3.5 w-3.5', cond && 'animate-spin')
+    - imports_added: "DownloadData, RotateCwData (lucide); MorphIcon"
+    - lucide_react_removed: Download；RotateCw 保留（多处仍用）
 
-  DownloadProgress:
-    new: FileProgressInfo
-    notes: "重命名并重组字段"
-    property_mapping:
-      DownloadedBytes: DownloadedBytes
-      TotalBytes: TotalBytes
-      Progress: ProgressPercent
-      Speed: 无直接对应 → 使用 GlobalProgressInfo.GlobalSpeedBytesPerSec
-
-progress:
-  polling: GetTaskInfos()/GetAllTaskInfos()/GetTaskFileStatuses()
-  new: IProgress<GlobalProgressInfo> + IProgress<FileProgressInfo> 回调
-  notes: "从主动轮询改为推送回调，DownloaderOptions 在构造时注入"
-
-events:
-  OnTaskProgressUpdated:
-    new: IProgress<FileProgressInfo> (在 DownloaderOptions.FileProgress 中配置)
-    notes: "从事件改为 IProgress<T> 模式"
-
-enums:
-  DownloadTask.FileStatus:
-    new: FileProgressStatus
-    value_mapping:
-      Downloading: Downloading
-      Completed: Completed
-      Failed: Failed
-      Pending: Pending (新增)
-
-methods:
-  CreateTask(maxConcurrentFiles, maxRetries, ...):
-    new: DownloaderOptions.MaxConcurrency / DownloaderOptions.DefaultMaxRetries
-    notes: "不再显式创建任务，改为在 DownloaderOptions 或 Builder 中配置全局参数"
-
-  AddFileToTask(tid, url, path):
-    new: 构建 DownloadTask 列表传给 DownloadBatchAsync
-    notes: "不再有 '将文件添加到任务 ID' 的步骤"
-
-  StartTaskAsync(tid, ct, userAgent, headers):
-    new: DownloadBatchAsync(tasks, ct) / DownloadAsync(task, ct)
-    notes: "UA/headers 移到 DownloaderOptions.DefaultUserAgent/DefaultHeaders"
-
-  StopTask(-1):
-    new: Dispose() 或 CancellationToken 取消
-    notes: "不再需要显式 StopTask，Downloader Dispose 自动清理"
-
-  GetAllTaskInfos():
-    new: IProgress<GlobalProgressInfo>
-    notes: "不再轮询，通过 GlobalProgressInfo 回调获取 CompletedTasks/FailedTasks/TotalTasks"
-
-  GetTaskFileStatuses(tid):
-    new: IProgress<FileProgressInfo>
-    notes: "不再轮询，通过 FileProgressInfo 回调获取每个文件进度"
-
-removed:
-  - ignoreRangeProbe200Ok 参数 (Watchdog 机制替代)
-  - singleFileThreadCount 参数 (不再暴露)
-  - .qdtmp 临时文件后缀 (FileWriter 内部处理)
-
-# =====================================================================
-# Qomicex.Launcher.Backend.Neo → qomicex-backend 服务器管理映射表
-# 生成时间: 2026-08-13
-# 迁移分支: migrate/server-management
-# 源端点: InstanceFilesEndpoints.cs MapServerEndpoints (C#)
-# 目标端点: src-backend/qomicex-backend/src/endpoints/instance_files.rs
-# =====================================================================
-
-endpoints:
-  GET /api/instance/{id}/files/servers:
-    new: get_servers
-    notes: "LoadServerList() → OldServerEntryDto[] (Name/Ip/IconBase64/AcceptTextures)，Ip 映射自 ServerEntry.Address"
-
-  POST /api/instance/{id}/files/servers:
-    new: add_server
-    notes: "AddOrUpdateServer({Name, Ip→Address, AcceptTextures=true})，body: {name, ip}"
-
-  DELETE /api/instance/{id}/files/servers?ip=:
-    new: delete_server
-    notes: "RemoveServer(ip) → 204 NoContent"
-
-  GET /api/instance/{id}/files/server-ping?address=:
-    new: server_ping
-    notes: "GetServerStateByAddress → ServerStateResultDto；超时 → isOnline=false + errorMessage='连接超时'；Rust async 变体：C# GetServerStateByAddress → get_server_state_by_address_async（后端 axum handler 直调 async 编排核心，避免同步变体在 tokio worker 线程内 block_on 的 'Cannot start a runtime from within a runtime' panic），同步方法 get_server_state_by_address 保留兼容（block_on 委托同一核心）"
-
-  GET /api/instance/{id}/files/lan-games:
-    new: lan_games
-    notes: "DiscoverLanServers(5s) → LanServerEntry[] (motd/address/port/displayAddress)"
-
-types:
-  ServerEntry (C#):
-    new: qomicex_core::models::local::ServerEntry
-    property_mapping:
-      Name: name
-      Address: address
-      IconBase64: icon_base64 (Option)
-      AcceptTextures: accept_textures
-      Hidden: hidden
-
-  ServerState (C#):
-    new: qomicex_core::models::local::ServerState
-    property_mapping:
-      Name: name
-      Address: address
-      IsOnline: is_online
-      Ping: ping (long→i64)
-      OnlinePlayers: online_players
-      MaxPlayers: max_players
-      Version: version
-      Description: description
-      ErrorMessage: error_message
-      IconBase64: icon_base64 (Option)
-
-  LanServerEntry (C#):
-    new: qomicex_core::models::local::LanServerEntry
-    property_mapping:
-      Motd: motd
-      Address: address
-      Port: port
-      DisplayAddress: display_address
-    notes: "前端 LanGameEntry 声明的 ip/worldName/onlinePlayers/maxPlayers/gameVersion 与 C# 响应字段不一致（源项目遗留），本次不改前端"
-
-factories:
-  ContentService.CreateServerManager(gameDir, version, isolated):
-    new: LocalResourcesFactory::create_server_manager(version, version_specific) -> Box<dyn ServerManager>
-    notes: "core 新增工厂方法，gameDir 由工厂持有（对应 create_mods 既有模式）"
+# 明确不改（非 icon↔icon 切换，维持原样）
+not_converted:
+  - "Connect.tsx L556/599/618/690：ternary 一侧为 null 或文本，非两图标切换"
+  - "静态图标用法（无状态切换）"

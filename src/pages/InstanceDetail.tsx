@@ -1,13 +1,15 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faInfoCircle, faSliders, faSave, faCamera, faCube, faBox, faSun, faServer, faPlay, faFolderOpen, faGear, faTrashCan, faRotate, faRobot, faGlobe, faPlus, faMagnifyingGlass, faDownload, faClipboard, faStar, faWifi, faDatabase, faGamepad, faUser, faPen, faCheck, faBan, faArrowUp, faClone, faList, faLayerGroup, faFileExport, faXmark, faDrawPolygon, faEye, faUpload, faTerminal} from '@fortawesome/free-solid-svg-icons'
+import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Info, Layers, List, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
+import { ArrowUp as ArrowUpData, RotateCw as RotateCwData, Upload as UploadData } from 'lucide'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
+import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { Separator } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
-import { Checkbox } from '../components/ui'
+import { Checkbox, Switch } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { Tabs, TabContent } from '../components/ui'
@@ -23,7 +25,7 @@ import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, getValidRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, MissingFile, GameSettingDto, FileEntry } from '../types/index.ts'
+import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, GameSettingDto, FileEntry } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates, getSchematics, deleteSchematic, renameSchematic, importSchematic } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
@@ -98,17 +100,17 @@ const LOADER_COLORS: Record<string, string> = {
 }
 
 const TABS = [
-  { id: 'overview', icon: faInfoCircle },
-  { id: 'settings', icon: faSliders },
-  { id: 'gamesettings', icon: faGamepad },
-  { id: 'saves', icon: faSave },
-  { id: 'screenshots', icon: faCamera },
-  { id: 'mods', icon: faCube },
-  { id: 'resourcepacks', icon: faBox },
-  { id: 'shaderpacks', icon: faSun },
-  { id: 'datapacks', icon: faDatabase },
-  { id: 'schematics', icon: faDrawPolygon },
-  { id: 'servers', icon: faServer },
+  { id: 'overview', icon: Info },
+  { id: 'settings', icon: SlidersHorizontal },
+  { id: 'gamesettings', icon: Gamepad2 },
+  { id: 'saves', icon: Save },
+  { id: 'screenshots', icon: Camera },
+  { id: 'mods', icon: Box },
+  { id: 'resourcepacks', icon: Package },
+  { id: 'shaderpacks', icon: Sun },
+  { id: 'datapacks', icon: Database },
+  { id: 'schematics', icon: PenTool },
+  { id: 'servers', icon: Server },
 ] as const
 
 function isQuickPlaySupported(gameVersion: string | undefined | null): boolean {
@@ -218,28 +220,23 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
   }, [saves, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faSave} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.saves')}
-            {saves.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({saves.length})</span>}
-          </h3>
+    <SettingSection title={saves.length > 0 ? `${t('instanceDetail.tabs.saves')} (${saves.length})` : t('instanceDetail.tabs.saves')} icon={<Save className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.saves.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
+              <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
           </div>
         </div>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
+            <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
@@ -252,14 +249,13 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             ))}
           </div>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(s => s.filePath)))}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </I18nBatchToolbar>
@@ -277,7 +273,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -340,22 +336,17 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
   }, [screenshots, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faCamera} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.screenshots')}
-            {screenshots.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({screenshots.length})</span>}
-          </h3>
+    <SettingSection title={screenshots.length > 0 ? `${t('instanceDetail.tabs.screenshots')} (${screenshots.length})` : t('instanceDetail.tabs.screenshots')} icon={<Camera className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.screenshots.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
+              <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
           </div>
         </div>
@@ -382,14 +373,13 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             ))}
           </div>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(s => s.filePath)))}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </I18nBatchToolbar>
@@ -407,7 +397,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -421,7 +411,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 }) {
   const navigate = useNavigate()
   const { notify } = useMessageBox()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [search, setSearch] = useState('')
   const [mods, setMods] = useState<ModMetadata[]>([])
   const [loading, setLoading] = useState(true)
@@ -438,11 +428,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [sortBy, setSortBy] = useState('name-asc')
 
   const FILTER_OPTIONS = [
-    { key: 'all', label: t('instanceDetail.mods.filterAll'), icon: faList },
-    { key: 'active', label: t('instanceDetail.mods.enable'), icon: faCheck },
-    { key: 'disabled', label: t('instanceDetail.mods.disable'), icon: faBan },
-    { key: 'updatable', label: t('instanceDetail.mods.updatable'), icon: faArrowUp },
-    { key: 'duplicate', label: t('instanceDetail.mods.duplicate'), icon: faClone },
+    { key: 'all', label: t('instanceDetail.mods.filterAll'), icon: List },
+    { key: 'active', label: t('instanceDetail.mods.enable'), icon: Check },
+    { key: 'disabled', label: t('instanceDetail.mods.disable'), icon: Ban },
+    { key: 'updatable', label: t('instanceDetail.mods.updatable'), icon: ArrowUp },
+    { key: 'duplicate', label: t('instanceDetail.mods.duplicate'), icon: CopyPlus },
   ]
   const SORT_OPTIONS = [
     { key: 'name-asc', label: t('instanceDetail.mods.sortNameAsc') },
@@ -563,9 +553,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const filtered = useMemo(() => {
     let result = [...mods]
     const q = search.toLowerCase()
+    // 中文环境匹配中文名；非中文环境仅英文名（ENH-05）
+    const matchCnName = lang.startsWith('zh')
     if (q) result = result.filter(m =>
       m.name.toLowerCase().includes(q) ||
-      (m.chineseName?.toLowerCase().includes(q)) ||
+      (matchCnName && m.chineseName?.toLowerCase().includes(q)) ||
       m.fileName.toLowerCase().includes(q)
     )
     if (filterType === 'active') result = result.filter(m => m.active)
@@ -586,7 +578,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       return 0
     })
     return result
-  }, [mods, search, filterType, sortBy, updateFileNames])
+  }, [mods, search, filterType, sortBy, updateFileNames, lang])
 
   const lastClickedRef = useRef(-1)
   const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
@@ -675,43 +667,36 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 
   if (!loader) {
     return (
-      <Card>
-        <CardContent className="p-5">
+      <SettingSection title={t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <FontAwesomeIcon icon={faCube} className="h-5 w-5" />
+              <Box className="h-5 w-5" />
             </div>
             <div>
               <h3 className="text-sm font-medium">{t('instanceDetail.mods.management')}</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">{t('instanceDetail.mods.noModsHint')}</p>
             </div>
           </div>
-        </CardContent>
-      </Card>
+      </SettingSection>
     )
   }
 
   return (
     <>
-      <Card>
-        <CardContent className="p-5">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-medium shrink-0">
-              <FontAwesomeIcon icon={faCube} className="mr-2 h-4 w-4 text-muted-foreground" />Mod
-              {mods.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({mods.length})</span>}
-            </h3>
+      <SettingSection title={mods.length > 0 ? `${t('instanceDetail.tabs.mods')} (${mods.length})` : t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
+          <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
-                <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.mods.search')} className="h-8 pl-8 text-xs" />
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
+                <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
               </Button>
               <Button size="sm" variant="outline" onClick={() => setUpdateDialogOpen(true)} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.mods.checkUpdates')}
+                <Download className="h-3.5 w-3.5" />{t('instanceDetail.mods.checkUpdates')}
               </Button>
               <Button size="sm" onClick={() => {
                 const p = new URLSearchParams({ category: 'mod', source: 'modrinth' })
@@ -720,14 +705,14 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                 if (instanceId) p.set('instanceId', instanceId)
                 navigate(`/resource-center?${p.toString()}`)
               }} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.mods.install')}
+                <Download className="h-3.5 w-3.5" />{t('instanceDetail.mods.install')}
               </Button>
             </div>
           </div>
 
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
             <Tabs
-              tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <FontAwesomeIcon icon={o.icon} className="h-3 w-3" /> }))}
+              tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" /> }))}
               activeTab={filterType}
               onChange={setFilterType}
               className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
@@ -741,7 +726,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 
           {enriching && (
             <div className="mb-3 flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-              <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin text-primary" />
+              <RotateCw className="h-3.5 w-3.5 animate-spin text-primary" />
               {t('instanceDetail.mods.fetchingRemoteInfo')}
             </div>
           )}
@@ -752,7 +737,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <div className="flex items-center gap-2">
-                      <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+                      <RotateCw className="h-3 w-3 animate-spin" />
                       {t('instanceDetail.mods.readingMods')}
                     </div>
                     <span className="tabular-nums">{Math.round(loadProgress.current / loadProgress.total * 100)}%</span>
@@ -809,8 +794,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               </div>
             </DragSelectArea>
           )}
-        </CardContent>
-      </Card>
+      </SettingSection>
 
       <I18nBatchToolbar
         selectedCount={selected.size}
@@ -820,11 +804,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'enable' })}>{t('instanceDetail.mods.enable')}</Button>
         <Button variant="ghost" size="sm" onClick={() => setBatchConfirm({ type: 'disable' })}>{t('instanceDetail.mods.disable')}</Button>
         <Button variant="ghost" size="sm" onClick={handleUpdateSelected} disabled={updatingMods || updateTargets.length === 0} className="gap-1.5">
-          {updatingMods ? <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin" /> : <FontAwesomeIcon icon={faArrowUp} className="h-3.5 w-3.5" />}
+          <MorphActionIcon active={updatingMods} busy={RotateCwData} rest={ArrowUpData} className="h-3.5 w-3.5" />
           {t('instanceDetail.mods.updateMods')}
         </Button>
         <Button variant="destructive" size="sm" onClick={() => setBatchConfirm({ type: 'delete' })}>
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </I18nBatchToolbar>
@@ -951,22 +935,17 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
   }, [packs, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faBox} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.resourcepacks')}
-            {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
-          </h3>
+    <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.resourcepacks')} (${packs.length})` : t('instanceDetail.tabs.resourcepacks')} icon={<Package className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.resourcepacks.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
+              <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => {
               const p = new URLSearchParams({ category: 'resourcepack', source: 'modrinth' })
@@ -975,7 +954,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
               if (instanceId) p.set('instanceId', instanceId)
               navigate(`/resource-center?${p.toString()}`)
             }} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.resourcepacks.install')}
+              <Download className="h-3.5 w-3.5" />{t('instanceDetail.resourcepacks.install')}
             </Button>
           </div>
         </div>
@@ -1007,14 +986,13 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             </div>
           </DragSelectArea>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(p => p.fileName)))}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </I18nBatchToolbar>
@@ -1032,7 +1010,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -1119,22 +1097,17 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
   }, [shaders, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faSun} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.shaderpacks')}
-            {shaders.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({shaders.length})</span>}
-          </h3>
+    <SettingSection title={shaders.length > 0 ? `${t('instanceDetail.tabs.shaderpacks')} (${shaders.length})` : t('instanceDetail.tabs.shaderpacks')} icon={<Sun className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.shaderpacks.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
+              <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => {
               const p = new URLSearchParams({ category: 'shader', source: 'modrinth' })
@@ -1143,7 +1116,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
               if (instanceId) p.set('instanceId', instanceId)
               navigate(`/resource-center?${p.toString()}`)
             }} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.shaderpacks.install')}
+              <Download className="h-3.5 w-3.5" />{t('instanceDetail.shaderpacks.install')}
             </Button>
           </div>
         </div>
@@ -1175,14 +1148,13 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             </div>
           </DragSelectArea>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(s => s.fileName)))}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </I18nBatchToolbar>
@@ -1200,7 +1172,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -1283,22 +1255,17 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
   }, [packs, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faDatabase} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.datapacks')}
-            {packs.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({packs.length})</span>}
-          </h3>
+    <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.datapacks')} (${packs.length})` : t('instanceDetail.tabs.datapacks')} icon={<Database className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.datapacks.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
+              <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => {
               const p = new URLSearchParams({ category: 'datapack', source: 'modrinth' })
@@ -1307,7 +1274,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
               if (instanceId) p.set('instanceId', instanceId)
               navigate(`/resource-center?${p.toString()}`)
             }} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faDownload} className="h-3.5 w-3.5" />{t('instanceDetail.datapacks.install')}
+              <Download className="h-3.5 w-3.5" />{t('instanceDetail.datapacks.install')}
             </Button>
           </div>
         </div>
@@ -1339,14 +1306,13 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
             </div>
           </DragSelectArea>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(p => p.fileName)))}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </I18nBatchToolbar>
@@ -1364,7 +1330,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           </Button>
         </DialogFooter>
       </Dialog>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -1466,25 +1432,20 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
   }, [files, search])
 
   return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faDrawPolygon} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.schematics')}
-            {files.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({files.length})</span>}
-          </h3>
+    <SettingSection title={files.length > 0 ? `${t('instanceDetail.tabs.schematics')} (${files.length})` : t('instanceDetail.tabs.schematics')} icon={<PenTool className="h-4 w-4" />}>
+        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 max-w-sm">
             <div className="relative flex-1">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.schematics.search')} className="h-8 pl-8 text-xs" />
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/schematics').catch(() => {})} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
+              <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={importing} className="gap-1.5 h-7 text-xs">
-              {importing ? <FontAwesomeIcon icon={faRotate} className="h-3.5 w-3.5 animate-spin" /> : <FontAwesomeIcon icon={faUpload} className="h-3.5 w-3.5" />}
+              <MorphActionIcon active={importing} busy={RotateCwData} rest={UploadData} className="h-3.5 w-3.5" />
               {t('instanceDetail.schematics.import')}
             </Button>
             <input
@@ -1503,7 +1464,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
         </div>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
+            <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
@@ -1521,7 +1482,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
                 )}
               >
                 <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors', selected.has(f.name) ? 'bg-primary/10 text-primary' : 'bg-muted/60 group-hover:text-primary')}>
-                  <FontAwesomeIcon icon={faDrawPolygon} className="h-4 w-4" />
+                  <PenTool className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{f.name}</div>
@@ -1537,17 +1498,17 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
                 <div className="flex items-center gap-0.5 shrink-0">
                   <Tooltip content={t('instanceDetail.schematics.preview')}>
                     <button aria-label={t('instanceDetail.schematics.preview')} onClick={(e) => { e.stopPropagation(); setPreviewFile(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
-                      <FontAwesomeIcon icon={faEye} className="h-3.5 w-3.5" />
+                      <Eye className="h-3.5 w-3.5" />
                     </button>
                   </Tooltip>
                   <Tooltip content={t('instanceDetail.schematics.rename')}>
                     <button aria-label={t('instanceDetail.schematics.rename')} onClick={(e) => { e.stopPropagation(); setRenameTarget(f.name); setRenameValue(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                      <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
+                      <Pen className="h-3.5 w-3.5" />
                     </button>
                   </Tooltip>
                   <Tooltip content={t('instanceDetail.schematics.delete')}>
                     <button aria-label={t('instanceDetail.schematics.delete')} onClick={(e) => { e.stopPropagation(); handleDeleteOne(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-                      <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                      <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </Tooltip>
                 </div>
@@ -1555,14 +1516,13 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
             ))}
           </div>
         )}
-      </CardContent>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={() => setSelected(new Set())}
         onSelectAll={() => setSelected(new Set(filtered.map(f => f.name)))}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
-          <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
           {t('instanceDetail.deleteSelected', { count: selected.size })}
         </Button>
       </I18nBatchToolbar>
@@ -1606,7 +1566,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
         fileName={previewFile ?? ''}
         onClose={() => setPreviewFile(null)}
       />
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -1717,29 +1677,24 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
 
   return (
     <>
-      <Card>
-        <CardContent className="p-5">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-medium shrink-0">
-              <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.servers')}
-              {servers.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({servers.length})</span>}
-            </h3>
+      <SettingSection title={servers.length > 0 ? `${t('instanceDetail.tabs.servers')} (${servers.length})` : t('instanceDetail.tabs.servers')} icon={<Server className="h-4 w-4" />}>
+          <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
             <div className="flex items-center gap-2 flex-1 max-w-sm">
               <div className="relative flex-1">
-                <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.servers.search')} className="h-8 pl-8 text-xs" />
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <Tooltip content={t('instanceDetail.servers.pingAll')}>
                 <Button size="sm" variant="ghost" onClick={() => {
                   servers.forEach(s => handlePing(s.ip))
                 }} className="h-7 w-7 px-0">
-                  <FontAwesomeIcon icon={faWifi} className="h-3.5 w-3.5" />
+                  <Wifi className="h-3.5 w-3.5" />
                 </Button>
               </Tooltip>
               <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />{t('instanceDetail.servers.addServer')}
+                <Plus className="h-3.5 w-3.5" />{t('instanceDetail.servers.addServer')}
               </Button>
             </div>
           </div>
@@ -1783,7 +1738,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                           {(ps?.iconBase64 || s.iconBase64) ? (
                             <img src={`data:image/png;base64,${ps?.iconBase64 || s.iconBase64}`} alt={s.name} className="h-full w-full object-cover" loading="lazy" />
                           ) : (
-                            <FontAwesomeIcon icon={faServer} className="h-5 w-5 opacity-50" />
+                            <Server className="h-5 w-5 opacity-50" />
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -1806,7 +1761,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                             {ps?.version && <><span className="text-border">·</span><span>{ps.version}</span></>}
                             {ps?.isOnline && <>
                               <span className="text-border">·</span>
-                              <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
+                              <User className="h-3 w-3" />
                               <span>{ps.onlinePlayers}/{ps.maxPlayers}</span>
                             </>}
                           </div>
@@ -1819,22 +1774,22 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                         <div className="flex items-center gap-0.5 shrink-0">
                           <Tooltip content={t('instanceDetail.servers.edit')}>
                             <button onClick={() => handleEdit(s)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                              <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
+                              <Pen className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
                           <Tooltip content={t('instanceDetail.servers.copyIp')}>
                             <button onClick={() => handleCopyIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                              <FontAwesomeIcon icon={faClipboard} className="h-3.5 w-3.5" />
+                              <Clipboard className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
                           <Tooltip content={t('instanceDetail.servers.quickJoin')}>
                             <button onClick={() => onQuickJoinServer(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
-                              <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />
+                              <Play className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
                           <Tooltip content={t('instanceDetail.servers.delete')}>
                             <button onClick={() => setConfirmIp(s.ip)} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-                              <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
                         </div>
@@ -1849,7 +1804,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
             <>
               <Separator className="my-3" />
               <div className="mb-2 flex items-center gap-2">
-                <FontAwesomeIcon icon={faWifi} className="h-3.5 w-3.5 text-muted-foreground" />
+                <Wifi className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="text-xs font-medium text-muted-foreground">{t('instanceDetail.servers.lanGames', { count: lanGames.length })}</span>
               </div>
               <div className="space-y-2">
@@ -1857,7 +1812,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                   <Card key={`${g.ip}:${g.port}-${i}`} className="group border-dashed border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
                     <CardContent className="flex items-start gap-3 p-4">
                       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted/50 text-muted-foreground">
-                        <FontAwesomeIcon icon={faWifi} className="h-5 w-5" />
+                        <Wifi className="h-5 w-5" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <h3 className="font-semibold text-sm">{g.worldName || t('instanceDetail.servers.lanGame')}</h3>
@@ -1872,7 +1827,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                         )}
                       </div>
                       <Button size="sm" onClick={() => onQuickJoinServer(`${g.ip}:${g.port}`)} className="shrink-0 gap-1.5 h-7 text-xs">
-                        <FontAwesomeIcon icon={faPlay} className="h-3 w-3" />{t('instanceDetail.servers.join')}
+                        <Play className="h-3 w-3" />{t('instanceDetail.servers.join')}
                       </Button>
                     </CardContent>
                   </Card>
@@ -1880,8 +1835,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingSection>
       <ConfirmDialog open={confirmIp !== null} title={t('instanceDetail.servers.deleteTitle')} message={t('instanceDetail.servers.deleteConfirm', { ip: confirmIp ?? '' })} onConfirm={() => confirmIp && handleDelete(confirmIp)} onCancel={() => setConfirmIp(null)} />
       <Dialog open={showAdd} onClose={() => { setShowAdd(false); setEditServer(null) }}>
         <DialogHeader onClose={() => { setShowAdd(false); setEditServer(null) }}><DialogTitle>{editServer ? t('instanceDetail.servers.editTitle') : t('instanceDetail.servers.addTitle')}</DialogTitle></DialogHeader>
@@ -2053,7 +2007,7 @@ function GameListSettingEditor({ name, value, onChange, t }: {
               className="text-muted-foreground transition-colors hover:text-destructive"
               aria-label={t('instanceDetail.gamesettings.remove')}
             >
-              <FontAwesomeIcon icon={faXmark} className="h-3 w-3" />
+              <X className="h-3 w-3" />
             </button>
           </Tooltip>
         </span>
@@ -2073,7 +2027,7 @@ function GameListSettingEditor({ name, value, onChange, t }: {
             className="flex h-6 w-6 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             aria-label={t('instanceDetail.gamesettings.add')}
           >
-            <FontAwesomeIcon icon={faPlus} className="h-3 w-3" />
+            <Plus className="h-3 w-3" />
           </button>
         </Tooltip>
       </div>
@@ -2170,20 +2124,16 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
   }, [listeningKey, handleChange])
 
   return (
-    <Card>
-      <CardContent className="p-5 overflow-hidden">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium shrink-0">
-            <FontAwesomeIcon icon={faGamepad} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instanceDetail.tabs.gamesettings')}
-            {!loading && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({settings.length})</span>}
-          </h3>
-          <div className="flex items-center gap-2 flex-1 max-w-sm">
-            <div className="relative flex-1">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.gamesettings.search')} className="h-8 pl-8 text-xs" />
-            </div>
+    <SettingSection title={t('instanceDetail.tabs.gamesettings')} icon={<Gamepad2 className="h-4 w-4" />}>
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center gap-2 flex-1 max-w-sm">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.gamesettings.search')} className="h-8 pl-8 text-xs" />
           </div>
         </div>
+        {!loading && <span className="shrink-0 text-xs font-normal text-muted-foreground">({settings.length})</span>}
+      </div>
         {loading ? (
           <div className="space-y-3">
             {Array.from({ length: 8 }).map((_, i) => (
@@ -2280,8 +2230,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
             })}
           </div>
         )}
-      </CardContent>
-    </Card>
+    </SettingSection>
   )
 }
 
@@ -2312,11 +2261,11 @@ export default function InstanceDetailPage() {
   const [, setRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
   const [accounts, setAccounts] = useState<Account[]>([])
   const [form, setForm] = useState<GameInstance | null>(null)
+  const initialFormRef = useRef<GameInstance | null>(null)
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [memoryMode, setMemoryMode] = useState<'auto' | 'custom'>('auto')
   const [isDefault, setIsDefault] = useState(false)
   const [verifying, setVerifying] = useState(false)
-  const [verifyResult, setVerifyResult] = useState<{ complete: boolean; missingFiles: MissingFile[] } | null>(null)
   const [repairing, setRepairing] = useState(false)
   const [repairProgress, setRepairProgress] = useState(0)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
@@ -2363,11 +2312,12 @@ export default function InstanceDetailPage() {
       try {
         const cacheKey = `api-instance-${id}`
         const cached = cacheGet<GameInstance>(cacheKey)
-        if (cached) { setInstance(cached); setForm({ ...cached }) }
+        if (cached) { setInstance(cached); setForm({ ...cached }); initialFormRef.current = cached }
         const [inst, accts, sys, def] = await Promise.all([getInstance(id!), getAccounts(), getSystemInfo(), getDefaultInstance()])
         if (cancelled) return
         setInstance(inst)
         setForm({ ...inst })
+        initialFormRef.current = inst
         cacheSet(cacheKey, inst)
         setRuntimes([...getRuntimes()])
         setAccounts(accts)
@@ -2432,7 +2382,30 @@ export default function InstanceDetailPage() {
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
   const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
-  const { confirm } = useMessageBox()
+  const { confirm, notify } = useMessageBox()
+
+  const handleResetSection = useCallback(async (fields: (keyof GameInstance)[]) => {
+    const ok = await confirm(t('instanceDetail.settingsTab.resetConfirm'), t('instanceDetail.settingsTab.resetSection'))
+    if (!ok || !initialFormRef.current) return
+    setForm((f) => {
+      if (!f) return f
+      const next = { ...f }
+      for (const k of fields) (next as any)[k] = (initialFormRef.current as any)[k]
+      return next
+    })
+    notify(t('instanceDetail.settingsTab.resetDone'), 'success')
+  }, [confirm, notify, t])
+
+  const ResetButton = ({ fields }: { fields: (keyof GameInstance)[] }) => (
+    <button
+      type="button"
+      onClick={() => handleResetSection(fields)}
+      className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <RotateCcw className="h-3 w-3" />
+      {t('instanceDetail.settingsTab.resetSection')}
+    </button>
+  )
 
   const handleLaunch = useCallback(async () => {
     if (!id) return
@@ -2519,23 +2492,6 @@ export default function InstanceDetailPage() {
     }
   }, [id, instance?.name, instance?.javaPath, instance?.gameVersion, instance?.gameDir, needsAccount, resolveAccountCheck, ctxLaunchInstance, runningInstances, confirm, showLaunchError, t])
 
-  const handleVerifyResources = useCallback(async () => {
-    if (!id) return
-    setVerifying(true)
-    setVerifyResult(null)
-    try {
-      const result = await verifyResources(id)
-      setVerifyResult({ complete: result.complete, missingFiles: result.missingFiles })
-      if (!result.complete && result.missingFiles.length > 0) {
-        await handleRepairResources()
-      }
-    } catch {
-      setVerifyResult({ complete: true, missingFiles: [] })
-    } finally {
-      setVerifying(false)
-    }
-  }, [id])
-
   const handleRepairResources = useCallback(async () => {
     if (!id) return
     setRepairing(true)
@@ -2549,7 +2505,6 @@ export default function InstanceDetailPage() {
             setRepairProgress(100)
             clearInterval(poll)
             setRepairing(false)
-            setVerifyResult(null)
           } else if (progress.status === 'failed') {
             clearInterval(poll)
             setRepairing(false)
@@ -2565,6 +2520,24 @@ export default function InstanceDetailPage() {
       setRepairing(false)
     }
   }, [id])
+
+  const handleVerifyResources = useCallback(async () => {
+    if (!id) return
+    setVerifying(true)
+    try {
+      const result = await verifyResources(id)
+      if (result.complete) {
+        notify(t('instanceDetail.settingsTab.integrityOk'), 'success')
+      } else if (result.missingFiles.length > 0) {
+        notify(t('instanceDetail.settingsTab.missingFiles', { count: result.missingFiles.length }), 'warning')
+        await handleRepairResources()
+      }
+    } catch {
+      notify(t('instanceDetail.settingsTab.integrityOk'), 'success')
+    } finally {
+      setVerifying(false)
+    }
+  }, [id, notify, t, handleRepairResources])
 
   const confirmDelete = useCallback(async () => {
     if (!id || !instance) return
@@ -2606,7 +2579,7 @@ export default function InstanceDetailPage() {
     return (
       <div className="flex h-full items-center justify-center p-8">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('instanceDetail.launch.loadingInstance')}
+          <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.launch.loadingInstance')}
         </div>
       </div>
     )
@@ -2616,7 +2589,7 @@ export default function InstanceDetailPage() {
     return (
       <div className="p-8">
         <Button variant="ghost" onClick={() => navigate('/instances')} className="gap-2">
-          <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />{t('instanceDetail.launch.backToList')}
+          <ArrowLeft className="h-4 w-4" />{t('instanceDetail.launch.backToList')}
         </Button>
         <p className="mt-4 text-sm text-muted-foreground text-center">{t('instanceDetail.launch.instanceNotFound')}</p>
       </div>
@@ -2627,7 +2600,7 @@ export default function InstanceDetailPage() {
     <PageShell className="flex h-screen flex-col space-y-6 overflow-hidden p-8">
       <div className="flex shrink-0 items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/instances')}>
-          <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
+          <ArrowLeft className="h-4 w-4" />
         </Button>
         <InstanceIcon icon={instance.icon} iconData={instance.iconData} loader={instance.loader} className="h-10 w-10 shrink-0 rounded-lg" imgClassName="rounded-lg" />
         <div className="flex-1">
@@ -2640,22 +2613,22 @@ export default function InstanceDetailPage() {
         <div className="flex items-center gap-2">
           <Tooltip content={t('instanceDetail.overview.refresh')}>
             <Button variant="outline" size="icon" onClick={refreshDetail}>
-              <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', loading && 'animate-spin')} />
+              <RotateCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             </Button>
           </Tooltip>
           <Button onClick={handleLaunch} className="gap-2">
-            <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />{t('instanceDetail.overview.launch')}
+            <Play className="h-3.5 w-3.5" />{t('instanceDetail.overview.launch')}
           </Button>
           <Button variant="outline" onClick={handleTestGame} className="gap-2">
-            <FontAwesomeIcon icon={faTerminal} className="h-3.5 w-3.5" />{t('instanceDetail.overview.testGame')}
+            <SquareTerminal className="h-3.5 w-3.5" />{t('instanceDetail.overview.testGame')}
           </Button>
           <Tooltip content={isDefault ? t('instanceDetail.overview.unpin') : t('instanceDetail.overview.pin')}>
             <Button variant="outline" size="icon" onClick={toggleDefault}>
-              <FontAwesomeIcon icon={faStar} className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />
+              <Star className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />
             </Button>
           </Tooltip>
           <Button variant="outline" size="icon" onClick={() => openFolder(gameDir).catch(() => {})}>
-            <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
+            <FolderOpen className="h-4 w-4" />
           </Button>
         </div>
       </div>
@@ -2663,7 +2636,7 @@ export default function InstanceDetailPage() {
       <div className="flex-1 min-h-0 flex gap-4">
         <div className="flex w-44 shrink-0 flex-col">
           <Tabs
-            tabs={TABS.map(tab => ({ id: tab.id, label: t(`instanceDetail.tabs.${tab.id}`), icon: <FontAwesomeIcon icon={tab.icon} className="h-4 w-4" /> }))}
+            tabs={TABS.map(tab => ({ id: tab.id, label: t(`instanceDetail.tabs.${tab.id}`), icon: <tab.icon className="h-4 w-4" /> }))}
             activeTab={tab}
             onChange={(id) => setTab(id as typeof tab)}
             orientation="vertical"
@@ -2748,25 +2721,25 @@ export default function InstanceDetailPage() {
                       ))}
                     </Select>
                     <Button size="sm" onClick={handleLaunch} className="gap-2">
-                      <FontAwesomeIcon icon={faPlay} className="h-3.5 w-3.5" />{t('instanceDetail.overview.launchGame')}
+                      <Play className="h-3.5 w-3.5" />{t('instanceDetail.overview.launchGame')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setTab('settings')} className="gap-2">
-                      <FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" />{t('instanceDetail.overview.instanceSettings')}
+                      <Settings className="h-3.5 w-3.5" />{t('instanceDetail.overview.instanceSettings')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing} className="gap-2">
-                      <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', verifying && 'animate-spin')} />{t('instanceDetail.overview.verifyIntegrity')}
+                      <RotateCw className={cn('h-3.5 w-3.5', verifying && 'animate-spin')} />{t('instanceDetail.overview.verifyIntegrity')}
                     </Button>
                     {repairing && (
                       <span className="self-center text-xs text-muted-foreground">{t('instanceDetail.overview.repairing', { progress: repairProgress })}</span>
                     )}
                     <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch(() => {})}>
-                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />{t('instanceDetail.overview.openGameDir')}
+                      <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.overview.openGameDir')}
                     </Button>
                     <Button size="sm" variant="outline" className="gap-2" onClick={() => setExportOpen(true)}>
-                      <FontAwesomeIcon icon={faFileExport} className="h-3.5 w-3.5" />{t('instanceDetail.overview.exportModpack')}
+                      <FileOutput className="h-3.5 w-3.5" />{t('instanceDetail.overview.exportModpack')}
                     </Button>
                     <Button size="sm" variant="outline" className="gap-2 text-destructive hover:text-destructive" onClick={handleDelete}>
-                      <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />{t('instanceDetail.overview.deleteInstance')}
+                      <Trash2 className="h-3.5 w-3.5" />{t('instanceDetail.overview.deleteInstance')}
                     </Button>
                   </div>
                 </CardContent>
@@ -2775,7 +2748,7 @@ export default function InstanceDetailPage() {
               <Card>
                 <CardContent className="p-5 space-y-3">
                   <h3 className="text-sm font-medium flex items-center gap-2">
-                    <FontAwesomeIcon icon={faLayerGroup} className="h-3.5 w-3.5 text-muted-foreground" />
+                    <Layers className="h-3.5 w-3.5 text-muted-foreground" />
                     {t('instances.groups')}
                   </h3>
                   {groups.length === 0 ? (
@@ -2793,7 +2766,7 @@ export default function InstanceDetailPage() {
                           >
                             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: g.color }} />
                             {g.name}
-                            {active && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+                            {active && <Check className="h-3 w-3" />}
                           </button>
                         )
                       })}
@@ -2806,81 +2779,58 @@ export default function InstanceDetailPage() {
           </TabContent>
 
           {tab === 'settings' && (
-            <Card>
-              <CardContent className="p-5 space-y-5">
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.instanceName')}</Label>
-                  <Input value={form.name} onChange={(e) => update('name', e.target.value)} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.instanceIcon')}</Label>
+            <div className="space-y-4">
+              <SettingSection title={t('instanceDetail.settingsTab.instanceName')} icon={<Settings className="h-4 w-4" />} action={<ResetButton fields={['name', 'icon', 'javaPath']} />}>
+                <SettingRow label={t('instanceDetail.settingsTab.instanceName')} control={<Input value={form.name} onChange={(e) => update('name', e.target.value)} />} />
+                <SettingRow label={t('instanceDetail.settingsTab.instanceIcon')} control={
                   <div className="grid grid-cols-8 gap-2">
                     {ICON_NAMES.map((name) => (
                       <button
                         key={name}
+                        type="button"
                         onClick={async () => {
                           if (!id) return
-                          update('icon', name)
-                          const updated = await updateInstance(id, { icon: name })
-                          setInstance(updated)
+                          try {
+                            update('icon', name)
+                            const updated = await updateInstance(id, { icon: name })
+                            setInstance(updated)
+                            cacheSet(`api-instance-${id}`, updated)
+                          } catch (e) { console.error('Update icon failed:', e) }
                         }}
-                        className="flex items-center justify-center rounded-lg border border-transparent p-1 transition-colors hover:border-muted-foreground/30"
+                        className={cn(
+                          'flex items-center justify-center rounded-lg border p-1 transition-colors hover:border-muted-foreground/30',
+                          form.icon === name ? 'border-primary bg-primary/10' : 'border-transparent'
+                        )}
                       >
                         <InstanceIcon icon={name} className="h-8 w-8" />
                       </button>
                     ))}
                   </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.gameVersion')}</Label>
-                  <Input value={form.gameVersion} disabled className="text-muted-foreground" />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.javaRuntime')}</Label>
+                } />
+                <SettingRow label={t('instanceDetail.settingsTab.gameVersion')} control={<Input value={form.gameVersion} disabled className="text-muted-foreground" />} />
+                <SettingRow label={t('instanceDetail.settingsTab.javaRuntime')} control={
                   <Select value={form.javaPath ?? ''} onChange={(v) => update('javaPath', v || null)}>
                     <SelectOption value="">{t('instanceDetail.settingsTab.autoSelect')}</SelectOption>
                     {getValidRuntimes().map((j, i) => (
                       <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                     ))}
                   </Select>
-                </div>
+                } />
+              </SettingSection>
 
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.integrity')}</Label>
+              <SettingSection title={t('instanceDetail.settingsTab.integrity')} icon={<ShieldCheck className="h-4 w-4" />} action={<ResetButton fields={['versionIsolation', 'skipIntegrityCheck']} />}>
+                <SettingRow label={t('instanceDetail.settingsTab.checkIntegrity')} control={
                   <div className="flex items-center gap-2">
                     <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing}>
-                      <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', verifying && 'animate-spin')} />
+                      <RotateCw className={cn('h-4 w-4', verifying && 'animate-spin')} />
                       {t('instanceDetail.settingsTab.checkIntegrity')}
                     </Button>
                     {repairing && (
                       <span className="text-sm text-muted-foreground">{t('instanceDetail.settingsTab.repairing', { progress: repairProgress })}</span>
                     )}
                   </div>
-                  {verifyResult && !verifyResult.complete && (
-                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-                      <p className="text-sm font-medium text-destructive">{t('instanceDetail.settingsTab.missingFiles', { count: verifyResult.missingFiles.length })}</p>
-                      <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
-                        {verifyResult.missingFiles.map((f, i) => (
-                          <li key={i} className="truncate">
-                            <Tooltip content={f.url}>
-                              <span className="block truncate">{f.name} — {f.url}</span>
-                            </Tooltip>
-                          </li>
-                        ))}
-                      </ul>
-                      <p className="mt-2 text-xs text-muted-foreground">{t('instanceDetail.settingsTab.autoRepairing')}</p>
-                    </div>
-                  )}
-                  {verifyResult && verifyResult.complete && (
-                    <p className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.integrityOk')}</p>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.versionIsolation')}</Label>
+                } />
+                <SettingRow label={t('instanceDetail.settingsTab.versionIsolation')} description={t('instanceDetail.settingsTab.isolationDesc')} control={
                   <Select
                     value={form.versionIsolation == null ? 'global' : form.versionIsolation ? 'on' : 'off'}
                     onChange={(v) => update('versionIsolation', v === 'global' ? null : v === 'on')}
@@ -2889,31 +2839,21 @@ export default function InstanceDetailPage() {
                     <SelectOption value="on">{t('instanceDetail.settingsTab.on')}</SelectOption>
                     <SelectOption value="off">{t('instanceDetail.settingsTab.off')}</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.isolationDesc')}</p>
-                </div>
+                } />
+                <SettingRow label={t('instanceDetail.settingsTab.skipIntegrity')} description={t('instanceDetail.settingsTab.skipIntegrityDesc')} control={<Switch checked={form.skipIntegrityCheck === true} onCheckedChange={(c) => update('skipIntegrityCheck', c === true)} />} />
+              </SettingSection>
 
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
-                    checked={form.skipIntegrityCheck === true}
-                    onCheckedChange={(c) => update('skipIntegrityCheck', c === true)}
-                  />
-                  <div>
-                    <div className="text-sm font-medium">{t('instanceDetail.settingsTab.skipIntegrity')}</div>
-                    <div className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.skipIntegrityDesc')}</div>
-                  </div>
-                </label>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.memoryAllocation')}</Label>
+              <SettingSection title={t('instanceDetail.settingsTab.memoryAllocation')} icon={<MemoryStick className="h-4 w-4" />} action={<ResetButton fields={['maxMemory']} />}>
+                <div className="space-y-3 px-4 py-3">
                   <div className="flex items-center gap-2">
                     <button onClick={() => {
                       setMemoryMode('auto')
                       if (sysInfo) update('maxMemory', Math.max(512, Math.floor(sysInfo.availableMemory * 0.7)))
-                    }} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                      <FontAwesomeIcon icon={faRobot} className="mr-1.5 h-3.5 w-3.5" />{t('instanceDetail.settingsTab.auto')}
+                    }} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                      <Bot className="h-3.5 w-3.5" />{t('instanceDetail.settingsTab.auto')}
                     </button>
-                    <button onClick={() => setMemoryMode('custom')} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                      <FontAwesomeIcon icon={faSliders} className="mr-1.5 h-3.5 w-3.5" />{t('instanceDetail.settingsTab.custom')}
+                    <button onClick={() => setMemoryMode('custom')} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                      <SlidersHorizontal className="h-3.5 w-3.5" />{t('instanceDetail.settingsTab.custom')}
                     </button>
                   </div>
 
@@ -2956,20 +2896,23 @@ export default function InstanceDetailPage() {
                     )
                   })()}
                 </div>
+              </SettingSection>
 
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.jvmArgs')}</Label>
+              <SettingSection title={t('instanceDetail.settingsTab.jvmArgs')} icon={<SquareTerminal className="h-4 w-4" />} action={<ResetButton fields={['jvmArgs', 'accountUuid', 'accountName', 'accessToken']} />}>
+                <div className="px-4 py-3">
+                  <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400">
+                    <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{t('instanceDetail.settingsTab.jvmArgsWarning')}</span>
+                  </div>
                   <textarea
                     value={form.jvmArgs ?? ''}
                     onChange={(e) => update('jvmArgs', e.target.value)}
                     placeholder="-Xmx2G -XX:+UseG1GC"
-                    rows={3}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                    rows={4}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y font-mono"
                   />
                 </div>
-
-                <div className="space-y-2">
-                  <Label>{t('instanceDetail.settingsTab.linkedAccount')}</Label>
+                <SettingRow label={t('instanceDetail.settingsTab.linkedAccount')} control={
                   <Select value={form.accountUuid ?? ''} onChange={(v) => {
                     const acc = accounts.find((a) => a.uuid === v)
                     update('accountUuid', v || null)
@@ -2981,15 +2924,14 @@ export default function InstanceDetailPage() {
                       <SelectOption key={a.uuid} value={a.uuid}>{a.name}</SelectOption>
                     ))}
                   </Select>
-                </div>
-
+                } />
                 {saving && (
-                  <div className="flex justify-end pt-2">
+                  <div className="flex justify-end px-4 pb-3">
                     <span className="text-xs text-muted-foreground">{t('instanceDetail.settingsTab.saving')}</span>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </SettingSection>
+            </div>
           )}
 
           <TabContent activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} onQuickJoinWorld={(name) => handleQuickLaunch({ joinWorld: name })} running={runningInstances.some(r => r.instanceId === id)} /></TabContent>

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faStop, faGamepad, faCube } from '@fortawesome/free-solid-svg-icons'
+import { Box, Gamepad2, Square } from 'lucide-react'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
@@ -41,11 +40,11 @@ export default function RunningInstances() {
       {runningInstances.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 text-muted-foreground">
           <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-muted/50">
-            <FontAwesomeIcon icon={faGamepad} className="h-10 w-10 opacity-30" />
+            <Gamepad2 className="h-10 w-10 opacity-30" />
           </div>
           <p className="text-sm">{t('running.noRunningGame')}</p>
           <Button variant="outline" size="sm" onClick={() => navigate('/instances')}>
-            <FontAwesomeIcon icon={faCube} className="h-4 w-4" />{t('running.goToInstances')}
+            <Box className="h-4 w-4" />{t('running.goToInstances')}
           </Button>
         </div>
       ) : (
@@ -77,7 +76,7 @@ export default function RunningInstances() {
                     className="flex-shrink-0 text-muted-foreground hover:text-destructive hover:border-destructive/50"
                     onClick={() => killInstance(inst.instanceId)}
                   >
-                    <FontAwesomeIcon icon={faStop} className="h-3.5 w-3.5" />
+                    <Square className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </CardContent>

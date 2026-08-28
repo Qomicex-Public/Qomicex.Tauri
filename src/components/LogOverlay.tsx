@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBug, faXmark, faChevronDown, faChevronUp, faCopy } from '@fortawesome/free-solid-svg-icons'
+import { Bug, ChevronDown, ChevronUp, Copy, X } from 'lucide-react'
 import { get } from '../api/client.ts'
 import { cn } from '../lib/utils.ts'
 import { useI18n } from '../i18n/index.tsx'
@@ -66,10 +65,10 @@ export default function LogOverlay() {
           className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-[11px] text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/85"
           style={{ pointerEvents: 'auto' }}
         >
-          <FontAwesomeIcon icon={faBug} className="h-3 w-3" />
+          <Bug className="h-3 w-3" />
           <span className="tabular-nums">{logs.length}</span>
           {latest && <span className="max-w-[200px] truncate text-white/60">{latest}</span>}
-          <FontAwesomeIcon icon={faChevronUp} className="h-2.5 w-2.5 text-white/40" />
+          <ChevronUp className="h-2.5 w-2.5 text-white/40" />
         </button>
       </div>
     )
@@ -83,20 +82,20 @@ export default function LogOverlay() {
       >
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <span className="text-xs font-medium text-muted-foreground">
-            <FontAwesomeIcon icon={faBug} className="mr-1.5 h-3 w-3" />
+            <Bug className="mr-1.5 h-3 w-3" />
             {t('tools.logs.debugLogsCount', { count: logs.length })}
           </span>
           <div className="flex items-center gap-1">
             <Tooltip content={t('common.copy')}>
               <button onClick={handleCopy} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
-                <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />
+                <Copy className="h-3 w-3" />
               </button>
             </Tooltip>
             <button onClick={() => setLogs([])} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
-              <FontAwesomeIcon icon={faXmark} className="h-3 w-3" />
+              <X className="h-3 w-3" />
             </button>
             <button onClick={() => setCollapsed(true)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
-              <FontAwesomeIcon icon={faChevronDown} className="h-3 w-3" />
+              <ChevronDown className="h-3 w-3" />
             </button>
           </div>
         </div>

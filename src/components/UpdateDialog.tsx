@@ -5,8 +5,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Tooltip } from './ui'
 import { Button } from './ui'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowUp, faRotate, faDownload, faCheckCircle, faTriangleExclamation, faExternalLinkAlt, faBroom } from '@fortawesome/free-solid-svg-icons'
+import { ArrowUp, CheckCircle2, Download, Eraser, ExternalLink, RotateCw, TriangleAlert } from 'lucide-react'
 import { useI18n } from '../i18n/index.tsx'
 import { REPOSITORY_URL } from '../constants/credits.ts'
 
@@ -76,9 +75,9 @@ export default function UpdateDialog({ open, update, required = false, onClose }
       <DialogHeader onClose={required ? undefined : onClose}>
         <DialogTitle className="flex items-center gap-2">
           {required ? (
-            <FontAwesomeIcon icon={faTriangleExclamation} className="h-4 w-4 text-amber-400" />
+            <TriangleAlert className="h-4 w-4 text-amber-400" />
           ) : (
-            <FontAwesomeIcon icon={faArrowUp} className="h-4 w-4 text-muted-foreground" />
+            <ArrowUp className="h-4 w-4 text-muted-foreground" />
           )}
           {t('dialogs.update.foundNew', { version: update.version })}
         </DialogTitle>
@@ -93,14 +92,14 @@ export default function UpdateDialog({ open, update, required = false, onClose }
             onClick={() => openUrl(releaseUrl).catch(() => window.open(releaseUrl, '_blank'))}
             className="inline-flex items-center gap-1 text-primary hover:underline"
           >
-            <FontAwesomeIcon icon={faExternalLinkAlt} className="h-2.5 w-2.5" />
+            <ExternalLink className="h-2.5 w-2.5" />
             {t('dialogs.update.viewRelease')}
           </button>
         </div>
 
         {required && (
           <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
-            <FontAwesomeIcon icon={faTriangleExclamation} className="h-3.5 w-3.5 shrink-0" />
+            <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
             {t('dialogs.update.requiredNotice')}
           </div>
         )}
@@ -123,13 +122,13 @@ export default function UpdateDialog({ open, update, required = false, onClose }
         )}
         {state === 'done' && (
           <span className="flex items-center gap-1 text-xs text-primary">
-            <FontAwesomeIcon icon={faCheckCircle} className="h-3 w-3" />
+            <CheckCircle2 className="h-3 w-3" />
             {t('dialogs.update.done')}
           </span>
         )}
         {state === 'downloading' && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />
+            <RotateCw className="h-3 w-3 animate-spin" />
             <span>{t('dialogs.update.downloading', { progress })}</span>
           </div>
         )}
@@ -141,13 +140,13 @@ export default function UpdateDialog({ open, update, required = false, onClose }
         )}
         {state === 'error' && (
           <Button variant="outline" size="sm" onClick={() => { setState('idle'); setError(undefined) }}>
-            <FontAwesomeIcon icon={faBroom} className="mr-1 h-3 w-3" />
+            <Eraser className="mr-1 h-3 w-3" />
             {t('dialogs.update.retry')}
           </Button>
         )}
         {state === 'idle' && (
           <Button size="sm" onClick={handleDownload}>
-            <FontAwesomeIcon icon={faDownload} className="mr-1 h-3 w-3" />
+            <Download className="mr-1 h-3 w-3" />
             {t('dialogs.update.updateNow')}
           </Button>
         )}

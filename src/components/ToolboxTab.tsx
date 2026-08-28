@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faDownload, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
-import { Card, CardHeader, CardTitle, CardContent } from './ui'
+import { Download, FolderOpen } from 'lucide-react'
 import { Button } from './ui'
 import { Input } from './ui'
 import { Label } from './ui'
@@ -14,6 +12,7 @@ import { downloadTo } from '../api/resource-download.ts'
 import { getDataDir } from '../api/settings.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { open } from '@tauri-apps/plugin-dialog'
+import { SettingSection } from './settings/SettingRow.tsx'
 import { useI18n } from '../i18n/index.tsx'
 
 export default function ToolboxTab() {
@@ -92,14 +91,8 @@ export default function ToolboxTab() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <FontAwesomeIcon icon={faDownload} className="mr-2 h-4 w-4 text-muted-foreground" />
-            {t('tools.toolbox.title')}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <SettingSection title={t('tools.toolbox.title')} icon={<Download className="h-4 w-4" />}>
+        <div className="space-y-4 p-4">
           <p className="text-sm text-muted-foreground">
             {t('tools.toolbox.description')}
           </p>
@@ -127,7 +120,7 @@ export default function ToolboxTab() {
               />
               <Tooltip content={t('tools.toolbox.pickFolder')}>
                 <Button variant="outline" size="icon" onClick={handlePickFolder} className="shrink-0">
-                  <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
+                  <FolderOpen className="h-4 w-4" />
                 </Button>
               </Tooltip>
             </div>
@@ -144,7 +137,7 @@ export default function ToolboxTab() {
             disabled={downloading || !validCount || !targetDir}
             className="w-full"
           >
-            <FontAwesomeIcon icon={faDownload} className={cn('h-4 w-4', downloading && 'animate-spin')} />
+            <Download className={cn('h-4 w-4', downloading && 'animate-spin')} />
             <span>
               {downloading
                 ? t('tools.toolbox.submitting')
@@ -153,8 +146,8 @@ export default function ToolboxTab() {
                   : t('tools.toolbox.startDownload')}
             </span>
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
     </div>
   )
 }

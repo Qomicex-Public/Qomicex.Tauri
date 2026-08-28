@@ -25,6 +25,15 @@ export function searchResources(params: {
   return get<ResourceSearchResponse>(`/resources/search?${q}`)
 }
 
+export interface ResourceCategory {
+  slug: string
+  name: string
+}
+
+export function getResourceCategories(source: string, category: string): Promise<ResourceCategory[]> {
+  return get<ResourceCategory[]>(`/resources/categories?source=${encodeURIComponent(source)}&category=${encodeURIComponent(category)}`)
+}
+
 export function getResourceDetail(id: string, source?: string, category?: string): Promise<ResourceDetail> {
   const q = new URLSearchParams()
   if (source) q.set('source', source)

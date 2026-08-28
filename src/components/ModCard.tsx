@@ -1,8 +1,7 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCube, faRotate } from '@fortawesome/free-solid-svg-icons'
-import { Card, CardContent } from './ui'
+import { Box } from 'lucide-react'
+import { Card, CardContent, Switch } from './ui'
 import { Tooltip } from './ui'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
@@ -35,7 +34,7 @@ export default function ModCard({
   mod, instanceId, gameVersion, loader, onRefresh, onToggle, onChangeVersion,
   selected, onSelect, update, onUpdated,
 }: ModCardProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const hasUpdate = !!update
@@ -142,16 +141,18 @@ export default function ModCard({
                 ) : mod.iconUrl && !imgError ? (
                   <img src={mod.iconUrl} alt={mod.name} className="h-full w-full object-cover" loading="lazy" onError={() => setImgError(true)} />
                 ) : (
-                  <FontAwesomeIcon icon={faCube} className="h-5 w-5 opacity-50" />
+                  <Box className="h-5 w-5 opacity-50" />
                 )
               ) : (
-                <FontAwesomeIcon icon={faCube} className="h-5 w-5 opacity-50" />
+                <Box className="h-5 w-5 opacity-50" />
               )}
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h3 className="truncate text-sm font-semibold text-foreground">
-                  {mod.chineseName ? <>{mod.chineseName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {mod.name}</span></> : mod.name}
+                <h3 className="truncate text-sm font-semibold text-foreground leading-snug">
+                  {lang.startsWith('zh') && mod.chineseName ? (
+                    <>{mod.chineseName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {mod.name}</span></>
+                  ) : mod.name}
                 </h3>
                 {hasUpdate && (
                   <Tooltip content={update ? t('dialogs.mod.updateAvailableTo', { version: update.latestVersion }) : ''}>
@@ -175,25 +176,12 @@ export default function ModCard({
               )}
             </div>
             <Tooltip content={mod.active ? t('common.enabled') : t('common.disabled')}>
-              <button
-                onClick={(e) => { e.stopPropagation(); handleToggle() }}
+              <Switch
+                checked={mod.active}
+                onCheckedChange={() => handleToggle()}
                 disabled={toggling}
-                className={cn(
-                  'relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors duration-200',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                  'ring-1 ring-inset ring-white/[0.06]',
-                  mod.active ? 'bg-primary' : 'bg-muted-foreground/25',
-                  toggling && 'opacity-50 cursor-wait'
-                )}
-              >
-                <span
-                  className={cn(
-                    'inline-block h-4 w-4 rounded-full bg-white transition-all duration-200',
-                    mod.active ? 'translate-x-[22px] shadow-md' : 'translate-x-[4px] shadow-sm'
-                  )}
-                />
-                {toggling && <FontAwesomeIcon icon={faRotate} className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />}
-              </button>
+                aria-label={mod.active ? t('common.disabled') : t('common.enabled')}
+              />
             </Tooltip>
           </CardContent>
         </Card>

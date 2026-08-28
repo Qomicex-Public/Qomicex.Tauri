@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlay, faChevronDown, faUser, faCheck, faCube } from '@fortawesome/free-solid-svg-icons'
+import { Box, Check, ChevronDown, Play, User } from 'lucide-react'
 import { cn } from '../lib/utils.ts'
 import { Button } from '../components/ui'
 import { useMessageBox } from '../components/ui'
@@ -140,7 +139,7 @@ export default function Dashboard() {
                 <AccountAvatar account={defaultAccount} className="h-9 w-9 shrink-0" />
               ) : (
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted">
-                  <FontAwesomeIcon icon={faUser} className="h-4 w-4 text-muted-foreground" />
+                  <User className="h-4 w-4 text-muted-foreground" />
                 </div>
               )}
               <div className="min-w-0 flex-1">
@@ -148,7 +147,7 @@ export default function Dashboard() {
                 <p className="text-[10px] text-muted-foreground/60">{defaultAccount ? t('dashboard.defaultAccount') : t('dashboard.addInSettings')}</p>
               </div>
               <Button variant="ghost" size="sm" onClick={openAccountDropdown} className="h-6 w-6 shrink-0 p-0">
-                <FontAwesomeIcon icon={faChevronDown} className={cn('h-3 w-3 transition-transform duration-200', accountsOpen && 'rotate-180')} />
+                <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', accountsOpen && 'rotate-180')} />
               </Button>
             </div>
           </div>
@@ -165,7 +164,7 @@ export default function Dashboard() {
                     >
                       <AccountAvatar account={acc} className="h-6 w-6 shrink-0" />
                       <span className="flex-1 truncate">{acc.name}</span>
-                      {isDefault && <FontAwesomeIcon icon={faCheck} className="h-3 w-3 text-primary" />}
+                      {isDefault && <Check className="h-3 w-3 text-primary" />}
                     </button>
                   )
                 })}
@@ -175,7 +174,7 @@ export default function Dashboard() {
                   onMouseDown={() => { navigate('/accounts'); setAccountsOpen(false) }}
                   className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-muted-foreground hover:bg-accent transition-colors"
                 >
-                  <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
+                  <User className="h-3 w-3" />
                   {t('dashboard.manageAccounts')}
                 </button>
               </div>
@@ -217,14 +216,14 @@ export default function Dashboard() {
               onClick={handleLaunch}
               className="flex h-14 items-center gap-3 rounded-xl px-10 text-lg font-bold tracking-widest transition-all hover:brightness-110 active:scale-95"
             >
-              <FontAwesomeIcon icon={faPlay} className="h-5 w-5" />
+              <Play className="h-5 w-5" />
               {t('dashboard.launch')}
             </Button>
           </div>
         </div>
       ) : (
         <div className="glass-surface mt-auto flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border/40 bg-card/30 px-6 py-8 text-center backdrop-blur-md">
-          <FontAwesomeIcon icon={faCube} className="h-6 w-6 text-muted-foreground/30" />
+          <Box className="h-6 w-6 text-muted-foreground/30" />
           <p className="text-sm text-muted-foreground">{t('dashboard.noPinnedInstance')}</p>
           <Button variant="outline" size="sm" onClick={() => navigate('/instances')} className="mt-1">
             {t('dashboard.goToInstances')}

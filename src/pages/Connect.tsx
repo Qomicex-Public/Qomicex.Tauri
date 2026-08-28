@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCopy, faSpinner, faDoorOpen, faRightToBracket, faPlay, faPlus, faMinus, faWifi, faArrowLeft, faUserSlash } from '@fortawesome/free-solid-svg-icons'
+import { ArrowLeft, Copy, DoorOpen, Loader2, LogIn, Minus, Play, Plus, UserX } from 'lucide-react'
+import { Loader2 as Loader2Data, Play as PlayData, Wifi as WifiData } from 'lucide'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Tabs, TabContent, Tooltip, Dialog, DialogHeader, DialogTitle, DialogDescription } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
@@ -76,7 +77,7 @@ function PlayerRow({ p, onKick }: { p: ConnectorPlayer; onKick?: () => void }) {
       {onKick && (
         <Tooltip content={t('connect.kick')}>
           <Button size="sm" variant="ghost" onClick={onKick} className="h-8 w-8 shrink-0 text-destructive hover:text-destructive">
-            <FontAwesomeIcon icon={faUserSlash} />
+            <UserX />
           </Button>
         </Tooltip>
       )}
@@ -136,7 +137,7 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
     <TabContent activeTab={roomTab} tabId="mods" className="space-y-3">
       {loading && !data ? (
         <p className="flex items-center gap-2 pt-2 text-xs text-muted-foreground">
-          <FontAwesomeIcon icon={faSpinner} spin /> {t('connect.scanningMatch')}
+          <Loader2 className="animate-spin" /> {t('connect.scanningMatch')}
         </p>
       ) : mods.length === 0 ? (
         <p className="pt-2 text-xs text-muted-foreground">{t('connect.noHostMods')}</p>
@@ -175,7 +176,7 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
     <TabContent activeTab={roomTab} tabId="instances" className="space-y-3 pt-2">
       {loading && !data ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <FontAwesomeIcon icon={faSpinner} spin /> {t('connect.scanningLocal')}
+          <Loader2 className="animate-spin" /> {t('connect.scanningLocal')}
         </p>
       ) : (
         <>
@@ -198,7 +199,7 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
                 </div>
               </div>
               <Button size="sm" onClick={() => onLaunch(inst.instanceId)} disabled={launching !== null}>
-                {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
+                <MorphActionIcon active={launching === inst.instanceId} busy={Loader2Data} rest={PlayData} className="mr-1" />
                 {t('connect.quickLaunch')}
               </Button>
             </div>
@@ -221,7 +222,7 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
                   onClick={() => onLaunch(inst.instanceId)}
                   disabled={launching !== null}
                 >
-                  {launching === inst.instanceId ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPlay} className="mr-1" />}
+                  <MorphActionIcon active={launching === inst.instanceId} busy={Loader2Data} rest={PlayData} className="mr-1" />
                   {t('connect.forceLaunch')}
                 </Button>
               </Tooltip>
@@ -500,7 +501,7 @@ export default function Connect() {
         <div className="flex items-center gap-2">
           {natTypeBadge}
           <Button variant="outline" size="sm" onClick={testNatType} disabled={natTypeBusy}>
-            {natTypeBusy ? <FontAwesomeIcon icon={faSpinner} spin className="mr-1" /> : <FontAwesomeIcon icon={faWifi} className="mr-1" />}
+            <MorphActionIcon active={natTypeBusy} busy={Loader2Data} rest={WifiData} className="mr-1" />
             {t('connect.natCheck')}
           </Button>
         </div>
@@ -518,7 +519,7 @@ export default function Connect() {
           ) : (
             <>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <FontAwesomeIcon icon={faSpinner} spin />
+                <Loader2 className="animate-spin" />
                 <span>{t(`connect.easyTierStatus.${easyTier.status}`)}</span>
                 <span className="ml-auto text-xs">{Math.round(easyTier.progress)}% {fmtSpeed(easyTier.speed)}</span>
               </div>
@@ -534,8 +535,8 @@ export default function Connect() {
         <>
           <Tabs
             tabs={[
-              { id: 'create', label: t('connect.tabCreate'), icon: <FontAwesomeIcon icon={faDoorOpen} className="h-4 w-4" /> },
-              { id: 'join', label: t('connect.tabJoin'), icon: <FontAwesomeIcon icon={faRightToBracket} className="h-4 w-4" /> },
+              { id: 'create', label: t('connect.tabCreate'), icon: <DoorOpen className="h-4 w-4" /> },
+              { id: 'join', label: t('connect.tabJoin'), icon: <LogIn className="h-4 w-4" /> },
             ]}
             activeTab={tab}
             onChange={(id) => setTab(id as 'create' | 'join')}
@@ -551,8 +552,8 @@ export default function Connect() {
                 {instances.map((i) => <SelectOption key={i.id} value={i.id}>{i.name}</SelectOption>)}
               </Select>
               <Button onClick={handleHostInstance} disabled={busy || !etReady} className="w-full">
-                {busy ? <FontAwesomeIcon icon={faSpinner} spin className="mr-2" /> : null}
-                {busy ? t('connect.starting') : <><FontAwesomeIcon icon={faPlay} className="mr-2" />{t('connect.startAndCreate')}</>}
+                {busy ? <Loader2 className="mr-2 animate-spin" /> : null}
+                {busy ? t('connect.starting') : <><Play className="mr-2" />{t('connect.startAndCreate')}</>}
               </Button>
               <p className="text-xs text-muted-foreground">
                 {t('connect.openLanHint')}
@@ -569,7 +570,7 @@ export default function Connect() {
             <Card className="space-y-4 border p-5">
               <div className="flex items-center gap-2">
                 <button onClick={() => setHostSubMode('instance')} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
-                  <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
+                  <ArrowLeft className="h-4 w-4" />
                 </button>
                 <h2 className="text-lg font-semibold">{t('connect.scanPortTitle')}</h2>
               </div>
@@ -577,7 +578,7 @@ export default function Connect() {
               {scanning && detectedPort === null && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <FontAwesomeIcon icon={faSpinner} spin />
+                    <Loader2 className="animate-spin" />
                     <span>{t('connect.scanningPorts')}</span>
                   </div>
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -594,7 +595,7 @@ export default function Connect() {
                       <p className="text-2xl font-bold">{detectedPort}</p>
                     </div>
                     <Button onClick={handleHostPort} disabled={busy || !etReady}>
-                      {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : t('connect.createRoom')}
+                      {busy ? <Loader2 className="animate-spin" /> : t('connect.createRoom')}
                     </Button>
                   </div>
                 </div>
@@ -605,15 +606,15 @@ export default function Connect() {
                   <div className="flex gap-2">
                     <div className="flex items-center gap-2">
                       <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setPort(String(Math.max(1, (parseInt(port) || 0) - 1)))} disabled={!port || parseInt(port) <= 1}>
-                        <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                        <Minus className="h-3.5 w-3.5" />
                       </Button>
                       <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="25565" className="w-24 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
                       <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setPort(String(Math.min(65535, (parseInt(port) || 0) + 1)))} disabled={parseInt(port) >= 65535}>
-                        <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                        <Plus className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                     <Button onClick={handleHostPort} disabled={busy || !etReady} variant="outline">
-                      {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : t('connect.createRoom')}
+                      {busy ? <Loader2 className="animate-spin" /> : t('connect.createRoom')}
                     </Button>
                   </div>
                 </div>
@@ -627,7 +628,7 @@ export default function Connect() {
               <Label>{t('connect.roomCode')}</Label>
               <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="U/XXXX-XXXX-XXXX-XXXX" />
               <Button onClick={handleJoin} disabled={busy || !etReady} className="w-full">
-                {busy ? <><FontAwesomeIcon icon={faSpinner} spin className="mr-2" />{t('connect.joining')}</> : <><FontAwesomeIcon icon={faRightToBracket} className="mr-2" />{t('connect.joinRoom')}</>}
+                {busy ? <><Loader2 className="mr-2 animate-spin" />{t('connect.joining')}</> : <><LogIn className="mr-2" />{t('connect.joinRoom')}</>}
               </Button>
             </Card>
           </TabContent>
@@ -646,7 +647,7 @@ export default function Connect() {
             <h2 className="text-lg font-semibold">{t('connect.createTitle')}</h2>
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <FontAwesomeIcon icon={faSpinner} spin />
+                <Loader2 className="animate-spin" />
                 <span>{launchProgress ? launchProgress.message : t('connect.starting')}</span>
               </div>
               {launchProgress && (
@@ -655,7 +656,7 @@ export default function Connect() {
                 </div>
               )}
               <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-                <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />{t('connect.cancel')}
+                <DoorOpen className="mr-2" />{t('connect.cancel')}
               </Button>
             </div>
           </Card>
@@ -670,7 +671,7 @@ export default function Connect() {
               <span className="text-sm text-muted-foreground">{t('connect.roomCode')}</span>
               <code className="rounded bg-muted px-2 py-1 text-sm">{status.roomCode}</code>
               <Button size="sm" variant="ghost" onClick={() => status.roomCode && copy(status.roomCode)}>
-                <FontAwesomeIcon icon={faCopy} />
+                <Copy />
               </Button>
             </div>
             <PlayerList players={status.players} onKick={(p) => { if (p.kind !== 'host' && !kickBusy) handleKick(p) }} />
@@ -685,7 +686,7 @@ export default function Connect() {
                         <span className="ml-2 text-xs text-muted-foreground">{p.vendor}</span>
                       </div>
                       <Button size="sm" variant="secondary" disabled={unbanBusyId === p.machineId} onClick={() => handleUnban(p)}>
-                        {unbanBusyId === p.machineId ? <FontAwesomeIcon icon={faSpinner} spin className="mr-1" /> : null}
+                        {unbanBusyId === p.machineId ? <Loader2 className="mr-1 animate-spin" /> : null}
                         {t('connect.unban')}
                       </Button>
                     </div>
@@ -694,7 +695,7 @@ export default function Connect() {
               </div>
             )}
             <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />{t('connect.closeRoom')}
+              <DoorOpen className="mr-2" />{t('connect.closeRoom')}
             </Button>
           </div>
         </Card>
@@ -708,7 +709,7 @@ export default function Connect() {
               <span className="text-sm text-muted-foreground">{t('connect.serverAddress')}</span>
               <code className="rounded bg-muted px-2 py-1 text-sm">{status.mcHost}:{status.mcPort}</code>
               <Button size="sm" variant="ghost" onClick={() => copy(`${status.mcHost}:${status.mcPort}`)}>
-                <FontAwesomeIcon icon={faCopy} />
+                <Copy />
               </Button>
             </div>
             {status.gameInfo && (
@@ -719,7 +720,7 @@ export default function Connect() {
             )}
             <RoomModsCard data={matchData} onLaunch={handleQuickLaunch} launching={launchingMatch} hostVersion={status.gameInfo?.gameVersion ?? ''} players={status.players} loading={matchLoading} />
             <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">
-              <FontAwesomeIcon icon={faDoorOpen} className="mr-2" />{t('connect.leaveRoom')}
+              <DoorOpen className="mr-2" />{t('connect.leaveRoom')}
             </Button>
           </div>
         </Card>

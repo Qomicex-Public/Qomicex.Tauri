@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBug, faTriangleExclamation, faXmark, faCopy, faDownload, faSpinner, faLink } from '@fortawesome/free-solid-svg-icons'
+import { Bug, Copy, Link, Loader2, TriangleAlert, X } from 'lucide-react'
+import { Download as DownloadData, Loader2 as Loader2Data } from 'lucide'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button } from './ui'
 import { Tooltip } from './ui'
 import { Separator } from './ui'
@@ -79,27 +80,27 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
         <div className="flex items-center justify-between border-b px-5 py-4">
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-destructive/10">
-              <FontAwesomeIcon icon={faBug} className="h-4 w-4 text-destructive" />
+              <Bug className="h-4 w-4 text-destructive" />
             </div>
             <h2 className="text-sm font-semibold">{title}</h2>
             {logId && (
               <Tooltip content={mcloGsUrl as string}>
                 <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
-                  <FontAwesomeIcon icon={faLink} className="h-2.5 w-2.5" />
+                  <Link className="h-2.5 w-2.5" />
                   {logId}
                 </span>
               </Tooltip>
             )}
           </div>
           <button onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted">
-            <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto space-y-4 p-5">
           <div className="flex gap-4">
             <div className="flex-1 flex items-start gap-2 rounded-lg bg-destructive/5 p-3">
-              <FontAwesomeIcon icon={faTriangleExclamation} className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
               <p className="text-sm whitespace-pre-wrap break-all">{message}</p>
             </div>
             {qrCodeBase64 && (
@@ -125,7 +126,7 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
 
           {analysisLoading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-              <FontAwesomeIcon icon={faSpinner} className="h-3 w-3 animate-spin" />
+              <Loader2 className="h-3 w-3 animate-spin" />
               {t('dialogs.crashAnalysis.analyzing')}
             </div>
           )}
@@ -154,11 +155,11 @@ export function CrashAnalysisDialog({ open, instanceId, title, message, detail, 
 
         <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
           <Button variant="outline" size="sm" onClick={copyAll} className="gap-1.5 h-7 text-xs">
-            <FontAwesomeIcon icon={faCopy} className="h-3 w-3" />{t('dialogs.crashAnalysis.copyAll')}
+            <Copy className="h-3 w-3" />{t('dialogs.crashAnalysis.copyAll')}
           </Button>
           {instanceId && (
             <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-1.5 h-7 text-xs">
-              <FontAwesomeIcon icon={exporting ? faSpinner : faDownload} className={exporting ? 'h-3 w-3 animate-spin' : 'h-3 w-3'} />
+              <MorphActionIcon active={exporting} busy={Loader2Data} rest={DownloadData} className="h-3 w-3" />
               {exporting ? t('dialogs.crashAnalysis.exporting') : t('dialogs.crashAnalysis.exportReport')}
             </Button>
           )}

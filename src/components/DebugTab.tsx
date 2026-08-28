@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faDownload, faTrashCan, faBug, faCircleCheck, faCircleXmark, faServer, faCopy } from '@fortawesome/free-solid-svg-icons'
-import { Card, CardHeader, CardTitle, CardContent } from './ui'
+import { Bug, CheckCircle2, Copy, Download, RotateCw, Server, Trash2, XCircle } from 'lucide-react'
+import { RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button } from './ui'
-import { Checkbox } from './ui'
+import { Switch } from './ui'
+import { SettingSection } from './settings/SettingRow.tsx'
 import { cn } from '../lib/utils.ts'
 import { useDebug } from './DebugContext.tsx'
 import { getSystemInfo } from '../api/system.ts'
@@ -31,6 +32,7 @@ const LEVEL_COLOR: Record<string, string> = {
 function LogCard() {
   const [logs, setLogs] = useState<string[]>([])
   const [autoScroll, setAutoScroll] = useState(true)
+  const [clearing, setClearing] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const { notify } = useMessageBox()
   const { t } = useI18n()
@@ -81,50 +83,47 @@ function LogCard() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faServer} className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.liveLogs')}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant={autoScroll ? 'default' : 'outline'} onClick={() => setAutoScroll(!autoScroll)} className="gap-1">
-            <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', autoScroll && 'animate-spin')} />{t('tools.debug.autoScroll')}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setLogs([])} className="gap-1">
-            <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />{t('tools.debug.clear')}
-          </Button>
-          <Button size="sm" variant="outline" onClick={handleExport} disabled={logs.length === 0} className="gap-1">
-            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('tools.debug.exportLogs')}
-          </Button>
-          <Button size="sm" variant="outline" onClick={handleCopy} disabled={logs.length === 0} className="gap-1">
-            <FontAwesomeIcon icon={faCopy} className="h-4 w-4" />{t('common.copy')}
-          </Button>
-          <Button size="sm" variant="outline" onClick={handleDump} className="gap-1">
-            <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('tools.debug.triggerDump')}
-          </Button>
-        </div>
-        <div className="overflow-hidden rounded-lg border">
-          <div
-            ref={containerRef}
-            onScroll={() => {
-              if (containerRef.current) {
-                const { scrollTop, scrollHeight, clientHeight } = containerRef.current
-                setAutoScroll(scrollTop + clientHeight >= scrollHeight - 20)
-              }
-            }}
-            className="log-selectable h-80 overflow-y-auto bg-muted/30 p-3 font-mono text-xs leading-relaxed"
-          >
-            {logs.length === 0 ? (
-              <span className="text-muted-foreground">{t('tools.debug.noLogs')}</span>
-            ) : (
-              logs.map((line, i) => (
-                <div key={i} className={cn('whitespace-pre-wrap', LEVEL_COLOR[inferLevel(line)])}>{line}</div>
-              ))
-            )}
+    <SettingSection title={t('tools.debug.liveLogs')} icon={<Server className="h-4 w-4" />}>
+        <div className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant={autoScroll ? 'default' : 'outline'} onClick={() => setAutoScroll(!autoScroll)} className="gap-1">
+              <RotateCw className={cn('h-4 w-4', autoScroll && 'animate-spin')} />{t('tools.debug.autoScroll')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => { setClearing(true); setLogs([]); setTimeout(() => setClearing(false), 800) }} className="gap-1">
+              <MorphActionIcon active={clearing} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />{t('tools.debug.clear')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleExport} disabled={logs.length === 0} className="gap-1">
+              <Download className="h-4 w-4" />{t('tools.debug.exportLogs')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleCopy} disabled={logs.length === 0} className="gap-1">
+              <Copy className="h-4 w-4" />{t('common.copy')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleDump} className="gap-1">
+              <Download className="h-4 w-4" />{t('tools.debug.triggerDump')}
+            </Button>
+          </div>
+          <div className="overflow-hidden rounded-lg border">
+            <div
+              ref={containerRef}
+              onScroll={() => {
+                if (containerRef.current) {
+                  const { scrollTop, scrollHeight, clientHeight } = containerRef.current
+                  setAutoScroll(scrollTop + clientHeight >= scrollHeight - 20)
+                }
+              }}
+              className="log-selectable h-80 overflow-y-auto bg-muted/30 p-3 font-mono text-xs leading-relaxed"
+            >
+              {logs.length === 0 ? (
+                <span className="text-muted-foreground">{t('tools.debug.noLogs')}</span>
+              ) : (
+                logs.map((line, i) => (
+                  <div key={i} className={cn('whitespace-pre-wrap', LEVEL_COLOR[inferLevel(line)])}>{line}</div>
+                ))
+              )}
+            </div>
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </SettingSection>
   )
 }
 
@@ -170,58 +169,55 @@ function DiagnosticsCard() {
   }, [])
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.diagnostics')}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        {loading ? (
-          <div className="flex items-center gap-2 text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('common.loading')}</div>
-        ) : (
-          <>
-            {sysInfo && (
+    <SettingSection title={t('tools.debug.diagnostics')} icon={<Bug className="h-4 w-4" />}>
+        <div className="space-y-3 p-4 text-sm">
+          {loading ? (
+            <div className="flex items-center gap-2 text-muted-foreground"><RotateCw className="h-4 w-4 animate-spin" />{t('common.loading')}</div>
+          ) : (
+            <>
+              {sysInfo && (
+                <div>
+                  <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.systemInfo')}</p>
+                  <p className="text-xs">OS: {sysInfo.osName} {sysInfo.architecture} | RAM: {(sysInfo.availableMemory / 1024).toFixed(1)} / {(sysInfo.memory / 1024).toFixed(1)} GiB</p>
+                </div>
+              )}
               <div>
-                <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.systemInfo')}</p>
-                <p className="text-xs">OS: {sysInfo.osName} {sysInfo.architecture} | RAM: {(sysInfo.availableMemory / 1024).toFixed(1)} / {(sysInfo.memory / 1024).toFixed(1)} GiB</p>
+                <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.versionInfo')}</p>
+                <p className="text-xs">Launcher: {__APP_VERSION__} | React: 19 | Build: {import.meta.env.DEV ? 'dev' : 'release'}</p>
               </div>
-            )}
-            <div>
-              <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.versionInfo')}</p>
-              <p className="text-xs">Launcher: {__APP_VERSION__} | React: 19 | Build: {import.meta.env.DEV ? 'dev' : 'release'}</p>
-            </div>
-            <div>
-              <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.connectivity')}</p>
-              <p className="text-xs space-x-3">
-                <span><FontAwesomeIcon icon={backendOk ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', backendOk ? 'text-green-500' : 'text-red-500')} />Backend</span>
-                {health ? (
-                  <>
-                    <span><FontAwesomeIcon icon={health.modrinth?.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', health.modrinth?.ok ? 'text-green-500' : 'text-red-500')} />Modrinth ({health.modrinth?.latency ?? '?'}ms)</span>
-                    <span><FontAwesomeIcon icon={health.curseforge?.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', health.curseforge?.ok ? 'text-green-500' : 'text-red-500')} />CurseForge ({health.curseforge?.latency ?? '?'}ms)</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-3 w-3 mr-1 animate-spin" />Modrinth</span>
-                    <span className="text-muted-foreground"><FontAwesomeIcon icon={faRotate} className="h-3 w-3 mr-1 animate-spin" />CurseForge</span>
-                  </>
-                )}
-              </p>
-            </div>
-            <div>
-              <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.apiHealthCheck')}</p>
-              <div className="space-y-0.5">
-                {Object.entries(apiTests).map(([ep, r]) => (
-                  <p key={ep} className="text-xs"><FontAwesomeIcon icon={r.ok ? faCircleCheck : faCircleXmark} className={cn('h-3 w-3 mr-1', r.ok ? 'text-green-500' : 'text-red-500')} />{ep} {r.ok ? `${r.latency}ms` : 'FAILED'}</p>
-                ))}
+              <div>
+                <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.connectivity')}</p>
+                <p className="text-xs space-x-3">
+                  <span>{backendOk ? <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" /> : <XCircle className="h-3 w-3 mr-1 text-red-500" />}Backend</span>
+                  {health ? (
+                    <>
+                      <span>{health.modrinth?.ok ? <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" /> : <XCircle className="h-3 w-3 mr-1 text-red-500" />}Modrinth ({health.modrinth?.latency ?? '?'}ms)</span>
+                      <span>{health.curseforge?.ok ? <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" /> : <XCircle className="h-3 w-3 mr-1 text-red-500" />}CurseForge ({health.curseforge?.latency ?? '?'}ms)</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-muted-foreground"><RotateCw className="h-3 w-3 mr-1 animate-spin" />Modrinth</span>
+                      <span className="text-muted-foreground"><RotateCw className="h-3 w-3 mr-1 animate-spin" />CurseForge</span>
+                    </>
+                  )}
+                </p>
               </div>
-            </div>
-            <div>
-              <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.pathInfo')}</p>
-              <p className="text-xs">API Base: {API_BASE}</p>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+              <div>
+                <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.apiHealthCheck')}</p>
+                <div className="space-y-0.5">
+                  {Object.entries(apiTests).map(([ep, r]) => (
+                    <p key={ep} className="text-xs">{r.ok ? <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" /> : <XCircle className="h-3 w-3 mr-1 text-red-500" />}{ep} {r.ok ? `${r.latency}ms` : 'FAILED'}</p>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="font-medium text-xs text-muted-foreground mb-1">{t('tools.debug.pathInfo')}</p>
+                <p className="text-xs">API Base: {API_BASE}</p>
+              </div>
+            </>
+          )}
+        </div>
+      </SettingSection>
   )
 }
 
@@ -240,53 +236,46 @@ function TogglesCard() {
   ]
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faBug} className="mr-2 h-4 w-4 text-primary" />{t('tools.debug.togglesTitle')}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-3">
+    <SettingSection title={t('tools.debug.togglesTitle')} icon={<Bug className="h-4 w-4" />}>
+        <div className="grid grid-cols-2 gap-3 p-4">
           {items.map(item => (
             <label key={item.key} className="flex items-center gap-2 text-sm cursor-pointer">
-              <Checkbox checked={state[item.key]} onCheckedChange={() => toggle(item.key)} />
+              <Switch checked={state[item.key]} onCheckedChange={() => toggle(item.key)} />
               {item.label}
             </label>
           ))}
         </div>
-      </CardContent>
-    </Card>
+      </SettingSection>
   )
 }
 
 function ClearDataCard() {
   const { confirm, notify } = useMessageBox()
   const { t } = useI18n()
+  const [clearingDownloads, setClearingDownloads] = useState(false)
 
   async function handleClearDownloadTasks() {
     const ok = await confirm(t('tools.debug.clearTasksConfirm'), t('tools.debug.clearTasksTitle'))
     if (!ok) return
+    setClearingDownloads(true)
     clearAllTasks()
     notify(t('tools.debug.tasksCleared'), 'success')
+    setTimeout(() => setClearingDownloads(false), 800)
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle><FontAwesomeIcon icon={faTrashCan} className="mr-2 h-4 w-4 text-destructive" />{t('tools.debug.dataManagement')}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-center justify-between gap-4">
+    <SettingSection title={t('tools.debug.dataManagement')} icon={<Trash2 className="h-4 w-4 text-destructive" />}>
+        <div className="flex items-center justify-between gap-4 p-4">
           <div className="space-y-1">
             <p className="text-sm font-medium">{t('tools.debug.downloadTaskList')}</p>
             <p className="text-xs text-muted-foreground">{t('tools.debug.clearTasksDescription')}</p>
           </div>
           <Button size="sm" variant="destructive" onClick={handleClearDownloadTasks} className="gap-1.5 shrink-0">
-            <FontAwesomeIcon icon={faTrashCan} className="h-4 w-4" />
+            <MorphActionIcon active={clearingDownloads} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
             {t('tools.debug.clearTasksButton')}
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </SettingSection>
   )
 }
 

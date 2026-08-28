@@ -3,6 +3,8 @@ import { deleteMod } from '../api/instance-files.ts'
 import { addTask, updateTask } from '../stores/downloadStore.ts'
 import { waitForCompletion } from './updateMods.ts'
 import { cacheInvalidate } from './simple-cache.ts'
+import { getSettings } from '../api/settings.ts'
+import { formatDownloadFileName, dedupFileName } from './download-naming.ts'
 import type { InstallStepInfo } from '../types/index.ts'
 
 type TFunc = (key: string, params?: Record<string, string | number>) => string
@@ -26,6 +28,8 @@ export interface QuickInstallOptions {
   /** 资源图标（https URL 或 data URL），显示在下载中心列表 */
   icon?: string
   t: TFunc
+  /** 当前语言（用于按语言决定默认命名格式） */
+  lang?: string
 }
 
 const DEP_STEP = 'download-deps'
@@ -43,6 +47,22 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
 
   for (const d of toDelete) {
     deleteMod(instanceId, d.fileName).catch(() => {})
+  }
+
+  // 资源文件命名格式（ENH-10）：读取设置，按模板生成新文件名。
+  // 已存在的目标文件名（下载中/已安装）做序号去重，避免覆盖。
+  const isZh = (opts.lang ?? '').toLowerCase().startsWith('zh')
+  const namingTemplate = getSettings().fileNaming || (isZh ? '[{cn}]{name}-{version}' : '{name}-{version}')
+  const usedNames = new Set<string>()
+  const applyNaming = (item: QuickInstallItem): QuickInstallItem => {
+    const version = item.fileName.replace(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i, '').replace(/^.*-(\d[\w.]*)$/, '$1')
+    const renamed = formatDownloadFileName(namingTemplate, {
+      name: item.name.replace(/\.(jar|zip|mrpack|qmodpack|mcpack|shaderpacks)$/i, ''),
+      version,
+    })
+    const finalName = dedupFileName(renamed, usedNames)
+    usedNames.add(finalName)
+    return { ...item, fileName: finalName }
   }
 
   const batchId = `quick-install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -70,7 +90,8 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
   })
 
   const startOne = async (item: QuickInstallItem): Promise<string> => {
-    const { taskId } = await startResourceDownload(instanceId, item.url, item.fileName, item.category)
+    const named = applyNaming(item)
+    const { taskId } = await startResourceDownload(instanceId, named.url, named.fileName, named.category)
     return taskId
   }
 

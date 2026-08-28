@@ -130,7 +130,7 @@ Exception: directory barrels like `src/components/ui` (its `index.ts`) resolve f
 - **UI components live in `packages/plugin-ui/src/components/`** (Badge, Button, Card, Checkbox, Combobox, Dialog, Input, Label, MessageBox, Select, Separator, Table, Tabs, Textarea, Tooltip, BatchToolbar). `src/components/ui/` is only a re-export barrel. Import via `'../components/ui'` or `'@qomicex/plugin-ui'`. **After editing a component, rebuild plugin-ui** (its `dist/` is gitignored and the launcher imports resolve there).
 - **Tooltip**: use instead of native `title`. Always wrap icon-only buttons.
 - **Select**: use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>`.
-- `LogAnalysis.tsx` exists but is **not registered** in the router.
+- **Button icon animations**: Use `MorphActionIcon` (`src/components/MorphActionIcon.tsx`) for action buttons that trigger async operations (clear, delete, refresh, etc.). Pattern: `active` state → busy icon spins → success check flashes → rest icon. Example: download clear button uses `Trash2` (rest) → `RotateCw` (busy) → `Check` (success flash 800ms). Always wrap with `Tooltip` for icon-only buttons.
 
 ## 浏览器调试（Playwright Tauri mock 注入）
 

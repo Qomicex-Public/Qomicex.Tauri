@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-08-27 01:45
+最后更新：2026-08-27 21:42
 
 ## 1-决策记录
 
@@ -59,6 +59,10 @@
 - [ADR-053：插件错误遥测上报 + 灰度自动暂停](1-决策记录/ADR-053-插件错误遥测上报---灰度自动暂停.md)
 - [ADR-054：ADR-054: l4 远程 WebView 隔离层跨窗口桥设计](1-决策记录/ADR-054-ADR-054--l4-远程-WebView-隔离层跨窗口桥设计.md)
 - [ADR-055：SPD 协议文档拆分：规范/接入/实现三分离](1-决策记录/ADR-055-SPD-协议文档拆分-规范-接入-实现三分离.md)
+- [ADR-059：FA→Lucide 全量图标迁移](1-决策记录/ADR-059-FA-Lucide-全量图标迁移.md)
+- [ADR-060：icon ternary → MorphIcon 动画迁移](1-决策记录/ADR-060-icon-ternary---MorphIcon-动画迁移.md)
+- [ADR-061：Settings 页重构为 Split View + List + Switch](1-决策记录/ADR-061-Settings-页重构为-Split-View---List---Switch.md)
+- [ADR-062：InstanceDetail 设置页重构为 List + Switch](1-决策记录/ADR-062-InstanceDetail-设置页重构为-List---Switch.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

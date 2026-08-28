@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRocket, faCoffee, faPalette, faInfoCircle, faFolderOpen, faSliders, faCheck, faMagnifyingGlass, faBolt, faPlus, faMinus, faDownload, faRotate, faFolder, faTrashCan, faArrowUp, faCircleCheck, faTag, faDesktop, faRobot, faBug, faBolt as faLightning, faChevronDown, faChevronRight, faExternalLinkAlt, faGlobe, faHeart, faFileLines, faShieldHalved, faKey, faCopy, faSpinner, faPuzzlePiece, faScaleBalanced, faFileContract, faGear, faDatabase, faImage, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
+import { ArrowUp, Bot, Bug, Check, CheckCircle2, ChevronRight, Coffee, Copy, Database, Download, ExternalLink, FileText, Folder, FolderOpen, Globe, Heart, Image, Info, Key, Loader2, Minus, Monitor, Palette, Plus, Puzzle, Rocket, RotateCw, Scale, Search, Settings as SettingsIcon, ShieldHalf, SlidersHorizontal, Tag, Trash2, TriangleAlert, Zap } from 'lucide-react'
+import { ArrowUp as ArrowUpData, ChevronDown as ChevronDownData, ChevronRight as ChevronRightData, RotateCw as RotateCwData, Search as SearchData, Trash2 as Trash2Data, Zap as ZapData } from 'lucide'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
+import { MorphIcon } from 'morphicons/react'
 import { Button } from '../components/ui'
-import { Card, CardHeader, CardTitle, CardContent } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
@@ -12,9 +14,10 @@ import { Separator } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { Tabs, TabContent } from '../components/ui'
-import { Checkbox } from '../components/ui'
+import { Switch } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
+import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
 import DebugTab from '../components/DebugTab.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
@@ -50,18 +53,19 @@ import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, setDataDir, getSystemFonts } from '../api/settings.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
+import { FILE_NAMING_OPTIONS } from '../lib/download-naming.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
 import { LegalDialog } from '../components/LegalDialog.tsx'
 
 const CATEGORIES = [
-  { id: 'launcher', icon: faRocket },
-  { id: 'java', icon: faCoffee },
-  { id: 'plugins', icon: faPuzzlePiece },
-  { id: 'appearance', icon: faPalette },
-  { id: 'toolbox', icon: faDownload },
-  { id: 'logs', icon: faFileLines },
-  { id: 'about', icon: faInfoCircle },
-  { id: 'debug', icon: faBug },
+  { id: 'launcher', icon: Rocket },
+  { id: 'java', icon: Coffee },
+  { id: 'plugins', icon: Puzzle },
+  { id: 'appearance', icon: Palette },
+  { id: 'toolbox', icon: Download },
+  { id: 'logs', icon: FileText },
+  { id: 'about', icon: Info },
+  { id: 'debug', icon: Bug },
 ] as const
 
 const DOWNLOAD_SOURCES = [
@@ -195,14 +199,8 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   return (
     <div key="about" className="animate-in slide-up space-y-4">
       {/* Header */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <FontAwesomeIcon icon={faInfoCircle} className="mr-2 h-4 w-4 text-muted-foreground" />
-            {t('settings.about.aboutApp', { name: APP_INFO.name })}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <SettingSection title={t('settings.about.aboutApp', { name: APP_INFO.name })} icon={<Info className="h-4 w-4" />}>
+        <div className="space-y-4 p-4">
           <div className="flex items-center gap-4">
             <img src="/logo.svg" alt={APP_INFO.name} className="h-14 w-14 rounded-2xl" />
             <div className="flex-1 min-w-0">
@@ -214,7 +212,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             </div>
             <div className="flex items-center gap-1 shrink-0">
               <Button size="sm" variant="ghost" onClick={() => openUrl('https://github.com/Qomicex-Public/Qomicex.Tauri/issues').catch(() => window.open('https://github.com/Qomicex-Public/Qomicex.Tauri/issues', '_blank'))} className="gap-1.5 h-7 text-xs">
-                <FontAwesomeIcon icon={faBug} className="h-3 w-3" />{t('settings.about.feedback')}
+                <Bug className="h-3 w-3" />{t('settings.about.feedback')}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => openUrl(REPOSITORY_URL).catch(() => window.open(REPOSITORY_URL, '_blank'))} className="gap-1.5 h-7 text-xs">
                 <FontAwesomeIcon icon={faGithub} className="h-3 w-3" />{t('settings.about.viewRepository')}
@@ -222,13 +220,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             </div>
           </div>
           <p className="text-sm leading-relaxed text-muted-foreground">{t('settings.about.appDescription')}</p>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Version Info */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.versionInfo')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.versionInfo')}>
+        <div className="p-4">
           <div className="rounded-lg bg-background p-4 text-sm">
             <div className="grid grid-cols-2 gap-3">
               <div><div className="text-xs text-muted-foreground">{t('settings.about.appVersion')}</div><div className="mt-0.5 flex items-center gap-2 font-medium">{APP_INFO.version}<span className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted">{versionType}</span></div></div>
@@ -238,20 +235,16 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               <div><div className="text-xs text-muted-foreground">{t('settings.about.memory')}</div><div className="mt-0.5 font-medium">{sysInfo ? `${(sysInfo.memory / 1024).toFixed(1)} GB` : t('common.loading')}</div></div>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {licenseStatus && !(licenseStatus.valid && !licenseStatus.licenseId) && (
-      <Card>
-        <CardHeader><CardTitle>
-          <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-muted-foreground" />
-          {t('settings.about.license')}
-        </CardTitle></CardHeader>
-        <CardContent className="space-y-3">
+      <SettingSection title={t('settings.about.license')} icon={<ShieldHalf className="h-4 w-4" />}>
+        <div className="space-y-3 p-4">
           <div className="flex items-center gap-3">
             {licenseStatus.valid ? (
               <Badge variant="default" className="gap-1">
-                <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />
+                <Check className="h-3 w-3" />
                 {t('settings.about.licenseActivated')}
               </Badge>
             ) : (
@@ -279,7 +272,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={onOpenLicenseDialog} className="gap-1.5">
-              <FontAwesomeIcon icon={faKey} className="h-3 w-3" />
+              <Key className="h-3 w-3" />
               {licenseStatus.valid ? t('settings.about.changeLicense') : t('settings.about.activateLicense')}
             </Button>
             <Tooltip content={licenseCopied ? t('common.copied') : t('settings.about.copyMachineCode')}>
@@ -294,21 +287,17 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   setTimeout(() => setLicenseCopied(false), 2000)
                 }}
               >
-                <FontAwesomeIcon icon={licenseCopied ? faCheck : faCopy} className="h-3 w-3" />
+                {licenseCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
               </Button>
             </Tooltip>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
       )}
 
       {/* Update */}
-      <Card>
-        <CardHeader><CardTitle>
-          <FontAwesomeIcon icon={faArrowUp} className="mr-2 h-4 w-4 text-muted-foreground" />
-          {t('settings.about.update')}
-        </CardTitle></CardHeader>
-        <CardContent className="space-y-3">
+      <SettingSection title={t('settings.about.update')} icon={<ArrowUp className="h-4 w-4" />}>
+        <div className="space-y-3 p-4">
           <div className="flex items-center gap-3">
 <Select value={channel} onChange={setChannelAndSave} className="w-28">
   <SelectOption value="stable">{t('settings.about.stable')}</SelectOption>
@@ -316,12 +305,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   <SelectOption value="alpha">Alpha</SelectOption>
 </Select>
             <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
-              <FontAwesomeIcon icon={updateState === 'checking' ? faRotate : faArrowUp} className={cn('mr-1 h-3 w-3', updateState === 'checking' && 'animate-spin')} />
+              <MorphActionIcon active={updateState === 'checking'} busy={RotateCwData} rest={ArrowUpData} className="mr-1 h-3 w-3" />
               {updateState === 'checking' ? t('settings.about.checking') : t('settings.about.checkUpdate')}
             </Button>
             {updateState === 'uptodate' && (
               <span className="flex items-center gap-1 text-sm text-muted-foreground">
-                <FontAwesomeIcon icon={faCircleCheck} className="h-3.5 w-3.5 text-primary" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
                 {t('settings.about.upToDate')}
               </span>
             )}
@@ -332,8 +321,8 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             )}
           </div>
 
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       <UpdateDialog
         open={updateDialogOpen}
@@ -346,12 +335,11 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       />
 
       {/* Contributors */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.developers')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.developers')}>
+        <div className="p-2">
           <div className="space-y-3">
             {CONTRIBUTORS.map((c) => (
-                <div key={c.name} className="flex items-center gap-3">
+                <div key={c.name} className="flex items-center gap-3 px-2 py-1">
                   {c.avatar ? (
                     <img src={c.avatar} alt={c.name} className="h-10 w-10 rounded-full object-cover" />
                   ) : (
@@ -369,13 +357,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                 </div>
                 ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Services Credits */}
-      <Card>
-        <CardHeader><CardTitle><FontAwesomeIcon icon={faHeart} className="mr-2 h-4 w-4 text-destructive" />{t('settings.about.acknowledgements')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.acknowledgements')} icon={<Heart className="h-4 w-4 text-destructive" />}>
+        <div className="p-4">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {SERVICES.map((svc) => (
               <button
@@ -386,23 +373,22 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                 {svc.icon ? (
                   <img src={svc.icon} alt={svc.name} className="h-6 w-6 shrink-0 rounded object-contain" />
                 ) : (
-                  <FontAwesomeIcon icon={faGlobe} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{t(SERVICE_NAME_KEYS[svc.name] ?? svc.name)}</div>
                   <div className="truncate text-xs text-muted-foreground">{t(SERVICE_DESC_KEYS[svc.name] ?? svc.description)}</div>
                 </div>
-                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50" />
               </button>
             ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Reference Projects */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.referenceProjects')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.referenceProjects')}>
+        <div className="p-2">
           <div className="space-y-2">
             {REFERENCE_PROJECTS.map((proj) => (
               <button
@@ -415,17 +401,16 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   <div className="font-medium">{proj.name}</div>
                   <div className="truncate text-xs text-muted-foreground">{t(REF_DESC_KEYS[proj.name] ?? proj.description)}</div>
                 </div>
-                <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50" />
               </button>
             ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Backend Dependencies */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.backendDependencies')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.backendDependencies')}>
+        <div className="p-2">
           <div className="space-y-1">
             {Object.entries(BACKEND_DEPENDENCIES).map(([category, deps]) => {
               const expandRef = useExpandAnimation(expandedDep === category)
@@ -438,7 +423,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   <span>{t(DEP_CATEGORY_KEYS[category] ?? category)}</span>
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary" className="h-5 text-[10px]">{deps.length}</Badge>
-                    <FontAwesomeIcon icon={expandedDep === category ? faChevronDown : faChevronRight} className="h-3 w-3 text-muted-foreground" />
+                    <MorphIcon icon={expandedDep === category ? ChevronDownData : ChevronRightData} className="h-3 w-3 text-muted-foreground" spring="snappy" reducedMotion="user" />
                   </div>
                 </button>
                 <div ref={expandRef} className="mt-1 space-y-1 pl-2">
@@ -455,7 +440,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                           {dep.license === '自研' && <Badge variant="outline" className="h-4 px-1 text-[9px] border-primary/30 text-primary">{t('settings.about.depInHouse')}</Badge>}
                         </div>
                         {dep.url.startsWith('http') ? (
-                          <FontAwesomeIcon icon={faExternalLinkAlt} className="h-2.5 w-2.5 text-muted-foreground/50 cursor-pointer" onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))} />
+                          <ExternalLink className="h-2.5 w-2.5 text-muted-foreground/50 cursor-pointer" onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))} />
                         ) : null}
                       </div>
                     ))}
@@ -465,13 +450,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               )
             })}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* Frontend Dependencies */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.frontendDependencies')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.frontendDependencies')}>
+        <div className="p-2">
           <div className="space-y-1">
             {Object.entries(DEPENDENCIES).map(([category, deps]) => {
               const expandRef = useExpandAnimation(expandedDep === category)
@@ -484,7 +468,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   <span>{t(DEP_CATEGORY_KEYS[category] ?? category)}</span>
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary" className="h-5 text-[10px]">{deps.length}</Badge>
-                    <FontAwesomeIcon icon={expandedDep === category ? faChevronDown : faChevronRight} className="h-3 w-3 text-muted-foreground" />
+                    <MorphIcon icon={expandedDep === category ? ChevronDownData : ChevronRightData} className="h-3 w-3 text-muted-foreground" spring="snappy" reducedMotion="user" />
                   </div>
                 </button>
                 <div ref={expandRef} className="mt-1 space-y-1 pl-2">
@@ -497,7 +481,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                         <span className="text-muted-foreground">{dep.name}</span>
                         <div className="flex items-center gap-2">
                           <span className="text-muted-foreground/70">{dep.license}</span>
-                          <FontAwesomeIcon icon={faExternalLinkAlt} className="h-2.5 w-2.5 text-muted-foreground/50" />
+                          <ExternalLink className="h-2.5 w-2.5 text-muted-foreground/50" />
                         </div>
                       </button>
                     ))}
@@ -507,64 +491,44 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               )
             })}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* License */}
-      <Card>
-        <CardHeader><CardTitle>{t('settings.about.openSourceLicense')}</CardTitle></CardHeader>
-        <CardContent>
+      <SettingSection title={t('settings.about.openSourceLicense')}>
+        <div className="p-4">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium">{LICENSE.name}</div>
               <div className="text-xs text-muted-foreground">{t('settings.about.licenseNotice', { name: LICENSE.name })}</div>
             </div>
             <Button size="sm" variant="outline" onClick={() => openUrl(LICENSE.url).catch(() => window.open(LICENSE.url, '_blank'))} className="gap-1.5 h-8 text-xs">
-              <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3" />{t('settings.about.viewLicense')}
+              <ExternalLink className="h-3 w-3" />{t('settings.about.viewLicense')}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SettingSection>
 
       {/* 版权与隐私 */}
-      <Card>
-        <CardHeader><CardTitle><FontAwesomeIcon icon={faScaleBalanced} className="mr-2 h-4 w-4 text-muted-foreground" />{t('settings.about.copyrightPrivacy')}</CardTitle></CardHeader>
-        <CardContent className="space-y-1">
-          <button
-            onClick={() => setLegalDialogOpen(true)}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
-          >
-            <FontAwesomeIcon icon={faFileLines} className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{t('settings.about.copyrightStatement')}</div>
-              <div className="truncate text-xs text-muted-foreground">{t('settings.about.copyrightStatementDesc')}</div>
-            </div>
-            <FontAwesomeIcon icon={faChevronRight} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-          </button>
-          <button
-            onClick={() => openUrl(USER_AGREEMENT_URL).catch(() => window.open(USER_AGREEMENT_URL, '_blank'))}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
-          >
-            <FontAwesomeIcon icon={faFileContract} className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{t('settings.about.userAgreement')}</div>
-              <div className="truncate text-xs text-muted-foreground">qomicex.top/legal/user-agreement</div>
-            </div>
-            <FontAwesomeIcon icon={faExternalLinkAlt} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-          </button>
-          <button
-            disabled
-            className="flex w-full cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm opacity-50"
-          >
-            <FontAwesomeIcon icon={faShieldHalved} className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{t('settings.about.privacyPolicy')}</div>
-              <div className="truncate text-xs text-muted-foreground">{t('common.comingSoon')}</div>
-            </div>
-            <Badge variant="secondary" className="h-5 shrink-0 text-[10px]">{t('common.comingSoon')}</Badge>
-          </button>
-        </CardContent>
-      </Card>
+      <SettingSection title={t('settings.about.copyrightPrivacy')} icon={<Scale className="h-4 w-4" />}>
+        <SettingRow
+          label={t('settings.about.copyrightStatement')}
+          description={t('settings.about.copyrightStatementDesc')}
+          onClick={() => setLegalDialogOpen(true)}
+          control={<ChevronRight className="h-3 w-3 text-muted-foreground/50" />}
+        />
+        <SettingRow
+          label={t('settings.about.userAgreement')}
+          description="qomicex.top/legal/user-agreement"
+          onClick={() => openUrl(USER_AGREEMENT_URL).catch(() => window.open(USER_AGREEMENT_URL, '_blank'))}
+          control={<ExternalLink className="h-3 w-3 text-muted-foreground/50" />}
+        />
+        <SettingRow
+          label={t('settings.about.privacyPolicy')}
+          description={t('common.comingSoon')}
+          control={<Badge variant="secondary" className="h-5 shrink-0 text-[10px]">{t('common.comingSoon')}</Badge>}
+        />
+      </SettingSection>
 
       <LegalDialog open={legalDialogOpen} onClose={() => setLegalDialogOpen(false)} />
     </div>
@@ -943,7 +907,7 @@ export default function Settings() {
       <div className="flex gap-4">
         <div className="sticky top-0 self-start flex w-48 shrink-0 flex-col">
           <Tabs
-            tabs={CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map(cat => ({ id: cat.id, label: t(`settings.category.${cat.id}`), icon: <FontAwesomeIcon icon={cat.icon} className="h-4 w-4" /> }))}
+            tabs={CATEGORIES.filter(cat => cat.id !== 'debug' || debugState.unlocked).map(cat => ({ id: cat.id, label: t(`settings.category.${cat.id}`), icon: <cat.icon className="h-4 w-4" /> }))}
             activeTab={category}
             onChange={(id) => setCategory(id)}
             orientation="vertical"
@@ -953,16 +917,10 @@ export default function Settings() {
         <div className="flex-1 min-w-0 space-y-4">
           <TabContent activeTab={category} tabId="launcher">
             <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <FontAwesomeIcon icon={faGear} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.category.basic')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label>{t('settings.appearance.language')}</Label>
+            <SettingSection title={t('settings.category.basic')} icon={<SettingsIcon className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.appearance.language')}
+                control={
                   <Select
                     value={settings.language}
                     onChange={(v) => {
@@ -976,9 +934,12 @@ export default function Settings() {
                     ))}
                     <SelectOption value="system">{t('settings.appearance.followSystem')}</SelectOption>
                   </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('settings.launcher.translationProvider')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.translationProvider')}
+                description={t('settings.launcher.translationProviderDesc')}
+                control={
                   <Select
                     value={settings.translationProvider}
                     onChange={(v) => update('translationProvider', v)}
@@ -988,49 +949,48 @@ export default function Settings() {
                     <SelectOption value="google">{t('settings.launcher.translationGoogle')}</SelectOption>
                     <SelectOption value="bing">Bing Translator</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.translationProviderDesc')}</p>
-                  {settings.translationProvider === 'bing' && (
-                    <div className="mt-3">
-                      <Label htmlFor="bingApiKey">Bing API Key</Label>
-                      <Input
-                        id="bingApiKey"
-                        type="password"
-                        value={settings.bingApiKey || ''}
-                        onChange={(e) => update('bingApiKey', e.target.value)}
-                        placeholder={t('settings.launcher.bingApiKeyPlaceholder')}
-                        className="mt-1 max-w-sm"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {t('settings.launcher.bingApiKeyDesc')}
-                      </p>
-                    </div>
-                  )}
+                }
+              />
+              {settings.translationProvider === 'bing' && (
+                <div className="space-y-2 px-4 py-3">
+                  <Label htmlFor="bingApiKey">Bing API Key</Label>
+                  <Input
+                    id="bingApiKey"
+                    type="password"
+                    value={settings.bingApiKey || ''}
+                    onChange={(e) => update('bingApiKey', e.target.value)}
+                    placeholder={t('settings.launcher.bingApiKeyPlaceholder')}
+                    className="max-w-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t('settings.launcher.bingApiKeyDesc')}
+                  </p>
                 </div>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+              )}
+              <SettingRow
+                label={t('settings.launcher.autoReportErrors')}
+                description={t('settings.launcher.autoReportErrorsDesc')}
+                control={
+                  <Switch
                     checked={settings.autoReportErrors !== false}
                     onCheckedChange={(c) => update('autoReportErrors', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.autoReportErrors')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.autoReportErrorsDesc')}</div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.telemetry')}
+                description={t('settings.launcher.telemetryDesc')}
+                control={
+                  <Switch
                     checked={settings.telemetryEnabled === true}
                     onCheckedChange={(c) => update('telemetryEnabled', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.telemetry')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.telemetryDesc')}</div>
-                  </div>
-                </label>
-
-                <div className="space-y-2">
-                  <Label>{t('settings.launcher.logLevelLabel')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.logLevelLabel')}
+                description={t('settings.launcher.logLevelDesc')}
+                control={
                   <Select
                     value={settings.logLevel}
                     onChange={(v) => update('logLevel', v)}
@@ -1042,56 +1002,41 @@ export default function Settings() {
                     <SelectOption value="debug">{t('settings.launcher.logLevel.debug')}</SelectOption>
                     <SelectOption value="trace">{t('settings.launcher.logLevel.trace')}</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.logLevelDesc')}</p>
-                </div>
-              </CardContent>
-            </Card>
+                }
+              />
+            </SettingSection>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <FontAwesomeIcon icon={faRocket} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.category.launch')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+            <SettingSection title={t('settings.category.launch')} icon={<Rocket className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.launcher.versionIsolation')}
+                description={t('settings.launcher.versionIsolationDesc')}
+                control={
+                  <Switch
                     checked={settings.versionIsolation}
                     onCheckedChange={(c) => update('versionIsolation', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.versionIsolation')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.versionIsolationDesc')}</div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.closeAfterLaunch')}
+                description={t('settings.launcher.closeAfterLaunchDesc')}
+                control={
+                  <Switch
                     checked={settings.closeAfterLaunch}
                     onCheckedChange={(c) => update('closeAfterLaunch', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.launcher.closeAfterLaunch')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.launcher.closeAfterLaunchDesc')}</div>
-                  </div>
-                </label>
-              </CardContent>
-            </Card>
+                }
+              />
+            </SettingSection>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <FontAwesomeIcon icon={faDownload} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.category.download')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label htmlFor="downloadThreads">{t('settings.launcher.downloadThreads')}</Label>
+            <SettingSection title={t('settings.category.download')} icon={<Download className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.launcher.downloadThreads')}
+                description={t('settings.launcher.downloadThreadsDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadThreads', Math.max(1, settings.downloadThreads - 1))} disabled={settings.downloadThreads <= 1}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                      <Minus className="h-3.5 w-3.5" />
                     </Button>
                     <Input
                       id="downloadThreads"
@@ -1103,14 +1048,15 @@ export default function Settings() {
                       className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadThreads', Math.min(512, settings.downloadThreads + 1))} disabled={settings.downloadThreads >= 512}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadThreadsDesc')}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="fileChunkThreads">{t('settings.launcher.fileChunkThreads')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.fileChunkThreads')}
+                description={t('settings.launcher.fileChunkThreadsDesc')}
+                control={
                   <Select
                     value={String(settings.fileChunkThreads)}
                     onChange={(v) => update('fileChunkThreads', Number(v))}
@@ -1122,14 +1068,15 @@ export default function Settings() {
                       <SelectOption key={n} value={String(n)}>{n}</SelectOption>
                     ))}
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.fileChunkThreadsDesc')}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="downloadTimeout">{t('settings.launcher.downloadTimeout')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.downloadTimeout')}
+                description={t('settings.launcher.downloadTimeoutDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.max(0, settings.downloadTimeout - 5))} disabled={settings.downloadTimeout <= 0}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                      <Minus className="h-3.5 w-3.5" />
                     </Button>
                     <Input
                       id="downloadTimeout"
@@ -1141,49 +1088,50 @@ export default function Settings() {
                       className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.min(120, settings.downloadTimeout + 5))} disabled={settings.downloadTimeout >= 120}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.downloadTimeoutDesc')}</p>
-                </div>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.enableHttp3')}
+                description={t('settings.launcher.enableHttp3Desc')}
+                control={
+                  <Switch
+                    checked={settings.enableHttp3 === true}
+                    onCheckedChange={(c) => update('enableHttp3', c === true)}
+                  />
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.http1Parallel')}
+                description={t('settings.launcher.http1ParallelDesc')}
+                control={
+                  <Switch
+                    checked={settings.http1Parallel === true}
+                    onCheckedChange={(c) => update('http1Parallel', c === true)}
+                  />
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.fileNaming')}
+                description={t('settings.launcher.fileNamingDesc')}
+                control={
+                  <Select
+                    value={settings.fileNaming || (settings.language.startsWith('zh') ? '[{cn}]{name}-{version}' : '{name}-{version}')}
+                    onChange={(v) => update('fileNaming', v)}
+                    className="w-56"
+                  >
+                    {(settings.language.startsWith('zh') ? FILE_NAMING_OPTIONS : FILE_NAMING_OPTIONS.filter(o => o.key === '{name}-{version}' || o.key === '{name}')).map((opt) => (
+                      <SelectOption key={opt.key} value={opt.key}>{t(`settings.launcher.${opt.label}`)}</SelectOption>
+                    ))}
+                  </Select>
+                }
+              />
+            </SettingSection>
 
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
-                      checked={settings.enableHttp3 === true}
-                      onCheckedChange={(c) => update('enableHttp3', c === true)}
-                    />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-medium">{t('settings.launcher.enableHttp3')}</span>
-                    </div>
-                  </label>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.enableHttp3Desc')}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
-                      checked={settings.http1Parallel === true}
-                      onCheckedChange={(c) => update('http1Parallel', c === true)}
-                    />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-medium">{t('settings.launcher.http1Parallel')}</span>
-                    </div>
-                  </label>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.http1ParallelDesc')}</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.launcher.downloadSource')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
+            <SettingSection title={t('settings.launcher.downloadSource')} icon={<Globe className="h-4 w-4" />}>
+                <div className="space-y-2 px-4 py-3">
                   <Label>{t('settings.launcher.downloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {DOWNLOAD_SOURCES.map((s) => {
@@ -1208,7 +1156,7 @@ export default function Settings() {
                           )}
                         >
                           {t(`settings.launcher.downloadSourceName.${s.value}`)}
-                          {pingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
+                          {pingLoading && <RotateCw className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!pingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
                               {ping.latency}ms
@@ -1222,24 +1170,24 @@ export default function Settings() {
                     })}
                     <Tooltip content={t('settings.launcher.refreshLatency')}>
                       <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshPings} disabled={pingLoading}>
-                        <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', pingLoading && 'animate-spin')} />
+                        <RotateCw className={cn('h-3.5 w-3.5', pingLoading && 'animate-spin')} />
                       </Button>
                     </Tooltip>
                   </div>
                   <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+                    <Switch
                       checked={settings.autoSelectDownloadSource}
                       onCheckedChange={(c) => update('autoSelectDownloadSource', c === true)}
                     />
                     <div className="flex items-center gap-1.5">
-                      <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
+                      <Zap className="h-3.5 w-3.5 text-amber-400" />
                       <span className="text-sm font-medium">{t('settings.launcher.autoSelectDownloadSource')}</span>
                     </div>
                   </label>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectDownloadSourceDesc')}</p>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2 px-4 py-3">
                   <Label>{t('settings.launcher.resourceDownloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {[0, 1, 2].map((s) => {
@@ -1264,7 +1212,7 @@ export default function Settings() {
                           )}
                         >
                           {t(`settings.launcher.resourceDownloadSourceName.${s}`)}
-                          {filePingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
+                          {filePingLoading && <RotateCw className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!filePingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
                               {ping.latency}ms
@@ -1278,24 +1226,24 @@ export default function Settings() {
                     })}
                     <Tooltip content={t('settings.launcher.refreshLatency')}>
                       <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshFilePings} disabled={filePingLoading}>
-                        <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', filePingLoading && 'animate-spin')} />
+                        <RotateCw className={cn('h-3.5 w-3.5', filePingLoading && 'animate-spin')} />
                       </Button>
                     </Tooltip>
                   </div>
                   <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+                    <Switch
                       checked={settings.autoSelectFileDownloadSource}
                       onCheckedChange={(c) => update('autoSelectFileDownloadSource', c === true)}
                     />
                     <div className="flex items-center gap-1.5">
-                      <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
+                      <Zap className="h-3.5 w-3.5 text-amber-400" />
                       <span className="text-sm font-medium">{t('settings.launcher.autoSelectFileDownloadSource')}</span>
                     </div>
                   </label>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.resourceDownloadSourceDesc')}</p>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2 px-4 py-3">
                   <Label>{t('settings.launcher.modSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
                     {[
@@ -1323,7 +1271,7 @@ export default function Settings() {
                           )}
                         >
                           {t(`settings.launcher.modSourceName.${s.value}`)}
-                          {modPingLoading && <FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin text-muted-foreground" />}
+                          {modPingLoading && <RotateCw className="h-3 w-3 animate-spin text-muted-foreground" />}
                           {!modPingLoading && showLatency && (
                             <span className={cn('text-xs tabular-nums', latencyColor)}>
                               {ping.latency}ms
@@ -1337,35 +1285,29 @@ export default function Settings() {
                     })}
                     <Tooltip content={t('settings.launcher.refreshLatency')}>
                       <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshModPings} disabled={modPingLoading}>
-                        <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', modPingLoading && 'animate-spin')} />
+                        <RotateCw className={cn('h-3.5 w-3.5', modPingLoading && 'animate-spin')} />
                       </Button>
                     </Tooltip>
                   </div>
                   <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+                    <Switch
                       checked={settings.autoSelectModMirror}
                       onCheckedChange={(c) => update('autoSelectModMirror', c === true)}
                     />
                     <div className="flex items-center gap-1.5">
-                      <FontAwesomeIcon icon={faLightning} className="h-3.5 w-3.5 text-amber-400" />
+                      <Zap className="h-3.5 w-3.5 text-amber-400" />
                       <span className="text-sm font-medium">{t('settings.launcher.autoSelectModSource')}</span>
                     </div>
                   </label>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectModSourceDesc')}</p>
                 </div>
-              </CardContent>
-            </Card>
+            </SettingSection>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <FontAwesomeIcon icon={faGlobe} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.network.proxy')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label>{t('settings.network.proxyMode')}</Label>
+            <SettingSection title={t('settings.network.proxy')} icon={<Globe className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.network.proxyMode')}
+                description={t('settings.network.proxyModeDesc')}
+                control={
                   <Select
                     value={settings.proxyMode}
                     onChange={(v) => update('proxyMode', v as AppSettings['proxyMode'])}
@@ -1376,46 +1318,40 @@ export default function Settings() {
                     <SelectOption value="http">HTTP(S)</SelectOption>
                     <SelectOption value="socks5">SOCKS5</SelectOption>
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('settings.network.proxyModeDesc')}</p>
-                </div>
-
-                {(settings.proxyMode === 'http' || settings.proxyMode === 'socks5') && (
-                  <div className="space-y-2">
-                    <Label htmlFor="proxyHost">{t('settings.network.proxyHost')}</Label>
+                }
+              />
+              {(settings.proxyMode === 'http' || settings.proxyMode === 'socks5') && (
+                <SettingRow
+                  label={t('settings.network.proxyHost')}
+                  description={t('settings.network.proxyHostDesc')}
+                  control={
                     <Input
                       id="proxyHost"
                       value={settings.proxyHost}
                       onChange={(e) => update('proxyHost', e.target.value)}
                       placeholder={t('settings.network.proxyHostPlaceholder')}
-                      className="mt-1 max-w-sm font-mono"
+                      className="max-w-sm font-mono"
                     />
-                    <p className="text-xs text-muted-foreground">{t('settings.network.proxyHostDesc')}</p>
-                  </div>
-                )}
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <Checkbox
+                  }
+                />
+              )}
+              <SettingRow
+                label={t('settings.network.ignoreSslCert')}
+                description={t('settings.network.ignoreSslCertDesc')}
+                control={
+                  <Switch
                     checked={settings.ignoreSslCert === true}
                     onCheckedChange={(c) => update('ignoreSslCert', c === true)}
                   />
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.network.ignoreSslCert')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.network.ignoreSslCertDesc')}</div>
-                  </div>
-                </label>
-              </CardContent>
-            </Card>
+                }
+              />
+            </SettingSection>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <FontAwesomeIcon icon={faDatabase} className="mr-2 h-4 w-4 text-muted-foreground" />
-                  {t('settings.category.storage')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label>{t('settings.launcher.dataDir')}</Label>
+            <SettingSection title={t('settings.category.storage')} icon={<Database className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.launcher.dataDir')}
+                description={t('settings.launcher.dataDirDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Input value={settings.dataDir} readOnly className="font-mono text-xs" />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={async () => {
@@ -1431,28 +1367,28 @@ export default function Settings() {
                         }
                       }
                     }}>
-                      <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                      <FolderOpen className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.dataDirDesc')}</p>
-                </div>
-
-                <div className="flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <Label>{t('settings.launcher.versionListCache')}</Label>
-                    <p className="text-xs text-muted-foreground">{t('settings.launcher.versionListCacheDesc')}</p>
-                  </div>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.versionListCache')}
+                description={t('settings.launcher.versionListCacheDesc')}
+                control={
                   <Button size="sm" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
-                    <FontAwesomeIcon icon={clearingCache ? faRotate : faTrashCan} className={cn('h-4 w-4', clearingCache && 'animate-spin')} />
+                    <MorphActionIcon active={clearingCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
                     {t('settings.launcher.clearCache')}
                   </Button>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="curseforgeVersionFetchConcurrency">{t('settings.launcher.curseforgeConcurrency')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.curseforgeConcurrency')}
+                description={t('settings.launcher.curseforgeConcurrencyDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionFetchConcurrency', Math.max(1, Math.min(20, settings.curseforgeVersionFetchConcurrency - 1)))} disabled={settings.curseforgeVersionFetchConcurrency <= 1}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                      <Minus className="h-3.5 w-3.5" />
                     </Button>
                     <Input
                       id="curseforgeVersionFetchConcurrency"
@@ -1464,17 +1400,18 @@ export default function Settings() {
                       className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionFetchConcurrency', Math.min(20, settings.curseforgeVersionFetchConcurrency + 1))} disabled={settings.curseforgeVersionFetchConcurrency >= 20}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeConcurrencyDesc')}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="curseforgeVersionCacheTtlSeconds">{t('settings.launcher.curseforgeTtl')}</Label>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.curseforgeTtl')}
+                description={t('settings.launcher.curseforgeTtlDesc')}
+                control={
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionCacheTtlSeconds', Math.max(0, settings.curseforgeVersionCacheTtlSeconds - 10))} disabled={settings.curseforgeVersionCacheTtlSeconds <= 0}>
-                      <FontAwesomeIcon icon={faMinus} className="h-3.5 w-3.5" />
+                      <Minus className="h-3.5 w-3.5" />
                     </Button>
                     <Input
                       id="curseforgeVersionCacheTtlSeconds"
@@ -1486,74 +1423,65 @@ export default function Settings() {
                       className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('curseforgeVersionCacheTtlSeconds', Math.min(3600, settings.curseforgeVersionCacheTtlSeconds + 10))} disabled={settings.curseforgeVersionCacheTtlSeconds >= 3600}>
-                      <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeTtlDesc')}</p>
-                </div>
-
-                <div className="flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <Label>{t('settings.launcher.curseforgeCache')}</Label>
-                    <p className="text-xs text-muted-foreground">{t('settings.launcher.curseforgeCacheDesc')}</p>
-                  </div>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.curseforgeCache')}
+                description={t('settings.launcher.curseforgeCacheDesc')}
+                control={
                   <Button size="sm" variant="outline" onClick={handleClearCurseForgeCache} disabled={clearingCurseForgeCache}>
-                    <FontAwesomeIcon icon={clearingCurseForgeCache ? faRotate : faTrashCan} className={cn('h-4 w-4', clearingCurseForgeCache && 'animate-spin')} />
+                    <MorphActionIcon active={clearingCurseForgeCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
                     {t('settings.launcher.clearCurseforgeCache')}
                   </Button>
-                </div>
-              </CardContent>
-            </Card>
+                }
+              />
+            </SettingSection>
 
             </div>
           </TabContent>
           <TabContent activeTab={category} tabId="java">
             <div className="space-y-6">
-              <Card>
-                <CardHeader className="flex-row items-center justify-between">
-                  <div>
-                    <CardTitle>
-                      <FontAwesomeIcon icon={faCoffee} className="mr-2 h-4 w-4 text-muted-foreground" />
-                      {t('settings.java.title')}
-                    </CardTitle>
-                  </div>
-                  <div className="flex items-center gap-3 text-sm">
-                    <span className="text-muted-foreground">{t('settings.java.detected')} <span className="font-medium text-foreground">{runtimes.length}</span></span>
-                    <span className="text-muted-foreground">{t('settings.java.available')} <span className="font-medium text-primary">{validCount}</span></span>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
+              <SettingSection title={t('settings.java.title')} icon={<Coffee className="h-4 w-4" />}>
+                <div className="flex items-center justify-between gap-4 px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" onClick={() => handleScan('quick')} disabled={scanning !== 'idle'}>
-                      <FontAwesomeIcon icon={scanning === 'quick' ? faRotate : faMagnifyingGlass} className={cn('h-4 w-4', scanning === 'quick' && 'animate-spin')} />
+                      <MorphActionIcon active={scanning === 'quick'} busy={RotateCwData} rest={SearchData} className="h-4 w-4" />
                       {t('settings.java.quickScan')}
                     </Button>
                     <Button size="sm" variant="secondary" onClick={() => handleScan('deep')} disabled={scanning !== 'idle'}>
-                      <FontAwesomeIcon icon={scanning === 'deep' ? faRotate : faBolt} className={cn('h-4 w-4', scanning === 'deep' && 'animate-spin')} />
+                      <MorphActionIcon active={scanning === 'deep'} busy={RotateCwData} rest={ZapData} className="h-4 w-4" />
                       {t('settings.java.deepScan')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={handleManualAdd} disabled={scanning !== 'idle'}>
-                      <FontAwesomeIcon icon={faPlus} className="h-4 w-4" />
+                      <Plus className="h-4 w-4" />
                       {t('settings.java.manualAdd')}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={handleOpenJavaDownload} disabled={downloadLoading}>
-                      <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />
+                      <Download className="h-4 w-4" />
                       {t('settings.java.downloadJava')}
                     </Button>
                     <Tooltip content={t('settings.java.refreshList')}>
                       <Button size="sm" variant="ghost" onClick={handleRefresh} disabled={scanning !== 'idle'}>
-                        <FontAwesomeIcon icon={faRotate} className={cn('h-4 w-4', scanning !== 'idle' && 'animate-spin')} />
+                        <RotateCw className={cn('h-4 w-4', scanning !== 'idle' && 'animate-spin')} />
                       </Button>
                     </Tooltip>
                     <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Checkbox checked={showInvalid} onCheckedChange={(v) => setShowInvalid(v === true)} />
+                      <Switch checked={showInvalid} onCheckedChange={(v) => setShowInvalid(v === true)} />
                       {t('settings.java.showInvalid')}
                     </label>
                   </div>
+                  <div className="flex shrink-0 items-center gap-3 text-sm">
+                    <span className="text-muted-foreground">{t('settings.java.detected')} <span className="font-medium text-foreground">{runtimes.length}</span></span>
+                    <span className="text-muted-foreground">{t('settings.java.available')} <span className="font-medium text-primary">{validCount}</span></span>
+                  </div>
+                </div>
 
                   {scanning !== 'idle' && (
                     <div className="flex items-center gap-3 rounded-lg bg-muted px-4 py-3">
-                      <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin text-primary" />
+                      <RotateCw className="h-4 w-4 animate-spin text-primary" />
                       <span className="text-sm text-muted-foreground">{t('settings.java.scanningRuntime')}</span>
                     </div>
                   )}
@@ -1561,14 +1489,14 @@ export default function Settings() {
                   {scanning === 'idle' && listRuntimes.length === 0 && (
                     <div className="flex flex-col items-center gap-4 py-12 text-center">
                       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
-                        <FontAwesomeIcon icon={faCoffee} className="h-7 w-7 text-muted-foreground" />
+                        <Coffee className="h-7 w-7 text-muted-foreground" />
                       </div>
                       <div>
                         <p className="text-sm font-medium text-foreground">{t('settings.java.noRuntimeDetected')}</p>
                         <p className="mt-1 text-xs text-muted-foreground">{t('settings.java.noRuntimeHint')}</p>
                       </div>
                       <Button size="sm" onClick={() => handleScan('quick')}>
-                        <FontAwesomeIcon icon={faMagnifyingGlass} className="h-4 w-4" />
+                        <Search className="h-4 w-4" />
                         {t('settings.java.startScan')}
                       </Button>
                     </div>
@@ -1598,16 +1526,16 @@ export default function Settings() {
                             </div>
                             <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
                               <span className="flex items-center gap-1">
-                                <FontAwesomeIcon icon={faTag} className="h-3 w-3" />
+                                <Tag className="h-3 w-3" />
                                 {t('common.version')} {j.version}
                               </span>
                               <span className="flex items-center gap-1">
-                                <FontAwesomeIcon icon={faDesktop} className="h-3 w-3" />
+                                <Monitor className="h-3 w-3" />
                                 {j.arch}
                               </span>
                             </div>
                             <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/60">
-                              <FontAwesomeIcon icon={faFolder} className="h-3 w-3 shrink-0" />
+                              <Folder className="h-3 w-3 shrink-0" />
                               <span className="truncate">{j.path}</span>
                             </div>
                           </div>
@@ -1615,13 +1543,13 @@ export default function Settings() {
                           <div className="flex shrink-0 items-center gap-0.5">
                             <Tooltip content={t('settings.java.openFolder')}>
                               <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleOpenFolder(j.path)}>
-                                <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                                <FolderOpen className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
                             {j.discoveredBy === 'Custom' && (
                               <Tooltip content={t('common.delete')}>
                                 <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive/70 hover:text-destructive" onClick={() => handleDelete(j.path)} disabled={removingPath === j.path}>
-                                  <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                                  <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                               </Tooltip>
                             )}
@@ -1632,35 +1560,29 @@ export default function Settings() {
                   )}
 
                   <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
-                    <FontAwesomeIcon icon={faInfoCircle} className="h-3.5 w-3.5 text-primary" />
+                    <Info className="h-3.5 w-3.5 text-primary" />
                     <span>{javaStatus}</span>
                     <span className="ml-auto">
                       {runtimes.length > 0 && t('settings.java.availableCount', { valid: validCount, total: runtimes.length })}
                     </span>
                   </div>
-                </CardContent>
-              </Card>
+              </SettingSection>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>{t('settings.java.defaultConfig')}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  <div className="space-y-2">
-                    <Label>{t('settings.java.defaultRuntime')}</Label>
+              <SettingSection title={t('settings.java.defaultConfig')}>
+                <SettingRow
+                  label={t('settings.java.defaultRuntime')}
+                  description={t('settings.java.defaultRuntimeDesc')}
+                  control={
                     <Select value={settings.defaultJavaPath} onChange={(v) => update('defaultJavaPath', v)}>
                       <SelectOption value="">{t('settings.java.autoSelect')}</SelectOption>
                       {getValidRuntimes().map((j, i) => (
                         <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                       ))}
                     </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {t('settings.java.defaultRuntimeDesc')}
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>{t('settings.java.memoryAllocation')}</Label>
+                  }
+                />
+                <div className="space-y-2 px-4 py-3">
+                  <Label>{t('settings.java.memoryAllocation')}</Label>
                     <div className="flex items-center gap-2">
                       <button onClick={() => {
                         const next = { ...settings, memoryMode: 'auto' as const }
@@ -1668,11 +1590,11 @@ export default function Settings() {
                         setSettings(next)
                         saveSettings(next)
                         notify(t('settings.saved'), 'success')
-                      }} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                        <FontAwesomeIcon icon={faRobot} className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryAuto')}
+                      }} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                        <Bot className="h-3.5 w-3.5" />{t('settings.java.memoryAuto')}
                       </button>
-                      <button onClick={() => update('memoryMode', 'custom')} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                        <FontAwesomeIcon icon={faSliders} className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryCustom')}
+                      <button onClick={() => update('memoryMode', 'custom')} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                        <SlidersHorizontal className="h-3.5 w-3.5" />{t('settings.java.memoryCustom')}
                       </button>
                     </div>
 
@@ -1737,37 +1659,41 @@ export default function Settings() {
                     )}
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="jvmArgs">{t('settings.java.jvmArgs')}</Label>
-                    <Input id="jvmArgs" value={settings.jvmArgs} onChange={(e) => update('jvmArgs', e.target.value)} placeholder="-XX:+UseG1GC -Dfml.ignoreInvalidMinecraftCertificates=true" />
-                    <p className="text-xs text-muted-foreground">{t('settings.java.jvmArgsDesc')}</p>
+                <div className="px-4 py-3">
+                  <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400">
+                    <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{t('settings.java.jvmArgsWarning')}</span>
                   </div>
-                </CardContent>
-              </Card>
+                  <textarea
+                    value={settings.jvmArgs}
+                    onChange={(e) => update('jvmArgs', e.target.value)}
+                    placeholder="-Xmx2G -XX:+UseG1GC"
+                    rows={4}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y font-mono"
+                  />
+                </div>
+              </SettingSection>
             </div>
           </TabContent>
 
           <TabContent activeTab={category} tabId="appearance">
             <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.title')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                   <div className="space-y-2">
-                     <Label>{t('settings.appearance.theme')} preset</Label>
-                     <Select value={settings.themePreset} onChange={(v) => update('themePreset', v as AppSettings['themePreset'])} className="w-56">
-                       <SelectOption value="default">Qomicex Default</SelectOption>
-                       {THEME_PRESETS.map((preset) => <SelectOption key={preset.value} value={preset.value}>{preset.label}</SelectOption>)}
-                     </Select>
-                   </div>
+              <SettingSection title={t('settings.appearance.title')} icon={<Palette className="h-4 w-4" />}>
+                <SettingRow
+                  label={t('settings.appearance.themePreset')}
+                  control={
+                    <Select value={settings.themePreset} onChange={(v) => update('themePreset', v as AppSettings['themePreset'])} className="w-56">
+                      <SelectOption value="default">Qomicex Default</SelectOption>
+                      {THEME_PRESETS.map((preset) => <SelectOption key={preset.value} value={preset.value}>{preset.label}</SelectOption>)}
+                    </Select>
+                  }
+                />
 
-                  <div className="space-y-2">
-                    <Label>{t('settings.appearance.themeColor')}</Label>
-                    <div className="flex flex-wrap items-center gap-2">
+                <SettingRow
+                  label={t('settings.appearance.themeColor')}
+                  description={t('settings.appearance.themeColorDesc')}
+                  control={
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <Tooltip content={t('settings.appearance.themeColorBackground')}>
                         <button
                           type="button"
@@ -1780,7 +1706,7 @@ export default function Settings() {
                           )}
                           style={{ background: 'conic-gradient(#f87171,#fbbf24,#34d399,#60a5fa,#a78bfa,#f87171)' }}
                         >
-                          <FontAwesomeIcon icon={faImage} className="h-3 w-3 text-foreground" />
+                          <Image className="h-3 w-3 text-foreground" />
                         </button>
                       </Tooltip>
                         {THEME_COLOR_PRESETS.map((p) => (
@@ -1819,46 +1745,45 @@ export default function Settings() {
                         </Button>
                       </Tooltip>
                     </div>
-                    <p className="text-xs text-muted-foreground">{t('settings.appearance.themeColorDesc')}</p>
-                  </div>
+                  }
+                />
 
-                  <div className="space-y-3">
-                    <Label>{t('settings.appearance.animations')}</Label>
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <Checkbox
-                        checked={settings.animationsEnabled}
-                        onCheckedChange={(c) => update('animationsEnabled', c === true)}
+                <SettingRow
+                  label={t('settings.appearance.animations')}
+                  description={t('settings.appearance.animationsDesc')}
+                  control={
+                    <Switch
+                      checked={settings.animationsEnabled}
+                      onCheckedChange={(c) => update('animationsEnabled', c === true)}
+                    />
+                  }
+                />
+                {settings.animationsEnabled && (
+                  <div className="space-y-2 px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min={0.25}
+                        max={2}
+                        step={0.25}
+                        value={settings.animationSpeed}
+                        onChange={(e) => update('animationSpeed', parseFloat(e.target.value))}
+                        className="flex-1"
                       />
-                      <div>
-                        <div className="text-sm font-medium">{t('settings.appearance.animations')}</div>
-                        <div className="text-xs text-muted-foreground">{t('settings.appearance.animationsDesc')}</div>
-                      </div>
-                    </label>
-                    {settings.animationsEnabled && (
-                      <div className="space-y-2 pl-7">
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="range"
-                            min={0.25}
-                            max={2}
-                            step={0.25}
-                            value={settings.animationSpeed}
-                            onChange={(e) => update('animationSpeed', parseFloat(e.target.value))}
-                            className="flex-1"
-                          />
-                          <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.animationSpeed}x</span>
-                        </div>
-                        <div className="flex justify-between text-[11px] text-muted-foreground">
-                          <span>{t('settings.appearance.slow')}</span>
-                          <span>{t('settings.appearance.normal')}</span>
-                          <span>{t('settings.appearance.fast')}</span>
-                        </div>
-                      </div>
-                    )}
+                      <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.animationSpeed}x</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-muted-foreground">
+                      <span>{t('settings.appearance.slow')}</span>
+                      <span>{t('settings.appearance.normal')}</span>
+                      <span>{t('settings.appearance.fast')}</span>
+                    </div>
                   </div>
+                )}
 
-                  <div className="space-y-2 pt-3 border-t border-border/50">
-                    <Label>{t('settings.appearance.maxFrameRate')}</Label>
+                <SettingRow
+                  label={t('settings.appearance.maxFrameRate')}
+                  description={t('settings.appearance.maxFrameRateDesc')}
+                  control={
                     <Select value={String(settings.maxFrameRate)} onChange={(v) => update('maxFrameRate', Number(v))} className="w-48">
                       <SelectOption value="0">{t('settings.appearance.maxFrameRateUnlimited')}</SelectOption>
                       <SelectOption value="30">30 FPS</SelectOption>
@@ -1866,29 +1791,25 @@ export default function Settings() {
                       <SelectOption value="120">120 FPS</SelectOption>
                       <SelectOption value="144">144 FPS</SelectOption>
                     </Select>
-                    <p className="text-xs text-muted-foreground">{t('settings.appearance.maxFrameRateDesc')}</p>
-                  </div>
-                 </CardContent>
-               </Card>
-               <Card>
-                 <CardHeader><CardTitle>{t('settings.appearance.theme')} mode</CardTitle></CardHeader>
-                 <CardContent>
-                   <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
-                     <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>
-                     <SelectOption value="light">{t('settings.appearance.light')}</SelectOption>
-                   </Select>
-                 </CardContent>
-               </Card>
+                  }
+                />
+              </SettingSection>
+              <SettingSection title={t('settings.appearance.themeMode')}>
+                <SettingRow
+                  label={t('settings.appearance.themeMode')}
+                  control={
+                    <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
+                      <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>
+                      <SelectOption value="light">{t('settings.appearance.light')}</SelectOption>
+                    </Select>
+                  }
+                />
+              </SettingSection>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <FontAwesomeIcon icon={faSliders} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.componentMaterial')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="space-y-2">
+              <SettingSection title={t('settings.appearance.componentMaterial')} icon={<SlidersHorizontal className="h-4 w-4" />}>
+                <SettingRow
+                  label={t('settings.appearance.componentMaterial')}
+                  control={
                     <Select
                       value={settings.componentMaterial ?? 'default'}
                       onChange={(v) => {
@@ -1908,88 +1829,78 @@ export default function Settings() {
                       <SelectOption value="aero">{t('settings.appearance.componentMaterialAero')}</SelectOption>
                       <SelectOption value="liquid">{t('settings.appearance.componentMaterialLiquidPreview')}</SelectOption>
                     </Select>
-                    {settings.componentMaterial === 'liquid' && (
-                      <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                        <FontAwesomeIcon icon={faTriangleExclamation} className="mt-0.5 h-3 w-3 shrink-0" />
-                        <span>{t('settings.appearance.componentMaterialLiquidWarning')}</span>
-                      </div>
-                    )}
+                  }
+                />
+                {settings.componentMaterial === 'liquid' && (
+                  <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-600 dark:text-amber-400">
+                    <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span>{t('settings.appearance.componentMaterialLiquidWarning')}</span>
                   </div>
-                  {settings.componentMaterial !== 'default' && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="range"
-                          min={2}
-                          max={40}
-                          step={1}
-                          value={settings.glassBlur ?? 18}
-                          onChange={(e) => update('glassBlur', parseInt(e.target.value))}
-                          className="flex-1"
-                        />
-                        <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.glassBlur ?? 18}px</span>
-                      </div>
-                      <div className="flex justify-between text-[11px] text-muted-foreground">
-                        <span>{t('settings.appearance.glassBlurLow')}</span>
-                        <span>{t('settings.appearance.glassBlurHigh')}</span>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <FontAwesomeIcon icon={faDesktop} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.cornerRadius')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
-                      checked={settings.windowCorners}
-                      onCheckedChange={(c) => update('windowCorners', c === true)}
-                    />
-                    <div>
-                      <div className="text-sm font-medium">{t('settings.appearance.windowCorners')}</div>
-                      <div className="text-xs text-muted-foreground">{t('settings.appearance.windowCornersDesc')}</div>
-                    </div>
-                  </label>
-                  <Separator />
-                  <div className="space-y-2">
+                )}
+                {settings.componentMaterial !== 'default' && (
+                  <div className="space-y-2 px-4 py-3">
                     <div className="flex items-center gap-3">
                       <input
                         type="range"
-                        min={0}
-                        max={16}
+                        min={2}
+                        max={40}
                         step={1}
-                        value={settings.cornerRadius}
-                        onChange={(e) => update('cornerRadius', parseInt(e.target.value))}
+                        value={settings.glassBlur ?? 18}
+                        onChange={(e) => update('glassBlur', parseInt(e.target.value))}
                         className="flex-1"
                       />
-                      <span className="w-10 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.cornerRadius}px</span>
+                      <span className="w-12 shrink-0 text-sm tabular-nums text-muted-foreground">{settings.glassBlur ?? 18}px</span>
                     </div>
                     <div className="flex justify-between text-[11px] text-muted-foreground">
-                      <span>{t('settings.appearance.cornerSharp')}</span>
-                      <span>{t('settings.appearance.cornerDefault')}</span>
-                      <span>{t('settings.appearance.cornerLarge')}</span>
+                      <span>{t('settings.appearance.glassBlurLow')}</span>
+                      <span>{t('settings.appearance.glassBlurHigh')}</span>
                     </div>
-
                   </div>
-                </CardContent>
-              </Card>
+                )}
+              </SettingSection>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.font')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="space-y-2">
-                    <Label>{t('settings.appearance.fontFamily')}</Label>
+              <SettingSection title={t('settings.appearance.cornerRadius')} icon={<Monitor className="h-4 w-4" />}>
+                <SettingRow
+                  label={t('settings.appearance.windowCorners')}
+                  description={t('settings.appearance.windowCornersDesc')}
+                  control={
+                    <Switch
+                      checked={settings.windowCorners}
+                      onCheckedChange={(c) => update('windowCorners', c === true)}
+                    />
+                  }
+                />
+                <SettingRow
+                  label={t('settings.appearance.cornerRadius')}
+                  control={
+                    <div className="w-44 space-y-1">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={0}
+                          max={16}
+                          step={1}
+                          value={settings.cornerRadius}
+                          onChange={(e) => update('cornerRadius', parseInt(e.target.value))}
+                          className="flex-1"
+                        />
+                        <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground">{settings.cornerRadius}px</span>
+                      </div>
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>{t('settings.appearance.cornerSharp')}</span>
+                        <span>{t('settings.appearance.cornerDefault')}</span>
+                        <span>{t('settings.appearance.cornerLarge')}</span>
+                      </div>
+                    </div>
+                  }
+                />
+              </SettingSection>
+
+              <SettingSection title={t('settings.appearance.font')} icon={<Palette className="h-4 w-4" />}>
+                <SettingRow
+                  label={t('settings.appearance.fontFamily')}
+                  description={t('settings.appearance.fontDesc')}
+                  control={
                     <Select
                       value={settings.fontFamily || ''}
                       onChange={(v) => update('fontFamily', v || '')}
@@ -2004,103 +1915,92 @@ export default function Settings() {
                         ))
                       )}
                     </Select>
-                    <p className="text-xs text-muted-foreground">{t('settings.appearance.fontDesc')}</p>
-                  </div>
+                  }
+                />
+                <div className="mx-4 my-3 rounded-lg border px-4 py-3"
+                  style={{ fontFamily: settings.fontFamily ? `'${settings.fontFamily.replace(/['"]/g, '')}', sans-serif` : undefined }}
+                >
+                  <div className="text-sm font-medium">{t('settings.appearance.fontPreviewTitle')}</div>
+                  <div className="text-xs text-muted-foreground">{t('settings.appearance.fontPreviewText')}</div>
+                </div>
+                <div className="flex items-center gap-2 px-4 py-3">
+                  {settings.fontFamily && (
+                    <Button variant="outline" size="sm" onClick={() => update('fontFamily', '')} className="gap-1">
+                      <RotateCw className="h-3 w-3" />
+                      {t('settings.appearance.fontReset')}
+                    </Button>
+                  )}
+                </div>
+              </SettingSection>
 
-                  {/* 字体预览 */}
-                  <div
-                    className="rounded-lg border px-4 py-3"
-                    style={{ fontFamily: settings.fontFamily ? `'${settings.fontFamily.replace(/['"]/g, '')}', sans-serif` : undefined }}
-                  >
-                    <div className="text-sm font-medium">{t('settings.appearance.fontPreviewTitle')}</div>
-                    <div className="text-xs text-muted-foreground">{t('settings.appearance.fontPreviewText')}</div>
+              <SettingSection title={t('settings.appearance.background')} icon={<Palette className="h-4 w-4" />}>
+                <div className="space-y-2 px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <Label>{t('settings.appearance.backgroundImage')}</Label>
+                    <Button variant="ghost" size="sm" onClick={() => get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})}>
+                      <RotateCw className="h-3 w-3" />
+                    </Button>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    {settings.fontFamily && (
-                      <Button variant="outline" size="sm" onClick={() => update('fontFamily', '')} className="gap-1">
-                        <FontAwesomeIcon icon={faRotate} className="h-3 w-3" />
-                        {t('settings.appearance.fontReset')}
-                      </Button>
+                  <div className="flex flex-wrap gap-2">
+                    {backgrounds.length === 0 ? (
+                      <p className="w-full text-xs text-muted-foreground">{t('settings.appearance.noBackgrounds')}</p>
+                    ) : (
+                      backgrounds.map((name) => (
+                        <button
+                          key={name}
+                          onClick={() => {
+                            const next = { ...settings, backgroundImage: name, backgroundRandom: false }
+                            setSettings(next)
+                            saveSettings(next)
+                            notify(t('settings.saved'), 'success')
+                          }}
+                          className={cn(
+                            'group relative h-16 w-28 overflow-hidden rounded-lg border-2 transition-colors',
+                            !settings.backgroundRandom && settings.backgroundImage === name
+                              ? 'border-primary'
+                              : 'border-border hover:border-muted-foreground/30'
+                          )}
+                        >
+                          <img
+                            src={`${API_BASE}/settings/backgrounds/${encodeURIComponent(name)}`}
+                            alt={name}
+                            className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
+                          />
+                          <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-3 text-[10px] leading-tight text-white">
+                            {name}
+                          </span>
+                        </button>
+                      ))
                     )}
                   </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.background')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label>{t('settings.appearance.backgroundImage')}</Label>
-                      <Button variant="ghost" size="sm" onClick={() => get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})}>
-                        <FontAwesomeIcon icon={faRotate} className="h-3 w-3" />
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {backgrounds.length === 0 ? (
-                        <p className="w-full text-xs text-muted-foreground">{t('settings.appearance.noBackgrounds')}</p>
-                      ) : (
-                        backgrounds.map((name) => (
-                          <button
-                            key={name}
-                            onClick={() => {
-                              const next = { ...settings, backgroundImage: name, backgroundRandom: false }
-                              setSettings(next)
-                              saveSettings(next)
-                              notify(t('settings.saved'), 'success')
-                            }}
-                            className={cn(
-                              'group relative h-16 w-28 overflow-hidden rounded-lg border-2 transition-colors',
-                              !settings.backgroundRandom && settings.backgroundImage === name
-                                ? 'border-primary'
-                                : 'border-border hover:border-muted-foreground/30'
-                            )}
-                          >
-                            <img
-                              src={`${API_BASE}/settings/backgrounds/${encodeURIComponent(name)}`}
-                              alt={name}
-                              className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
-                            />
-                            <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-3 text-[10px] leading-tight text-white">
-                              {name}
-                            </span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 pt-0.5">
-                      <Button variant="outline" size="sm" onClick={handleOpenBackgrounds}>
-                        <FontAwesomeIcon icon={faFolderOpen} className="mr-1 h-3 w-3" /> {t('settings.appearance.openFolder')}
-                      </Button>
-                      <p className="text-xs text-muted-foreground">{t('settings.appearance.backgroundsHint')}</p>
-                    </div>
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <Button variant="outline" size="sm" onClick={handleOpenBackgrounds}>
+                      <FolderOpen className="mr-1 h-3 w-3" /> {t('settings.appearance.openFolder')}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">{t('settings.appearance.backgroundsHint')}</p>
                   </div>
+                </div>
 
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+                <SettingRow
+                  label={t('settings.appearance.backgroundRandom')}
+                  description={t('settings.appearance.backgroundRandomDesc')}
+                  control={
+                    <Switch
                       checked={settings.backgroundRandom}
                       onCheckedChange={(c) => {
                         update('backgroundRandom', c === true)
                         if (c && !settings.backgroundImage) update('backgroundImage', 'random')
                       }}
                     />
-                    <div>
-                      <div className="text-sm font-medium">{t('settings.appearance.backgroundRandom')}</div>
-                      <div className="text-xs text-muted-foreground">{t('settings.appearance.backgroundRandomDesc')}</div>
-                    </div>
-                  </label>
+                  }
+                />
 
-                  {settings.backgroundImage && (
+                {settings.backgroundImage && (
+                  <div className="px-4 py-3">
                     <>
                       {!settings.backgroundRandom && (
                         <Button variant="ghost" size="sm" onClick={() => update('backgroundImage', '')}>
-                          <FontAwesomeIcon icon={faTrashCan} className="mr-1 h-3 w-3" /> {t('settings.appearance.clearBackground')}
+                          <Trash2 className="mr-1 h-3 w-3" /> {t('settings.appearance.clearBackground')}
                         </Button>
                       )}
                       <div className="grid grid-cols-2 gap-4 pt-1">
@@ -2128,38 +2028,30 @@ export default function Settings() {
                         </div>
                       </div>
                     </>
-                  )}
-                </CardContent>
-              </Card>
+                  </div>
+                )}
+              </SettingSection>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    <FontAwesomeIcon icon={faPalette} className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('settings.appearance.watermark')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Checkbox
+              <SettingSection title={t('settings.appearance.watermark')} icon={<Palette className="h-4 w-4" />}>
+                <SettingRow
+                  label={t('settings.appearance.watermarkEnabled')}
+                  description={t('settings.appearance.watermarkEnabledDesc')}
+                  control={
+                    <Switch
                       checked={settings.watermarkEnabled}
                       onCheckedChange={(c) => update('watermarkEnabled', c === true)}
                     />
-                    <div>
-                      <div className="text-sm font-medium">{t('settings.appearance.watermarkEnabled')}</div>
-                      <div className="text-xs text-muted-foreground">{t('settings.appearance.watermarkEnabledDesc')}</div>
-                    </div>
-                  </label>
-                  {settings.watermarkEnabled && (
-                    <div className="space-y-2 pl-7">
-                      <Label htmlFor="watermarkText">{t('settings.appearance.watermarkText')}</Label>
-                      <Input id="watermarkText" value={settings.watermarkText} onChange={(e) => update('watermarkText', e.target.value)} placeholder="Qomicex" />
-                      <Label htmlFor="watermarkSubtext">{t('settings.appearance.watermarkSubtext')}</Label>
-                      <Input id="watermarkSubtext" value={settings.watermarkSubtext} onChange={(e) => update('watermarkSubtext', e.target.value)} placeholder={t('settings.appearance.watermarkSubtextPlaceholder')} />
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                  }
+                />
+                {settings.watermarkEnabled && (
+                  <div className="space-y-2 px-4 py-3">
+                    <Label htmlFor="watermarkText">{t('settings.appearance.watermarkText')}</Label>
+                    <Input id="watermarkText" value={settings.watermarkText} onChange={(e) => update('watermarkText', e.target.value)} placeholder="Qomicex" />
+                    <Label htmlFor="watermarkSubtext">{t('settings.appearance.watermarkSubtext')}</Label>
+                    <Input id="watermarkSubtext" value={settings.watermarkSubtext} onChange={(e) => update('watermarkSubtext', e.target.value)} placeholder={t('settings.appearance.watermarkSubtextPlaceholder')} />
+                  </div>
+                )}
+              </SettingSection>
             </div>
           </TabContent>
 
@@ -2237,7 +2129,7 @@ export default function Settings() {
             </DialogBody>
             <DialogFooter>
               <Button onClick={handleStartJavaDownload} disabled={!selectedVendor || startDownloadLoading}>
-                {startDownloadLoading ? <><FontAwesomeIcon icon={faSpinner} className="h-4 w-4 animate-spin mr-2" />{t('settings.java.resolving')}</> : t('settings.java.startDownload')}
+                {startDownloadLoading ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />{t('settings.java.resolving')}</> : t('settings.java.startDownload')}
               </Button>
             </DialogFooter>
           </Dialog>

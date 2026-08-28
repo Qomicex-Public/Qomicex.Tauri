@@ -6,8 +6,7 @@ import { Button } from './ui'
 import { Tooltip } from './ui'
 import { fetchLicenseStatus, activateLicense } from '../api/license.ts'
 import type { LicenseStatus } from '../api/license.ts'
-import { faKey, faShieldHalved, faCopy, faCheck, faRightFromBracket } from '@fortawesome/free-solid-svg-icons'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { Check, Copy, Key, LogOut, ShieldHalf } from 'lucide-react'
 import { exit } from '@tauri-apps/plugin-process'
 import { useI18n } from '../i18n/index.tsx'
 
@@ -59,14 +58,14 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
     <Dialog open={open} onClose={onClose ?? (() => {})} closeOnBackdrop={!!onClose} closeOnEsc={!!onClose}>
       <DialogHeader onClose={onClose}>
         <DialogTitle>
-          <FontAwesomeIcon icon={faShieldHalved} className="mr-2 h-4 w-4 text-muted-foreground" />
+          <ShieldHalf className="mr-2 h-4 w-4 text-muted-foreground" />
           {t('dialogs.license.title')}
         </DialogTitle>
       </DialogHeader>
       <DialogBody className="space-y-4">
         {licenseStatus && licenseStatus.valid && (
           <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-primary">
-            <FontAwesomeIcon icon={faKey} className="h-4 w-4 shrink-0" />
+            <Key className="h-4 w-4 shrink-0" />
             <div>
               <div className="font-medium">{t('dialogs.license.active')}</div>
               {licenseStatus.licenseId && (
@@ -93,7 +92,7 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
                   setTimeout(() => setCopied(false), 2000)
                 }}
               >
-                <FontAwesomeIcon icon={copied ? faCheck : faCopy} className="h-3 w-3" />
+                {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
               </Button>
             </Tooltip>
           </div>
@@ -117,7 +116,7 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
         )}
         {!onClose && (
           <Button variant="ghost" onClick={() => exit(0)} className="gap-1.5 text-muted-foreground">
-            <FontAwesomeIcon icon={faRightFromBracket} className="h-3 w-3" />
+            <LogOut className="h-3 w-3" />
             {t('dialogs.license.exitLauncher')}
           </Button>
         )}

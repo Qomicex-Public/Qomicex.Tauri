@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faCube, faWandMagicSparkles, faTriangleExclamation, faXmark, faCopy } from '@fortawesome/free-solid-svg-icons'
+import { Box, Copy, RotateCw, TriangleAlert, WandSparkles, X } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Button, Tooltip } from './ui/index.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { getSchematicBytes, getSchematicAssets } from '../api/instance-files.ts'
@@ -152,19 +151,19 @@ export default function SchematicPreviewDialog({ open, instanceId, fileName, onC
     <Dialog open={open} onClose={onClose} className="max-w-5xl">
       <DialogHeader onClose={onClose}>
         <DialogTitle className="flex items-center gap-2">
-          <FontAwesomeIcon icon={faWandMagicSparkles} className="h-4 w-4 text-primary" />
+          <WandSparkles className="h-4 w-4 text-primary" />
           {t('instanceDetail.schematics.previewTitle', { name: fileName })}
         </DialogTitle>
       </DialogHeader>
       <DialogBody className="p-0">
         {stage === 'loading' ? (
           <div className="flex h-72 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-5 w-5 animate-spin" />
+            <RotateCw className="h-5 w-5 animate-spin" />
             {t('instanceDetail.schematics.parsing')}
           </div>
         ) : stage === 'error' ? (
           <div className="flex h-72 flex-col items-center justify-center gap-3 px-6 text-center">
-            <FontAwesomeIcon icon={faTriangleExclamation} className="h-6 w-6 text-destructive" />
+            <TriangleAlert className="h-6 w-6 text-destructive" />
             <p className="text-sm text-destructive">{error}</p>
             <Button size="sm" variant="outline" onClick={load}>重试</Button>
           </div>
@@ -172,13 +171,13 @@ export default function SchematicPreviewDialog({ open, instanceId, fileName, onC
           <div className="flex flex-col">
             {overCap && (
               <div className="flex items-center gap-2 border-b border-border bg-destructive/10 px-4 py-2 text-xs text-destructive">
-                <FontAwesomeIcon icon={faTriangleExclamation} className="h-3.5 w-3.5" />
+                <TriangleAlert className="h-3.5 w-3.5" />
                 {t('instanceDetail.schematics.overCap')}
               </div>
             )}
             {warnSize && (
               <div className="flex items-center gap-2 border-b border-border bg-amber-500/10 px-4 py-2 text-xs text-amber-600">
-                <FontAwesomeIcon icon={faTriangleExclamation} className="h-3.5 w-3.5" />
+                <TriangleAlert className="h-3.5 w-3.5" />
                 {t('instanceDetail.schematics.largeSize', { count: totalBlocks })}
               </div>
             )}
@@ -203,13 +202,13 @@ export default function SchematicPreviewDialog({ open, instanceId, fileName, onC
                 <canvas ref={canvasRef} className={cn('absolute inset-0 h-full w-full', overCap && 'hidden')} />
                 {stage === 'rendering' && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/60 text-sm text-muted-foreground">
-                    <FontAwesomeIcon icon={faRotate} className="h-5 w-5 animate-spin" />
+                    <RotateCw className="h-5 w-5 animate-spin" />
                     {t('instanceDetail.schematics.buildingPreview')}
                   </div>
                 )}
                 {overCap && (
                   <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
-                    <FontAwesomeIcon icon={faCube} className="mr-2 h-5 w-5" />
+                    <Box className="mr-2 h-5 w-5" />
                     {t('instanceDetail.schematics.overCapHint')}
                   </div>
                 )}
@@ -281,7 +280,7 @@ export default function SchematicPreviewDialog({ open, instanceId, fileName, onC
                       </button>
                       <Tooltip content={t('instanceDetail.schematics.copy')}>
                         <button onClick={copyMaterials} className="text-muted-foreground hover:text-foreground">
-                          <FontAwesomeIcon icon={faCopy} className="h-3.5 w-3.5" />
+                          <Copy className="h-3.5 w-3.5" />
                         </button>
                       </Tooltip>
                     </div>
@@ -307,7 +306,7 @@ export default function SchematicPreviewDialog({ open, instanceId, fileName, onC
       </DialogBody>
       <DialogFooter>
         <Button size="sm" variant="outline" onClick={onClose}>
-          <FontAwesomeIcon icon={faXmark} className="h-3.5 w-3.5" />
+          <X className="h-3.5 w-3.5" />
           {t('instanceDetail.confirm.cancel')}
         </Button>
       </DialogFooter>

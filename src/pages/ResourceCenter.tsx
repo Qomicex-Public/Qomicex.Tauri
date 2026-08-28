@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowUpRightFromSquare, faDownload, faMagnifyingGlass, faRotate, faTag, faUser, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { Download, ExternalLink, RotateCw, Search, Tag, User, X } from 'lucide-react'
+import { RotateCw as RotateCwData } from 'lucide'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
@@ -12,7 +13,7 @@ import { Badge } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Combobox } from '../components/ui'
 import { cn } from '../components/ui'
-import { searchResources } from '../api/resource.ts'
+import { searchResources, getResourceCategories, type ResourceCategory } from '../api/resource.ts'
 import { batchLookupChineseNames } from '../api/mcmod.ts'
 import type { ResourceItem } from '../types/index.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
@@ -129,18 +130,17 @@ const CF_TAGS = [
 // 被过滤。因此 `all` 只暴露两套体系的交集标签，保证两边都按同一筛选条件过滤。
 const ALL_TAGS = MOD_TAGS.filter((t) => CF_TAGS.includes(t))
 
-// 根据来源返回对应的标签集合：CurseForge 用 CF 体系，all 聚合用交集，其余（modrinth）
-// 用 Modrinth 体系。
-function tagsForSource(source: string): string[] {
+// 根据来源+资源类型返回对应的静态标签集合（动态类别加载失败时的兜底；非 mod 无静态列表）。
+function tagsForSource(source: string, category: string): string[] {
+  if (category !== 'mod') return []
   if (source === 'curseforge') return CF_TAGS
   if (source === 'all') return ALL_TAGS
   return MOD_TAGS
 }
 
-// 把标签列表过滤为当前来源支持的那一套，避免把 Modrinth 标签套到 CurseForge
-// （或反之），例如通过 URL / 快照恢复时来源与标签不匹配的情况。
-function normalizeTags(tags: string[], source: string): string[] {
-  const allowed = new Set(tagsForSource(source))
+// 把标签列表过滤为当前来源+类型支持的那一套，避免 URL / 快照恢复时标签与来源不匹配。
+function normalizeTags(tags: string[], source: string, category: string): string[] {
+  const allowed = new Set(tagsForSource(source, category))
   return tags.filter((t) => allowed.has(t))
 }
 
@@ -155,9 +155,24 @@ function getSourceLabel(source: string): string {
   return map[source] ?? source
 }
 
-// 标签筛选对 Modrinth / CurseForge（及 all 聚合）的 mod 分类生效。
+// 标签/类别筛选对哪些资源类型生效（ENH-04：全类型类别筛选）。
+// - save：无类别体系
+// - ftb：用自身分类（暂不扩展）
+// - curseforge：仅 mod/modpack 有 classId 分类
+// - 其余（modrinth / all 聚合）：mod/modpack/shader/resourcepack/datapack 均支持
 function tagsSupported(source: string, category: string): boolean {
-  return (source === 'modrinth' || source === 'curseforge' || source === 'all') && category === 'mod'
+  if (category === 'save') return false
+  if (source === 'ftb') return false
+  if (source === 'curseforge') return category === 'mod' || category === 'modpack'
+  return category === 'mod' || category === 'modpack' || category === 'shader' || category === 'resourcepack' || category === 'datapack'
+}
+
+/** 类别筛选的静态回退（仅 mod 有内置列表；后端动态类别失败时兜底）。 */
+function staticTagsFor(source: string, category: string): string[] {
+  if (category !== 'mod') return []
+  if (source === 'curseforge') return CF_TAGS
+  if (source === 'all') return ALL_TAGS
+  return MOD_TAGS
 }
 
 function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string, tags?: string[]): string {
@@ -215,13 +230,13 @@ function ResourceCard({
             <img src={item.iconUrl} alt={item.title} className="h-16 w-16 flex-shrink-0 rounded-2xl object-cover ring-1 ring-border/40" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
           ) : (
             <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-              <FontAwesomeIcon icon={faTag} className="h-5 w-5 opacity-50" />
+              <Tag className="h-5 w-5 opacity-50" />
             </div>
           )}
           <div className="min-w-0 flex-1 space-y-3">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base font-semibold text-foreground">{cnName ? <>{cnName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {item.title}</span></> : item.title}</h3>
+                <h3 className="text-base font-semibold text-foreground">{lang.startsWith('zh') && cnName ? <>{cnName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {item.title}</span></> : item.title}</h3>
                 <Badge variant="secondary" className="rounded-full px-2.5 py-0.5">{getSourceLabel(item.source)}</Badge>
                 {item.latestVersion && <Badge variant="outline" className="rounded-full px-2.5 py-0.5">{item.latestVersion}</Badge>}
               </div>
@@ -229,11 +244,11 @@ function ResourceCard({
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1">
-                <FontAwesomeIcon icon={faUser} className="h-3 w-3" />
+                <User className="h-3 w-3" />
                 {item.author || t('resource.unknownAuthor')}
               </span>
               <span className="inline-flex items-center gap-1">
-                <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                <Download className="h-3 w-3" />
                 {formatDownloads(item.downloadCount)}
               </span>
             </div>
@@ -248,7 +263,7 @@ function ResourceCard({
         </div>
         <div className="flex flex-row gap-2 sm:min-w-[148px] sm:flex-col sm:items-stretch sm:self-stretch">
           <Button className="flex-1 sm:w-full" onClick={() => onInstall(item)}>
-            <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+            <Download className="h-3 w-3" />
             {t('resource.install')}
           </Button>
           <Button asChild variant="outline" className="flex-1 sm:w-full">
@@ -257,7 +272,7 @@ function ResourceCard({
           {item.projectUrl && (
             <Button asChild variant="ghost" className="px-3 sm:w-full">
               <a href={item.projectUrl} target="_blank" rel="noopener noreferrer">
-                <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3 w-3" />
+                <ExternalLink className="h-3 w-3" />
                 {t('resource.originalSite')}
               </a>
             </Button>
@@ -301,7 +316,7 @@ export default function ResourceCenter() {
   const [tags, setTags] = useState<string[]>(() => {
     const raw = urlTags ? urlTags.split(',').map((t) => t.trim()).filter(Boolean)
       : (!freshEntry && snap?.tags ? snap.tags : [])
-    return tagsSupported(categoryInit, source) ? normalizeTags(raw, source) : []
+    return tagsSupported(categoryInit, source) ? normalizeTags(raw, source, categoryInit) : []
   })
   const instanceId = searchParams.get('instanceId') ?? ''
   const [items, setItems] = useState<ResourceItem[]>(() => freshEntry ? [] : (snap?.items ?? []))
@@ -315,6 +330,21 @@ export default function ResourceCenter() {
   const [modpackInstallItem, setModpackInstallItem] = useState<ResourceItem | null>(null)
   const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => freshEntry ? {} : (snap?.cnNames ?? {}))
   const pageSize = 20
+
+  // 动态类别列表（按 source+category 拉取；失败时回退静态列表 staticTagsFor）
+  const [categoryOptions, setCategoryOptions] = useState<ResourceCategory[] | null>(null)
+
+  useEffect(() => {
+    if (!tagsSupported(source, category)) {
+      setCategoryOptions(null)
+      return
+    }
+    let cancelled = false
+    getResourceCategories(source === 'curseforge' ? 'curseforge' : 'modrinth', category)
+      .then((list) => { if (!cancelled) setCategoryOptions(list) })
+      .catch(() => { if (!cancelled) setCategoryOptions(null) })
+    return () => { cancelled = true }
+  }, [source, category])
 
   const restoredRef = useRef(!freshEntry && !!snap)
   const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames })
@@ -424,7 +454,7 @@ export default function ResourceCenter() {
   const handleSourceChange = (nextSource: string) => {
     // 切换来源会改变标签体系（Modrinth / CurseForge），跨体系的标签 slug 不通用，
     // 因此来源词汇变化时清空已选标签，避免误把一套标签发给另一套来源。
-    if (tagsForSource(nextSource) !== tagsForSource(source)) setTags([])
+    if (tagsForSource(nextSource, category) !== tagsForSource(source, category)) setTags([])
     setSource(nextSource)
     if (nextSource === 'ftb') {
       setCategory('modpack')
@@ -483,7 +513,7 @@ export default function ResourceCenter() {
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_110px]">
             <div className="relative">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
               <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={t('resource.searchPlaceholder', { category: activeCategoryLabel })} className="h-10 rounded-xl border-border/60 bg-background pl-9" />
             </div>
             <Select value={sort} onChange={setSort} className="h-10">
@@ -492,7 +522,7 @@ export default function ResourceCenter() {
               ))}
             </Select>
             <Button onClick={handleSearch} className="h-10 rounded-xl">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="h-3.5 w-3.5" />
+              <Search className="h-3.5 w-3.5" />
               {t('resource.search')}
             </Button>
           </div>
@@ -504,7 +534,7 @@ export default function ResourceCenter() {
                 <Combobox value={gameVersion} onChange={setGameVersion} options={GAME_VERSIONS.map((v) => ({ value: v, label: v }))} placeholder={t('resource.allVersions')} emptyText={t('common.noMatch')} className="w-[150px]" />
                 {gameVersion && (
                   <button onClick={clearVersion} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                    <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+                    <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
@@ -519,24 +549,24 @@ export default function ResourceCenter() {
                 </Select>
                 {loader && (
                   <button onClick={clearLoader} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                    <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
+                    <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
             </div>
-            {(source === 'modrinth' || source === 'curseforge' || source === 'all') && category === 'mod' && (
+            {tagsSupported(source, category) && (
               <div className="w-full space-y-1">
                 <p className="text-[11px] font-medium text-muted-foreground">
-                  {source === 'curseforge' ? 'CurseForge 标签' : '标签'}
+                  {t('resource.categoryFilterLabel')}
                 </p>
                 <div className="flex flex-wrap gap-1.5">
-                  {tagsForSource(source).map((tag) => {
-                    const active = tags.includes(tag)
+                  {(categoryOptions ? categoryOptions.map(o => o.slug) : staticTagsFor(source, category)).map((slug) => {
+                    const active = tags.includes(slug)
                     return (
                       <button
-                        key={tag}
+                        key={slug}
                         type="button"
-                        onClick={() => toggleTag(tag)}
+                        onClick={() => toggleTag(slug)}
                         className={cn(
                           'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
                           active
@@ -544,7 +574,7 @@ export default function ResourceCenter() {
                             : 'border-border/60 bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground',
                         )}
                       >
-                        {translateCategory(tag, source === 'curseforge' ? 'curseforge' : 'modrinth', lang)}
+                        {translateCategory(slug, source === 'curseforge' ? 'curseforge' : 'modrinth', lang)}
                       </button>
                     )
                   })}
@@ -554,8 +584,8 @@ export default function ResourceCenter() {
                       onClick={() => setTags([])}
                       className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
                     >
-                      <FontAwesomeIcon icon={faXmark} className="h-3 w-3" />
-                      清除标签
+                      <X className="h-3 w-3" />
+                      {t('resource.clearFilter')}
                     </button>
                   )}
                 </div>
@@ -583,19 +613,19 @@ export default function ResourceCenter() {
       ) : error ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
-            <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 text-destructive/60" />
+            <Search className="h-6 w-6 text-destructive/60" />
           </div>
           <p className="text-sm font-medium text-foreground/80">{t('resource.searchFailed')}</p>
           <p className="mt-1 text-xs text-muted-foreground/60">{error}</p>
           <Button size="sm" variant="outline" onClick={() => doSearch(1, false)} className="mt-4">
-            <FontAwesomeIcon icon={faRotate} className="mr-1.5 h-3 w-3" />
+            <MorphActionIcon active={loading} busy={RotateCwData} rest={RotateCwData} className="mr-1.5 h-3 w-3" />
             {t('resource.retry')}
           </Button>
         </div>
       ) : items.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-            <FontAwesomeIcon icon={faMagnifyingGlass} className="h-6 w-6 opacity-40" />
+            <Search className="h-6 w-6 opacity-40" />
           </div>
           <p className="text-sm font-medium text-foreground/80">{t('resource.notFound')}</p>
           <p className="mt-1 text-xs text-muted-foreground/60">{t('resource.notFoundHint')}</p>
@@ -614,7 +644,7 @@ export default function ResourceCenter() {
             items.length < total ? (
               <div className="mt-5 flex justify-center">
                 <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
-                  {loading ? <><FontAwesomeIcon icon={faRotate} className="h-3 w-3 animate-spin" />{t('resource.loading')}</> : <>{t('resource.loadMore', { current: items.length, total })}</>}
+                  {loading ? <><RotateCw className="h-3 w-3 animate-spin" />{t('resource.loading')}</> : <>{t('resource.loadMore', { current: items.length, total })}</>}
                 </Button>
               </div>
             ) : (

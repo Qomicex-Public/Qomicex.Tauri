@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../lib/cn.js'
 import gsap from 'gsap'
+import { useFloatingPosition } from '../hooks/useFloatingPosition.js'
 
 interface SelectOptionProps {
   value: string
@@ -29,13 +30,12 @@ interface SelectProps {
 export function Select({ value, onChange, children, className, placeholder, disabled }: SelectProps) {
   const [open, setOpen] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
   const [search, setSearch] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const popupAnimRef = useRef<HTMLDivElement>(null)
-  const onCloseRef = useRef<() => void>(() => {})
+  const floating = useFloatingPosition(triggerRef, { maxHeight: 288 }, open || isClosing)
 
   const options: { value: string; label: string; disabled: boolean; isDivider: boolean }[] = []
   let selectedLabel = placeholder || ''
@@ -107,22 +107,6 @@ export function Select({ value, onChange, children, className, placeholder, disa
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open, handleClickOutside])
 
-  useEffect(() => {
-    if (!open) return
-    function reposition() {
-      if (!triggerRef.current) return
-      const tr = triggerRef.current.getBoundingClientRect()
-      setPos({ top: tr.bottom + 4, left: tr.left, width: tr.width })
-    }
-    reposition()
-    window.addEventListener('scroll', reposition, true)
-    window.addEventListener('resize', reposition)
-    return () => {
-      window.removeEventListener('scroll', reposition, true)
-      window.removeEventListener('resize', reposition)
-    }
-  }, [open])
-
   // GSAP 弹出动画
   useEffect(() => {
     if (!open || !popupAnimRef.current) return
@@ -147,9 +131,6 @@ export function Select({ value, onChange, children, className, placeholder, disa
   }, [open])
 
   function openPopup() {
-    if (!triggerRef.current) return
-    const tr = triggerRef.current.getBoundingClientRect()
-    setPos({ top: tr.bottom + 4, left: tr.left, width: tr.width })
     setOpen(true)
     requestAnimationFrame(() => searchRef.current?.focus())
   }
@@ -185,7 +166,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
             popupRef.current = el
             popupAnimRef.current = el
           }}
-          style={{ position: 'fixed', top: pos.top, left: pos.left, width: Math.max(pos.width, 180), zIndex: 9999 }}
+          style={floating.style}
           className="rounded-lg border border-border/50 bg-popover p-1 shadow-xl"
         >
           <div className="max-h-72 overflow-y-auto">

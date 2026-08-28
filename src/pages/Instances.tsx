@@ -2,8 +2,10 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import gsap from 'gsap'
 
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faFileImport, faRotate, faPlay, faGear, faTrashCan, faFolderOpen, faMagnifyingGlass, faCube, faCheck, faTriangleExclamation, faCalendar, faDownload, faFolder, faChevronDown, faList, faGrip, faPen, faHammer, faTag, faStar, faBug, faGhost, faWrench, faLayerGroup, faFolderPlus, faPencil } from '@fortawesome/free-solid-svg-icons'
+import { Box, Bug, Calendar, Check, ChevronDown, Download, FileInput, Folder, FolderOpen, FolderPlus, Ghost, Hammer, Layers, Pen, Pencil, Play, Plus, RotateCw, Search, Settings, Star, Tag, TriangleAlert, Wrench } from 'lucide-react'
+import { Grip as GripData, List as ListData, RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
+import { MorphIcon } from 'morphicons/react'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { invoke } from '@tauri-apps/api/core'
@@ -19,7 +21,7 @@ import { ContextMenu } from '../components/ContextMenu.tsx'
 import type { ContextMenuItem } from '../components/ContextMenu.tsx'
 import { useMessageBox } from '../components/ui'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, syncScan, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
+import { createInstance, startInstall, getInstances, syncScan, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, deleteInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui'
@@ -129,9 +131,9 @@ type PageStep = 'list' | 'select-version' | 'configure'
 
 export default function Instances() {
   const navigate = useNavigate()
-  const { t } = useI18n()
-  const { alert: msgAlert, prompt: msgPrompt, notify } = useMessageBox()
-  const { launchInstance: ctxLaunchInstance } = useRunning()
+  const { t, lang } = useI18n()
+  const { alert: msgAlert, prompt: msgPrompt, confirm: msgConfirm, notify } = useMessageBox()
+  const { launchInstance: ctxLaunchInstance, runningInstances } = useRunning()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
 
   const [scannedLocal, setScannedLocal] = useState<ScannedVersion[]>([])
@@ -155,6 +157,7 @@ export default function Instances() {
   }, [])
 
   const [managedDirs, setManagedDirs] = useState<ManagedDir[]>(() => loadDirs())
+  const [removingDir, setRemovingDir] = useState<string | null>(null)
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
   const [dirPopover, setDirPopover] = useState(false)
 
@@ -242,7 +245,7 @@ export default function Instances() {
     if (!form.loader || !form.gameVersion) { setLoaderVersions([]); return }
     let cancelled = false
     setLoadingVersions(true)
-    getLoaderVersions(form.gameVersion, form.loader)
+    getLoaderVersions(form.gameVersion, form.loader, lang)
       .then((versions) => { if (!cancelled) setLoaderVersions(versions) })
       .catch(() => { if (!cancelled) setLoaderVersions([]) })
       .finally(() => { if (!cancelled) setLoadingVersions(false) })
@@ -308,7 +311,11 @@ export default function Instances() {
   }
 
   function removeDir(path: string) {
-    setManagedDirs((prev) => { const next = prev.filter((d) => d.path !== path); saveDirs(next); return next })
+    setRemovingDir(path)
+    setTimeout(() => {
+      setManagedDirs((prev) => { const next = prev.filter((d) => d.path !== path); saveDirs(next); return next })
+      setRemovingDir(null)
+    }, 400)
   }
 
   function moveDir(from: number, to: number) {
@@ -567,12 +574,12 @@ export default function Instances() {
   }, [versionTypeMap])
 
   const FILTER_OPTIONS = [
-    { key: 'all', icon: faLayerGroup },
-    { key: 'modded', icon: faWrench },
-    { key: 'vanilla', icon: faCube },
-    { key: 'snapshot', icon: faGhost },
-    { key: 'april_fools', icon: faStar },
-    { key: 'broken', icon: faBug },
+    { key: 'all', icon: Layers },
+    { key: 'modded', icon: Wrench },
+    { key: 'vanilla', icon: Box },
+    { key: 'snapshot', icon: Ghost },
+    { key: 'april_fools', icon: Star },
+    { key: 'broken', icon: Bug },
   ]
 
   const filtered = useMemo(() => {
@@ -684,7 +691,7 @@ export default function Instances() {
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_112px]">
             <div className="relative">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input placeholder={t('instances.searchPlaceholder')} value={versionSearch} onChange={(e) => setVersionSearch(e.target.value)} className="pl-9" />
             </div>
 
@@ -695,7 +702,7 @@ export default function Instances() {
             </Select>
 
             <button onClick={() => setRemoteViewMode(remoteViewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', remoteViewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
-              <FontAwesomeIcon icon={remoteViewMode === 'grid' ? faGrip : faList} className="h-3.5 w-3.5" />
+              <MorphIcon icon={remoteViewMode === 'grid' ? GripData : ListData} className="h-3.5 w-3.5" spring="snappy" reducedMotion="user" />
             </button>
           </div>
 
@@ -707,7 +714,7 @@ export default function Instances() {
 
         {sortedRemote.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-20 text-center text-muted-foreground">
-            <FontAwesomeIcon icon={faCube} className="mb-3 h-8 w-8 opacity-30" />
+            <Box className="mb-3 h-8 w-8 opacity-30" />
             <p className="text-sm font-medium">{t('instances.noRemoteMatch')}</p>
             <p className="mt-1 text-xs text-muted-foreground/70">{t('instances.noRemoteMatchHint')}</p>
           </div>
@@ -716,13 +723,13 @@ export default function Instances() {
             {sortedRemote.map((v) => (
               <button key={v.id} data-key={v.id} onClick={() => selectRemoteVersion(v)} className="group glass-surface flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-left transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
                 <div className="flex items-center gap-1.5">
-                  <FontAwesomeIcon icon={faCube} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <Box className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="truncate text-sm font-medium">{v.id}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{t(TYPE_LABEL[v.type] ?? v.type)}</span>
                 </div>
-                <span className="text-[10px] text-muted-foreground/60"><FontAwesomeIcon icon={faCalendar} className="mr-0.5 h-2.5 w-2.5" />{formatDate(v.releaseTime)}</span>
+                <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/60"><Calendar className="h-2.5 w-2.5 shrink-0" />{formatDate(v.releaseTime)}</span>
               </button>
             ))}
           </div>
@@ -733,13 +740,13 @@ export default function Instances() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex items-center gap-2">
-                      <FontAwesomeIcon icon={faCube} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <Box className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       <span className="text-sm font-medium text-foreground">{v.id}</span>
                     </div>
                     <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', v.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : v.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : v.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{t(TYPE_LABEL[v.type] ?? v.type)}</span>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground/70">
-                    <FontAwesomeIcon icon={faCalendar} className="mr-1 h-2.5 w-2.5" />
+                  <div className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground/70">
+                    <Calendar className="h-2.5 w-2.5 shrink-0" />
                     {t('instances.releaseDate', { date: formatDate(v.releaseTime) })}
                   </div>
                 </div>
@@ -765,14 +772,14 @@ export default function Instances() {
             <div className="space-y-2">
               <Label htmlFor="iname">{t('instances.instanceName')}</Label>
               <div className="relative">
-                <FontAwesomeIcon icon={faPen} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Pen className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input id="iname" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} className="pl-9" placeholder={t('instances.instanceNamePlaceholder')} />
               </div>
             </div>
             <div className="space-y-2">
               <Label>{t('instances.gameVersion')}</Label>
               <div className="flex h-9 items-center gap-2 rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
-                <FontAwesomeIcon icon={faCube} className="h-3.5 w-3.5 shrink-0" />
+                <Box className="h-3.5 w-3.5 shrink-0" />
                 <span className="font-medium text-foreground">{form.gameVersion}</span>
                 {selectedVer && (
                   <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium', selectedVer.type === 'release' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : selectedVer.type === 'snapshot' ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : selectedVer.type === 'april_fools' ? 'border-pink-500/30 bg-pink-500/10 text-pink-400' : 'border-muted-foreground/20 bg-muted text-muted-foreground')}>{t(TYPE_LABEL[selectedVer.type] || selectedVer.type)}</span>
@@ -880,7 +887,7 @@ export default function Instances() {
             )}
             <div className="flex items-center justify-between gap-4 rounded-lg border border-border/40 bg-muted/10 p-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <FontAwesomeIcon icon={faDownload} className="h-3 w-3" />
+                <Download className="h-3 w-3" />
                 <span>{t('instances.onlyGameFiles')}</span>
               </div>
             </div>
@@ -890,7 +897,7 @@ export default function Instances() {
               )}
               <Button variant="secondary" onClick={() => setStep('list')}>{t('instances.cancel')}</Button>
               <Button onClick={handleDownload} disabled={!form.gameVersion || !form.name.trim() || loadingVersions || (!!form.loader && !loadingVersions && loaderVersions.length === 0)}>
-                <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('instances.startDownload')}
+                <Download className="h-4 w-4" />{t('instances.startDownload')}
               </Button>
             </div>
           </CardContent>
@@ -901,6 +908,32 @@ export default function Instances() {
 
   function getInstanceForVersion(v: ScannedVersion): GameInstance | undefined {
     return backedInstances.find((i) => i.gameDir === currentDir && i.name === v.name)
+  }
+
+  /** 删除实例：二次确认后调用后端（后端会删除版本隔离目录，破坏性操作）。 */
+  async function handleDeleteInstance(v: ScannedVersion) {
+    const inst = getInstanceForVersion(v)
+    if (!inst) return
+    const ok = await msgConfirm(t('instances.deleteInstanceConfirm', { name: v.name }))
+    if (!ok) return
+    try {
+      await deleteInstance(inst.id)
+      refreshInstances()
+      if (currentDir) await doScan(currentDir)
+    } catch (e) {
+      await msgAlert(t('dialogs.common.deleteFailed', { error: e instanceof Error ? e.message : String(e) }))
+    }
+  }
+
+  /** 实例卡片右键菜单：启动（运行中禁用）/ 详情 / 删除（未创建或运行中禁用 + 二次确认）。 */
+  function buildInstanceContextItems(v: ScannedVersion): ContextMenuItem[] {
+    const inst = getInstanceForVersion(v)
+    const running = inst ? runningInstances.some((r) => r.instanceId === inst.id) : false
+    return [
+      { label: t('instances.launch'), onClick: () => handleLaunch(v), disabled: running },
+      { label: t('instances.settings'), onClick: () => openVersionSettings(v) },
+      { label: t('common.delete'), onClick: () => handleDeleteInstance(v), disabled: !inst || running, danger: true },
+    ]
   }
 
   function getLoadersForVersion(v: ScannedVersion) {
@@ -986,7 +1019,7 @@ export default function Instances() {
           actions={
             <Tooltip content={t('instances.refresh')}>
               <button onClick={refreshInstances} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-                <FontAwesomeIcon icon={faRotate} className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                <RotateCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
               </button>
             </Tooltip>
           }
@@ -1001,7 +1034,7 @@ export default function Instances() {
         <DialogBody>
           {managedDirs.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-8">
-              <FontAwesomeIcon icon={faFolder} className="h-10 w-10 text-muted-foreground/40" />
+              <Folder className="h-10 w-10 text-muted-foreground/40" />
               <p className="text-sm text-muted-foreground">{t('instances.noDir')}</p>
               <p className="text-xs text-muted-foreground/60">{t('instances.noDirHint')}</p>
             </div>
@@ -1036,7 +1069,7 @@ export default function Instances() {
                         className="cursor-pointer space-y-1 p-3"
                       >
                         <div className="flex items-center gap-2">
-                          <FontAwesomeIcon icon={faFolder} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
                           {editing ? (
                             <Input
                               autoFocus
@@ -1052,25 +1085,25 @@ export default function Instances() {
                               <span className="min-w-0 flex-1 truncate text-sm font-medium">{d.name || dirName(d.path)}</span>
                               <Tooltip content={t('instances.rename')}>
                                 <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); startEdit(d) }}>
-                                  <FontAwesomeIcon icon={faPencil} className="h-3 w-3" />
+                                  <Pencil className="h-3 w-3" />
                                 </Button>
                               </Tooltip>
                             </>
                           )}
                           {active && (
-                            <span className="shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
-                              <FontAwesomeIcon icon={faCheck} className="mr-1 h-3 w-3" />
+                            <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+                              <Check className="h-3 w-3" />
                               {t('instances.inUse')}
                             </span>
                           )}
                           <Tooltip content={t('instances.openDir')}>
                             <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); openFolder(d.path).catch(() => {}) }}>
-                              <FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" />
+                              <FolderOpen className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                           <Tooltip content={t('instances.remove')}>
                             <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={(e) => { e.stopPropagation(); removeDir(d.path) }}>
-                              <FontAwesomeIcon icon={faTrashCan} className="h-3.5 w-3.5" />
+                              <MorphActionIcon active={removingDir === d.path} busy={RotateCwData} rest={Trash2Data} className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                         </div>
@@ -1086,8 +1119,8 @@ export default function Instances() {
           )}
         </DialogBody>
         <DialogFooter className="justify-between">
-          <Button variant="link" onClick={addDirManually} className="gap-1.5 px-2"><FontAwesomeIcon icon={faPlus} className="h-4 w-4" />{t('instances.manualAdd')}</Button>
-          <Button onClick={() => { handlePickDir(); setDirManager(false) }} className="gap-1.5"><FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />{t('instances.browseAdd')}</Button>
+          <Button variant="link" onClick={addDirManually} className="gap-1.5 px-2"><Plus className="h-4 w-4" />{t('instances.manualAdd')}</Button>
+          <Button onClick={() => { handlePickDir(); setDirManager(false) }} className="gap-1.5"><FolderOpen className="h-4 w-4" />{t('instances.browseAdd')}</Button>
         </DialogFooter>
       </Dialog>
 
@@ -1145,12 +1178,12 @@ export default function Instances() {
                   <p className="text-sm text-muted-foreground">{t('instances.repairDesc')}</p>
                   {(repairAdded || hasActive) ? (
                     <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-primary">
-                      <FontAwesomeIcon icon={faDownload} className="mr-1.5 h-4 w-4" />{t('instances.addedToDownload')}
+                      <Download className="mr-1.5 h-4 w-4" />{t('instances.addedToDownload')}
                       <button onClick={() => navigate('/downloads')} className="ml-2 text-xs underline hover:text-primary/80">{t('instances.goToDownloadCenter')}</button>
                     </div>
                   ) : isDone ? (
                     <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-400">
-                      <FontAwesomeIcon icon={faCheck} className="mr-1.5 h-4 w-4" />{t('instances.repairCompleted')}
+                      <Check className="mr-1.5 h-4 w-4" />{t('instances.repairCompleted')}
                     </div>
                   ) : isFailed ? (
                     <div className="space-y-2">
@@ -1159,7 +1192,7 @@ export default function Instances() {
                     </div>
                   ) : (
                     <Button onClick={handleRepairStart} className="gap-2">
-                      <FontAwesomeIcon icon={faHammer} className="h-4 w-4" />{t('instances.startRepair')}
+                      <Hammer className="h-4 w-4" />{t('instances.startRepair')}
                     </Button>
                   )}
                 </div>
@@ -1179,9 +1212,9 @@ export default function Instances() {
                 !currentDir && 'border-dashed text-muted-foreground'
               )}
             >
-              <FontAwesomeIcon icon={faFolder} className="h-3.5 w-3.5 text-muted-foreground" />
+              <Folder className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="max-w-[140px] truncate">{currentDir ? dirName(currentDir) : t('instances.selectGameDir')}</span>
-              <FontAwesomeIcon icon={faChevronDown} className={cn('h-2.5 w-2.5 text-muted-foreground transition-transform', dirPopover && 'rotate-180')} />
+              <ChevronDown className={cn('h-2.5 w-2.5 text-muted-foreground transition-transform', dirPopover && 'rotate-180')} />
             </button>
             {dirPopover && (
               <div ref={dirPopoverRef} className="absolute left-0 top-full z-50 mt-1 w-96 rounded-xl border bg-popover p-2 shadow-xl">
@@ -1196,13 +1229,13 @@ export default function Instances() {
                     {managedDirs.map((d) => (
                       <button key={d.path} onClick={() => switchDir(d.path)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent', currentDir === d.path && 'bg-accent/80')}>
                         <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', currentDir === d.path ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
-                          <FontAwesomeIcon icon={faFolder} className="h-4 w-4" />
+                          <Folder className="h-4 w-4" />
                         </div>
                         <div className="flex-1 truncate">
                           <div className="text-sm font-medium">{d.name}</div>
                           <div className="truncate text-xs text-muted-foreground">{d.path}</div>
                         </div>
-                        {currentDir === d.path && <FontAwesomeIcon icon={faCheck} className="h-3 w-3 text-primary" />}
+                        {currentDir === d.path && <Check className="h-3 w-3 text-primary" />}
                       </button>
                     ))}
                   </div>
@@ -1213,34 +1246,34 @@ export default function Instances() {
           {scanning && <span className="text-xs text-muted-foreground animate-pulse">{t('instances.scanning')}</span>}
         </div>
         <div className="relative max-w-sm flex-1">
-          <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder={t('instances.searchPlaceholder')} value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
         <Button onClick={gotoNewInstance}>
-          <FontAwesomeIcon icon={faDownload} className="h-4 w-4" />{t('instances.downloadTitle')}
+          <Download className="h-4 w-4" />{t('instances.downloadTitle')}
         </Button>
-        <Button variant="outline" onClick={() => setImportOpen(true)}><FontAwesomeIcon icon={faFileImport} className="h-4 w-4" />{t('instances.import')}</Button>
+        <Button variant="outline" onClick={() => setImportOpen(true)}><FileInput className="h-4 w-4" />{t('instances.import')}</Button>
         {currentDir && (
           <Tooltip content={t('instances.openGameDir')}>
             <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '')}/versions`).catch(() => {})}>
-              <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />
+              <FolderOpen className="h-4 w-4" />
             </Button>
           </Tooltip>
         )}
         <Tooltip content={t('instances.manageGroups')}>
           <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setManageGroupsOpen(true)}>
-            <FontAwesomeIcon icon={faFolderPlus} className="h-3.5 w-3.5" />
+            <FolderPlus className="h-3.5 w-3.5" />
           </Button>
         </Tooltip>
         <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-background text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', viewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
-          <FontAwesomeIcon icon={viewMode === 'grid' ? faGrip : faList} className="h-3.5 w-3.5" />
+          <MorphIcon icon={viewMode === 'grid' ? GripData : ListData} className="h-3.5 w-3.5" spring="snappy" reducedMotion="user" />
         </button>
       </div>
 
       <div className="flex items-center gap-2">
         <Tabs
           tabs={[
-            ...FILTER_OPTIONS.map(o => ({ id: o.key, label: t(`instances.loaderFilter.${o.key}`), icon: <FontAwesomeIcon icon={o.icon} className="h-3 w-3" /> })),
+            ...FILTER_OPTIONS.map(o => ({ id: o.key, label: t(`instances.loaderFilter.${o.key}`), icon: <o.icon className="h-3 w-3" /> })),
             ...groups.map(g => ({ id: `group:${g.id}`, label: g.name, icon: <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: g.color }} /> })),
           ]}
           activeTab={groupFilter ? `group:${groupFilter}` : filterType}
@@ -1258,11 +1291,11 @@ export default function Instances() {
 
       {!currentDir ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
-          <FontAwesomeIcon icon={faFolder} className="h-12 w-12 opacity-20" />
+          <Folder className="h-12 w-12 opacity-20" />
           <p className="text-sm font-medium">{t('instances.selectMcDir')}</p>
           <p className="text-xs text-muted-foreground/70">{t('instances.selectMcDirHint')}</p>
           <Button variant="outline" onClick={handlePickDir} className="mt-2 gap-2">
-            <FontAwesomeIcon icon={faFolderOpen} className="h-4 w-4" />{t('instances.browseAndSelect')}
+            <FolderOpen className="h-4 w-4" />{t('instances.browseAndSelect')}
           </Button>
         </div>
       ) : null}
@@ -1296,7 +1329,7 @@ export default function Instances() {
         )
       ) : scannedLocal.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
-          <FontAwesomeIcon icon={faCube} className="h-10 w-10 opacity-30" />
+          <Box className="h-10 w-10 opacity-30" />
           <p className="text-sm">{search ? t('instances.noMatch') : t('instances.noVersionDetected')}</p>
           <p className="text-xs text-muted-foreground/70">{t('instances.needVersionsFolder')}</p>
         </div>
@@ -1305,7 +1338,8 @@ export default function Instances() {
           {scannedLocal.length > 0 && (viewMode === 'grid' ? (
           <div ref={gridAnimRef} className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v) => (
-              <div key={v.name} data-key={v.name} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
+              <ContextMenu key={v.name} items={buildInstanceContextItems(v)}>
+                <div data-key={v.name} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 <div className="mt-1 flex flex-wrap justify-center gap-1">
@@ -1319,42 +1353,44 @@ export default function Instances() {
                 </div>
                 <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/70">
                   <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
-                    <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
+                    {v.state === 'Available' ? <Check className="h-2.5 w-2.5" /> : <TriangleAlert className="h-2.5 w-2.5" />}
                     {v.state === 'Available' ? t('instances.available') : t('instances.unavailable')}
                   </span>
                 </div>
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
                     <Tooltip content={t('instances.launch')}>
                     <Button className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:bg-primary/90" onClick={(e) => { e.stopPropagation(); handleLaunch(v) }}>
-                      <FontAwesomeIcon icon={faPlay} className="h-5 w-5" />
+                      <Play className="h-5 w-5" />
                     </Button>
                   </Tooltip>
                   <div className="flex items-center gap-1">
                     <Tooltip content={t('instances.settings')}>
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openVersionSettings(v) }}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openVersionSettings(v) }}><Settings className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                     <Tooltip content={t('instances.groups')}>
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); setAssignGroupVersion(v) }}><FontAwesomeIcon icon={faLayerGroup} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); setAssignGroupVersion(v) }}><Layers className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                     {(() => { const inst = getInstanceForVersion(v); return (
                       <Tooltip content={inst && defaultInstanceId === inst.id ? t('instances.unpin') : t('instances.pinToHome')}>
                         <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); handleToggleDefault(v) }}>
-                          <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', inst && defaultInstanceId === inst.id && 'text-yellow-400')} />
+                          <Star className={cn('h-3.5 w-3.5', inst && defaultInstanceId === inst.id && 'text-yellow-400')} />
                         </Button>
                       </Tooltip>
                     )})()}
                     <Tooltip content={t('instances.openFolder')}>
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {}) }}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {}) }}><FolderOpen className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
+                  </div>
                 </div>
-              </div>
+              </ContextMenu>
             ))}
           </div>
         ) : (
           <div ref={listAnimRef} className="space-y-3">
             {filtered.map((v) => (
-              <div key={v.name} data-key={v.name} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
+              <ContextMenu key={v.name} items={buildInstanceContextItems(v)}>
+                <div data-key={v.name} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -1367,19 +1403,19 @@ export default function Instances() {
                       <span className={cn('inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium shrink-0', LOADER_COLORS.Vanilla)}>Vanilla</span>
                     )}
                     <span className={cn('inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium', v.state === 'Available' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400')}>
-                      <FontAwesomeIcon icon={v.state === 'Available' ? faCheck : faTriangleExclamation} className="h-2.5 w-2.5" />
+                      {v.state === 'Available' ? <Check className="h-2.5 w-2.5" /> : <TriangleAlert className="h-2.5 w-2.5" />}
                     {v.state === 'Available' ? t('instances.available') : t('instances.unavailable')}
                     </span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
                     {getLoadersForVersion(v).filter((l) => l.version).length > 0 && (
                       <span className="flex items-center gap-1">
-                        <FontAwesomeIcon icon={faTag} className="h-3 w-3" />
+                        <Tag className="h-3 w-3" />
                         {getLoadersForVersion(v).filter((l) => l.version).map((l) => l.version).join(', ')}
                       </span>
                     )}
                     <span className="flex items-center gap-1">
-                      <FontAwesomeIcon icon={faCalendar} className="h-3 w-3" />
+                      <Calendar className="h-3 w-3" />
                       {v.gameVersion}
                     </span>
                   </div>
@@ -1387,27 +1423,28 @@ export default function Instances() {
                 <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                   <Tooltip content={t('instances.launch')}>
                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLaunch(v)}>
-                      <FontAwesomeIcon icon={faPlay} className="h-4 w-4" />
+                      <Play className="h-4 w-4" />
                     </Button>
                   </Tooltip>
                   <Tooltip content={t('instances.settings')}>
-                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openVersionSettings(v)}><FontAwesomeIcon icon={faGear} className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openVersionSettings(v)}><Settings className="h-3.5 w-3.5" /></Button>
                   </Tooltip>
                   <Tooltip content={t('instances.groups')}>
-                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setAssignGroupVersion(v)}><FontAwesomeIcon icon={faLayerGroup} className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setAssignGroupVersion(v)}><Layers className="h-3.5 w-3.5" /></Button>
                   </Tooltip>
                   {(() => { const inst = getInstanceForVersion(v); return (
                     <Tooltip content={inst && defaultInstanceId === inst.id ? t('instances.unpin') : t('instances.pinToHome')}>
                       <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleToggleDefault(v)}>
-                        <FontAwesomeIcon icon={faStar} className={cn('h-3.5 w-3.5', inst && defaultInstanceId === inst.id && 'text-yellow-400')} />
+                        <Star className={cn('h-3.5 w-3.5', inst && defaultInstanceId === inst.id && 'text-yellow-400')} />
                       </Button>
                     </Tooltip>
                   )})()}
                    <Tooltip content={t('instances.openFolder')}>
-                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {})}><FontAwesomeIcon icon={faFolderOpen} className="h-3.5 w-3.5" /></Button>
-                   </Tooltip>
-                </div>
-              </div>
+                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {})}><FolderOpen className="h-3.5 w-3.5" /></Button>
+</Tooltip>
+                 </div>
+               </div>
+              </ContextMenu>
             ))}
           </div>
         ))}
@@ -1504,6 +1541,7 @@ function ManageGroupsDialog({ open, groups, colors, onClose, onCreate, onRename,
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editColor, setEditColor] = useState('')
+  const [deletingGroup, setDeletingGroup] = useState<string | null>(null)
 
   useEffect(() => {
     if (open) { setName(''); setColor(colors[0] ?? '#22d3ee'); setEditingId(null) }
@@ -1518,7 +1556,7 @@ function ManageGroupsDialog({ open, groups, colors, onClose, onCreate, onRename,
   return (
     <Dialog open={open} onClose={onClose}>
       <DialogHeader onClose={onClose}>
-        <DialogTitle><FontAwesomeIcon icon={faLayerGroup} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instances.manageGroups')}</DialogTitle>
+        <DialogTitle><Layers className="mr-2 h-4 w-4 text-muted-foreground" />{t('instances.manageGroups')}</DialogTitle>
       </DialogHeader>
       <DialogBody className="space-y-4">
         {/* 新建 */}
@@ -1549,17 +1587,19 @@ function ManageGroupsDialog({ open, groups, colors, onClose, onCreate, onRename,
                       <button key={c} type="button" onClick={() => setEditColor(c)} className={cn('h-4 w-4 rounded-full border-2', editColor === c ? 'border-primary' : 'border-transparent')} style={{ backgroundColor: c }} />
                     ))}
                   </div>
-                  <Button size="sm" variant="default" onClick={() => { onRename(g.id, editName, editColor); setEditingId(null) }}><FontAwesomeIcon icon={faCheck} className="h-3 w-3" /></Button>
+                  <Button size="sm" variant="default" onClick={() => { onRename(g.id, editName, editColor); setEditingId(null) }}><Check className="h-3 w-3" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>{t('common.cancel')}</Button>
                 </>
               ) : (
                 <>
                   <span className="flex-1 truncate text-sm">{g.name}</span>
                   <Tooltip content={t('common.edit')}>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEdit(g)}><FontAwesomeIcon icon={faPencil} className="h-3 w-3" /></Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEdit(g)}><Pencil className="h-3 w-3" /></Button>
                   </Tooltip>
                   <Tooltip content={t('common.delete')}>
-                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => onDelete(g.id)}><FontAwesomeIcon icon={faTrashCan} className="h-3 w-3" /></Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { setDeletingGroup(g.id); setTimeout(() => { onDelete(g.id); setDeletingGroup(null) }, 400) }}>
+                      <MorphActionIcon active={deletingGroup === g.id} busy={RotateCwData} rest={Trash2Data} className="h-3 w-3" />
+                    </Button>
                   </Tooltip>
                 </>
               )}
@@ -1585,7 +1625,7 @@ function AssignGroupDialog({ version, groups, instance, onClose, onToggle }: {
   return (
     <Dialog open={!!version} onClose={onClose}>
       <DialogHeader onClose={onClose}>
-        <DialogTitle><FontAwesomeIcon icon={faLayerGroup} className="mr-2 h-4 w-4 text-muted-foreground" />{t('instances.groups')}</DialogTitle>
+        <DialogTitle><Layers className="mr-2 h-4 w-4 text-muted-foreground" />{t('instances.groups')}</DialogTitle>
       </DialogHeader>
       <DialogBody className="space-y-3">
         <p className="truncate text-sm font-medium">{version?.name}</p>
@@ -1604,7 +1644,7 @@ function AssignGroupDialog({ version, groups, instance, onClose, onToggle }: {
                 >
                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: g.color }} />
                   {g.name}
-                  {active && <FontAwesomeIcon icon={faCheck} className="h-3 w-3" />}
+                  {active && <Check className="h-3 w-3" />}
                 </button>
               )
             })}

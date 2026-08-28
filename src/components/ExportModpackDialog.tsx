@@ -47,6 +47,33 @@ function ProgressBar({ percent }: { percent: number }) {
   )
 }
 
+/** 导出子任务定义（权重之和=100，对应后端总进度分段）。 */
+interface ExportSubTask {
+  key: string
+  weight: number
+  labelKey: string
+}
+const EXPORT_SUB_TASKS: ExportSubTask[] = [
+  { key: 'lookup', weight: 30, labelKey: 'stageLookup' },    // 后端总进度 0-30
+  { key: 'manifest', weight: 5, labelKey: 'stageManifest' }, // 后端总进度 30-35
+  { key: 'packing', weight: 65, labelKey: 'stagePacking' },  // 后端总进度 35-100
+]
+
+/** 根据后端总进度 percent 计算各子任务进度（0-100），保证加权平均=percent。 */
+function subTaskProgress(percent: number, sub: ExportSubTask): number {
+  const p = Math.max(0, Math.min(100, percent))
+  if (sub.key === 'lookup') return Math.min(p / 30, 1) * 100
+  if (sub.key === 'manifest') return p <= 30 ? 0 : Math.min((p - 30) / 5, 1) * 100
+  return p <= 35 ? 0 : Math.min((p - 35) / 65, 1) * 100
+}
+
+/** 子任务是否已完成。 */
+function subTaskDone(percent: number, sub: ExportSubTask): boolean {
+  if (sub.key === 'lookup') return percent >= 30
+  if (sub.key === 'manifest') return percent >= 35
+  return percent >= 100
+}
+
 /** 收集节点子树内全部文件相对路径。 */
 function collectFilePaths(node: ModpackExportFileNode, out: string[]) {
   if (node.type === 'file') {
@@ -408,7 +435,7 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
       closeOnBackdrop={exportStatus !== 'running'}
       closeOnEsc={exportStatus !== 'running'}
     >
-      <DialogHeader onClose={exportStatus === 'running' ? undefined : onClose}>
+      <DialogHeader onClose={exportStatus === 'running' ? undefined : () => { reset(); onClose() }}>
         <DialogTitle>
           {exportStatus === 'running' ? t('dialogs.modpackExport.exportingTitle') : t('dialogs.modpackExport.title')}
         </DialogTitle>
@@ -422,9 +449,33 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
                 <span className="text-xs tabular-nums text-muted-foreground">{Math.round(exportPercent)}%</span>
               )}
             </div>
+            {/* 总进度条 */}
             <ProgressBar percent={exportPercent} />
             {exportStatus === 'running' && (
               <p className="text-sm text-muted-foreground">{stageText(exportStage, exportCurrentFile)}</p>
+            )}
+            {/* 子任务进度列表（ENH-03） */}
+            {exportStatus === 'running' && (
+              <div className="space-y-2 pt-1">
+                {EXPORT_SUB_TASKS.map((sub) => {
+                  const pct = subTaskProgress(exportPercent, sub)
+                  const active = exportStage === sub.key
+                  const done = subTaskDone(exportPercent, sub)
+                  return (
+                    <div key={sub.key} className="flex items-center gap-3">
+                      <span className={cn('w-16 text-xs shrink-0', active ? 'text-foreground font-medium' : done ? 'text-emerald-400' : 'text-muted-foreground/50')}>
+                        {t(`dialogs.modpackExport.${sub.labelKey}`)}
+                      </span>
+                      <div className="flex-1">
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                          <div className={cn('h-full rounded-full transition-all duration-300', active ? 'bg-primary' : done ? 'bg-emerald-400' : 'bg-muted-foreground/20')} style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                      <span className="w-8 text-right text-[10px] tabular-nums text-muted-foreground">{Math.round(pct)}%</span>
+                    </div>
+                  )
+                })}
+              </div>
             )}
             {exportStatus === 'completed' && (
               <p className="text-sm text-emerald-500 break-all">

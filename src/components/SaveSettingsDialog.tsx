@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRotate, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
+import { RotateCw, TriangleAlert } from 'lucide-react'
+import { RotateCw as RotateCwData } from 'lucide'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button, Checkbox, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Label, Select, SelectOption } from './ui'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
@@ -168,7 +169,7 @@ export default function SaveSettingsDialog({ open, onClose, instanceId, saveName
       <DialogBody className="max-h-[70vh] overflow-y-auto">
         {running && (
           <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600">
-            <FontAwesomeIcon icon={faTriangleExclamation} className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{t('instanceDetail.saveSettings.runningWarning')}</span>
           </div>
         )}
@@ -176,7 +177,7 @@ export default function SaveSettingsDialog({ open, onClose, instanceId, saveName
           <div className="py-6 text-center text-sm text-destructive">{error}</div>
         ) : loading || !settings ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <FontAwesomeIcon icon={faRotate} className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
+            <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
         ) : (
           <div className="grid gap-4">
@@ -302,7 +303,7 @@ export default function SaveSettingsDialog({ open, onClose, instanceId, saveName
       <DialogFooter>
         {!error && settings && (
           <Button variant="outline" size="sm" onClick={() => void handleRestore()} disabled={restoring || saving} className="mr-auto gap-1.5">
-            <FontAwesomeIcon icon={faRotate} className={`h-3 w-3 ${restoring ? 'animate-spin' : ''}`} />
+            <MorphActionIcon active={restoring} busy={RotateCwData} rest={RotateCwData} className="h-3 w-3" />
             {t('instanceDetail.saveSettings.restoreFromOld')}
           </Button>
         )}
