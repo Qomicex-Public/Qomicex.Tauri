@@ -3,6 +3,8 @@ import type { ReactNode } from 'react'
 import { launchInstance as apiLaunchInstance, getLaunchProgress, cancelLaunch as apiCancelLaunch } from '../api/instance.ts'
 import type { LaunchInstanceOptions } from '../api/instance.ts'
 import { getJavaRequirement } from '../api/java.ts'
+import { getProcessResourceUsage } from '../api/system.ts'
+import type { ProcessResourceUsage } from '../api/system.ts'
 import { analyzeCrash } from '../api/crashDiagnostics.ts'
 import { getRuntimes } from '../stores/javaStore.ts'
 import { useMessageBox } from '../components/ui'
@@ -15,6 +17,7 @@ export interface RunningInstance {
   startedAt: number
   stage: string
   processId?: number | null
+  resourceUsage?: ProcessResourceUsage | null
 }
 
 export interface JavaCheckInfo {
@@ -56,6 +59,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null)
   const [crashDialogState, setCrashDialogState] = useState<CrashDialogState | null>(null)
   const pollRefs = useRef<Map<string, number>>(new Map())
+  const resourcePollRefs = useRef<Map<string, number>>(new Map())
   const notifyRef = useRef<(msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void>(() => {})
   const launchingIdRef = useRef<string | null>(null)
 
@@ -78,6 +82,26 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   const clearInstancePoll = useCallback((id: string) => {
     const ref = pollRefs.current.get(id)
     if (ref) { clearTimeout(ref); pollRefs.current.delete(id) }
+    // 同时清理资源监控轮询
+    const resRef = resourcePollRefs.current.get(id)
+    if (resRef) { clearTimeout(resRef); resourcePollRefs.current.delete(id) }
+  }, [])
+
+  /** 轮询进程资源使用（CPU/内存），每秒更新一次。 */
+  const startResourcePoll = useCallback((id: string, pid: number) => {
+    const poll = async () => {
+      try {
+        const usage = await getProcessResourceUsage(pid)
+        setRunningInstances(prev => prev.map(r =>
+          r.instanceId === id ? { ...r, resourceUsage: usage } : r
+        ))
+        resourcePollRefs.current.set(id, window.setTimeout(poll, 1000))
+      } catch {
+        // 进程可能已退出，停止轮询
+        resourcePollRefs.current.delete(id)
+      }
+    }
+    resourcePollRefs.current.set(id, window.setTimeout(poll, 1000))
   }, [])
 
   /** 轮询启动进度直到终态（running 注册进运行列表 / failed/crashed 弹窗 / completed 移除）。
@@ -126,6 +150,10 @@ export function RunningProvider({ children }: { children: ReactNode }) {
             notifyRef.current?.(tRef.current('running.gameStarted'), 'success')
             return [...prev, { instanceId: id, name, startedAt: Date.now(), stage: 'running', processId: p.processId }]
           })
+          // 启动资源监控轮询
+          if (p.processId) {
+            startResourcePoll(id, p.processId)
+          }
           pollRefs.current.set(id, window.setTimeout(poll, 5000))
         } else {
           setLaunchProgress(p)

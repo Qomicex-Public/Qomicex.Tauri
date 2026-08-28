@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Box, Gamepad2, Square } from 'lucide-react'
+import { Box, Gamepad2, Square, Cpu, MemoryStick } from 'lucide-react'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
@@ -68,6 +68,18 @@ export default function RunningInstances() {
                     </p>
                     {inst.processId && (
                       <p className="mt-1 text-xs text-muted-foreground/60">PID: {inst.processId}</p>
+                    )}
+                    {inst.resourceUsage && (
+                      <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          <Cpu className="h-3 w-3" />
+                          <span>{inst.resourceUsage.cpuUsage.toFixed(1)}%</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <MemoryStick className="h-3 w-3" />
+                          <span>{inst.resourceUsage.memoryUsageMb.toFixed(0)} MB</span>
+                        </div>
+                      </div>
                     )}
                   </div>
                   <Button

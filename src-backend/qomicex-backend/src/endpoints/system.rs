@@ -105,6 +105,7 @@ pub fn router() -> Router<SharedState> {
             post(clear_curseforge_cache),
         )
         .route("/settings/clear-neoforge-cache", post(clear_neoforge_cache))
+        .route("/process/{pid}/resource-usage", get(get_process_resource_usage))
 }
 
 async fn health() -> ApiResult<Json<HealthResponse>> {
@@ -480,4 +481,46 @@ async fn clear_neoforge_cache() -> ApiResult<Json<ClearNeoForgeCacheResponse>> {
         }
     }
     Ok(Json(ClearNeoForgeCacheResponse { deleted }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessResourceUsageResponse {
+    pid: i32,
+    cpu_usage: f32,
+    memory_usage: u64,
+    memory_usage_mb: f64,
+}
+
+/// 获取指定进程的资源使用情况（CPU/内存）。
+/// 用于运行中游戏的实时监控。
+async fn get_process_resource_usage(
+    AxumPath(pid): AxumPath<i32>,
+) -> ApiResult<Json<ProcessResourceUsageResponse>> {
+    if pid <= 0 {
+        return Err(ApiError::bad_request(
+            "INVALID_PID",
+            "PID must be a positive integer",
+        ));
+    }
+
+    let mut sys = sysinfo::System::new();
+    let syspid = sysinfo::Pid::from_u32(pid as u32);
+
+    // 刷新进程信息
+    sys.refresh_process(syspid);
+
+    let process = sys.process(syspid).ok_or_else(|| {
+        ApiError::not_found("PROCESS_NOT_FOUND", &format!("Process with PID {} not found", pid))
+    })?;
+
+    let cpu_usage = process.cpu_usage();
+    let memory_usage = process.memory(); // 字节
+
+    Ok(Json(ProcessResourceUsageResponse {
+        pid,
+        cpu_usage,
+        memory_usage,
+        memory_usage_mb: memory_usage as f64 / (1024.0 * 1024.0),
+    }))
 }
