@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw as RefreshCwData } from 'lucide'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Separator, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { PluginCard } from './PluginCard.tsx'
@@ -192,7 +193,7 @@ export default function PluginStoreManage() {
               className="h-8 w-52"
             />
             <Button onClick={() => void handleCheckUpdates()} size="sm" variant="outline" disabled={checkingUpdates}>
-              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${checkingUpdates ? 'animate-spin' : ''}`} />
+              <MorphActionIcon active={checkingUpdates} busy={RefreshCwData} rest={RefreshCwData} className="mr-1.5 h-3.5 w-3.5" />
               {checkingUpdates ? t('settings.plugins.store.checkingUpdates') : t('settings.plugins.store.checkUpdates')}
             </Button>
             <Button onClick={handlePluginRefresh} size="sm" variant="outline" disabled={loading}>{t('common.refresh')}</Button>

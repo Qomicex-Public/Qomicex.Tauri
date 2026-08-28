@@ -1794,9 +1794,9 @@ export default function Settings() {
                   }
                 />
               </SettingSection>
-              <SettingSection title={`${t('settings.appearance.theme')} mode`}>
+              <SettingSection title={t('settings.appearance.themeMode')}>
                 <SettingRow
-                  label={`${t('settings.appearance.theme')} mode`}
+                  label={t('settings.appearance.themeMode')}
                   control={
                     <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
                       <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>

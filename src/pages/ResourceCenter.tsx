@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
 import { Download, ExternalLink, RotateCw, Search, Tag, User, X } from 'lucide-react'
+import { RotateCw as RotateCwData } from 'lucide'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
@@ -616,7 +618,7 @@ export default function ResourceCenter() {
           <p className="text-sm font-medium text-foreground/80">{t('resource.searchFailed')}</p>
           <p className="mt-1 text-xs text-muted-foreground/60">{error}</p>
           <Button size="sm" variant="outline" onClick={() => doSearch(1, false)} className="mt-4">
-            <RotateCw className="mr-1.5 h-3 w-3" />
+            <MorphActionIcon active={loading} busy={RotateCwData} rest={RotateCwData} className="mr-1.5 h-3 w-3" />
             {t('resource.retry')}
           </Button>
         </div>

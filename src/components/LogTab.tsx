@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { Download, Eye, FileText, FolderOpen, Info, RotateCw, Search, Trash2, X } from 'lucide-react'
+import { RotateCw as RotateCwData } from 'lucide'
 import { ChevronDown as ChevronDownData, ChevronRight as ChevronRightData } from 'lucide'
 import { MorphIcon } from 'morphicons/react'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button } from './ui'
 import { Badge } from './ui'
 import { Tooltip } from './ui'
@@ -179,7 +181,7 @@ export default function LogTab() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={fetchLogs} disabled={loading}>
-                <RotateCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+                <MorphActionIcon active={loading} busy={RotateCwData} rest={RotateCwData} className="h-4 w-4" />
                 {t('common.refresh')}
               </Button>
               <Button size="sm" variant="outline" onClick={handleExportAll} disabled={logs.length === 0}>
