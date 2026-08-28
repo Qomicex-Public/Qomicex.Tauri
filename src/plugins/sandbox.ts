@@ -225,6 +225,12 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
 
 /** 向插件页面注入主题初始化 + 通用样式 + API 桥 + 主题桥，返回最终 srcdoc。 */
 export function buildPluginDoc(plugin: PluginInfo, html: string): string {
+  // 注入 <base href> 指向插件文件服务目录：srcdoc 环境（about:srcdoc）下所有相对
+  // URL（含 JS 模块内部 import）必须基于插件文件服务解析，否则多 chunk 产物白屏
+  const entry = plugin.manifest.entry?.frontend ?? ''
+  const dir = entry.split('/').slice(0, -1).join('/')
+  const baseHref = `${API_BASE}/plugins/${encodeURIComponent(plugin.manifest.id)}/files/${dir ? dir + '/' : ''}`
+  html = html.replace(/<head>/i, `<head><base href="${baseHref}">`)
   const themeInit = `<style data-theme-vars>${getThemeVarsCss()}</style><script>document.documentElement.classList.toggle('dark',getComputedStyle(document.documentElement).colorScheme==='dark');document.documentElement.classList.toggle('light',getComputedStyle(document.documentElement).colorScheme==='light')</script>`
   return html.replace('</head>', themeInit + '\n' + injectCss + '\n' + apiBridgeScript.replace('__PLUGIN_ID_TOKEN__', plugin.manifest.id).replace('__PLUGIN_VERSION_TOKEN__', plugin.manifest.version).replace('__API_BASE_TOKEN__', `${API_BASE}/plugins/${plugin.manifest.id}/files`) + '\n' + themeBridgeScript + '\n</head>')
 }

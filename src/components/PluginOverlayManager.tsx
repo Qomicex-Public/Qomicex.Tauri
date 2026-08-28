@@ -5,7 +5,55 @@ import { registerOverlayIframe } from '../plugins/sandbox.ts'
 import { pluginCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from '../plugins/plugin-css.ts'
 
 const apiScript = `<script>
-window.__PLUGIN_ID__ = null
+;(function () {
+  // 与 entry 的 apiBridgeScript 一致：overlay iframe 也必须初始化本地插件注册表，
+  // 否则插件调用 registerMethod/callPlugin 会抛 "Plugin registry not initialized" 导致白屏
+  var __localExports = {}
+  window.__pluginRegistry = {
+    register: function (pluginId, method, fn) {
+      if (!__localExports[pluginId]) __localExports[pluginId] = {}
+      __localExports[pluginId][method] = fn
+      parent.postMessage({ type: '__plugin_registry_register', pluginId: pluginId, method: method }, '*')
+    },
+    unregister: function (pluginId) {
+      delete __localExports[pluginId]
+      parent.postMessage({ type: '__plugin_registry_unregister', pluginId: pluginId }, '*')
+    },
+    has: function (pluginId, method) {
+      var e = __localExports[pluginId]
+      if (!e) return false
+      return method ? typeof e[method] === 'function' : Object.keys(e).length > 0
+    },
+    call: function (pluginId, method, args) {
+      return new Promise(function (resolve, reject) {
+        var callId = Math.random().toString(36).slice(2)
+        var handler = function (e) {
+          if (e.data && e.data.type === '__plugin_registry_result' && e.data.callId === callId) {
+            window.removeEventListener('message', handler)
+            if (e.data.error) reject(new Error(e.data.error))
+            else resolve(e.data.result)
+          }
+        }
+        window.addEventListener('message', handler)
+        parent.postMessage({ type: '__plugin_registry_call', callId: callId, pluginId: pluginId, method: method, args: args }, '*')
+      })
+    },
+    _callLocal: function (method, args) {
+      var fn = (__localExports[window.__PLUGIN_ID__] || {})[method]
+      if (typeof fn !== 'function') return Promise.reject(new Error('插件 ' + window.__PLUGIN_ID__ + ' 未提供方法 ' + method))
+      return Promise.resolve(fn.apply(null, args))
+    }
+  }
+  window.addEventListener('message', function (e) {
+    var msg = e.data
+    if (msg && msg.type === '__plugin_registry_call') {
+      window.__pluginRegistry._callLocal(msg.method, msg.args).then(
+        function (result) { parent.postMessage({ type: '__plugin_registry_result', callId: msg.callId, result: result }, '*') },
+        function (err) { parent.postMessage({ type: '__plugin_registry_result', callId: msg.callId, error: err instanceof Error ? err.message : String(err) }, '*') }
+      )
+    }
+  })
+})()
 window.__PLUGIN_API__ = {
   call: (method, ...args) => {
     return new Promise((resolve, reject) => {

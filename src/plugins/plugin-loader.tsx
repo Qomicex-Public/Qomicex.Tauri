@@ -1,7 +1,7 @@
 import { Tooltip } from '../components/ui/index.ts'
 import type { PluginInfo, PluginMenuItem, PluginContributes } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { createSandbox, renderInline, getInstance, getWebviewInstance, registerWebviewInstance, destroyWebviewInstance } from './sandbox.ts'
+import { createSandbox, renderInline, getInstance, getWebviewInstance, registerWebviewInstance, destroyWebviewInstance, convertCssLinks, getFileUrl } from './sandbox.ts'
 import { initL4Bridge } from './webview-bridge.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
 import { NavItem } from '../components/Sidebar.tsx'
@@ -285,7 +285,17 @@ function OverlaySidebarButton({ pluginId, item, overlay }: { pluginId: string; i
   const handleClick = async () => {
     const res = await fetch(`${API_BASE}/plugins/${pluginId}/files/${overlay.file}`)
     if (!res.ok) return
-    const html = await res.text()
+    let html = await res.text()
+    // 注入 <base href> 指向插件文件服务目录：悬浮窗用 blob URL 渲染，不注入则
+    // 相对路径（<script src> 与 JS 模块内部 import）全部解析失败导致白屏。
+    // base 注入后所有相对 URL 都会基于插件文件服务解析。
+    const dir = overlay.file.split('/').slice(0, -1).join('/')
+    const baseHref = `${API_BASE}/plugins/${encodeURIComponent(pluginId)}/files/${dir ? dir + '/' : ''}`
+    html = html.replace(/<head>/i, `<head><base href="${baseHref}">`)
+    // 悬浮窗渲染时 overlayHtml() 会把 <link rel="stylesheet"> 提取到 head，
+    // 而 <base> 标签留在 body（在其后生效）——head 里 CSS 的相对 href 会用 blob base
+    // 解析而失败。因此 CSS 必须显式转成插件文件服务的绝对 URL。
+    html = convertCssLinks(html, (p) => getFileUrl(pluginId, overlay.file, p))
     store.createOverlay(pluginId, {
       title: overlay.title ?? item.label,
       html,
