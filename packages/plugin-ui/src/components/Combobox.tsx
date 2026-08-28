@@ -45,12 +45,14 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
     const DROPDOWN_MAX_H = 260
     const MARGIN = 4
     const flipY = tr.bottom + DROPDOWN_MAX_H + MARGIN > vh && tr.top - DROPDOWN_MAX_H > 0
+    const ddWidth = Math.max(tr.width, 180)
     let left = tr.left
-    if (left + tr.width > vw) left = Math.max(8, vw - tr.width - 8)
+    if (left + ddWidth > vw - 8) left = Math.max(8, vw - ddWidth - 8)
+    if (left < 8) left = 8
     setPos({
       top: flipY ? tr.top - MARGIN : tr.bottom + MARGIN,
       left,
-      width: tr.width,
+      width: ddWidth,
       flipY,
     })
   }, [])
@@ -109,7 +111,7 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
       {open && createPortal(
         <div
           ref={popupRef}
-          style={{ position: 'fixed', ...(pos.flipY ? { bottom: `${window.innerHeight - pos.top}px` } : { top: pos.top }), left: pos.left, width: Math.max(pos.width, 180), zIndex: 9999 }}
+          style={{ position: 'fixed', ...(pos.flipY ? { bottom: `${window.innerHeight - pos.top}px` } : { top: pos.top }), left: pos.left, width: pos.width, maxWidth: `calc(100vw - 16px)`, zIndex: 9999 }}
           className="rounded-lg border border-border/50 bg-popover p-1 shadow-xl animate-in fade-in zoom-in-95"
           onMouseDown={(e) => e.preventDefault()}
         >
