@@ -1680,7 +1680,7 @@ export default function Settings() {
             <div className="space-y-6">
               <SettingSection title={t('settings.appearance.title')} icon={<Palette className="h-4 w-4" />}>
                 <SettingRow
-                  label={`${t('settings.appearance.theme')} preset`}
+                  label={t('settings.appearance.themePreset')}
                   control={
                     <Select value={settings.themePreset} onChange={(v) => update('themePreset', v as AppSettings['themePreset'])} className="w-56">
                       <SelectOption value="default">Qomicex Default</SelectOption>

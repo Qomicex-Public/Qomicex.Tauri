@@ -110,7 +110,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bgBlur: 0,
   watermarkEnabled: true,
   watermarkText: 'Qomicex',
-  watermarkSubtext: '启动器',
+  watermarkSubtext: 'Launcher',
   logLevel: 'info',
   translationProvider: 'mymemory',
   bingApiKey: '',

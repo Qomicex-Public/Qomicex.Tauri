@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { ArrowRight, Box, CheckCircle2, Coffee, Download, Hammer, ListChecks, Package, RotateCw, Square, Trash2 } from 'lucide-react'
+import { RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
 import { MorphIcon } from 'morphicons/react'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { Button } from '../components/ui'
@@ -107,6 +109,7 @@ export default function DownloadCenter() {
   const navigate = useNavigate()
   const [tasks, setTasks] = useState<DownloadTask[]>(() => getTasks())
   const [filter, setFilter] = useState<FilterMode>('all')
+  const [clearing, setClearing] = useState(false)
 
   useEffect(() => {
     const unsub = subscribe(() => setTasks([...getTasks()]))
@@ -314,11 +317,13 @@ if (task.instanceId && task.type !== 'batch') {
     <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
       <PageHeader title={t('downloads.title')} subtitle={t('downloads.subtitle', { count: tasks.length })} actions={
         <Button variant="outline" size="sm" onClick={() => {
+          setClearing(true)
           import('../stores/downloadStore.ts').then(m => {
             m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued').forEach(t => m.removeTask(t.id))
+            setTimeout(() => setClearing(false), 800)
           })
         }} className="gap-1.5">
-          <Trash2 className="h-3.5 w-3.5" />{t('downloads.clearFinished')}
+          <MorphActionIcon active={clearing} busy={RotateCwData} rest={Trash2Data} className="h-3.5 w-3.5" />{t('downloads.clearFinished')}
         </Button>
       } />
 
