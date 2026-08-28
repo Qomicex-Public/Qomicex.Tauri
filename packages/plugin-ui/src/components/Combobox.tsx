@@ -14,7 +14,7 @@ interface ComboboxProps {
 export function Combobox({ value, onChange, options, placeholder, emptyText = '', className }: ComboboxProps) {
   const [open, setOpen] = useState(false)
   const [input, setInput] = useState(value)
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0, flipY: false })
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
@@ -40,7 +40,19 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
   const updatePos = useCallback(() => {
     if (!inputRef.current) return
     const tr = inputRef.current.getBoundingClientRect()
-    setPos({ top: tr.bottom + 4, left: tr.left, width: tr.width })
+    const vh = window.innerHeight
+    const vw = window.innerWidth
+    const DROPDOWN_MAX_H = 260
+    const MARGIN = 4
+    const flipY = tr.bottom + DROPDOWN_MAX_H + MARGIN > vh && tr.top - DROPDOWN_MAX_H > 0
+    let left = tr.left
+    if (left + tr.width > vw) left = Math.max(8, vw - tr.width - 8)
+    setPos({
+      top: flipY ? tr.top - MARGIN : tr.bottom + MARGIN,
+      left,
+      width: tr.width,
+      flipY,
+    })
   }, [])
 
   const openPopup = useCallback(() => {
@@ -97,7 +109,7 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
       {open && createPortal(
         <div
           ref={popupRef}
-          style={{ position: 'fixed', top: pos.top, left: pos.left, width: Math.max(pos.width, 180), zIndex: 9999 }}
+          style={{ position: 'fixed', ...(pos.flipY ? { bottom: `${window.innerHeight - pos.top}px` } : { top: pos.top }), left: pos.left, width: Math.max(pos.width, 180), zIndex: 9999 }}
           className="rounded-lg border border-border/50 bg-popover p-1 shadow-xl animate-in fade-in zoom-in-95"
           onMouseDown={(e) => e.preventDefault()}
         >

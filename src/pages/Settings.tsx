@@ -1590,11 +1590,11 @@ export default function Settings() {
                         setSettings(next)
                         saveSettings(next)
                         notify(t('settings.saved'), 'success')
-                      }} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                        <Bot className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryAuto')}
+                      }} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                        <Bot className="h-3.5 w-3.5" />{t('settings.java.memoryAuto')}
                       </button>
-                      <button onClick={() => update('memoryMode', 'custom')} className={cn('h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
-                        <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />{t('settings.java.memoryCustom')}
+                      <button onClick={() => update('memoryMode', 'custom')} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', settings.memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                        <SlidersHorizontal className="h-3.5 w-3.5" />{t('settings.java.memoryCustom')}
                       </button>
                     </div>
 
