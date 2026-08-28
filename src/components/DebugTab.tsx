@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { Bug, CheckCircle2, Copy, Download, RotateCw, Server, Trash2, XCircle } from 'lucide-react'
+import { RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button } from './ui'
 import { Switch } from './ui'
 import { SettingSection } from './settings/SettingRow.tsx'
@@ -30,6 +32,7 @@ const LEVEL_COLOR: Record<string, string> = {
 function LogCard() {
   const [logs, setLogs] = useState<string[]>([])
   const [autoScroll, setAutoScroll] = useState(true)
+  const [clearing, setClearing] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const { notify } = useMessageBox()
   const { t } = useI18n()
@@ -86,8 +89,8 @@ function LogCard() {
             <Button size="sm" variant={autoScroll ? 'default' : 'outline'} onClick={() => setAutoScroll(!autoScroll)} className="gap-1">
               <RotateCw className={cn('h-4 w-4', autoScroll && 'animate-spin')} />{t('tools.debug.autoScroll')}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setLogs([])} className="gap-1">
-              <Trash2 className="h-4 w-4" />{t('tools.debug.clear')}
+            <Button size="sm" variant="outline" onClick={() => { setClearing(true); setLogs([]); setTimeout(() => setClearing(false), 800) }} className="gap-1">
+              <MorphActionIcon active={clearing} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />{t('tools.debug.clear')}
             </Button>
             <Button size="sm" variant="outline" onClick={handleExport} disabled={logs.length === 0} className="gap-1">
               <Download className="h-4 w-4" />{t('tools.debug.exportLogs')}
@@ -249,12 +252,15 @@ function TogglesCard() {
 function ClearDataCard() {
   const { confirm, notify } = useMessageBox()
   const { t } = useI18n()
+  const [clearingDownloads, setClearingDownloads] = useState(false)
 
   async function handleClearDownloadTasks() {
     const ok = await confirm(t('tools.debug.clearTasksConfirm'), t('tools.debug.clearTasksTitle'))
     if (!ok) return
+    setClearingDownloads(true)
     clearAllTasks()
     notify(t('tools.debug.tasksCleared'), 'success')
+    setTimeout(() => setClearingDownloads(false), 800)
   }
 
   return (
@@ -265,7 +271,7 @@ function ClearDataCard() {
             <p className="text-xs text-muted-foreground">{t('tools.debug.clearTasksDescription')}</p>
           </div>
           <Button size="sm" variant="destructive" onClick={handleClearDownloadTasks} className="gap-1.5 shrink-0">
-            <Trash2 className="h-4 w-4" />
+            <MorphActionIcon active={clearingDownloads} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
             {t('tools.debug.clearTasksButton')}
           </Button>
         </div>

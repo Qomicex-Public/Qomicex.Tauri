@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
-import { ArrowLeftRight, RotateCw } from 'lucide-react'
+import { RotateCw } from 'lucide-react'
+import { ArrowLeftRight as ArrowLeftRightData, RotateCw as RotateCwData } from 'lucide'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
 import { cn } from '../lib/utils.ts'
@@ -89,11 +91,8 @@ export default function VersionPickerDialog({
                   onClick={() => handleInstall(v)}
                   disabled={installing !== null}
                 >
-                  {installing === v.id ? (
-                    <><RotateCw className="h-3 w-3 animate-spin" />{t('dialogs.versionPicker.switching')}</>
-                  ) : (
-                    <><ArrowLeftRight className="h-3 w-3" />{t('dialogs.versionPicker.switch')}</>
-                  )}
+                  <MorphActionIcon active={installing === v.id} busy={RotateCwData} rest={ArrowLeftRightData} className="h-3 w-3" />
+                  {installing === v.id ? t('dialogs.versionPicker.switching') : t('dialogs.versionPicker.switch')}
                 </Button>
               </div>
             ))}

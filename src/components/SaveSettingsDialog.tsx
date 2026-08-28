@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { RotateCw, TriangleAlert } from 'lucide-react'
+import { RotateCw as RotateCwData } from 'lucide'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button, Checkbox, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Label, Select, SelectOption } from './ui'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
@@ -301,7 +303,7 @@ export default function SaveSettingsDialog({ open, onClose, instanceId, saveName
       <DialogFooter>
         {!error && settings && (
           <Button variant="outline" size="sm" onClick={() => void handleRestore()} disabled={restoring || saving} className="mr-auto gap-1.5">
-            <RotateCw className={`h-3 w-3 ${restoring ? 'animate-spin' : ''}`} />
+            <MorphActionIcon active={restoring} busy={RotateCwData} rest={RotateCwData} className="h-3 w-3" />
             {t('instanceDetail.saveSettings.restoreFromOld')}
           </Button>
         )}

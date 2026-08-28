@@ -2386,7 +2386,7 @@ export default function InstanceDetailPage() {
   const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
   const { confirm, notify } = useMessageBox()
 
-  // 保存备注
+// 保存备注
   const saveRemark = useCallback(async () => {
     if (!id || !instance) return
     const trimmed = remarkValue.trim()

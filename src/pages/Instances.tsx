@@ -2,9 +2,10 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import gsap from 'gsap'
 
-import { Box, Bug, Calendar, Check, ChevronDown, Download, FileInput, Folder, FolderOpen, FolderPlus, Ghost, Hammer, Layers, Pen, Pencil, Play, Plus, RotateCw, Search, Settings, Star, Tag, Trash2, TriangleAlert, Wrench } from 'lucide-react'
-import { Grip as GripData, List as ListData } from 'lucide'
+import { Box, Bug, Calendar, Check, ChevronDown, Download, FileInput, Folder, FolderOpen, FolderPlus, Ghost, Hammer, Layers, Pen, Pencil, Play, Plus, RotateCw, Search, Settings, Star, Tag, TriangleAlert, Wrench } from 'lucide-react'
+import { Grip as GripData, List as ListData, RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
 import { MorphIcon } from 'morphicons/react'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { invoke } from '@tauri-apps/api/core'
@@ -156,6 +157,7 @@ export default function Instances() {
   }, [])
 
   const [managedDirs, setManagedDirs] = useState<ManagedDir[]>(() => loadDirs())
+  const [removingDir, setRemovingDir] = useState<string | null>(null)
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
   const [dirPopover, setDirPopover] = useState(false)
 
@@ -309,7 +311,11 @@ export default function Instances() {
   }
 
   function removeDir(path: string) {
-    setManagedDirs((prev) => { const next = prev.filter((d) => d.path !== path); saveDirs(next); return next })
+    setRemovingDir(path)
+    setTimeout(() => {
+      setManagedDirs((prev) => { const next = prev.filter((d) => d.path !== path); saveDirs(next); return next })
+      setRemovingDir(null)
+    }, 400)
   }
 
   function moveDir(from: number, to: number) {
@@ -1097,7 +1103,7 @@ export default function Instances() {
                           </Tooltip>
                           <Tooltip content={t('instances.remove')}>
                             <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={(e) => { e.stopPropagation(); removeDir(d.path) }}>
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <MorphActionIcon active={removingDir === d.path} busy={RotateCwData} rest={Trash2Data} className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                         </div>
@@ -1538,6 +1544,7 @@ function ManageGroupsDialog({ open, groups, colors, onClose, onCreate, onRename,
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editColor, setEditColor] = useState('')
+  const [deletingGroup, setDeletingGroup] = useState<string | null>(null)
 
   useEffect(() => {
     if (open) { setName(''); setColor(colors[0] ?? '#22d3ee'); setEditingId(null) }
@@ -1593,7 +1600,9 @@ function ManageGroupsDialog({ open, groups, colors, onClose, onCreate, onRename,
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEdit(g)}><Pencil className="h-3 w-3" /></Button>
                   </Tooltip>
                   <Tooltip content={t('common.delete')}>
-                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => onDelete(g.id)}><Trash2 className="h-3 w-3" /></Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { setDeletingGroup(g.id); setTimeout(() => { onDelete(g.id); setDeletingGroup(null) }, 400) }}>
+                      <MorphActionIcon active={deletingGroup === g.id} busy={RotateCwData} rest={Trash2Data} className="h-3 w-3" />
+                    </Button>
                   </Tooltip>
                 </>
               )}

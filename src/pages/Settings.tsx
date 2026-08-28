@@ -135,10 +135,6 @@ function saveSettings(settings: AppSettings) {
   document.documentElement.dataset.maxFps = String(maxFps)
   document.documentElement.style.setProperty('--anim-duration-multiplier', String((1 / speed) * fpsScale))
   document.documentElement.style.setProperty('--radius', `${settings.cornerRadius ?? 8}px`)
-  // 组件材质：与 App.tsx onSettingsChange 中 applyGlassMaterial 同步，
-  // 确保设置页修改后立即生效（apiSaveSettings 的监听器链是异步的）。
-  document.documentElement.dataset.material = settings.componentMaterial ?? 'default'
-  document.documentElement.style.setProperty('--glass-blur', `${Math.max(0, settings.glassBlur ?? 18)}px`)
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
 
@@ -1530,11 +1526,11 @@ export default function Settings() {
                   )}
 
                   {scanning === 'idle' && listRuntimes.length > 0 && (
-                    <div className="space-y-px">
+                    <div className="space-y-1">
                       {listRuntimes.map((j, i) => (
                         <div
                           key={i}
-                          className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50"
+                          className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 transition-colors hover:border-muted-foreground/30"
                         >
                           <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', j.state === 'Valid' ? 'bg-green-500/10 text-green-600' : 'bg-destructive/15 text-destructive')}>
                             <FontAwesomeIcon icon={faJava} className="h-5 w-5" />
@@ -1821,9 +1817,9 @@ export default function Settings() {
                   }
                 />
               </SettingSection>
-              <SettingSection title={`${t('settings.appearance.theme')} mode`}>
+              <SettingSection title={t('settings.appearance.themeMode')}>
                 <SettingRow
-                  label={`${t('settings.appearance.theme')} mode`}
+                  label={t('settings.appearance.themeMode')}
                   control={
                     <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
                       <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>

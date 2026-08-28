@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { ArrowLeft, ChevronDown, Download, ExternalLink, Languages, Layers, RotateCw, Save, Tag, User } from 'lucide-react'
+import { RotateCw as RotateCwData } from 'lucide'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
@@ -466,7 +468,7 @@ export default function ResourceDetailPage() {
             <div className="flex items-center gap-2">
               <Tooltip content={t('resourceDetail.refresh')}>
                 <Button variant="outline" size="sm" onClick={refreshDetail}>
-                  <RotateCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                  <MorphActionIcon active={loading} busy={RotateCwData} rest={RotateCwData} className="h-3.5 w-3.5" />
                 </Button>
               </Tooltip>
               {detail?.projectUrl ? (

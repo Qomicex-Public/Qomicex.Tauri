@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CloudDownload, RotateCw, Search, Star } from 'lucide-react'
+import { CloudDownload, Search, Star } from 'lucide-react'
+import { RotateCw as RotateCwData } from 'lucide'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Select, SelectOption, Separator, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
@@ -199,7 +201,7 @@ export default function PluginStoreBrowse() {
               <SelectOption value="downloads">{t('settings.plugins.store.sortDownloads')}</SelectOption>
             </Select>
             <Button size="sm" variant="outline" className="ml-auto" onClick={() => void load(page)} disabled={loading}>
-              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
+              <MorphActionIcon active={loading} busy={RotateCwData} rest={RotateCwData} className="h-3.5 w-3.5" />
               {t('common.refresh')}
             </Button>
           </div>

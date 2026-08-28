@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Download, Globe, RotateCw, Shirt, Trash2, Undo2, Upload } from 'lucide-react'
+import { ArrowLeft, Download, Globe, Shirt, Trash2, Undo2, Upload } from 'lucide-react'
+import { RotateCw as RotateCwData } from 'lucide'
+import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { getAccount, deleteAccount } from '../api/account.ts'
 import { getSkinProfile, uploadSkin, resetSkin, saveSkinTo, getCapeBlobUrl, getMcCapes, getMcCapeImageUrl, equipMcCape, unequipMcCape, invalidateAvatarCache } from '../api/skin.ts'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -40,6 +42,7 @@ export default function AccountDetail() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [modelDialogOpen, setModelDialogOpen] = useState(false)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
+  const [skinRefreshing, setSkinRefreshing] = useState(false)
   const capeImagesRef = useRef<Map<string, string>>(new Map())
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -130,10 +133,12 @@ export default function AccountDetail() {
 
   async function handleSkinRefresh() {
     if (!uuid) return
+    setSkinRefreshing(true)
     invalidateAvatarCache()
     const prof = await getSkinProfile(uuid, account?.loginMethod ?? 'Microsoft', account?.serverUrl).catch(() => null)
     setProfile(prof)
     setSkinVersion((v) => v + 1)
+    setTimeout(() => setSkinRefreshing(false), 800)
   }
 
   async function handleSkinUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -292,7 +297,7 @@ export default function AccountDetail() {
 
           <div className="flex gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={handleSkinRefresh}>
-              <RotateCw className="mr-1 h-3 w-3" /> {t('accountDetail.refreshSkin')}
+              <MorphActionIcon active={skinRefreshing} busy={RotateCwData} rest={RotateCwData} className="mr-1 h-3 w-3" /> {t('accountDetail.refreshSkin')}
             </Button>
             {account.loginMethod === 'Microsoft' ? (
               <>
