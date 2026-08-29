@@ -59,7 +59,7 @@ qomicex v${VERSION} — Qomicex 插件生态 CLI
                                 manifest 合法性 + 权限最小化 + 长循环告警 + 签名检查
   qomicex bump <major|minor|patch> [--version <v>]
                                 递增 manifest.json 版本号（或 --version 直接指定）
-  qomicex publish [--key <k>] [--slug <s>] [--changelog <c>] [--api <url>] [--org-id <id>] [--package <f>] [--yes]
+  qomicex publish [--key <k>] [--slug <s>] [--changelog <c>] [--api <url>] [--org-id <id>] [--package <f>] [--skip-build] [--yes]
                                 设备流登录 → 注册签名公钥 → 签名 → 上传到商店
   qomicex --help | -h           显示帮助
   qomicex --version | -v        显示版本
@@ -119,6 +119,7 @@ async function main(): Promise<void> {
           orgId: typeof options['org-id'] === 'string' ? options['org-id'] : undefined,
           package: typeof options['package'] === 'string' ? options['package'] : undefined,
           yes: options['yes'] === true,
+          skipBuild: options['skip-build'] === true,
         })
         break
       default:
