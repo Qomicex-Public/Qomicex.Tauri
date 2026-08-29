@@ -105,6 +105,7 @@ export interface PluginBridge {
   navigate: (path: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
+  log: (message: string, level?: 'debug' | 'info' | 'warn' | 'error') => void
   getSystemInfo: () => Promise<unknown>
   openUrl: (url: string) => Promise<void>
   listPlugins: () => Promise<PluginListEntry[]>
@@ -303,6 +304,13 @@ export function createPluginBridge(pluginId: string): PluginBridge {
     },
     showToast: (message, type) => {
       window.dispatchEvent(new CustomEvent('plugin:show-toast', { detail: { pluginId, message, type } }))
+    },
+    log: (message, level = 'info') => {
+      void fetch(`${API_BASE}/plugins/log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pluginId, level, message })
+      }).catch(() => {})
     },
     createOverlay: (opts) => {
       const { createOverlay } = (window as any).__pluginOverlayStore || {}

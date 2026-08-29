@@ -90,6 +90,7 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   'wasm:execute':        { id: 'wasm:execute',        key: 'plugins.permission.wasmExecute',        risk: 'warning' },
   'plugin:install':      { id: 'plugin:install',      key: 'plugins.permission.pluginInstall',      risk: 'danger' },
   'plugin:list':         { id: 'plugin:list',         key: 'plugins.permission.pluginList',         risk: 'normal' },
+  'plugin:log':          { id: 'plugin:log',          key: 'plugins.permission.pluginLog',          risk: 'normal' },
   'resource:read':       { id: 'resource:read',       key: 'plugins.permission.resourceRead',       risk: 'normal' },
   'resource:write':      { id: 'resource:write',      key: 'plugins.permission.resourceWrite',      risk: 'warning' },
   'java:manage':         { id: 'java:manage',         key: 'plugins.permission.javaManage',         risk: 'warning' },

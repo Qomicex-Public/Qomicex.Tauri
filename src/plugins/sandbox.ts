@@ -470,7 +470,7 @@ const METHOD_PERMISSIONS: Record<string, string> = {
   getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', uploadPlugin: 'plugin:install', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
   readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', execCommand: 'shell:execute',
-  navigate: 'config:read', showToast: 'ui:toast', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
+  navigate: 'config:read', showToast: 'ui:toast', log: 'plugin:log', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
   getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
@@ -544,6 +544,7 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'listPlugins': return bridge.listPlugins()
     case 'navigate': bridge.navigate(args[0] as string); return
     case 'showToast': bridge.showToast(args[0] as string, args[1] as 'info' | 'error' | 'success' | undefined); return
+    case 'log': bridge.log(args[0] as string, args[1] as 'debug' | 'info' | 'warn' | 'error' | undefined); return
     case 'getThemeColor': return getCurrentThemeColorHex()
     case 'applyThemeOverride': applyThemeOverride(args[0] as Record<string, string>); return
     case 'clearThemeOverride': clearThemeOverride(); return
