@@ -1173,6 +1173,22 @@ CORS 代理：插件网页 fetch 外部 API 被 CORS 拒绝时，由后端转发
 
 文本/JSON 响应走 `body`，二进制走 `bodyBase64`。**SSRF 防护**：禁内网/保留地址、不自动跟随重定向。错误码：`PROXY_INVALID_URL`(400)、`PROXY_SCHEME_NOT_ALLOWED`(400)、`PROXY_PRIVATE_ADDRESS`(400)、`PROXY_UPSTREAM_FAILED`(502)。
 
+### POST `/api/plugins/log`
+
+插件日志写入 trace 缓冲 + 落盘（`qomicex debug` 实时可见、诊断导出含）。需要插件声明 `plugin:log` 权限（前端桥 enforce）。
+
+```json
+{ "pluginId": "com.example.demo", "level": "info", "message": "hello" }
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| pluginId | string | 必填，插件 id（空则 400） |
+| level | string | `debug` / `info` / `warn` / `error`，默认 info |
+| message | string | 日志内容，多行逐行写入 |
+
+**响应：** `204 No Content`。写入格式：`[plugin:{pluginId}:{level}] {message}`。
+
 ---
 
 ## 15. 进度 SSE Stream
@@ -1418,6 +1434,14 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 ### GET `/api/diagnostics/trace`
 
 获取追踪缓冲区快照。
+
+### GET `/api/diagnostics/trace/stream`
+
+SSE 实时 trace 流（`text/event-stream`）：先逐行推送当前缓冲快照，再推送新追加行。供 `qomicex debug` / 日志面板实时查看后端与插件日志。每 15s 心跳保活；消费端断开即停止。
+
+```
+data: [plugin:com.example.demo:info] hello
+```
 
 ### POST `/api/diagnostics/dump`
 

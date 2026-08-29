@@ -21,6 +21,7 @@
 | GET | `/api/plugins/settings/{id}` | 获取插件设置 |
 | POST | `/api/plugins/settings/{id}` | 保存插件设置 |
 | POST | `/api/plugins/rescan` | 重新扫描 plugins/ 目录并刷新插件列表 |
+| POST | `/api/plugins/log` | 插件日志写入 trace（`{pluginId, level?, message}` → 204；需 `plugin:log` 权限） |
 
 ### 上传安装
 
@@ -74,6 +75,7 @@ interface PluginBridge {
   proxyFetch(req: { url: string; method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }): Promise<{ status: number; headers: Record<string, string>; body?: string | null; bodyBase64?: string | null }>
   navigate(path: string): void
   showToast(message: string, type?: 'info' | 'error' | 'success'): void
+  log(message: string, level?: 'debug' | 'info' | 'warn' | 'error'): void
 
   // 通用系统能力
   getSystemInfo(): Promise<{ Os: string; Architecture: string; OsName: string; OsVersion: string; OsVersionId: string; OsDisplayName: string; GitCommit: string; Memory: number; AvailableMemory: number }>
@@ -110,6 +112,7 @@ interface PluginBridge {
 | execCommand | shell:execute |
 | navigate | config:read |
 | showToast | ui:toast |
+| log | plugin:log |
 | getSystemInfo | system:info |
 | openUrl | system:notification |
 | listPlugins | plugin:list |

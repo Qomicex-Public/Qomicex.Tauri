@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-08-27 21:42
+最后更新：2026-08-29 21:53
 
 ## 1-决策记录
 
@@ -59,10 +59,11 @@
 - [ADR-053：插件错误遥测上报 + 灰度自动暂停](1-决策记录/ADR-053-插件错误遥测上报---灰度自动暂停.md)
 - [ADR-054：ADR-054: l4 远程 WebView 隔离层跨窗口桥设计](1-决策记录/ADR-054-ADR-054--l4-远程-WebView-隔离层跨窗口桥设计.md)
 - [ADR-055：SPD 协议文档拆分：规范/接入/实现三分离](1-决策记录/ADR-055-SPD-协议文档拆分-规范-接入-实现三分离.md)
-- [ADR-059：FA→Lucide 全量图标迁移](1-决策记录/ADR-059-FA-Lucide-全量图标迁移.md)
-- [ADR-060：icon ternary → MorphIcon 动画迁移](1-决策记录/ADR-060-icon-ternary---MorphIcon-动画迁移.md)
-- [ADR-061：Settings 页重构为 Split View + List + Switch](1-决策记录/ADR-061-Settings-页重构为-Split-View---List---Switch.md)
-- [ADR-062：InstanceDetail 设置页重构为 List + Switch](1-决策记录/ADR-062-InstanceDetail-设置页重构为-List---Switch.md)
+- [ADR-055：FA→Lucide 全量图标迁移](1-决策记录/ADR-059-FA-Lucide-全量图标迁移.md)
+- [ADR-056：icon ternary → MorphIcon 动画迁移](1-决策记录/ADR-060-icon-ternary---MorphIcon-动画迁移.md)
+- [ADR-057：Settings 页重构为 Split View + List + Switch](1-决策记录/ADR-061-Settings-页重构为-Split-View---List---Switch.md)
+- [ADR-058：InstanceDetail 设置页重构为 List + Switch](1-决策记录/ADR-062-InstanceDetail-设置页重构为-List---Switch.md)
+- [ADR-063：qomicex CLI 优化与插件 log API](1-决策记录/ADR-063-qomicex-CLI-优化与插件-log-API.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
@@ -74,6 +75,7 @@
 - [下载器全局选项：HTTP 代理与忽略 TLS 证书校验](2-架构设计/下载器-代理与忽略TLS证书选项.md)
 - [主题语义 Token 规范 v1 + .qtheme（颜色主题）](2-架构设计/主题语义Token规范v1.md)
 - [前端浏览器调试：Playwright Tauri mock 注入与挂载](2-架构设计/前端浏览器调试-Playwright-Tauri-mock注入.md)
+- [动画系统](2-架构设计/动画系统.md)
 - [启动流程](2-架构设计/启动流程.md)
 - [Mod 名称交叉匹配设计](2-架构设计/崩溃分析-Mod名称交叉匹配设计.md)
 - [技术选型](2-架构设计/技术选型.md)
