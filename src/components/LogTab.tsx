@@ -9,6 +9,7 @@ import { Badge } from './ui'
 import { Tooltip } from './ui'
 import { cn } from '../lib/utils.ts'
 import { useMessageBox } from './ui'
+import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import {
   listLogs, getExportUrl, getExportAllUrl, exportLogTo, exportAllLogsTo, deleteLog, openLog, openLogDir, getLogContent,
 } from '../api/logs.ts'
@@ -90,6 +91,8 @@ export default function LogTab() {
       window.removeEventListener('keydown', keydown)
     }
   }, [])
+
+  const logAnimRef = useAnimatedList<HTMLDivElement>([logs.length, loading], { y: 12, scale: 0.95 })
 
   const handleExport = async (entry: LogEntry) => {
     try {
@@ -208,9 +211,9 @@ export default function LogTab() {
               </div>
             </div>
           ) : (
-            <div className="space-y-1">
+            <div ref={logAnimRef} className="space-y-1">
               {logs.map((entry, i) => (
-                <div key={`${entry.path}-${i}`}>
+                <div key={`${entry.path}-${i}`} data-key={entry.path}>
                   <div
                     onContextMenu={(e) => handleContextMenu(e, entry)}
                     onClick={() => openPreview(entry)}

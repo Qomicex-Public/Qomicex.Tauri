@@ -50,6 +50,7 @@ import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import { useI18n } from '../i18n/index.tsx'
+import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import SchematicPreviewDialog from '../components/SchematicPreviewDialog.tsx'
 
 /** 测试游戏的独立日志窗口 label（固定，重复点击先关旧的再开新的）。 */
@@ -243,7 +244,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             {search ? t('instanceDetail.saves.noMatch') : t('instanceDetail.saves.empty')}
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 p-4">
             {filtered.map((save) => (
               <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} running={running} />
             ))}
@@ -367,7 +368,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             {search ? t('instanceDetail.screenshots.noMatch') : t('instanceDetail.screenshots.empty')}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
             {filtered.map((s) => (
               <ScreenshotCard key={s.filePath} screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.filePath)} onSelect={(e) => toggleSelect(s.filePath, e.shiftKey, e.ctrlKey)} />
             ))}
@@ -580,6 +581,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     return result
   }, [mods, search, filterType, sortBy, updateFileNames, lang])
 
+  const modsAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
+
   const lastClickedRef = useRef(-1)
   const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
     const index = filtered.findIndex(m => m.fileName === fileName)
@@ -773,9 +776,9 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             </div>
           ) : (
             <DragSelectArea onSelect={handleDragSelect}>
-              <div className="flex flex-col gap-2">
+              <div ref={modsAnimRef} className="flex flex-col gap-2 p-4">
                 {filtered.map((mod) => (
-                  <div key={mod.fileName} data-select-item={mod.fileName}>
+                  <div key={mod.fileName} data-key={mod.fileName} data-select-item={mod.fileName}>
                     <ModCard
                       mod={mod}
                       instanceId={instanceId}
@@ -934,6 +937,8 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
     return packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
   }, [packs, search])
 
+  const rpAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
+
   return (
     <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.resourcepacks')} (${packs.length})` : t('instanceDetail.tabs.resourcepacks')} icon={<Package className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
@@ -977,9 +982,9 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div className="flex flex-col gap-2">
+            <div ref={rpAnimRef} className="flex flex-col gap-2 p-4">
               {filtered.map((pack) => (
-                <div key={pack.fileName} data-select-item={pack.fileName}>
+                <div key={pack.fileName} data-key={pack.fileName} data-select-item={pack.fileName}>
                   <ResourcePackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
@@ -1096,6 +1101,8 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
     return shaders.filter(s => s.name.toLowerCase().includes(q) || s.fileName.toLowerCase().includes(q))
   }, [shaders, search])
 
+  const shaderAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
+
   return (
     <SettingSection title={shaders.length > 0 ? `${t('instanceDetail.tabs.shaderpacks')} (${shaders.length})` : t('instanceDetail.tabs.shaderpacks')} icon={<Sun className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
@@ -1139,9 +1146,9 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div className="flex flex-col gap-2">
+            <div ref={shaderAnimRef} className="flex flex-col gap-2 p-4">
               {filtered.map((shader) => (
-                <div key={shader.fileName} data-select-item={shader.fileName}>
+                <div key={shader.fileName} data-key={shader.fileName} data-select-item={shader.fileName}>
                   <ShaderCard shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(shader.fileName)} onSelect={(e) => toggleSelect(shader.fileName, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
@@ -1254,6 +1261,8 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
     return packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
   }, [packs, search])
 
+  const dpAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
+
   return (
     <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.datapacks')} (${packs.length})` : t('instanceDetail.tabs.datapacks')} icon={<Database className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
@@ -1297,9 +1306,9 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div className="flex flex-col gap-2">
+            <div ref={dpAnimRef} className="flex flex-col gap-2 p-4">
               {filtered.map((pack) => (
-                <div key={pack.fileName} data-select-item={pack.fileName}>
+                <div key={pack.fileName} data-key={pack.fileName} data-select-item={pack.fileName}>
                   <DataPackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
@@ -1431,6 +1440,8 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
     return files.filter(f => f.name.toLowerCase().includes(q))
   }, [files, search])
 
+  const schemAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
+
   return (
     <SettingSection title={files.length > 0 ? `${t('instanceDetail.tabs.schematics')} (${files.length})` : t('instanceDetail.tabs.schematics')} icon={<PenTool className="h-4 w-4" />}>
         <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
@@ -1471,10 +1482,11 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
             {search ? t('instanceDetail.schematics.noMatch') : t('instanceDetail.schematics.empty')}
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div ref={schemAnimRef} className="flex flex-col gap-2 p-4">
             {filtered.map((f) => (
               <div
                 key={f.name}
+                data-key={f.name}
                 onClick={(e) => toggleSelect(f.name, e.shiftKey, e.ctrlKey)}
                 className={cn(
                   'group glass-surface flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all',

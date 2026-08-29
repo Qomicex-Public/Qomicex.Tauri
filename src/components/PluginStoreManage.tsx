@@ -3,6 +3,7 @@ import { RefreshCw as RefreshCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Separator, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
+import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import { PluginCard } from './PluginCard.tsx'
 import { PluginIcon } from './PluginIcon.tsx'
 import { resolvePluginAssetUrl, deactivatePlugin } from '../plugins/plugin-loader.tsx'
@@ -174,6 +175,8 @@ export default function PluginStoreManage() {
     p.manifest.name.toLowerCase().includes(pluginQuery.trim().toLowerCase())
   )
 
+  const pluginAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -206,17 +209,29 @@ export default function PluginStoreManage() {
           <div className="mb-4 rounded bg-primary/10 px-4 py-2 text-sm text-primary">{pluginsMsg}</div>
         )}
         {loading ? (
-          <p className="text-muted-foreground">{t('common.loading')}</p>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="animate-pulse flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
+                <div className="h-9 w-9 shrink-0 rounded-lg bg-muted" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-1/2 rounded bg-muted" />
+                  <div className="h-3 w-2/3 rounded bg-muted" />
+                </div>
+                <div className="h-6 w-16 rounded bg-muted" />
+                <div className="h-6 w-6 rounded bg-muted" />
+              </div>
+            ))}
+          </div>
         ) : plugins.length === 0 ? (
           <div className="flex min-h-[200px] items-center justify-center">
             <p className="text-muted-foreground">{t('settings.plugins.noneInstalled')}</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div ref={pluginAnimRef} className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {filtered.map((p) => {
               const updateTo = updates[p.manifest.id]
               return (
-                <div key={p.manifest.id} className="relative">
+                <div key={p.manifest.id} data-key={p.manifest.id} className="relative">
                   {updateTo && (
                     <span className="absolute -right-1.5 -top-1.5 z-10 rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground shadow">
                       v{updateTo.latestVersion}

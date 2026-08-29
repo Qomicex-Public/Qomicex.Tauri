@@ -4,6 +4,7 @@ import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Select, SelectOption, Separator, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
+import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { PluginIcon } from './PluginIcon.tsx'
@@ -98,6 +99,8 @@ export default function PluginStoreBrowse() {
   }, [load])
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+
+  const storeAnimRef = useAnimatedList<HTMLDivElement>([items.length, loading], { y: 12, scale: 0.95 })
 
   function findLocal(slug: string) {
     return localPlugins.find((p) => matchesLocalId(slug, p.manifest.id))
@@ -207,7 +210,26 @@ export default function PluginStoreBrowse() {
           </div>
 
           {loading ? (
-            <p className="py-10 text-center text-muted-foreground">{t('common.loading')}</p>
+            <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="animate-pulse flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 w-2/3 rounded bg-muted" />
+                      <div className="h-3 w-full rounded bg-muted" />
+                      <div className="h-3 w-4/5 rounded bg-muted" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-5 w-10 rounded bg-muted" />
+                    <div className="h-5 w-12 rounded bg-muted" />
+                    <div className="h-5 w-8 rounded bg-muted" />
+                  </div>
+                  <div className="h-8 w-full rounded-md bg-muted" />
+                </div>
+              ))}
+            </div>
           ) : loadError ? (
             <div className="flex flex-col items-center gap-3 py-10">
               <p className="text-muted-foreground">{t('settings.plugins.store.loadFailed')}</p>
@@ -217,13 +239,14 @@ export default function PluginStoreBrowse() {
             <p className="py-10 text-center text-muted-foreground">{t('settings.plugins.store.emptyResult')}</p>
           ) : (
             <>
-              <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div ref={storeAnimRef} className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {items.map((item) => {
                   const updatable = updatableTo(item)
                   const installed = !!installedVersionOf(item)
                   return (
                     <div
                       key={item.slug}
+                      data-key={item.slug}
                       className="flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:border-primary/40"
                       onClick={() => void openDetail(item)}
                     >

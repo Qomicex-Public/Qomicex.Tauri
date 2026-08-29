@@ -31,7 +31,7 @@ import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui'
-import { useExpandAnimation } from '../hooks/useGsapAnimations.ts'
+import { useExpandAnimation, useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { LANGS } from '../i18n/lang.ts'
 import type { LangChoice } from '../i18n/lang.ts'
@@ -558,6 +558,7 @@ export default function Settings() {
   const [showInvalid, setShowInvalid] = useState(false)
   const listRuntimes = showInvalid ? getRuntimes() : getValidRuntimes()
   const [scanning, setScanning] = useState<'idle' | 'quick' | 'deep'>('idle')
+  const javaAnimRef = useAnimatedList<HTMLDivElement>([listRuntimes.length, scanning], { y: 12, scale: 0.95 })
   const [javaStatus, setJavaStatus] = useState(() => t('settings.java.ready'))
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [addPath, setAddPath] = useState('')
@@ -1530,10 +1531,11 @@ export default function Settings() {
                   )}
 
                   {scanning === 'idle' && listRuntimes.length > 0 && (
-                    <div className="space-y-1 p-4">
+                    <div ref={javaAnimRef} className="space-y-1 p-4">
                       {listRuntimes.map((j, i) => (
                         <div
                           key={i}
+                          data-key={j.path}
                           className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 transition-colors hover:border-muted-foreground/30"
                         >
                           <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', j.state === 'Valid' ? 'bg-green-500/10 text-green-600' : 'bg-destructive/15 text-destructive')}>
