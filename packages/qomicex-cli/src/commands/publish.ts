@@ -57,19 +57,25 @@ export async function publishCommand(opts: PublishOptions = {}): Promise<void> {
   // 清掉旧签名文件，避免脏残留
   for (const k of ['signature.json', 'signature.cert.json']) delete entries[k]
 
-  // 3) 设备流登录
+  // 3) 认证：QOMICEX_API_KEY 存在则跳过设备流（CI 场景），否则设备流登录
   const api = opts.api ?? process.env.QOMICEX_STORE_API ?? DEFAULT_API_BASE
-  info('==> 设备流登录')
-  const code = await requestDeviceCode(api)
-  info(`  请在浏览器打开（或扫码）并登录确认：`)
-  info(`  ${code.verificationUriComplete}`)
-  info(`  授权码: ${code.userCode}`)
-  const login = await pollDeviceLogin(api, code)
-  info(`✔ 登录成功：${login.user.username}`)
+  let token = ''
+  if (process.env.QOMICEX_API_KEY) {
+    info('==> 使用 API Key 认证（CI 模式）')
+  } else {
+    info('==> 设备流登录')
+    const code = await requestDeviceCode(api)
+    info(`  请在浏览器打开（或扫码）并登录确认：`)
+    info(`  ${code.verificationUriComplete}`)
+    info(`  授权码: ${code.userCode}`)
+    const login = await pollDeviceLogin(api, code)
+    token = login.accessToken
+    info(`✔ 登录成功：${login.user.username}`)
+  }
 
   // 4) 注册/刷新签名公钥，获取商店根钥签发的证书
   info('==> 注册签名公钥')
-  const keyRes = await registerDevKey(api, login.accessToken, publicKey)
+  const keyRes = await registerDevKey(api, token, publicKey)
   const certJson = JSON.stringify(keyRes.cert)
   info(`✔ 签名证书就绪（keyId: ${keyRes.keyId}）`)
 
@@ -81,14 +87,14 @@ export async function publishCommand(opts: PublishOptions = {}): Promise<void> {
   // 6) 查找/创建插件记录
   info('==> 确认插件记录')
   let pluginId = ''
-  const mine = await fetchMinePlugins(api, login.accessToken)
+  const mine = await fetchMinePlugins(api, token)
   const existing = mine.find((p) => p.slug === slug)
   if (existing) {
     pluginId = existing.id
     info(`✔ 找到已有插件 ${slug}（id: ${pluginId}）`)
   } else {
     try {
-      const created = await createPlugin(api, login.accessToken, {
+      const created = await createPlugin(api, token, {
         slug,
         name: String(manifest.name ?? slug),
         description: String(manifest.description ?? ''),
@@ -98,7 +104,7 @@ export async function publishCommand(opts: PublishOptions = {}): Promise<void> {
       info(`✔ 已创建插件记录 ${slug}（id: ${pluginId}，等待商店审核）`)
     } catch (e) {
       if (e instanceof StoreApiError && e.status === 409) {
-        const again = await fetchMinePlugins(api, login.accessToken)
+        const again = await fetchMinePlugins(api, token)
         const found = again.find((p) => p.slug === slug)
         if (!found) throw e
         pluginId = found.id
@@ -115,14 +121,14 @@ export async function publishCommand(opts: PublishOptions = {}): Promise<void> {
   info(`  插件: ${slug}  v${version}`)
   info(`  keyId: ${keyRes.keyId}`)
   info(`  包体: ${signedBytes.length} 字节（已签名）`)
-  const ok = await confirm('确认发布到商店？', opts.yes ?? false)
+  const ok = await confirm('确认发布到商店？', opts.yes ?? !!process.env.QOMICEX_API_KEY)
   if (!ok) {
     warn('已取消发布')
     return
   }
 
   info('==> 上传版本')
-  const result = await uploadVersion(api, login.accessToken, pluginId, signedBytes, opts.changelog)
+  const result = await uploadVersion(api, token, pluginId, signedBytes, opts.changelog)
   info(`✔ 上传完成：${slug} v${version}`)
   info(`  商店地址: ${api.replace('/api/v1', '')}`)
   if (typeof result === 'object' && result && 'status' in result) {

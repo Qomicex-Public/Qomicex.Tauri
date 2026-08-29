@@ -66,6 +66,7 @@ qomicex v${VERSION} — Qomicex 插件生态 CLI
 
 环境变量:
   QOMICEX_SIGN_KEY   签名私钥（PKCS#8 PEM 或 raw base64 seed），publish 必填
+  QOMICEX_API_KEY    商店 API Key（CI 模式下跳过设备流登录，自动确认上传）
   QOMICEX_STORE_API  商店 API base（默认 https://plugins.qomicex.top/api/v1）
 `
 }

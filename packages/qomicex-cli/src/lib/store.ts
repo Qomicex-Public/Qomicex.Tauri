@@ -36,7 +36,9 @@ export interface DevKeyResult {
 
 async function request<T>(base: string, path: string, init?: RequestInit, token?: string): Promise<T> {
   const headers = new Headers(init?.headers)
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const apiKey = process.env.QOMICEX_API_KEY
+  if (apiKey) headers.set('X-API-Key', apiKey)
+  else if (token) headers.set('Authorization', `Bearer ${token}`)
   let res: Response
   try {
     res = await fetch(`${base}${path}`, { ...init, headers })
