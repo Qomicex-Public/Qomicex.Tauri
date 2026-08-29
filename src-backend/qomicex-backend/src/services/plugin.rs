@@ -430,7 +430,11 @@ pub fn install_from_package(
     package_bytes: &[u8],
     require_signature: bool,
 ) -> Result<Option<PluginInfo>, ApiError> {
-    crate::services::plugin_signature::verify_package_signature(package_bytes, require_signature)?;
+    crate::services::plugin_signature::verify_package_signature(
+        package_bytes,
+        require_signature,
+        crate::services::plugin_signature::ROOT_PUBLIC_KEY_B64,
+    )?;
 
     let plugins_dir = settings::plugins_dir();
     let _ = std::fs::create_dir_all(&plugins_dir);

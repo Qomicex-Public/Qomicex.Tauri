@@ -20,7 +20,7 @@ use crate::error::ApiError;
 
 /// 商店签名根公钥（raw Ed25519 base64）。由 `scripts/plugin-keygen.mjs` 生成，
 /// 与 store 的 `PLUGIN_ROOT_PRIVATE_KEY` 对应。更换根钥需同步本常量。
-const ROOT_PUBLIC_KEY_B64: &str = "YkYb+Oh8CNHyGwKAEy/1p6Vz8FYp7UafymXoHCZhfmQ=";
+pub const ROOT_PUBLIC_KEY_B64: &str = "YkYb+Oh8CNHyGwKAEy/1p6Vz8FYp7UafymXoHCZhfmQ=";
 
 const SIGNATURE_FILE: &str = "signature.json";
 const CERT_FILE: &str = "signature.cert.json";
@@ -65,11 +65,10 @@ fn canonical_cert_body(cert: &CertJson) -> String {
     )
 }
 
-/// 签名载荷规范化 JSON：{"manifest":"<hex>","files":[{"path":"<p>","sha256":"<h>"},...]}
+/// 签名载荷规范化 JSON：{"files":[{"path":"<p>","sha256":"<h>"},...],"manifest":"<hex>"}
+/// 键序与 JS canonicalJson 一致（按 key 字典序：files < manifest），否则 signedHash 复算不一致。
 fn canonical_payload(manifest_hex: &str, files: &[(String, String)]) -> String {
-    let mut out = String::from("{\"manifest\":");
-    out.push_str(&json_str(manifest_hex));
-    out.push_str(",\"files\":[");
+    let mut out = String::from("{\"files\":[");
     for (i, (path, sha)) in files.iter().enumerate() {
         if i > 0 {
             out.push(',');
@@ -80,7 +79,9 @@ fn canonical_payload(manifest_hex: &str, files: &[(String, String)]) -> String {
         out.push_str(&json_str(sha));
         out.push('}');
     }
-    out.push_str("]}");
+    out.push_str("],\"manifest\":");
+    out.push_str(&json_str(manifest_hex));
+    out.push('}');
     out
 }
 
@@ -105,7 +106,12 @@ fn b64_decode(s: &str, what: &str) -> Result<Vec<u8>, ApiError> {
 /// 验签入口。
 /// - `required=true`：签名缺失即拒绝（upload 路径，ADR-050 默认拒收新上传）。
 /// - `required=false`：无签名放行（老版本/商店历史版本），有签名则必须通过（store-install 路径）。
-pub fn verify_package_signature(package_bytes: &[u8], required: bool) -> Result<(), ApiError> {
+/// - `root_pub_key_b64`：商店根公钥（生产用内置常量；测试注入测试密钥对）。
+pub fn verify_package_signature(
+    package_bytes: &[u8],
+    required: bool,
+    root_pub_key_b64: &str,
+) -> Result<(), ApiError> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package_bytes))
         .map_err(|_| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包无效"))?;
 
@@ -166,7 +172,7 @@ pub fn verify_package_signature(package_bytes: &[u8], required: bool) -> Result<
     }
 
     // 1) 证书：商店根公钥验证
-    let root = verifying_key(&b64_decode(ROOT_PUBLIC_KEY_B64, "根公钥")?, "根公钥")?;
+    let root = verifying_key(&b64_decode(root_pub_key_b64, "根公钥")?, "根公钥")?;
     let cert_sig = decode_signature(&cert.signature)?;
     root.verify(canonical_cert_body(&cert).as_bytes(), &cert_sig)
         .map_err(|_| {
@@ -254,6 +260,8 @@ mod tests {
 
     const TEST_ROOT_PRIV_B64: &str =
         "MC4CAQAwBQYDK2VwBCIEIJWt9O728z6bu79B+h/ZNashGzqy+unwoU7RIGwjVrk8";
+    /// 测试根公钥（TEST_ROOT_PRIV_B64 对应）
+    const TEST_ROOT_PUB_B64: &str = "hNoXOazEkdTRoxBra8ABlCWXhy16S7rM5ZmEDa+GmnE=";
 
     struct TestKeys {
         root: SigningKey,
@@ -366,16 +374,16 @@ mod tests {
         let dev = SigningKey::from_bytes(&[7u8; 32]);
         let keys = TestKeys { root, dev };
         let pkg = build_signed_package(&keys, r#"{"id":"dev.x","version":"1.0.0"}"#);
-        verify_package_signature(&pkg, true).expect("valid signature should pass");
+        verify_package_signature(&pkg, true, TEST_ROOT_PUB_B64).expect("valid signature should pass");
     }
 
     #[test]
     fn missing_signature_rejected_when_required() {
         let pkg = build_unsigned_package();
-        let err = verify_package_signature(&pkg, true).unwrap_err();
+        let err = verify_package_signature(&pkg, true, TEST_ROOT_PUB_B64).unwrap_err();
         assert_eq!(err.code, "PLUGIN_SIGNATURE_MISSING");
         // required=false 时老版本兼容放行
-        assert!(verify_package_signature(&pkg, false).is_ok());
+        assert!(verify_package_signature(&pkg, false, TEST_ROOT_PUB_B64).is_ok());
     }
 
     #[test]
@@ -388,7 +396,7 @@ mod tests {
             &keys,
             r#"{"id":"dev.x","version":"1.0.0"}"#,
         ));
-        let err = verify_package_signature(&pkg, true).unwrap_err();
+        let err = verify_package_signature(&pkg, true, TEST_ROOT_PUB_B64).unwrap_err();
         assert_eq!(err.code, "PLUGIN_SIGNATURE_HASH_MISMATCH");
     }
 
@@ -398,7 +406,7 @@ mod tests {
         let dev = SigningKey::from_bytes(&[7u8; 32]);
         let keys = TestKeys { root, dev };
         let pkg = build_signed_package(&keys, r#"{"id":"dev.x","version":"1.0.0"}"#);
-        let err = verify_package_signature(&pkg, true).unwrap_err();
+        let err = verify_package_signature(&pkg, true, TEST_ROOT_PUB_B64).unwrap_err();
         assert_eq!(err.code, "PLUGIN_SIGNATURE_CERT_INVALID");
     }
 
@@ -409,7 +417,7 @@ mod tests {
         let out = canonical_payload("aa", &files);
         assert_eq!(
             out,
-            r#"{"manifest":"aa","files":[{"path":"a","sha256":"dd"},{"path":"b","sha256":"cc"}]}"#
+            r#"{"files":[{"path":"a","sha256":"dd"},{"path":"b","sha256":"cc"}],"manifest":"aa"}"#
         );
     }
 }
