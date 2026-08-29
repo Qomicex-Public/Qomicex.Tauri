@@ -95,6 +95,21 @@ export async function fetchMinePlugins(base: string, token: string): Promise<{ i
   return r.items ?? []
 }
 
+export interface RefreshTokenResult {
+  accessToken: string
+  refreshToken: string
+  user?: { id: string; username: string }
+}
+
+/** 刷新令牌（POST /auth/refresh，旋转式：旧 refreshToken 立即吊销，返回新 token 对）。 */
+export async function refreshToken(base: string, refreshToken: string): Promise<RefreshTokenResult> {
+  return request<RefreshTokenResult>(base, '/auth/refresh', {
+    method: 'POST',
+    body: JSON.stringify({ refreshToken }),
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
 export interface CreatePluginInput {
   slug: string
   name: string

@@ -13,7 +13,9 @@ import {
   createPlugin,
   registerDevKey,
   uploadVersion,
+  refreshToken,
 } from '../lib/store.ts'
+import { loadAuth, saveAuth, clearAuth } from '../lib/auth.ts'
 import { parsePrivateKey, derivePublicKey, signPackage } from '../lib/signature.ts'
 import { confirm, fail, info, warn } from '../lib/io.ts'
 
@@ -57,20 +59,53 @@ export async function publishCommand(opts: PublishOptions = {}): Promise<void> {
   // 清掉旧签名文件，避免脏残留
   for (const k of ['signature.json', 'signature.cert.json']) delete entries[k]
 
-  // 3) 认证：QOMICEX_API_KEY 存在则跳过设备流（CI 场景），否则设备流登录
+  // 3) 认证：QOMICEX_API_KEY 存在则跳过设备流（CI 场景）；否则优先用持久化会话
+  //    （login 保存的 refreshToken 30 天，经 /auth/refresh 旋转续期），失效才走设备流。
   const api = opts.api ?? process.env.QOMICEX_STORE_API ?? DEFAULT_API_BASE
   let token = ''
   if (process.env.QOMICEX_API_KEY) {
     info('==> 使用 API Key 认证（CI 模式）')
   } else {
-    info('==> 设备流登录')
-    const code = await requestDeviceCode(api)
-    info(`  请在浏览器打开（或扫码）并登录确认：`)
-    info(`  ${code.verificationUriComplete}`)
-    info(`  授权码: ${code.userCode}`)
-    const login = await pollDeviceLogin(api, code)
-    token = login.accessToken
-    info(`✔ 登录成功：${login.user.username}`)
+    const stored = loadAuth()
+    if (stored && stored.apiBase === api) {
+      info('==> 使用持久化会话续期')
+      try {
+        const refreshed = await refreshToken(api, stored.refreshToken)
+        token = refreshed.accessToken
+        saveAuth({
+          ...stored,
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          user: refreshed.user ?? stored.user,
+          updatedAt: new Date().toISOString(),
+        })
+        info(`✔ 续期成功：${stored.user.username}`)
+      } catch (e) {
+        if (e instanceof StoreApiError && (e.status === 401 || e.code === 'invalid_refresh_token')) {
+          warn('持久化会话已失效，请重新登录')
+          clearAuth()
+        } else {
+          throw e
+        }
+      }
+    }
+    if (!token) {
+      info('==> 设备流登录')
+      const code = await requestDeviceCode(api)
+      info(`  请在浏览器打开（或扫码）并登录确认：`)
+      info(`  ${code.verificationUriComplete}`)
+      info(`  授权码: ${code.userCode}`)
+      const login = await pollDeviceLogin(api, code)
+      token = login.accessToken
+      saveAuth({
+        apiBase: api,
+        accessToken: login.accessToken,
+        refreshToken: login.refreshToken,
+        user: { id: login.user.id, username: login.user.username },
+        updatedAt: new Date().toISOString(),
+      })
+      info(`✔ 登录成功：${login.user.username}（会话已保存，下次 publish 免登录）`)
+    }
   }
 
   // 4) 注册/刷新签名公钥，获取商店根钥签发的证书

@@ -1,11 +1,16 @@
 #!/usr/bin/env node
-// qomicex CLI 入口：create / dev / pack / verify / bump / publish
+// qomicex CLI 入口：create / dev / pack / verify / bump / publish / login / logout / lint / doctor / debug
 import { createCommand } from './commands/create.ts'
 import { devCommand } from './commands/dev.ts'
 import { packCommand } from './commands/pack.ts'
 import { verifyCommand } from './commands/verify.ts'
 import { publishCommand } from './commands/publish.ts'
 import { bumpCommand } from './commands/bump.ts'
+import { loginCommand } from './commands/login.ts'
+import { logoutCommand } from './commands/logout.ts'
+import { lintCommand } from './commands/lint.ts'
+import { doctorCommand } from './commands/doctor.ts'
+import { debugCommand } from './commands/debug.ts'
 import { fail } from './lib/io.ts'
 import { createRequire } from 'node:module'
 
@@ -57,10 +62,16 @@ qomicex v${VERSION} — Qomicex 插件生态 CLI
                                 构建并打 .qplugin（manifest.json 在 zip 根）
   qomicex verify [--package <f>]
                                 manifest 合法性 + 权限最小化 + 长循环告警 + 签名检查
+  qomicex lint [--json]         增强静态检查：manifest/权限/长循环 + 相对 import 扩展名 + 资源引用
   qomicex bump <major|minor|patch> [--version <v>]
                                 递增 manifest.json 版本号（或 --version 直接指定）
   qomicex publish [--key <k>] [--slug <s>] [--changelog <c>] [--api <url>] [--org-id <id>] [--package <f>] [--skip-build] [--yes]
                                 设备流登录 → 注册签名公钥 → 签名 → 上传到商店
+  qomicex login [--api <url>]   设备流登录并持久化会话（~/.qomicex/auth.json，publish 免登录）
+  qomicex logout                清除持久化登录会话
+  qomicex doctor [--json]       环境诊断：Node/pnpm/项目/plugin-ui/vite/签名环境/后端/商店/harness
+  qomicex debug [--port <n>] [--launcher <p>] [--no-logs] [--no-kill]
+                                启动启动器开放 CDP + 实时 tail 日志（自动化调试）
   qomicex --help | -h           显示帮助
   qomicex --version | -v        显示版本
 
@@ -108,6 +119,31 @@ async function main(): Promise<void> {
         await bumpCommand({
           part: positional[0] ?? 'minor',
           version: typeof options['version'] === 'string' ? options['version'] : undefined,
+        })
+        break
+      case 'login':
+        await loginCommand({
+          api: typeof options['api'] === 'string' ? options['api'] : undefined,
+        })
+        break
+      case 'logout':
+        await logoutCommand()
+        break
+      case 'lint':
+        await lintCommand({ json: options['json'] === true })
+        break
+      case 'doctor':
+        await doctorCommand({
+          json: options['json'] === true,
+          api: typeof options['api'] === 'string' ? options['api'] : undefined,
+        })
+        break
+      case 'debug':
+        await debugCommand({
+          port: num(options['port'], 9222),
+          launcher: typeof options['launcher'] === 'string' ? options['launcher'] : undefined,
+          noLogs: options['no-logs'] === true,
+          noKill: options['no-kill'] === true,
         })
         break
       case 'publish':

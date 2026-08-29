@@ -27,6 +27,35 @@ export function runShell(cmdLine: string, cwd: string): Promise<number> {
   })
 }
 
+export interface CapturedResult {
+  code: number
+  stdout: string
+  stderr: string
+}
+
+/** 以 shell 方式运行命令并捕获输出（不回显），超时 kill 返回 code -1。诊断用。 */
+export function runCapture(cmdLine: string, timeoutMs = 8000): Promise<CapturedResult> {
+  return new Promise((resolve) => {
+    const child = spawn(cmdLine, { shell: true, windowsHide: true })
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+    const timer = setTimeout(() => {
+      child.kill()
+      resolve({ code: -1, stdout, stderr })
+    }, timeoutMs)
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ code: code ?? -1, stdout, stderr })
+    })
+    child.on('error', () => {
+      clearTimeout(timer)
+      resolve({ code: -1, stdout, stderr })
+    })
+  })
+}
+
 /** 非交互确认：默认 N，回答 y/yes 才放行。 */
 export async function confirm(question: string, yesFlag: boolean): Promise<boolean> {
   if (yesFlag) return true

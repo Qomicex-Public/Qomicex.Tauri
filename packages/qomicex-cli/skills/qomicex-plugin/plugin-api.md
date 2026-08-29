@@ -69,6 +69,8 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | | 跳转启动器内部路由，勿用外部 URL | |
 | **showToast** | `call('showToast', message, type?)` | `ui:toast` |
 | | `type: 'info' \| 'error' \| 'success'`，默认 info | |
+| **log** | `call('log', message, level?)` | `plugin:log` |
+| | 写日志到启动器 trace 体系（`qomicex debug` 实时可见，诊断导出含）；`level: 'debug' \| 'info' \| 'warn' \| 'error'` 默认 info | |
 | **overlay.create** | `call('overlay.create', { title?, html, x?, y?, width?, height?, minimizable?, resizable? }) → overlayId` | `ui:sub_window` |
 | **overlay.show/hide/destroy** | `call('overlay.show/hide/destroy', overlayId)` | `ui:sub_window` |
 | **overlay.setHtml** | `call('overlay.setHtml', overlayId, html)` | `ui:sub_window` |

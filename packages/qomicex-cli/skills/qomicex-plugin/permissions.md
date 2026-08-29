@@ -43,6 +43,7 @@
 | `wasm:execute` | warning | 执行 WASM 模块（callWasm） |
 | `plugin:install` | danger | 安装/卸载/更新插件 |
 | `plugin:list` | normal | 读取已安装插件列表 |
+| `plugin:log` | normal | 写插件日志到启动器 trace（调试排障） |
 | `resource:read` | normal | 读取游戏资源文件 |
 | `resource:write` | warning | 写入游戏资源文件 |
 | `java:manage` | warning | 管理 Java 运行时 |
@@ -72,6 +73,7 @@
 | `execCommand` | `shell:execute` |
 | `navigate` | `config:read` |
 | `showToast` | `ui:toast` |
+| `log` | `plugin:log` |
 | `getSystemInfo` | `system:info` |
 | `openUrl` | `system:notification` |
 | `listPlugins` | `plugin:list` |

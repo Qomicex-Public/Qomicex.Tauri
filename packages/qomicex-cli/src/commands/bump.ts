@@ -9,7 +9,8 @@ export interface BumpOptions {
   version?: string
 }
 
-const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(-.+)?$/
+// 与 manifest.ts SEMVER_RE 保持一致：支持 pre-release 与 build metadata（+xxx）。
+const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
 export async function bumpCommand(opts: BumpOptions): Promise<string> {
   const manifestFile = join(process.cwd(), 'manifest.json')

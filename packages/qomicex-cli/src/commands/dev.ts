@@ -2,23 +2,12 @@
 // 在仓库内（plugins-dev/ 等）检测到 scripts/harness/run.mjs 时，spawn harness
 // 走完整调试环境（Tauri mock + stub + 热重载）；否则回退裸 Vite + 输出 dev 源配置。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { join } from 'node:path'
+import { findHarnessStart } from '../lib/project.ts'
 import { fail, info, runShell } from '../lib/io.ts'
 
 export interface DevOptions {
   port?: number
-}
-
-/** 从 cwd 逐级向上查找仓库根下的 scripts/harness/run.mjs；找不到返回 null */
-function findHarnessStart(): string | null {
-  let dir = resolve(process.cwd())
-  while (true) {
-    const candidate = join(dir, 'scripts', 'harness', 'run.mjs')
-    if (existsSync(candidate)) return candidate
-    const parent = dirname(dir)
-    if (parent === dir) return null
-    dir = parent
-  }
 }
 
 export async function devCommand(opts: DevOptions = {}): Promise<void> {
@@ -30,7 +19,7 @@ export async function devCommand(opts: DevOptions = {}): Promise<void> {
 
   // 仓库内检测到 harness → 走完整调试环境（Tauri mock + stub + 热重载）。
   // 注意：harness 固定使用仓库根 Vite(:1420) + stub(:5100)，CLI 的 --port 在此模式不生效。
-  const harness = findHarnessStart()
+  const harness = findHarnessStart(root)
   if (harness) {
     info(`✔ 检测到调试 harness（${harness}），进入完整调试环境（Tauri mock + stub + 热重载）`)
     info('  插件须位于仓库 plugins-dev/{id} 供 harness 定位；--port 参数在此模式不生效（固定 1420）')

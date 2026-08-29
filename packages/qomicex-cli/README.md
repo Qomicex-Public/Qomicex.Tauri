@@ -62,6 +62,44 @@ qomicex publish --api http://127.0.0.1:8787/api/v1   # 本地商店（wrangler d
 4. 查找/创建插件记录（`/plugins/mine` → 无则 `POST /plugins`），确认后 `POST /plugins/:id/versions` multipart 上传。
 5. 成功后将签名包存为 `release/<id>-<version>.signed.qplugin` 供复验。
 
+> 认证：无 `QOMICEX_API_KEY` 时优先用 `qomicex login` 持久化的会话（refresh token 30 天，经 `/auth/refresh` 旋转续期）免登录；失效才回退设备流。
+
+### login / logout
+```bash
+qomicex login              # 设备流登录，会话持久化到 ~/.qomicex/auth.json（0600）
+qomicex login --api http://127.0.0.1:8787/api/v1   # 指定商店
+qomicex logout             # 清除本地会话
+```
+登录成功后 30 天内 `qomicex publish` 免重复授权（access token 15 分钟过期时自动用 refresh token 续期，旋转式）。会话按 store API base 区分。
+
+### lint
+```bash
+qomicex lint               # manifest/权限/长循环 + 相对 import 扩展名 + 资源引用
+qomicex lint --json        # 结构化输出（CI 消费：{ok, errors, warnings, findings}）
+```
+比 `verify` 更严的发布前静态门禁，额外检查：
+- **相对 import 缺扩展名**：`import ... from './x'` 无扩展名且非目录 barrel → error（Vite 硬规则，见仓库 AGENTS.md）。
+- **资源引用存在性**：`entry.frontend/theme/backend`、`contributes.overlay.file` 指向的文件不存在 → error（`dist/` 引用未构建时给 warning）。
+
+### doctor
+```bash
+qomicex doctor             # 环境诊断（纯只读，零副作用）
+qomicex doctor --json
+```
+逐项检查：Node ≥20、pnpm、插件项目 + manifest 合法性、`@qomicex/plugin-ui`、Vite、openssl + WebCrypto(Ed25519)、后端 `:5000`、插件商店可达、调试 harness 可定位。
+
+### debug
+```bash
+qomicex debug                            # 启动启动器开放 CDP :9222 + 实时日志
+qomicex debug --port 9223 --no-logs      # 指定 CDP 端口 / 仅 CDP 不要日志
+qomicex debug --launcher ./dist/launcher.exe --no-kill
+```
+定位启动器（`--launcher` > `QOMICEX_LAUNCHER_PATH` > 仓库 `src-tauri/target/{release,debug}` > 安装路径），以 `--debug <port>` 参数启动。**启动器本身支持 `Qomicex Launcher.exe --debug <port>`**——第三方开发者无需 CLI/源码，直接命令行传参即可开放 CDP + 实时推送日志；**release 默认纯 IPC 不受影响**（仅显式传参才启用）：
+- **Windows（WebView2）**：`--debug <port>` 设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>` 开放 CDP；轮询 `/json/list` 打印 targets + DevTools 前端地址，可用 Playwright `connectOverCDP()` / Chrome DevTools 自动化。
+- **Linux/macOS**：`--debug <port>` 设 `WEBKIT_INSPECTOR_SERVER` / `WEBKIT_INSPECTOR_HTTP_SERVER` 尽力支持（需应用启用 inspector）。
+- **实时日志双通道**：① 启动器 stderr 实时推送（backend 日志 + 启动器日志，`stdio: inherit` 直接可见）；② tail `{BaseDir}/logs/qomicex-backend.log`（backend `FileLog` 逐行 flush 实时落盘，含 `[plugin:...]` / `[frontend:...]` trace 行）打印 `[trace] ...`。**均不依赖后端 TCP**，数据目录按 `QOMICEX_HOME` → `.qomicex-bootstrap` → 默认目录解析。
+- `Ctrl+C` 停止并结束启动器子进程（`--no-kill` 保留）。
+
 ## AI 辅助开发
 
 CLI 随包分发 **AI skill 包**（`skills/qomicex-plugin/`），供 AI agent（Claude / opencode / Cursor 等）在写插件时加载，获得准确且不过时的 manifest 字段、权限目录、桥 API 签名、主题 token、签名与调试流程——避免 AI 臆造字段。安装 CLI 后本地路径为 `node_modules/@qomicex/cli/skills/qomicex-plugin/`（npm 包内，随 `files` 分发）。
