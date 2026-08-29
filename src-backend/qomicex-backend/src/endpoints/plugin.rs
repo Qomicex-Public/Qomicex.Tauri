@@ -394,8 +394,10 @@ async fn delete_plugin(
 }
 
 /// POST /api/plugins/upload — multipart form, field name `plugin`.
+/// query `allowUnsigned=true` 时跳过强制签名校验（前端确认风险后重试；无签名放行，有签名仍须有效）。
 async fn upload(
     State(state): State<SharedState>,
+    Query(query): Query<UploadQuery>,
     mut multipart: Multipart,
 ) -> ApiResult<Json<PluginInfo>> {
     let mut plugin_bytes: Option<Vec<u8>> = None;
@@ -415,10 +417,16 @@ async fn upload(
     let bytes = plugin_bytes
         .ok_or_else(|| ApiError::bad_request("NO_PLUGIN_FILE", "No plugin file uploaded"))?;
 
-    let plugin = install_from_package(&bytes, true)?
+    let plugin = install_from_package(&bytes, !query.allow_unsigned)?
         .ok_or_else(|| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "Invalid plugin package"))?;
     state.plugin_store.invalidate_cache();
     Ok(Json(plugin))
+}
+
+#[derive(Deserialize)]
+struct UploadQuery {
+    #[serde(default)]
+    allow_unsigned: bool,
 }
 
 /// PUT /api/plugins/{id}/state
@@ -866,6 +874,11 @@ fn is_private_address(ip: IpAddr) -> bool {
             }
             if v6.is_loopback() || v6.is_multicast() {
                 return true;
+            }
+            // fdfe:dcba:9876::/48 是 Clash/Surge 的 fake-ip IPv6 池（同 198.18.0.0/15）：
+            // 代理工具把公网域名解析成该段地址，拦截会导致 proxyFetch 对代理用户全挂。
+            if v6.segments()[0] == 0xfdfe && v6.segments()[1] == 0xdcba && v6.segments()[2] == 0x9876 {
+                return false;
             }
             if v6.segments()[0] & 0xfe00 == 0xfc00 {
                 return true; // fc00::/7 unique local
@@ -1549,6 +1562,10 @@ mod tests {
         // Clash/Surge fake-ip pools resolve public hostnames into 198.18.0.0/15.
         assert!(!is_private("198.18.0.87"));
         assert!(!is_private("198.19.255.255"));
+        // fake-ip IPv6 池（fdfe:dcba:9876::/48）同样放行
+        assert!(!is_private("fdfe:dcba:9876::9a"));
+        // 真实 ULA 仍拦截
+        assert!(is_private("fd12:3456:7890::1"));
     }
 
     #[test]

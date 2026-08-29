@@ -78,8 +78,25 @@ export default function PluginStoreManage() {
       if (!file) return
       setPluginInstalling(true)
       try {
-        const res = await uploadFile('/plugins/upload', file, 'plugin')
-        if (!res.ok) throw new Error(`Upload failed (${res.status})`)
+        const upload = async (allowUnsigned: boolean) => {
+          const res = await uploadFile(allowUnsigned ? '/plugins/upload?allowUnsigned=true' : '/plugins/upload', file, 'plugin')
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as { code?: string; message?: string } | null
+            const code = body?.code ?? ''
+            if (!allowUnsigned && code.startsWith('PLUGIN_SIGNATURE')) {
+              const ok = await msgConfirm(
+                t('settings.plugins.unsigndInstallConfirm', {
+                  message: body?.message ?? `HTTP ${res.status}`,
+                }),
+              )
+              if (!ok) return
+              return upload(true)
+            }
+            throw new Error(body?.message ?? `Upload failed (${res.status})`)
+          }
+          return res
+        }
+        await upload(false)
         setPluginsMsg(t('settings.plugins.installSuccess'))
         setPluginDetail(null)
         await loadPlugins()
