@@ -9,6 +9,8 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use tokio::sync::broadcast;
+
 use crate::settings::resolve_base_dir;
 
 /// 全局 trace 缓冲（AppState::build 时注册；trace_append / TraceWriter 写入）。
@@ -16,6 +18,16 @@ pub static TRACE_BUFFER: OnceLock<Arc<TraceBufferStore>> = OnceLock::new();
 
 /// 全局文件日志（AppState::build 时注册；trace_append 双写）。
 static FILE_LOG: OnceLock<Arc<FileLog>> = OnceLock::new();
+
+/// 全局 trace 实时广播（SSE 订阅；trace_append 同时广播，无订阅者时静默丢弃）。
+static TRACE_BROADCAST: OnceLock<broadcast::Sender<String>> = OnceLock::new();
+
+/// 获取 trace 广播发送端（首次调用惰性创建，容量 256；落后于消费则 Lagged）。
+pub fn trace_broadcast() -> broadcast::Sender<String> {
+    TRACE_BROADCAST
+        .get_or_init(|| broadcast::channel(256).0)
+        .clone()
+}
 
 /// 注册全局缓冲（重复注册忽略）。
 pub fn init_global_trace(buffer: Arc<TraceBufferStore>) {
@@ -27,10 +39,13 @@ pub fn init_file_log(log: Arc<FileLog>) {
     let _ = FILE_LOG.set(log);
 }
 
-/// 向全局缓冲追加一行（未初始化时静默丢弃），并双写到文件日志。
+/// 向全局缓冲追加一行（未初始化时静默丢弃），广播到 SSE 订阅者，并双写到文件日志。
 pub fn trace_append(line: String) {
     if let Some(b) = TRACE_BUFFER.get() {
         b.append(line.clone());
+    }
+    if let Some(tx) = TRACE_BROADCAST.get() {
+        let _ = tx.send(line.clone());
     }
     if let Some(f) = FILE_LOG.get() {
         f.append(line);

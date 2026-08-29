@@ -103,6 +103,15 @@ struct PluginFileWriteRequest {
     content_base64: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginLogRequest {
+    plugin_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    level: Option<String>,
+    message: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginFileResponse {
@@ -321,6 +330,7 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/rescan", post(rescan))
         .route("/plugins/install", post(install))
         .route("/plugins/upload", post(upload))
+        .route("/plugins/log", post(plugin_log))
         .route("/plugins/{id}/state", put(set_state))
         .route("/plugins/{id}/rollback", post(rollback))
         .route("/plugins/{id}/files/{*path}", get(plugin_file))
@@ -427,6 +437,20 @@ async fn upload(
 struct UploadQuery {
     #[serde(default)]
     allow_unsigned: bool,
+}
+
+/// POST /api/plugins/log — 插件日志写入 trace 缓冲 + 落盘（debug SSE / 诊断导出可见）。
+/// 权限由前端桥 enforce（plugin:log），后端仅做输入校验。
+async fn plugin_log(Json(body): Json<PluginLogRequest>) -> ApiResult<StatusCode> {
+    let plugin_id = body.plugin_id.trim();
+    if plugin_id.is_empty() {
+        return Err(ApiError::bad_request("BAD_REQUEST", "pluginId is required"));
+    }
+    let level = body.level.unwrap_or_else(|| "info".to_string());
+    for line in body.message.lines() {
+        crate::services::trace::trace_append(format!("[plugin:{plugin_id}:{level}] {line}"));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// PUT /api/plugins/{id}/state

@@ -1,15 +1,19 @@
 //! System 端点（对应源 Endpoints/SystemEndpoints.cs）。
 //! 自包含切片：无需额外服务注入，用于验证框架/错误封装/设置持久化/CORS/HTTP ping。
 
+use std::convert::Infallible;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{header, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures::StreamExt;
 use serde::Serialize;
+use tokio::sync::broadcast;
 
 use crate::error::{ApiError, ApiResult};
 use crate::models::*;
@@ -68,6 +72,7 @@ pub fn router() -> Router<SharedState> {
         .route("/health", get(health))
         .route("/diagnostics/health", get(diagnostics_health))
         .route("/diagnostics/trace", get(diagnostics_trace))
+        .route("/diagnostics/trace/stream", get(diagnostics_trace_stream))
         .route("/diagnostics/dump", post(diagnostics_dump))
         .route("/system/info", get(sysinfo))
         .route("/systeminfo", get(sysinfo))
@@ -140,6 +145,33 @@ async fn diagnostics_health() -> ApiResult<Json<DiagnosticsHealthResponse>> {
 /// GET /api/diagnostics/trace — 返回内存 trace 缓冲快照（对应 C# TraceBufferStore.Snapshot）。
 async fn diagnostics_trace(State(state): State<SharedState>) -> ApiResult<Json<Vec<String>>> {
     Ok(Json(state.trace_buffer.snapshot()))
+}
+
+/// GET /api/diagnostics/trace/stream — SSE 实时 trace 流：先推当前缓冲快照（逐行），
+/// 再推送新追加行（`trace_append` 广播）。供 `qomicex debug` / 日志面板实时查看后端日志。
+async fn diagnostics_trace_stream(State(state): State<SharedState>) -> Response {
+    let tx = crate::services::trace::trace_broadcast();
+    let snapshot = state.trace_buffer.snapshot();
+    let initial = futures::stream::iter(
+        snapshot
+            .into_iter()
+            .map(|line| Ok::<Event, Infallible>(Event::default().data(line))),
+    );
+    let live = futures::stream::unfold(tx.subscribe(), |mut rx| async move {
+        match rx.recv().await {
+            Ok(line) => Some((Ok::<Event, Infallible>(Event::default().data(line)), rx)),
+            Err(broadcast::error::RecvError::Lagged(_)) => Some((
+                Ok::<Event, Infallible>(
+                    Event::default().data("[trace] 日志过密，丢弃部分行".to_string()),
+                ),
+                rx,
+            )),
+            Err(broadcast::error::RecvError::Closed) => None,
+        }
+    });
+    Sse::new(initial.chain(live))
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
 }
 
 /// POST /api/diagnostics/dump — 将缓冲 dump 到 `{BaseDir}/logs/backend-trace-*.log`，返回路径。
