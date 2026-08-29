@@ -877,7 +877,10 @@ fn is_private_address(ip: IpAddr) -> bool {
             }
             // fdfe:dcba:9876::/48 是 Clash/Surge 的 fake-ip IPv6 池（同 198.18.0.0/15）：
             // 代理工具把公网域名解析成该段地址，拦截会导致 proxyFetch 对代理用户全挂。
-            if v6.segments()[0] == 0xfdfe && v6.segments()[1] == 0xdcba && v6.segments()[2] == 0x9876 {
+            if v6.segments()[0] == 0xfdfe
+                && v6.segments()[1] == 0xdcba
+                && v6.segments()[2] == 0x9876
+            {
                 return false;
             }
             if v6.segments()[0] & 0xfe00 == 0xfc00 {

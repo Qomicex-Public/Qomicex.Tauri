@@ -374,7 +374,8 @@ mod tests {
         let dev = SigningKey::from_bytes(&[7u8; 32]);
         let keys = TestKeys { root, dev };
         let pkg = build_signed_package(&keys, r#"{"id":"dev.x","version":"1.0.0"}"#);
-        verify_package_signature(&pkg, true, TEST_ROOT_PUB_B64).expect("valid signature should pass");
+        verify_package_signature(&pkg, true, TEST_ROOT_PUB_B64)
+            .expect("valid signature should pass");
     }
 
     #[test]
