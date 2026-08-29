@@ -122,10 +122,39 @@ export interface CertJson {
   signature: string
 }
 
+/** 自签开发者证书（开发者私钥签证书体）：未注册商店密钥时的离线打包/本地验证用，商店上传需对应公钥已注册。 */
+export async function makeSelfSignedCert(
+  privDer: Uint8Array,
+  keyId: string,
+  developerName = '',
+): Promise<string> {
+  const { derivePublicKey } = await import('./signature.ts')
+  const publicKey = await derivePublicKey(privDer)
+  const body: CertJson = {
+    alg: ALG,
+    keyId,
+    developerId: '',
+    developerName,
+    publicKey,
+    issuedAt: new Date().toISOString(),
+    signature: '',
+  }
+  const certBody = canonicalJson({
+    alg: body.alg,
+    keyId: body.keyId,
+    developerId: body.developerId,
+    developerName: body.developerName,
+    publicKey: body.publicKey,
+    issuedAt: body.issuedAt,
+  })
+  body.signature = await signBytes(privDer, new TextEncoder().encode(certBody))
+  return JSON.stringify(body)
+}
+
 /**
  * 对包内全部条目生成签名文件。
  * @param certJson 商店根钥签发的开发者证书 JSON（POST /developer/keys 返回值），
- *                 无 cert 时仅生成 signature.json（pack 场景，publish 会走完整证书链）。
+ *                 省略时仅生成 signature.json（publish 场景由调用方传证书）。
  */
 export async function signPackage(
   entries: Record<string, Uint8Array>,

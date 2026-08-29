@@ -60,19 +60,25 @@ export async function packCommand(opts: PackOptions = {}): Promise<PackResult> {
 
   let entries = buildPackageEntries(root, manifest)
 
-  // 可选签名（仅 signature.json；需要证书链请用 publish）
+  // 可选签名（signature.json + signature.cert.json；无商店证书时生成自签证书）
   if (opts.key) {
     const keyContent = await readKeyInput(opts.key)
     const priv = parsePrivateKey(keyContent)
-    const { derivePublicKey } = await import('../lib/signature.ts')
+    const { derivePublicKey, makeSelfSignedCert } = await import('../lib/signature.ts')
     const pub = await derivePublicKey(priv)
     const keyId = `ed25519:${pub.slice(0, 8)}`
     const localCert = join(root, 'signature.cert.json')
     let certJson: string | undefined
-    if (existsSync(localCert)) certJson = readFileSync(localCert, 'utf8')
+    if (existsSync(localCert)) {
+      certJson = readFileSync(localCert, 'utf8')
+    } else {
+      const name = String((manifest as Record<string, unknown>).name ?? '')
+      certJson = await makeSelfSignedCert(priv, keyId, name)
+      writeFileSync(localCert, certJson)
+      warn('未找到本地签名证书，已生成自签证书并写入 signature.cert.json；上传商店需先在开发者中心注册对应公钥')
+    }
     const sig = await signPackage(entries, priv, keyId, certJson)
     entries = { ...entries, ...sig }
-    if (!certJson) warn('缺少本地 signature.cert.json，商店上传仍需证书；建议改用 qomicex publish 走完整签名')
   }
 
   const outDir = resolve(root, opts.outDir ?? 'release')
