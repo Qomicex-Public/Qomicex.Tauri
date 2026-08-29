@@ -139,6 +139,8 @@ fn spawn_backend(app: &tauri::App, pipe_name: &Option<String>) {
     // IPC 模式（纯管道）：启动器注入管道名并禁用 TCP 监听，彻底消除端口占用
     // 冲突（旧后端残留进程抢占 127.0.0.1:5000 时新后端 bind 失败 panic 退出，
     // 管道随之消失，前端 qomicex:// 探测失败回退 HTTP 连到旧后端 → 405 版本错配）。
+    // release 恒为纯 IPC（性能/安全/端口冲突考量），外部调试日志不依赖 TCP——
+    // 经启动器 stdout/stderr 转发 + {BaseDir}/logs/qomicex-backend.log 实时落盘。
     if let Some(name) = pipe_name {
         cmd.env("QOMICEX_IPC_PIPE", name);
         cmd.env("QOMICEX_NO_TCP", "1");
@@ -189,8 +191,39 @@ fn spawn_backend(app: &tauri::App, pipe_name: &Option<String>) {
     );
 }
 
+/// 解析 `--debug <port>`（或 `-d <port>`）启动参数，返回端口。非法端口提示并返回 None。
+fn parse_debug_port() -> Option<u16> {
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        if a == "--debug" || a == "-d" {
+            match args.next().and_then(|v| v.parse::<u16>().ok()) {
+                Some(port) if port > 0 => return Some(port),
+                _ => {
+                    eprintln!("[debug] --debug 需要有效端口号（1-65535），如 --debug 9223");
+                    return None;
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // --debug <port>：显式调试模式（第三方开发者无需源码/CLI 即可用）——开放 CDP
+    // 调试端口，日志经 stderr 实时推送（logger::log_line 回显 + backend 转发）。
+    // release 默认行为不变（纯 IPC），仅显式传参才启用。
+    if let Some(port) = parse_debug_port() {
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            format!("--remote-debugging-port={port}"),
+        );
+        #[cfg(target_os = "macos")]
+        std::env::set_var("WEBKIT_INSPECTOR_HTTP_SERVER", format!("127.0.0.1:{port}"));
+        #[cfg(target_os = "linux")]
+        std::env::set_var("WEBKIT_INSPECTOR_SERVER", format!("127.0.0.1:{port}"));
+        tauri_log!("debug", "CDP 调试端口开放: {port}（--debug 模式）");
+    }
     // 管道名来源优先级：显式 env > release 内嵌后端默认启用；debug 占位/外部管理回落 None（前端走 HTTP）
     let pipe_name: Option<String> = std::env::var("QOMICEX_IPC_PIPE").ok().or_else(|| {
         if BACKEND.len() >= 1024 {
