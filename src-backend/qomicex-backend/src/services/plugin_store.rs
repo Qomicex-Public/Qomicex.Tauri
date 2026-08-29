@@ -412,7 +412,7 @@ pub async fn install(
     let bytes = fetch_package(client, &info).await?;
     verify_package_matches_slug(&bytes, slug)?;
     // 商店路径：有签名则验、无签名放行（老版本不强制重签，ADR-050 降级策略）
-    crate::services::plugin::install_from_package(&bytes, false)?.ok_or_else(|| {
+    crate::services::plugin::install_from_package(&bytes, false, false)?.ok_or_else(|| {
         ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包无效（缺少 manifest.json）")
     })
 }

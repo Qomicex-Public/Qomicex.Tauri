@@ -249,10 +249,11 @@ export async function uploadFile(path: string, file: File, fieldName = 'file'): 
         if (status < 200 || status >= 300) {
           dead = true
           invoke('ipc_stream_abort', { id }).catch(() => {})
-          reject(new StreamStatusError(status))
+          // 收集错误响应 body 后返回（与浏览器 fetch 语义一致），供调用方读 code/message
+          // （不能直接 reject：上传签名失败需读取错误 body 决定是否弹确认框）
         }
       } else if (e.t === 'chunk') {
-        chunks.push(e.d ?? '')
+        if (!dead) chunks.push(e.d ?? '')
       } else if (e.t === 'error') {
         dead = true
         reject(new Error(e.d || 'stream failed'))

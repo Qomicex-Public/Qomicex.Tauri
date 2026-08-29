@@ -426,15 +426,19 @@ impl PluginStore {
 ///
 /// `require_signature`（ADR-050）：true=签名缺失拒绝（upload）；false=无签名放行
 /// （老版本/商店历史版本），有签名则必须通过。
+/// `skip_signature`：完全跳过签名验证（前端确认风险后的强制安装）。
 pub fn install_from_package(
     package_bytes: &[u8],
     require_signature: bool,
+    skip_signature: bool,
 ) -> Result<Option<PluginInfo>, ApiError> {
-    crate::services::plugin_signature::verify_package_signature(
-        package_bytes,
-        require_signature,
-        crate::services::plugin_signature::ROOT_PUBLIC_KEY_B64,
-    )?;
+    if !skip_signature {
+        crate::services::plugin_signature::verify_package_signature(
+            package_bytes,
+            require_signature,
+            crate::services::plugin_signature::ROOT_PUBLIC_KEY_B64,
+        )?;
+    }
 
     let plugins_dir = settings::plugins_dir();
     let _ = std::fs::create_dir_all(&plugins_dir);
@@ -919,7 +923,7 @@ mod tests {
     #[test]
     fn install_rejects_path_traversal_id() {
         let pkg = minimal_package(r#"{"id":"../../evil","name":"x","version":"1.0.0"}"#);
-        let err = install_from_package(&pkg, false).unwrap_err();
+        let err = install_from_package(&pkg, false, false).unwrap_err();
         assert_eq!(err.code, "INVALID_PLUGIN_PACKAGE");
         assert!(err.message.contains("非法的插件 ID"));
     }
@@ -929,7 +933,7 @@ mod tests {
         for id in ["", "C:\\Windows\\Temp", "/etc/passwd", "a..b"] {
             let manifest = format!(r#"{{"id":"{id}","name":"x","version":"1.0.0"}}"#);
             let pkg = minimal_package(&manifest);
-            let err = install_from_package(&pkg, false).unwrap_err();
+            let err = install_from_package(&pkg, false, false).unwrap_err();
             assert_eq!(err.code, "INVALID_PLUGIN_PACKAGE", "id={id}");
         }
     }
@@ -945,7 +949,7 @@ mod tests {
             r#"{"id":"com.qomicex.demo","name":"x","version":"1.0.0","entry":{},"layers":["l2"],"permissions":[]}"#,
         );
         // 依赖预检：无依赖 → 应安装成功
-        let info = install_from_package(&pkg, false).unwrap().unwrap();
+        let info = install_from_package(&pkg, false, false).unwrap().unwrap();
         assert_eq!(info.manifest.id, "com.qomicex.demo");
         // 清理仅测试自己创建的产物
         store.uninstall("com.qomicex.demo");
