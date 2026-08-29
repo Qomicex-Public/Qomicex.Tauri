@@ -166,7 +166,6 @@ jobs:
           fi
 
       - name: Bump version files
-        if: github.event_name == 'workflow_dispatch'
         run: node scripts/bump-version.mjs "${{ steps.construct.outputs.version }}"
 
       - name: Show version
