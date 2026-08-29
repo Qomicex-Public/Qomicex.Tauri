@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// qomicex CLI 入口：create / dev / pack / verify / publish
+// qomicex CLI 入口：create / dev / pack / verify / bump / publish
 import { createCommand } from './commands/create.ts'
 import { devCommand } from './commands/dev.ts'
 import { packCommand } from './commands/pack.ts'
 import { verifyCommand } from './commands/verify.ts'
 import { publishCommand } from './commands/publish.ts'
+import { bumpCommand } from './commands/bump.ts'
 import { fail } from './lib/io.ts'
+import { createRequire } from 'node:module'
 
-const VERSION = '0.1.0'
+// 版本号单一来源：package.json（bump 只改一处）
+const VERSION = createRequire(import.meta.url)('../package.json').version
 
 interface ParsedArgs {
   command: string
@@ -54,6 +57,8 @@ qomicex v${VERSION} — Qomicex 插件生态 CLI
                                 构建并打 .qplugin（manifest.json 在 zip 根）
   qomicex verify [--package <f>]
                                 manifest 合法性 + 权限最小化 + 长循环告警 + 签名检查
+  qomicex bump <major|minor|patch> [--version <v>]
+                                递增 manifest.json 版本号（或 --version 直接指定）
   qomicex publish [--key <k>] [--slug <s>] [--changelog <c>] [--api <url>] [--org-id <id>] [--package <f>] [--yes]
                                 设备流登录 → 注册签名公钥 → 签名 → 上传到商店
   qomicex --help | -h           显示帮助
@@ -97,6 +102,12 @@ async function main(): Promise<void> {
         break
       case 'verify':
         await verifyCommand({ package: typeof options['package'] === 'string' ? options['package'] : undefined })
+        break
+      case 'bump':
+        await bumpCommand({
+          part: positional[0] ?? 'minor',
+          version: typeof options['version'] === 'string' ? options['version'] : undefined,
+        })
         break
       case 'publish':
         await publishCommand({

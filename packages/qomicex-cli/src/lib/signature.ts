@@ -9,7 +9,7 @@ export const SIGNATURE_FILE = 'signature.json'
 export const CERT_FILE = 'signature.cert.json'
 export const ALG = 'Ed25519'
 /** 商店签名根公钥（raw base64），与 launcher plugin_signature.rs ROOT_PUBLIC_KEY_B64 一致 */
-export const STORE_ROOT_PUBLIC_KEY_B64 = 'hNoXOazEkdTRoxBra8ABlCWXhy16S7rM5ZmEDa+GmnE='
+export const STORE_ROOT_PUBLIC_KEY_B64 = 'sPKcrc6QR5gcOnQMdq21Jo3yqxN7Mbm61OYxZnKuHE0='
 
 /** Ed25519 PKCS#8 DER 固定前缀（前 16 字节），后接 32 字节 seed */
 const ED25519_PKCS8_PREFIX = Uint8Array.from([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20])

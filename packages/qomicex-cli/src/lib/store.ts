@@ -104,7 +104,7 @@ export interface CreatePluginInput {
 
 /** 新建插件（store 返回 201 {plugin:{id}}），slug 占用抛 409。 */
 export async function createPlugin(base: string, token: string, input: CreatePluginInput): Promise<{ id: string }> {
-  const r = await request<{ plugin?: { id?: string } } & { id?: string }>(base, '/plugins/', {
+  const r = await request<{ plugin?: { id?: string } } & { id?: string }>(base, '/plugins', {
     method: 'POST',
     body: JSON.stringify({
       slug: input.slug,

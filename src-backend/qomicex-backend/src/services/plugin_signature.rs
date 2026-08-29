@@ -20,7 +20,7 @@ use crate::error::ApiError;
 
 /// 商店签名根公钥（raw Ed25519 base64）。由 `scripts/plugin-keygen.mjs` 生成，
 /// 与 store 的 `PLUGIN_ROOT_PRIVATE_KEY` 对应。更换根钥需同步本常量。
-const ROOT_PUBLIC_KEY_B64: &str = "hNoXOazEkdTRoxBra8ABlCWXhy16S7rM5ZmEDa+GmnE=";
+const ROOT_PUBLIC_KEY_B64: &str = "sPKcrc6QR5gcOnQMdq21Jo3yqxN7Mbm61OYxZnKuHE0=";
 
 const SIGNATURE_FILE: &str = "signature.json";
 const CERT_FILE: &str = "signature.cert.json";
