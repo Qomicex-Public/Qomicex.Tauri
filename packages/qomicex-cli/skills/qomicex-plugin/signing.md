@@ -75,6 +75,6 @@ qomicex verify --package ./release/x.qplugin
 ## 商店根公钥
 
 ```
-sPKcrc6QR5gcOnQMdq21Jo3yqxN7Mbm61OYxZnKuHE0=
+YkYb+Oh8CNHyGwKAEy/1p6Vz8FYp7UafymXoHCZhfmQ=
 ```
 （raw base64 Ed25519 公钥；开发 / 自建商店需替换为对应根钥）
