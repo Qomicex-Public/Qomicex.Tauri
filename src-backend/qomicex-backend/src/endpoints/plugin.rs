@@ -417,7 +417,7 @@ async fn upload(
     let bytes = plugin_bytes
         .ok_or_else(|| ApiError::bad_request("NO_PLUGIN_FILE", "No plugin file uploaded"))?;
 
-    let plugin = install_from_package(&bytes, !query.allow_unsigned)?
+    let plugin = install_from_package(&bytes, true, query.allow_unsigned)?
         .ok_or_else(|| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "Invalid plugin package"))?;
     state.plugin_store.invalidate_cache();
     Ok(Json(plugin))
