@@ -54,7 +54,7 @@
       "dangerousInsecureTransportProtocol": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM1REQ2QUU1MzMwMUFCRTMKUldUanF3RXo1V3JkTmZpa2EvMFc1L3VSNTRURGhKTkJTeTJnUnl2eHhEZWZlWHZlWENiMWEvY2gK",
       "endpoints": [
-        "http://127.0.0.1:5000/api/update/manifest?current_version={{current_version}}&target={{target}}&arch={{arch}}",
+        "http://127.0.0.1:5000/api/update/manifest?current={{current_version}}&target={{target}}&arch={{arch}}",
         "https://api.qomicex.top/api/client/update/manifest?current_version={{current_version}}&target={{target}}&arch={{arch}}"
       ]
     }
