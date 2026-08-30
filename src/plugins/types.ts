@@ -38,6 +38,8 @@ export interface PluginContributes {
   fontLinks?: string[]
   /** 声明可被本插件 hook 的启动器方法（配合运行时 `registerHook` 注册处理函数）。 */
   hooks?: PluginHookDecl[]
+  /** UI 槽位注入：激活时把 slot 对应的 HTML 文件以独立 iframe 沙箱挂载到主界面槽位。 */
+  slots?: PluginSlotContribution[]
 }
 
 /** 一个可 hook 的方法声明：`method` 为启动器 hookable 方法名，如 `"launchInstance"`。 */
@@ -45,6 +47,19 @@ export interface PluginHookDecl {
   method: string
   /** 执行顺序优先级：数字越小越先执行（默认 100）。同优先级按注册先后。 */
   priority?: number
+}
+
+/** 主界面槽位。 */
+export type PluginSlotId = 'header:right' | 'dashboard:widgets'
+
+export interface PluginSlotContribution {
+  /** 目标槽位：标题栏右侧（控制钮左侧）/ 主页右侧卡片区 */
+  slot: PluginSlotId
+  /** 槽位 HTML 文件（`.qplugin` 内相对路径，如 `dist/weather.html`） */
+  file: string
+  /** iframe 尺寸约束（可选）：height 固定高度（px），width 固定宽度（px） */
+  width?: number
+  height?: number
 }
 
 export interface PluginMenuItem {

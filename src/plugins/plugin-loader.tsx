@@ -1,10 +1,12 @@
 import { Tooltip } from '../components/ui/index.ts'
 import type { PluginInfo, PluginMenuItem, PluginContributes } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { createSandbox, renderInline, getInstance, getWebviewInstance, registerWebviewInstance, destroyWebviewInstance, convertCssLinks, getFileUrl } from './sandbox.ts'
+import { createSandbox, renderInline, getInstance, getWebviewInstance, registerWebviewInstance, destroyWebviewInstance, convertCssLinks, getFileUrl, createSlotSandbox, destroySlotSandboxes } from './sandbox.ts'
 import { initL4Bridge } from './webview-bridge.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
 import { getHookRegistry } from './hook-registry.ts'
+import { PluginSlot } from './PluginSlot.tsx'
+import type { SlotId } from './slots.tsx'
 import { NavItem } from '../components/Sidebar.tsx'
 import { PluginIcon } from '../components/PluginIcon.tsx'
 import { API_BASE } from '../api/client.ts'
@@ -165,7 +167,7 @@ export async function activatePlugin(plugin: PluginInfo) {
       throw e
     }
 
-    const { menuItems, overlay } = plugin.manifest.contributes ?? {}
+    const { menuItems, overlay, slots } = plugin.manifest.contributes ?? {}
     if (menuItems) {
       for (const item of menuItems) {
         if (item.action === 'overlay' && overlay) {
@@ -180,6 +182,23 @@ export async function activatePlugin(plugin: PluginInfo) {
             'sidebar:bottom',
             () => <NavItem to={`/plugins/p/${plugin.manifest.id}`} label={item.label} icon={<PluginIcon pluginId={plugin.manifest.id} icon={resolvePluginAssetUrl(plugin.manifest.id, item.icon ?? '')} fallback={item.label[0]} />} />
           )
+        }
+      }
+    }
+
+    // UI 槽位注入：每个 slot 声明一个独立 iframe 沙箱，挂载到主界面对应槽位
+    if (slots) {
+      for (const slot of slots) {
+        if (!slot.file) continue
+        try {
+          const sandbox = createSlotSandbox(plugin, slot.file)
+          registerSlot(
+            plugin.manifest.id,
+            slot.slot as SlotId,
+            () => <PluginSlot slotId={slot.slot} sandbox={sandbox} width={slot.width} height={slot.height} />
+          )
+        } catch (e) {
+          console.error(`[plugin] 槽位 ${slot.slot} 挂载失败 ${plugin.manifest.id}`, e)
         }
       }
     }
@@ -238,6 +257,7 @@ export function deactivatePlugin(pluginId: string) {
     try { inst.destroy() } catch { /* ignore */ }
   }
   destroyWebviewInstance(pluginId)
+  destroySlotSandboxes(pluginId)
   unregisterPluginSlots(pluginId)
   unregisterPluginIconTheme(pluginId)
   clearThemeOverride()

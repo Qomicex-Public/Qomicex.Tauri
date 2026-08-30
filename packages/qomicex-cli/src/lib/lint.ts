@@ -49,6 +49,7 @@ export function checkRefFiles(root: string, manifest: Record<string, unknown>): 
   const findings: ScanFinding[] = []
   const entry = manifest.entry as Record<string, unknown> | undefined
   const overlay = (manifest.contributes as { overlay?: { file?: string } } | undefined)?.overlay
+  const slots = (manifest.contributes as { slots?: Array<{ file?: string }> } | undefined)?.slots
   const refs: Array<[string, string]> = []
   if (entry) {
     for (const key of ['frontend', 'theme', 'backend']) {
@@ -57,6 +58,9 @@ export function checkRefFiles(root: string, manifest: Record<string, unknown>): 
     }
   }
   if (overlay && typeof overlay.file === 'string') refs.push(['contributes.overlay.file', overlay.file])
+  for (const s of slots ?? []) {
+    if (typeof s.file === 'string') refs.push(['contributes.slots[].file', s.file])
+  }
 
   for (const [where, ref] of refs) {
     if (!ref.startsWith('dist/') && !ref.startsWith('src/')) continue

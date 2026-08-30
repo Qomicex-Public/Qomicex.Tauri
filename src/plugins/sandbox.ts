@@ -31,6 +31,8 @@ export interface WebviewInstance {
 const sandboxes = new Map<string, SandboxInstance>()
 const inlineInstances = new Map<string, InlineInstance>()
 const webviewInstances = new Map<string, WebviewInstance>()
+/** UI 槽位沙箱：pluginId → 该插件挂载到各槽位的 iframe 列表（与主页面沙箱独立管理） */
+const slotSandboxes = new Map<string, SandboxInstance[]>()
 const sourceMap = new WeakMap<Window, string>()
 
 export function getFileUrl(pluginId: string, frontend: string, path: string) {
@@ -292,10 +294,45 @@ export function createSandbox(plugin: PluginInfo): SandboxInstance {
   return instance
 }
 
-async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement) {
-  if (!plugin.manifest.entry.frontend) return
+/** 创建 UI 槽位 iframe 沙箱：把插件包内任意 HTML 文件以沙箱渲染，供 slots 槽位挂载。 */
+export function createSlotSandbox(plugin: PluginInfo, file: string): SandboxInstance {
+  const iframe = document.createElement('iframe')
+  iframe.setAttribute('sandbox', 'allow-scripts')
+  iframe.style.cssText = 'border:none;width:100%;height:100%'
+
+  const instance: SandboxInstance = {
+    iframe, plugin,
+    destroy: () => {
+      const list = slotSandboxes.get(plugin.manifest.id)
+      if (list) {
+        const idx = list.indexOf(instance)
+        if (idx >= 0) list.splice(idx, 1)
+        if (list.length === 0) slotSandboxes.delete(plugin.manifest.id)
+      }
+      iframe.remove()
+    }
+  }
+
+  const list = slotSandboxes.get(plugin.manifest.id) ?? []
+  list.push(instance)
+  slotSandboxes.set(plugin.manifest.id, list)
+
+  loadSandboxContent(plugin, iframe, file)
+  return instance
+}
+
+/** 销毁某插件全部槽位沙箱（停用时调用）。 */
+export function destroySlotSandboxes(pluginId: string) {
+  const list = slotSandboxes.get(pluginId)
+  if (!list) return
+  for (const sb of [...list]) sb.destroy()
+  slotSandboxes.delete(pluginId)
+}
+
+async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement, file?: string) {
+  const entry = file ?? plugin.manifest.entry?.frontend
+  if (!entry) return
   try {
-    const entry = plugin.manifest.entry.frontend
     const fileUrl = (p: string) => getFileUrl(plugin.manifest.id, entry, p)
     const res = await fetch(fileUrl(entry.split('/').pop()!))
     if (!res.ok) return
@@ -304,7 +341,7 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
     html = convertScriptSrcs(html, fileUrl)
     html = convertCssLinks(html, fileUrl)
 
-    html = buildPluginDoc(plugin, html)
+    html = buildPluginDoc(plugin, html, entry)
 
     iframe.onload = () => {
       if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
@@ -318,10 +355,10 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement)
 }
 
 /** 向插件页面注入主题初始化 + 通用样式 + API 桥 + 主题桥，返回最终 srcdoc。 */
-export function buildPluginDoc(plugin: PluginInfo, html: string): string {
+export function buildPluginDoc(plugin: PluginInfo, html: string, file?: string): string {
   // 注入 <base href> 指向插件文件服务目录：srcdoc 环境（about:srcdoc）下所有相对
   // URL（含 JS 模块内部 import）必须基于插件文件服务解析，否则多 chunk 产物白屏
-  const entry = plugin.manifest.entry?.frontend ?? ''
+  const entry = file ?? plugin.manifest.entry?.frontend ?? ''
   const dir = entry.split('/').slice(0, -1).join('/')
   const baseHref = `${API_BASE}/plugins/${encodeURIComponent(plugin.manifest.id)}/files/${dir ? dir + '/' : ''}`
   html = html.replace(/<head>/i, `<head><base href="${baseHref}">`)

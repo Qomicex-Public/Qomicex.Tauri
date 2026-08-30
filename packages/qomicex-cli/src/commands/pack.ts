@@ -64,10 +64,17 @@ export function buildPackageEntries(root: string, manifest: Record<string, unkno
     }
   }
 
-  // entry.theme / contributes.overlay.file 引用 dist/ 下文件但源码在根目录时，自动拷入
+  // entry.theme / contributes.overlay.file / contributes.slots[].file 引用 dist/ 下文件但源码在根目录时，自动拷入
   const entry = manifest.entry as { theme?: string; frontend?: string } | undefined
-  const overlay = (manifest.contributes as { overlay?: { file?: string } } | undefined)?.overlay
-  for (const ref of [entry?.theme, overlay?.file]) {
+  const contributes = manifest.contributes as { overlay?: { file?: string }; slots?: Array<{ file?: string }> } | undefined
+  const overlay = contributes?.overlay
+  const refs: string[] = []
+  if (entry?.theme) refs.push(entry.theme)
+  if (overlay?.file) refs.push(overlay.file)
+  for (const slot of contributes?.slots ?? []) {
+    if (slot.file) refs.push(slot.file)
+  }
+  for (const ref of refs) {
     if (typeof ref !== 'string' || !ref.startsWith('dist/')) continue
     const target = join(root, ref)
     if (existsSync(target)) continue

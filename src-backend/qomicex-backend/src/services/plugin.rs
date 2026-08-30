@@ -81,11 +81,24 @@ pub struct PluginContributes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay: Option<PluginOverlayConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<Vec<PluginSlotContribution>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hooks: Option<Vec<PluginHookDecl>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_theme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_links: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSlotContribution {
+    pub slot: String,
+    pub file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

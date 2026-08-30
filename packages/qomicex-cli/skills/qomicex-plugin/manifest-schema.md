@@ -102,6 +102,7 @@
 | `settingsPages` | string[] | 保留（当前未使用，以代码为准） |
 | `menuItems` | PluginMenuItem[] | 侧边栏入口列表 |
 | `overlay` | object | 悬浮窗配置 |
+| `slots` | PluginSlotContribution[] | UI 槽位注入（标题栏/主页卡片等） |
 
 ### menuItems 数组元素
 
@@ -121,6 +122,19 @@
 
 - `file`：悬浮窗 HTML 文件路径（必填，指向 `.html`，如 `dist/overlay.html`）。
 - `title` / `width` / `height` / `minimizable` / `resizable`：可选，视觉/行为参数（具体默认值以启动器代码为准）。
+
+### slots 数组元素
+
+```ts
+{ slot: 'header:right' | 'dashboard:widgets'; file: string; width?: number; height?: number }
+```
+
+- 轻量 UI 注入到主界面指定位置，激活时以独立 iframe 沙箱渲染（与主界面隔离，`__PLUGIN_API__` 桥可用）。
+- `slot`：`header:right`（标题栏右侧、控制按钮左侧）/ `dashboard:widgets`（主页右侧卡片区）。
+- `file`：slot HTML 文件路径（必填，指向 `.html`，如 `dist/weather.html`）。
+- `width` / `height`：iframe 固定尺寸（px，可选；缺省 100% 填充父容器）。
+- 主题自动跟随（CSS 变量注入）；插件停用时自动注销并销毁。
+- `qomicex pack` 会自动把根目录的 slot 文件拷入 dist（同 theme/overlay 逻辑）。
 
 ## CLI 校验行为（`qomicex verify` 目录模式）
 

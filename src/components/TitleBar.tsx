@@ -2,6 +2,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useState } from 'react'
 import { MorphIcon } from 'morphicons/react'
 import { useSafeClose } from '../hooks/closeGuardContext.ts'
+import { SlotHost } from './SlotHost.tsx'
 
 const win = getCurrentWindow()
 
@@ -35,6 +36,7 @@ export function TitleBar() {
 
   return (
     <div data-tauri-drag-region className="flex h-9 shrink-0 items-center justify-end bg-background/50 backdrop-blur-sm select-none">
+      <SlotHost slotId="header:right" className="flex h-full items-center" trailingSeparator />
       <div className="flex">
         <button onClick={() => win.minimize()} className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20">
           <MinIcon />

@@ -53,8 +53,9 @@ async function request<T>(base: string, path: string, init?: RequestInit, token?
     body = text
   }
   if (!res.ok) {
-    const errBody = body as { code?: string; message?: string; error?: string } | null
-    throw new StoreApiError(res.status, errBody?.message ?? errBody?.error ?? `HTTP ${res.status}`, errBody?.code)
+    const err = (body as { error?: { code?: string; message?: string } })?.error
+    const message = typeof err?.message === 'string' ? err.message : (body as { message?: string } | null)?.message ?? `HTTP ${res.status}`
+    throw new StoreApiError(res.status, message, err?.code ?? (body as { code?: string } | null)?.code)
   }
   return body as T
 }

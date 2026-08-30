@@ -19,6 +19,7 @@ import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import { AnnouncementCard } from '../components/AnnouncementCard.tsx'
+import { SlotHost } from '../components/SlotHost.tsx'
 import { useI18n } from '../i18n/index.tsx'
 
 export default function Dashboard() {
@@ -181,6 +182,9 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+
+        {/* 插件槽位：主页右侧卡片区 */}
+        <SlotHost slotId="dashboard:widgets" className="space-y-4" />
 
         {/* 公告卡片 */}
         <AnnouncementCard />
