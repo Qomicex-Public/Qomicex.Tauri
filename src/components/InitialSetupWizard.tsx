@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { Button } from './ui'
+import { useMessageBox } from './ui'
 import { Input } from './ui'
 import { Label } from './ui'
 import { Select, SelectOption } from './ui'
@@ -48,6 +49,7 @@ interface InitialSetupWizardProps {
 
 export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupWizardProps) {
   const { t, setLanguage } = useI18n()
+  const { confirm } = useMessageBox()
   const [mode, setMode] = useState<'quick' | 'custom' | null>(null)
   const [step, setStep] = useState(0)
   const [lang, setLang] = useState<LangChoice>((settings.language === 'en' ? 'en-US' : settings.language) as LangChoice)
@@ -199,6 +201,13 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
     setStep((s) => Math.max(0, s - 1))
   }
 
+  async function handleSkipJava() {
+    const ok = await confirm(t('wizard.javaSkipConfirm'), t('wizard.javaSkipConfirmTitle'))
+    if (!ok) return
+    setSaveError('')
+    setStep((s) => Math.min(stepCount - 1, s + 1))
+  }
+
   async function downloadJava(version: number) {
     if (javaDownloads[version]?.status === 'downloading' || javaDownloads[version]?.status === 'queued') return
     try {
@@ -323,7 +332,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
   return (
     <div
       data-tauri-drag-region
-      className="fixed inset-0 z-[9998] flex flex-col bg-background cursor-default select-none overflow-hidden"
+      className="fixed inset-0 z-40 flex flex-col bg-background cursor-default select-none overflow-hidden"
     >
       {/* 顶部品牌栏（拖动条） */}
       <div data-tauri-drag-region className="flex items-center gap-3 px-8 pt-6 select-none">
@@ -731,10 +740,17 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
             {saving ? t('wizard.saving') : t('wizard.finish')}
           </Button>
         ) : (
-          <Button onClick={handleNext} disabled={!canNext()} className="gap-1 min-w-24">
-            {t('common.next')}
-            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
-          </Button>
+          <div className="flex items-center gap-2">
+            {isJavaStep && !javaReady && !javaScanning && (
+              <Button variant="ghost" onClick={handleSkipJava} disabled={saving} className="gap-1">
+                {t('wizard.javaSkip')}
+              </Button>
+            )}
+            <Button onClick={handleNext} disabled={!canNext()} className="gap-1 min-w-24">
+              {t('common.next')}
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+            </Button>
+          </div>
         )}
       </div>
     </div>
