@@ -92,13 +92,101 @@ window.__PLUGIN_API_BASE__ = '__API_BASE_TOKEN__'
       return Promise.resolve(fn.apply(null, args))
     }
   }
+  // iframe 侧本地 hook 注册表：pluginId -> method -> handler（洋葱管道）
+  var __localHooks = {}
+  window.__pluginHookLocal = {
+    register: function (pluginId, method, fn) {
+      if (!__localHooks[method]) __localHooks[method] = []
+      var list = __localHooks[method]
+      var idx = -1
+      for (var i = 0; i < list.length; i++) if (list[i].pluginId === pluginId) { idx = i; break }
+      if (idx >= 0) list[idx] = { pluginId: pluginId, fn: fn }
+      else list.push({ pluginId: pluginId, fn: fn })
+    },
+    unregisterAll: function (pluginId) {
+      for (var method in __localHooks) {
+        var list = __localHooks[method]
+        var next = list.filter(function (h) { return h.pluginId !== pluginId })
+        if (next.length === 0) delete __localHooks[method]
+        else __localHooks[method] = next
+      }
+    }
+  }
   window.addEventListener('message', function (e) {
     var msg = e.data
-    if (msg && msg.type === '__plugin_registry_call') {
+    if (!msg) return
+    if (msg.type === '__plugin_registry_call') {
       window.__pluginRegistry._callLocal(msg.method, msg.args).then(
         function (result) { parent.postMessage({ type: '__plugin_registry_result', callId: msg.callId, result: result }, '*') },
         function (err) { parent.postMessage({ type: '__plugin_registry_result', callId: msg.callId, error: err instanceof Error ? err.message : String(err) }, '*') }
       )
+    } else if (msg.type === '__plugin_hook_invoke') {
+      // 阶段1（before）：主窗口发来 hook 调用，执行本地 hook 的 before 部分。
+      // hook 内调用 next() 时挂起（返回 resumePromise），此时回传 before_done；
+      // 收到 __plugin_hook_continue 后 resolve 挂起，after 继续，完整链 resolve 后回传 after_done。
+      var callId = msg.callId
+      var payload = msg.payload || {}
+      var method = payload.method || ''
+      var ctx = {
+        method: method,
+        pluginId: window.__PLUGIN_ID__,
+        args: payload.args || [],
+        result: payload.result,
+        prevented: payload.prevented || false,
+        prevent: function () { this.prevented = true }
+      }
+      var list = __localHooks[method] || []
+      var resumeResolve = null
+      var resumePromise = new Promise(function (resolve) { resumeResolve = resolve })
+      var beforeSent = false
+      var sendBefore = function () {
+        if (beforeSent) return
+        beforeSent = true
+        parent.postMessage({
+          type: '__plugin_hook_before_done',
+          callId: callId,
+          ctx: { method: ctx.method, pluginId: ctx.pluginId, args: ctx.args, result: ctx.result, prevented: ctx.prevented }
+        }, '*')
+      }
+      var sendAfter = function () {
+        parent.postMessage({
+          type: '__plugin_hook_after_done',
+          callId: callId,
+          ctx: { method: ctx.method, pluginId: ctx.pluginId, args: ctx.args, result: ctx.result, prevented: ctx.prevented }
+        }, '*')
+      }
+      var dispatch = function (index) {
+        if (ctx.prevented) { sendBefore(); return Promise.resolve() }
+        if (index >= list.length) { sendBefore(); return resumePromise } // 挂起等 continue
+        var h = list[index]
+        ctx.pluginId = h.pluginId
+        return Promise.resolve().then(function () {
+          return h.fn(ctx, function () { return dispatch(index + 1) })
+        })
+      }
+      // 完整链 promise：挂起时 before_done 已发，continue 后 after 执行完 → after_done
+      dispatch(0).then(function () {
+        // hook 若不调 next() 直接 prevent/返回，dispatch 内不会发 before_done，这里补发
+        if (!beforeSent) sendBefore()
+        sendAfter()
+      }, function (err) {
+        if (!beforeSent) sendBefore()
+        sendAfter()
+      })
+      // 保存挂起上下文，供 continue 恢复
+      window.__pluginHookPending = window.__pluginHookPending || {}
+      window.__pluginHookPending[callId] = {
+        ctx: ctx,
+        resume: resumeResolve
+      }
+    } else if (msg.type === '__plugin_hook_continue') {
+      // 阶段2（after）：主窗口 impl 完成，带 result 回来，恢复挂起的 next()。
+      var callId = msg.callId
+      var pending = (window.__pluginHookPending || {})[callId]
+      if (!pending) return
+      pending.ctx.result = msg.result
+      pending.resume() // next() 的 promise resolve → hook 的 after 部分继续执行
+      delete window.__pluginHookPending[callId]
     }
   })
 })()
@@ -123,6 +211,12 @@ window.__PLUGIN_API__ = {
     const registry = window.__pluginRegistry
     if (!registry) throw new Error('Plugin registry not initialized')
     registry.register(window.__PLUGIN_ID__, method, fn)
+  },
+  registerHook: (method, handler) => {
+    if (!window.__pluginHookLocal) throw new Error('Hook registry not initialized')
+    const fn = handler
+    window.__pluginHookLocal.register(window.__PLUGIN_ID__, method, fn)
+    parent.postMessage({ type: '__plugin_hook_register', pluginId: window.__PLUGIN_ID__, method }, '*')
   },
   callPlugin: (pluginId, method, ...args) => {
     const registry = window.__pluginRegistry
@@ -305,6 +399,11 @@ window.__PLUGIN_API__ = {
     var registry = window.__pluginRegistry
     if (!registry) throw new Error('Plugin registry not initialized')
     registry.register('${plugin.manifest.id}', method, fn)
+  },
+  registerHook: function (method, handler) {
+    var reg = window.__pluginHookRegistry
+    if (!reg) throw new Error('Hook registry not initialized')
+    reg.register('${plugin.manifest.id}', method, handler)
   },
   callPlugin: function (pluginId, method) {
     var registry = window.__pluginRegistry

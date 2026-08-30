@@ -3,6 +3,8 @@ import { openStream, createSseParser, uploadFile } from '../api/ipc.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
 import { resolveLang } from '../i18n/lang.ts'
+import { getHookRegistry } from './hook-registry.ts'
+import type { HookContext } from './hook-registry.ts'
 
 function i18nKey(key: string, params?: Record<string, string | number>): string {
   const dict = RESOURCES[resolveLang(localStorage.getItem('qomicex-language'))] as unknown as Record<string, unknown>
@@ -93,6 +95,10 @@ export interface PluginBridge {
   proxyFetch: (req: ProxyRequest) => Promise<ProxyResponse>
   proxyFetchStream: (req: ProxyRequest, onChunk: (chunk: string) => void, signal?: AbortSignal) => Promise<void>
   registerMethod: (method: string, fn: (...args: unknown[]) => unknown) => void
+  /** 注册 hook：拦截/增强启动器 hookable 方法（如 launchInstance、scanVersions）。
+   * handler 为洋葱中间件 `(ctx, next) => Promise<void>`：next 前改 ctx.args，
+   * next 后改 ctx.result，ctx.prevent() 阻止默认实现。需 hook:register 权限。 */
+  registerHook: (method: string, handler: (ctx: HookContext, next: () => Promise<void>) => Promise<void>) => void
   callPlugin: (pluginId: string, method: string, ...args: unknown[]) => Promise<unknown>
   callWasm: (pluginId: string, exportName?: string) => Promise<unknown>
   listWasmPlugins: () => Promise<string[]>
@@ -199,6 +205,11 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       const registry = (window as any).__pluginRegistry
       if (!registry) throw new Error('Plugin registry not initialized')
       registry.register(pluginId, method, fn)
+    },
+    registerHook: (method, handler) => {
+      // iframe/inline 插件的 registerHook 在桥脚本中直接处理；此实现供主窗口侧
+      // （l4 桥等）直接注册到主窗口 HookRegistry。
+      getHookRegistry().register(pluginId, method, handler)
     },
     callPlugin: async (targetId, method, ...args) => {
       const registry = (window as any).__pluginRegistry

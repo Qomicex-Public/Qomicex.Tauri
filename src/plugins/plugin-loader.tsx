@@ -4,6 +4,7 @@ import { usePluginStore } from '../stores/pluginStore.ts'
 import { createSandbox, renderInline, getInstance, getWebviewInstance, registerWebviewInstance, destroyWebviewInstance, convertCssLinks, getFileUrl } from './sandbox.ts'
 import { initL4Bridge } from './webview-bridge.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
+import { getHookRegistry } from './hook-registry.ts'
 import { NavItem } from '../components/Sidebar.tsx'
 import { PluginIcon } from '../components/PluginIcon.tsx'
 import { API_BASE } from '../api/client.ts'
@@ -240,6 +241,8 @@ export function deactivatePlugin(pluginId: string) {
   unregisterPluginSlots(pluginId)
   unregisterPluginIconTheme(pluginId)
   clearThemeOverride()
+  // 注销该插件注册的所有 hook（iframe 侧经主窗口 registry，inline 侧同 registry）
+  getHookRegistry().unregisterAll(pluginId)
   const themeStyle = activeThemes.get(pluginId)
   if (themeStyle) {
     themeStyle.remove()

@@ -36,6 +36,15 @@ export interface PluginContributes {
   iconTheme?: string
   /** 字体/连字贡献：激活时注入 `<link rel="stylesheet">` 的 CSS/CDN URL 列表。 */
   fontLinks?: string[]
+  /** 声明可被本插件 hook 的启动器方法（配合运行时 `registerHook` 注册处理函数）。 */
+  hooks?: PluginHookDecl[]
+}
+
+/** 一个可 hook 的方法声明：`method` 为启动器 hookable 方法名，如 `"launchInstance"`。 */
+export interface PluginHookDecl {
+  method: string
+  /** 执行顺序优先级：数字越小越先执行（默认 100）。同优先级按注册先后。 */
+  priority?: number
 }
 
 export interface PluginMenuItem {
@@ -99,6 +108,7 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   'game:log':            { id: 'game:log',            key: 'plugins.permission.gameLog',            risk: 'normal' },
   'connector:host':      { id: 'connector:host',      key: 'plugins.permission.connectorHost',      risk: 'warning' },
   'connector:scan':      { id: 'connector:scan',      key: 'plugins.permission.connectorScan',      risk: 'normal' },
+  'hook:register':       { id: 'hook:register',       key: 'plugins.permission.hookRegister',       risk: 'danger' },
   'shell:execute':       { id: 'shell:execute',       key: 'plugins.permission.shellExecute',       risk: 'danger' },
   'filesystem:read':     { id: 'filesystem:read',     key: 'plugins.permission.filesystemRead',     risk: 'warning' },
   'filesystem:write':    { id: 'filesystem:write',    key: 'plugins.permission.filesystemWrite',    risk: 'danger' },

@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-08-29 21:53
+最后更新：2026-08-30 19:36
 
 ## 1-决策记录
 
@@ -64,6 +64,7 @@
 - [ADR-057：Settings 页重构为 Split View + List + Switch](1-决策记录/ADR-061-Settings-页重构为-Split-View---List---Switch.md)
 - [ADR-058：InstanceDetail 设置页重构为 List + Switch](1-决策记录/ADR-062-InstanceDetail-设置页重构为-List---Switch.md)
 - [ADR-063：qomicex CLI 优化与插件 log API](1-决策记录/ADR-063-qomicex-CLI-优化与插件-log-API.md)
+- [ADR-064：通用插件 Hook 系统：Koa 洋葱管道 + 前端方法层 hook（v1）](1-决策记录/ADR-064-通用插件-Hook-系统-Koa-洋葱管道---前端方法层-hook-v1-.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

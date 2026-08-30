@@ -515,3 +515,33 @@ const { instanceId } = await __PLUGIN_API__.call('modpack.install', {
 | 2026-08-02 | v1.4 | 新增整合包一键安装（modpack.install，权限 instance:write）与下载中心登记（download.registerInstall） | AI Agent |
 | 2026-08-02 | v1.5 | 新增文件删除（deleteFile，权限 filesystem:write，授权制） | AI Agent |
 
+
+
+### 2026-08-30 更新
+### 2026-08-30 更新
+## 插件 Hook 注册（registerHook / hook:register）
+
+插件可拦截/增强启动器方法（启动、版本扫描、实例同步等），实现功能强化、性能优化、重构。详见 `2-架构设计/插件Hook系统.md`。
+
+```js
+// manifest permissions 需含 "hook:register"
+__PLUGIN_API__.registerHook('scanVersions', async (ctx, next) => {
+  ctx.args[0] = ctx.args[0] + '/custom'   // before：修改参数
+  await next()                              // 执行默认实现
+  ctx.result = [...ctx.result, { name: 'virtual-1.20.1', gameVersion: '1.20.1' }]  // after：修改结果
+})
+```
+
+| 能力 | 写法 |
+|------|------|
+| 修改参数 | `ctx.args[i] = ...`（before） |
+| 修改返回值 | `ctx.result = ...`（after） |
+| 阻止执行 | `ctx.prevent()` |
+| 完全替换 | `ctx.prevent()` + `ctx.result = 自定义值` |
+| 嵌套 | 多插件按注册顺序洋葱执行 |
+
+**首批可 hook 方法**：`launchInstanceFlow`（RunningContext）、`launchInstance`/`syncScan`（instance）、`scanVersions`（versions）。
+
+- 权限：`hook:register`（**danger**）
+- 插件 hook 函数在插件 iframe 中执行，经两阶段桥与主窗口默认实现交互
+- 停用时自动注销该插件全部 hooks

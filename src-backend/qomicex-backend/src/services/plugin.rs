@@ -78,6 +78,16 @@ pub struct PluginContributes {
     pub menu_items: Option<Vec<PluginMenuItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay: Option<PluginOverlayConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hooks: Option<Vec<PluginHookDecl>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginHookDecl {
+    pub method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,6 +9,7 @@ import { analyzeCrash } from '../api/crashDiagnostics.ts'
 import { getRuntimes } from '../stores/javaStore.ts'
 import { useMessageBox } from '../components/ui'
 import { useI18n } from '../i18n/index.tsx'
+import { hookable } from '../plugins/hookable.ts'
 import type { LaunchResult, LaunchProgress, CrashDialogState } from '../types/index.ts'
 
 export interface RunningInstance {
@@ -174,7 +175,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     startPoll(id, name)
   }, [startPoll])
 
-  const launchInstance = useCallback(async (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions): Promise<LaunchResult> => {
+  const launchInstance = useCallback(hookable('launchInstanceFlow', async (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions): Promise<LaunchResult> => {
     launchingIdRef.current = id
     setLaunchingInstanceId(id)
     setLaunchProgress({ stage: 'starting', message: tRef.current('running.preparingLaunch'), progress: 0, isRunning: false })
@@ -239,7 +240,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
 
     startPoll(id, name)
     return result
-  }, [clearInstancePoll, confirm, startPoll])
+  }), [clearInstancePoll, confirm, startPoll])
 
   const cancelLaunch = useCallback(async (id?: string) => {
     const targetId = id || launchingIdRef.current

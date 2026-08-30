@@ -1,5 +1,6 @@
 import { get, post, put, del, API_BASE, ApiError } from './client.ts'
 import { uploadFile } from './ipc.ts'
+import { hookable } from '../plugins/hookable.ts'
 import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode, ScannedVersion } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
@@ -8,7 +9,8 @@ export async function getInstances(): Promise<GameInstance[]> {
 
 /// 将前端扫描结果同步到后端，返回同步后的实例列表。
 /// 这是实例列表的核心同步入口，所有使用实例列表的地方都应通过此方法或 getInstances 获取数据。
-export async function syncScan(gameDir: string, versions: ScannedVersion[]): Promise<GameInstance[]> {
+/// 可被插件 hook（`hook:syncScan`）：before 修改 gameDir/versions，after 修改返回的实例列表。
+export const syncScan = hookable('syncScan', async (gameDir: string, versions: ScannedVersion[]): Promise<GameInstance[]> => {
   return post<GameInstance[]>('/instance/sync-scan', {
     gameDir,
     versions: versions.map(v => {
@@ -27,7 +29,7 @@ export async function syncScan(gameDir: string, versions: ScannedVersion[]): Pro
       }
     }),
   })
-}
+})
 
 export async function getInstance(id: string): Promise<GameInstance> {
   return get<GameInstance>(`/instance/${id}`)
@@ -87,9 +89,11 @@ export interface LaunchInstanceOptions {
   accountUuid?: string
 }
 
-export async function launchInstance(id: string, options?: LaunchInstanceOptions): Promise<LaunchResult> {
+/// 启动实例。可被插件 hook（`hook:launchInstance`）：before 修改 options
+/// （注入 joinServer/accountUuid 等），prevent 阻止启动，after 修改返回结果。
+export const launchInstance = hookable('launchInstance', async (id: string, options?: LaunchInstanceOptions): Promise<LaunchResult> => {
   return post<LaunchResult>(`/instance/${id}/launch`, options || {})
-}
+})
 
 /** 实时游戏日志的一行。 */
 export interface GameLogLine {
