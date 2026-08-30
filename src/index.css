@@ -12,6 +12,12 @@
     user-select: auto;
     -webkit-user-select: auto;
   }
+  /* lucide 图标恢复行内布局：Tailwind preflight 把 svg 设为 display:block，
+     FontAwesome→lucide 迁移后行内 icon+text（span/p 内）被拆成两行。
+     此处恢复 preflight 之前的 inline-block 行为；flex 容器内会被 blockify，不受影响。 */
+  .lucide {
+    display: inline-block;
+  }
 }
 
 @layer base {
