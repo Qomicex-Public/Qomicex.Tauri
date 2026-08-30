@@ -5,3 +5,5 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@qomicex/plugin-ui@0.1.0'
 onlyBuiltDependencies: '["esbuild"]'
+overrides:
+  '@qomicex/cli': link:packages/qomicex-cli

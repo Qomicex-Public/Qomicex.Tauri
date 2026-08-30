@@ -429,3 +429,28 @@ FontAwesome 6 Free Solid (`@fortawesome/free-solid-svg-icons`), rendered via `@f
 | FPS overlay | `fixed top-3 right-3 z-[9999]` semi-transparent badge, color-coded (red < 30, yellow < 55, green) |
 
 All debug toggles are temporary (reset on page reload).
+
+
+### 2026-08-30 更新
+#### CopyActionIcon（复制成功动画）
+
+- 位置：`src/components/CopyActionIcon.tsx`（应用级组件，非 plugin-ui 包）
+- 用途：复制按钮的成功反馈。受控组件，`copied=true` 时图标从 Copy morph 为绿色 Check（`text-emerald-500`），800ms 后自动 morph 回 Copy
+- 实现：复用 morphicons 库的 `MorphIcon`（同 `MorphActionIcon`），`spring="snappy" reducedMotion="user"`，零新增依赖
+- 用法示例（Connect.tsx 联机页）：
+
+```tsx
+const [copiedKey, setCopiedKey] = useState<'roomCode' | 'server' | null>(null)
+const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+const copy = (key: 'roomCode' | 'server', text: string) => {
+  navigator.clipboard.writeText(text)
+  setCopiedKey(key)
+  if (copiedTimer.current) clearTimeout(copiedTimer.current)
+  copiedTimer.current = setTimeout(() => setCopiedKey(null), 800)
+}
+<Button size="sm" variant="ghost" onClick={() => status.roomCode && copy('roomCode', status.roomCode)}>
+  <CopyActionIcon copied={copiedKey === 'roomCode'} />
+</Button>
+```
+
+- 成功态颜色使用状态语义色 emerald（同 modrinth badge 惯例），区别于按钮默认继承色

@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@qomicex/cli': link:packages/qomicex-cli
+
 importers:
 
   .:
@@ -20,6 +23,9 @@ importers:
       '@gsap/react':
         specifier: ^2.1.2
         version: 2.1.2(gsap@3.15.0)(react@19.2.8)
+      '@qomicex/cli':
+        specifier: link:packages/qomicex-cli
+        version: link:packages/qomicex-cli
       '@qomicex/plugin-ui':
         specifier: workspace:*
         version: link:packages/plugin-ui

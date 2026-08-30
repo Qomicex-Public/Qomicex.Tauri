@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowLeft, Copy, DoorOpen, Loader2, LogIn, Minus, Play, Plus, UserX } from 'lucide-react'
+import { ArrowLeft, DoorOpen, Loader2, LogIn, Minus, Play, Plus, UserX } from 'lucide-react'
 import { Loader2 as Loader2Data, Play as PlayData, Wifi as WifiData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
+import { CopyActionIcon } from '../components/CopyActionIcon.tsx'
 import { Tabs, TabContent, Tooltip, Dialog, DialogHeader, DialogTitle, DialogDescription } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
@@ -267,6 +268,8 @@ export default function Connect() {
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [hostError, setHostError] = useState<string | null>(null)
   const [kickBusy, setKickBusy] = useState(false)
+  const [copiedKey, setCopiedKey] = useState<'roomCode' | 'server' | null>(null)
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const startInstanceIdRef = useRef<string | null>(null)
   const lpTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -464,7 +467,12 @@ export default function Connect() {
     finally { setLaunchingMatch(null) }
   }
 
-  const copy = (text: string) => navigator.clipboard.writeText(text)
+  const copy = (key: 'roomCode' | 'server', text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedKey(key)
+    if (copiedTimer.current) clearTimeout(copiedTimer.current)
+    copiedTimer.current = setTimeout(() => setCopiedKey(null), 800)
+  }
 
   const testNatType = async () => {
     setNatTypeBusy(true)
@@ -670,8 +678,8 @@ export default function Connect() {
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{t('connect.roomCode')}</span>
               <code className="rounded bg-muted px-2 py-1 text-sm">{status.roomCode}</code>
-              <Button size="sm" variant="ghost" onClick={() => status.roomCode && copy(status.roomCode)}>
-                <Copy />
+              <Button size="sm" variant="ghost" onClick={() => status.roomCode && copy('roomCode', status.roomCode)}>
+                <CopyActionIcon copied={copiedKey === 'roomCode'} />
               </Button>
             </div>
             <PlayerList players={status.players} onKick={(p) => { if (p.kind !== 'host' && !kickBusy) handleKick(p) }} />
@@ -708,8 +716,8 @@ export default function Connect() {
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{t('connect.serverAddress')}</span>
               <code className="rounded bg-muted px-2 py-1 text-sm">{status.mcHost}:{status.mcPort}</code>
-              <Button size="sm" variant="ghost" onClick={() => copy(`${status.mcHost}:${status.mcPort}`)}>
-                <Copy />
+              <Button size="sm" variant="ghost" onClick={() => copy('server', `${status.mcHost}:${status.mcPort}`)}>
+                <CopyActionIcon copied={copiedKey === 'server'} />
               </Button>
             </div>
             {status.gameInfo && (
