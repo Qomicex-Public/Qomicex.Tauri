@@ -27,6 +27,8 @@ interface ResourceInstallDialogProps {
   category: string
   instanceId?: string
   initialVersionId?: string
+  /** 中文名（mcmod.cn），用于 [{cn}] 命名模板 */
+  resourceCnName?: string | null
 }
 
 const versionCache = new Map<string, ResourceVersion[]>()
@@ -36,7 +38,7 @@ function versionCacheKey(resourceId: string, gameVersion: string, loader: string
 }
 
 export default function ResourceInstallDialog({
-  open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId, initialVersionId,
+  open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId, initialVersionId, resourceCnName,
 }: ResourceInstallDialogProps) {
   const { t, lang } = useI18n()
   const { notify } = useMessageBox()
@@ -231,7 +233,7 @@ export default function ResourceInstallDialog({
         gameVersion: selectedInstance.gameVersion,
         resourceTitle,
         deps: depsItems,
-        main: { url: mainFile.url, fileName: mainFile.fileName, category, name: resourceTitle },
+        main: { url: mainFile.url, fileName: mainFile.fileName, category, name: resourceTitle, cnName: resourceCnName },
         toDelete,
         taskName: t('downloads.quickInstallName', { name: resourceTitle }),
         icon: resourceIcon || undefined,

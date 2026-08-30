@@ -916,6 +916,7 @@ export default function ResourceDetailPage() {
           category={category}
           instanceId={instanceIdParam || undefined}
           initialVersionId={installVersion.id}
+          resourceCnName={cnName}
         />
       )}
     </PageShell>

@@ -42,7 +42,7 @@ export function formatDownloadFileName(
     .replace(/\{version\}/g, info.version || '')
     // 去掉空占位符残留
     .replace(/\s*\{\w+\}\s*/g, '')
-    .replace(/[\[\]]/g, '')
+    .replace(/\[\s*\]/g, '')
     // 连续多个空格/连字符/下划线 → 单一连字符
     .replace(/[\s_]+/g, '-')
     .replace(/-+/g, '-')

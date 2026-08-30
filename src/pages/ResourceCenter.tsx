@@ -664,6 +664,7 @@ export default function ResourceCenter() {
           source={installDialogItem.source}
           category={category}
           instanceId={instanceId}
+          resourceCnName={cnNames[installDialogItem.title] ?? null}
         />
       )}
 

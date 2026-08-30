@@ -14,6 +14,8 @@ export interface QuickInstallItem {
   fileName: string
   category: string
   name: string
+  /** 中文名（mcmod.cn），用于 [{cn}] 命名模板 */
+  cnName?: string | null
 }
 
 export interface QuickInstallOptions {
@@ -55,12 +57,15 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
   const namingTemplate = getSettings().fileNaming || (isZh ? '[{cn}]{name}-{version}' : '{name}-{version}')
   const usedNames = new Set<string>()
   const applyNaming = (item: QuickInstallItem): QuickInstallItem => {
-    const version = item.fileName.replace(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i, '').replace(/^.*-(\d[\w.]*)$/, '$1')
+    const extMatch = item.fileName.match(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i)
+    const ext = extMatch ? extMatch[0] : ''
+    const version = item.fileName.replace(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i, '').replace(/^.*-(\d[\w.+]*)$/, '$1')
     const renamed = formatDownloadFileName(namingTemplate, {
       name: item.name.replace(/\.(jar|zip|mrpack|qmodpack|mcpack|shaderpacks)$/i, ''),
       version,
+      cnName: item.cnName ?? null,
     })
-    const finalName = dedupFileName(renamed, usedNames)
+    const finalName = dedupFileName(`${renamed}${ext}`, usedNames)
     usedNames.add(finalName)
     return { ...item, fileName: finalName }
   }
