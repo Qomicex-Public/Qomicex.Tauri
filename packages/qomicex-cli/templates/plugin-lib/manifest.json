@@ -1,0 +1,12 @@
+{
+  "id": "__QOMICEX_PLUGIN_ID__",
+  "name": "__QOMICEX_PLUGIN_NAME__",
+  "version": "0.1.0",
+  "minLauncherVersion": "0.1.0",
+  "layers": ["l3"],
+  "icon": "fa-solid fa-book",
+  "permissions": ["config:write"],
+  "entry": {
+    "frontend": "dist/index.html"
+  }
+}

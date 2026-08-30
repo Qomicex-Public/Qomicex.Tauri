@@ -1,0 +1,12 @@
+{
+  "name": "__QOMICEX_PLUGIN_ID__",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

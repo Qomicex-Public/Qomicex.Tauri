@@ -1,0 +1,6 @@
+/* 插件主题：只消费主题语义 token，全部 var() 引用，禁止内联色值。 */
+:root[data-theme] {
+  /* 可选：覆盖默认 HSL token 例如
+     --primary: 142 71% 48%;
+  */
+}

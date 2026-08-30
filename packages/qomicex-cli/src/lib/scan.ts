@@ -1,6 +1,6 @@
 // verify 的静态启发式扫描：权限最小化 + 主线程长循环告警。
 // 均为轻量文本/正则，不做真 AST（提案允许"简单启发式即可"）。
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { METHOD_PERMISSIONS } from './permissions.ts'
 
@@ -12,9 +12,15 @@ export interface ScanFinding {
 
 const SRC_EXTS = /\.(ts|tsx|js|jsx|mjs|cjs|html)$/
 
-/** 递归收集插件源码文件（跳过 node_modules/dist/release/.staging）。 */
+/**
+ * 递归收集插件源码文件（跳过 node_modules/release/.staging）。
+ * dist/ 的跳过规则：项目有 src/ 目录时，dist 视为构建产物跳过；
+ * 无 src/ 的纯静态/纯 html 插件（源码直接放 dist 或根目录）则扫描 dist。
+ */
 export function collectSourceFiles(root: string, maxFiles = 400): string[] {
   const out: string[] = []
+  const hasSrc = existsSync(join(root, 'src'))
+  const skipDists = hasSrc
   const walk = (dir: string) => {
     if (out.length >= maxFiles) return
     let entries: string[]
@@ -24,7 +30,8 @@ export function collectSourceFiles(root: string, maxFiles = 400): string[] {
       return
     }
     for (const name of entries) {
-      if (name === 'node_modules' || name === 'dist' || name === 'release' || name.startsWith('.staging')) continue
+      if (name === 'node_modules' || name === 'release' || name.startsWith('.staging')) continue
+      if (name === 'dist' && skipDists) continue
       const p = join(dir, name)
       try {
         const st = statSync(p)
@@ -39,18 +46,18 @@ export function collectSourceFiles(root: string, maxFiles = 400): string[] {
   return out
 }
 
-/** 提取源码里用到的桥方法名（.call('x') 与 __PLUGIN_API__.x 两种形态）。 */
+/** 提取源码里用到的桥方法名（.call('x') 与 __PLUGIN_API__.x / __PLUGIN_API__?.x 两种形态）。 */
 function usedMethods(content: string): Set<string> {
   const found = new Set<string>()
   const callRe = /\.call\(\s*['"]([a-zA-Z0-9_.]+)['"]/g
   let m: RegExpExecArray | null
   while ((m = callRe.exec(content)) !== null) found.add(m[1]!)
-  const directRe = /__PLUGIN_API__\.([a-zA-Z0-9_]+)\(/g
+  const directRe = /__PLUGIN_API__\??\.([a-zA-Z0-9_]+)\(/g
   while ((m = directRe.exec(content)) !== null) {
     const name = m[1]!
     if (name in METHOD_PERMISSIONS) found.add(name)
   }
-  const dottedRe = /__PLUGIN_API__\.(download|overlay|modpack)\.([a-zA-Z0-9_]+)\(/g
+  const dottedRe = /__PLUGIN_API__\??\.(download|overlay|modpack)\.([a-zA-Z0-9_]+)\(/g
   while ((m = dottedRe.exec(content)) !== null) found.add(`${m[1]}.${m[2]}`)
   return found
 }
@@ -63,8 +70,29 @@ export interface PermCheck {
   missing: string[]
 }
 
+/** L3 纯 wasm 插件：layers 含 l3 且无前端 entry（无 l2/l4、无 entry.frontend），
+ * 或项目存在 Cargo.toml（Rust wasm 项目）。此类无 JS 源码，跳过 JS 权限扫描。 */
+export function isWasmOnlyPlugin(root: string): boolean {
+  try {
+    const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8')) as {
+      layers?: string[]
+      entry?: { frontend?: unknown }
+    }
+    const layers = manifest.layers ?? []
+    const hasFrontendEntry = !!(manifest.entry as { frontend?: unknown } | undefined)?.frontend
+    if (layers.includes('l2') || layers.includes('l4') || hasFrontendEntry) return false
+    return layers.includes('l3') || existsSync(join(root, 'Cargo.toml'))
+  } catch {
+    return false
+  }
+}
+
 export function checkPermissions(root: string, declared: string[]): PermCheck {
   const findings: ScanFinding[] = []
+  // L3 纯 wasm 插件无 JS 源码，wasm:execute 权限由网关消费，不参与 JS 权限最小化扫描
+  if (isWasmOnlyPlugin(root)) {
+    return { findings, unused: [], missing: [] }
+  }
   const used = new Set<string>()
   for (const file of collectSourceFiles(root)) {
     try {

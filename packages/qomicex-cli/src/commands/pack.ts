@@ -1,4 +1,4 @@
-// qomicex pack — 构建（tsc && vite build）并打 .qplugin（manifest.json 在 zip 根）。
+// qomicex pack — 构建（有 package.json 则 pnpm run build；否则跳过）并打 .qplugin。
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { readManifestFile, collectDir } from '../lib/project.ts'
@@ -18,13 +18,51 @@ export interface PackOptions {
   skipBuild?: boolean
 }
 
-/** 组装包内条目：manifest.json + dist/**，并把入口引用的根文件（theme.css/overlay.html）拷进 dist。 */
+/** 构建方式：package.json 的 scripts.build（react/html/lib）或 Cargo.toml（wasm Rust）。 */
+export function hasBuildScript(root: string): boolean {
+  const pkgFile = join(root, 'package.json')
+  if (existsSync(pkgFile)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgFile, 'utf8')) as { scripts?: Record<string, string> }
+      return typeof pkg.scripts?.build === 'string'
+    } catch {
+      return false
+    }
+  }
+  // L3 wasm 插件：Rust 项目（Cargo.toml），构建产物为 plugin.wasm
+  return existsSync(join(root, 'Cargo.toml'))
+}
+
+/** 项目构建命令：按项目类型选择（react/html/lib 走 pnpm build；wasm 走 cargo build）。 */
+export function buildCommand(root: string): string {
+  if (existsSync(join(root, 'Cargo.toml'))) {
+    // wasm：优先仓库内 scripts/build.sh（Unix）或 build.ps1（Windows），否则直接 cargo
+    if (process.platform === 'win32') {
+      return existsSync(join(root, 'scripts', 'build.ps1')) ? 'pwsh -NoProfile -File scripts/build.ps1' : 'cargo build --release --target wasm32-unknown-unknown'
+    }
+    return existsSync(join(root, 'scripts', 'build.sh')) ? 'bash scripts/build.sh' : 'cargo build --release --target wasm32-unknown-unknown'
+  }
+  return 'pnpm run build'
+}
+
+/** 组装包内条目：manifest.json + dist/**（无 dist/ 时回退收集根目录静态文件），并把入口引用的根文件拷进 dist。 */
 export function buildPackageEntries(root: string, manifest: Record<string, unknown>): Record<string, Uint8Array> {
   const entries: Record<string, Uint8Array> = {}
   entries['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
   const distDir = join(root, 'dist')
-  if (!existsSync(distDir)) fail('缺少 dist/ 目录，请先构建（pnpm run build 或使用 qomicex pack）')
-  for (const f of collectDir(distDir, 'dist/')) entries[f.name] = f.data
+  if (existsSync(distDir)) {
+    for (const f of collectDir(distDir, 'dist/')) entries[f.name] = f.data
+  } else {
+    // 无 dist/（纯静态 / 无构建 / wasm 项目）：收集 manifest 引用的根文件 + plugin.wasm
+    info('⚠ 未找到 dist/ 目录，回退收集 manifest 引用的根目录文件（无构建流程）')
+    const refs = referencedFiles(manifest)
+    if (existsSync(join(root, 'plugin.wasm'))) refs.push('plugin.wasm')
+    for (const ref of refs) {
+      const p = join(root, ref)
+      if (existsSync(p)) entries[ref] = readFileSync(p)
+      else warn(`manifest 引用 ${ref} 不存在，已跳过`)
+    }
+  }
 
   // entry.theme / contributes.overlay.file 引用 dist/ 下文件但源码在根目录时，自动拷入
   const entry = manifest.entry as { theme?: string; frontend?: string } | undefined
@@ -42,15 +80,33 @@ export function buildPackageEntries(root: string, manifest: Record<string, unkno
   return entries
 }
 
+/** manifest 引用的包内文件（entry.frontend/theme/backend + overlay.file）。 */
+function referencedFiles(manifest: Record<string, unknown>): string[] {
+  const out: string[] = []
+  const entry = manifest.entry as Record<string, unknown> | undefined
+  if (entry) {
+    for (const key of ['frontend', 'theme', 'backend']) {
+      const v = entry[key]
+      if (typeof v === 'string') out.push(v)
+    }
+  }
+  const overlay = (manifest.contributes as { overlay?: { file?: string } } | undefined)?.overlay
+  if (overlay && typeof overlay.file === 'string') out.push(overlay.file)
+  return [...new Set(out)]
+}
+
 export async function packCommand(opts: PackOptions = {}): Promise<PackResult> {
   const root = process.cwd()
   const manifestFile = join(root, 'manifest.json')
   if (!existsSync(manifestFile)) fail('当前目录不是插件项目（缺少 manifest.json）')
 
-  if (!opts.skipBuild) {
-    info('==> 构建前端（tsc + vite build）')
-    const code = await runShell('pnpm run build', root)
+  if (!opts.skipBuild && hasBuildScript(root)) {
+    const cmd = buildCommand(root)
+    info(`==> 构建（${cmd}）`)
+    const code = await runShell(cmd, root)
     if (code !== 0) fail('构建失败，请先修复编译错误')
+  } else if (!opts.skipBuild) {
+    info('==> 跳过构建（无 package.json / 无 Cargo.toml / 无 build 脚本；直接打包现有文件）')
   }
 
   const manifest = readManifestFile(manifestFile)

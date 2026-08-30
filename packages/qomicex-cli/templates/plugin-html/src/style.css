@@ -1,0 +1,11 @@
+/* 插件私有样式。组件类（.p-card/.p-btn 等）由启动器注入，这里只写定制样式。 */
+body {
+  padding: 16px;
+  font-size: 13px;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

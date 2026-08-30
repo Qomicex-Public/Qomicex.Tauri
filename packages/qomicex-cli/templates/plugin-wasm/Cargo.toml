@@ -1,0 +1,11 @@
+[package]
+name = "__QOMICEX_PLUGIN_ID__"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+opt-level = "z"

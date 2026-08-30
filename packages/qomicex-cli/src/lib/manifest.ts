@@ -72,12 +72,19 @@ export function validateManifest(raw: unknown): ManifestCheck {
   }
 
   const entry = m.entry
+  const isWasmOnly = Array.isArray(m.layers) && m.layers.includes('l3') && !m.layers.includes('l2') && !m.layers.includes('l4')
   if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
-    add('error', 'entry', '缺少必填字段 entry（至少 frontend/backend/theme 之一）')
+    // L3 纯 wasm 插件（layers 含 l3 且无 l2/l4 前端）允许无 entry——网关按固定文件名 plugin.wasm 加载
+    if (isWasmOnly) {
+      add('warning', 'entry', 'L3 wasm 插件无需 entry（网关按固定文件名 plugin.wasm 加载）')
+    } else {
+      add('error', 'entry', '缺少必填字段 entry（至少 frontend/backend/theme 之一）')
+    }
   } else {
     const e = entry as Record<string, unknown>
     if (!e.frontend && !e.backend && !e.theme) {
-      add('error', 'entry', 'entry 至少需要 frontend/backend/theme 之一')
+      if (isWasmOnly) add('warning', 'entry', 'L3 wasm 插件无需 entry（网关按固定文件名 plugin.wasm 加载）')
+      else add('error', 'entry', 'entry 至少需要 frontend/backend/theme 之一')
     }
     if (typeof e.frontend === 'string' && !e.frontend.endsWith('.html')) {
       add('warning', 'entry.frontend', 'frontend 应指向 .html（如 dist/index.html）')

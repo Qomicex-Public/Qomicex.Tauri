@@ -27,6 +27,8 @@ function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = []
   const options: Record<string, string | boolean> = {}
   const command = argv[0] ?? 'help'
+  // 需要取值的短参数（如 -t lib）
+  const SHORT_VALUE_OPTS = new Set(['t'])
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i]!
     if (a.startsWith('--')) {
@@ -43,7 +45,14 @@ function parseArgs(argv: string[]): ParsedArgs {
         }
       }
     } else if (a.startsWith('-') && a.length === 2) {
-      options[a.slice(1)] = true
+      const key = a.slice(1)
+      const next = argv[i + 1]
+      if (SHORT_VALUE_OPTS.has(key) && next !== undefined && !next.startsWith('-')) {
+        options[key] = next
+        i++
+      } else {
+        options[key] = true
+      }
     } else {
       positional.push(a)
     }
@@ -56,7 +65,9 @@ function helpText(): string {
 qomicex v${VERSION} — Qomicex 插件生态 CLI
 
 用法:
-  qomicex create <id>           从内置模板生成合法插件项目（Vite+React+TS+plugin-ui+tailwind）
+  qomicex create <id> [--template <react|html|lib|wasm>] [-t <react|html|lib|wasm>]
+                                从内置模板生成合法插件项目（默认 react: Vite+React+TS+plugin-ui+tailwind；
+                                html: 纯 HTML/CSS/JS；lib: 纯库插件无 UI；wasm: L3 Rust+wasmtime）
   qomicex dev [--port <n>]      起本地 Vite dev server + 生成 dev 源插件配置（默认 5173）
   qomicex pack [--out-dir <d>] [--version <v>] [--key <k>] [--skip-build]
                                 构建并打 .qplugin（manifest.json 在 zip 根）
@@ -99,7 +110,10 @@ async function main(): Promise<void> {
   try {
     switch (command) {
       case 'create':
-        await createCommand(positional[0] ?? '')
+        await createCommand(
+          positional[0] ?? '',
+          typeof options['template'] === 'string' ? options['template'] : typeof options['t'] === 'string' ? options['t'] : undefined,
+        )
         break
       case 'dev':
         await devCommand({ port: num(options['port'], 5173) })

@@ -1,0 +1,4 @@
+# 项目自成一个 workspace root，可独立 pnpm install，也不会被外层 workspace 影响。
+# pnpm 11 的 allowBuilds 放行 esbuild 构建脚本（Linux/mac 的 postinstall 依赖它）。
+allowBuilds:
+  esbuild: true

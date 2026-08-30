@@ -16,9 +16,21 @@ pnpm --filter @qomicex/cli link
 
 ### create
 ```bash
-qomicex create com.example.demo
+qomicex create com.example.demo                  # 默认 react 模板
+qomicex create com.example.html --template html   # 纯 HTML/CSS/JS（-t html 短参数也可）
+qomicex create com.example.lib -t lib             # 纯库插件（无 UI，registerMethod 供调用）
+qomicex create com.example.wasm --template wasm   # L3 WASM 插件（Rust + wasmtime）
 ```
-从内置模板生成合法插件项目（Vite + React 19 + TS + Tailwind + `@qomicex/plugin-ui`），自动替换 `manifest.json` / `package.json` 中的 id。模板 `layers:["l2"]`（iframe 沙箱），权限最小集 `config:read / ui:toast / network:cors_proxy`。生成后提示 `pnpm install`。
+从内置模板生成合法插件项目，自动替换 `manifest.json` / `package.json` / `Cargo.toml` / `src/lib.rs` 中的 id。四种模板：
+
+| 模板 | `--template`/`-t` | 结构 | 构建 |
+|------|-------------------|------|------|
+| **react**（默认） | `react` | Vite + React 19 + TS + Tailwind + `@qomicex/plugin-ui`，`layers:["l2"]` | `pnpm run build`（tsc + vite） |
+| **html** | `html` | 纯 HTML/CSS/JS（无框架），`src/` + esbuild 打包 → `dist/` | `pnpm run build`（esbuild） |
+| **lib** | `lib` | 纯库插件（无 UI），`src/main.js` 注册方法供其他插件 `callPlugin`，`layers:["l3"]` | `pnpm run build`（esbuild） |
+| **wasm** | `wasm` | L3 WASM 插件（Rust cdylib + `src/lib.rs`），`layers:["l3"]`、无 entry | `bash scripts/build.sh` / `pwsh scripts/build.ps1`（cargo build） |
+
+生成后提示 `pnpm install`（wasm 为 `rustup target add wasm32-unknown-unknown`）。
 
 ### dev
 ```bash
@@ -31,12 +43,12 @@ qomicex dev --port 3000
 
 ### pack
 ```bash
-qomicex pack                          # tsc && vite build → release/<id>-<version>.qplugin
+qomicex pack                          # 有 package.json → pnpm run build；有 Cargo.toml → cargo build；无则跳过
 qomicex pack --version 0.2.0          # 覆盖 manifest 版本号
 qomicex pack --key ./dev-key.pem      # 附签名（仅 signature.json；完整证书链请用 publish）
 qomicex pack --skip-build             # 跳过构建（复用现有 dist）
 ```
-`.qplugin` = zip，`manifest.json` 在根 + `dist/**`。`entry.theme` / `contributes.overlay.file` 若引用 `dist/` 下文件但源码在根目录，会自动拷入。
+`.qplugin` = zip，`manifest.json` 在根 + `dist/**`（或 `plugin.wasm`）。构建自动检测：项目有 `package.json` 且含 `scripts.build` 时走 `pnpm run build`（react/html/lib）；有 `Cargo.toml` 时走 `scripts/build.sh` / `build.ps1`（wasm）；两者皆无则跳过（纯静态项目）。无 `dist/` 时回退收集 manifest 引用的根文件与 `plugin.wasm`。`entry.theme` / `contributes.overlay.file` 若引用 `dist/` 下文件但源码在根目录，会自动拷入。
 
 ### verify
 ```bash
@@ -44,7 +56,7 @@ qomicex verify                        # 目录模式：manifest + 权限 + 长�
 qomicex verify --package ./release/x.qplugin   # 包模式：manifest + 签名验签
 ```
 - **manifest 合法性**：id（反向域名/安全字符）、name、version(semver)、minLauncherVersion、layers、permissions、entry、contributes。
-- **权限最小化**：对比 `manifest.permissions` 与源码实际调用的桥方法（`METHOD_PERMISSIONS` 表）。声明未用 / 用了未声明都会报错。
+- **权限最小化**：对比 `manifest.permissions` 与源码实际调用的桥方法（`METHOD_PERMISSIONS` 表）。声明未用 / 用了未声明都会报错。源码扫描：有 `src/` 时扫 `src/`（`dist/` 视为产物跳过）；无 `src/` 的纯静态/纯 html 插件也扫 `dist/` 与根目录 html，支持 `__PLUGIN_API__?.` 可选链写法。**L3 纯 wasm 插件**（layers 含 l3、无前端 entry、无 JS 源码）跳过 JS 权限扫描（`wasm:execute` 由网关消费）。
 - **长循环告警**：`while(true)`、`for(;;)`、`setInterval` 无界轮询（提示放 Worker/WASM/后端）。
 - **签名检查**：包模式用内置商店根公钥验签（ADR-050）；无签名提示"未签名"不拒绝。
 

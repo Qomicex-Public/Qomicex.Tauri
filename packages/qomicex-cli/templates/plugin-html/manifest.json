@@ -1,0 +1,22 @@
+{
+  "id": "__QOMICEX_PLUGIN_ID__",
+  "name": "__QOMICEX_PLUGIN_NAME__",
+  "version": "0.1.0",
+  "minLauncherVersion": "0.1.0",
+  "layers": ["l2"],
+  "permissions": ["config:read", "ui:toast"],
+  "entry": {
+    "frontend": "dist/index.html",
+    "theme": "dist/theme.css"
+  },
+  "contributes": {
+    "menuItems": [
+      {
+        "path": "/plugins/p/__QOMICEX_PLUGIN_ID__",
+        "label": "__QOMICEX_PLUGIN_NAME__",
+        "icon": "🧩",
+        "action": "page"
+      }
+    ]
+  }
+}
