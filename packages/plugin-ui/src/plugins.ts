@@ -38,6 +38,14 @@ export interface PluginContributes {
   iconTheme?: string
   /** 字体/连字贡献：激活时注入 `<link rel="stylesheet">` 的 CSS/CDN URL 列表。 */
   fontLinks?: string[]
+  /** 声明可被本插件 hook 的启动器方法（配合运行时 `registerHook` 注册处理函数）。 */
+  hooks?: PluginHookDecl[]
+}
+
+export interface PluginHookDecl {
+  method: string
+  /** 执行顺序优先级：数字越小越先执行（默认 100）。 */
+  priority?: number
 }
 
 export interface PluginMenuItem {
@@ -82,6 +90,8 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   'wasm:execute':          { id: 'wasm:execute',          key: 'plugins.permission.wasmExecute',          risk: 'warning' },
   'plugin:install':        { id: 'plugin:install',        key: 'plugins.permission.pluginInstall',        risk: 'danger' },
   'plugin:list':           { id: 'plugin:list',           key: 'plugins.permission.pluginList',           risk: 'normal' },
+  'plugin:log':            { id: 'plugin:log',            key: 'plugins.permission.pluginLog',            risk: 'normal' },
+  'hook:register':         { id: 'hook:register',         key: 'plugins.permission.hookRegister',         risk: 'danger' },
   'resource:read':         { id: 'resource:read',         key: 'plugins.permission.resourceRead',         risk: 'normal' },
   'resource:write':        { id: 'resource:write',        key: 'plugins.permission.resourceWrite',        risk: 'warning' },
   'java:manage':           { id: 'java:manage',           key: 'plugins.permission.javaManage',           risk: 'warning' },
