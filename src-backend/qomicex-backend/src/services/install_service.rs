@@ -586,7 +586,7 @@ pub async fn run_install_pipeline(
 /// C# 源用 `Path.GetFullPath` 产生**非 verbatim** 的 `C:\…` 绝对路径。此处 canonicalize
 /// 后剥掉 verbatim 前缀，与 C# 行为一致（connector.rs 亦已对 launch 用非 verbatim 的
 /// `instance.game_dir`，共识是非 verbatim 的 game_root 交给 core/外部工具）。
-fn absolute_path(game_dir: &str) -> PathBuf {
+pub(crate) fn absolute_path(game_dir: &str) -> PathBuf {
     let mut root = PathBuf::from(game_dir);
     if !root.is_absolute() {
         root = crate::settings::resolve_base_dir().join(root);

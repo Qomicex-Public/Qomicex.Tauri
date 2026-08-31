@@ -7,6 +7,7 @@ import { classifyFile } from '../api/drop-install.ts'
 import type { ClassifyFileResult } from '../api/drop-install.ts'
 import DropInstallDialog from './DropInstallDialog.tsx'
 import type { DropFileItem, DropGroup } from './DropInstallDialog.tsx'
+import { importDialogActive } from '../lib/drop-routing.ts'
 
 const INSTALLABLE: ReadonlySet<string> = new Set(['modpack', 'mod', 'resourcepack', 'shaderpack'])
 
@@ -31,13 +32,15 @@ export default function GlobalDropInstaller() {
   useEffect(() => {
     const unlisteners: Array<() => void> = []
     listen<boolean>('file-drop-hover', e => {
+      if (importDialogActive.current) return
       if (!busyRef.current) setHover(!!e.payload)
     })
       .then(fn => unlisteners.push(fn))
       .catch(() => {})
     listen<string[]>('file-drop', e => {
       setHover(false)
-      if (busyRef.current || groupRef.current) return
+      // 导入对话框打开时，拖放让位给 ImportDialog 处理。
+      if (importDialogActive.current || busyRef.current || groupRef.current) return
       const paths = e.payload
       if (!paths?.length) return
       busyRef.current = true

@@ -94,6 +94,10 @@ const STAGE_LABELS: Record<string, string> = {
   'parsing-modpack': 'parsing-modpack',
   'modpack-files': 'modpack-files',
   'modpack-overrides': 'modpack-overrides',
+  'installing-game': 'installing-game',
+  'building-version': 'building-version',
+  'downloading-game': 'downloading-game',
+  'copying-files': 'copying-files',
 }
 
 const FILTER_TABS: Tab[] = [

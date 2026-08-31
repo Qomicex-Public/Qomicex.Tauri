@@ -1,7 +1,7 @@
 import { get, post, put, del, API_BASE, ApiError } from './client.ts'
 import { uploadFile } from './ipc.ts'
 import { hookable } from '../plugins/hookable.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode, ScannedVersion } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode, ScannedVersion, MultiMcParseResult, MultiMcImportRequest } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
@@ -198,6 +198,16 @@ export async function startModpackInstall(data: ModpackInstallRequest): Promise<
 
 export async function installModpackDirect(data: ModpackInstallDirectRequest): Promise<ModpackInstallDirectResult> {
   return post<ModpackInstallDirectResult>('/modpack/install-direct', data)
+}
+
+/** 解析 MultiMC 实例文件夹（Tauri 目录选择器选中）。 */
+export async function parseMultiMcFolder(path: string): Promise<MultiMcParseResult> {
+  return post<MultiMcParseResult>('/modpack/multimc/parse-folder', { path })
+}
+
+/** 开始 MultiMC 导入（后台任务，进度走 /modpack/progress/{instanceId}）。 */
+export async function startMultiMcImport(data: MultiMcImportRequest): Promise<{ instanceId: string }> {
+  return post<{ instanceId: string }>('/modpack/multimc/import', data)
 }
 
 /** 读取实例可导出文件树（HMCL 风格勾选列表）。 */
