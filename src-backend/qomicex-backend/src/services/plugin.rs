@@ -410,6 +410,14 @@ impl PluginStore {
             if !dir.is_dir() {
                 continue;
             }
+            // 跳过升级快照目录（.bak-{version}），避免扫描出重复条目
+            if dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.starts_with(".bak-"))
+            {
+                continue;
+            }
             let manifest_path = dir.join("manifest.json");
             if !manifest_path.is_file() {
                 continue;
