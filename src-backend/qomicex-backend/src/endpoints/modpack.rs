@@ -406,8 +406,6 @@ async fn multimc_import(
     let tracker = s.install_tracker.clone();
     let mgr = s.download_manager.load_full();
     let http_client = s.http_client.clone();
-    let cf_key = s.curse_forge_api_key.clone();
-    let core = s.core.clone();
     let inst_svc = s.instance.clone();
     let cleanup_dir = if is_temp {
         Some(source_dir.clone())
@@ -424,13 +422,12 @@ async fn multimc_import(
             &handle,
             &mgr,
             &http_client,
-            &cf_key,
-            &core,
             &root_path,
             &meta_owned,
             &gd,
             &name,
-            version_isolation,
+            &inst_svc,
+            &inst_id_inner,
         )
         .await;
         if let Some(dir) = cleanup_dir {
@@ -446,20 +443,18 @@ async fn multimc_import(
     Ok(Json(ModpackInstallDirectResponse { instance_id }))
 }
 
-/// MultiMC 导入后台任务：策略 A（标准安装管线）或策略 B（通用 json-patch 引擎）
-/// + 用户内容/内嵌库拷贝。
+/// MultiMC 导入后台任务：组件补丁链合并（策略 B，对齐 HMCL）+ 内容/内嵌库拷贝。
 #[allow(clippy::too_many_arguments)]
 async fn run_multimc_import(
     handle: &InstallHandle,
     mgr: &Arc<qomicex_downloader::DownloadManager>,
     http_client: &reqwest::Client,
-    cf_api_key: &str,
-    core: &Arc<GameCore>,
     root: &std::path::Path,
     meta: &crate::services::multimc::MultiMcMetadata,
     game_dir: &str,
     version_dir_name: &str,
-    version_isolation: bool,
+    inst_svc: &crate::services::instance::InstanceService,
+    instance_id: &str,
 ) -> Result<(), String> {
     use InstallStepSpec as S;
     handle.define_steps(
@@ -480,107 +475,66 @@ async fn run_multimc_import(
         crate::services::install_service::INSTALL_STEP_BUDGET_TOP,
     );
 
-    // === 策略 A：已知加载器 + provider 版本命中 → 现有安装管线 ===
-    let mut installed_via_pipeline = false;
+    // 统一路径（对齐 HMCL）：所有 MultiMC 包都走「组件补丁链合并」生成官方版本 JSON。
+    // 标准安装管线捷径会对带辅助组件 / 新版 Java 参数（+jvmArgs）的包漏掉补丁
+    // （LWJGL3 库、RFB 主类、--add-opens 启动参数），且 fabric/quilt 会误加默认 addon，
+    // 故不再使用。
     let mut merged_json: Option<String> = None;
-    if !meta.loader_uid.is_empty() {
-        for (mtype, loader_name) in &meta.loader_candidates {
-            let hit = core
-                .installer_provider()
-                .get_available_mod_loaders(&meta.game_version, *mtype)
-                .await
-                .map(|loaders| {
-                    loaders
-                        .iter()
-                        .any(|l| l.version.eq_ignore_ascii_case(&meta.loader_version))
-                })
-                .unwrap_or(false);
-            if !hit {
-                continue;
-            }
-            handle.mark_step("install-game", "active");
-            handle.set_stage("installing-game");
-            handle.set_current_file(&format!(
-                "安装 Minecraft {} + {} {}",
-                meta.game_version, loader_name, meta.loader_version
-            ));
-            let data = InstallRequestData {
-                game_version: meta.game_version.clone(),
-                game_dir: game_dir.to_string(),
-                version_dir_name: version_dir_name.to_string(),
-                loader: Some(loader_name.clone()),
-                loader_version: Some(meta.loader_version.clone()),
-                addons: Vec::new(),
-                download_threads: 8,
-                version_isolation,
-                download_source_id: crate::settings::get_global_file_download_source(),
-                optifine_version: None,
-            };
-            run_install_pipeline(
-                handle,
-                mgr.clone(),
-                http_client.clone(),
-                cf_api_key,
-                data,
-                40.0,
-            )
-            .await?;
-            handle.mark_step("install-game", "done");
-            installed_via_pipeline = true;
-            break;
-        }
-    }
+    handle.mark_step("install-game", "active");
+    handle.set_stage("building-version");
+    handle.set_current_file("合并 MultiMC 组件补丁...");
+    let (merged, jvm_args) = crate::services::multimc::build_merged_version_json(
+        http_client,
+        root,
+        meta,
+        version_dir_name,
+    )
+    .await?;
+    let version_dir = std::path::Path::new(game_dir)
+        .join("versions")
+        .join(version_dir_name);
+    std::fs::create_dir_all(&version_dir).map_err(|e| format!("创建版本目录失败: {e}"))?;
+    std::fs::write(
+        version_dir.join(format!("{version_dir_name}.json")),
+        &merged,
+    )
+    .map_err(|e| format!("写入版本 JSON 失败: {e}"))?;
 
-    // === 策略 B：通用 json-patch 转换引擎 ===
-    if !installed_via_pipeline {
-        handle.mark_step("install-game", "active");
-        handle.set_stage("building-version");
-        handle.set_current_file("合并 MultiMC 组件补丁...");
-        let merged = crate::services::multimc::build_merged_version_json(
-            http_client,
-            root,
-            meta,
-            version_dir_name,
-        )
-        .await?;
-        let version_dir = std::path::Path::new(game_dir)
-            .join("versions")
-            .join(version_dir_name);
-        std::fs::create_dir_all(&version_dir).map_err(|e| format!("创建版本目录失败: {e}"))?;
-        std::fs::write(
-            version_dir.join(format!("{version_dir_name}.json")),
-            &merged,
-        )
-        .map_err(|e| format!("写入版本 JSON 失败: {e}"))?;
-
-        // 下载缺失文件（库 + 主 jar + 资源；镜像/进度/取消复用 locator + download_manager）。
-        handle.set_stage("downloading-game");
-        let source_id = crate::settings::get_global_file_download_source();
-        let repair = crate::services::install_service::build_repair_core(
-            game_dir,
-            source_id,
-            http_client.clone(),
-        );
-        let miss = repair
-            .locator()
-            .get_miss_files_from_json(&merged)
-            .await
-            .map_err(|e| format!("扫描缺失文件失败: {e}"))?;
-        let miss: Vec<_> = miss
-            .into_iter()
-            .filter(|f| !f.path.is_empty() && !f.url.is_empty())
+    // 下载缺失文件（库 + 主 jar + 资源；镜像/进度/取消复用 locator + download_manager）。
+    handle.set_stage("downloading-game");
+    let source_id = crate::settings::get_global_file_download_source();
+    let repair = crate::services::install_service::build_repair_core(
+        game_dir,
+        source_id,
+        http_client.clone(),
+    );
+    let miss = repair
+        .locator()
+        .get_miss_files_from_json(&merged)
+        .await
+        .map_err(|e| format!("扫描缺失文件失败: {e}"))?;
+    let miss: Vec<_> = miss
+        .into_iter()
+        .filter(|f| !f.path.is_empty() && !f.url.is_empty())
+        .collect();
+    if !miss.is_empty() {
+        handle.set_current_file(&format!("下载游戏文件（{} 个）...", miss.len()));
+        let files: Vec<(String, std::path::PathBuf, Vec<(String, String)>)> = miss
+            .iter()
+            .map(|f| (f.url.clone(), std::path::PathBuf::from(&f.path), Vec::new()))
             .collect();
-        if !miss.is_empty() {
-            handle.set_current_file(&format!("下载游戏文件（{} 个）...", miss.len()));
-            let files: Vec<(String, std::path::PathBuf, Vec<(String, String)>)> = miss
-                .iter()
-                .map(|f| (f.url.clone(), std::path::PathBuf::from(&f.path), Vec::new()))
-                .collect();
-            download_batch(handle, mgr, files, Some("install-game")).await?;
-        }
-        merged_json = Some(merged);
-        handle.mark_step("install-game", "done");
+        download_batch(handle, mgr, files, Some("install-game")).await?;
     }
+    merged_json = Some(merged);
+    // 组件收集的 +jvmArgs（等价 HMCL addnJvmArguments）写入实例 jvm_args，启动时统一生效
+    // （任何包声明 Java 9+ 参数都会应用，覆盖所有新版 Java 整合包）。
+    if !jvm_args.is_empty() {
+        if let Some(mut inst) = inst_svc.get_by_id(instance_id) {
+            inst.jvm_args = Some(jvm_args.join(" "));
+            let _ = inst_svc.update(instance_id, inst);
+        }
+    }
+    handle.mark_step("install-game", "done");
 
     // === 拷贝用户内容 + 内嵌库 ===
     handle.mark_step("copy-files", "active");
@@ -588,10 +542,8 @@ async fn run_multimc_import(
     handle.set_current_file("拷贝实例内容...");
     let game_root = std::path::Path::new(game_dir);
     crate::services::multimc::copy_instance_content(root, game_root, version_dir_name)?;
-    if !installed_via_pipeline {
-        if let Some(merged) = &merged_json {
-            let _ = crate::services::multimc::copy_embedded_libraries(root, game_root, merged)?;
-        }
+    if let Some(merged) = &merged_json {
+        let _ = crate::services::multimc::copy_embedded_libraries(root, game_root, merged)?;
     }
     handle.mark_step("copy-files", "done");
 

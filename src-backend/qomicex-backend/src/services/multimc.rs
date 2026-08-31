@@ -221,10 +221,22 @@ pub fn parse_metadata(root: &Path) -> Result<MultiMcMetadata, String> {
         return Err("net.minecraft 组件版本为空".to_string());
     }
 
-    // 主加载器：首个非 dependency-only 且非 minecraft 的组件。
+    // 主加载器：优先选择 uid 能映射到已知加载器的组件（特殊兼容包常混入
+    // forgepatches/launchargs 等辅助组件，如 GTNH 的 me.eigenraven.lwjgl3ify.*，
+    // 真正的加载器是 net.minecraftforge）；找不到已知加载器再回退首个
+    // 非 dependency-only 且非 minecraft 的组件（自定义加载器 → 走 json-patch 兜底）。
     let loader = components
         .iter()
-        .find(|c| !c.dependency_only && c.uid != "net.minecraft");
+        .find(|c| {
+            !c.dependency_only
+                && c.uid != "net.minecraft"
+                && !loader_candidates_for(&c.uid, &game_version).is_empty()
+        })
+        .or_else(|| {
+            components
+                .iter()
+                .find(|c| !c.dependency_only && c.uid != "net.minecraft")
+        });
     let loader_uid = loader.map(|c| c.uid.clone()).unwrap_or_default();
     let loader_version = loader.map(|c| c.version.clone()).unwrap_or_default();
     let loader_candidates = if loader_uid.is_empty() {
@@ -534,12 +546,15 @@ async fn load_patch(
 }
 
 /// 构建合并后的版本 JSON（策略 B）：Mojang base + 组件 patch 依依赖序合并。
+/// 返回 `(合并 JSON, 组件收集的 +jvmArgs)` —— jvmArgs 由调用方写入实例 jvm_args 字段
+/// （MultiMC 的 +jvmArgs 非标准字段；旧格式 json 注入 arguments.jvm 会因缺
+/// arguments.game 导致启动报错，实例字段两种格式均保证生效）。
 pub async fn build_merged_version_json(
     http_client: &reqwest::Client,
     root: &Path,
     metadata: &MultiMcMetadata,
     version_dir_name: &str,
-) -> Result<String, String> {
+) -> Result<(String, Vec<String>), String> {
     // 1. Mojang base（Qomicex 原生字段：downloads.client / assetIndex / libraries）。
     let base = fetch_mojang_version_json(http_client, &metadata.game_version).await?;
     let mut merged = base;
@@ -625,11 +640,45 @@ pub async fn build_merged_version_json(
         .cloned()
         .unwrap_or_default();
     inject_tweakers(&mut merged, &tweakers);
+    let jvm_args = merged
+        .get("__jvm_args")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let jvm_args: Vec<String> = jvm_args
+        .iter()
+        .filter_map(Value::as_str)
+        .map(String::from)
+        .collect();
+    // 特殊兼容包推断 Java 大版本：为 RFB 引导或含 --add-opens/--add-modules/
+    // --enable-preview 等 Java 9+ 参数（GTNH Java 17-25 等）时，把 javaVersion 提升到
+    // 17（若缺失或低于 17），避免启动器误选 Java 8 导致无法启动。
+    let current_java = merged
+        .get("javaVersion")
+        .and_then(|j| j.get("majorVersion"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let main_class = merged
+        .get("mainClass")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let needs_modern_java = main_class.contains("retrofuturabootstrap")
+        || jvm_args
+            .iter()
+            .any(|a| a == "--add-opens" || a == "--add-modules" || a == "--enable-preview");
+    if needs_modern_java && current_java < 17 {
+        merged["javaVersion"] = json!({
+            "component": "java-runtime-gamma",
+            "majorVersion": 17
+        });
+    }
     merged.as_object_mut().map(|m| m.remove("__tweakers"));
     merged.as_object_mut().map(|m| m.remove("__jvm_args"));
     merged.as_object_mut().map(|m| m.remove("__main_jar"));
 
-    serde_json::to_string(&merged).map_err(|e| format!("序列化合并版本 JSON 失败: {e}"))
+    let json =
+        serde_json::to_string(&merged).map_err(|e| format!("序列化合并版本 JSON 失败: {e}"))?;
+    Ok((json, jvm_args))
 }
 
 /// 拉取 Mojang 官方版本 JSON（版本清单 → 版本 URL → JSON）。
@@ -1220,8 +1269,16 @@ mod tests {
         };
         let root = locate_instance_root(Path::new(&dir)).expect("实例根");
         let meta = parse_metadata(&root).expect("元数据");
+        // 特殊兼容包：主加载器应识别为已知加载器（forge），而非辅助组件（lwjgl3ify）。
+        if meta.name.contains("GTNH") || meta.components.iter().any(|c| c.uid.contains("lwjgl3ify"))
+        {
+            assert_eq!(
+                meta.loader_uid, "net.minecraftforge",
+                "GTNH 主加载器应为 forge"
+            );
+        }
         let client = reqwest::Client::new();
-        let merged = build_merged_version_json(&client, &root, &meta, "MergeProbe")
+        let (merged, jvm_args) = build_merged_version_json(&client, &root, &meta, "MergeProbe")
             .await
             .expect("合并失败");
         let v: Value = serde_json::from_str(&merged).expect("JSON");
@@ -1236,7 +1293,7 @@ mod tests {
             .map(|c| c.is_object())
             .unwrap_or(false);
         eprintln!(
-            "name={} mc={} mainClass={} libs={} client={} assetIndex={}",
+            "name={} mc={} mainClass={} libs={} client={} assetIndex={} jvmArgs={}",
             meta.name,
             meta.game_version,
             v.get("mainClass").and_then(Value::as_str).unwrap_or(""),
@@ -1245,7 +1302,8 @@ mod tests {
             v.get("assetIndex")
                 .and_then(|a| a.get("id"))
                 .and_then(Value::as_str)
-                .unwrap_or("")
+                .unwrap_or(""),
+            jvm_args.len()
         );
         assert!(v
             .get("mainClass")
@@ -1253,5 +1311,18 @@ mod tests {
             .is_some_and(|s| !s.is_empty()));
         assert!(libs > 0);
         assert!(has_client, "旧版本应补齐 downloads.client");
+        if meta.name.contains("GTNH") {
+            assert_eq!(
+                v.get("javaVersion")
+                    .and_then(|j| j.get("majorVersion"))
+                    .and_then(Value::as_i64),
+                Some(17),
+                "GTNH Java 17-25 应推断 Java 17"
+            );
+            assert!(
+                jvm_args.iter().any(|a| a == "--add-opens"),
+                "应提取 --add-opens JVM 参数"
+            );
+        }
     }
 }
