@@ -798,6 +798,10 @@ export interface ModpackParseResult {
   iconData: string | null
   /** 本地导入：上传临时文件句柄，随 /modpack/install 传回 */
   fileId?: string | null
+  /** 整合包类型：modrinth / curseforge / qomicex / multimc */
+  packType?: string | null
+  /** MultiMC 导入：multimc-imports 解压根句柄，随 /modpack/multimc/import 传回 */
+  sourceId?: string | null
 }
 
 export interface ModpackInstallRequest {
@@ -866,6 +870,30 @@ export interface ModpackInstallDirectRequest {
 
 export interface ModpackInstallDirectResult {
   instanceId: string
+}
+
+/** MultiMC 导入解析结果（POST /modpack/multimc/parse | parse-folder）。 */
+export interface MultiMcParseResult {
+  /** zip 上传：{BaseDir}/temp/multimc-imports/{uuid} 句柄 */
+  sourceId?: string
+  /** 文件夹：实例根目录绝对路径 */
+  sourcePath?: string
+  name: string
+  gameVersion: string
+  loader: string
+  loaderVersion: string | null
+  iconData?: string | null
+  /** 恒为 "multimc"（文件夹入口） */
+  packType?: string | null
+}
+
+/** MultiMC 导入请求（POST /modpack/multimc/import）。 */
+export interface MultiMcImportRequest {
+  sourceId?: string
+  sourcePath?: string
+  name: string
+  gameDir: string
+  versionIsolation: boolean
 }
 
 export interface NatTypeResult {

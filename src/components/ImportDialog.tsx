@@ -1,22 +1,19 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import type { DragEvent } from 'react'
+import { FileDown, FolderOpen } from 'lucide-react'
 import { Dialog, DialogBody, DialogHeader, DialogTitle } from '../components/ui'
 import { Button } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { Separator } from '../components/ui'
-import { parseModpackFile, startModpackInstall, getInstallProgress } from '../api/instance.ts'
+import { parseModpackFile, startModpackInstall, parseMultiMcFolder, startMultiMcImport } from '../api/instance.ts'
 import { ApiError } from '../api/client.ts'
-import type { ModpackParseResult, InstallProgressResponse } from '../types/index.ts'
+import type { ModpackParseResult, MultiMcParseResult } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
 import { addTask } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
-
-const STAGE_KEYS: readonly string[] = [
-  'queued', 'downloading-json', 'downloading', 'downloading-libraries',
-  'downloading-assets', 'downloading-mainjar', 'downloading-loader',
-  'downloading-loader-libs', 'installing-loader', 'downloading-addons',
-  'downloading-modpack', 'parsing-modpack', 'modpack-files', 'modpack-overrides',
-]
+import { cn } from '../lib/utils.ts'
+import { importDialogActive } from '../lib/drop-routing.ts'
 
 interface Props {
   open: boolean
@@ -29,41 +26,36 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   const { t } = useI18n()
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [step, setStep] = useState<'select' | 'parsing' | 'preview' | 'installing'>('select')
-  const [parsed, setParsed] = useState<ModpackParseResult | null>(null)
+  // Tauri 原生 file-drop 事件最近一次拖入的路径（文件夹拖入用）。
+  const folderPathsRef = useRef<string[]>([])
+  const [step, setStep] = useState<'select' | 'parsing' | 'preview'>('select')
+  const [dragActive, setDragActive] = useState(false)
+  const [parsed, setParsed] = useState<ModpackParseResult | MultiMcParseResult | null>(null)
   const [instanceName, setInstanceName] = useState('')
-  const [installingInstanceId, setInstallingInstanceId] = useState<string | null>(null)
-  const [progress, setProgress] = useState<InstallProgressResponse | null>(null)
   const [error, setError] = useState('')
 
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
-  }, [])
-
-  useEffect(() => { return () => stopPolling() }, [stopPolling])
-
+  // 打开期间让全局拖放路由进本对话框；同时监听 Tauri 原生 file-drop 取路径（文件夹）。
   useEffect(() => {
-    if (step !== 'installing' || !installingInstanceId) { stopPolling(); return }
-    stopPolling()
-    pollRef.current = setInterval(async () => {
-      try {
-        const p = await getInstallProgress(installingInstanceId)
-        setProgress(p)
-        if (p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled') {
-          stopPolling()
-        }
-      } catch { /* retry next tick */ }
-    }, 500)
-    return () => stopPolling()
-  }, [step, installingInstanceId, stopPolling])
+    importDialogActive.current = open
+    if (!open) return
+    let un: (() => void) | undefined
+    import('@tauri-apps/api/event')
+      .then(async ({ listen }) => {
+        un = await listen<string[]>('file-drop', e => {
+          folderPathsRef.current = e.payload || []
+        })
+      })
+      .catch(() => {})
+    return () => {
+      importDialogActive.current = false
+      un?.()
+    }
+  }, [open])
 
-  const handleFileSelect = async () => {
-    const file = fileInputRef.current?.files?.[0]
-    if (!file) return
+  /** 解析一个文件（后端 /modpack/parse 统一识别 MultiMC / CF / MR / Qomicex）。 */
+  const parseFile = async (file: File) => {
     setStep('parsing')
     setError('')
-    setProgress(null)
     try {
       const result = await parseModpackFile(file)
       setParsed(result)
@@ -75,29 +67,91 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     }
   }
 
+  /** 解析一个 MultiMC 实例文件夹。 */
+  const parseFolder = async (path: string) => {
+    setStep('parsing')
+    setError('')
+    try {
+      const result = await parseMultiMcFolder(path)
+      setParsed(result)
+      setInstanceName(result.name)
+      setStep('preview')
+    } catch (e: any) {
+      setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
+      setStep('select')
+    }
+  }
+
+  const handleFileSelect = async () => {
+    const input = fileInputRef.current
+    const file = input?.files?.[0]
+    if (!file) return
+    input!.value = ''
+    await parseFile(file)
+  }
+
+  /** 拖放：文件走浏览器 DnD（File 对象上传）；文件夹走 Tauri file-drop 路径。 */
+  const handleDrop = async (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragActive(false)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length > 0) {
+      await parseFile(files[0])
+      return
+    }
+    // 文件夹：无 files，用 Tauri 原生事件给的路径。
+    const path = folderPathsRef.current[0]
+    if (path) {
+      await parseFolder(path)
+    } else {
+      setError(t('dialogs.import.folderDropUnsupported'))
+    }
+  }
+
+  const handleFolderSelect = async () => {
+    setStep('parsing')
+    setError('')
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const dir = await open({ directory: true, multiple: false })
+      if (typeof dir !== 'string' || !dir) { setStep('select'); return }
+      await parseFolder(dir)
+    } catch (e: any) {
+      setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
+      setStep('select')
+    }
+  }
+
   const handleInstall = async () => {
     if (!parsed) return
-    setStep('installing')
     setError('')
-    setProgress(null)
     try {
-      const { instanceId } = await startModpackInstall({
-        name: instanceName,
-        gameVersion: parsed.gameVersion,
-        loader: parsed.loader,
-        loaderVersion: parsed.loaderVersion,
-        gameDir,
-        versionIsolation,
-        modpackFiles: parsed.files,
-        overridesZip: parsed.overridesZip,
-        iconData: parsed.iconData,
-        modpackName: parsed.name,
-        modpackVersion: parsed.version,
-        modpackAuthor: parsed.author,
-        modpackSummary: parsed.summary,
-        source: parsed.source,
-        fileId: parsed.fileId ?? undefined,
-      })
+      const isMultiMc = parsed.packType === 'multimc' || (parsed as MultiMcParseResult).sourcePath != null
+      const instanceId = isMultiMc
+        ? (await startMultiMcImport({
+            sourceId: parsed.sourceId ?? undefined,
+            sourcePath: (parsed as MultiMcParseResult).sourcePath ?? undefined,
+            name: instanceName,
+            gameDir,
+            versionIsolation,
+          })).instanceId
+        : (await startModpackInstall({
+            name: instanceName,
+            gameVersion: parsed.gameVersion,
+            loader: parsed.loader,
+            loaderVersion: parsed.loaderVersion,
+            gameDir,
+            versionIsolation,
+            modpackFiles: (parsed as ModpackParseResult).files,
+            overridesZip: (parsed as ModpackParseResult).overridesZip,
+            iconData: parsed.iconData,
+            modpackName: parsed.name,
+            modpackVersion: (parsed as ModpackParseResult).version,
+            modpackAuthor: (parsed as ModpackParseResult).author,
+            modpackSummary: (parsed as ModpackParseResult).summary,
+            source: (parsed as ModpackParseResult).source,
+            fileId: (parsed as ModpackParseResult).fileId ?? undefined,
+          })).instanceId
       addTask({
         id: instanceId,
         name: instanceName,
@@ -111,25 +165,22 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
         instanceId,
         icon: parsed.iconData ?? undefined,
       })
-      setInstallingInstanceId(instanceId)
+      // 安装已入队：关闭弹窗并跳转下载中心查看进度。
+      reset()
+      onClose()
+      navigate('/downloads')
     } catch (e: any) {
       setError(e.message || t('dialogs.import.installFailed'))
-      setStep('preview')
     }
   }
 
   const reset = () => {
-    stopPolling()
     setStep('select')
     setParsed(null)
-    setInstallingInstanceId(null)
-    setProgress(null)
     setError('')
+    setDragActive(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
-
-  const isComplete = progress?.status === 'completed'
-  const isFailed = progress?.status === 'failed' || progress?.status === 'cancelled'
 
   return (
     <Dialog open={open} onClose={() => { reset(); onClose() }}>
@@ -139,13 +190,39 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
       <DialogBody>
         {step === 'select' && (
           <div className="space-y-4">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragActive(true) }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={handleDrop}
+              className={cn(
+                'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center transition-colors',
+                dragActive ? 'border-primary/60 bg-primary/5' : 'border-muted-foreground/40 hover:border-primary/50 hover:bg-primary/5',
+              )}
+            >
+              <FileDown className={cn('h-8 w-8', dragActive ? 'text-primary' : 'text-muted-foreground')} />
+              <span className="text-sm font-medium">{t('dialogs.import.dropHint')}</span>
+              <span className="text-xs text-muted-foreground">{t('dialogs.import.dropSubHint')}</span>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".qmodpack,.mrpack,.zip"
+              accept=".zip,.mrpack,.qmodpack"
               onChange={handleFileSelect}
-              className="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-primary file:text-primary-foreground"
+              className="hidden"
             />
+            <div className="flex items-center gap-2">
+              <Separator className="flex-1" />
+              <span className="text-xs text-muted-foreground">or</span>
+              <Separator className="flex-1" />
+            </div>
+            <Button variant="outline" className="w-full" onClick={handleFolderSelect}>
+              <FolderOpen className="h-4 w-4 mr-2" />
+              {t('dialogs.import.chooseFolder')}
+            </Button>
+            <p className="text-xs text-muted-foreground">{t('dialogs.import.folderHint')}</p>
             {error && <p className="text-destructive text-sm">{error}</p>}
           </div>
         )}
@@ -179,57 +256,6 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => { reset(); onClose() }}>{t('common.cancel')}</Button>
               <Button onClick={handleInstall}>{t('dialogs.import.startInstall')}</Button>
-            </div>
-          </div>
-        )}
-
-        {step === 'installing' && (
-          <div className="space-y-4">
-            {!progress && <p className="text-muted-foreground">{t('dialogs.import.connecting')}</p>}
-            {progress && !isComplete && !isFailed && (
-              <>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">{t('dialogs.import.installing', { name: instanceName })}</span>
-                    <span className="font-medium">{Math.round(progress.progress)}%</span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress.progress}%` }} />
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span>{STAGE_KEYS.includes(progress.stage) ? t(`dialogs.stage.${progress.stage}`) : (STAGE_KEYS.includes(progress.status) ? t(`dialogs.stage.${progress.status}`) : (progress.stage || progress.status))}</span>
-                  {progress.currentFileProgress > 0 && <span>({Math.round(progress.currentFileProgress)}%)</span>}
-                  {progress.totalFiles != null && progress.totalFiles > 0 && <span>{progress.completedFiles ?? 0}/{progress.totalFiles}</span>}
-                </div>
-                {progress.currentFile && (
-                  <p className="truncate text-xs text-muted-foreground">{progress.currentFile}</p>
-                )}
-              </>
-            )}
-            {isComplete && (
-              <div className="text-center text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">{t('dialogs.import.completed')}</p>
-                <p className="mt-1">{t('dialogs.import.completedDetail', { name: instanceName })}</p>
-              </div>
-            )}
-            {isFailed && (
-              <div className="text-sm text-destructive">
-                {t('dialogs.import.failedWith', { error: progress?.error || error || t('dialogs.import.seeDownloadPage') })}
-              </div>
-            )}
-            <div className="flex justify-end gap-2">
-              {(isComplete || isFailed) && installingInstanceId && (
-                <Button variant="outline" onClick={() => { reset(); onClose(); navigate(`/instances/${installingInstanceId}`) }}>
-                  {t('dialogs.import.viewInstance')}
-                </Button>
-              )}
-              {!isComplete && !isFailed && (
-                <Button variant="outline" onClick={() => { reset(); onClose() }}>{t('dialogs.import.backgroundDownload')}</Button>
-              )}
-              {(isComplete || isFailed) && (
-                <Button onClick={() => { reset(); onClose() }}>{t('common.close')}</Button>
-              )}
             </div>
           </div>
         )}
