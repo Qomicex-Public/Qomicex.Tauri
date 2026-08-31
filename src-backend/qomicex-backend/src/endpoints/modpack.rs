@@ -291,7 +291,7 @@ async fn multimc_parse(mut multipart: Multipart) -> ApiResult<Json<MultiMcParseR
 async fn multimc_parse_folder(
     Json(req): Json<MultiMcParseFolderRequest>,
 ) -> ApiResult<Json<MultiMcParseResult>> {
-    let dir = std::path::Path::new(&req.path);
+    let dir = validate_source_path(&req.path)?;
     if !dir.is_dir() {
         return Err(ApiError::not_found(
             "MULTIMC_SOURCE_NOT_FOUND",
@@ -299,6 +299,29 @@ async fn multimc_parse_folder(
         ));
     }
     multimc_parse_from_dir(dir, None).map(Json)
+}
+
+/// 校验调用方提供的源路径：必须为绝对路径且不含 `..` 遍历（防读取任意路径）。
+/// 后端为本地无认证服务，路径由受信任 Tauri 前端经文件/文件夹选择器提供；
+/// 此处仅做基础防御。返回规范化后的 `&Path`。
+fn validate_source_path<'a>(raw: &'a str) -> ApiResult<&'a std::path::Path> {
+    let path = std::path::Path::new(raw);
+    if !path.is_absolute() {
+        return Err(ApiError::bad_request(
+            "MULTIMC_SOURCE_PATH_RELATIVE",
+            "MultiMC 源路径必须为绝对路径",
+        ));
+    }
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(ApiError::bad_request(
+            "MULTIMC_SOURCE_PATH_TRAVERSAL",
+            "MultiMC 源路径不允许包含 ..",
+        ));
+    }
+    Ok(path)
 }
 
 /// 从实例目录解析元数据（zip 解压根或用户选择的文件夹），返回解析结果 + 源句柄。
@@ -347,7 +370,7 @@ async fn multimc_import(
     let (source_dir, is_temp): (std::path::PathBuf, bool) =
         match (req.source_id.as_deref(), req.source_path.as_deref()) {
             (Some(id), _) => (multimc_imports_dir()?.join(id), true),
-            (None, Some(p)) => (std::path::PathBuf::from(p), false),
+            (None, Some(p)) => (validate_source_path(p)?.to_path_buf(), false),
             _ => {
                 return Err(ApiError::bad_request(
                     "MULTIMC_SOURCE_REQUIRED",
@@ -365,16 +388,23 @@ async fn multimc_import(
         .map_err(|e| ApiError::bad_request("MULTIMC_PARSE_FAILED", e))?;
 
     let game_dir = crate::services::install_service::absolute_path(&req.game_dir);
-    let version_isolation = req
-        .version_isolation
-        .unwrap_or_else(crate::settings::get_global_version_isolation);
+    // MultiMC 实例天生自带完整 `.minecraft`（含自身 mods/config/版本隔离内容），
+    // 必须写入 `versions/{name}` 隔离目录；共享根目录（version_isolation=false）会让
+    // 内容与启动路径不一致，故强制隔离。
+    let version_isolation = true;
     let base_name = sanitize_instance_name(if req.name.trim().is_empty() {
         meta.name.as_str()
     } else {
         req.name.trim()
     });
+    // 并发导入同名实例的选名是"检查后创建"竞态：两个请求可能同时选中同一名字，
+    // 后台任务会互相覆盖版本 JSON 与内容。用全局锁串行化「选名 → 创建实例记录」；
+    // 导入低频，全局锁可接受（若需高并发再按 game_dir 分锁）。
+    static MULTIMC_IMPORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = MULTIMC_IMPORT_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let name = unique_instance_name(&game_dir, &base_name);
-
     let loader = if meta.loader_uid.is_empty() {
         None
     } else {
@@ -401,6 +431,7 @@ async fn multimc_import(
     inst.icon_data = meta.icon_data.clone();
     inst.modpack_name = Some(name.clone());
     let created = s.instance.create(inst);
+    drop(_guard);
     let instance_id = created.id.clone();
 
     let tracker = s.install_tracker.clone();
