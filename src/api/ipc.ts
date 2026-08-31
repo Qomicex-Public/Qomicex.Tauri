@@ -267,7 +267,10 @@ export async function uploadFile(path: string, file: File, fieldName = 'file'): 
         method: 'POST',
         path: ipcApiPath(path),
         headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
-        body: Array.from(body),
+        // 直接传 Uint8Array（Tauri v2 以原始字节转给 Rust Vec<u8>），
+        // 避免 Array.from 把整个大文件（如 GTNH 595MB）转成巨型 JS 数字数组
+        // 触发 `RangeError: Invalid array length` / 内存爆炸。
+        body,
       },
       onEvent: channel,
     }).catch(reject)
