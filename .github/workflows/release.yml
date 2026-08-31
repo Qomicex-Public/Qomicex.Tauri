@@ -993,7 +993,10 @@ jobs:
 
       - name: Merge update fragments into latest.json
         run: |
-          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          # manifest.version 必须是合法 semver（Tauri updater 用它跟安装版 current_version 比较，
+          # `v` 前缀会令 semver 解析失败 → check() 无声返回“无更新”）。用不带 `v` 的 version；
+          # 下载 URL 仍用 displayVersion（release tag 带 `v`，见平台 fragment 生成处）。
+          VERSION="${{ needs.setup.outputs.version }}"
           REQUIRED=${{ needs.setup.outputs.required }}
           NOTES_JSON=$(cat RELEASE_NOTES.md | jq -Rs '.')
           jq -n \
@@ -1016,7 +1019,7 @@ jobs:
       - name: Generate alpha.json (alpha only)
         if: needs.setup.outputs.releaseType == 'alpha'
         run: |
-          VERSION="${{ needs.setup.outputs.displayVersion }}"
+          VERSION="${{ needs.setup.outputs.version }}"
           REQUIRED=${{ needs.setup.outputs.required }}
           NOTES_JSON=$(cat RELEASE_NOTES.md | jq -Rs '.')
           jq -n \

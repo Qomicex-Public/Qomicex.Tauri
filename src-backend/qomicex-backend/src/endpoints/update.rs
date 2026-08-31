@@ -159,7 +159,15 @@ async fn fetch_tauri_manifest(
         return Err(ApiError::upstream(format!("HTTP {status}")));
     }
     match serde_json::from_str::<TauriManifestResponse>(&text) {
-        Ok(m) => Ok(Some(m)),
+        Ok(mut m) => {
+            // 防御：manifest.version 前导 `v` 会令 Tauri updater 的 semver 解析失败 →
+            // check() 无声返回“无更新”。最新发布产物应在生成时去 `v`（见 release.yml），
+            // 此处归一化兜底，让存量带 `v` 的 latest.json 也能正常检出更新。
+            if let Some(stripped) = m.version.strip_prefix('v') {
+                m.version = stripped.to_string();
+            }
+            Ok(Some(m))
+        }
         Err(e) => {
             tracing::warn!("update manifest parse failed from {url}: {e}");
             Ok(None)
