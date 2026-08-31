@@ -387,7 +387,8 @@ async fn multimc_import(
     let meta = crate::services::multimc::parse_metadata(&root)
         .map_err(|e| ApiError::bad_request("MULTIMC_PARSE_FAILED", e))?;
 
-    let game_dir = crate::services::install_service::absolute_path(&req.game_dir);
+    let game_dir = validate_source_path(&req.game_dir)?.to_path_buf();
+    let game_dir = crate::services::install_service::absolute_path(&game_dir.to_string_lossy());
     // MultiMC 实例天生自带完整 `.minecraft`（含自身 mods/config/版本隔离内容），
     // 必须写入 `versions/{name}` 隔离目录；共享根目录（version_isolation=false）会让
     // 内容与启动路径不一致，故强制隔离。

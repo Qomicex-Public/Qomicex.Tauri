@@ -115,6 +115,20 @@ pub fn parse_instance_cfg(content: &str) -> HashMap<String, String> {
     map
 }
 
+/// 组件 uid 白名单清洗（安全）：只保留 `[A-Za-z0-9._-]`，其余替换为 `_`。
+/// uid 来自整合包内容，用于拼接本地 patch 路径与 meta URL，防止路径遍历 / URL 注入。
+fn sanitize_component_id(uid: &str) -> String {
+    uid.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 /// 读取并解析 `mmc-pack.json` 的 components。
 fn parse_mmc_components(root: &Path) -> Result<Vec<MmcpComponent>, String> {
     let content = std::fs::read_to_string(root.join("mmc-pack.json"))
@@ -132,8 +146,17 @@ fn parse_mmc_components(root: &Path) -> Result<Vec<MmcpComponent>, String> {
         if uid.is_empty() {
             continue;
         }
+        // 清洗后不得引入路径遍历（`..`）或含目录分隔符。
+        let uid_clean = sanitize_component_id(uid);
+        if uid_clean.is_empty()
+            || uid_clean.contains("..")
+            || uid_clean.contains('/')
+            || uid_clean.contains('\\')
+        {
+            continue;
+        }
         comps.push(MmcpComponent {
-            uid: uid.to_string(),
+            uid: uid_clean,
             version: version.to_string(),
             dependency_only: c
                 .get("dependencyOnly")
@@ -438,6 +461,21 @@ fn copy_file(src: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 相对路径安全判定：非空、非绝对、不含 `..` 组件（用于 maven 相对路径拼接到
+/// `libraries/` 下，防路径遍历逃逸出库目录）。
+fn is_safe_rel_path(p: &str) -> bool {
+    if p.trim().is_empty() {
+        return false;
+    }
+    let path = Path::new(p);
+    if path.is_absolute() {
+        return false;
+    }
+    !path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
 /// 拷贝合并 JSON 中 `MMC-hint: local` 的内嵌库：`{instance}/libraries/{basename}` → `{game_root}/libraries/{maven_path}`。
 pub fn copy_embedded_libraries(
     src_root: &Path,
@@ -465,7 +503,7 @@ pub fn copy_embedded_libraries(
             continue;
         };
         let maven_path = qomicex_core::util::lib_helper::maven_to_path(name);
-        if maven_path.is_empty() {
+        if maven_path.is_empty() || !is_safe_rel_path(&maven_path) {
             continue;
         }
         // 内嵌文件 = maven 路径末段（如 cleanroom-0.3.4-alpha-universal.jar）。
@@ -492,6 +530,7 @@ pub fn copy_embedded_libraries(
 // ---------------------------------------------------------------------------
 
 /// 组件 patch 的 meta URL（version 为空时按 MultiMC 默认补全）。
+/// uid/version 均经 URL 编码，防止 URL 注入（uid 已在 parse_mmc_components 清洗）。
 pub fn meta_url(uid: &str, version: &str, game_version: &str) -> String {
     let ver = if version.trim().is_empty() {
         match uid {
@@ -503,6 +542,7 @@ pub fn meta_url(uid: &str, version: &str, game_version: &str) -> String {
     } else {
         version
     };
+    let uid = urlencoding::encode(uid);
     let ver = urlencoding::encode(ver);
     format!("https://meta.multimc.org/v1/{uid}/{ver}.json")
 }
@@ -586,7 +626,16 @@ pub async fn build_merged_version_json(
                     let Some(rid) = r.get("uid").and_then(Value::as_str) else {
                         continue;
                     };
-                    if rid == "net.minecraft" || patches.contains_key(rid) {
+                    // requires 的 uid 亦来自补丁内容，清洗后须安全（无遍历/分隔符）。
+                    let rid = sanitize_component_id(rid);
+                    if rid.is_empty()
+                        || rid.contains("..")
+                        || rid.contains('/')
+                        || rid.contains('\\')
+                    {
+                        continue;
+                    }
+                    if rid == "net.minecraft" || patches.contains_key(&rid) {
                         continue;
                     }
                     let ver = r
@@ -950,6 +999,9 @@ fn materialize_library_downloads(base: &mut Value) {
             continue;
         };
         let maven_path = qomicex_core::util::lib_helper::maven_to_path(name);
+        if !maven_path.is_empty() && !is_safe_rel_path(&maven_path) {
+            continue;
+        }
         let is_local = lib
             .get("MMC-hint")
             .or_else(|| lib.get("hint"))
@@ -984,10 +1036,10 @@ fn materialize_library_downloads(base: &mut Value) {
         } else {
             let repo = lib.get("url").and_then(Value::as_str).unwrap_or("");
             let rel = lib.get("path").and_then(Value::as_str).unwrap_or("");
-            if !repo.is_empty() && !rel.is_empty() {
+            if !repo.is_empty() && !rel.is_empty() && is_safe_rel_path(rel) {
                 // MultiMC 格式：url = 完整文件 URL（repo + path）。
                 (rel.to_string(), repo.to_string())
-            } else if !repo.is_empty() {
+            } else if !repo.is_empty() && is_safe_rel_path(&path) {
                 let base = if repo.ends_with('/') {
                     repo.to_string()
                 } else {
