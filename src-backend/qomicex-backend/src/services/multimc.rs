@@ -1325,4 +1325,71 @@ mod tests {
             );
         }
     }
+
+    /// 手动验证：MMC-hint:local 内嵌库经 copy_embedded_libraries 复制到 maven 路径后，
+    /// 缺失文件扫描不应再把它判为缺失（避免空 url 回退 libraries.minecraft.net 404）。
+    /// 用法：`QOMICEX_MMC_TEST_PACK=<实例目录> cargo test -- --ignored multimc_local_lib_skips_download`
+    #[tokio::test]
+    #[ignore]
+    async fn multimc_local_lib_skips_download() {
+        let Some(dir) = std::env::var_os("QOMICEX_MMC_TEST_PACK") else {
+            eprintln!("skip: QOMICEX_MMC_TEST_PACK 未设置");
+            return;
+        };
+        let root = locate_instance_root(Path::new(&dir)).expect("实例根");
+        let meta = parse_metadata(&root).expect("元数据");
+        let client = reqwest::Client::new();
+        let game_root =
+            std::env::temp_dir().join(format!("qomicex-mmclocal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&game_root);
+        std::fs::create_dir_all(&game_root).unwrap();
+
+        let (merged, _jvm) = build_merged_version_json(&client, &root, &meta, "LocalProbe")
+            .await
+            .expect("合并失败");
+        let copied = copy_embedded_libraries(&root, &game_root, &merged).expect("复制内嵌库失败");
+        let v: Value = serde_json::from_str(&merged).unwrap();
+        let local_lib = v
+            .get("libraries")
+            .and_then(Value::as_array)
+            .and_then(|a| {
+                a.iter()
+                    .find(|l| l.get("MMC-hint").and_then(Value::as_str) == Some("local"))
+            })
+            .cloned();
+        let Some(local_lib) = local_lib else {
+            eprintln!("no local lib in merged json");
+            return;
+        };
+        let name = local_lib.get("name").and_then(Value::as_str).unwrap_or("");
+        let maven_path = qomicex_core::util::lib_helper::maven_to_path(name);
+        let dest = game_root.join("libraries").join(&maven_path);
+        eprintln!(
+            "local lib {name} copied={copied} dest_exists={}",
+            dest.is_file()
+        );
+
+        let repair = crate::services::install_service::build_repair_core(
+            game_root.to_str().unwrap(),
+            0,
+            client,
+        );
+        let miss = repair
+            .locator()
+            .get_miss_files_from_json(&merged)
+            .await
+            .expect("扫描失败");
+        let hit = miss.iter().find(|f| f.path.contains("lwjgl3ify"));
+        eprintln!(
+            "miss total={} lwjgl3ify_missing={}",
+            miss.len(),
+            hit.map(|h| h.url.clone()).unwrap_or_default()
+        );
+        assert!(
+            hit.is_none(),
+            "内嵌库不应被判为缺失（否则触发 libraries.minecraft.net 404）: {:?}",
+            hit.map(|h| h.url.clone())
+        );
+        let _ = std::fs::remove_dir_all(&game_root);
+    }
 }

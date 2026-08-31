@@ -479,7 +479,6 @@ async fn run_multimc_import(
     // 标准安装管线捷径会对带辅助组件 / 新版 Java 参数（+jvmArgs）的包漏掉补丁
     // （LWJGL3 库、RFB 主类、--add-opens 启动参数），且 fabric/quilt 会误加默认 addon，
     // 故不再使用。
-    let mut merged_json: Option<String> = None;
     handle.mark_step("install-game", "active");
     handle.set_stage("building-version");
     handle.set_current_file("合并 MultiMC 组件补丁...");
@@ -499,6 +498,12 @@ async fn run_multimc_import(
         &merged,
     )
     .map_err(|e| format!("写入版本 JSON 失败: {e}"))?;
+
+    // 先把包内 MMC-hint:local 内嵌库复制到 maven 路径（如 GTNH 的
+    // lwjgl3ify-2.1.16-forgePatches.jar），使下方下载扫描判定已存在而跳过；
+    // 否则空 url 会被 locator 回退成 libraries.minecraft.net 触发 404 下载。
+    let game_root = std::path::Path::new(game_dir);
+    let _ = crate::services::multimc::copy_embedded_libraries(root, game_root, &merged)?;
 
     // 下载缺失文件（库 + 主 jar + 资源；镜像/进度/取消复用 locator + download_manager）。
     handle.set_stage("downloading-game");
@@ -525,7 +530,6 @@ async fn run_multimc_import(
             .collect();
         download_batch(handle, mgr, files, Some("install-game")).await?;
     }
-    merged_json = Some(merged);
     // 组件收集的 +jvmArgs（等价 HMCL addnJvmArguments）写入实例 jvm_args，启动时统一生效
     // （任何包声明 Java 9+ 参数都会应用，覆盖所有新版 Java 整合包）。
     if !jvm_args.is_empty() {
@@ -540,11 +544,7 @@ async fn run_multimc_import(
     handle.mark_step("copy-files", "active");
     handle.set_stage("copying-files");
     handle.set_current_file("拷贝实例内容...");
-    let game_root = std::path::Path::new(game_dir);
     crate::services::multimc::copy_instance_content(root, game_root, version_dir_name)?;
-    if let Some(merged) = &merged_json {
-        let _ = crate::services::multimc::copy_embedded_libraries(root, game_root, merged)?;
-    }
     handle.mark_step("copy-files", "done");
 
     // === 收尾 ===
