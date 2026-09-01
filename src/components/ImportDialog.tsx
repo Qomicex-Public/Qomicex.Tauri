@@ -196,9 +196,16 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  // 统一关闭路径：标题栏 × 与弹窗遮罩都先 reset（作废在途解析）再 onClose，
+  // 避免解析请求在关闭后仍把 parsed/error/step 写入已卸载对话框。
+  const handleDialogClose = () => {
+    reset()
+    onClose()
+  }
+
   return (
-    <Dialog open={open} onClose={() => { reset(); onClose() }}>
-      <DialogHeader onClose={onClose}>
+    <Dialog open={open} onClose={handleDialogClose}>
+      <DialogHeader onClose={handleDialogClose}>
         <DialogTitle>{t('dialogs.import.title')}</DialogTitle>
       </DialogHeader>
       <DialogBody>

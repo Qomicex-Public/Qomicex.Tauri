@@ -443,14 +443,21 @@ fn resolve_icon_from_zip(
     prefix: &str,
     icon_key: Option<&str>,
 ) -> Option<String> {
+    let join = |rel: &str| {
+        if prefix.is_empty() {
+            rel.to_string()
+        } else {
+            format!("{prefix}/{rel}")
+        }
+    };
     let mut candidates: Vec<String> = Vec::new();
     if let Some(key) = icon_key {
         let k = key.trim();
         if !k.is_empty() {
-            candidates.push(format!("{prefix}/{k}.png"));
+            candidates.push(join(&format!("{k}.png")));
         }
     }
-    candidates.push(format!("{prefix}/.minecraft/icon.png"));
+    candidates.push(join(".minecraft/icon.png"));
     for name in candidates {
         let Ok(mut entry) = archive.by_name(&name) else {
             continue;

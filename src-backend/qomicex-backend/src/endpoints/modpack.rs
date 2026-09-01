@@ -457,7 +457,23 @@ async fn multimc_import(
     let source_dir: std::path::PathBuf =
         match (req.source_id.as_deref(), req.source_path.as_deref()) {
             (Some(id), _) => {
+                // source_id 由解析阶段生成（multimc_imports_dir/{uuid}），此处要求 UUID
+                // 格式，防止恶意 source_id（含 .. / 绝对路径）让 RAII 清理删除任意目录。
+                let is_uuid = uuid::Uuid::parse_str(id).is_ok();
+                if !is_uuid || id.is_empty() {
+                    return Err(ApiError::bad_request(
+                        "MULTIMC_SOURCE_ID_INVALID",
+                        "sourceId 无效（应为 UUID）",
+                    ));
+                }
                 let dir = multimc_imports_dir()?.join(id);
+                // 纵深防御：确认拼接后仍在 imports 根下（UUID 已保证无分隔符，此处兜底）。
+                if !dir.starts_with(&multimc_imports_dir()?) {
+                    return Err(ApiError::bad_request(
+                        "MULTIMC_SOURCE_ID_INVALID",
+                        "sourceId 无效（越界路径）",
+                    ));
+                }
                 cleanup.push_dir(dir.clone());
                 dir
             }
