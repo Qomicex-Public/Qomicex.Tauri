@@ -31,6 +31,8 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   const [instanceName, setInstanceName] = useState('')
   const [error, setError] = useState('')
   const [dropHover, setDropHover] = useState(false)
+  // 单调递增请求 ID：丢弃过期解析结果（快速连续拖入多个包时旧响应不得覆盖新预览）。
+  const parseReqIdRef = useRef(0)
 
   // Tauri 原生 file-drop 事件：文件和文件夹统一处理。
   useEffect(() => {
@@ -45,21 +47,24 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
       setDropHover(false)
       const paths = e.payload
       if (!paths?.length) return
+      const reqId = ++parseReqIdRef.current
       const p = paths[0]
       if (/\.(zip|mrpack|qmodpack)$/i.test(p)) {
         setStep('parsing')
         setError('')
         try {
           const result = await parseModpackFileByPath(p)
+          if (reqId !== parseReqIdRef.current) return
           setParsed(result)
           setInstanceName(result.name)
           setStep('preview')
         } catch (e: any) {
+          if (reqId !== parseReqIdRef.current) return
           setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
           setStep('select')
         }
       } else {
-        await parseFolder(p)
+        await parseFolder(p, reqId)
       }
     }).then(fn => { unDrop = fn }).catch(() => {})
     return () => {
@@ -71,29 +76,34 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
 
   /** 解析一个文件（后端 /modpack/parse 统一识别 MultiMC / CF / MR / Qomicex）。 */
   const parseFile = async (file: File) => {
+    const reqId = ++parseReqIdRef.current
     setStep('parsing')
     setError('')
     try {
       const result = await parseModpackFile(file)
+      if (reqId !== parseReqIdRef.current) return
       setParsed(result)
       setInstanceName(result.name)
       setStep('preview')
     } catch (e: any) {
+      if (reqId !== parseReqIdRef.current) return
       setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
       setStep('select')
     }
   }
 
   /** 解析一个 MultiMC 实例文件夹。 */
-  const parseFolder = async (path: string) => {
+  const parseFolder = async (path: string, reqId = ++parseReqIdRef.current) => {
     setStep('parsing')
     setError('')
     try {
       const result = await parseMultiMcFolder(path)
+      if (reqId !== parseReqIdRef.current) return
       setParsed(result)
       setInstanceName(result.name)
       setStep('preview')
     } catch (e: any) {
+      if (reqId !== parseReqIdRef.current) return
       setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
       setStep('select')
     }
@@ -174,6 +184,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   }
 
   const reset = () => {
+    parseReqIdRef.current++ // 作废在途解析请求，防止关闭后旧响应回写 state
     setStep('select')
     setParsed(null)
     setError('')

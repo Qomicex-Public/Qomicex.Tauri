@@ -133,8 +133,13 @@ fn sanitize_component_id(uid: &str) -> String {
 fn parse_mmc_components(root: &Path) -> Result<Vec<MmcpComponent>, String> {
     let content = std::fs::read_to_string(root.join("mmc-pack.json"))
         .map_err(|e| format!("读取 mmc-pack.json 失败: {e}"))?;
+    parse_mmc_components_from_str(&content)
+}
+
+/// 从 `mmc-pack.json` 内容解析 components（文件夹 / zip 条目通用）。
+fn parse_mmc_components_from_str(content: &str) -> Result<Vec<MmcpComponent>, String> {
     let v: Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析 mmc-pack.json 失败: {e}"))?;
+        serde_json::from_str(content).map_err(|e| format!("解析 mmc-pack.json 失败: {e}"))?;
     let arr = v
         .get("components")
         .and_then(Value::as_array)
@@ -233,7 +238,81 @@ pub fn parse_metadata(root: &Path) -> Result<MultiMcMetadata, String> {
         HashMap::new()
     };
     let components = parse_mmc_components(root)?;
+    let fallback_name = root.file_name().map(|n| n.to_string_lossy().into_owned());
+    let icon_data = resolve_icon(root, cfg.get("iconKey").map(|s| s.as_str()));
+    build_metadata(cfg, components, fallback_name, icon_data)
+}
 
+/// 从 zip 整合包直接解析元数据（不落盘，类似 C# ZipArchive 只读条目）。
+/// 定位实例根前缀（含 mmc-pack.json / instance.cfg 的目录），只读这三个条目：
+/// `mmc-pack.json`（components）、`instance.cfg`（name/Java/内存/iconKey）、图标 PNG。
+pub fn parse_metadata_from_zip(zip_path: &Path) -> Result<MultiMcMetadata, String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
+
+    // 1. 定位实例根前缀：含 mmc-pack.json / instance.cfg 的目录（zip 常多包一层目录）。
+    let mut root_prefix: Option<String> = None;
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index(i) else {
+            continue;
+        };
+        let name = entry.name();
+        if name.ends_with("mmc-pack.json") || name.ends_with("instance.cfg") {
+            root_prefix = Some(
+                name.rsplit_once('/')
+                    .map(|(dir, _)| dir)
+                    .unwrap_or("")
+                    .to_string(),
+            );
+            break;
+        }
+    }
+    let Some(prefix) = root_prefix else {
+        return Err("未找到 MultiMC 实例（缺少 mmc-pack.json / instance.cfg）".to_string());
+    };
+    let prefix = prefix.as_str();
+
+    // 2. 读取 mmc-pack.json + instance.cfg（zip 内可能带前导目录）。
+    let read_zip_str =
+        |archive: &mut zip::ZipArchive<std::fs::File>, rel: &str| -> Result<String, String> {
+            for cand in [format!("{prefix}/{rel}"), rel.to_string()] {
+                let Ok(mut entry) = archive.by_name(&cand) else {
+                    continue;
+                };
+                let mut content = String::new();
+                if std::io::Read::read_to_string(&mut entry, &mut content).is_err() {
+                    continue;
+                }
+                return Ok(content);
+            }
+            Err(format!("zip 内缺少 {rel}"))
+        };
+    let components = parse_mmc_components_from_str(&read_zip_str(&mut archive, "mmc-pack.json")?)?;
+    let cfg = read_zip_str(&mut archive, "instance.cfg")
+        .map(|c| parse_instance_cfg(&c))
+        .unwrap_or_default();
+
+    // 3. 图标：`{root}/{iconKey}.png` → `.minecraft/icon.png`（zip 内相对根前缀）。
+    let icon_data =
+        resolve_icon_from_zip(&mut archive, prefix, cfg.get("iconKey").map(|s| s.as_str()));
+
+    // 4. 名称兜底：实例根目录名（zip 前导目录名）。
+    let fallback_name = prefix
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    build_metadata(cfg, components, fallback_name, icon_data)
+}
+
+/// 共享元数据构建：cfg + components + 名称兜底 + 图标 → MultiMcMetadata。
+#[allow(clippy::too_many_arguments)]
+fn build_metadata(
+    cfg: HashMap<String, String>,
+    components: Vec<MmcpComponent>,
+    fallback_name: Option<String>,
+    icon_data: Option<String>,
+) -> Result<MultiMcMetadata, String> {
     // 游戏版本：net.minecraft 组件。
     let mc = components
         .iter()
@@ -272,10 +351,8 @@ pub fn parse_metadata(root: &Path) -> Result<MultiMcMetadata, String> {
         .get("name")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| root.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .or_else(|| fallback_name)
         .unwrap_or_else(|| "MultiMC 实例".to_string());
-
-    let icon_data = resolve_icon(root, cfg.get("iconKey").map(|s| s.as_str()));
 
     // 仅当 Override 时导入启动设置。
     let java_path = if cfg
@@ -334,6 +411,33 @@ pub fn resolve_icon(root: &Path, icon_key: Option<&str>) -> Option<String> {
             if let Ok(bytes) = std::fs::read(&p) {
                 return Some(format!("data:image/png;base64,{}", base64_encode(&bytes)));
             }
+        }
+    }
+    None
+}
+
+/// 从 zip 直接读图标：`{prefix}/{iconKey}.png` → `{prefix}/.minecraft/icon.png` → None。
+/// 前缀即实例根在 zip 内的相对目录（可能为空 = 根）。
+fn resolve_icon_from_zip(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    prefix: &str,
+    icon_key: Option<&str>,
+) -> Option<String> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Some(key) = icon_key {
+        let k = key.trim();
+        if !k.is_empty() {
+            candidates.push(format!("{prefix}/{k}.png"));
+        }
+    }
+    candidates.push(format!("{prefix}/.minecraft/icon.png"));
+    for name in candidates {
+        let Ok(mut entry) = archive.by_name(&name) else {
+            continue;
+        };
+        let mut bytes = Vec::new();
+        if std::io::Read::read_to_end(&mut entry, &mut bytes).is_ok() {
+            return Some(format!("data:image/png;base64,{}", base64_encode(&bytes)));
         }
     }
     None
