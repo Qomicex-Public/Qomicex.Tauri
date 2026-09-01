@@ -38,11 +38,14 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   useEffect(() => {
     importDialogActive.current = open
     if (!open) return
+    // listen() 是异步的：若对话框在注册完成前关闭，旧监听器不会被取消。
+    // disposed 标志 + 注册完成后立即检查，避免后续拖放触发已卸载对话框的回调。
+    let disposed = false
     let unHover: (() => void) | undefined
     let unDrop: (() => void) | undefined
     listen<boolean>('file-drop-hover', e => {
       setDropHover(!!e.payload)
-    }).then(fn => { unHover = fn }).catch(() => {})
+    }).then(fn => { if (disposed) fn(); else unHover = fn }).catch(() => {})
     listen<string[]>('file-drop', async e => {
       setDropHover(false)
       const paths = e.payload
@@ -66,8 +69,9 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
       } else {
         await parseFolder(p, reqId)
       }
-    }).then(fn => { unDrop = fn }).catch(() => {})
+    }).then(fn => { if (disposed) fn(); else unDrop = fn }).catch(() => {})
     return () => {
+      disposed = true
       importDialogActive.current = false
       unHover?.()
       unDrop?.()

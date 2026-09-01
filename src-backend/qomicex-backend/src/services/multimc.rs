@@ -250,42 +250,62 @@ pub fn parse_metadata_from_zip(zip_path: &Path) -> Result<MultiMcMetadata, Strin
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
 
-    // 1. 定位实例根前缀：含 mmc-pack.json / instance.cfg 的目录（zip 常多包一层目录）。
-    let mut root_prefix: Option<String> = None;
+    // 1. 定位实例根前缀：收集所有含 mmc-pack.json 的目录（zip 常多包一层目录），
+    //    优先选同时含 instance.cfg 的统一前缀，避免 mmc-pack.json 与 instance.cfg
+    //    来自不同目录（如包内含多个实例或嵌套条目）导致名称/组件错配。
+    let mut mc_prefixes: Vec<String> = Vec::new();
     for i in 0..archive.len() {
         let Ok(entry) = archive.by_index(i) else {
             continue;
         };
         let name = entry.name();
-        if name.ends_with("mmc-pack.json") || name.ends_with("instance.cfg") {
-            root_prefix = Some(
-                name.rsplit_once('/')
-                    .map(|(dir, _)| dir)
-                    .unwrap_or("")
-                    .to_string(),
-            );
-            break;
+        if name.ends_with("mmc-pack.json") {
+            let dir = name
+                .rsplit_once('/')
+                .map(|(d, _)| d)
+                .unwrap_or("")
+                .to_string();
+            if !mc_prefixes.iter().any(|p| *p == dir) {
+                mc_prefixes.push(dir);
+            }
         }
     }
-    let Some(prefix) = root_prefix else {
-        return Err("未找到 MultiMC 实例（缺少 mmc-pack.json / instance.cfg）".to_string());
-    };
+    let prefix = mc_prefixes
+        .iter()
+        .find(|p| {
+            let cand = if p.is_empty() {
+                "instance.cfg".to_string()
+            } else {
+                format!("{p}/instance.cfg")
+            };
+            archive
+                .by_name(&cand)
+                .map(|mut e| {
+                    let mut s = String::new();
+                    std::io::Read::read_to_string(&mut e, &mut s).is_ok()
+                })
+                .unwrap_or(false)
+        })
+        .or_else(|| mc_prefixes.first())
+        .cloned()
+        .ok_or("未找到 MultiMC 实例（缺少 mmc-pack.json）")?;
     let prefix = prefix.as_str();
 
-    // 2. 读取 mmc-pack.json + instance.cfg（zip 内可能带前导目录）。
+    // 2. 读取 mmc-pack.json + instance.cfg（只在前缀下查找，不回退裸路径跨目录匹配）。
     let read_zip_str =
         |archive: &mut zip::ZipArchive<std::fs::File>, rel: &str| -> Result<String, String> {
-            for cand in [format!("{prefix}/{rel}"), rel.to_string()] {
-                let Ok(mut entry) = archive.by_name(&cand) else {
-                    continue;
-                };
-                let mut content = String::new();
-                if std::io::Read::read_to_string(&mut entry, &mut content).is_err() {
-                    continue;
-                }
-                return Ok(content);
-            }
-            Err(format!("zip 内缺少 {rel}"))
+            let cand = if prefix.is_empty() {
+                rel.to_string()
+            } else {
+                format!("{prefix}/{rel}")
+            };
+            let mut entry = archive
+                .by_name(&cand)
+                .map_err(|_| format!("zip 内缺少 {cand}"))?;
+            let mut content = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut content)
+                .map_err(|e| format!("读取 {cand} 失败: {e}"))?;
+            Ok(content)
         };
     let components = parse_mmc_components_from_str(&read_zip_str(&mut archive, "mmc-pack.json")?)?;
     let cfg = read_zip_str(&mut archive, "instance.cfg")
@@ -1551,5 +1571,92 @@ mod tests {
             hit.map(|h| h.url.clone())
         );
         let _ = std::fs::remove_dir_all(&game_root);
+    }
+
+    fn write_zip(root: &Path, name: &str, entries: &[(&str, &str)]) -> PathBuf {
+        let p = root.join(name);
+        let file = std::fs::File::create(&p).unwrap();
+        let mut zw = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (path, content) in entries {
+            zw.start_file(*path, opts).unwrap();
+            use std::io::Write;
+            zw.write_all(content.as_bytes()).unwrap();
+        }
+        zw.finish().unwrap();
+        p
+    }
+
+    #[test]
+    fn parse_metadata_from_zip_nested_prefix() {
+        let root = temp_dir("zip-nested");
+        // zip 多包一层目录（模拟 GTNH `GT New Horizons 2.8.4/`）。
+        let zip = write_zip(
+            &root,
+            "pack.zip",
+            &[
+                ("GT New Horizons 2.8.4/mmc-pack.json", PACK_JSON),
+                ("GT New Horizons 2.8.4/instance.cfg", CFG),
+                ("GT New Horizons 2.8.4/README.txt", "ignore"),
+            ],
+        );
+        let meta = parse_metadata_from_zip(&zip).unwrap();
+        assert_eq!(meta.name, "TestPack");
+        assert_eq!(meta.game_version, "1.12.2");
+        assert_eq!(meta.loader_uid, "net.minecraftforge");
+        assert_eq!(meta.max_memory, Some(2048));
+        // 名称兜底用 zip 前导目录名（无 instance.cfg name 时）。
+    }
+
+    #[test]
+    fn parse_metadata_from_zip_root_level() {
+        let root = temp_dir("zip-root");
+        let zip = write_zip(
+            &root,
+            "pack.zip",
+            &[("mmc-pack.json", PACK_JSON), ("instance.cfg", CFG)],
+        );
+        let meta = parse_metadata_from_zip(&zip).unwrap();
+        assert_eq!(meta.name, "TestPack");
+        assert_eq!(meta.game_version, "1.12.2");
+    }
+
+    #[test]
+    fn parse_metadata_from_zip_prefers_dir_with_cfg() {
+        let root = temp_dir("zip-pref");
+        // 两个候选：一个只有 mmc-pack.json（无 cfg），一个两者都有 → 应选后者。
+        let zip = write_zip(
+            &root,
+            "pack.zip",
+            &[
+                ("CandidateA/mmc-pack.json", PACK_JSON),
+                ("CandidateB/mmc-pack.json", PACK_JSON),
+                ("CandidateB/instance.cfg", CFG),
+            ],
+        );
+        let meta = parse_metadata_from_zip(&zip).unwrap();
+        assert_eq!(meta.name, "TestPack");
+        assert_eq!(meta.max_memory, Some(2048)); // cfg 来自 CandidateB
+    }
+
+    #[test]
+    fn parse_metadata_from_zip_real_gtnh() {
+        // 用户提供的真实 GTNH 压缩包（仅存在时运行）。
+        let zip = std::path::Path::new(
+            r"C:\Project\tmp\modpacks\muilti-mc\GT_New_Horizons_2.8.4_Java_17-25.zip",
+        );
+        if !zip.is_file() {
+            eprintln!("skip: GTNH zip not found");
+            return;
+        }
+        let meta = parse_metadata_from_zip(zip).unwrap();
+        assert_eq!(meta.game_version, "1.7.10");
+        assert_eq!(meta.loader_uid, "net.minecraftforge");
+        assert!(!meta.components.is_empty());
+        eprintln!(
+            "GTNH zip meta: name={} game={} loader={}",
+            meta.name, meta.game_version, meta.loader_uid
+        );
     }
 }

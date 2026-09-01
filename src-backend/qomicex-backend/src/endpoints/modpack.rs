@@ -427,20 +427,59 @@ async fn multimc_import(
     State(s): State<SharedState>,
     Json(req): Json<MultiMcImportRequest>,
 ) -> ApiResult<Json<ModpackInstallDirectResponse>> {
-    let (source_dir, is_temp): (std::path::PathBuf, bool) =
+    // 导入临时资源 RAII 守卫：Drop 时删除登记路径，覆盖所有提前返回路径
+    // （解压后 locate_instance_root / parse_metadata / 实例创建失败也会清理）。
+    struct ImportCleanup(Vec<PathBuf>);
+    impl ImportCleanup {
+        fn new() -> Self {
+            Self(Vec::new())
+        }
+        fn push_dir(&mut self, p: PathBuf) {
+            self.0.push(p);
+        }
+        fn push_file(&mut self, p: PathBuf) {
+            self.0.push(p);
+        }
+    }
+    impl Drop for ImportCleanup {
+        fn drop(&mut self) {
+            for p in &self.0 {
+                if p.is_dir() {
+                    let _ = std::fs::remove_dir_all(p);
+                } else {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
+    }
+    let mut cleanup = ImportCleanup::new();
+
+    let source_dir: std::path::PathBuf =
         match (req.source_id.as_deref(), req.source_path.as_deref()) {
-            (Some(id), _) => (multimc_imports_dir()?.join(id), true),
+            (Some(id), _) => {
+                let dir = multimc_imports_dir()?.join(id);
+                cleanup.push_dir(dir.clone());
+                dir
+            }
             (None, Some(p)) => {
                 let p = validate_source_path(p)?.to_path_buf();
                 if p.is_file() {
                     // source_path 指向 zip（解析阶段不落盘）→ 解压到临时目录，导入后清理。
                     let id = uuid::Uuid::new_v4().to_string();
                     let dir = multimc_imports_dir()?.join(&id);
-                    extract_zip_file(&p, &dir)
-                        .map_err(|e| ApiError::bad_request("MULTIMC_PARSE_EXTRACT_FAILED", e))?;
-                    (dir, true)
+                    if let Err(e) = extract_zip_file(&p, &dir) {
+                        // 解压失败也可能留下部分目录，交给守卫清理。
+                        cleanup.push_dir(dir);
+                        return Err(ApiError::bad_request("MULTIMC_PARSE_EXTRACT_FAILED", e));
+                    }
+                    // 上传的 zip（位于 modpack-uploads/）导入完成后删除，避免累积。
+                    if p.starts_with(&modpack_uploads_dir()?) {
+                        cleanup.push_file(p.clone());
+                    }
+                    cleanup.push_dir(dir.clone());
+                    dir
                 } else {
-                    (p, false)
+                    p
                 }
             }
             _ => {
@@ -511,11 +550,6 @@ async fn multimc_import(
     let mgr = s.download_manager.load_full();
     let http_client = s.http_client.clone();
     let inst_svc = s.instance.clone();
-    let cleanup_dir = if is_temp {
-        Some(source_dir.clone())
-    } else {
-        None
-    };
     let root_path = root.clone();
     let meta_owned = meta;
     let gd = game_dir.to_string_lossy().into_owned();
@@ -534,9 +568,7 @@ async fn multimc_import(
             &inst_id_inner,
         )
         .await;
-        if let Some(dir) = cleanup_dir {
-            let _ = std::fs::remove_dir_all(&dir);
-        }
+        drop(cleanup); // 导入完成（含失败）后清理临时解压目录与上传 zip
         if result.is_err() {
             // 回滚：删除实例记录 + 版本隔离目录。
             let _ = inst_svc.delete(&inst_id_inner);
