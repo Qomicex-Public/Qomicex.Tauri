@@ -56,6 +56,7 @@ import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/sett
 import { FILE_NAMING_OPTIONS } from '../lib/download-naming.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
 import { LegalDialog } from '../components/LegalDialog.tsx'
+import { PrivacyDialog } from '../components/PrivacyDialog.tsx'
 
 const CATEGORIES = [
   { id: 'launcher', icon: Rocket },
@@ -157,6 +158,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [pendingRequired, setPendingRequired] = useState(false)
   const [legalDialogOpen, setLegalDialogOpen] = useState(false)
+  const [privacyDialogOpen, setPrivacyDialogOpen] = useState(false)
   const { t } = useI18n()
 
   const isPreRelease = /-/.test(APP_INFO.version)
@@ -529,12 +531,14 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
         />
         <SettingRow
           label={t('settings.about.privacyPolicy')}
-          description={t('common.comingSoon')}
-          control={<Badge variant="secondary" className="h-5 shrink-0 text-[10px]">{t('common.comingSoon')}</Badge>}
+          description={t('settings.about.privacyPolicy')}
+          onClick={() => setPrivacyDialogOpen(true)}
+          control={<ChevronRight className="h-3 w-3 text-muted-foreground/50" />}
         />
       </SettingSection>
 
       <LegalDialog open={legalDialogOpen} onClose={() => setLegalDialogOpen(false)} />
+      <PrivacyDialog open={privacyDialogOpen} onClose={() => setPrivacyDialogOpen(false)} />
     </div>
   )
 }

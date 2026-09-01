@@ -109,6 +109,8 @@ fn manifest_channel(headers: &HeaderMap) -> &str {
 
 /// Perform the version check (corresponds to UpdateService.CheckAsync).
 async fn check_update(state: &SharedState, current: &str) -> ApiResult<UpdateCheckResponse> {
+    tracing::info!("checking update for current={current}");
+    tracing::info!("GET {UPSTREAM_BASE}{VERSION_CHECK_PATH} \nQuery current={current}");
     let response = state
         .http_client
         .get(format!("{UPSTREAM_BASE}{VERSION_CHECK_PATH}"))
@@ -122,6 +124,7 @@ async fn check_update(state: &SharedState, current: &str) -> ApiResult<UpdateChe
         .text()
         .await
         .map_err(|e| ApiError::upstream(e.to_string()))?;
+    tracing::info!("upstream response: HTTP {status} {text}");
     if !status.is_success() {
         return Err(ApiError::upstream(format!("HTTP {status}")));
     }

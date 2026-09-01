@@ -101,6 +101,7 @@ pub fn router() -> Router<SharedState> {
         )
         .route("/modpack/multimc/parse-folder", post(multimc_parse_folder))
         .route("/modpack/multimc/import", post(multimc_import))
+        .route("/modpack/parse-path", post(parse_path))
         .route("/modpack/resolve", post(resolve))
         .route("/modpack/install", post(install))
         .route("/modpack/install-direct", post(install_direct))
@@ -184,19 +185,10 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
     let file_id = file_id.expect("saved_path 与 file_id 同设");
 
     // === MultiMC 整合包（zip 内含 mmc-pack.json / instance.cfg）===
+    // 解析阶段不落盘：像 C# ZipArchive 只读 zip 条目解析元数据，返回 source_path
+    // （上传文件路径），安装阶段（multimc_import）再解压到临时目录并清理。
     if is_multimc_zip(&path) {
-        let mmc_id = uuid::Uuid::new_v4().to_string();
-        let mmc_dir = multimc_imports_dir()?.join(&mmc_id);
-        extract_zip_file(&path, &mmc_dir)
-            .map_err(|e| ApiError::bad_request("MULTIMC_PARSE_EXTRACT_FAILED", e))?;
-        let _ = std::fs::remove_file(&path); // 原始上传 zip 不再需要
-        let root = crate::services::multimc::locate_instance_root(&mmc_dir).ok_or_else(|| {
-            ApiError::bad_request(
-                "MULTIMC_NOT_FOUND",
-                "未找到 MultiMC 实例（缺少 instance.cfg / mmc-pack.json）",
-            )
-        })?;
-        let meta = crate::services::multimc::parse_metadata(&root)
+        let meta = crate::services::multimc::parse_metadata_from_zip(&path)
             .map_err(|e| ApiError::bad_request("MULTIMC_PARSE_FAILED", e))?;
         let loader = meta
             .loader_candidates
@@ -223,7 +215,8 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
             icon_data: meta.icon_data,
             file_id: None,
             pack_type: Some("multimc".to_string()),
-            source_id: Some(mmc_id),
+            source_id: None,
+            source_path: Some(path.to_string_lossy().into_owned()),
         }));
     }
 
@@ -241,6 +234,73 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
         _ => "qomicex".to_string(),
     });
     Ok(Json(result))
+}
+
+/// POST /modpack/parse-path -- parse a local modpack file by absolute path.
+///
+/// IPC 模式下大文件（>200MB）无法通过 Tauri invoke 传输（JSON 序列化 Uint8Array
+/// 触发 RangeError: Invalid array length），改为前端用 dialog 取路径后调此端点，
+/// 后端直接从磁盘读取，绕过 IPC 二进制瓶颈。
+async fn parse_path(Json(req): Json<ParsePathRequest>) -> ApiResult<Json<ModpackParseResult>> {
+    let path = validate_source_path(&req.path)?;
+    if !path.is_file() {
+        return Err(ApiError::not_found(
+            "MODPACK_FILE_NOT_FOUND",
+            "整合包文件不存在",
+        ));
+    }
+
+    // MultiMC 整合包（zip 内含 mmc-pack.json/instance.cfg）
+    if is_multimc_zip(path) {
+        let meta = crate::services::multimc::parse_metadata_from_zip(path)
+            .map_err(|e| ApiError::bad_request("MULTIMC_PARSE_FAILED", e))?;
+        let loader = meta
+            .loader_candidates
+            .first()
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| meta.loader_uid.clone());
+        return Ok(Json(ModpackParseResult {
+            name: meta.name,
+            summary: None,
+            author: None,
+            version: None,
+            game_version: meta.game_version,
+            loader,
+            loader_version: if meta.loader_version.is_empty() {
+                None
+            } else {
+                Some(meta.loader_version)
+            },
+            source: "multimc".to_string(),
+            files: Vec::new(),
+            has_overrides: false,
+            file_count: 0,
+            overrides_zip: None,
+            icon_data: meta.icon_data,
+            file_id: None,
+            pack_type: Some("multimc".to_string()),
+            source_id: None,
+            source_path: Some(path.to_string_lossy().into_owned()),
+        }));
+    }
+
+    let parsed = parse_local_pack_file(path)
+        .map_err(|e| ApiError::bad_request("MODPACK_PARSE_FAILED", e))?;
+
+    let source = parsed.source.clone();
+    let mut result = parsed.to_parse_result();
+    result.file_id = None;
+    result.pack_type = Some(match source.as_str() {
+        "modrinth" => "modrinth".to_string(),
+        "curseforge" => "curseforge".to_string(),
+        _ => "qomicex".to_string(),
+    });
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+struct ParsePathRequest {
+    path: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -367,10 +427,77 @@ async fn multimc_import(
     State(s): State<SharedState>,
     Json(req): Json<MultiMcImportRequest>,
 ) -> ApiResult<Json<ModpackInstallDirectResponse>> {
-    let (source_dir, is_temp): (std::path::PathBuf, bool) =
+    // 导入临时资源 RAII 守卫：Drop 时删除登记路径，覆盖所有提前返回路径
+    // （解压后 locate_instance_root / parse_metadata / 实例创建失败也会清理）。
+    struct ImportCleanup(Vec<PathBuf>);
+    impl ImportCleanup {
+        fn new() -> Self {
+            Self(Vec::new())
+        }
+        fn push_dir(&mut self, p: PathBuf) {
+            self.0.push(p);
+        }
+        fn push_file(&mut self, p: PathBuf) {
+            self.0.push(p);
+        }
+    }
+    impl Drop for ImportCleanup {
+        fn drop(&mut self) {
+            for p in &self.0 {
+                if p.is_dir() {
+                    let _ = std::fs::remove_dir_all(p);
+                } else {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
+    }
+    let mut cleanup = ImportCleanup::new();
+
+    let source_dir: std::path::PathBuf =
         match (req.source_id.as_deref(), req.source_path.as_deref()) {
-            (Some(id), _) => (multimc_imports_dir()?.join(id), true),
-            (None, Some(p)) => (validate_source_path(p)?.to_path_buf(), false),
+            (Some(id), _) => {
+                // source_id 由解析阶段生成（multimc_imports_dir/{uuid}），此处要求 UUID
+                // 格式，防止恶意 source_id（含 .. / 绝对路径）让 RAII 清理删除任意目录。
+                let is_uuid = uuid::Uuid::parse_str(id).is_ok();
+                if !is_uuid || id.is_empty() {
+                    return Err(ApiError::bad_request(
+                        "MULTIMC_SOURCE_ID_INVALID",
+                        "sourceId 无效（应为 UUID）",
+                    ));
+                }
+                let dir = multimc_imports_dir()?.join(id);
+                // 纵深防御：确认拼接后仍在 imports 根下（UUID 已保证无分隔符，此处兜底）。
+                if !dir.starts_with(&multimc_imports_dir()?) {
+                    return Err(ApiError::bad_request(
+                        "MULTIMC_SOURCE_ID_INVALID",
+                        "sourceId 无效（越界路径）",
+                    ));
+                }
+                cleanup.push_dir(dir.clone());
+                dir
+            }
+            (None, Some(p)) => {
+                let p = validate_source_path(p)?.to_path_buf();
+                if p.is_file() {
+                    // source_path 指向 zip（解析阶段不落盘）→ 解压到临时目录，导入后清理。
+                    let id = uuid::Uuid::new_v4().to_string();
+                    let dir = multimc_imports_dir()?.join(&id);
+                    if let Err(e) = extract_zip_file(&p, &dir) {
+                        // 解压失败也可能留下部分目录，交给守卫清理。
+                        cleanup.push_dir(dir);
+                        return Err(ApiError::bad_request("MULTIMC_PARSE_EXTRACT_FAILED", e));
+                    }
+                    // 上传的 zip（位于 modpack-uploads/）导入完成后删除，避免累积。
+                    if p.starts_with(&modpack_uploads_dir()?) {
+                        cleanup.push_file(p.clone());
+                    }
+                    cleanup.push_dir(dir.clone());
+                    dir
+                } else {
+                    p
+                }
+            }
             _ => {
                 return Err(ApiError::bad_request(
                     "MULTIMC_SOURCE_REQUIRED",
@@ -439,11 +566,6 @@ async fn multimc_import(
     let mgr = s.download_manager.load_full();
     let http_client = s.http_client.clone();
     let inst_svc = s.instance.clone();
-    let cleanup_dir = if is_temp {
-        Some(source_dir.clone())
-    } else {
-        None
-    };
     let root_path = root.clone();
     let meta_owned = meta;
     let gd = game_dir.to_string_lossy().into_owned();
@@ -462,9 +584,7 @@ async fn multimc_import(
             &inst_id_inner,
         )
         .await;
-        if let Some(dir) = cleanup_dir {
-            let _ = std::fs::remove_dir_all(&dir);
-        }
+        drop(cleanup); // 导入完成（含失败）后清理临时解压目录与上传 zip
         if result.is_err() {
             // 回滚：删除实例记录 + 版本隔离目录。
             let _ = inst_svc.delete(&inst_id_inner);
@@ -587,7 +707,10 @@ async fn run_multimc_import(
     Ok(())
 }
 
-/// 探测 zip 是否为 MultiMC 整合包（内含 `mmc-pack.json` 或 `instance.cfg`）。
+/// 探测 zip 是否为 MultiMC 整合包。
+/// 只认 `mmc-pack.json`（MultiMC 实例的强标识，且 parse_metadata_from_zip 也以此为准）。
+/// 单独的 `instance.cfg` 不作为信号：普通 Modrinth/CurseForge 包可能恰好含同名文件，
+/// 误判后会被交给 parse_metadata_from_zip 并因缺 mmc-pack.json 而拒绝本应有效的整合包。
 fn is_multimc_zip(zip_path: &std::path::Path) -> bool {
     let Ok(file) = std::fs::File::open(zip_path) else {
         return false;
@@ -600,11 +723,7 @@ fn is_multimc_zip(zip_path: &std::path::Path) -> bool {
             continue;
         };
         let name = entry.name();
-        if name == "mmc-pack.json"
-            || name.ends_with("/mmc-pack.json")
-            || name == "instance.cfg"
-            || name.ends_with("/instance.cfg")
-        {
+        if name == "mmc-pack.json" || name.ends_with("/mmc-pack.json") {
             return true;
         }
     }
@@ -625,11 +744,23 @@ fn extract_zip(data: &[u8], dest: &std::path::Path) -> Result<(), String> {
     extract_archive(&mut archive, dest)
 }
 
+/// zip 炸弹防护阈值（远高于正常整合包：GTNH 约 1.2 万条目 / 解压 0.72GB）。
+const MAX_ZIP_ENTRIES: usize = 200_000;
+const MAX_ENTRY_UNCOMPRESSED: u64 = 8 * 1024 * 1024 * 1024; // 单文件 8 GiB
+const MAX_TOTAL_UNCOMPRESSED: u64 = 64 * 1024 * 1024 * 1024; // 总解压 64 GiB
+
 fn extract_archive<R: std::io::Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
     dest: &std::path::Path,
 ) -> Result<(), String> {
-    for i in 0..archive.len() {
+    let total_entries = archive.len();
+    if total_entries > MAX_ZIP_ENTRIES {
+        return Err(format!(
+            "整合包条目数过多（{total_entries} > {MAX_ZIP_ENTRIES}），疑似异常压缩包"
+        ));
+    }
+    let mut total_uncompressed: u64 = 0;
+    for i in 0..total_entries {
         let mut entry = archive
             .by_index(i)
             .map_err(|e| format!("读取整合包条目失败: {e}"))?;
@@ -642,6 +773,18 @@ fn extract_archive<R: std::io::Read + std::io::Seek>(
             std::fs::create_dir_all(&target)
                 .map_err(|e| format!("创建目录失败 {}: {e}", target.display()))?;
             continue;
+        }
+        let size = entry.size();
+        if size > MAX_ENTRY_UNCOMPRESSED {
+            return Err(format!(
+                "整合包内文件过大（{} > {MAX_ENTRY_UNCOMPRESSED} B）：{}",
+                size,
+                entry.name()
+            ));
+        }
+        total_uncompressed += size;
+        if total_uncompressed > MAX_TOTAL_UNCOMPRESSED {
+            return Err("整合包解压总大小超出限制，疑似异常压缩包".to_string());
         }
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)
@@ -971,6 +1114,7 @@ impl ModpackServiceData {
             file_id: None,
             pack_type: None,
             source_id: None,
+            source_path: None,
         })
     }
 
@@ -1033,6 +1177,7 @@ impl ModpackServiceData {
             file_id: None,
             pack_type: None,
             source_id: None,
+            source_path: None,
         })
     }
 
@@ -1107,6 +1252,7 @@ impl ModpackServiceData {
             file_id: None,
             pack_type: None,
             source_id: None,
+            source_path: None,
         })
     }
 
@@ -1242,6 +1388,7 @@ impl ModpackServiceData {
                 file_id: None,
                 pack_type: None,
                 source_id: None,
+                source_path: None,
             };
             result
         } else {
@@ -2226,6 +2373,7 @@ impl LocalPackParse {
             file_id: None,
             pack_type: None,
             source_id: None,
+            source_path: None,
         }
     }
 }
@@ -2448,6 +2596,9 @@ pub struct ModpackParseResult {
     /// MultiMC 导入：`{BaseDir}/temp/multimc-imports/{uuid}` 解压根句柄。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
+    /// MultiMC 导入：源 zip / 文件夹绝对路径（解析阶段不落盘时用）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

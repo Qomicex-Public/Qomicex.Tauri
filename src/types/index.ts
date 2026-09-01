@@ -802,6 +802,8 @@ export interface ModpackParseResult {
   packType?: string | null
   /** MultiMC 导入：multimc-imports 解压根句柄，随 /modpack/multimc/import 传回 */
   sourceId?: string | null
+  /** MultiMC 导入：源 zip / 文件夹绝对路径（解析阶段不落盘时用） */
+  sourcePath?: string | null
 }
 
 export interface ModpackInstallRequest {
