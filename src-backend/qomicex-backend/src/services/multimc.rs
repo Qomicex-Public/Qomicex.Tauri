@@ -653,6 +653,16 @@ pub async fn build_merged_version_json(
         }
     }
 
+    // 3.5. HMCL 语义对齐：net.minecraft patch 自带 libraries 时，以其替换 Mojang base 的
+    // libraries 作为基础库表。MultiMC 的 net.minecraft.json 是修正后的完整库表
+    // （如 gson 2.10.1、log4j -fixed、剔除 LWJGL2），直接 merge 会残留 Mojang base 旧库
+    // （gson 2.2.4 / LWJGL2 2.9.1）导致 classpath 冲突、启动 VerifyError。
+    if let Some(mc_patch) = patches.get("net.minecraft") {
+        if let Some(libs) = mc_patch.get("libraries").and_then(Value::as_array) {
+            merged["libraries"] = Value::Array(libs.clone());
+        }
+    }
+
     // 4. 依序合并（dependency-only 优先，保持 mmc-pack 相对序；标量字段后定义者胜出）。
     let mut order: Vec<String> = Vec::new();
     let mut deps: Vec<String> = Vec::new();
