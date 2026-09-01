@@ -707,7 +707,10 @@ async fn run_multimc_import(
     Ok(())
 }
 
-/// 探测 zip 是否为 MultiMC 整合包（内含 `mmc-pack.json` 或 `instance.cfg`）。
+/// 探测 zip 是否为 MultiMC 整合包。
+/// 只认 `mmc-pack.json`（MultiMC 实例的强标识，且 parse_metadata_from_zip 也以此为准）。
+/// 单独的 `instance.cfg` 不作为信号：普通 Modrinth/CurseForge 包可能恰好含同名文件，
+/// 误判后会被交给 parse_metadata_from_zip 并因缺 mmc-pack.json 而拒绝本应有效的整合包。
 fn is_multimc_zip(zip_path: &std::path::Path) -> bool {
     let Ok(file) = std::fs::File::open(zip_path) else {
         return false;
@@ -720,11 +723,7 @@ fn is_multimc_zip(zip_path: &std::path::Path) -> bool {
             continue;
         };
         let name = entry.name();
-        if name == "mmc-pack.json"
-            || name.ends_with("/mmc-pack.json")
-            || name == "instance.cfg"
-            || name.ends_with("/instance.cfg")
-        {
+        if name == "mmc-pack.json" || name.ends_with("/mmc-pack.json") {
             return true;
         }
     }
