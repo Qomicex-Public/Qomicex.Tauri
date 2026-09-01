@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import type { DragEvent } from 'react'
 import { FileDown, FolderOpen } from 'lucide-react'
+import { listen } from '@tauri-apps/api/event'
 import { Dialog, DialogBody, DialogHeader, DialogTitle } from '../components/ui'
 import { Button } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { Separator } from '../components/ui'
-import { parseModpackFile, startModpackInstall, parseMultiMcFolder, startMultiMcImport } from '../api/instance.ts'
+import { parseModpackFile, parseModpackFileByPath, startModpackInstall, parseMultiMcFolder, startMultiMcImport } from '../api/instance.ts'
 import { ApiError } from '../api/client.ts'
 import type { ModpackParseResult, MultiMcParseResult } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
@@ -26,31 +26,48 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   const { t } = useI18n()
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  // Tauri 原生 file-drop 事件最近一次拖入的路径（文件夹拖入用）。
-  const folderPathsRef = useRef<string[]>([])
   const [step, setStep] = useState<'select' | 'parsing' | 'preview'>('select')
-  const [dragActive, setDragActive] = useState(false)
   const [parsed, setParsed] = useState<ModpackParseResult | MultiMcParseResult | null>(null)
   const [instanceName, setInstanceName] = useState('')
   const [error, setError] = useState('')
+  const [dropHover, setDropHover] = useState(false)
 
-  // 打开期间让全局拖放路由进本对话框；同时监听 Tauri 原生 file-drop 取路径（文件夹）。
+  // Tauri 原生 file-drop 事件：文件和文件夹统一处理。
   useEffect(() => {
     importDialogActive.current = open
     if (!open) return
-    let un: (() => void) | undefined
-    import('@tauri-apps/api/event')
-      .then(async ({ listen }) => {
-        un = await listen<string[]>('file-drop', e => {
-          folderPathsRef.current = e.payload || []
-        })
-      })
-      .catch(() => {})
+    let unHover: (() => void) | undefined
+    let unDrop: (() => void) | undefined
+    listen<boolean>('file-drop-hover', e => {
+      setDropHover(!!e.payload)
+    }).then(fn => { unHover = fn }).catch(() => {})
+    listen<string[]>('file-drop', async e => {
+      setDropHover(false)
+      const paths = e.payload
+      if (!paths?.length) return
+      const p = paths[0]
+      if (/\.(zip|mrpack|qmodpack)$/i.test(p)) {
+        setStep('parsing')
+        setError('')
+        try {
+          const result = await parseModpackFileByPath(p)
+          setParsed(result)
+          setInstanceName(result.name)
+          setStep('preview')
+        } catch (e: any) {
+          setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
+          setStep('select')
+        }
+      } else {
+        await parseFolder(p)
+      }
+    }).then(fn => { unDrop = fn }).catch(() => {})
     return () => {
       importDialogActive.current = false
-      un?.()
+      unHover?.()
+      unDrop?.()
     }
-  }, [open])
+  }, [open, t])
 
   /** 解析一个文件（后端 /modpack/parse 统一识别 MultiMC / CF / MR / Qomicex）。 */
   const parseFile = async (file: File) => {
@@ -88,24 +105,6 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     if (!file) return
     input!.value = ''
     await parseFile(file)
-  }
-
-  /** 拖放：文件走浏览器 DnD（File 对象上传）；文件夹走 Tauri file-drop 路径。 */
-  const handleDrop = async (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    setDragActive(false)
-    const files = Array.from(e.dataTransfer.files)
-    if (files.length > 0) {
-      await parseFile(files[0])
-      return
-    }
-    // 文件夹：无 files，用 Tauri 原生事件给的路径。
-    const path = folderPathsRef.current[0]
-    if (path) {
-      await parseFolder(path)
-    } else {
-      setError(t('dialogs.import.folderDropUnsupported'))
-    }
   }
 
   const handleFolderSelect = async () => {
@@ -178,7 +177,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     setStep('select')
     setParsed(null)
     setError('')
-    setDragActive(false)
+    setDropHover(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -194,15 +193,12 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
               role="button"
               tabIndex={0}
               onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragActive(true) }}
-              onDragLeave={() => setDragActive(false)}
-              onDrop={handleDrop}
               className={cn(
                 'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center transition-colors',
-                dragActive ? 'border-primary/60 bg-primary/5' : 'border-muted-foreground/40 hover:border-primary/50 hover:bg-primary/5',
+                dropHover ? 'border-primary/60 bg-primary/5' : 'border-muted-foreground/40 hover:border-primary/50 hover:bg-primary/5',
               )}
             >
-              <FileDown className={cn('h-8 w-8', dragActive ? 'text-primary' : 'text-muted-foreground')} />
+              <FileDown className={cn('h-8 w-8', dropHover ? 'text-primary' : 'text-muted-foreground')} />
               <span className="text-sm font-medium">{t('dialogs.import.dropHint')}</span>
               <span className="text-xs text-muted-foreground">{t('dialogs.import.dropSubHint')}</span>
             </div>
@@ -228,7 +224,28 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
         )}
 
         {step === 'parsing' && (
-          <p className="text-muted-foreground">{t('dialogs.import.parsing')}</p>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="h-4 w-24 animate-pulse rounded bg-muted" />
+              <div className="h-5 w-48 animate-pulse rounded bg-muted" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+                <div className="h-4 w-16 animate-pulse rounded bg-muted" />
+              </div>
+              <div className="space-y-2">
+                <div className="h-4 w-16 animate-pulse rounded bg-muted" />
+                <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+              </div>
+            </div>
+            <div className="h-px w-full bg-border" />
+            <div className="space-y-2">
+              <div className="h-4 w-28 animate-pulse rounded bg-muted" />
+              <div className="h-8 w-full animate-pulse rounded bg-muted" />
+            </div>
+            <p className="text-xs text-muted-foreground">{t('dialogs.import.parsing')}</p>
+          </div>
         )}
 
         {step === 'preview' && parsed && (

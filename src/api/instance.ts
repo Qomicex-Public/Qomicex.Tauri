@@ -187,6 +187,18 @@ export async function parseModpackFile(file: File): Promise<ModpackParseResult> 
   }
 }
 
+/** 按本地路径解析整合包（Tauri file-drop 场景）。大文件解析耗时长，给 60s 超时。 */
+export async function parseModpackFileByPath(path: string): Promise<ModpackParseResult> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60_000)
+  try {
+    const res = await post<ModpackParseResult>('/modpack/parse-path', { path }, { signal: controller.signal })
+    return res
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function resolveModpack(source: string, projectId: string, versionId: string): Promise<ModpackParseResult> {
   return post<ModpackParseResult>('/modpack/resolve', { source, projectId, versionId })
 }

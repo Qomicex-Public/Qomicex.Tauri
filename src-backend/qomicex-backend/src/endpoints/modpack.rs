@@ -101,6 +101,7 @@ pub fn router() -> Router<SharedState> {
         )
         .route("/modpack/multimc/parse-folder", post(multimc_parse_folder))
         .route("/modpack/multimc/import", post(multimc_import))
+        .route("/modpack/parse-path", post(parse_path))
         .route("/modpack/resolve", post(resolve))
         .route("/modpack/install", post(install))
         .route("/modpack/install-direct", post(install_direct))
@@ -241,6 +242,82 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
         _ => "qomicex".to_string(),
     });
     Ok(Json(result))
+}
+
+/// POST /modpack/parse-path -- parse a local modpack file by absolute path.
+///
+/// IPC 模式下大文件（>200MB）无法通过 Tauri invoke 传输（JSON 序列化 Uint8Array
+/// 触发 RangeError: Invalid array length），改为前端用 dialog 取路径后调此端点，
+/// 后端直接从磁盘读取，绕过 IPC 二进制瓶颈。
+async fn parse_path(Json(req): Json<ParsePathRequest>) -> ApiResult<Json<ModpackParseResult>> {
+    let path = validate_source_path(&req.path)?;
+    if !path.is_file() {
+        return Err(ApiError::not_found(
+            "MODPACK_FILE_NOT_FOUND",
+            "整合包文件不存在",
+        ));
+    }
+
+    // MultiMC 整合包（zip 内含 mmc-pack.json/instance.cfg）
+    if is_multimc_zip(path) {
+        let mmc_id = uuid::Uuid::new_v4().to_string();
+        let mmc_dir = multimc_imports_dir()?.join(&mmc_id);
+        extract_zip_file(path, &mmc_dir)
+            .map_err(|e| ApiError::bad_request("MULTIMC_PARSE_EXTRACT_FAILED", e))?;
+        let root = crate::services::multimc::locate_instance_root(&mmc_dir).ok_or_else(|| {
+            ApiError::bad_request(
+                "MULTIMC_NOT_FOUND",
+                "未找到 MultiMC 实例（缺少 instance.cfg / mmc-pack.json）",
+            )
+        })?;
+        let meta = crate::services::multimc::parse_metadata(&root)
+            .map_err(|e| ApiError::bad_request("MULTIMC_PARSE_FAILED", e))?;
+        let loader = meta
+            .loader_candidates
+            .first()
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| meta.loader_uid.clone());
+        return Ok(Json(ModpackParseResult {
+            name: meta.name,
+            summary: None,
+            author: None,
+            version: None,
+            game_version: meta.game_version,
+            loader,
+            loader_version: if meta.loader_version.is_empty() {
+                None
+            } else {
+                Some(meta.loader_version)
+            },
+            source: "multimc".to_string(),
+            files: Vec::new(),
+            has_overrides: false,
+            file_count: 0,
+            overrides_zip: None,
+            icon_data: meta.icon_data,
+            file_id: None,
+            pack_type: Some("multimc".to_string()),
+            source_id: Some(mmc_id),
+        }));
+    }
+
+    let parsed = parse_local_pack_file(path)
+        .map_err(|e| ApiError::bad_request("MODPACK_PARSE_FAILED", e))?;
+
+    let source = parsed.source.clone();
+    let mut result = parsed.to_parse_result();
+    result.file_id = None;
+    result.pack_type = Some(match source.as_str() {
+        "modrinth" => "modrinth".to_string(),
+        "curseforge" => "curseforge".to_string(),
+        _ => "qomicex".to_string(),
+    });
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+struct ParsePathRequest {
+    path: String,
 }
 
 // ---------------------------------------------------------------------------
