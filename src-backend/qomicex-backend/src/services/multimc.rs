@@ -603,9 +603,6 @@ pub async fn build_merged_version_json(
     // 2. 加载全部组件 patch（本地优先，否则 meta）。
     let mut patches: HashMap<String, Value> = HashMap::new();
     for c in &metadata.components {
-        if c.uid == "net.minecraft" {
-            continue; // base 已含
-        }
         let p = load_patch(
             http_client,
             root,
@@ -660,9 +657,6 @@ pub async fn build_merged_version_json(
     let mut order: Vec<String> = Vec::new();
     let mut deps: Vec<String> = Vec::new();
     for c in &metadata.components {
-        if c.uid == "net.minecraft" {
-            continue;
-        }
         if c.dependency_only {
             deps.push(c.uid.clone());
         } else if patches.contains_key(&c.uid) {
