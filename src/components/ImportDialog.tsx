@@ -6,7 +6,7 @@ import { Button } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { Separator } from '../components/ui'
-import { parseModpackFile, parseModpackFileByPath, startModpackInstall, parseMultiMcFolder, startMultiMcImport } from '../api/instance.ts'
+import { parseModpackFileByPath, startModpackInstall, parseMultiMcFolder, startMultiMcImport } from '../api/instance.ts'
 import { ApiError } from '../api/client.ts'
 import type { ModpackParseResult, MultiMcParseResult } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
@@ -25,7 +25,6 @@ interface Props {
 export default function ImportDialog({ open, onClose, gameDir, versionIsolation }: Props) {
   const { t } = useI18n()
   const navigate = useNavigate()
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<'select' | 'parsing' | 'preview'>('select')
   const [parsed, setParsed] = useState<ModpackParseResult | MultiMcParseResult | null>(null)
   const [instanceName, setInstanceName] = useState('')
@@ -78,24 +77,6 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     }
   }, [open, t])
 
-  /** 解析一个文件（后端 /modpack/parse 统一识别 MultiMC / CF / MR / Qomicex）。 */
-  const parseFile = async (file: File) => {
-    const reqId = ++parseReqIdRef.current
-    setStep('parsing')
-    setError('')
-    try {
-      const result = await parseModpackFile(file)
-      if (reqId !== parseReqIdRef.current) return
-      setParsed(result)
-      setInstanceName(result.name)
-      setStep('preview')
-    } catch (e: any) {
-      if (reqId !== parseReqIdRef.current) return
-      setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
-      setStep('select')
-    }
-  }
-
   /** 解析一个 MultiMC 实例文件夹。 */
   const parseFolder = async (path: string, reqId = ++parseReqIdRef.current) => {
     setStep('parsing')
@@ -114,11 +95,20 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   }
 
   const handleFileSelect = async () => {
-    const input = fileInputRef.current
-    const file = input?.files?.[0]
-    if (!file) return
-    input!.value = ''
-    await parseFile(file)
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const file = await open({ multiple: false, filters: [{ name: 'Modpack', extensions: ['zip', 'mrpack', 'qmodpack'] }] })
+      if (typeof file !== 'string' || !file) return
+      setStep('parsing')
+      setError('')
+      const result = await parseModpackFileByPath(file)
+      setParsed(result)
+      setInstanceName(result.name)
+      setStep('preview')
+    } catch (e: any) {
+      setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
+      setStep('select')
+    }
   }
 
   const handleFolderSelect = async () => {
@@ -193,7 +183,6 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     setParsed(null)
     setError('')
     setDropHover(false)
-    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   // 统一关闭路径：标题栏 × 与弹窗遮罩都先 reset（作废在途解析）再 onClose，
@@ -214,7 +203,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             <div
               role="button"
               tabIndex={0}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={handleFileSelect}
               className={cn(
                 'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center transition-colors',
                 dropHover ? 'border-primary/60 bg-primary/5' : 'border-muted-foreground/40 hover:border-primary/50 hover:bg-primary/5',
@@ -224,13 +213,6 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
               <span className="text-sm font-medium">{t('dialogs.import.dropHint')}</span>
               <span className="text-xs text-muted-foreground">{t('dialogs.import.dropSubHint')}</span>
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".zip,.mrpack,.qmodpack"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
             <div className="flex items-center gap-2">
               <Separator className="flex-1" />
               <span className="text-xs text-muted-foreground">or</span>
