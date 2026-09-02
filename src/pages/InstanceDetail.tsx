@@ -750,7 +750,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                   </div>
                 </div>
               )}
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2 p-4">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
                     <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
@@ -964,7 +964,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           </div>
         </div>
         {loading ? (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 p-4">
             {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
                 <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
@@ -1128,7 +1128,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           </div>
         </div>
         {loading ? (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 p-4">
             {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
                 <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
@@ -1288,7 +1288,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           </div>
         </div>
         {loading ? (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 p-4">
             {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
                 <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
