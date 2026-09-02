@@ -427,6 +427,15 @@ async fn multimc_import(
     State(s): State<SharedState>,
     Json(req): Json<MultiMcImportRequest>,
 ) -> ApiResult<Json<ModpackInstallDirectResponse>> {
+    multimc_import_impl(s, req).await
+}
+
+/// MultiMC 导入主体（multimc_import 与 /modpack/install-direct 的 MultiMC zip
+/// 分支共用；source_path 指向 zip 时解压到临时目录，导入后清理）。
+async fn multimc_import_impl(
+    s: SharedState,
+    req: MultiMcImportRequest,
+) -> ApiResult<Json<ModpackInstallDirectResponse>> {
     // 导入临时资源 RAII 守卫：Drop 时删除登记路径，覆盖所有提前返回路径
     // （解压后 locate_instance_root / parse_metadata / 实例创建失败也会清理）。
     struct ImportCleanup(Vec<PathBuf>);
@@ -1001,7 +1010,7 @@ async fn install_direct(
     State(s): State<SharedState>,
     Json(req): Json<ModpackInstallDirectRequest>,
 ) -> ApiResult<Json<ModpackInstallDirectResponse>> {
-    let instance_id = modpack_data(&s).install_direct(req).await?;
+    let instance_id = modpack_data(&s).install_direct(s, req).await?;
     Ok(Json(ModpackInstallDirectResponse { instance_id }))
 }
 
@@ -1316,6 +1325,8 @@ impl ModpackServiceData {
         };
 
         let file_download_source = crate::settings::get_global_file_download_source();
+        let inst_svc = self.instance.clone();
+        let inst_id_inner = instance_id.clone();
         tracker.start_modpack_install(instance_id.clone(), move |handle| async move {
             let result = run_modpack_pipeline(
                 &handle,
@@ -1337,8 +1348,25 @@ impl ModpackServiceData {
                 file_download_source,
             )
             .await;
+            // 清理在线下载的包体临时文件（本地导入的文件不属于我们，不删）。
+            if local_pack_path.is_none() {
+                let ext = if source == "modrinth" {
+                    "mrpack"
+                } else {
+                    "zip"
+                };
+                let temp_pack = Path::new(&game_dir)
+                    .join("temp")
+                    .join(format!("modpack-{version_dir_name}.{ext}"));
+                let _ = std::fs::remove_file(&temp_pack);
+            }
             if let Some(p) = cleanup_path {
                 let _ = std::fs::remove_file(&p);
+            }
+            if result.is_err() {
+                // 回滚：安装失败/取消 → 删除实例记录 + 版本隔离目录，不残留不可用实例。
+                // 共享目录（libraries/assets/非隔离 mods）不清理，避免误删。
+                let _ = inst_svc.delete(&inst_id_inner);
             }
             result
         });
@@ -1347,7 +1375,11 @@ impl ModpackServiceData {
     }
 
     /// One-click install: resolve (local path or online), then install.
-    async fn install_direct(&self, req: ModpackInstallDirectRequest) -> ApiResult<String> {
+    async fn install_direct(
+        &self,
+        s: SharedState,
+        req: ModpackInstallDirectRequest,
+    ) -> ApiResult<String> {
         if req.id.trim().is_empty() {
             return Err(ApiError::bad_request(
                 "MODPACK_NAME_REQUIRED",
@@ -1367,6 +1399,22 @@ impl ModpackServiceData {
                     "MODPACK_FILE_NOT_FOUND",
                     "Modpack file not found",
                 ));
+            }
+            // MultiMC zip（含 mmc-pack.json）：走 MultiMC 导入管线，其余格式走
+            // 本地 parse_local_pack_file。id 即实例名，语义与 ImportDialog 一致。
+            if is_multimc_zip(Path::new(path)) {
+                let resp = multimc_import_impl(
+                    s,
+                    MultiMcImportRequest {
+                        source_id: None,
+                        source_path: Some(path.to_string()),
+                        name: req.id,
+                        game_dir: req.game_dir,
+                        version_isolation: req.version_isolation,
+                    },
+                )
+                .await?;
+                return Ok(resp.0.instance_id);
             }
             let parsed = parse_local_pack_file(Path::new(path))
                 .map_err(|e| ApiError::bad_request("MODPACK_PARSE_FAILED", e))?;
