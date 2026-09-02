@@ -623,9 +623,25 @@ fn is_cf_modpack_manifest(archive: &mut zip::ZipArchive<std::fs::File>) -> bool 
 
 /// MultiMC 整合包预览元数据：name 取自 instance.cfg 的 `name=`，
 /// game_version/loader 取自 mmc-pack.json 的 components。
+/// 实例根以 mmc-pack.json 所在目录为准（根级或嵌套顶层实例目录，如 MultiMC 导出）。
 fn multimc_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<PackMeta> {
+    let mut mmc_path = None;
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index(i) else {
+            continue;
+        };
+        let n = entry.name();
+        if n == "mmc-pack.json" || n.ends_with("/mmc-pack.json") {
+            mmc_path = Some(n.to_string());
+            break;
+        }
+    }
+    let mmc_path = mmc_path?;
+    let prefix = mmc_path.strip_suffix("mmc-pack.json").unwrap_or_default();
+    let cfg_path = format!("{prefix}instance.cfg");
+
     let mut name = None;
-    if let Ok(mut f) = archive.by_name("instance.cfg") {
+    if let Ok(mut f) = archive.by_name(&cfg_path) {
         let mut text = String::new();
         if std::io::Read::read_to_string(&mut f, &mut text).is_ok() {
             for line in text.lines() {
@@ -639,7 +655,7 @@ fn multimc_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<Pac
             }
         }
     }
-    let root = read_entry_json(archive, "mmc-pack.json")?;
+    let root = read_entry_json(archive, &mmc_path)?;
     let components = root.get("components").and_then(|c| c.as_array());
     let game_version = components
         .and_then(|cs| {
