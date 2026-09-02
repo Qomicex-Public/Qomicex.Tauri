@@ -95,17 +95,20 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   }
 
   const handleFileSelect = async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const file = await open({ multiple: false, filters: [{ name: 'Modpack', extensions: ['zip', 'mrpack', 'qmodpack'] }] })
+    if (typeof file !== 'string' || !file) return
+    const reqId = ++parseReqIdRef.current
+    setStep('parsing')
+    setError('')
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const file = await open({ multiple: false, filters: [{ name: 'Modpack', extensions: ['zip', 'mrpack', 'qmodpack'] }] })
-      if (typeof file !== 'string' || !file) return
-      setStep('parsing')
-      setError('')
       const result = await parseModpackFileByPath(file)
+      if (reqId !== parseReqIdRef.current) return
       setParsed(result)
       setInstanceName(result.name)
       setStep('preview')
     } catch (e: any) {
+      if (reqId !== parseReqIdRef.current) return
       setError(e instanceof ApiError ? e.displayMessage : e.message || t('dialogs.import.parseFailed'))
       setStep('select')
     }
