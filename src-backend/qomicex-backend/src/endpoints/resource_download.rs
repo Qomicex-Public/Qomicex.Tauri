@@ -549,6 +549,7 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
     let mut has_mr = false;
     let mut has_qml = false;
     let mut has_cf_manifest = false;
+    let mut has_mmc = false;
     let mut has_shaders = false;
     let mut has_mcmeta = false;
     for i in 0..archive.len() {
@@ -560,6 +561,7 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
             "qmodpack.index.json" => has_qml = true,
             "manifest.json" => has_cf_manifest = true,
             "pack.mcmeta" => has_mcmeta = true,
+            n if n == "mmc-pack.json" || n.ends_with("/mmc-pack.json") => has_mmc = true,
             _ => {}
         }
         if entry.name().starts_with("shaders/") {
@@ -595,6 +597,9 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
             Some(pack_meta_from(&mut archive, "manifest.json", "curseforge")),
         );
     }
+    if has_mmc {
+        return ("modpack", multimc_pack_meta(&mut archive));
+    }
 
     if has_shaders {
         return ("shaderpack", None);
@@ -614,6 +619,72 @@ fn is_cf_modpack_manifest(archive: &mut zip::ZipArchive<std::fs::File>) -> bool 
         })
         .as_deref()
         == Some("minecraftModpack")
+}
+
+/// MultiMC 整合包预览元数据：name 取自 instance.cfg 的 `name=`，
+/// game_version/loader 取自 mmc-pack.json 的 components。
+/// 实例根以 mmc-pack.json 所在目录为准（根级或嵌套顶层实例目录，如 MultiMC 导出）。
+fn multimc_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<PackMeta> {
+    let mut mmc_path = None;
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index(i) else {
+            continue;
+        };
+        let n = entry.name();
+        if n == "mmc-pack.json" || n.ends_with("/mmc-pack.json") {
+            mmc_path = Some(n.to_string());
+            break;
+        }
+    }
+    let mmc_path = mmc_path?;
+    let prefix = mmc_path.strip_suffix("mmc-pack.json").unwrap_or_default();
+    let cfg_path = format!("{prefix}instance.cfg");
+
+    let mut name = None;
+    if let Ok(mut f) = archive.by_name(&cfg_path) {
+        let mut text = String::new();
+        if std::io::Read::read_to_string(&mut f, &mut text).is_ok() {
+            for line in text.lines() {
+                if let Some(v) = line.strip_prefix("name=") {
+                    let v = v.trim();
+                    if !v.is_empty() {
+                        name = Some(v.to_string());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    let root = read_entry_json(archive, &mmc_path)?;
+    let components = root.get("components").and_then(|c| c.as_array());
+    let game_version = components
+        .and_then(|cs| {
+            cs.iter()
+                .find(|c| c.get("uid").and_then(|u| u.as_str()) == Some("net.minecraft"))
+        })
+        .and_then(|c| str_field(c, "version"));
+    let loader = components.and_then(|cs| {
+        for c in cs {
+            let uid = c.get("uid").and_then(|u| u.as_str()).unwrap_or("");
+            let n = match uid {
+                "net.fabricmc.fabric-loader" => Some("fabric".to_string()),
+                "org.quiltmc.quilt-loader" => Some("quilt".to_string()),
+                "net.minecraftforge" | "net.minecraftforge.forge" => Some("forge".to_string()),
+                "net.neoforged" => Some("neoforge".to_string()),
+                _ => None,
+            };
+            if n.is_some() {
+                return n;
+            }
+        }
+        None
+    });
+    Some(PackMeta {
+        name,
+        game_version,
+        loader,
+        summary: None,
+    })
 }
 
 fn pack_meta_from(

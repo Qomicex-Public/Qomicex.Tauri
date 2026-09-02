@@ -1133,9 +1133,11 @@ async fn install_instance(
     let mgr = state.download_manager.load_full();
     let http_client = state.http_client.clone();
     let cf_api_key = state.curse_forge_api_key.clone();
+    let inst_svc = state.instance.clone();
+    let inst_id_inner = instance_id.clone();
 
     tracker.start(instance_id.clone(), "install", move |handle| async move {
-        crate::services::install_service::run_install_pipeline(
+        let result = crate::services::install_service::run_install_pipeline(
             &handle,
             mgr,
             http_client,
@@ -1143,7 +1145,13 @@ async fn install_instance(
             data,
             crate::services::install_service::INSTALL_STEP_BUDGET_TOP,
         )
-        .await
+        .await;
+        if result.is_err() {
+            // 回滚：安装失败/取消 → 删除实例记录 + 版本隔离目录，不残留不可用空实例。
+            // 该端点仅由「下载新版本」新建实例流程调用，失败删实例安全。
+            let _ = inst_svc.delete(&inst_id_inner);
+        }
+        result
     });
 
     Ok(Json(MessageResponse {
