@@ -95,6 +95,18 @@ async fn manifest(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
+    // 安装包 URL（platforms[target].url，直连 GitHub releases）也套上测速最快的
+    // 代理前缀；否则测速只加速了 latest.json 清单，几十 MB 的本体仍直连 GitHub。
+    if let Some(entry) = manifest.platforms.get_mut(&q.target) {
+        // GitHub release asset 名不含空格（上传时 ' ' → '.'），存量 latest.json
+        // 里的带空格 URL 会 404，下载前归一化。
+        entry.url = entry.url.replace(' ', ".");
+        let prefix = get_fastest_proxy_prefix(&entry.url).await;
+        if !prefix.is_empty() {
+            entry.url = format!("{prefix}{}", entry.url);
+        }
+    }
+
     Ok(Json(manifest).into_response())
 }
 

@@ -1018,6 +1018,9 @@ jobs:
               mv tmp.json latest.json
             fi
           done
+          # GitHub 上传 asset 时把文件名里的空格替换为 '.'，fragment 用的是本地
+          # bundle 名（含空格），必须归一化成与实际 asset 名一致，否则 404。
+          jq '.platforms |= map_values(.url |= gsub(" "; "."))' latest.json > tmp.json && mv tmp.json latest.json
           echo "=== latest.json ==="
           cat latest.json
 
@@ -1041,6 +1044,8 @@ jobs:
               mv tmp.json alpha.json
             fi
           done
+          # 同 latest.json：asset 名空格 → '.'，与 GitHub 实际文件名对齐
+          jq '.platforms |= map_values(.url |= gsub(" "; "."))' alpha.json > tmp.json && mv tmp.json alpha.json
           echo "=== alpha.json ==="
           cat alpha.json
 
