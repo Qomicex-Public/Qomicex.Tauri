@@ -710,6 +710,13 @@ async fn proxy(
             "仅支持 http/https 协议",
         ));
     }
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(ApiError::bad_request(
+            "PROXY_INVALID_URL",
+            "仅支持 http/https 协议",
+        ));
+    }
+
     let host = parsed
         .host_str()
         .ok_or_else(|| ApiError::bad_request("PROXY_INVALID_URL", "无效的代理 URL"))?
@@ -721,7 +728,7 @@ async fn proxy(
     let method = reqwest::Method::from_bytes(method_str.to_uppercase().as_bytes())
         .unwrap_or(reqwest::Method::GET);
 
-    let mut request = state.proxy_client.request(method, &req.url);
+    let mut request = state.proxy_client.request(method, parsed.clone());
     let mut content_type = "application/json".to_string();
     if let Some(headers) = &req.headers {
         for (k, v) in headers {
