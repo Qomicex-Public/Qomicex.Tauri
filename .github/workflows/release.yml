@@ -335,6 +335,7 @@ jobs:
           name: qomicex-launcher-windows-x64
           path: |
             src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.exe.sig
             src-tauri/binaries/Packet.dll
             src-tauri/binaries/wintun.dll
 
@@ -427,6 +428,7 @@ jobs:
           name: qomicex-launcher-windows-arm64
           path: |
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe.sig
             src-tauri/binaries/Packet.dll
             src-tauri/binaries/wintun.dll
 
@@ -527,6 +529,7 @@ jobs:
           name: qomicex-launcher-linux-x64
           path: |
             src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.AppImage.sig
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.rpm
 
@@ -627,6 +630,7 @@ jobs:
           name: qomicex-launcher-linux-arm64
           path: |
             src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.AppImage.sig
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.rpm
 
@@ -724,6 +728,7 @@ jobs:
           name: qomicex-launcher-linux-loongarch64
           path: |
             src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.AppImage.sig
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.rpm
 
