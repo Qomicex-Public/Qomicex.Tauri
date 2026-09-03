@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { FileDown, FolderOpen } from 'lucide-react'
+import { Download as DownloadData, RotateCw as RotateCwData } from 'lucide'
 import { listen } from '@tauri-apps/api/event'
+import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Dialog, DialogBody, DialogHeader, DialogTitle } from '../components/ui'
 import { Button } from '../components/ui'
 import { Input } from '../components/ui'
@@ -29,6 +31,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   const [parsed, setParsed] = useState<ModpackParseResult | MultiMcParseResult | null>(null)
   const [instanceName, setInstanceName] = useState('')
   const [error, setError] = useState('')
+  const [installing, setInstalling] = useState(false)
   const [dropHover, setDropHover] = useState(false)
   // 单调递增请求 ID：丢弃过期解析结果（快速连续拖入多个包时旧响应不得覆盖新预览）。
   const parseReqIdRef = useRef(0)
@@ -129,7 +132,8 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   }
 
   const handleInstall = async () => {
-    if (!parsed) return
+    if (!parsed || installing) return
+    setInstalling(true)
     setError('')
     try {
       const isMultiMc = parsed.packType === 'multimc' || (parsed as MultiMcParseResult).sourcePath != null
@@ -176,6 +180,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
       onClose()
       navigate('/downloads')
     } catch (e: any) {
+      setInstalling(false)
       setError(e.message || t('dialogs.import.installFailed'))
     }
   }
@@ -185,6 +190,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     setStep('select')
     setParsed(null)
     setError('')
+    setInstalling(false)
     setDropHover(false)
   }
 
@@ -278,8 +284,11 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => { reset(); onClose() }}>{t('common.cancel')}</Button>
-              <Button onClick={handleInstall}>{t('dialogs.import.startInstall')}</Button>
+              <Button variant="outline" disabled={installing} onClick={() => { reset(); onClose() }}>{t('common.cancel')}</Button>
+              <Button onClick={handleInstall} disabled={installing}>
+                <MorphActionIcon active={installing} busy={RotateCwData} rest={DownloadData} className="mr-1.5 h-4 w-4" />
+                {t('dialogs.import.startInstall')}
+              </Button>
             </div>
           </div>
         )}
