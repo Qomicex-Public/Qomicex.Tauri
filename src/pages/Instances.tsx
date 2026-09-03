@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import gsap from 'gsap'
 
 import { Box, Bug, Calendar, Check, ChevronDown, Download, FileInput, Folder, FolderOpen, FolderPlus, Ghost, Hammer, Layers, Pen, Pencil, Play, Plus, RotateCw, Search, Settings, Star, Tag, TriangleAlert, Wrench } from 'lucide-react'
-import { Download as DownloadData, Grip as GripData, List as ListData, RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
+import { Grip as GripData, List as ListData, RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
 import { MorphIcon } from 'morphicons/react'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
@@ -909,7 +909,10 @@ export default function Instances() {
               )}
               <Button variant="secondary" onClick={() => setStep('list')}>{t('instances.cancel')}</Button>
               <Button onClick={handleDownload} disabled={!form.gameVersion || !form.name.trim() || creating || loadingVersions || (!!form.loader && !loadingVersions && loaderVersions.length === 0)}>
-                <MorphActionIcon active={creating} busy={RotateCwData} rest={DownloadData} className="h-4 w-4" />{t('instances.startDownload')}
+                {creating
+                  ? <RotateCw className="h-4 w-4 animate-spin" />
+                  : <Download className="h-4 w-4" />}
+                {t('instances.startDownload')}
               </Button>
             </div>
           </CardContent>
