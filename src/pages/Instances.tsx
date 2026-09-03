@@ -200,6 +200,7 @@ export default function Instances() {
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [loaderAddons, setLoaderAddons] = useState<LoaderAddonInfo[]>([])
   const [loadingAddons, setLoadingAddons] = useState(false)
+  const [creating, setCreating] = useState(false)
 
   const doScan = useCallback(async (dir: string) => {
     if (!dir) { setScannedLocal([]); return }
@@ -378,7 +379,7 @@ export default function Instances() {
   }
 
   async function handleDownload() {
-    if (!form.gameVersion || !form.name.trim()) return
+    if (!form.gameVersion || !form.name.trim() || creating) return
     if (!currentDir) {
       await msgAlert(t('instances.selectDirFirst'))
       return
@@ -401,6 +402,7 @@ export default function Instances() {
       return
     }
 
+    setCreating(true)
     try {
       const isAprilFools = remoteVersions.some((v) => v.id === form.gameVersion && v.type === 'april_fools')
       const data: CreateInstanceRequest = {
@@ -454,6 +456,8 @@ export default function Instances() {
       navigate('/downloads')
     } catch (e) {
       await msgAlert(t('instances.createFailed', { error: e instanceof Error ? e.message : String(e) }))
+    } finally {
+      setCreating(false)
     }
   }
 
@@ -904,8 +908,11 @@ export default function Instances() {
                 <span className="text-xs text-destructive/80">{t('instances.noLoaderAvailable')}</span>
               )}
               <Button variant="secondary" onClick={() => setStep('list')}>{t('instances.cancel')}</Button>
-              <Button onClick={handleDownload} disabled={!form.gameVersion || !form.name.trim() || loadingVersions || (!!form.loader && !loadingVersions && loaderVersions.length === 0)}>
-                <Download className="h-4 w-4" />{t('instances.startDownload')}
+              <Button onClick={handleDownload} disabled={!form.gameVersion || !form.name.trim() || creating || loadingVersions || (!!form.loader && !loadingVersions && loaderVersions.length === 0)}>
+                {creating
+                  ? <RotateCw className="h-4 w-4 animate-spin" />
+                  : <Download className="h-4 w-4" />}
+                {t('instances.startDownload')}
               </Button>
             </div>
           </CardContent>
