@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import type { DragEvent, ReactNode } from 'react'
+import type { DragEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
@@ -18,6 +18,7 @@ import { PageShell } from '../components/PageShell.tsx'
 import { I18nBatchToolbar } from '../components/I18nBatchToolbar.tsx'
 import { Select, SelectOption } from '../components/ui'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
+import { getAccountIcon } from '../components/AccountType.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from '../components/ui'
 import { ApiError } from '../api/client.ts'
 import { Tooltip } from '../components/ui'
@@ -53,12 +54,6 @@ interface YggResolvedInfo {
   changed: boolean
   insecure: boolean
   error: boolean
-}
-
-function getAccountIcon(loginMethod: string): { icon: ReactNode; color: string } {
-  if (loginMethod === 'Microsoft') return { icon: <FontAwesomeIcon icon={faMicrosoft} className="h-2.5 w-2.5" />, color: 'text-green-400' }
-  if (loginMethod === 'Offline') return { icon: <CircleUser className="h-2.5 w-2.5" />, color: 'text-yellow-400' }
-  return { icon: <FontAwesomeIcon icon={faKeycdn} className="h-2.5 w-2.5" />, color: 'text-purple-400' }
 }
 
 type MicrosoftStep = 'idle' | 'fetching-oauth' | 'waiting-auth' | 'fetching-info' | 'done' | 'error'
@@ -579,11 +574,9 @@ export default function Accounts() {
                 <AccountAvatar account={acc} className="h-10 w-10 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{acc.name}</div>
-                  <div className="flex items-center gap-1">
-                    <span className={icon.color}>{icon.icon}</span>
-                    <Tooltip content={acc.serverUrl}>
-                      <span className="text-[11px] text-muted-foreground">{getAccountLabel(acc.loginMethod, acc.serverUrl)}</span>
-                    </Tooltip>
+                  <div className="flex items-center gap-1.5">
+                    <span className={cn('flex h-3.5 w-3.5 shrink-0 items-center justify-center', icon.color)}>{icon.icon}</span>
+                    <span className="truncate text-xs leading-none text-muted-foreground">{getAccountLabel(acc.loginMethod, acc.serverUrl)}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">

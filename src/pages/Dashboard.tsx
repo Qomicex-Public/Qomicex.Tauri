@@ -12,6 +12,7 @@ import type { GameInstance, Account } from '../types/index.ts'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
+import { getAccountIcon, getAccountTypeLabel } from '../components/AccountType.tsx'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
@@ -157,6 +158,7 @@ export default function Dashboard() {
               <div className="max-h-60 overflow-y-auto">
                 {allAccounts.map((acc) => {
                   const isDefault = acc.uuid === defaultAccount?.uuid
+                  const icon = getAccountIcon(acc.loginMethod)
                   return (
                     <button
                       key={acc.uuid}
@@ -164,8 +166,14 @@ export default function Dashboard() {
                       className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent transition-colors"
                     >
                       <AccountAvatar account={acc} className="h-6 w-6 shrink-0" />
-                      <span className="flex-1 truncate">{acc.name}</span>
-                      {isDefault && <Check className="h-3 w-3 text-primary" />}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{acc.name}</span>
+                        <span className="flex items-center gap-1 text-[10px] leading-none text-muted-foreground">
+                          <span className={cn('flex h-3 w-3 shrink-0 items-center justify-center', icon.color)}>{icon.icon}</span>
+                          {getAccountTypeLabel(acc.loginMethod, t)}
+                        </span>
+                      </span>
+                      {isDefault && <Check className="h-3 w-3 shrink-0 text-primary" />}
                     </button>
                   )
                 })}
