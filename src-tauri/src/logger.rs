@@ -70,3 +70,31 @@ macro_rules! tauri_log {
         $crate::logger::log_line($tag, &format!($($arg)*))
     };
 }
+
+/// `log` crate backend：把依赖库（tauri-plugin-updater 等）经 `log::debug!`/
+/// `log::error!` 输出的日志桥接到 `log_line`，落盘 qomicex-tauri.log。
+/// 不注册任何 backend 时 log crate 会静默丢弃所有日志——updater 的
+/// 请求 URL/响应体/失败原因此前完全不可见，排查更新问题即为黑盒。
+struct CrateLogger;
+
+impl log::Log for CrateLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Debug
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let tag = record.target().split("::").next().unwrap_or("log");
+        log_line(tag, &format!("{} {}", record.level(), record.args()));
+    }
+
+    fn flush(&self) {}
+}
+
+/// 注册 `log` crate 全局 backend（进程早期调用一次；已有 backend 时静默跳过）。
+pub fn init_log_backend() {
+    let _ = log::set_boxed_logger(Box::new(CrateLogger));
+    log::set_max_level(log::LevelFilter::Debug);
+}

@@ -210,6 +210,11 @@ fn parse_debug_port() -> Option<u16> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 尽早注册 log crate backend：tauri-plugin-updater 等依赖库的
+    // log::debug!/error!（请求 URL、响应体、失败原因）否则被静默丢弃。
+    logger::init_log_backend();
+    tauri_log!("log", "log backend registered (level=debug)");
+
     // --debug <port>：显式调试模式（第三方开发者无需源码/CLI 即可用）——开放 CDP
     // 调试端口，日志经 stderr 实时推送（logger::log_line 回显 + backend 转发）。
     // release 默认行为不变（纯 IPC），仅显式传参才启用。
