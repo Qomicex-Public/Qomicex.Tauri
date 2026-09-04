@@ -114,7 +114,7 @@ const SERVICE_NAME_KEYS: Record<string, string> = {
 const REF_DESC_KEYS: Record<string, string> = {
   HMCL: 'settings.about.refVersionCheck',
   ProjBobcat: 'settings.about.refModloaderInstaller',
-  PCL: 'settings.about.refLaunchFlow',
+  'PCL-CE': 'settings.about.refModCnData',
 }
 const DEP_CATEGORY_KEYS: Record<string, string> = {
   'Rust 后端运行时': 'settings.about.depBackendRuntime',

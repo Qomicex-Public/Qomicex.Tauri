@@ -112,3 +112,25 @@ i18n：`widget.launch` 键已不再被引用（7 语言文件中保留，作为�
 3. **1格高度=旧2格**：行高公式加 clamp `min(84, max(64, (areaH-(rows+1)*12)/rows))`，rows 下限从 4 提到 8。800px 视口实测 1 格 = 69px ≈ 旧版 72px ✅；实例栏底 blankBelow=48（页面 padding 32 + margin 12）✅。
 
 存储键 v2 → v3（丢弃旧的 4 行大块布局）。注意：HMR 半更新场景下旧 state 会以新键 persist 造成测试污染（本次测试遇到），真实用户不受影响（正常启动全量加载）。
+
+
+### 2026-09-04 更新
+# 关于页鸣谢数据勘误（2026-09-04）
+
+## 变更
+
+`src/constants/credits.ts` 鸣谢数据修正（用户指认原始描述有误）：
+
+1. **xphost008 移入 SERVICES 鸣谢区**（原误放 REFERENCE_PROJECTS 参考项目——个人不属于"参考项目"）：
+   - `{ name: 'xphost008', description: '启动流程参考教程', url: 'https://github.com/xphost008', icon: 'https://github.com/xphost008.png' }`
+   - icon 直接使用其 GitHub 头像（服务区 icon 本为 img src，天然支持外链头像）
+2. **PCL 更名 PCL-CE**（url 同步改为社区版仓库 PCL-Community/PCL2-CE），description 修正为"模组中文名数据文件来源"
+3. `Settings.tsx` REF_DESC_KEYS：删除 xphost008 映射、'PCL' 改 'PCL-CE'→`settings.about.refModCnData`
+4. 回滚上轮临时加的 `ReferenceProject.avatar` 字段与渲染分支（xphost008 挪走后无消费者）
+5. i18n 7 语言新增 `settings.about.refModCnData`（refLaunchFlow 成为孤儿键保留）
+
+## 关联
+
+- 验证：tsc ✅ / vitepress build ✅ / grep 断言（credits.ts:92、:124；Settings.tsx:117）
+- 文档同步：qml-docs `docs/guide/legal.md` 服务致谢表与参考项目表
+- 启动流程参考的真实来源：xphost008（https://github.com/xphost008 ，用户证言；GitHub 在线验证因网络不通未完成）
