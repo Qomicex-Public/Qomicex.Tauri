@@ -39,6 +39,7 @@
     "quidlass": "^1.2.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-grid-layout": "^2.2.4",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.11.0",
     "rehype-raw": "^7.0.0",

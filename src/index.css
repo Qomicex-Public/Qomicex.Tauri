@@ -473,3 +473,30 @@
   -webkit-mask-image: none;
   mask-image: none;
 }
+
+/* 主页小组件网格（编辑模式视觉） */
+.dashboard-grid > .react-grid-item {
+  /* 组件内容容器不裁剪（账户下拉等需溢出） */
+  overflow: visible;
+}
+
+.dashboard-editing > .react-grid-item {
+  outline: 1px dashed hsl(var(--primary) / 0.4);
+  outline-offset: -1px;
+  border-radius: 0.75rem;
+}
+
+.dashboard-editing > .react-grid-item.react-grid-placeholder {
+  background: hsl(var(--primary) / 0.2);
+  border-radius: 0.75rem;
+}
+
+.dashboard-editing > .react-grid-item {
+  cursor: grab;
+}
+
+.dashboard-editing > .react-grid-item.react-draggable-dragging,
+.dashboard-editing > .react-grid-item.resizing {
+  cursor: grabbing;
+  z-index: 50;
+}

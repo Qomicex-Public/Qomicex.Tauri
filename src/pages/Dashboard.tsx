@@ -1,266 +1,91 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Box, Check, ChevronDown, Play, User } from 'lucide-react'
-import { cn } from '../lib/utils.ts'
-import { Button } from '../components/ui'
-import { useMessageBox } from '../components/ui'
-import { ApiError } from '../api/client.ts'
-import { scanRuntimes, loadCustomRuntimes, hasAnyRuntimes } from '../stores/javaStore.ts'
-import { getDefaultInstance } from '../api/instance.ts'
-import { getAccounts, getDefaultAccount, setDefaultAccount } from '../api/account.ts'
-import type { GameInstance, Account } from '../types/index.ts'
-import { useRunning } from '../contexts/RunningContext.tsx'
+import { useEffect, useMemo } from 'react'
+import { Pencil } from 'lucide-react'
+import { usePluginStore } from '../stores/pluginStore.ts'
+import { getSlotContent } from '../plugins/slots.tsx'
 import { usePageAnimation } from '../hooks/usePageAnimation.ts'
-import { AccountAvatar } from '../components/AccountAvatar.tsx'
-import { getAccountIcon, getAccountTypeLabel } from '../components/AccountType.tsx'
-import { InstanceIcon } from '../components/InstanceIcon.tsx'
+import { useMessageBox } from '../components/ui'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
-import { getSettings, onSettingsChange } from '../api/settings.ts'
-import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
-import { AnnouncementCard } from '../components/AnnouncementCard.tsx'
-import { SlotHost } from '../components/SlotHost.tsx'
 import { useI18n } from '../i18n/index.tsx'
+import { DashboardProvider, useDashboard, DEFAULT_WIDGETS } from './dashboard/context.tsx'
+import type { WidgetId, WidgetLayoutItem } from './dashboard/context.tsx'
+import { WidgetGrid, type WidgetEntry } from './dashboard/WidgetGrid.tsx'
+import { WatermarkWidget, AccountWidget, InstanceWidget, AnnouncementWidget } from './dashboard/widgets.tsx'
 
-export default function Dashboard() {
-  const navigate = useNavigate()
-  const { t, lang } = useI18n()
-  useMessageBox()
-  const { launchInstance, showLaunchError } = useRunning()
-  const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
-  const [defaultInstance, setDefaultInstance] = useState<GameInstance | null>(null)
-  const [defaultAccount, setDefaultAccountState] = useState<Account | null>(null)
-  const [allAccounts, setAllAccounts] = useState<Account[]>([])
-  const [accountsOpen, setAccountsOpen] = useState(false)
-  const [watermarkEnabled, setWatermarkEnabled] = useState(true)
-  const [watermarkText, setWatermarkText] = useState('Qomicex')
-  const [watermarkSubtext, setWatermarkSubtext] = useState(() => t('settings.appearance.watermarkSubtextPlaceholder'))
-  const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
-  const pageRef = usePageAnimation()
-  const accountRef = useRef<HTMLDivElement>(null)
+function DashboardContent() {
+  const { t } = useI18n()
+  const plugins = usePluginStore(s => s.plugins)
+  const { layout, setLayout, editing, setEditing, showMicrosoftReauth, setShowMicrosoftReauth, defaultAccount, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useDashboard()
 
-  const loadDefaultInstance = useCallback(async () => {
-    try {
-      const inst = await getDefaultInstance()
-      setDefaultInstance(inst)
-    } catch { /* ignore */ }
-  }, [])
+  const widgets = useMemo<WidgetEntry[]>(() => {
+    const staticEntries: WidgetEntry[] = [
+      { id: 'watermark', label: t('widget.watermark'), node: <WatermarkWidget /> },
+      { id: 'account', label: t('widget.account'), node: <AccountWidget /> },
+      { id: 'instance', label: t('widget.instance'), node: <InstanceWidget /> },
+      { id: 'announcements', label: t('widget.announcements'), node: <AnnouncementWidget /> },
+    ]
+    const pluginEntries: WidgetEntry[] = getSlotContent('dashboard:widgets').map((reg, i) => ({
+      id: `plugin:${reg.pluginId}:${i}` as WidgetId,
+      label: reg.pluginId,
+      node: (
+        <div className="glass-surface h-full overflow-hidden rounded-xl border border-border/30 bg-card/70 backdrop-blur-md [&>*]:h-full">
+          {reg.render()}
+        </div>
+      ),
+    }))
+    return [...staticEntries, ...pluginEntries]
+  }, [plugins, t])
 
   useEffect(() => {
-    Promise.all([
-      loadDefaultInstance(),
-      getDefaultAccount().catch(() => null),
-    ]).then(([, acc]) => {
-      setDefaultAccountState(acc as Account | null)
+    const known = new Set<string>(widgets.map(w => w.id))
+    const inLayout = new Set(layout.map(it => it.i))
+    const missing = widgets.filter(w => !inLayout.has(w.id))
+    const stale = layout.some(it => !known.has(it.i))
+    if (missing.length === 0 && !stale) return
+    const cleaned = layout.filter(it => known.has(it.i))
+    let y = cleaned.reduce((m, it) => Math.max(m, it.y + it.h), 0)
+    const appended: WidgetLayoutItem[] = missing.map(w => {
+      const def = DEFAULT_WIDGETS.find(d => d.id === w.id)
+      const item: WidgetLayoutItem = {
+        i: w.id, x: 0, y, w: def?.defaultLayout.w ?? 2, h: def?.defaultLayout.h ?? 1,
+      }
+      y += item.h
+      return item
     })
-    loadCustomRuntimes().catch(() => {})
-    if (!hasAnyRuntimes()) {
-      scanRuntimes('quick').catch(() => {})
-    }
-  }, [])
-
-  useEffect(() => {
-    function load(s = getSettings()) {
-      setWatermarkEnabled(s.watermarkEnabled !== false)
-      setWatermarkText(s.watermarkText || 'Qomicex')
-      setWatermarkSubtext(s.watermarkSubtext || t('settings.appearance.watermarkSubtextPlaceholder'))
-    }
-    load()
-    return onSettingsChange(load)
-  }, [])
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (accountRef.current && !accountRef.current.contains(e.target as Node)) setAccountsOpen(false)
-    }
-    if (accountsOpen) document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [accountsOpen])
-
-  const openAccountDropdown = useCallback(async () => {
-    if (accountsOpen) { setAccountsOpen(false); return }
-    try {
-      const list = await getAccounts()
-      setAllAccounts(list)
-      setAccountsOpen(true)
-    } catch { /* ignore */ }
-  }, [accountsOpen])
-
-  async function handleSwitchAccount(uuid: string) {
-    try {
-      const acc = await setDefaultAccount(uuid)
-      setDefaultAccountState(acc)
-      setAccountsOpen(false)
-    } catch { /* ignore */ }
-  }
-
-  const handleLaunch = async () => {
-    if (!defaultInstance) return
-    if (needsAccount) {
-      const ok = await resolveAccountCheck()
-      if (!ok) return
-    }
-    try {
-      await launchInstance(defaultInstance.id, defaultInstance.name, { path: defaultInstance.javaPath, gameVersion: defaultInstance.gameVersion, gameDir: defaultInstance.gameDir })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      const code = e instanceof ApiError ? e.code : ''
-      if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
-        setShowMicrosoftReauth(true)
-        return
-      }
-      if (code.includes('NETWORK_ERROR')) {
-        showLaunchError(t('running.launchFailedTitle'), t('errors.networkError'))
-        return
-      }
-      showLaunchError(t('running.launchFailedTitle'), e instanceof Error ? e.message : String(e))
-    }
-  }
+    setLayout([...cleaned, ...appended])
+  }, [widgets, layout, setLayout])
 
   return (
-    <div ref={pageRef} className="relative flex flex-1 min-h-0 flex-col overflow-y-auto scroll-fade-mask p-8">
-      {/* Center branding */}
-      <div className="flex flex-1 flex-col items-center justify-center">
-        {watermarkEnabled && (
-          <>
-            <h1 className="select-none text-6xl font-bold tracking-widest text-foreground/90">{watermarkText}</h1>
-            <p className="mt-2 select-none text-xs font-semibold tracking-[0.5em] text-primary/60">{watermarkSubtext}</p>
-          </>
+    <>
+      <div className="mb-2 flex justify-end">
+        {!editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground/50 transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            {t('dashboard.editLayout')}
+          </button>
         )}
       </div>
-
-      {/* Right widgets */}
-      <div className="absolute right-8 top-24 w-72 space-y-4">
-        {/* Account widget */}
-        <div className="relative z-50">
-          <div className="glass-surface rounded-xl border border-border/30 bg-card/70 p-4 backdrop-blur-md">
-            <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">{t('dashboard.account')}</p>
-            <div ref={accountRef} className="flex items-center gap-3">
-              {defaultAccount ? (
-                <AccountAvatar account={defaultAccount} className="h-9 w-9 shrink-0" />
-              ) : (
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted">
-                  <User className="h-4 w-4 text-muted-foreground" />
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{defaultAccount ? defaultAccount.name : t('dashboard.noDefaultAccount')}</p>
-                <p className="text-[10px] text-muted-foreground/60">{defaultAccount ? t('dashboard.defaultAccount') : t('dashboard.addInSettings')}</p>
-              </div>
-              <Button variant="ghost" size="sm" onClick={openAccountDropdown} className="h-6 w-6 shrink-0 p-0">
-                <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', accountsOpen && 'rotate-180')} />
-              </Button>
-            </div>
-          </div>
-          {accountsOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-top-2 zoom-in-95 duration-200">
-              <div className="max-h-60 overflow-y-auto">
-                {allAccounts.map((acc) => {
-                  const isDefault = acc.uuid === defaultAccount?.uuid
-                  const icon = getAccountIcon(acc.loginMethod)
-                  return (
-                    <button
-                      key={acc.uuid}
-                      onMouseDown={() => handleSwitchAccount(acc.uuid)}
-                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent transition-colors"
-                    >
-                      <AccountAvatar account={acc} className="h-6 w-6 shrink-0" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate">{acc.name}</span>
-                        <span className="flex items-center gap-1 text-[10px] leading-none text-muted-foreground">
-                          <span className={cn('flex h-3 w-3 shrink-0 items-center justify-center', icon.color)}>{icon.icon}</span>
-                          {getAccountTypeLabel(acc.loginMethod, t)}
-                        </span>
-                      </span>
-                      {isDefault && <Check className="h-3 w-3 shrink-0 text-primary" />}
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="border-t border-border pt-1 mt-1">
-                <button
-                  onMouseDown={() => { navigate('/accounts'); setAccountsOpen(false) }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-muted-foreground hover:bg-accent transition-colors"
-                >
-                  <User className="h-3 w-3" />
-                  {t('dashboard.manageAccounts')}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* 插件槽位：主页右侧卡片区 */}
-        <SlotHost slotId="dashboard:widgets" className="space-y-4" />
-
-        {/* 公告卡片 */}
-        <AnnouncementCard />
-      </div>
-
-      {/* Bottom action bar */}
-      {defaultInstance ? (
-        <div className="glass-surface mt-auto flex items-center justify-between rounded-2xl border border-border/30 bg-card/70 px-6 py-4 backdrop-blur-md">
-          <div className="flex items-center gap-4">
-            <InstanceIcon icon={defaultInstance.icon} iconData={defaultInstance.iconData} loader={defaultInstance.loader} className="h-12 w-12 shrink-0 rounded-xl" imgClassName="rounded-xl" />
-            <div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => navigate(`/instances/${defaultInstance.id}`)} className="text-base font-semibold hover:underline">
-                  {defaultInstance.name}
-                </button>
-                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                  {defaultInstance.loader || 'Vanilla'}
-                </span>
-              </div>
-              <p className="mt-0.5 text-xs text-muted-foreground/70">
-                {defaultInstance.gameVersion}
-                {defaultInstance.loader && ` · ${defaultInstance.loader} ${defaultInstance.loaderVersion}`}
-                {defaultInstance.lastPlayed && ` · ${t('dashboard.lastPlayed', { date: new Date(defaultInstance.lastPlayed).toLocaleDateString(lang) })}`}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="hidden text-right md:block">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">{t('dashboard.status')}</p>
-              <p className="text-sm text-muted-foreground">{t('dashboard.ready')}</p>
-            </div>
-            <Button
-              onClick={handleLaunch}
-              className="flex h-14 items-center gap-3 rounded-xl px-10 text-lg font-bold tracking-widest transition-all hover:brightness-110 active:scale-95"
-            >
-              <Play className="h-5 w-5" />
-              {t('dashboard.launch')}
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="glass-surface mt-auto flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border/40 bg-card/30 px-6 py-8 text-center backdrop-blur-md">
-          <Box className="h-6 w-6 text-muted-foreground/30" />
-          <p className="text-sm text-muted-foreground">{t('dashboard.noPinnedInstance')}</p>
-          <Button variant="outline" size="sm" onClick={() => navigate('/instances')} className="mt-1">
-            {t('dashboard.goToInstances')}
-          </Button>
-        </div>
-      )}
-
-      <AccountSelectDialog
-        open={showSelectAccount}
-        onClose={handleCancelSelect}
-        onSelect={handleSelectAccount}
-      />
-      <NoAccountDialog
-        open={showNoAccount}
-        onClose={handleCancelNoAccount}
-        onAddAccount={handleAddAccount}
-        onGoToAccounts={handleGoToAccounts}
-      />
-      <MicrosoftReauthDialog
-        open={showMicrosoftReauth}
-        onClose={() => setShowMicrosoftReauth(false)}
-        expiredAccountUuid={defaultAccount?.uuid}
-      />
-    </div>
+      <WidgetGrid widgets={widgets} />
+      <AccountSelectDialog open={showSelectAccount} onClose={handleCancelSelect} onSelect={handleSelectAccount} />
+      <NoAccountDialog open={showNoAccount} onClose={handleCancelNoAccount} onAddAccount={handleAddAccount} onGoToAccounts={handleGoToAccounts} />
+      <MicrosoftReauthDialog open={showMicrosoftReauth} onClose={() => setShowMicrosoftReauth(false)} expiredAccountUuid={defaultAccount?.uuid} />
+    </>
   )
 }
 
+export default function Dashboard() {
+  useMessageBox()
+  const pageRef = usePageAnimation()
 
+  return (
+    <div ref={pageRef} className="relative flex flex-1 min-h-0 flex-col overflow-y-auto scroll-fade-mask p-8">
+      <DashboardProvider>
+        <DashboardContent />
+      </DashboardProvider>
+    </div>
+  )
+}
