@@ -79,11 +79,15 @@ async fn manifest(
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
 
-    // download_url points to the Tauri latest.json manifest. This block maps
-    // to the C# try/catch: any failure returns 204 NoContent.
+    // download_url points to the Tauri latest.json manifest. Network/HTTP
+    // failures MUST return an error (not 204): the Tauri updater treats 204
+    // as a terminal "no update" and stops trying further endpoints, whereas
+    // a 5xx makes it fall through to the next endpoint in tauri.conf.json.
+    // A silent 204 here masked GitHub fetch failures as "已是最新版本".
     let mut manifest = match fetch_tauri_manifest(&state.http_client, &download_url).await {
         Ok(Some(m)) => m,
-        _ => return Ok(StatusCode::NO_CONTENT.into_response()),
+        Ok(None) => return Ok(StatusCode::NO_CONTENT.into_response()), // unparsable asset
+        Err(e) => return Err(e),
     };
 
     // Tauri updater requires a signature for every platform entry it
@@ -91,13 +95,29 @@ async fn manifest(
     // the whole platforms map. Drop them so signed platforms still update.
     manifest.platforms.retain(|_, e| !e.signature.is_empty());
 
-    if manifest.platforms.is_empty() || !manifest.platforms.contains_key(&q.target) {
+    if manifest.platforms.is_empty() {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+
+    // Tauri updater 的 `{{target}}` 模板变量是 OS 名（windows/darwin/linux），
+    // 而 latest.json 的平台 key 是 {target}-{arch}（如 windows-x86_64）。按
+    // 精确 key → {target}-{arch} 组合的顺序解析，避免拿 "windows" 原样查
+    // map 永远 miss → 204，令 updater 直接终态为“无更新”。
+    let target_key = if manifest.platforms.contains_key(&q.target) {
+        q.target.clone()
+    } else {
+        match &q.arch {
+            Some(arch) => format!("{}-{}", q.target, arch),
+            None => q.target.clone(),
+        }
+    };
+    if !manifest.platforms.contains_key(&target_key) {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
     // 安装包 URL（platforms[target].url，直连 GitHub releases）也套上测速最快的
     // 代理前缀；否则测速只加速了 latest.json 清单，几十 MB 的本体仍直连 GitHub。
-    if let Some(entry) = manifest.platforms.get_mut(&q.target) {
+    if let Some(entry) = manifest.platforms.get_mut(&target_key) {
         // GitHub release asset 名不含空格（上传时 ' ' → '.'），存量 latest.json
         // 里的带空格 URL 会 404，下载前归一化。
         entry.url = entry.url.replace(' ', ".");
@@ -171,6 +191,7 @@ async fn fetch_tauri_manifest(
         .await
         .map_err(|e| ApiError::upstream(e.to_string()))?;
     if !status.is_success() {
+        tracing::warn!("update manifest fetch failed from {url}: HTTP {status}");
         return Err(ApiError::upstream(format!("HTTP {status}")));
     }
     match serde_json::from_str::<TauriManifestResponse>(&text) {
@@ -311,8 +332,9 @@ struct CheckQuery {
 struct ManifestQuery {
     current: String,
     target: String,
-    #[allow(dead_code)]
-    arch: Option<String>, // accepted by the C# route but unused.
+    /// Tauri updater 传 OS 名+架构（如 arch=x86_64），用于把 target=windows
+    /// 解析成 latest.json 的平台 key（windows-x86_64）。
+    arch: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
