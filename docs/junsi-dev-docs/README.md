@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-09-04 15:19
+最后更新：2026-09-04 19:49
 
 ## 1-决策记录
 
@@ -66,6 +66,7 @@
 - [ADR-063：qomicex CLI 优化与插件 log API](1-决策记录/ADR-063-qomicex-CLI-优化与插件-log-API.md)
 - [ADR-064：通用插件 Hook 系统：Koa 洋葱管道 + 前端方法层 hook（v1）](1-决策记录/ADR-064-通用插件-Hook-系统-Koa-洋葱管道---前端方法层-hook-v1-.md)
 - [ADR-065：主页小组件化：react-grid-layout 编辑模式网格](1-决策记录/ADR-065-主页小组件化-react-grid-layout-编辑模式网格.md)
+- [ADR-066：qml-docs 用户指南补全：8 篇功能文档覆盖启动器全部功能](1-决策记录/ADR-066-qml-docs-用户指南补全-8-篇功能文档覆盖启动器全部功能.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
