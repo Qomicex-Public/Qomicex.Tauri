@@ -1280,6 +1280,15 @@ pub(crate) async fn refresh_microsoft_token(
         }
     };
     if !result.success {
+        let msg = result.error_message.clone().unwrap_or_default();
+        // 429 限流 ≠ 令牌过期：微软上游（Xbox/XSTS/MC services 链）限流时
+        // 降级放行现有 token，由下游 MC API 的 401 才判真过期。否则刚登录
+        // 就撞限流窗口会被误判"账户过期"引导重登，而重登后再开披风页照样
+        // 强制刷新、照样撞限流，形成"永远过期"死循环。
+        if msg.contains("429") || msg.contains("Too Many Requests") {
+            tracing::warn!(uuid = %acc.uuid, "microsoft refresh rate-limited, falling back to existing token");
+            return Ok(Some(acc));
+        }
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             "TOKEN_EXPIRED",
@@ -1761,6 +1770,27 @@ mod refresh_tests {
         )
         .await;
         assert_eq!(result.unwrap_err().code, "TOKEN_EXPIRED");
+    }
+
+    #[tokio::test]
+    async fn rate_limited_refresh_falls_back_to_existing_token() {
+        // 回归：MC services 链 429 时不得误判 TOKEN_EXPIRED（重登死循环），
+        // 应降级放行现有 token，交由下游 MC API 401 判真过期。
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("rate-limited");
+        let mut r = auth_result(false);
+        r.error_message =
+            Some("Response status code does not indicate success: 429 (Too Many Requests).".into());
+        let out = refresh_microsoft_token(
+            &MockAuth {
+                scenario: Scenario::Success(r),
+            },
+            &accounts,
+            Some(ms_account()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.unwrap().access_token, "stale-token");
     }
 
     #[tokio::test]
