@@ -495,6 +495,12 @@
   cursor: grab;
 }
 
+/* 编辑模式下插件 widget（iframe 沙箱）会吞掉指针事件导致无法拖动/缩放，
+   禁用其指针事件让 mousedown 落到 RGL item 层；查看模式保持正常交互 */
+.dashboard-editing > .react-grid-item iframe {
+  pointer-events: none;
+}
+
 .dashboard-editing > .react-grid-item.react-draggable-dragging,
 .dashboard-editing > .react-grid-item.resizing {
   cursor: grabbing;
