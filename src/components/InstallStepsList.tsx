@@ -6,15 +6,17 @@ import { cn } from '../lib/utils.ts'
 interface InstallStepsListProps {
   steps: InstallStepInfo[]
   className?: string
+  /** i18n 词条前缀，默认下载安装管线的 downloads.steps */
+  keyPrefix?: string
 }
 
 /** 安装管线分步列表（后端 SSE 下发的 steps 渲染；活跃步骤显示字节百分比）。 */
-export default function InstallStepsList({ steps, className }: InstallStepsListProps) {
+export default function InstallStepsList({ steps, className, keyPrefix = 'downloads.steps' }: InstallStepsListProps) {
   const { t } = useI18n()
   return (
     <ul className={cn('space-y-1', className)}>
       {steps.map((step) => {
-        const labelKey = `downloads.steps.${step.id}` as const
+        const labelKey = `${keyPrefix}.${step.id}` as const
         return (
           <li key={step.id} className="flex items-center gap-2 text-xs">
             {step.status === 'done' ? (

@@ -300,6 +300,8 @@ export interface LaunchProgress {
   missingFiles?: string[]
   arguments?: string | null
   isRunning: boolean
+  totalFiles?: number
+  completedFiles?: number
 }
 
 export interface ScannedVersionLoader {
