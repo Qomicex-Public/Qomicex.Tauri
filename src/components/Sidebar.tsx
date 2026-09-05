@@ -119,7 +119,8 @@ export default function Sidebar() {
         x: 0,
         duration: 0.25 / speed,
         stagger: 0.03 / speed,
-        ease: 'power2.out'
+        ease: 'power3.out',
+        force3D: settings.gpuAcceleration !== false
       }
     )
   }, [])

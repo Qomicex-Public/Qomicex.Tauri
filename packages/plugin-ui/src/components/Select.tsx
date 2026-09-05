@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../lib/cn.js'
 import gsap from 'gsap'
+import { readAnimConfig, EASE_IN, EASE_OUT, withGpu } from '../lib/anim.js'
 import { useFloatingPosition } from '../hooks/useFloatingPosition.js'
 
 interface SelectOptionProps {
@@ -35,6 +36,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
   const popupRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const popupAnimRef = useRef<HTMLDivElement>(null)
+  const closeAnimRef = useRef<gsap.core.Tween | null>(null)
   const floating = useFloatingPosition(triggerRef, { maxHeight: 288 }, open || isClosing)
 
   const options: { value: string; label: string; disabled: boolean; isDivider: boolean }[] = []
@@ -60,16 +62,12 @@ export function Select({ value, onChange, children, className, placeholder, disa
   collect(children)
 
   const close = useCallback(() => {
-    const popup = popupAnimRef.current
-    if (!popup) {
-      setOpen(false)
-      setSearch('')
-      return
-    }
+    // 防重入：退出动画进行中再次 close 直接忽略
+    if (closeAnimRef.current) return
 
-    // 检查动画是否启用
-    const animEnabled = document.documentElement.getAttribute('data-anim-enabled') !== 'false'
-    if (!animEnabled) {
+    const popup = popupAnimRef.current
+    const { enabled, speed } = readAnimConfig()
+    if (!popup || !enabled) {
       setOpen(false)
       setSearch('')
       return
@@ -77,17 +75,16 @@ export function Select({ value, onChange, children, className, placeholder, disa
 
     setIsClosing(true)
 
-    const speedStr = getComputedStyle(document.documentElement).getPropertyValue('--anim-duration-multiplier')
-    const speed = speedStr ? parseFloat(speedStr) : 1
-    const duration = 0.1 / (speed || 1)
-
-    gsap.to(popup, {
+    const duration = 0.12 / speed
+    closeAnimRef.current = gsap.to(popup, {
       opacity: 0,
-      scale: 0.9,
+      scale: 0.94,
       y: -4,
       duration,
-      ease: 'power2.in',
+      ease: EASE_OUT,
+      ...withGpu({}),
       onComplete: () => {
+        closeAnimRef.current = null
         setIsClosing(false)
         setOpen(false)
         setSearch('')
@@ -109,23 +106,29 @@ export function Select({ value, onChange, children, className, placeholder, disa
 
   // GSAP 弹出动画
   useEffect(() => {
-    if (!open || !popupAnimRef.current) return
+    if (!open) return
+    // 退出动画中重开：终止退出动画并复位状态
+    if (closeAnimRef.current) {
+      closeAnimRef.current.kill()
+      closeAnimRef.current = null
+      setIsClosing(false)
+    }
+    if (!popupAnimRef.current) return
 
-    const animEnabled = document.documentElement.getAttribute('data-anim-enabled') !== 'false'
-    if (!animEnabled) return
+    const { enabled, speed } = readAnimConfig()
+    if (!enabled) return
 
-    const speedStr = getComputedStyle(document.documentElement).getPropertyValue('--anim-duration-multiplier')
-    const speed = speedStr ? parseFloat(speedStr) : 1
-    const duration = 0.15 / (speed || 1)
+    const duration = 0.15 / speed
 
     gsap.fromTo(popupAnimRef.current,
-      { opacity: 0, scale: 0.9, y: -4 },
+      { opacity: 0, scale: 0.94, y: -4 },
       {
         opacity: 1,
         scale: 1,
         y: 0,
         duration,
-        ease: 'power2.out'
+        ease: EASE_IN,
+        ...withGpu({})
       }
     )
   }, [open])

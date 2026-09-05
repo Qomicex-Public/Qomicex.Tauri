@@ -35,6 +35,8 @@ export interface AppSettings {
   themePreset: 'default' | 'latte' | 'frappe' | 'macchiato' | 'mocha'
   animationsEnabled: boolean
   animationSpeed: number
+  /** GPU 硬件加速动画（force3D）：缺失 = 开启（默认开） */
+  gpuAcceleration?: boolean
   maxFrameRate: number
   backgroundImage: string
   backgroundRandom: boolean
@@ -103,6 +105,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themePreset: 'default',
   animationsEnabled: true,
   animationSpeed: 1,
+  gpuAcceleration: true,
   maxFrameRate: 0,
   backgroundImage: '',
   backgroundRandom: false,
@@ -156,6 +159,7 @@ export async function loadSettings(): Promise<AppSettings> {
           DEFAULT_SETTINGS.themePreset,
         animationSpeed: data.animationSpeed ?? cached.animationSpeed ?? DEFAULT_SETTINGS.animationSpeed,
         animationsEnabled: data.animationsEnabled ?? cached.animationsEnabled ?? DEFAULT_SETTINGS.animationsEnabled,
+        gpuAcceleration: data.gpuAcceleration ?? cached.gpuAcceleration ?? DEFAULT_SETTINGS.gpuAcceleration,
       }
       loaded = true
       listeners.forEach(fn => fn(cached))

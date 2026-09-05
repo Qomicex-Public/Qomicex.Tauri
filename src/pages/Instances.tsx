@@ -632,7 +632,8 @@ export default function Instances() {
         scale: 1,
         y: 0,
         duration: 0.15 / speed,
-        ease: 'power2.out'
+        ease: 'power3.out',
+        force3D: settings.gpuAcceleration !== false
       }
     )
   }, [dirPopover])
@@ -683,7 +684,8 @@ export default function Instances() {
         opacity: 1,
         x: 0,
         duration: 0.3 / speed,
-        ease: 'power2.out'
+        ease: 'power3.out',
+        force3D: settings.gpuAcceleration !== false
       }
     )
   }, [step])

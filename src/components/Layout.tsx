@@ -139,7 +139,7 @@ export default function Layout() {
     // 等待 DOM 更新后执行动画
     requestAnimationFrame(() => {
       gsap.to(el,
-        { opacity: 1, y: 0, duration: 0.25 / speed, ease: 'power2.out' }
+        { opacity: 1, y: 0, duration: 0.25 / speed, ease: 'power3.out', force3D: settings.gpuAcceleration !== false }
       )
     })
   }, [location.pathname])

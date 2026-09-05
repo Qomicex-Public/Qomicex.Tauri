@@ -22,7 +22,8 @@ export function usePageAnimation() {
       autoAlpha: 0,
       y: 12,
       duration: 0.35 / speed * fpsScale,
-      ease: 'power2.out',
+      ease: 'power3.out',
+      force3D: s.gpuAcceleration !== false,
       clearProps: 'y',
     })
   }, { scope: ref })
@@ -52,7 +53,8 @@ export function useStaggerAnimation(deps: unknown[] = []) {
       scale: 0.97,
       duration: 0.3 / speed * fpsScale,
       stagger: Math.min(0.06, 0.3 / children.length) / speed * fpsScale,
-      ease: 'power2.out',
+      ease: 'power3.out',
+      force3D: s.gpuAcceleration !== false,
       clearProps: 'all',
     })
   }, { scope: ref, dependencies: deps })

@@ -92,6 +92,10 @@ pub struct SettingsResponse {
     pub download_timeout: i32,
     pub animations_enabled: Option<bool>,
     pub animation_speed: Option<i32>,
+    /// GPU 硬件加速动画（GSAP force3D，动画元素提升到独立 GPU 合成层）。
+    /// `None`/`Some(true)` = 开启（默认开）；`Some(false)` = 关闭（2D 渲染，低端设备兜底）。
+    #[serde(default)]
+    pub gpu_acceleration: Option<bool>,
     pub max_frame_rate: Option<i32>,
     pub background_image: Option<String>,
     pub background_random: Option<bool>,
@@ -197,6 +201,7 @@ impl Default for SettingsResponse {
             download_timeout: 15,
             animations_enabled: None,
             animation_speed: None,
+            gpu_acceleration: None,
             max_frame_rate: None,
             background_image: None,
             background_random: None,

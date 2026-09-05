@@ -25,7 +25,7 @@ export function usePageTransition<T extends HTMLElement>(options?: {
 
     gsap.fromTo(el,
       { opacity: 0, y },
-      { opacity: 1, y: 0, duration, ease: 'power2.out' }
+      { opacity: 1, y: 0, duration, ease: 'power3.out', ...(settings.gpuAcceleration !== false ? { force3D: true } : {}) }
     )
   }, [options?.duration, options?.y])
 
@@ -66,7 +66,8 @@ export function useStaggerAnimation<T extends HTMLElement>(options?: {
         opacity: 1, y: 0, scale: 1,
         duration,
         stagger,
-        ease: 'power2.out'
+        ease: 'power3.out',
+        ...(settings.gpuAcceleration !== false ? { force3D: true } : {})
       }
     )
   }, [options?.stagger, options?.duration, options?.y, options?.scale])
@@ -161,7 +162,7 @@ export function useDialogAnimation(open: boolean): {
     if (backdropRef.current) {
       gsap.fromTo(backdropRef.current,
         { opacity: 0 },
-        { opacity: 1, duration, ease: 'power2.out' }
+        { opacity: 1, duration, ease: 'power3.out' }
       )
     }
 
@@ -173,7 +174,8 @@ export function useDialogAnimation(open: boolean): {
           scale: 1,
           y: 0,
           duration,
-          ease: 'power2.out'
+          ease: 'power3.out',
+          ...(settings.gpuAcceleration !== false ? { force3D: true } : {})
         }
       )
     }
@@ -199,13 +201,14 @@ export function usePopupAnimation(open: boolean): RefObject<HTMLDivElement | nul
     const duration = 0.15 / speed
 
     gsap.fromTo(ref.current,
-      { opacity: 0, scale: 0.9, y: -4 },
+      { opacity: 0, scale: 0.94, y: -4 },
       {
         opacity: 1,
         scale: 1,
         y: 0,
         duration,
-        ease: 'power2.out'
+        ease: 'power3.out',
+        ...(settings.gpuAcceleration !== false ? { force3D: true } : {})
       }
     )
   }, [open])
@@ -305,6 +308,7 @@ export function useAnimatedList<T extends HTMLElement>(
           scale: 0.92,
           duration: (options?.exitDuration ?? 0.23) / speed,
           ease: 'power2.in',
+          force3D: true,
           onComplete: () => clone.remove(),
         })
       })
@@ -316,7 +320,8 @@ export function useAnimatedList<T extends HTMLElement>(
     const to: gsap.TweenVars = {
       opacity: 1,
       duration: (options?.duration ?? 0.25) / speed,
-      ease: 'power2.out',
+      ease: 'power3.out',
+      ...(settings.gpuAcceleration !== false ? { force3D: true } : {}),
     }
     if (options?.x !== undefined) {
       from.x = options.x

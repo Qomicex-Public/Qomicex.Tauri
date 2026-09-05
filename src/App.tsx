@@ -436,6 +436,7 @@ Console - Qomicex Launcher ======================================`)
       const maxFps = s.maxFrameRate ?? 0
       const fpsScale = maxFps > 0 ? 60 / maxFps : 1
       document.documentElement.dataset.animEnabled = String(enabled)
+      document.documentElement.dataset.animGpu = String(s.gpuAcceleration !== false)
       document.documentElement.dataset.maxFps = String(maxFps)
       document.documentElement.style.setProperty('--anim-duration-multiplier', String((1 / speed) * fpsScale))
       window.dispatchEvent(new CustomEvent('qomicex-bg-change'))

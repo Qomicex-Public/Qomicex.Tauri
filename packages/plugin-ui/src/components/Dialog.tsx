@@ -2,6 +2,7 @@ import * as React from "react"
 import { createPortal } from "react-dom"
 import { cn } from "../lib/cn.js"
 import gsap from "gsap"
+import { readAnimConfig, EASE_IN, EASE_OUT, withGpu } from "../lib/anim.js"
 
 interface DialogProps {
   open: boolean
@@ -15,101 +16,93 @@ interface DialogProps {
 function Dialog({ open, onClose, children, className, closeOnBackdrop = true, closeOnEsc = true }: DialogProps) {
   const backdropRef = React.useRef<HTMLDivElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
-  const [isVisible, setIsVisible] = React.useState(open)
-  const [isAnimating, setIsAnimating] = React.useState(false)
+  // 是否正处于"open=false 但还在播退出动画"状态；动画结束才真正卸载
+  const [isClosing, setIsClosing] = React.useState(false)
+  // open 一直为 false 时不渲染任何东西
+  const [mounted, setMounted] = React.useState(open)
   const onCloseRef = React.useRef(onClose)
   onCloseRef.current = onClose
+  const closeTimerRef = React.useRef<gsap.core.Tween | null>(null)
 
   React.useEffect(() => {
     if (!open || !closeOnEsc) return
     function handler(e: KeyboardEvent) {
-      if (e.key === "Escape") handleClose()
+      if (e.key === "Escape") onCloseRef.current()
     }
     document.addEventListener("keydown", handler)
     return () => document.removeEventListener("keydown", handler)
   }, [open, closeOnEsc])
 
-  // GSAP 进入动画
+  // 挂载/卸载编排：open 翻 true → 挂载；open 翻 false → 先播退出动画再卸载
   React.useEffect(() => {
-    if (!open) return
+    if (open) {
+      // 快速关闭又重开：取消未完的退出动画，恢复可见
+      closeTimerRef.current?.kill()
+      setMounted(true)
+      setIsClosing(false)
+    } else {
+      // 所有关闭路径（按钮/Esc/backdrop/调用方 setState）都走这里，统一有退出动画
+      const { enabled, speed } = readAnimConfig()
+      if (!mounted || !enabled) {
+        setMounted(false)
+        return
+      }
+      setIsClosing(true)
+      const backdrop = backdropRef.current
+      const content = contentRef.current
+      const duration = 0.15 / speed
+      if (backdrop) {
+        gsap.to(backdrop, { opacity: 0, duration, ease: EASE_OUT })
+      }
+      if (content) {
+        closeTimerRef.current = gsap.to(content, {
+          opacity: 0,
+          scale: 0.95,
+          y: 8,
+          duration,
+          ease: EASE_OUT,
+          ...withGpu({}),
+          onComplete: () => {
+            setIsClosing(false)
+            setMounted(false)
+          },
+        })
+      } else {
+        setIsClosing(false)
+        setMounted(false)
+        return
+      }
+    }
+  }, [open])
 
+  // 进入动画：DOM 挂载后执行（refs 已就绪），修复常驻 Dialog 首开无动画
+  React.useLayoutEffect(() => {
+    if (!open || isClosing || !mounted) return
     const backdrop = backdropRef.current
     const content = contentRef.current
     if (!backdrop || !content) return
 
-    // 检查动画是否启用
-    const animEnabled = document.documentElement.getAttribute('data-anim-enabled') !== 'false'
-    if (!animEnabled) return
+    const { enabled, speed } = readAnimConfig()
+    if (!enabled) return
 
-    const speedStr = getComputedStyle(document.documentElement).getPropertyValue('--anim-duration-multiplier')
-    const speed = speedStr ? parseFloat(speedStr) : 1
-    const duration = 0.2 / (speed || 1)
-
-    gsap.fromTo(backdrop,
+    const duration = 0.2 / speed
+    gsap.fromTo(
+      backdrop,
       { opacity: 0 },
-      { opacity: 1, duration, ease: 'power2.out' }
+      { opacity: 1, duration, ease: EASE_IN }
     )
-
-    gsap.fromTo(content,
+    gsap.fromTo(
+      content,
       { opacity: 0, scale: 0.95, y: 8 },
-      {
-        opacity: 1,
-        scale: 1,
-        y: 0,
-        duration,
-        ease: 'power2.out'
-      }
+      { opacity: 1, scale: 1, y: 0, duration, ease: EASE_IN, ...withGpu({}) }
     )
-  }, [open])
+  }, [mounted, isClosing])
 
-  // 处理关闭动画
   const handleClose = React.useCallback(() => {
-    const backdrop = backdropRef.current
-    const content = contentRef.current
-
-    // 检查动画是否启用
-    const animEnabled = document.documentElement.getAttribute('data-anim-enabled') !== 'false'
-    if (!animEnabled || !backdrop || !content) {
-      onCloseRef.current()
-      return
-    }
-
-    setIsAnimating(true)
-
-    const speedStr = getComputedStyle(document.documentElement).getPropertyValue('--anim-duration-multiplier')
-    const speed = speedStr ? parseFloat(speedStr) : 1
-    const duration = 0.15 / (speed || 1)
-
-    gsap.to(backdrop, {
-      opacity: 0,
-      duration,
-      ease: 'power2.in'
-    })
-
-    gsap.to(content, {
-      opacity: 0,
-      scale: 0.95,
-      y: 8,
-      duration,
-      ease: 'power2.in',
-      onComplete: () => {
-        setIsAnimating(false)
-        onCloseRef.current()
-      }
-    })
+    onCloseRef.current()
   }, [])
 
-  // 同步 open 状态到 isVisible
-  React.useEffect(() => {
-    if (open) {
-      setIsVisible(true)
-    } else if (!isAnimating) {
-      // 关闭动画完成后才隐藏
-      setIsVisible(false)
-    }
-  }, [open, isAnimating])
-
-  if (!isVisible) return null
+  if (!mounted) return null
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">

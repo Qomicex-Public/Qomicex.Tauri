@@ -49,7 +49,8 @@ export function ContentTransition({
           opacity: 1,
           scale: 1,
           duration: duration / 2,
-          ease: 'power2.out'
+          ease: 'power3.out',
+          force3D: settings.gpuAcceleration !== false,
         }
       )
     } else {
@@ -66,7 +67,8 @@ export function ContentTransition({
           opacity: 1,
           scale: 1,
           duration,
-          ease: 'power2.out'
+          ease: 'power3.out',
+          force3D: settings.gpuAcceleration !== false,
         }
       )
     }

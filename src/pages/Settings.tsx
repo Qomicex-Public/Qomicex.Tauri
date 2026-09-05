@@ -102,6 +102,7 @@ const SERVICE_DESC_KEYS: Record<string, string> = {
   bangbang93: 'settings.about.serviceBmclapi',
   mcmod: 'settings.about.serviceMcmod',
   'Minecraft官网': 'settings.about.serviceMinecraft',
+  xphost008: 'settings.about.refLaunchFlow',
 }
 const SERVICE_NAME_KEYS: Record<string, string> = {
   Modrinth: 'settings.about.serviceModrinthName',
@@ -110,6 +111,7 @@ const SERVICE_NAME_KEYS: Record<string, string> = {
   bangbang93: 'settings.about.serviceBmclapiName',
   mcmod: 'settings.about.serviceMcmodName',
   'Minecraft官网': 'settings.about.serviceMinecraftName',
+  xphost008: 'settings.about.serviceXphost008Name',
 }
 const REF_DESC_KEYS: Record<string, string> = {
   HMCL: 'settings.about.refVersionCheck',
@@ -1811,6 +1813,19 @@ export default function Settings() {
                       <span>{t('settings.appearance.fast')}</span>
                     </div>
                   </div>
+                )}
+
+                {settings.animationsEnabled && (
+                  <SettingRow
+                    label={t('settings.appearance.gpuAcceleration')}
+                    description={t('settings.appearance.gpuAccelerationDesc')}
+                    control={
+                      <Switch
+                        checked={settings.gpuAcceleration !== false}
+                        onCheckedChange={(c) => update('gpuAcceleration', c === true)}
+                      />
+                    }
+                  />
                 )}
 
                 <SettingRow
