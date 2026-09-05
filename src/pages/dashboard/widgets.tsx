@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Megaphone, Play, User, X } from 'lucide-react'
 import { cn } from '../../lib/utils.ts'
 import { Button } from '../../components/ui'
@@ -59,13 +60,34 @@ export function AccountWidget() {
   const [allAccounts, setAllAccounts] = useState<Account[]>([])
   const [accountsOpen, setAccountsOpen] = useState(false)
   const accountRef = useRef<HTMLDivElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  /** 下拉 portal 到 body（grid item 的 transform/backdrop-blur 会创建 stacking context，内部 z-50 逃不出被相邻 widget 遮挡） */
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; right: number } | null>(null)
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (accountRef.current && !accountRef.current.contains(e.target as Node)) setAccountsOpen(false)
+      if (accountRef.current?.contains(e.target as Node)) return
+      if (dropdownRef.current?.contains(e.target as Node)) return
+      setAccountsOpen(false)
     }
     if (accountsOpen) document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
+  }, [accountsOpen])
+
+  // 下拉打开期间跟随 anchor（页面滚动/窗口尺寸变化时重算 fixed 定位）
+  useEffect(() => {
+    if (!accountsOpen) return
+    const update = () => {
+      const rect = accountRef.current?.getBoundingClientRect()
+      if (rect) setDropdownPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+    }
+    update()
+    window.addEventListener('scroll', update, true)
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('scroll', update, true)
+      window.removeEventListener('resize', update)
+    }
   }, [accountsOpen])
 
   const openAccountDropdown = useCallback(async () => {
@@ -107,8 +129,12 @@ export function AccountWidget() {
           <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', accountsOpen && 'rotate-180')} />
         </Button>
       </div>
-      {accountsOpen && (
-        <div className="no-drag absolute right-2 top-full z-50 mt-1 w-56 rounded-lg border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-top-2 zoom-in-95 duration-200">
+      {accountsOpen && dropdownPos && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{ position: 'fixed', top: dropdownPos.top, right: dropdownPos.right, zIndex: 9999 }}
+          className="no-drag w-56 rounded-lg border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-top-2 zoom-in-95 duration-200"
+        >
           <div className="max-h-60 overflow-y-auto">
             {allAccounts.map((acc) => {
               const isDefault = acc.uuid === defaultAccount?.uuid
@@ -141,7 +167,8 @@ export function AccountWidget() {
               {t('dashboard.manageAccounts')}
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
