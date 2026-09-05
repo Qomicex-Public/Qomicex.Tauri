@@ -20,10 +20,10 @@ function DashboardContent() {
 
   const widgets = useMemo<WidgetEntry[]>(() => {
     const staticEntries: WidgetEntry[] = [
-      { id: 'watermark', label: t('widget.watermark'), node: <WatermarkWidget /> },
-      { id: 'account', label: t('widget.account'), node: <AccountWidget /> },
-      { id: 'instance', label: t('widget.instance'), node: <InstanceWidget /> },
-      { id: 'announcements', label: t('widget.announcements'), node: <AnnouncementWidget /> },
+      { id: 'watermark', label: t('dashboard.widget.watermark'), node: <WatermarkWidget /> },
+      { id: 'account', label: t('dashboard.widget.account'), node: <AccountWidget /> },
+      { id: 'instance', label: t('dashboard.widget.instance'), node: <InstanceWidget /> },
+      { id: 'announcements', label: t('dashboard.widget.announcements'), node: <AnnouncementWidget /> },
     ]
     const pluginEntries: WidgetEntry[] = getSlotContent('dashboard:widgets').map((reg, i) => ({
       id: `plugin:${reg.pluginId}:${i}` as WidgetId,
