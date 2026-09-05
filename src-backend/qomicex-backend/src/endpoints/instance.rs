@@ -794,6 +794,14 @@ async fn launch_instance(
 
         match result {
             Ok((pid, _msg)) => {
+                // 取消可能落在 core.launch() 无检查点窗口内：若已置取消位，杀掉刚
+                // 拉起的进程并按取消结算，不进运行列表（否则取消后游戏仍被启动）。
+                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    crate::services::launch_tracker::kill_process(pid);
+                    tracing::info!(instance = %instance_id, pid, "launch: cancelled after process start");
+                    tracker.cancel_and_remove(&instance_id);
+                    return;
+                }
                 tracing::info!(instance = %instance_id, pid, "launch: game started");
                 tracker.track(&instance_id, pid);
                 game_log.register(&instance_id, pid);
@@ -811,6 +819,12 @@ async fn launch_instance(
             }
             Err(err) => {
                 tracing::error!(instance = %instance_id, error = %err, "launch: failed");
+                // 用户取消：清掉进度即可，不写回 failed 终态（否则已取消的
+                // 流程被复活成错误进度，前端 dialog 关了又弹回）。
+                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    tracker.cancel_and_remove(&instance_id);
+                    return;
+                }
                 let _ = std::fs::create_dir_all(std::path::Path::new(&game_dir).join("logs"));
                 let _ = std::fs::write(
                     std::path::Path::new(&game_dir).join("logs/launch-errors.log"),

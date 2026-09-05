@@ -61,8 +61,20 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   const [crashDialogState, setCrashDialogState] = useState<CrashDialogState | null>(null)
   const pollRefs = useRef<Map<string, number>>(new Map())
   const resourcePollRefs = useRef<Map<string, number>>(new Map())
+  // 轮询所有权标记：clearInstancePoll 后，飞行中的 fetch resolve 时据此退出，
+  // 不复活 launchProgress（dialog 复现）也不重排下一跳（轮询链复活）
+  const activePolls = useRef<Set<string>>(new Set())
   const notifyRef = useRef<(msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void>(() => {})
   const launchingIdRef = useRef<string | null>(null)
+  // per-instance 启动序号：cancelLaunch 递增使 in-flight 的 launchInstance 失配，
+  // 其 apiLaunchInstance resolve 后不再 startPoll（否则轮询链在取消后复活，dialog 弹回）
+  const launchSeqRef = useRef<Map<string, number>>(new Map())
+
+  const bumpLaunchSeq = useCallback((id: string) => {
+    const next = (launchSeqRef.current.get(id) ?? 0) + 1
+    launchSeqRef.current.set(id, next)
+    return next
+  }, [])
 
   const setNotifyImpl = useCallback((fn: typeof notifyRef.current) => { notifyRef.current = fn }, [])
 
@@ -81,6 +93,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const clearInstancePoll = useCallback((id: string) => {
+    activePolls.current.delete(id)
     const ref = pollRefs.current.get(id)
     if (ref) { clearTimeout(ref); pollRefs.current.delete(id) }
     // 同时清理资源监控轮询
@@ -108,9 +121,12 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   /** 轮询启动进度直到终态（running 注册进运行列表 / failed/crashed 弹窗 / completed 移除）。
    * 供 launchInstance（启动后）与 watchInstance（联机房主由后端代启，仅监听）复用。 */
   const startPoll = useCallback((id: string, name: string) => {
+    activePolls.current.add(id)
     const poll = async () => {
+      if (!activePolls.current.has(id)) return
       try {
         const p = await getLaunchProgress(id)
+        if (!activePolls.current.has(id)) return
         if (p.stage === 'crashed' || p.stage === 'failed') {
           // 崩溃/失败走崩溃分析弹窗，不再保留 launchProgress（否则弹窗关闭后
           // LaunchProgressDialog 会以 crashed 终态重新出现，造成二次弹窗）。
@@ -160,8 +176,9 @@ export function RunningProvider({ children }: { children: ReactNode }) {
           setLaunchProgress(p)
           pollRefs.current.set(id, window.setTimeout(poll, 500))
         }
-      } catch {
-        clearInstancePoll(id)
+        } catch {
+          if (!activePolls.current.has(id)) return
+          clearInstancePoll(id)
         setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
         setLaunchProgress(null)
         setLaunchingInstanceId(null)
@@ -177,6 +194,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
 
   const launchInstance = useCallback(hookable('launchInstanceFlow', async (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions): Promise<LaunchResult> => {
     launchingIdRef.current = id
+    const seq = bumpLaunchSeq(id)
     setLaunchingInstanceId(id)
     setLaunchProgress({ stage: 'starting', message: tRef.current('running.preparingLaunch'), progress: 0, isRunning: false })
 
@@ -207,6 +225,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     try {
       result = await apiLaunchInstance(id, quickJoin)
     } catch (e) {
+      if (launchSeqRef.current.get(id) !== seq) return { success: false, processId: 0 } as LaunchResult
       // 请求异常（超时/后端不可达）：清掉启动 dialog，避免残留"准备启动"无法关闭
       setLaunchProgress(null)
       setLaunchingInstanceId(null)
@@ -238,9 +257,15 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       return result
     }
 
+    // 期间被取消（seq 失配）：apiLaunchInstance 已在后端开跑，由后端 cancel
+    // 兜底终止；前端只保证不再建立轮询链（否则 dialog 在关闭后弹回）
+    if (launchSeqRef.current.get(id) !== seq) {
+      try { await apiCancelLaunch(id) } catch {}
+      return result
+    }
     startPoll(id, name)
     return result
-  }), [clearInstancePoll, confirm, startPoll])
+  }), [bumpLaunchSeq, clearInstancePoll, confirm, startPoll])
 
   const cancelLaunch = useCallback(async (id?: string) => {
     const targetId = id || launchingIdRef.current
@@ -248,13 +273,17 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     setLaunchProgress(null)
     setLaunchingInstanceId(null)
     launchingIdRef.current = null
-    if (targetId) clearInstancePoll(targetId)
+    if (targetId) {
+      // 递增序号使 in-flight 的 launchInstance 失配，其 resolve 后不再复活轮询链
+      bumpLaunchSeq(targetId)
+      clearInstancePoll(targetId)
+    }
     setRunningInstances(prev => prev.filter(r => r.instanceId !== targetId))
     if (targetId) {
       try { await apiCancelLaunch(targetId) } catch {}
     }
     notifyRef.current?.(tRef.current('running.launchCancelled'), 'info')
-  }, [clearInstancePoll])
+  }, [bumpLaunchSeq, clearInstancePoll])
 
   const killInstance = useCallback(async (id: string) => {
     try { await apiCancelLaunch(id) } catch {}
