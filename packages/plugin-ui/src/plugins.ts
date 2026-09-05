@@ -31,6 +31,9 @@ export interface PluginEntry {
 export interface PluginContributes {
   downloadSources?: string[]
   commands?: string[]
+  /** 插件设置页：包内 HTML 相对路径列表（如 `"dist/settings.html"`）。
+   * 每个路径在启动器「设置 → 插件设置」生成一个纵向 tab，以 iframe 沙箱渲染，
+   * 页面内可经注入的 `__PLUGIN_API__`（getSettings/setSettings/callBackend 等）读写插件设置。 */
   settingsPages?: string[]
   menuItems?: PluginMenuItem[]
   overlay?: { file: string; title?: string; width?: number; height?: number; minimizable?: boolean; resizable?: boolean }

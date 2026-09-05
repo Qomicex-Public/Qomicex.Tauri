@@ -37,6 +37,9 @@ export function PluginEventBridge() {
         navigate(detail.path)
       }
     }
+    function handleOpenSettings() {
+      navigate('/settings?tab=plugins')
+    }
     function handleToast(e: Event) {
       const detail = (e as CustomEvent).detail
       if (detail?.message) notify(detail.message, detail.type ?? 'info')
@@ -56,10 +59,12 @@ export function PluginEventBridge() {
       }
     }
     window.addEventListener('plugin:navigate', handleNavigate)
+    window.addEventListener('plugin:open-settings', handleOpenSettings)
     window.addEventListener('plugin:show-toast', handleToast)
     window.addEventListener('keydown', handleKeyDown)
     return () => {
       window.removeEventListener('plugin:navigate', handleNavigate)
+      window.removeEventListener('plugin:open-settings', handleOpenSettings)
       window.removeEventListener('plugin:show-toast', handleToast)
       window.removeEventListener('keydown', handleKeyDown)
     }

@@ -630,6 +630,13 @@ export default function Settings() {
     }
   }, [category])
 
+  // 插件 openPluginSettings API：已挂载时监听事件切到插件 tab（未挂载时由 URL ?tab=plugins 初始化兜底）
+  useEffect(() => {
+    const open = () => setCategory('plugins')
+    window.addEventListener('plugin:open-settings', open)
+    return () => window.removeEventListener('plugin:open-settings', open)
+  }, [])
+
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     const next = { ...settings, [key]: value }
     setSettings(next)

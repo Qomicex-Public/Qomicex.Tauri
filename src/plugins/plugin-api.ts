@@ -4,6 +4,7 @@ import { addTask } from '../stores/downloadStore.ts'
 import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
 import { resolveLang } from '../i18n/lang.ts'
 import { getHookRegistry } from './hook-registry.ts'
+import { requestPluginSettings } from './pluginSettingsNav.ts'
 import type { HookContext } from './hook-registry.ts'
 
 function i18nKey(key: string, params?: Record<string, string | number>): string {
@@ -109,6 +110,9 @@ export interface PluginBridge {
   deleteFile: (path: string) => Promise<{ path: string }>
   execCommand: (command: string, timeoutMs?: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   navigate: (path: string) => void
+  /** 打开启动器「设置 → 插件 → 插件设置」并定位到指定插件（缺省定位到本插件第一个设置页）。
+   * 目标插件须在 manifest 声明 contributes.settingsPages 才有对应 tab。 */
+  openPluginSettings: (targetPluginId?: string) => void
   addMenuItem: (item: { path: string; label: string; icon?: string }) => void
   showToast: (message: string, type?: 'info' | 'error' | 'success') => void
   log: (message: string, level?: 'debug' | 'info' | 'warn' | 'error') => void
@@ -309,6 +313,9 @@ export function createPluginBridge(pluginId: string): PluginBridge {
     },
     navigate: (path) => {
       window.dispatchEvent(new CustomEvent('plugin:navigate', { detail: { pluginId, path } }))
+    },
+    openPluginSettings: (targetPluginId) => {
+      requestPluginSettings(targetPluginId ?? pluginId)
     },
     addMenuItem: (item) => {
       window.dispatchEvent(new CustomEvent('plugin:add-menu-item', { detail: { pluginId, item } }))
