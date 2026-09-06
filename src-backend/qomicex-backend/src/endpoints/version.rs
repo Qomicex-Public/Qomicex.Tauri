@@ -5,9 +5,11 @@
 //! 用于 /versions/scan 的实例自动修复）。
 //!
 //! 与源的差异：
-//! - ResolveGameVersion 第 1 级 `GameVersionHelper.FromJar`（读 JAR 内 version 数据）Rust 侧
-//!   无现成实现，且不引入 zip 依赖 → 以待补 TODO 跳过（见 `from_jar_game_version`），
-//!   该级暂不生效，回退到 clientVersion → minecraftVersion → inheritsFrom → arguments → regex。
+//! - ResolveGameVersion 第 1 级 `GameVersionHelper.FromJar` 已接线到 core
+//!   `util::version_json::from_jar`（jar 内 version.json → class 常量池 →
+//!   已知 SHA1 映射表），回退顺序与源一致：JAR → clientVersion →
+//!   minecraftVersion → inheritsFrom → arguments → regex → id（见
+//!   `from_jar_game_version`）。
 //! - `/versions/{name}` 及子路由通过 axum 静态路由优先匹配，与较长的
 //!   `/latest`/`/installed`/`/remote`/`/scan` 无冲突。
 
