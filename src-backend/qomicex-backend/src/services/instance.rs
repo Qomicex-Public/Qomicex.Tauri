@@ -141,6 +141,20 @@ impl InstanceService {
         }
     }
 
+    /// 测试专用：实例文件落在指定目录，避免读写用户真实数据。
+    #[doc(hidden)]
+    pub fn new_for_test(base_dir: &std::path::Path) -> Self {
+        let data_dir = base_dir.join("data");
+        let _ = std::fs::create_dir_all(&data_dir);
+        let file_path = data_dir.join("instances.json");
+        Self {
+            instances: Mutex::new(load_from_file(&file_path)),
+            default_id: Mutex::new(None),
+            scan_cache: Mutex::new(HashMap::new()),
+            file_path,
+        }
+    }
+
     fn save_to_file(&self) {
         let guard = match self.instances.lock() {
             Ok(g) => g,
