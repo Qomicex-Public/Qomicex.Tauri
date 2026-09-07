@@ -371,7 +371,7 @@ export interface RepairResourcesResult {
 
 export interface InstallStepInfo {
   id: string
-  status: 'pending' | 'active' | 'done' | 'failed'
+  status: 'pending' | 'active' | 'done' | 'failed' | 'skipped'
   percent?: number
   /** 合成总进度权重（并行管线中多步可同时 active） */
   weight?: number

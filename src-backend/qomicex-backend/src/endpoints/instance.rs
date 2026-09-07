@@ -754,10 +754,29 @@ async fn launch_instance(
             if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err("启动已取消".to_string());
             }
-            progress.stage = "launching".to_string();
-            progress.message = "正在启动游戏...".to_string();
-            progress.progress = 50.0;
-            tracker.set_progress(&instance_id, progress.clone());
+
+            // core.launch 细分阶段回调：natives（解压游戏文件）/ params（生成启动参数）。
+            // 供启动 dialog 分步展示；进度快照直接覆盖（repairing 等历史阶段由前端 seen 集合判定）。
+            let cb_tracker = tracker.clone();
+            let cb_instance = instance_id.clone();
+            let stage_callback: qomicex_core::models::launch::LaunchStageCallback =
+                Arc::new(move |stage: &str| {
+                    let (s, msg, prog) = match stage {
+                        "natives" => ("natives", "正在解压游戏文件...", 55.0),
+                        "params" => ("params", "正在生成启动参数...", 80.0),
+                        _ => return,
+                    };
+                    cb_tracker.set_progress(
+                        &cb_instance,
+                        LaunchProgress {
+                            stage: s.to_string(),
+                            message: msg.to_string(),
+                            progress: prog,
+                            is_running: false,
+                            ..Default::default()
+                        },
+                    );
+                });
 
             let options = LaunchOptions {
                 version: name.clone(),
@@ -779,6 +798,7 @@ async fn launch_instance(
                 }),
                 auth_options: Some(auth_options),
                 game_root: Some(game_dir.clone()),
+                on_stage: Some(stage_callback),
             };
             let result = core
                 .launch()
@@ -803,6 +823,16 @@ async fn launch_instance(
                     return;
                 }
                 tracing::info!(instance = %instance_id, pid, "launch: game started");
+                tracker.set_progress(
+                    &instance_id,
+                    LaunchProgress {
+                        stage: "launching".to_string(),
+                        message: "正在启动游戏...".to_string(),
+                        progress: 95.0,
+                        is_running: false,
+                        ..Default::default()
+                    },
+                );
                 tracker.track(&instance_id, pid);
                 game_log.register(&instance_id, pid);
                 tracker.set_progress(

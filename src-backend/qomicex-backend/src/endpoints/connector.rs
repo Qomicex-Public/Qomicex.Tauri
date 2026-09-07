@@ -707,26 +707,40 @@ async fn host_instance(
                         source: None,
                     })
                 } else {
-                    let launch_options =
-                        build_launch_options(&instance_clone, &java_path, Some(auth_options));
-                    // core.launch() 内部可能做完整性检查/下载（数分钟），期间写心跳进度
+                    let launch_options = {
+                        // core.launch 细分阶段回调（与普通启动路径口径一致）
+                        let cb_tracker = tracker.clone();
+                        let cb_id = starting_id.clone();
+                        let on_stage: qomicex_core::models::launch::LaunchStageCallback =
+                            Arc::new(move |stage: &str| {
+                                let (s, msg, prog) = match stage {
+                                    "natives" => ("natives", "正在解压游戏文件...", 55.0),
+                                    "params" => ("params", "正在生成启动参数...", 80.0),
+                                    _ => return,
+                                };
+                                cb_tracker.set_progress(
+                                    &cb_id,
+                                    LaunchProgress {
+                                        stage: s.to_string(),
+                                        message: msg.to_string(),
+                                        progress: prog,
+                                        is_running: false,
+                                        ..Default::default()
+                                    },
+                                );
+                            });
+                        let mut opts =
+                            build_launch_options(&instance_clone, &java_path, Some(auth_options));
+                        opts.on_stage = Some(on_stage);
+                        opts
+                    };
                     let launch_fut = core.launch().launch(launch_options);
                     tokio::pin!(launch_fut);
                     let result = loop {
                         tokio::select! {
                             r = &mut launch_fut => break r,
-                            _ = tokio::time::sleep(Duration::from_secs(2)) => {
-                                tracker.set_progress(
-                                    &starting_id,
-                                    LaunchProgress {
-                                        stage: "launching".to_string(),
-                                        message: "正在启动游戏（检查/下载文件）...".to_string(),
-                                        progress: 50.0,
-                                        is_running: false,
-                                        ..Default::default()
-                                    },
-                                );
-                            }
+                            // core.launch() 内部可能做完整性检查/下载（数分钟），期间写心跳进度
+                            _ = tokio::time::sleep(Duration::from_secs(2)) => {}
                         }
                     };
                     result.and_then(|r| {
@@ -751,6 +765,16 @@ async fn host_instance(
                     return;
                 }
                 tracker.track(&starting_id, pid);
+                tracker.set_progress(
+                    &starting_id,
+                    LaunchProgress {
+                        stage: "launching".to_string(),
+                        message: "正在启动游戏...".to_string(),
+                        progress: 95.0,
+                        is_running: false,
+                        ..Default::default()
+                    },
+                );
                 tracker.set_progress(
                     &starting_id,
                     LaunchProgress {

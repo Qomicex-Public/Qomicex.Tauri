@@ -290,7 +290,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       return { success: false, processId: 0 } as LaunchResult
     }
 
-    setLaunchProgress({ stage: 'starting', message: tRef.current('running.preparingLaunch'), progress: 0, isRunning: false })
+    setLaunchProgress({ stage: 'auth', message: tRef.current('dialogs.launchProgress.stage.logging-in'), progress: 0, isRunning: false })
 
     if (info?.path && info.gameVersion && info.gameDir) {
       try {

@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react'
+import { CheckCircle2, Circle, CircleDashed, Loader2, XCircle } from 'lucide-react'
 import { useI18n } from '../i18n/index.tsx'
 import type { InstallStepInfo } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
@@ -25,6 +25,8 @@ export default function InstallStepsList({ steps, className, keyPrefix = 'downlo
               <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
             ) : step.status === 'failed' ? (
               <XCircle className="h-3 w-3 shrink-0 text-red-400" />
+            ) : step.status === 'skipped' ? (
+              <CircleDashed className="h-3 w-3 shrink-0 text-muted-foreground/40" />
             ) : (
               <Circle className="h-3 w-3 shrink-0 text-muted-foreground/30" />
             )}
@@ -34,6 +36,7 @@ export default function InstallStepsList({ steps, className, keyPrefix = 'downlo
                 step.status === 'done' && 'text-muted-foreground/70',
                 step.status === 'active' && 'font-medium text-foreground',
                 step.status === 'pending' && 'text-muted-foreground/50',
+                step.status === 'skipped' && 'text-muted-foreground/40',
                 step.status === 'failed' && 'text-red-400'
               )}
             >

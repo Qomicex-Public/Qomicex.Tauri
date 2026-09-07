@@ -7,24 +7,35 @@ import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
 import type { InstallStepInfo, LaunchProgress } from '../types/index.ts'
 
-/** 启动阶段 → 分步显示的固定步骤（repairing 是"检查完整性"的进行中子状态；
- * java 是前端注入的启动前 Java 检查/自动下载阶段）。 */
+/** 启动阶段 → 分步显示的固定步骤。
+ * java/auth 是前端注入的启动前阶段（Java 检查/自动下载、账户校验）；
+ * repairing 是"检查完整性"的条件子步骤（仅缺文件时发生）；
+ * natives/params 由 core 启动回调上报（解压游戏文件/生成启动参数）。
+ * 行 id 对应 i18n 键 dialogs.launchProgress.stage.*。 */
 const STEP_STAGES: ReadonlyArray<{ id: string; stages: readonly string[] }> = [
   { id: 'java', stages: ['java'] },
-  { id: 'checking', stages: ['starting', 'checking', 'repairing'] },
+  { id: 'logging-in', stages: ['auth'] },
+  { id: 'checking', stages: ['starting', 'checking'] },
+  { id: 'repairing', stages: ['repairing'] },
   { id: 'preparing', stages: ['preparing'] },
+  { id: 'natives', stages: ['natives'] },
+  { id: 'building', stages: ['params'] },
   { id: 'launching', stages: ['launching'] },
 ]
 
 const FINAL_STAGES = ['completed', 'crashed', 'failed']
 const ERROR_STAGES = ['crashed', 'failed']
 
-/** 由当前 stage 派生分步状态；failed/crashed 时以最后已知非终态 stage 定位失败步。 */
-function deriveSteps(stage: string, lastStage: string, p: LaunchProgress): InstallStepInfo[] {
+/** 由当前 stage 派生分步状态；failed/crashed 时以最后已知非终态 stage 定位失败步。
+ * 已越过的行若其阶段从未出现在 seen 集合（条件性步骤，如 repairing）则显示 skipped。 */
+function deriveSteps(stage: string, lastStage: string, seen: ReadonlySet<string>, p: LaunchProgress): InstallStepInfo[] {
   const locating = ERROR_STAGES.includes(stage) ? lastStage : stage
   const activeIndex = STEP_STAGES.findIndex((s) => s.stages.includes(locating))
   return STEP_STAGES.map((s, i) => {
-    if (stage === 'completed' || i < activeIndex) return { id: s.id, status: 'done' as const }
+    if (stage === 'completed' || i < activeIndex) {
+      const ran = s.stages.some((st) => seen.has(st))
+      return { id: s.id, status: ran ? ('done' as const) : ('skipped' as const) }
+    }
     if (i === activeIndex) {
       if (ERROR_STAGES.includes(stage)) return { id: s.id, status: 'failed' as const }
       // repairing 子阶段用文件数百分比；java 阶段总进度映射在前 10%，行内还原原始百分比
@@ -43,10 +54,16 @@ export default function LaunchProgressDialog() {
   const { t } = useI18n()
   const { launchProgress, crashDialogState, cancelLaunch } = useRunning()
   const lastStageRef = useRef('starting')
+  const seenStagesRef = useRef<Set<string>>(new Set())
 
-  if (!launchProgress) return null
+  if (!launchProgress) {
+    // 启动会话结束（dialog 关闭）：清空阶段轨迹，下次启动从零累积
+    seenStagesRef.current.clear()
+    return null
+  }
   if (crashDialogState) return null
 
+  seenStagesRef.current.add(launchProgress.stage)
   if (!FINAL_STAGES.includes(launchProgress.stage) && !ERROR_STAGES.includes(launchProgress.stage)) {
     lastStageRef.current = launchProgress.stage
   }
@@ -59,7 +76,7 @@ export default function LaunchProgressDialog() {
   window.dispatchEvent(oe)
   const displayMessage = overrideDetail.message
 
-  const steps = deriveSteps(launchProgress.stage, lastStageRef.current, launchProgress)
+  const steps = deriveSteps(launchProgress.stage, lastStageRef.current, seenStagesRef.current, launchProgress)
 
   return (
     <Dialog open onClose={() => cancelLaunch()} closeOnBackdrop={isFinal} closeOnEsc={isFinal}>
