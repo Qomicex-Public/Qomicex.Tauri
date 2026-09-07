@@ -1,93 +1,57 @@
-import { useState, useCallback, useRef } from 'react'
+import { useCallback } from 'react'
 import Markdown from 'react-markdown'
-import { relaunch } from '@tauri-apps/plugin-process'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import type { Update } from '@tauri-apps/plugin-updater'
+import type { UpdatePlan } from '../api/update.ts'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Tooltip } from './ui'
 import { Button } from './ui'
 import { ArrowUp, CheckCircle2, Download, Eraser, ExternalLink, RotateCw, TriangleAlert } from 'lucide-react'
 import { useI18n } from '../i18n/index.tsx'
 import { REPOSITORY_URL } from '../constants/credits.ts'
+import { useUpdaterStore } from '../stores/updaterStore.ts'
+import { APP_INFO } from '../constants/credits.ts'
 
 interface Props {
   open: boolean
-  update: Update | null
+  plan: UpdatePlan | null
   required?: boolean
   onClose: () => void
 }
 
-export default function UpdateDialog({ open, update, required = false, onClose }: Props) {
+export default function UpdateDialog({ open, plan, required = false, onClose }: Props) {
   const { t } = useI18n()
-  const [state, setState] = useState<'idle' | 'downloading' | 'installing' | 'error' | 'done'>('idle')
-  const [progress, setProgress] = useState(0)
-  const [error, setError] = useState<string>()
-  const cancelledRef = useRef(false)
+  const { phase, progress, error } = useUpdaterStore()
+  const start = useUpdaterStore((s) => s.start)
+  const reset = useUpdaterStore((s) => s.reset)
 
-  const handleDownload = useCallback(async () => {
-    if (!update) return
-    cancelledRef.current = false
-    setState('downloading')
-    setProgress(0)
-    setError(undefined)
+  const handleUpdate = useCallback(() => {
+    if (!plan) return
+    void start(plan)
+  }, [plan, start])
 
-    let total = 0
-    let downloaded = 0
-    try {
-      // ponytail: plugin 无下载中止 API，cancel 语义 = 下载完成后不安装/不重启
-      await update.download((event) => {
-        if (event.event === 'Started') {
-          total = event.data?.contentLength ?? 0
-        } else if (event.event === 'Progress') {
-          downloaded += event.data.chunkLength
-          if (total > 0) setProgress(Math.min(99, Math.round((downloaded / total) * 100)))
-        }
-      })
-      if (cancelledRef.current) {
-        setState('idle')
-        return
-      }
-      setState('installing')
-      await update.install()
-      if (cancelledRef.current) return
-      setState('done')
-      await relaunch()
-    } catch (e) {
-      if (cancelledRef.current) return
-      setState('error')
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }, [update])
+  if (!plan) return null
 
-  const handleCancel = useCallback(() => {
-    cancelledRef.current = true
-    setState('idle')
-    setProgress(0)
-  }, [])
-
-  if (!update) return null
-
-  const versionTag = `v${update.version.replace(/^v/, '')}`
+  const downloading = phase === 'starting' || phase === 'downloading'
+  const done = phase === 'installing'
+  const versionTag = `v${plan.version?.replace(/^v/, '') ?? ''}`
   const releaseUrl = `${REPOSITORY_URL}/releases/tag/${versionTag}`
-  const date = update.date ? new Date(update.date).toLocaleDateString() : undefined
 
   return (
     <Dialog open={open} onClose={required ? () => {} : onClose} closeOnBackdrop={!required} closeOnEsc={!required}>
-      <DialogHeader onClose={required ? undefined : onClose}>
+      <DialogHeader onClose={required || downloading || done ? undefined : onClose}>
         <DialogTitle className="flex items-center gap-2">
           {required ? (
             <TriangleAlert className="h-4 w-4 text-amber-400" />
           ) : (
             <ArrowUp className="h-4 w-4 text-muted-foreground" />
           )}
-          {t('dialogs.update.foundNew', { version: update.version })}
+          {t('dialogs.update.foundNew', { version: plan.version ?? '' })}
         </DialogTitle>
       </DialogHeader>
       <DialogBody>
         <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <span>
-            {update.currentVersion} → <span className="font-medium text-foreground">{update.version}</span>
+            {APP_INFO.version} → <span className="font-medium text-foreground">{plan.version}</span>
           </span>
-          {date && <span>{t('dialogs.update.released', { date })}</span>}
           <button
             onClick={() => openUrl(releaseUrl).catch(() => window.open(releaseUrl, '_blank'))}
             className="inline-flex items-center gap-1 text-primary hover:underline"
@@ -105,10 +69,22 @@ export default function UpdateDialog({ open, update, required = false, onClose }
         )}
 
         <div className="max-h-56 overflow-y-auto rounded-lg bg-background p-3 text-sm leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
-          <Markdown>{update.body || t('dialogs.update.noNotes')}</Markdown>
+          <Markdown>{plan.changelog || t('dialogs.update.noNotes')}</Markdown>
         </div>
 
-        {state === 'error' && error && (
+        {downloading && (
+          <div className="mt-3">
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="mt-1 text-right text-xs text-muted-foreground">{progress}%</p>
+          </div>
+        )}
+
+        {phase === 'error' && error && (
           <Tooltip content={error}>
             <span className="mt-2 block break-words text-xs text-destructive">
               {t('dialogs.update.downloadFailed')}：{error}
@@ -117,35 +93,32 @@ export default function UpdateDialog({ open, update, required = false, onClose }
         )}
       </DialogBody>
       <DialogFooter className="gap-2">
-        {state === 'error' && (
+        {phase === 'error' && (
           <span className="text-xs text-destructive">{t('dialogs.update.downloadFailed')}</span>
         )}
-        {state === 'done' && (
+        {done && (
           <span className="flex items-center gap-1 text-xs text-primary">
             <CheckCircle2 className="h-3 w-3" />
-            {t('dialogs.update.done')}
+            {t('dialogs.update.installing')}
           </span>
         )}
-        {state === 'downloading' && (
+        {downloading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <RotateCw className="h-3 w-3 animate-spin" />
             <span>{t('dialogs.update.downloading', { progress })}</span>
           </div>
         )}
-        {state === 'idle' && !required && (
+        {phase === 'idle' && !required && (
           <Button variant="outline" size="sm" onClick={onClose}>{t('dialogs.update.later')}</Button>
         )}
-        {state === 'downloading' && (
-          <Button variant="outline" size="sm" onClick={handleCancel}>{t('dialogs.update.cancelDownload')}</Button>
-        )}
-        {state === 'error' && (
-          <Button variant="outline" size="sm" onClick={() => { setState('idle'); setError(undefined) }}>
+        {phase === 'error' && (
+          <Button variant="outline" size="sm" onClick={reset}>
             <Eraser className="mr-1 h-3 w-3" />
             {t('dialogs.update.retry')}
           </Button>
         )}
-        {state === 'idle' && (
-          <Button size="sm" onClick={handleDownload}>
+        {(phase === 'idle' || phase === 'error') && (
+          <Button size="sm" onClick={handleUpdate}>
             <Download className="mr-1 h-3 w-3" />
             {t('dialogs.update.updateNow')}
           </Button>

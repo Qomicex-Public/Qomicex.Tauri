@@ -295,6 +295,9 @@ jobs:
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.dll src-tauri/binaries/Packet.dll
           # wintun.dll: easytier TUN 模式（管理员运行）动态加载
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/wintun.dll src-tauri/binaries/wintun.dll
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target x86_64-pc-windows-msvc
+          Copy-Item -Force Qomicex.Updater/target/x86_64-pc-windows-msvc/release/qomicex-updater.exe src-tauri/binaries/updater.exe
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis
@@ -326,6 +329,32 @@ jobs:
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
+      - name: Generate self-update package (windows-x86_64)
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          # 文件布局更新包：NSIS /S 静默安装到收集目录，打包安装后的目录内容
+          $version = "${{ needs.setup.outputs.version }}"
+          $setup = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*setup.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+          if (-not $setup) { throw "No NSIS setup.exe found" }
+          $collect = Join-Path $env:RUNNER_TEMP "qomicex-install-collect"
+          New-Item -ItemType Directory -Force $collect | Out-Null
+          $log = Join-Path $env:RUNNER_TEMP "nsis-install.log"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S", "/D=$collect" -Wait -PassThru -RedirectStandardError $log
+          if ($p.ExitCode -ne 0) { Get-Content $log; throw "NSIS silent install failed: $($p.ExitCode)" }
+          if (-not (Test-Path (Join-Path $collect "Qomicex Launcher.exe"))) { throw "NSIS silent install produced no launcher exe" }
+          $pkg = "qomicex-update-windows-x86_64.zip"
+          Compress-Archive -Path (Join-Path $collect '*') -DestinationPath $pkg -Force
+          npx tauri signer sign $pkg
+          Write-Output "self-update package: $pkg"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-windows-x64
+          path: |
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
@@ -335,7 +364,6 @@ jobs:
           name: qomicex-launcher-windows-x64
           path: |
             src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.exe.sig
             src-tauri/binaries/Packet.dll
             src-tauri/binaries/wintun.dll
 
@@ -388,6 +416,9 @@ jobs:
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/Packet.dll src-tauri/binaries/Packet.dll
           # wintun.dll: easytier TUN 模式（管理员运行）动态加载，ARM64 版
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/wintun.dll src-tauri/binaries/wintun.dll
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target aarch64-pc-windows-msvc
+          Copy-Item -Force Qomicex.Updater/target/aarch64-pc-windows-msvc/release/qomicex-updater.exe src-tauri/binaries/updater.exe
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
@@ -419,6 +450,31 @@ jobs:
           $json = $fragment | ConvertTo-Json -Compress -Depth 10
           Set-Content -Path "update-fragment-$platform.json" -Value $json
           Write-Output "Fragment: $json"
+      - name: Generate self-update package (windows-aarch64)
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $version = "${{ needs.setup.outputs.version }}"
+          $setup = Get-ChildItem -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" -Recurse -Filter "*setup.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+          if (-not $setup) { throw "No NSIS setup.exe found" }
+          $collect = Join-Path $env:RUNNER_TEMP "qomicex-install-collect"
+          New-Item -ItemType Directory -Force $collect | Out-Null
+          $log = Join-Path $env:RUNNER_TEMP "nsis-install.log"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S", "/D=$collect" -Wait -PassThru -RedirectStandardError $log
+          if ($p.ExitCode -ne 0) { Get-Content $log; throw "NSIS silent install failed: $($p.ExitCode)" }
+          if (-not (Test-Path (Join-Path $collect "Qomicex Launcher.exe"))) { throw "NSIS silent install produced no launcher exe" }
+          $pkg = "qomicex-update-windows-aarch64.zip"
+          Compress-Archive -Path (Join-Path $collect '*') -DestinationPath $pkg -Force
+          npx tauri signer sign $pkg
+          Write-Output "self-update package: $pkg"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-windows-arm64
+          path: |
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
@@ -428,7 +484,6 @@ jobs:
           name: qomicex-launcher-windows-arm64
           path: |
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
-            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe.sig
             src-tauri/binaries/Packet.dll
             src-tauri/binaries/wintun.dll
 
@@ -477,6 +532,9 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/x86_64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml
+          cp Qomicex.Updater/target/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - name: Build bundles (retry on transient network errors)
@@ -520,6 +578,45 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
+      - name: Generate self-update packages (linux-x86_64)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION="${{ needs.setup.outputs.version }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
+
+          # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）
+          APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
+          if [ -z "$APPIMAGE" ]; then echo "ERROR: No AppImage found"; exit 1; fi
+          PKG_APP="qomicex-update-linux-x86_64-appimage.zip"
+          zip -j "$PKG_APP" "$APPIMAGE"
+          npx tauri signer sign "$PKG_APP"
+
+          # system 包（deb 布局为基线）：dpkg-deb -x 收集 / 相对布局
+          DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          if [ -z "$DEB" ]; then echo "ERROR: No deb found"; exit 1; fi
+          STAGING=$(mktemp -d)
+          dpkg-deb -x "$DEB" "$STAGING"
+          PKG_SYS="qomicex-update-linux-x86_64-system.zip"
+          (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
+          npx tauri signer sign "$PKG_SYS"
+          rm -rf "$STAGING"
+
+          echo "{\"linux-x86_64-appimage\":{\"url\":\"$URL_BASE/$PKG_APP\",\"signature\":\"$(tr -d '\n' < "$PKG_APP.sig")\",\"strategy\":\"appimage\"}}" > "update-package-fragment-linux-x86_64-appimage.json"
+          echo "{\"linux-x86_64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-x86_64-system.json"
+          cat update-package-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-linux-x64
+          path: |
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-fragment-${{ github.job }}
+          path: update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
@@ -578,6 +675,9 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/aarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml
+          cp Qomicex.Updater/target/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - name: Build bundles (retry on transient network errors)
@@ -683,6 +783,8 @@ jobs:
             cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
             mkdir -p src-tauri/binaries
             mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
+            cargo build --release --manifest-path Qomicex.Updater/Cargo.toml
+            cp Qomicex.Updater/target/release/qomicex-updater src-tauri/binaries/updater
             pnpm store prune || true
             # ponytail: QEMU 用户态模拟下 pnpm tarball 完整性校验异常（Wanted==Got 仍报错），
             # 用非 frozen 模式接受 registry 当前 integrity；仅 QEMU 交叉构建路径使用
@@ -774,6 +876,9 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/aarch64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target aarch64-apple-darwin
+          cp Qomicex.Updater/target/aarch64-apple-darwin/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles app
@@ -815,6 +920,31 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Generate self-update package (darwin-aarch64)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION="${{ needs.setup.outputs.version }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
+          # app 包：zip 内放 .app 内部内容（Contents/...），updater 解压覆盖 bundle 根
+          APP="$BUNDLE_DIR/macos/Qomicex Launcher.app"
+          PKG="qomicex-update-darwin-aarch64.zip"
+          (cd "$APP" && zip -qry "$OLDPWD/$PKG" .)
+          npx tauri signer sign "$PKG"
+          echo "{\"darwin-aarch64\":{\"url\":\"$URL_BASE/$PKG\",\"signature\":\"$(tr -d '\n' < "$PKG.sig")\",\"strategy\":\"app\"}}" > "update-package-fragment-darwin-aarch64.json"
+          cat update-package-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-macos-arm64
+          path: |
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-fragment-${{ github.job }}
+          path: update-package-fragment-*.json
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -887,6 +1017,9 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/x86_64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target x86_64-apple-darwin
+          cp Qomicex.Updater/target/x86_64-apple-darwin/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles app --target x86_64-apple-darwin
@@ -947,6 +1080,30 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
+      - name: Generate self-update package (darwin-x86_64)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION="${{ needs.setup.outputs.version }}"
+          BUNDLE_DIR="src-tauri/target/x86_64-apple-darwin/release/bundle"
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
+          APP="$BUNDLE_DIR/macos/Qomicex Launcher.app"
+          PKG="qomicex-update-darwin-x86_64.zip"
+          (cd "$APP" && zip -qry "$OLDPWD/$PKG" .)
+          npx tauri signer sign "$PKG"
+          echo "{\"darwin-x86_64\":{\"url\":\"$URL_BASE/$PKG\",\"signature\":\"$(tr -d '\n' < "$PKG.sig")\",\"strategy\":\"app\"}}" > "update-package-fragment-darwin-x86_64.json"
+          cat update-package-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-macos-x64
+          path: |
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-fragment-${{ github.job }}
+          path: update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
@@ -994,6 +1151,16 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
+          pattern: update-package-fragment-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: update-package-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
           pattern: qomicex-launcher-*
 
       - name: Merge update fragments into latest.json
@@ -1023,6 +1190,31 @@ jobs:
           jq '.platforms |= map_values(.url |= gsub(" "; "."))' latest.json > tmp.json && mv tmp.json latest.json
           echo "=== latest.json ==="
           cat latest.json
+
+      - name: Merge update-package fragments into updates.json
+        run: |
+          # 自更新链路（Qomicex.Updater）的更新计划：platforms key 即包名后缀
+          # （windows-x86_64 / linux-x86_64-appimage / linux-x86_64-system /
+          # darwin-aarch64 ...），条目含 url + signature + strategy。
+          VERSION="${{ needs.setup.outputs.version }}"
+          REQUIRED=${{ needs.setup.outputs.required }}
+          NOTES_JSON=$(cat RELEASE_NOTES.md | jq -Rs '.')
+          jq -n \
+            --arg version "$VERSION" \
+            --argjson required "$REQUIRED" \
+            --argjson notes "$NOTES_JSON" \
+            '{version: $version, required: $required, notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: {}}' \
+            > updates.json
+          for f in update-package-fragment-*.json; do
+            if [ -f "$f" ]; then
+              KEY=$(jq -r 'keys[0]' "$f")
+              VAL=$(jq '.[keys[0]]' "$f")
+              jq --arg k "$KEY" --argjson v "$VAL" '.platforms[$k] = $v' updates.json > tmp.json
+              mv tmp.json updates.json
+            fi
+          done
+          echo "=== updates.json ==="
+          cat updates.json
 
       - name: Generate alpha.json (alpha only)
         if: needs.setup.outputs.releaseType == 'alpha'
@@ -1076,6 +1268,9 @@ jobs:
           files: |
             latest.json
             alpha.json
+            updates.json
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
             qomicex-launcher-*/**/*
           fail_on_unmatched_files: false
 

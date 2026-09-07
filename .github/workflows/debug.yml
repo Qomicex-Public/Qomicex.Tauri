@@ -293,6 +293,9 @@ jobs:
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/Packet.dll src-tauri/binaries/Packet.dll
           # wintun.dll: easytier TUN 模式（管理员运行）动态加载
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/x86_64/wintun.dll src-tauri/binaries/wintun.dll
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target x86_64-pc-windows-msvc
+          Copy-Item -Force Qomicex.Updater/target/x86_64-pc-windows-msvc/release/qomicex-updater.exe src-tauri/binaries/updater.exe
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis
@@ -386,6 +389,9 @@ jobs:
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/Packet.dll src-tauri/binaries/Packet.dll
           # wintun.dll: easytier TUN 模式（管理员运行）动态加载，ARM64 版
           Copy-Item -Force qomicex-connector-rust/easytier/third_party/arm64/wintun.dll src-tauri/binaries/wintun.dll
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target aarch64-pc-windows-msvc
+          Copy-Item -Force Qomicex.Updater/target/aarch64-pc-windows-msvc/release/qomicex-updater.exe src-tauri/binaries/updater.exe
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
@@ -475,6 +481,9 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/x86_64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml
+          cp Qomicex.Updater/target/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
@@ -568,6 +577,9 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/aarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml
+          cp Qomicex.Updater/target/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
@@ -664,6 +676,8 @@ jobs:
             cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
             mkdir -p src-tauri/binaries
             mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
+            cargo build --release --manifest-path Qomicex.Updater/Cargo.toml
+            cp Qomicex.Updater/target/release/qomicex-updater src-tauri/binaries/updater
             pnpm store prune || true
             # ponytail: QEMU 用户态模拟下 pnpm tarball 完整性校验异常（Wanted==Got 仍报错），
             # 用非 frozen 模式接受 registry 当前 integrity；仅 QEMU 交叉构建路径使用
@@ -753,6 +767,9 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/aarch64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target aarch64-apple-darwin
+          cp Qomicex.Updater/target/aarch64-apple-darwin/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles app
@@ -865,6 +882,9 @@ jobs:
           # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
           mkdir -p src-tauri/binaries
           mv src-backend/qomicex-backend/target/x86_64-apple-darwin/release/qomicex-backend src-tauri/binaries/backend
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target x86_64-apple-darwin
+          cp Qomicex.Updater/target/x86_64-apple-darwin/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: npm run tauri -- build --bundles app --target x86_64-apple-darwin

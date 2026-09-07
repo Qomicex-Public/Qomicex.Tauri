@@ -24,9 +24,7 @@ import ToolboxTab from '../components/ToolboxTab.tsx'
 import PluginStoreTab from '../components/PluginStoreTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
-import { check } from '@tauri-apps/plugin-updater'
-import type { Update } from '@tauri-apps/plugin-updater'
-import { checkRequired } from '../api/update.ts'
+import { checkRequired, fetchUpdatePlan, type UpdatePlan } from '../api/update.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
@@ -152,7 +150,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 }) {
   const [expandedDep, setExpandedDep] = useState<string | null>(null)
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
-  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
+  const [pendingUpdate, setPendingUpdate] = useState<UpdatePlan | null>(null)
   const [updateError, setUpdateError] = useState<string>()
   const [channel, setChannel] = useState(() => localStorage.getItem('update-channel') || 'stable')
   const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -182,19 +180,19 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     setUpdateState('checking')
     setUpdateError(undefined)
     try {
-      const update = await check({
-        headers: { 'X-Updater-Channel': channel }
-      })
-      if (!update) {
+      const channel = localStorage.getItem('update-channel') || 'stable'
+      const plan = await fetchUpdatePlan(channel)
+      if (!plan.hasUpdate || !plan.version) {
         setUpdateState('uptodate')
         return
       }
-      let required = false
+      // 必须传已安装版本：传目标版本会拿目标跟自己比，恒 false
+      let required = plan.required === true
       try {
-        const info = await checkRequired(update.currentVersion, channel)
-        required = info.hasUpdate && info.required === true
+        const info = await checkRequired(APP_INFO.version, channel)
+        required = required || (info.hasUpdate && info.required === true)
       } catch {}
-      setPendingUpdate(update)
+      setPendingUpdate(plan)
       setPendingRequired(required)
       setUpdateState('available')
       setUpdateDialogOpen(true)
@@ -334,7 +332,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 
       <UpdateDialog
         open={updateDialogOpen}
-        update={pendingUpdate}
+        plan={pendingUpdate}
         required={pendingRequired}
         onClose={() => {
           setUpdateDialogOpen(false)

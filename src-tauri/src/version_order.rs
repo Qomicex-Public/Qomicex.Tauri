@@ -1,8 +1,8 @@
 //! QML 版本排序键（#46 第二层修复）。
 //!
 //! semver 规范中字母数字 pre-release 标识符按 ASCII 字典序比较，
-//! 导致 `0.1.0-beta10.0 < 0.1.0-beta9.0`（'1' < '9'），Tauri updater
-//! 默认比较器会把 beta 序数进位误判为"无更新/倒退"。这里把版本映射
+//! 导致 `0.1.0-beta10.0 < 0.1.0-beta9.0`（'1' < '9'），朴素的 semver
+//! 比较会把 beta 序数进位误判为"无更新/倒退"。这里把版本映射
 //! 成数值感知的排序键：标识符拆成（字母前缀, 数字段列表），数字按值比较。
 //!
 //! 排序规则示例：
@@ -10,8 +10,6 @@
 //! - `0.1.0-beta10.0 > 0.1.0-beta9.0`（序数数值比）
 //! - `0.1.0-beta9.0 > 0.1.0-alpha20260823.0`（"beta" > "alpha"）
 //! - `0.1.1 > 0.1.1-anything`、`0.1.0-beta9.0 > 0.1.0` 同版不提示
-
-use tauri_plugin_updater::RemoteRelease;
 
 /// (major, minor, patch, stable标记, [(标识符字母前缀, 数字段...)])
 ///
@@ -43,9 +41,9 @@ fn sort_key(v: &semver::Version) -> SortKey {
     (v.major, v.minor, v.patch, stable_mark, identifiers)
 }
 
-/// updater 版本比较器入口：manifest 版本是否比当前版本新。
-pub fn is_update_available(current: &semver::Version, release: &RemoteRelease) -> bool {
-    sort_key(&release.version) > sort_key(current)
+/// 版本比较入口：release 版本是否比 current 版本新。
+pub fn is_update_available(current: &semver::Version, release: &semver::Version) -> bool {
+    sort_key(release) > sort_key(current)
 }
 
 #[cfg(test)]
@@ -98,8 +96,7 @@ mod tests {
             &v("0.1.0-beta10.0"),
             &release("0.1.0-beta9.0")
         ));
-        // 同 base 去掉 pre-release = 正式版，semver 规范视为更大（与
-        // Tauri 默认比较器行为一致）
+        // 同 base 去掉 pre-release = 正式版，semver 规范视为更大
         assert!(is_update_available(&v("0.1.0-beta9.0"), &release("0.1.0")));
     }
 
@@ -110,17 +107,7 @@ mod tests {
         assert!(!is_update_available(&v("0.1.1"), &release("0.1.1-beta1.0")));
     }
 
-    fn release(version: &str) -> RemoteRelease {
-        serde_json::from_value(serde_json::json!({
-            "version": format!("v{version}"),
-            "pub_date": "2026-08-24T11:23:19Z",
-            "platforms": {
-                "windows-x86_64": {
-                    "url": "https://example.com/setup.exe",
-                    "signature": "sig"
-                }
-            }
-        }))
-        .expect("test manifest parses")
+    fn release(version: &str) -> semver::Version {
+        v(version)
     }
 }

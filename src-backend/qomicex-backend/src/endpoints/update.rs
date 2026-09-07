@@ -31,6 +31,7 @@ use crate::state::SharedState;
 
 const UPSTREAM_BASE: &str = "https://api.qomicex.top";
 const VERSION_CHECK_PATH: &str = "/api/client/version/check";
+const UPDATE_PLAN_PATH: &str = "/api/client/update/plan";
 
 /// Proxy prefixes raced to find the fastest mirror for the download URL.
 const PROXY_PREFIXES: &[&str] = &[
@@ -49,6 +50,75 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/update/check", get(check))
         .route("/update/manifest", get(manifest))
+        .route("/update/plan", get(plan))
+}
+
+/// GET /api/update/plan?channel=... — launcher self-update plan for the new
+/// download-center + Qomicex.Updater pipeline.
+///
+/// Forwards to upstream `/api/client/update/plan` (rollout-weight gated) and
+/// returns the package url + minisign signature + install strategy for this
+/// machine. OS/arch/mode are detected locally; channel is forwarded for
+/// future channel-specific plans (upstream currently ignores it).
+async fn plan(
+    State(state): State<SharedState>,
+    Query(q): Query<PlanQuery>,
+) -> ApiResult<Json<UpdatePlanResponse>> {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    let arch = std::env::consts::ARCH;
+    // Linux has two install forms: AppImage (single file, $APPIMAGE set) and
+    // system packages (deb/rpm). Other platforms ignore mode upstream.
+    let mode = if os == "linux" && std::env::var("APPIMAGE").is_err() {
+        "system"
+    } else {
+        ""
+    };
+
+    tracing::info!("checking update plan for os={os} arch={arch} mode={mode}");
+    let mut request = state
+        .http_client
+        .get(format!("{UPSTREAM_BASE}{UPDATE_PLAN_PATH}"))
+        .query(&[
+            ("current", state.app_version.as_str()),
+            ("target", os),
+            ("arch", arch),
+            ("mode", mode),
+        ]);
+    if let Some(channel) = &q.channel {
+        request = request.query(&[("channel", channel)]);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| ApiError::upstream(e.to_string()))?;
+
+    let status = response.status();
+    if status == StatusCode::NO_CONTENT {
+        return Ok(Json(UpdatePlanResponse::default()));
+    }
+    let text = response
+        .text()
+        .await
+        .map_err(|e| ApiError::upstream(e.to_string()))?;
+    if !status.is_success() {
+        return Err(ApiError::upstream(format!("HTTP {status}")));
+    }
+
+    let mut plan: UpdatePlanResponse = serde_json::from_str(&text)
+        .map_err(|e| ApiError::upstream(format!("update plan parse failed: {e}")))?;
+
+    // Only route through the fastest mirror when there actually is an update;
+    // upstream may answer 200 with hasUpdate=false instead of 204.
+    if plan.has_update {
+        if let Some(url) = plan.package_url.take() {
+            let prefix = get_fastest_proxy_prefix(&url).await;
+            plan.package_url = Some(format!("{prefix}{url}"));
+        }
+    }
+    Ok(Json(plan))
 }
 
 /// GET /api/update/check?current=...&channel=...
@@ -329,12 +399,41 @@ struct CheckQuery {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PlanQuery {
+    channel: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ManifestQuery {
     current: String,
     target: String,
     /// Tauri updater 传 OS 名+架构（如 arch=x86_64），用于把 target=windows
     /// 解析成 latest.json 的平台 key（windows-x86_64）。
     arch: Option<String>,
+}
+
+/// Response of GET /api/update/plan. `hasUpdate=false` (all fields empty)
+/// means the caller is up to date or gated out by the rollout weight.
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct UpdatePlanResponse {
+    has_update: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+    /// dir | appimage | app | system — consumed by Qomicex.Updater.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strategy: Option<String>,
+    /// File-layout zip package (post-proxy-rewrite).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    package_url: Option<String>,
+    /// minisign signature over the zip (armor text).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changelog: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------

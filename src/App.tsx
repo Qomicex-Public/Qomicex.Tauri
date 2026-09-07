@@ -32,9 +32,8 @@ import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
 import { initApiTransport, isIpcMode } from './api/ipc.ts'
-import { check } from '@tauri-apps/plugin-updater'
-import type { Update } from '@tauri-apps/plugin-updater'
-import { checkRequired } from './api/update.ts'
+import { checkRequired, fetchUpdatePlan, type UpdatePlan } from './api/update.ts'
+import { APP_INFO } from './constants/credits.ts'
 import { applyThemeColor } from './lib/themeColor.ts'
 import { restoreSavedTheme } from './theme/index.ts'
 
@@ -87,7 +86,7 @@ function AppContent() {
   const { t } = useI18n()
   const { crashDialogState, clearCrashDialog } = useRunning()
   const javaChecked = useRef(false)
-  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
+  const [pendingUpdate, setPendingUpdate] = useState<UpdatePlan | null>(null)
   const [pendingUpdateRequired, setPendingUpdateRequired] = useState(false)
   const autoCheckDone = useRef(false)
   /** 插件更新静默轮询只做一次（与 autoCheckDone/javaChecked 同模式） */
@@ -167,27 +166,26 @@ function AppContent() {
     const timer = setTimeout(async () => {
       try {
         const channel = localStorage.getItem('update-channel') || 'stable'
-        const update = await check({
-          headers: { 'X-Updater-Channel': channel }
-        })
-        if (!update) return
+        const plan = await fetchUpdatePlan(channel)
+        if (!plan.hasUpdate || !plan.version) return
 
         // 强制更新标记：来自后端 /api/update/check（后端镜像 C# 逻辑，按 current 判断）
-        let required = false
+        // 必须传已安装版本：传目标版本会拿目标跟自己比，恒 false
+        let required = plan.required === true
         try {
-          const info = await checkRequired(update.currentVersion, channel)
-          required = info.hasUpdate && info.required === true
+          const info = await checkRequired(APP_INFO.version, channel)
+          required = required || (info.hasUpdate && info.required === true)
         } catch {}
 
         const snooze = localStorage.getItem('snooze-update')
         if (!required && snooze) {
           try {
             const s = JSON.parse(snooze)
-            if (s.version === update.version && s.until > Date.now()) return
+            if (s.version === plan.version && s.until > Date.now()) return
           } catch {}
         }
 
-        setPendingUpdate(update)
+        setPendingUpdate(plan)
         setPendingUpdateRequired(required)
       } catch (e) {
         console.warn('[updater] background check failed:', e)
@@ -294,7 +292,7 @@ function AppContent() {
       />
       <UpdateDialog
         open={pendingUpdate !== null}
-        update={pendingUpdate}
+        plan={pendingUpdate}
         required={pendingUpdateRequired}
         onClose={() => {
           if (pendingUpdate && !pendingUpdateRequired) {
