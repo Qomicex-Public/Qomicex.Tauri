@@ -1372,7 +1372,7 @@ fn required_java_version(game_dir: &str, version: &str) -> i32 {
 }
 
 /// 选择启动用 Java 路径：用户指定优先，否则按版本 JSON 的 Java 要求自动推荐
-/// （scan_quick + recommand，与 C# launch 流程一致）。供普通启动与联机建房复用。
+/// （merged_java_runtimes + recommand，与 Java 管理页同一合并列表）。供普通启动与联机建房复用。
 pub(crate) async fn resolve_java_path(
     core: &Arc<GameCore>,
     game_dir: &str,
@@ -1403,7 +1403,9 @@ pub(crate) async fn resolve_java_path(
         release_time: String::new(),
         time: String::new(),
     };
-    let java_results = java::scan_quick(core.clone()).await;
+    // merged（Quick 扫描 + 下载目录 + 自定义注册）而非 scan_quick：
+    // 向导/启动前自动下载的 Java 经 add_custom 注册，只在 merged 列表中可见。
+    let java_results = java::merged_java_runtimes(core).await;
     if java_results.is_empty() {
         return Err("未找到可用的 Java 运行时，请在实例设置中指定 Java 路径".to_string());
     }
@@ -1441,7 +1443,7 @@ fn required_java_from_path(path: &std::path::Path, game_dir: &str) -> i32 {
 
 /// Sniff the loader from the version JSON's `inheritsFrom` / folder name,
 /// mirroring the C# cleanroom/babric special-casing in the launch flow.
-fn instance_loader(game_dir: &str, version: &str) -> Option<String> {
+pub(crate) fn instance_loader(game_dir: &str, version: &str) -> Option<String> {
     let path = std::path::Path::new(game_dir)
         .join("versions")
         .join(version)
@@ -1461,7 +1463,11 @@ fn instance_loader(game_dir: &str, version: &str) -> Option<String> {
 }
 
 /// Apply the C# cleanroom/babric Java-version bumps.
-fn apply_loader_java_requirement(loader: &str, version_name: &str, required: i32) -> i32 {
+pub(crate) fn apply_loader_java_requirement(
+    loader: &str,
+    version_name: &str,
+    required: i32,
+) -> i32 {
     let mut required = required;
     if loader == "cleanroom" {
         // LoaderVersion may be embedded in the name (e.g. "...-cleanroom0.5.0").

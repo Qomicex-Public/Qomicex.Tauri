@@ -2,13 +2,15 @@ import { useRef } from 'react'
 import { RotateCw } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from './ui'
 import InstallStepsList from './InstallStepsList.tsx'
-import type { InstallStepInfo } from '../types/index.ts'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
+import type { InstallStepInfo, LaunchProgress } from '../types/index.ts'
 
-/** 启动阶段 → 分步显示的固定步骤（repairing 是"检查完整性"的进行中子状态）。 */
+/** 启动阶段 → 分步显示的固定步骤（repairing 是"检查完整性"的进行中子状态；
+ * java 是前端注入的启动前 Java 检查/自动下载阶段）。 */
 const STEP_STAGES: ReadonlyArray<{ id: string; stages: readonly string[] }> = [
+  { id: 'java', stages: ['java'] },
   { id: 'checking', stages: ['starting', 'checking', 'repairing'] },
   { id: 'preparing', stages: ['preparing'] },
   { id: 'launching', stages: ['launching'] },
@@ -18,15 +20,19 @@ const FINAL_STAGES = ['completed', 'crashed', 'failed']
 const ERROR_STAGES = ['crashed', 'failed']
 
 /** 由当前 stage 派生分步状态；failed/crashed 时以最后已知非终态 stage 定位失败步。 */
-function deriveSteps(stage: string, lastStage: string, progress: number): InstallStepInfo[] {
+function deriveSteps(stage: string, lastStage: string, p: LaunchProgress): InstallStepInfo[] {
   const locating = ERROR_STAGES.includes(stage) ? lastStage : stage
   const activeIndex = STEP_STAGES.findIndex((s) => s.stages.includes(locating))
   return STEP_STAGES.map((s, i) => {
     if (stage === 'completed' || i < activeIndex) return { id: s.id, status: 'done' as const }
     if (i === activeIndex) {
       if (ERROR_STAGES.includes(stage)) return { id: s.id, status: 'failed' as const }
-      // repairing 子阶段用文件数百分比
-      const percent = locating === 'repairing' ? progress : undefined
+      // repairing 子阶段用文件数百分比；java 阶段总进度映射在前 10%，行内还原原始百分比
+      const percent = locating === 'repairing'
+        ? (p.totalFiles && p.completedFiles ? (p.completedFiles / p.totalFiles) * 100 : undefined)
+        : locating === 'java'
+          ? p.progress * 10
+          : undefined
       return { id: s.id, status: 'active' as const, percent }
     }
     return { id: s.id, status: 'pending' as const }
@@ -53,13 +59,7 @@ export default function LaunchProgressDialog() {
   window.dispatchEvent(oe)
   const displayMessage = overrideDetail.message
 
-  const steps = deriveSteps(
-    launchProgress.stage,
-    lastStageRef.current,
-    launchProgress.totalFiles && launchProgress.completedFiles
-      ? (launchProgress.completedFiles / launchProgress.totalFiles) * 100
-      : 0,
-  )
+  const steps = deriveSteps(launchProgress.stage, lastStageRef.current, launchProgress)
 
   return (
     <Dialog open onClose={() => cancelLaunch()} closeOnBackdrop={isFinal} closeOnEsc={isFinal}>

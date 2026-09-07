@@ -29,25 +29,13 @@ use qomicex_core::models::version_metadata::{CompleteVersionMetadata, JavaVersio
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 
+use super::instance::{apply_loader_java_requirement, instance_loader};
+
 /// 模块私有聚合状态（构造时组装，替代 DI 注入）。
 struct JavaStateData {
     core: Arc<GameCore>,
     store: Arc<JavaRuntimeStore>,
     download: Arc<JavaDownloadService>,
-}
-
-/// Quick 模式扫描本机 Java（对应 C# launch 流程里 `store.GetMergedAsync(Quick)`
-/// 的扫描部分；调用方拿结果走 `recommand`）。
-pub(crate) async fn scan_quick(core: Arc<GameCore>) -> Vec<JavaResult> {
-    let provider = core.java_provider();
-    let options = JavaSearchOptions {
-        mode: JavaSearchMode::Quick,
-        ..Default::default()
-    };
-    match provider.search(&options).await {
-        Ok(r) => r,
-        Err(_) => Vec::new(),
-    }
 }
 
 /// 与 Java 管理页一致的合并运行时列表（Quick 扫描 + 下载目录 + 自定义注册），
@@ -809,6 +797,10 @@ async fn requirement(
         .join(&q.version)
         .join(format!("{}.json", q.version));
     let required = get_required_java_version(&path)?;
+    // 与启动链路 resolve_java_path 一致：应用 Cleanroom/Babric 加载器加成，
+    // 否则前端预检会误判（如 cleanroom 0.5+ 实际需要 Java 25）。
+    let loader = instance_loader(&q.game_dir, &q.version).unwrap_or_default();
+    let required = apply_loader_java_requirement(&loader, &q.version, required);
     Ok(Json(JavaRequirementResponse {
         required_major_version: required,
     }))

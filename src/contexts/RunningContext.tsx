@@ -1,8 +1,8 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react'
 import type { ReactNode } from 'react'
-import { launchInstance as apiLaunchInstance, getLaunchProgress, cancelLaunch as apiCancelLaunch } from '../api/instance.ts'
+import { launchInstance as apiLaunchInstance, getLaunchProgress, cancelLaunch as apiCancelLaunch, getInstance } from '../api/instance.ts'
 import type { LaunchInstanceOptions } from '../api/instance.ts'
-import { getJavaRequirement } from '../api/java.ts'
+import { getJavaRequirement, searchJava, getJavaDownloadCatalog, startJavaDownload, getJavaDownloadProgress, cancelJavaDownload } from '../api/java.ts'
 import { getProcessResourceUsage } from '../api/system.ts'
 import type { ProcessResourceUsage } from '../api/system.ts'
 import { analyzeCrash } from '../api/crashDiagnostics.ts'
@@ -192,21 +192,115 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     startPoll(id, name)
   }, [startPoll])
 
+  function detectPlatform(): string {
+    const ua = navigator.userAgent
+    if (/Windows/i.test(ua)) return 'windows'
+    if (/Mac|iPhone|iPad/i.test(ua)) return 'macos'
+    return 'linux'
+  }
+
+  function detectArch(): string {
+    const ua = navigator.userAgent
+    if (/arm64|aarch64/i.test(ua)) return 'arm64'
+    return 'x64'
+  }
+
+  /** 启动前 Java 预检：本地无所需版本时自动下载（进度映射到总进度前 10%）。
+   * 失败不中止启动——交给后端启动链路最终裁决。返回 false 表示启动被取消。 */
+  const ensureJavaForLaunch = useCallback(async (id: string, javaInfo: JavaCheckInfo, seq: number): Promise<boolean> => {
+    if (!javaInfo.gameVersion || !javaInfo.gameDir) return true
+    // 用户明确指定了 Java：尊重其选择，只走既有的版本不匹配确认弹窗，不自动下载
+    if (javaInfo.path) return true
+
+    let required = 0
+    try {
+      const req = await getJavaRequirement(javaInfo.gameDir, javaInfo.gameVersion)
+      required = req.requiredMajorVersion
+    } catch { return true }
+    if (!required) return true
+
+    const hasMatch = (list: { majorVersion?: number; versionID: number; state: string }[]) =>
+      list.some(r => r.state === 'Valid' && (r.majorVersion ?? r.versionID) >= required)
+
+    let runtimes = await searchJava('quick').catch(() => [])
+    if (hasMatch(runtimes)) return true
+
+    setLaunchProgress({
+      stage: 'java',
+      message: tRef.current('running.javaAutoDownloading', { version: required }),
+      progress: 0,
+      isRunning: false,
+    })
+    let taskId: string | null = null
+    try {
+      const catalog = await getJavaDownloadCatalog()
+      const vendor = catalog.vendors.find(v => v.versions.includes(required)) ?? catalog.vendors[0]
+      if (!vendor) throw new Error('no vendor')
+      const res = await startJavaDownload({
+        vendor: vendor.id,
+        version: required,
+        platform: detectPlatform(),
+        architecture: detectArch(),
+      })
+      taskId = res.taskId
+      for (;;) {
+        // 启动被取消：联动取消下载任务
+        if (launchSeqRef.current.get(id) !== seq) {
+          void cancelJavaDownload(taskId).catch(() => {})
+          return false
+        }
+        await new Promise(r => setTimeout(r, 800))
+        const p = await getJavaDownloadProgress(taskId)
+        if (!p) throw new Error('task lost')
+        setLaunchProgress({
+          stage: 'java',
+          message: tRef.current('running.javaAutoDownloading', { version: required }),
+          progress: Math.min(9.9, p.progress / 10),
+          isRunning: false,
+        })
+        if (p.status === 'completed') break
+        if (p.status === 'failed' || p.status === 'cancelled') throw new Error(p.status)
+      }
+      runtimes = await searchJava('quick').catch(() => [])
+      if (!hasMatch(runtimes)) throw new Error('not registered')
+    } catch {
+      // 下载失败：警告后继续尝试启动（后端会推荐替代运行时或报错）
+      notifyRef.current?.(tRef.current('running.javaAutoDownloadFailed', { version: required }), 'warning')
+    }
+    return true
+  }, [])
+
   const launchInstance = useCallback(hookable('launchInstanceFlow', async (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions): Promise<LaunchResult> => {
     launchingIdRef.current = id
     const seq = bumpLaunchSeq(id)
     setLaunchingInstanceId(id)
+    setLaunchProgress({ stage: 'java', message: tRef.current('running.javaAutoChecking'), progress: 0, isRunning: false })
+
+    // Java 预检：info 不全时兜底拉一次实例详情（Connect 快捷启动等入口）
+    let info = javaInfo
+    if (!info?.gameVersion || !info?.gameDir) {
+      info = await getInstance(id)
+        .then(inst => ({ path: inst.javaPath, gameVersion: inst.gameVersion, gameDir: inst.gameDir }))
+        .catch(() => info)
+    }
+    if (info && !(await ensureJavaForLaunch(id, info, seq))) {
+      setLaunchProgress(null)
+      setLaunchingInstanceId(null)
+      launchingIdRef.current = null
+      return { success: false, processId: 0 } as LaunchResult
+    }
+
     setLaunchProgress({ stage: 'starting', message: tRef.current('running.preparingLaunch'), progress: 0, isRunning: false })
 
-    if (javaInfo?.path && javaInfo.gameVersion && javaInfo.gameDir) {
+    if (info?.path && info.gameVersion && info.gameDir) {
       try {
-        const req = await getJavaRequirement(javaInfo.gameDir, javaInfo.gameVersion)
-        const rt = getRuntimes().find(r => r.path === javaInfo.path)
+        const req = await getJavaRequirement(info.gameDir, info.gameVersion)
+        const rt = getRuntimes().find(r => r.path === info?.path)
         if (rt && rt.versionID < req.requiredMajorVersion) {
           const ok = await confirm(
             tRef.current('running.javaIncompatible', {
               current: rt.versionID,
-              game: javaInfo.gameVersion,
+              game: info.gameVersion,
               required: req.requiredMajorVersion,
             }),
             tRef.current('running.javaIncompatibleTitle')
@@ -265,7 +359,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     }
     startPoll(id, name)
     return result
-  }), [bumpLaunchSeq, clearInstancePoll, confirm, startPoll])
+  }), [bumpLaunchSeq, clearInstancePoll, confirm, ensureJavaForLaunch, startPoll])
 
   const cancelLaunch = useCallback(async (id?: string) => {
     const targetId = id || launchingIdRef.current
