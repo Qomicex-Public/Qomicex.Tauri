@@ -277,4 +277,38 @@ export async function clearNeoForgeCache(): Promise<{ deleted: number }> {
   return post<{ deleted: number }>('/settings/clear-neoforge-cache', {})
 }
 
+export async function clearFtbCache(): Promise<{ deleted: number }> {
+  return post<{ deleted: number }>('/settings/clear-ftb-cache', {})
+}
+
+export async function clearModsListCache(): Promise<{ deleted: number }> {
+  return post<{ deleted: number }>('/settings/clear-mods-list-cache', {})
+}
+
+export async function clearModUpdatesCache(): Promise<{ deleted: number }> {
+  return post<{ deleted: number }>('/settings/clear-mod-updates-cache', {})
+}
+
+export async function clearModpackTemp(): Promise<{ deleted: number }> {
+  return post<{ deleted: number }>('/settings/clear-modpack-temp', {})
+}
+
+export interface CacheDirStats {
+  files: number
+  bytes: number
+}
+
+export interface CacheStats {
+  forgeVersions: CacheDirStats
+  neoforge: CacheDirStats
+  ftb: CacheDirStats
+  modsList: CacheDirStats
+  modUpdates: CacheDirStats
+  modpackTemp: CacheDirStats
+}
+
+export function getCacheStats(): Promise<CacheStats> {
+  return get<CacheStats>('/settings/cache-stats')
+}
+
 

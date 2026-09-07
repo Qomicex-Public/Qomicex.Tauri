@@ -110,6 +110,18 @@ pub fn router() -> Router<SharedState> {
             post(clear_curseforge_cache),
         )
         .route("/settings/clear-neoforge-cache", post(clear_neoforge_cache))
+        .route("/settings/clear-cache", post(clear_cache_files))
+        .route("/settings/clear-ftb-cache", post(clear_ftb_cache))
+        .route(
+            "/settings/clear-mods-list-cache",
+            post(clear_mods_list_cache),
+        )
+        .route(
+            "/settings/clear-mod-updates-cache",
+            post(clear_mod_updates_cache),
+        )
+        .route("/settings/clear-modpack-temp", post(clear_modpack_temp))
+        .route("/settings/cache-stats", get(cache_stats))
         .route(
             "/process/{pid}/resource-usage",
             get(get_process_resource_usage),
@@ -502,20 +514,187 @@ struct ClearNeoForgeCacheResponse {
 /// 清理 NeoForge 版本缓存（%TEMP%/NeoForgeVersionCache/ 下所有 .json 文件）。
 async fn clear_neoforge_cache() -> ApiResult<Json<ClearNeoForgeCacheResponse>> {
     let cache_dir = std::env::temp_dir().join("NeoForgeVersionCache");
+    let deleted = delete_files_in_dir(&cache_dir, "json");
+    Ok(Json(ClearNeoForgeCacheResponse { deleted }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClearCacheResponse {
+    deleted: usize,
+}
+
+/// 递归统计并删除目录下指定扩展名的文件；目录不存在返回 0。
+fn delete_files_in_dir(dir: &std::path::Path, ext: &str) -> usize {
     let mut deleted = 0usize;
-    if cache_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                    if std::fs::remove_file(&path).is_ok() {
-                        deleted += 1;
+    if dir.is_dir() {
+        if let Ok(entries) = walk_dir_files(dir) {
+            for path in entries {
+                if path.extension().and_then(|e| e.to_str()) == Some(ext)
+                    && std::fs::remove_file(&path).is_ok()
+                {
+                    deleted += 1;
+                }
+            }
+        }
+    }
+    deleted
+}
+
+/// 递归删除目录下全部文件（含子目录内），返回删除数量。
+fn delete_all_files_in_dir(dir: &std::path::Path) -> usize {
+    let mut deleted = 0usize;
+    if dir.is_dir() {
+        if let Ok(entries) = walk_dir_files(dir) {
+            for path in entries {
+                if std::fs::remove_file(&path).is_ok() {
+                    deleted += 1;
+                }
+            }
+        }
+    }
+    deleted
+}
+
+/// 递归收集目录下的所有文件路径（不进入无法读取的子目录）。
+fn walk_dir_files(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d)?.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// POST /api/settings/clear-cache — 清理 Forge 版本列表 HTML 缓存
+/// （%TEMP%/ForgeVersionCache/，core `get_cache_file_path` 落盘位置）。
+async fn clear_cache_files() -> ApiResult<Json<ClearCacheResponse>> {
+    let cache_dir = std::env::temp_dir().join("ForgeVersionCache");
+    let deleted = delete_files_in_dir(&cache_dir, "html");
+    Ok(Json(ClearCacheResponse { deleted }))
+}
+
+/// POST /api/settings/clear-ftb-cache — 清理 FTB 整合包市场缓存
+/// （{BaseDir}/QML/cache/ftb/ftb_cache.json，core FtbBase 落盘位置）。
+async fn clear_ftb_cache(State(state): State<SharedState>) -> ApiResult<Json<ClearCacheResponse>> {
+    let cache_dir = state.data_dir.join("QML").join("cache").join("ftb");
+    let deleted = delete_files_in_dir(&cache_dir, "json");
+    Ok(Json(ClearCacheResponse { deleted }))
+}
+
+/// POST /api/settings/clear-mods-list-cache — 清理所有实例的模组列表缓存
+/// （{BaseDir}/QML/mods-cache/*.json，6h TTL）。
+async fn clear_mods_list_cache(
+    State(state): State<SharedState>,
+) -> ApiResult<Json<ClearCacheResponse>> {
+    let cache_dir = state.data_dir.join("QML").join("mods-cache");
+    let deleted = delete_files_in_dir(&cache_dir, "json");
+    Ok(Json(ClearCacheResponse { deleted }))
+}
+
+/// POST /api/settings/clear-mod-updates-cache — 清理所有实例的模组更新检查缓存
+/// （{BaseDir}/QML/mods-update-cache/*.json，6h TTL）。
+async fn clear_mod_updates_cache(
+    State(state): State<SharedState>,
+) -> ApiResult<Json<ClearCacheResponse>> {
+    let cache_dir = state.data_dir.join("QML").join("mods-update-cache");
+    let deleted = delete_files_in_dir(&cache_dir, "json");
+    Ok(Json(ClearCacheResponse { deleted }))
+}
+
+/// POST /api/settings/clear-modpack-temp — 清理整合包导入临时文件
+/// （{BaseDir}/temp/ 下 modpack-uploads / multimc-imports 及超期残留）。
+async fn clear_modpack_temp(
+    State(state): State<SharedState>,
+) -> ApiResult<Json<ClearCacheResponse>> {
+    let temp_dir = state.data_dir.join("temp");
+    let mut deleted = delete_all_files_in_dir(&temp_dir.join("modpack-uploads"));
+    deleted += delete_all_files_in_dir(&temp_dir.join("multimc-imports"));
+    Ok(Json(ClearCacheResponse { deleted }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CacheDirStats {
+    files: u64,
+    bytes: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CacheStatsResponse {
+    forge_versions: CacheDirStats,
+    neoforge: CacheDirStats,
+    ftb: CacheDirStats,
+    mods_list: CacheDirStats,
+    mod_updates: CacheDirStats,
+    modpack_temp: CacheDirStats,
+}
+
+/// 递归统计目录下指定扩展名文件的数量与总大小（字节）；目录不存在返回 0。
+fn stat_files_in_dir(dir: &std::path::Path, ext: &str) -> CacheDirStats {
+    let mut stats = CacheDirStats { files: 0, bytes: 0 };
+    if dir.is_dir() {
+        if let Ok(entries) = walk_dir_files(dir) {
+            for path in entries {
+                if path.extension().and_then(|e| e.to_str()) == Some(ext) {
+                    if let Ok(meta) = std::fs::metadata(&path) {
+                        stats.files += 1;
+                        stats.bytes += meta.len();
                     }
                 }
             }
         }
     }
-    Ok(Json(ClearNeoForgeCacheResponse { deleted }))
+    stats
+}
+
+/// 递归统计目录下全部文件的数量与总大小（字节）；目录不存在返回 0。
+fn stat_all_files_in_dir(dir: &std::path::Path) -> CacheDirStats {
+    let mut stats = CacheDirStats { files: 0, bytes: 0 };
+    if dir.is_dir() {
+        if let Ok(entries) = walk_dir_files(dir) {
+            for path in entries {
+                if let Ok(meta) = std::fs::metadata(&path) {
+                    stats.files += 1;
+                    stats.bytes += meta.len();
+                }
+            }
+        }
+    }
+    stats
+}
+
+/// GET /api/settings/cache-stats — 各磁盘缓存的文件数与总大小（字节），
+/// 与各 clear-* 端点的清理范围一一对应。
+async fn cache_stats(State(state): State<SharedState>) -> ApiResult<Json<CacheStatsResponse>> {
+    let temp = std::env::temp_dir();
+    let uploads = stat_all_files_in_dir(&state.data_dir.join("temp").join("modpack-uploads"));
+    let imports = stat_all_files_in_dir(&state.data_dir.join("temp").join("multimc-imports"));
+    Ok(Json(CacheStatsResponse {
+        forge_versions: stat_files_in_dir(&temp.join("ForgeVersionCache"), "html"),
+        neoforge: stat_files_in_dir(&temp.join("NeoForgeVersionCache"), "json"),
+        ftb: stat_files_in_dir(
+            &state.data_dir.join("QML").join("cache").join("ftb"),
+            "json",
+        ),
+        mods_list: stat_files_in_dir(&state.data_dir.join("QML").join("mods-cache"), "json"),
+        mod_updates: stat_files_in_dir(
+            &state.data_dir.join("QML").join("mods-update-cache"),
+            "json",
+        ),
+        modpack_temp: CacheDirStats {
+            files: uploads.files + imports.files,
+            bytes: uploads.bytes + imports.bytes,
+        },
+    }))
 }
 
 #[derive(Serialize)]
@@ -565,4 +744,35 @@ async fn get_process_resource_usage(
         memory_usage,
         memory_usage_mb: memory_usage as f64 / (1024.0 * 1024.0),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stat_and_delete_count_files_recursively() {
+        let dir = std::env::temp_dir().join(format!("qml-cache-stats-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sub = dir.join("nested");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.join("a.json"), "12345").unwrap();
+        std::fs::write(sub.join("b.json"), "1234567890").unwrap();
+        std::fs::write(sub.join("c.txt"), "ignored").unwrap();
+
+        let s = stat_files_in_dir(&dir, "json");
+        assert_eq!(s.files, 2);
+        assert_eq!(s.bytes, 15);
+
+        let all = stat_all_files_in_dir(&dir);
+        assert_eq!(all.files, 3);
+        assert_eq!(all.bytes, 22);
+
+        assert_eq!(delete_files_in_dir(&dir, "json"), 2);
+        assert_eq!(delete_all_files_in_dir(&dir), 1);
+        assert!(stat_all_files_in_dir(&dir).files == 0);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(stat_files_in_dir(&dir.join("nonexistent"), "json").files, 0);
+    }
 }

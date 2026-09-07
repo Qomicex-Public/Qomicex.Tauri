@@ -35,7 +35,7 @@ export function SettingRow({ label, description, control, onClick, className }: 
     >
       <div className="min-w-0">
         <div className="text-sm font-medium">{label}</div>
-        {description && <div className="mt-0.5 text-xs text-muted-foreground">{description}</div>}
+        {description && <div className="mt-0.5 whitespace-pre-line text-xs text-muted-foreground">{description}</div>}
       </div>
       {control && <div className="flex shrink-0 items-center">{control}</div>}
     </Comp>

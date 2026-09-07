@@ -49,7 +49,9 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, setDataDir, getSystemFonts } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
+import type { CacheStats, CacheDirStats } from '../api/settings.ts'
+import { cacheInvalidate } from '../lib/simple-cache.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
 import { FILE_NAMING_OPTIONS } from '../lib/download-naming.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
@@ -549,6 +551,28 @@ export default function Settings() {
   const [clearingCache, setClearingCache] = useState(false)
   const [clearingCurseForgeCache, setClearingCurseForgeCache] = useState(false)
   const [clearingNeoForgeCache, setClearingNeoForgeCache] = useState(false)
+  const [clearingFtbCache, setClearingFtbCache] = useState(false)
+  const [clearingModsListCache, setClearingModsListCache] = useState(false)
+  const [clearingModUpdatesCache, setClearingModUpdatesCache] = useState(false)
+  const [clearingModpackTemp, setClearingModpackTemp] = useState(false)
+  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null)
+
+  function refreshCacheStats() {
+    getCacheStats().then(setCacheStats).catch(() => {})
+  }
+
+  function formatCacheSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+  }
+
+  function cacheStatText(s?: CacheDirStats): string {
+    if (!s) return t('settings.launcher.cacheStatsLoading')
+    if (s.files === 0) return t('settings.launcher.cacheStatsEmpty')
+    return t('settings.launcher.cacheStatsFiles', { count: s.files, size: formatCacheSize(s.bytes) })
+  }
   const { state: debugState } = useDebug()
   const [category, setCategory] = useState(() => {
     const params = new URLSearchParams(window.location.search)
@@ -680,6 +704,12 @@ export default function Settings() {
       }
     }
   }, [settings.memoryMode])
+
+  useEffect(() => {
+    if (category === 'launcher') {
+      getCacheStats().then(setCacheStats).catch(() => {})
+    }
+  }, [category])
 
   useEffect(() => {
     if (category === 'java' && !autoScanRef.current) {
@@ -879,6 +909,7 @@ export default function Settings() {
     try {
       const { deleted } = await clearCache()
       notify(t('settings.launcher.cacheCleared', { count: deleted }), 'success')
+      refreshCacheStats()
     } catch (e) {
       await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.cacheClearFailed'))
     } finally {
@@ -903,10 +934,64 @@ export default function Settings() {
     try {
       const { deleted } = await clearNeoForgeCache()
       notify(t('settings.launcher.neoforgeCacheCleared', { count: deleted }), 'success')
+      refreshCacheStats()
     } catch (e) {
       await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.neoforgeCacheClearFailed'))
     } finally {
       setClearingNeoForgeCache(false)
+    }
+  }
+
+  async function handleClearFtbCache() {
+    setClearingFtbCache(true)
+    try {
+      const { deleted } = await clearFtbCache()
+      notify(t('settings.launcher.ftbCacheCleared', { count: deleted }), 'success')
+      refreshCacheStats()
+    } catch (e) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.ftbCacheClearFailed'))
+    } finally {
+      setClearingFtbCache(false)
+    }
+  }
+
+  async function handleClearModsListCache() {
+    setClearingModsListCache(true)
+    try {
+      const { deleted } = await clearModsListCache()
+      cacheInvalidate('api-instance-')
+      notify(t('settings.launcher.modsListCacheCleared', { count: deleted }), 'success')
+      refreshCacheStats()
+    } catch (e) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.modsListCacheClearFailed'))
+    } finally {
+      setClearingModsListCache(false)
+    }
+  }
+
+  async function handleClearModUpdatesCache() {
+    setClearingModUpdatesCache(true)
+    try {
+      const { deleted } = await clearModUpdatesCache()
+      notify(t('settings.launcher.modUpdatesCacheCleared', { count: deleted }), 'success')
+      refreshCacheStats()
+    } catch (e) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.modUpdatesCacheClearFailed'))
+    } finally {
+      setClearingModUpdatesCache(false)
+    }
+  }
+
+  async function handleClearModpackTemp() {
+    setClearingModpackTemp(true)
+    try {
+      const { deleted } = await clearModpackTemp()
+      notify(t('settings.launcher.modpackTempCleared', { count: deleted }), 'success')
+      refreshCacheStats()
+    } catch (e) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.launcher.modpackTempClearFailed'))
+    } finally {
+      setClearingModpackTemp(false)
     }
   }
 
@@ -1403,7 +1488,7 @@ export default function Settings() {
               />
               <SettingRow
                 label={t('settings.launcher.versionListCache')}
-                description={t('settings.launcher.versionListCacheDesc')}
+                description={[t('settings.launcher.versionListCacheDesc'), cacheStatText(cacheStats?.forgeVersions)].filter(Boolean).join('\n')}
                 control={
                   <Button size="sm" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
                     <MorphActionIcon active={clearingCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
@@ -1469,11 +1554,51 @@ export default function Settings() {
               />
               <SettingRow
                 label={t('settings.launcher.neoforgeCache')}
-                description={t('settings.launcher.neoforgeCacheDesc')}
+                description={[t('settings.launcher.neoforgeCacheDesc'), cacheStatText(cacheStats?.neoforge)].filter(Boolean).join('\n')}
                 control={
                   <Button size="sm" variant="outline" onClick={handleClearNeoForgeCache} disabled={clearingNeoForgeCache}>
                     <MorphActionIcon active={clearingNeoForgeCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
                     {t('settings.launcher.clearNeoforgeCache')}
+                  </Button>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.ftbCache')}
+                description={[t('settings.launcher.ftbCacheDesc'), cacheStatText(cacheStats?.ftb)].filter(Boolean).join('\n')}
+                control={
+                  <Button size="sm" variant="outline" onClick={handleClearFtbCache} disabled={clearingFtbCache}>
+                    <MorphActionIcon active={clearingFtbCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
+                    {t('settings.launcher.clearFtbCache')}
+                  </Button>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.modsListCache')}
+                description={[t('settings.launcher.modsListCacheDesc'), cacheStatText(cacheStats?.modsList)].filter(Boolean).join('\n')}
+                control={
+                  <Button size="sm" variant="outline" onClick={handleClearModsListCache} disabled={clearingModsListCache}>
+                    <MorphActionIcon active={clearingModsListCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
+                    {t('settings.launcher.clearModsListCache')}
+                  </Button>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.modUpdatesCache')}
+                description={[t('settings.launcher.modUpdatesCacheDesc'), cacheStatText(cacheStats?.modUpdates)].filter(Boolean).join('\n')}
+                control={
+                  <Button size="sm" variant="outline" onClick={handleClearModUpdatesCache} disabled={clearingModUpdatesCache}>
+                    <MorphActionIcon active={clearingModUpdatesCache} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
+                    {t('settings.launcher.clearModUpdatesCache')}
+                  </Button>
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.modpackTemp')}
+                description={[t('settings.launcher.modpackTempDesc'), cacheStatText(cacheStats?.modpackTemp)].filter(Boolean).join('\n')}
+                control={
+                  <Button size="sm" variant="outline" onClick={handleClearModpackTemp} disabled={clearingModpackTemp}>
+                    <MorphActionIcon active={clearingModpackTemp} busy={RotateCwData} rest={Trash2Data} className="h-4 w-4" />
+                    {t('settings.launcher.clearModpackTemp')}
                   </Button>
                 }
               />
