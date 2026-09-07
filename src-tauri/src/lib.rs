@@ -9,6 +9,7 @@ mod logger;
 mod dialog_cmd;
 mod ipc;
 mod plugin_gateway;
+mod updater;
 #[doc(hidden)]
 pub mod version_order;
 
@@ -297,7 +298,8 @@ pub fn run() {
             dialog_cmd::pick_dialog,
             ipc::ipc_ping,
             ipc::ipc_stream,
-            ipc::ipc_stream_abort
+            ipc::ipc_stream_abort,
+            updater::run_updater
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
