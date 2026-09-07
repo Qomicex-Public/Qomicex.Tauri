@@ -181,14 +181,15 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     setUpdateError(undefined)
     try {
       const channel = localStorage.getItem('update-channel') || 'stable'
-      const plan = await fetchUpdatePlan()
+      const plan = await fetchUpdatePlan(channel)
       if (!plan.hasUpdate || !plan.version) {
         setUpdateState('uptodate')
         return
       }
+      // 必须传已安装版本：传目标版本会拿目标跟自己比，恒 false
       let required = plan.required === true
       try {
-        const info = await checkRequired(plan.version, channel)
+        const info = await checkRequired(APP_INFO.version, channel)
         required = required || (info.hasUpdate && info.required === true)
       } catch {}
       setPendingUpdate(plan)

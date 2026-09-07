@@ -53,14 +53,17 @@ pub fn router() -> Router<SharedState> {
         .route("/update/plan", get(plan))
 }
 
-/// GET /api/update/plan — launcher self-update plan for the new
+/// GET /api/update/plan?channel=... — launcher self-update plan for the new
 /// download-center + Qomicex.Updater pipeline.
 ///
 /// Forwards to upstream `/api/client/update/plan` (rollout-weight gated) and
 /// returns the package url + minisign signature + install strategy for this
-/// machine. OS/arch/mode are detected locally: the backend runs on the same
-/// host as the launcher, so the frontend passes nothing at all.
-async fn plan(State(state): State<SharedState>) -> ApiResult<Json<UpdatePlanResponse>> {
+/// machine. OS/arch/mode are detected locally; channel is forwarded for
+/// future channel-specific plans (upstream currently ignores it).
+async fn plan(
+    State(state): State<SharedState>,
+    Query(q): Query<PlanQuery>,
+) -> ApiResult<Json<UpdatePlanResponse>> {
     let os = match std::env::consts::OS {
         "macos" => "darwin",
         other => other,
@@ -75,7 +78,7 @@ async fn plan(State(state): State<SharedState>) -> ApiResult<Json<UpdatePlanResp
     };
 
     tracing::info!("checking update plan for os={os} arch={arch} mode={mode}");
-    let response = state
+    let mut request = state
         .http_client
         .get(format!("{UPSTREAM_BASE}{UPDATE_PLAN_PATH}"))
         .query(&[
@@ -83,7 +86,11 @@ async fn plan(State(state): State<SharedState>) -> ApiResult<Json<UpdatePlanResp
             ("target", os),
             ("arch", arch),
             ("mode", mode),
-        ])
+        ]);
+    if let Some(channel) = &q.channel {
+        request = request.query(&[("channel", channel)]);
+    }
+    let response = request
         .send()
         .await
         .map_err(|e| ApiError::upstream(e.to_string()))?;
@@ -102,12 +109,14 @@ async fn plan(State(state): State<SharedState>) -> ApiResult<Json<UpdatePlanResp
 
     let mut plan: UpdatePlanResponse = serde_json::from_str(&text)
         .map_err(|e| ApiError::upstream(format!("update plan parse failed: {e}")))?;
-    plan.has_update = true;
 
-    // Route the package through the fastest mirror, same as the manifest path.
-    if let Some(url) = plan.package_url.take() {
-        let prefix = get_fastest_proxy_prefix(&url).await;
-        plan.package_url = Some(format!("{prefix}{url}"));
+    // Only route through the fastest mirror when there actually is an update;
+    // upstream may answer 200 with hasUpdate=false instead of 204.
+    if plan.has_update {
+        if let Some(url) = plan.package_url.take() {
+            let prefix = get_fastest_proxy_prefix(&url).await;
+            plan.package_url = Some(format!("{prefix}{url}"));
+        }
     }
     Ok(Json(plan))
 }
@@ -385,6 +394,12 @@ fn proxy_cache() -> &'static Mutex<ProxyCache> {
 #[serde(rename_all = "camelCase")]
 struct CheckQuery {
     current: String,
+    channel: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanQuery {
     channel: Option<String>,
 }
 

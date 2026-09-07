@@ -33,6 +33,7 @@ import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
 import { initApiTransport, isIpcMode } from './api/ipc.ts'
 import { checkRequired, fetchUpdatePlan, type UpdatePlan } from './api/update.ts'
+import { APP_INFO } from './constants/credits.ts'
 import { applyThemeColor } from './lib/themeColor.ts'
 import { restoreSavedTheme } from './theme/index.ts'
 
@@ -165,13 +166,14 @@ function AppContent() {
     const timer = setTimeout(async () => {
       try {
         const channel = localStorage.getItem('update-channel') || 'stable'
-        const plan = await fetchUpdatePlan()
+        const plan = await fetchUpdatePlan(channel)
         if (!plan.hasUpdate || !plan.version) return
 
         // 强制更新标记：来自后端 /api/update/check（后端镜像 C# 逻辑，按 current 判断）
+        // 必须传已安装版本：传目标版本会拿目标跟自己比，恒 false
         let required = plan.required === true
         try {
-          const info = await checkRequired(plan.version, channel)
+          const info = await checkRequired(APP_INFO.version, channel)
           required = required || (info.hasUpdate && info.required === true)
         } catch {}
 

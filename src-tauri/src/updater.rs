@@ -23,6 +23,14 @@ pub(crate) fn extract_updater() -> Option<std::path::PathBuf> {
     let path = base.join(UPDATER_EXE);
 
     let bytes: &[u8] = if UPDATER_BIN.is_empty() {
+        // Dev override wins over sibling-repo builds: explicit selection must
+        // not be silently shadowed by a stale local build.
+        if let Ok(p) = std::env::var("QOMICEX_UPDATER_PATH") {
+            let p = std::path::PathBuf::from(p);
+            if p.exists() {
+                return Some(p);
+            }
+        }
         // Dev fallback: local updater build from the sibling repository.
         let dev = std::path::PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -44,12 +52,6 @@ pub(crate) fn extract_updater() -> Option<std::path::PathBuf> {
             "updater",
             "updater binary not embedded and not found (set QOMICEX_UPDATER_PATH)"
         );
-        if let Ok(p) = std::env::var("QOMICEX_UPDATER_PATH") {
-            let p = std::path::PathBuf::from(p);
-            if p.exists() {
-                return Some(p);
-            }
-        }
         return None;
     } else {
         UPDATER_BIN
@@ -128,9 +130,15 @@ pub fn run_updater(
         return Err("UPDATE_PACKAGE_NOT_FOUND".into());
     }
 
+    // 信任边界：version 来自更新计划响应，未校验前不进文件名（防路径穿越
+    // 把签名写到预期临时目录之外）。签名无效时 updater 的 minisign 校验
+    // 会拒绝包本体——这里只挡文件系统副作用。
+    let parsed = semver::Version::parse(version.trim().trim_start_matches('v'))
+        .map_err(|_| "INVALID_VERSION".to_string())?;
+
     let base = crate::user_temp_dir();
     let _ = std::fs::create_dir_all(&base);
-    let sig_path = base.join(format!("qomicex-update-{version}.sig"));
+    let sig_path = base.join(format!("qomicex-update-{parsed}.sig"));
     std::fs::write(&sig_path, &signature).map_err(|e| format!("SIG_WRITE_FAILED: {e}"))?;
 
     let (strategy, mut extra) = detect_strategy();

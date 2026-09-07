@@ -32,8 +32,13 @@ export function checkRequired(current: string, channel: string): Promise<UpdateC
   )
 }
 
-/** 查询本机更新计划（os/arch/mode 由后端检测，前端零传参）。204 → hasUpdate=false */
-export async function fetchUpdatePlan(): Promise<UpdatePlan> {
-  const res = await get<UpdatePlan | undefined>('/update/plan')
+/**
+ * 查询本机更新计划（os/arch/mode 由后端检测）。channel 作为 query 传透本地后端
+ * → upstream plan（当前服务端语义：三通道取最新，与旧 manifest 端点一致）。
+ * 204 → hasUpdate=false
+ */
+export async function fetchUpdatePlan(channel?: string): Promise<UpdatePlan> {
+  const q = channel ? `?channel=${encodeURIComponent(channel)}` : ''
+  const res = await get<UpdatePlan | undefined>(`/update/plan${q}`)
   return res ?? { hasUpdate: false }
 }
