@@ -979,6 +979,10 @@ fn minecraft_to_java_version(mc_version: &str) -> i32 {
         None => 0,
     };
 
+    if major >= 26 {
+        // Minecraft 26.1+ requires Java 25
+        return 25;
+    }
     if major >= 1 && minor >= 21 {
         return 21;
     }

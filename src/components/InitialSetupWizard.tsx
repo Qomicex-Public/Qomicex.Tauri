@@ -16,8 +16,8 @@ import { getJavaDownloadCatalog, startJavaDownload, getJavaDownloadProgress } fr
 import { getSystemInfo } from '../api/system.ts'
 import type { SystemInfo } from '../types/index.ts'
 
-/** 向导必需的三档 Java 主版本 */
-const REQUIRED_JAVA_VERSIONS = [8, 17, 21]
+/** 向导必需的四档 Java 主版本（Minecraft 26.1+ 需要 Java 25） */
+const REQUIRED_JAVA_VERSIONS = [8, 17, 21, 25]
 
 function detectPlatform(): string {
   const ua = navigator.userAgent
