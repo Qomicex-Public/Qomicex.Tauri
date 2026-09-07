@@ -267,31 +267,61 @@ impl InstanceService {
     }
 
     pub fn delete(&self, id: &str) -> Option<GameInstance> {
+        // 旧语义保留（调用方只关心记录是否存在）；目录删除失败静默的缺口由
+        // try_delete 承接（安装回滚/手动删除端点应改用 try_delete）。
+        self.try_delete(id).ok().flatten()
+    }
+
+    /// 删除实例记录 + 版本隔离目录（目录删除失败 → Err，记录已回滚保留）。
+    ///
+    /// 顺序：先删记录（防删除期间被扫描/启动引用），再删目录；目录删除失败时
+    /// **恢复记录**并返回 Err——否则残留目录会被 sync_from_disk 反推成幽灵实例
+    /// （新 id 复活）。Windows 下目录被占用（游戏进程/杀软扫描）多为瞬态，先短重试。
+    pub fn try_delete(&self, id: &str) -> Result<Option<GameInstance>, String> {
         let mut default_guard = self.default_id.lock().unwrap_or_else(|p| p.into_inner());
         if default_guard.as_deref() == Some(id) {
             *default_guard = None;
         }
         drop(default_guard);
 
-        let mut guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());
-        let instance = guard.iter().find(|i| i.id == id).cloned();
-        let instance = instance?;
-        guard.retain(|i| i.id != id);
-        drop(guard);
-        self.save_to_file();
+        let instance = {
+            let mut guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+            let instance = guard.iter().find(|i| i.id == id).cloned();
+            let instance = match instance {
+                Some(i) => i,
+                None => return Ok(None),
+            };
+            guard.retain(|i| i.id != id);
+            drop(guard);
+            self.save_to_file();
+            instance
+        };
 
-        // 删除版本隔离目录 {gameDir}/versions/{name}
+        // 删除版本隔离目录 {gameDir}/versions/{name}（重试 3 次，间隔 200ms）
         let version_dir = std::path::Path::new(&instance.game_dir)
             .join("versions")
             .join(&instance.name);
-        if version_dir.is_dir() {
-            let _ = std::fs::remove_dir_all(&version_dir);
+        let mut removed = !version_dir.is_dir();
+        for _ in 0..3 {
+            if std::fs::remove_dir_all(&version_dir).is_ok() {
+                removed = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        if !removed {
+            // 目录删不掉 → 恢复记录，避免残留目录被扫描反推成幽灵实例
+            self.create(instance.clone());
+            return Err(format!(
+                "版本目录删除失败（可能被占用）：{}",
+                version_dir.display()
+            ));
         }
 
         // 使该 game_dir 的扫描缓存失效
         self.invalidate_scan_cache(&instance.game_dir);
 
-        Some(instance)
+        Ok(Some(instance))
     }
 
     pub fn get_default_id(&self) -> Option<String> {
@@ -593,6 +623,73 @@ mod tests {
         );
         assert!(names.contains(&"Shared"), "隔离关闭的实例应保留: {names:?}");
 
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+    }
+
+    /// 回归：幽灵实例防线。try_delete 正常删目录 → Ok；删除失败 → Err 且记录恢复
+    /// （否则残留目录会被 sync_from_disk 反推成幽灵实例复活）。
+    #[test]
+    fn try_delete_recovers_record_when_dir_undeletable() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-trydelete-test-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let version_dir = game_dir.join("versions").join("Ghost");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(version_dir.join("Ghost.json"), "{}").unwrap();
+
+        let service = InstanceService::new();
+        let inst = service.create(make_instance(
+            "Ghost",
+            game_dir.to_str().unwrap(),
+            Some(true),
+        ));
+
+        // 正常删除：目录可删 → Ok(Some)，记录与目录均消失
+        let removed = service.try_delete(&inst.id);
+        assert!(removed.is_ok(), "正常删除应成功: {removed:?}");
+        assert!(!version_dir.is_dir(), "版本目录应被删除");
+
+        // 制造「目录删不掉」：Windows 上进程 CWD 所在目录不可删除（目录被锁定）。
+        // （实测：File::open 句柄锁无效——std 删除走 POSIX semantics；只读文件也
+        // 无效——remove_dir_all 会自行清除只读属性。仅 CWD 锁可靠。）
+        std::fs::create_dir_all(&version_dir).unwrap();
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&version_dir).unwrap();
+
+        let inst2 = service.create(make_instance(
+            "Ghost",
+            game_dir.to_str().unwrap(),
+            Some(true),
+        ));
+        let result = service.try_delete(&inst2.id);
+        let record_restored = service.get_by_id(&inst2.id).is_some();
+
+        if cfg!(windows) {
+            assert!(
+                matches!(result, Err(ref e) if e.contains("版本目录删除失败")),
+                "Windows 上 CWD 锁应导致目录删除失败: {result:?}"
+            );
+            assert!(
+                record_restored,
+                "目录删除失败时实例记录必须恢复（防幽灵实例复活）"
+            );
+            assert!(version_dir.is_dir(), "残留目录应仍在（等待用户处理）");
+        } else {
+            // 非 Windows：CWD 锁不生效 → 行为退化为正常删除，同样可接受
+            assert!(result.is_ok() || record_restored);
+        }
+
+        // 恢复 CWD 后清理
+        std::env::set_current_dir(old_cwd).unwrap();
+        let _ = std::fs::remove_dir_all(&version_dir);
         match old_home {
             Some(v) => std::env::set_var("QOMICEX_HOME", v),
             None => std::env::remove_var("QOMICEX_HOME"),

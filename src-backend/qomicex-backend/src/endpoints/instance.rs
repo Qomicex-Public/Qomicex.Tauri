@@ -415,12 +415,14 @@ async fn delete_instance(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Json<MessageResponse>> {
-    if state.instance.delete(&id).is_none() {
-        return Err(instance_not_found(&id));
+    // try_delete：目录被占用时透传错误给用户（原静默失败 → 幽灵实例复活）。
+    match state.instance.try_delete(&id) {
+        Ok(Some(_)) => Ok(Json(MessageResponse {
+            message: format!("Instance {id} deleted"),
+        })),
+        Ok(None) => Err(instance_not_found(&id)),
+        Err(e) => Err(ApiError::internal(e)),
     }
-    Ok(Json(MessageResponse {
-        message: format!("Instance {id} deleted"),
-    }))
 }
 
 /// GET /api/instance-groups: list custom instance groups.
@@ -1193,7 +1195,14 @@ async fn install_instance(
         if result.is_err() {
             // 回滚：安装失败/取消 → 删除实例记录 + 版本隔离目录，不残留不可用空实例。
             // 该端点仅由「下载新版本」新建实例流程调用，失败删实例安全。
-            let _ = inst_svc.delete(&inst_id_inner);
+            // 目录删除失败（try_delete Err）→ 保留记录防幽灵实例复活，追加提示。
+            if let Err(e) = inst_svc.try_delete(&inst_id_inner) {
+                let msg = format!(
+                    "{result_err}；另：{e}，实例记录已保留，请手动删除或重试",
+                    result_err = result.as_ref().err().map(String::as_str).unwrap_or("")
+                );
+                return Err(msg);
+            }
         }
         result
     });

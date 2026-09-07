@@ -596,7 +596,14 @@ async fn multimc_import_impl(
         drop(cleanup); // 导入完成（含失败）后清理临时解压目录与上传 zip
         if result.is_err() {
             // 回滚：删除实例记录 + 版本隔离目录。
-            let _ = inst_svc.delete(&inst_id_inner);
+            // 目录删除失败 → 保留记录防幽灵实例复活，错误并入任务失败信息。
+            if let Err(e) = inst_svc.try_delete(&inst_id_inner) {
+                let msg = format!(
+                    "{}；另：{e}，实例记录已保留，请手动删除或重试",
+                    result.as_ref().err().map(String::as_str).unwrap_or("")
+                );
+                return Err(msg);
+            }
         }
         result
     });
@@ -1366,7 +1373,14 @@ impl ModpackServiceData {
             if result.is_err() {
                 // 回滚：安装失败/取消 → 删除实例记录 + 版本隔离目录，不残留不可用实例。
                 // 共享目录（libraries/assets/非隔离 mods）不清理，避免误删。
-                let _ = inst_svc.delete(&inst_id_inner);
+                // 目录删除失败 → 保留记录防幽灵实例复活，错误并入任务失败信息。
+                if let Err(e) = inst_svc.try_delete(&inst_id_inner) {
+                    let msg = format!(
+                        "{}；另：{e}，实例记录已保留，请手动删除或重试",
+                        result.as_ref().err().map(String::as_str).unwrap_or("")
+                    );
+                    return Err(msg);
+                }
             }
             result
         });
