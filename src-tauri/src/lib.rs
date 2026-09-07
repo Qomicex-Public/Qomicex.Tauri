@@ -211,7 +211,7 @@ fn parse_debug_port() -> Option<u16> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 尽早注册 log crate backend：tauri-plugin-updater 等依赖库的
+    // 尽早注册 log crate backend：依赖库的
     // log::debug!/error!（请求 URL、响应体、失败原因）否则被静默丢弃。
     logger::init_log_backend();
     tauri_log!("log", "log backend registered (level=debug)");
@@ -243,14 +243,6 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_updater::Builder::new()
-                // QML 版本号（betaN 序数进位）在纯 semver 比较下会倒退，见 version_order
-                .default_version_comparator(|current, release| {
-                    version_order::is_update_available(&current, &release)
-                })
-                .build(),
-        )
         .plugin(tauri_plugin_process::init())
         .manage(BackendChild(Mutex::new(None)))
         .manage(ipc::IpcPipe(pipe_shared.clone()))
