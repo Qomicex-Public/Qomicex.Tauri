@@ -105,6 +105,8 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, state: Arc<Gateway
             let id = p
                 .trim_start_matches("/plugins/")
                 .trim_end_matches("/invoke");
+            // ponytail: manifest permissions 未做门禁（has_permission 已实现但未接），
+            // 当前 host 函数均为桩、无敏感操作；接入真敏感 host 函数前必须在此校验
             let export_name = serde_json::from_str::<serde_json::Value>(&body)
                 .ok()
                 .and_then(|v| v["export"].as_str().map(String::from))

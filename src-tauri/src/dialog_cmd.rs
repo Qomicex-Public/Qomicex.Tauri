@@ -8,7 +8,6 @@ use tauri::Window;
 pub struct PickDialogOptions {
     title: Option<String>,
     directory: Option<bool>,
-    #[allow(dead_code)]
     multiple: Option<bool>,
     default_path: Option<String>,
     filters: Option<Vec<FilterDef>>,
