@@ -92,6 +92,7 @@ const STAGE_LABELS: Record<string, string> = {
   'finishing': 'finishing',
   'downloading-modpack': 'downloading-modpack',
   'parsing-modpack': 'parsing-modpack',
+  'extracting-modpack': 'extracting-modpack',
   'modpack-files': 'modpack-files',
   'modpack-overrides': 'modpack-overrides',
   'installing-game': 'installing-game',

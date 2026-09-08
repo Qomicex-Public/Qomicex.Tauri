@@ -1,16 +1,19 @@
 use std::path::Path;
 
 /// Resolve PCL modpack icon from a version directory.
-/// Checks `{version_dir}/PCL/Logo.png` first, then `Icon.png`.
+/// Checks `{version_dir}/PCL/Logo.png`, `Icon.png`, then HMCL-style `icon.png`.
 /// Returns a base64 data URI on success.
 pub fn resolve_pcl_icon(version_dir: &Path) -> Option<String> {
     let pcl_dir = version_dir.join("PCL");
     let logo = pcl_dir.join("Logo.png");
     let icon = pcl_dir.join("Icon.png");
+    let hmcl_icon = version_dir.join("icon.png");
     let path = if logo.is_file() {
         Some(logo)
     } else if icon.is_file() {
         Some(icon)
+    } else if hmcl_icon.is_file() {
+        Some(hmcl_icon)
     } else {
         None
     };
@@ -60,4 +63,33 @@ fn base64_encode(input: &[u8]) -> String {
         out.push('=');
     }
     out
+}
+
+/// Minimal standard base64 decode (data URI payloads; whitespace/padding tolerant).
+pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a') as u32 + 26),
+            b'0'..=b'9' => Some((c - b'0') as u32 + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    for &c in input.as_bytes() {
+        if c.is_ascii_whitespace() || c == b'=' {
+            continue;
+        }
+        acc = (acc << 6) | val(c)?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
 }
