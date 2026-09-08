@@ -119,6 +119,13 @@ pub struct ScannedVersionInfo {
     pub modpack_summary: Option<String>,
 }
 
+/// 改名失败原因：目标目录已存在（用户可修复，前端应提示）vs IO 错误。
+#[derive(Debug)]
+pub enum RenameFailure {
+    TargetExists(String),
+    Io(String),
+}
+
 /// 实例服务（对应 C# InstanceService）。
 pub struct InstanceService {
     file_path: PathBuf,
@@ -264,6 +271,63 @@ impl InstanceService {
         // 使该 game_dir 的扫描缓存失效
         self.invalidate_scan_cache(&instance.game_dir);
         Some(instance)
+    }
+
+    /// 改名时同步重命名版本目录 + 目录内 {name}.json/.jar + 修补版本 JSON 内的 id。
+    /// name 同时是版本隔离目录名（VersionDirName），只改记录会被 sync_from_disk
+    /// 按磁盘目录名打回。目录不存在（未安装/共享残留）→ 直接 Ok；
+    /// 重命名失败（游戏运行中目录被占用/目标已存在）→ Err，调用方不得改记录。
+    pub fn rename_version_dir(
+        &self,
+        inst: &GameInstance,
+        new_name: &str,
+    ) -> Result<(), RenameFailure> {
+        let old_name = inst.name.as_str();
+        if old_name.is_empty() || old_name == new_name {
+            return Ok(());
+        }
+        let game_root = if std::path::Path::new(&inst.game_dir).is_absolute() {
+            PathBuf::from(&inst.game_dir)
+        } else {
+            settings::resolve_base_dir().join(&inst.game_dir)
+        };
+        let old_dir = game_root.join("versions").join(old_name);
+        let new_dir = game_root.join("versions").join(new_name);
+        if !old_dir.is_dir() {
+            return Ok(());
+        }
+        if new_dir.exists() {
+            return Err(RenameFailure::TargetExists(new_dir.display().to_string()));
+        }
+        std::fs::rename(&old_dir, &new_dir).map_err(|e| {
+            RenameFailure::Io(format!(
+                "版本目录重命名失败（可能游戏正在运行或目录被占用）: {e}"
+            ))
+        })?;
+        for ext in ["json", "jar"] {
+            let old_file = new_dir.join(format!("{old_name}.{ext}"));
+            let new_file = new_dir.join(format!("{new_name}.{ext}"));
+            if old_file.is_file() {
+                let _ = std::fs::rename(&old_file, &new_file);
+            }
+        }
+        let json_path = new_dir.join(format!("{new_name}.json"));
+        if json_path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&json_path) {
+                if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert(
+                            "id".to_string(),
+                            serde_json::Value::String(new_name.to_string()),
+                        );
+                    }
+                    if let Ok(out) = serde_json::to_string_pretty(&val) {
+                        let _ = std::fs::write(&json_path, out);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn delete(&self, id: &str) -> Option<GameInstance> {
@@ -627,6 +691,94 @@ mod tests {
             Some(v) => std::env::set_var("QOMICEX_HOME", v),
             None => std::env::remove_var("QOMICEX_HOME"),
         }
+    }
+
+    /// 回归：改名必须同步重命名版本目录（name 即 VersionDirName），
+    /// 否则 sync_from_disk 会按磁盘旧目录名把记录当残留清掉、旧名复活。
+    #[test]
+    fn rename_version_dir_renames_dir_and_files() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-rename-test-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let old_dir = game_dir.join("versions").join("1.20.1-Forge-47.1.0");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::write(
+            old_dir.join("1.20.1-Forge-47.1.0.json"),
+            r#"{"id":"1.20.1-Forge-47.1.0","inheritsFrom":"1.20.1"}"#,
+        )
+        .unwrap();
+        std::fs::write(old_dir.join("1.20.1-Forge-47.1.0.jar"), b"jar").unwrap();
+
+        let service = InstanceService::new();
+        let inst = service.create(make_instance(
+            "1.20.1-Forge-47.1.0",
+            game_dir.to_str().unwrap(),
+            Some(true),
+        ));
+
+        // 模拟 PUT /instance/{id} 改名全流程：重命名目录 → 更新记录
+        let mut renamed = service.get_by_id(&inst.id).unwrap();
+        service.rename_version_dir(&renamed, "我的服务器").unwrap();
+        renamed.name = "我的服务器".to_string();
+        service.update(&inst.id, renamed);
+
+        // 目录/json/jar 已重命名，JSON 内 id 已修补
+        let new_dir = game_dir.join("versions").join("我的服务器");
+        assert!(new_dir.is_dir(), "版本目录应已重命名");
+        assert!(!old_dir.is_dir(), "旧目录不应残留");
+        assert!(
+            new_dir.join("我的服务器.json").is_file(),
+            "版本 JSON 应已重命名"
+        );
+        assert!(
+            new_dir.join("我的服务器.jar").is_file(),
+            "版本 jar 应已重命名"
+        );
+        let json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(new_dir.join("我的服务器.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["id"], "我的服务器", "版本 JSON 内 id 应已修补");
+
+        // sync_from_disk 后新名仍在（修复点：不再被打回）
+        let scanned = vec![ScannedVersionInfo {
+            name: "我的服务器".to_string(),
+            game_version: "1.20.1".to_string(),
+            game_dir: game_dir.to_str().unwrap().to_string(),
+            loader: Some("forge".to_string()),
+            loader_version: Some("47.1.0".to_string()),
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+        let result = service.sync_from_disk(&scanned);
+        let names: Vec<&str> = result.iter().map(|i| i.name.as_str()).collect();
+        assert!(
+            names.contains(&"我的服务器"),
+            "改名后实例不应被磁盘同步打回: {names:?}"
+        );
+
+        // 目录被占用（目标已存在）→ TargetExists 且记录不变
+        let ghost = game_dir.join("versions").join("Ghost");
+        std::fs::create_dir_all(&ghost).unwrap();
+        let occupied = service.rename_version_dir(&service.get_by_id(&inst.id).unwrap(), "Ghost");
+        assert!(
+            matches!(occupied, Err(RenameFailure::TargetExists(_))),
+            "目标目录已存在时应报 TargetExists: {occupied:?}"
+        );
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// 回归：幽灵实例防线。try_delete 正常删目录 → Ok；删除失败 → Err 且记录恢复

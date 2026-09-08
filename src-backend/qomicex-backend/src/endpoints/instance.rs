@@ -370,8 +370,28 @@ async fn update_instance(
     let Some(mut existing) = state.instance.get_by_id(&id) else {
         return Err(instance_not_found(&id));
     };
-    if let Some(v) = req.name {
-        existing.name = v;
+    // name 即 VersionDirName：先同步重命名磁盘版本目录，成功才更新记录；
+    // 目录被占用/目标已存在 → 拒绝改名并返回错误（记录保持原名不变）。
+    if let Some(v) = req.name.as_deref() {
+        let new_name = v.trim();
+        if new_name.is_empty() {
+            return Err(ApiError::bad_request(
+                "INSTANCE_NAME_EMPTY",
+                "Instance name cannot be empty",
+            ));
+        }
+        if new_name != existing.name {
+            state
+                .instance
+                .rename_version_dir(&existing, new_name)
+                .map_err(|e| match e {
+                    crate::services::instance::RenameFailure::TargetExists(msg) => {
+                        ApiError::bad_request("INSTANCE_NAME_CONFLICT", msg)
+                    }
+                    crate::services::instance::RenameFailure::Io(msg) => ApiError::internal(msg),
+                })?;
+            existing.name = new_name.to_string();
+        }
     }
     if let Some(v) = req.game_version {
         existing.game_version = v;

@@ -2351,6 +2351,8 @@ export default function InstanceDetailPage() {
   }, [id, navigate, detailRefreshKey])
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
+  const { confirm, notify } = useMessageBox()
 
   const doSave = useCallback(async (formToSave: GameInstance) => {
     if (!id) return
@@ -2373,9 +2375,13 @@ export default function InstanceDetailPage() {
         skipIntegrityCheck: formToSave.skipIntegrityCheck,
       })
       setInstance(updated)
-    } catch {}
+      cacheSet(`api-instance-${id}`, updated)
+    } catch (e) {
+      notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+      setForm((f) => (f ? { ...f, name: instance?.name ?? f.name } : f))
+    }
     setSaving(false)
-  }, [id])
+  }, [id, notify, instance])
 
   const debouncedSave = useCallback((formToSave: GameInstance) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -2394,9 +2400,6 @@ export default function InstanceDetailPage() {
   }, [id, instance])
 
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
-
-  const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
-  const { confirm, notify } = useMessageBox()
 
 // 保存备注
   const saveRemark = useCallback(async () => {
