@@ -364,8 +364,6 @@ jobs:
           name: qomicex-launcher-windows-x64
           path: |
             src-tauri/target/release/bundle/**/*.exe
-            src-tauri/binaries/Packet.dll
-            src-tauri/binaries/wintun.dll
 
   windows-arm64:
     if: |
@@ -484,8 +482,6 @@ jobs:
           name: qomicex-launcher-windows-arm64
           path: |
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
-            src-tauri/binaries/Packet.dll
-            src-tauri/binaries/wintun.dll
 
   linux-x64:
     if: |
@@ -1240,30 +1236,6 @@ jobs:
           jq '.platforms |= map_values(.url |= gsub(" "; "."))' alpha.json > tmp.json && mv tmp.json alpha.json
           echo "=== alpha.json ==="
           cat alpha.json
-
-      # GitHub Release 不允许同名 asset：windows-x64 / windows-arm64 两个
-      # artifact 都带 wintun.dll / Packet.dll（打进安装包的同时单独分发），
-      # 重名会导致第二次上传走 update 路径并在 label restore 时 404
-      # （softprops/action-gh-release 已知问题 #760）。上传前按架构重命名。
-      - name: Rename arch-specific DLL assets
-        shell: bash
-        run: |
-          set -e
-          for d in qomicex-launcher-*; do
-            case "$d" in
-              *windows-x64) ARCH=x64 ;;
-              *windows-arm64) ARCH=arm64 ;;
-              *) continue ;;
-            esac
-            # artifact 内路径结构被保留（$d/src-tauri/binaries/*.dll），
-            # 顶层与嵌套都要覆盖，否则同名 asset 上传竞态导致 release job 失败
-            for f in $(find "$d" -name Packet.dll -o -name wintun.dll); do
-              base=$(basename "$f")
-              name="${base%.dll}-$ARCH.dll"
-              mv "$f" "$(dirname "$f")/$name"
-              echo "renamed $f -> $name"
-            done
-          done
 
       - name: Create/update GitHub Release
         uses: softprops/action-gh-release@v3
