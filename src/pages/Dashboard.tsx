@@ -43,9 +43,12 @@ function DashboardContent() {
     const missing = widgets.filter(w => !inLayout.has(w.id))
     // 隐藏项不算 stale：Dashboard 先于插件激活挂载，此时插件槽位尚未注册，
     // 清掉隐藏项会导致插件激活后按 missing 重新追加（用户隐藏的组件每次启动复活）
-    const stale = layout.some(it => !it.hidden && !known.has(it.i))
+    // 插件项（plugin:*）也不算 stale：同理，槽位注册晚于本 effect 首跑，
+    // 提前清理会把用户摆好的插件组件位置重置（随后按默认位置重新追加，#86）
+    const stale = layout.some(it => !it.hidden && !it.i.startsWith('plugin:') && !known.has(it.i))
     if (missing.length === 0 && !stale) return
-    const cleaned = layout.filter(it => known.has(it.i) || it.hidden)
+    // plugin:* 保留：同上，等插件激活后自然对上（卸载插件的残留项不渲染、无 UI 影响）
+    const cleaned = layout.filter(it => known.has(it.i) || it.hidden || it.i.startsWith('plugin:'))
     let y = cleaned.reduce((m, it) => Math.max(m, it.y + it.h), 0)
     const appended: WidgetLayoutItem[] = missing.map(w => {
       const def = DEFAULT_WIDGETS.find(d => d.id === w.id)
