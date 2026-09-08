@@ -2110,7 +2110,10 @@ async fn copy_save(
             "Save directory not found",
         ));
     }
-    copy_dir(&src, &saves_dir.join(&req.new_name));
+    copy_dir(&src, &saves_dir.join(&req.new_name)).map_err(|e| {
+        tracing::warn!("copy save {} -> {} failed: {e}", req.name, req.new_name);
+        ApiError::internal(format!("copy save failed: {e}"))
+    })?;
     Ok(StatusCode::OK)
 }
 
@@ -2493,21 +2496,20 @@ fn delete_file(path: &Path) {
 }
 
 /// Recursive directory copy (C# CopyDirectory).
-fn copy_dir(source: &Path, dest: &Path) {
-    if let Err(e) = std::fs::create_dir_all(dest) {
-        tracing::warn!("copy_dir: create {} failed: {e}", dest.display());
-    }
-    if let Ok(rd) = std::fs::read_dir(source) {
-        for e in rd.filter_map(|e| e.ok()) {
-            let from = e.path();
-            let to = dest.join(e.file_name());
-            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                copy_dir(&from, &to);
-            } else {
-                let _ = std::fs::copy(&from, &to);
-            }
+/// Errors propagate: callers must not report success on partial copies.
+fn copy_dir(source: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for e in std::fs::read_dir(source)? {
+        let e = e?;
+        let from = e.path();
+        let to = dest.join(e.file_name());
+        if e.file_type()?.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
         }
     }
+    Ok(())
 }
 
 fn instance_not_found(id: &str) -> ApiError {
