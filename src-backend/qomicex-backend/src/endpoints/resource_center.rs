@@ -705,7 +705,8 @@ async fn search(
     // 聚合排序统一按下载量，跨源可比
     merged.sort_by(|a, b| b.download_count.cmp(&a.download_count));
     merged.truncate(page_size as usize);
-    // ponytail: total 为各源 total 之和（近似）；FTB 无分页，翻页会重复出现
+    // ponytail: total 为各源 total 之和（近似）；各源各自取第 N 页后合并截断，
+    // 跨源混合页语义本就是近似，精确交叉分页不值得做
     Ok(Json(ResourceSearchResponse {
         items: merged,
         total,
@@ -992,6 +993,8 @@ async fn search_one(
             return Ok((vec![], 0));
         }
         let ftb = state.core.create_ftb_source();
+        // core FtbSource::search 无 page 参数（全量拉取后内存过滤），此处取全量后
+        // 内存切片分页；total 用真实总数，否则 total==首页条数 → 前端「加载更多」失效。
         let packs = ftb
             .search(
                 if keyword.is_empty() {
@@ -1003,14 +1006,19 @@ async fn search_one(
                 game_version,
                 loader,
                 map_ft_sort(sort),
-                page_size,
+                i32::MAX,
             )
             .await
             .map_err(|e| ApiError::upstream(e.to_string()))?;
-        let items: Vec<ResourceItemDto> =
-            packs.iter().map(|p| ftb_pack_to_item(p, "ftb")).collect();
-        let count = items.len() as i32;
-        Ok((items, count))
+        let total = packs.len() as i32;
+        let offset = ((page - 1).max(0) as usize) * page_size.max(0) as usize;
+        let items: Vec<ResourceItemDto> = packs
+            .iter()
+            .skip(offset)
+            .take(page_size.max(0) as usize)
+            .map(|p| ftb_pack_to_item(p, "ftb"))
+            .collect();
+        Ok((items, total))
     } else {
         Ok((vec![], 0))
     }
