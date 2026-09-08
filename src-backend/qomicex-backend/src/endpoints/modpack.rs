@@ -1267,9 +1267,9 @@ impl ModpackServiceData {
 
     /// Resolve a CurseForge modpack file into a parse result.
     ///
-    /// NOTE: the source parses the downloaded CurseForge zip to obtain game
-    /// version / loader / overrides; without a `zip` crate we only surface the
-    /// mod info + single download entry and leave the rest as TODO.
+    /// The install pipeline re-parses the downloaded zip (parse_curseforge_manifest)
+    /// to fill game version / loader / overrides, so these fields stay empty here
+    /// (install-time preview only shows mod info + single download entry).
     async fn resolve_curseforge_online(
         &self,
         project_id: &str,
@@ -1309,8 +1309,7 @@ impl ModpackServiceData {
                 .as_deref()
                 .and_then(|a| a.first())
                 .map(|a| a.name.clone()),
-            // TODO: real values come from parsing the downloaded manifest.zip;
-            // unavailable without a zip crate.
+            // 预览值留空：安装管线下载 zip 后经 parse_curseforge_manifest 补全
             version: file_info.file_name.clone(),
             game_version: String::new(),
             loader: String::new(),

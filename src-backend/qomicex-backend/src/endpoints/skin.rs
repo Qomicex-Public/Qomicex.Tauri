@@ -904,7 +904,6 @@ fn skin_path(uuid: &str) -> std::path::PathBuf {
 /// The axum `multipart` feature is not enabled in this crate, so the raw body
 /// is scanned for the first part whose header contains `name="<field>"` and its
 /// payload bytes are returned. This mirrors `request.Form.Files.GetFile("file")`.
-/// TODO: switch to `axum::extract::Multipart` if the feature is enabled.
 fn extract_file_field(body: &[u8], field: &str) -> Option<Vec<u8>> {
     let marker = format!("name=\"{field}\"").into_bytes();
     let idx = find_slice(body, &marker, 0)?;

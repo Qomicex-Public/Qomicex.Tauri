@@ -998,9 +998,7 @@ fn map_mod_dtos(list: &[qomicex_core::models::expansion::local::ModInfo]) -> Vec
                     None
                 },
                 source,
-                // TODO: mcmod Chinese-name enrichment (McmodService has no
-                // Rust peer yet), so mcmod_id / chinese_name are left empty;
-                // iconUrl is filled by fill_remote_icons below.
+                // mcmod_id / chinese_name 由调用方 list_mods 经 mcmod 索引回填
                 mcmod_id: None,
                 chinese_name: None,
                 active: m.is_active(),
