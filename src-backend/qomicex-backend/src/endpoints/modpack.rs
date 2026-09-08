@@ -676,7 +676,15 @@ async fn run_multimc_import(
         );
         handle.mark_step("extract", "active");
         handle.set_stage("extracting-modpack");
-        extract_zip_file(zip, dir)?;
+        extract_zip_file_progressed(zip, dir, &mut |done, total| {
+            let pct = if total > 0 {
+                done as f64 * 100.0 / total as f64
+            } else {
+                100.0
+            };
+            handle.set_step_percent("extract", pct);
+            handle.set_current_file(&format!("解压整合包文件 {done}/{total}..."));
+        })?;
         handle.mark_step("extract", "done");
     } else {
         handle.define_steps(
@@ -784,7 +792,7 @@ async fn run_multimc_import(
     handle.mark_step("finalize", "active");
     handle.set_stage("finishing");
     handle.set_current_file("导入完成");
-    write_pack_icon(game_dir, version_dir_name, meta.icon_data.as_deref());
+    write_pack_icon(game_dir, version_dir_name, meta.icon_data.as_deref())?;
     handle.mark_step("finalize", "done");
     Ok(())
 }
@@ -792,25 +800,37 @@ async fn run_multimc_import(
 /// 把整合包图标（data URI）落盘为 `{gameDir}/versions/{name}/icon.png`
 /// （HMCL 同款约定；实例扫描 resolve_pcl_icon 从该文件兜底读取，
 /// 不再依赖 instances.json 内嵌数据，修复导入后 logo 丢失）。
-fn write_pack_icon(game_dir: &str, version_dir_name: &str, icon_data: Option<&str>) {
+/// 无图标 → Ok（跳过）；有图标但写盘失败（权限/磁盘满）→ Err，导入随管线失败回滚
+/// ——否则实例元数据声称有图标、扫描却读不到，比导入失败更难排查。
+fn write_pack_icon(
+    game_dir: &str,
+    version_dir_name: &str,
+    icon_data: Option<&str>,
+) -> Result<(), String> {
     let Some(data) = icon_data.and_then(|d| d.strip_prefix("data:image/")) else {
-        return;
+        return Ok(());
     };
     let Some((_, b64)) = data.split_once("base64,") else {
-        return;
+        return Ok(());
     };
     let Some(bytes) = crate::util::pcl_icon::base64_decode(b64) else {
-        return;
+        return Ok(());
     };
     if bytes.is_empty() {
-        return;
+        return Ok(());
     }
     let version_dir = std::path::Path::new(game_dir)
         .join("versions")
         .join(version_dir_name);
-    if version_dir.is_dir() {
-        let _ = std::fs::write(version_dir.join("icon.png"), &bytes);
+    if !version_dir.is_dir() {
+        return Ok(());
     }
+    std::fs::write(version_dir.join("icon.png"), &bytes).map_err(|e| {
+        format!(
+            "写入整合包图标失败 {}: {e}",
+            version_dir.join("icon.png").display()
+        )
+    })
 }
 
 /// 探测 zip 是否为 MultiMC 整合包。
@@ -840,14 +860,25 @@ fn is_multimc_zip(zip_path: &std::path::Path) -> bool {
 fn extract_zip_file(zip_path: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
-    extract_archive(&mut archive, dest)
+    extract_archive(&mut archive, dest, None)
+}
+
+/// 从磁盘 zip 文件解压到目标目录并逐条目上报进度 (已完成条目, 总条目)。
+fn extract_zip_file_progressed(
+    zip_path: &std::path::Path,
+    dest: &std::path::Path,
+    progress: &mut dyn FnMut(usize, usize),
+) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
+    extract_archive(&mut archive, dest, Some(progress))
 }
 
 /// 从内存字节解压到目标目录（防 zip-slip：仅使用 `enclosed_name` 安全路径）。
 fn extract_zip(data: &[u8], dest: &std::path::Path) -> Result<(), String> {
     let cursor = std::io::Cursor::new(data);
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("读取整合包失败: {e}"))?;
-    extract_archive(&mut archive, dest)
+    extract_archive(&mut archive, dest, None)
 }
 
 /// zip 炸弹防护阈值（远高于正常整合包：GTNH 约 1.2 万条目 / 解压 0.72GB）。
@@ -858,6 +889,7 @@ const MAX_TOTAL_UNCOMPRESSED: u64 = 64 * 1024 * 1024 * 1024; // 总解压 64 GiB
 fn extract_archive<R: std::io::Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
     dest: &std::path::Path,
+    mut progress: Option<&mut dyn FnMut(usize, usize)>,
 ) -> Result<(), String> {
     let total_entries = archive.len();
     if total_entries > MAX_ZIP_ENTRIES {
@@ -866,6 +898,7 @@ fn extract_archive<R: std::io::Read + std::io::Seek>(
         ));
     }
     let mut total_uncompressed: u64 = 0;
+    let mut done: usize = 0;
     for i in 0..total_entries {
         let mut entry = archive
             .by_index(i)
@@ -878,6 +911,10 @@ fn extract_archive<R: std::io::Read + std::io::Seek>(
         if entry.is_dir() {
             std::fs::create_dir_all(&target)
                 .map_err(|e| format!("创建目录失败 {}: {e}", target.display()))?;
+            done += 1;
+            if let Some(p) = progress.as_deref_mut() {
+                p(done, total_entries);
+            }
             continue;
         }
         let size = entry.size();
@@ -900,6 +937,10 @@ fn extract_archive<R: std::io::Read + std::io::Seek>(
             .map_err(|e| format!("创建文件失败 {}: {e}", target.display()))?;
         std::io::copy(&mut entry, &mut out)
             .map_err(|e| format!("解压文件失败 {}: {e}", target.display()))?;
+        done += 1;
+        if let Some(p) = progress.as_deref_mut() {
+            p(done, total_entries);
+        }
     }
     Ok(())
 }
@@ -2200,7 +2241,7 @@ pub(crate) async fn run_modpack_pipeline(
         f.current_file = "整合包安装完成".to_string();
     });
     // 图标落盘 versions/{name}/icon.png（HMCL 约定，扫描兜底读取；CF/MR 与 MultiMC 导入一致）。
-    write_pack_icon(game_dir, version_dir_name, icon_data.as_deref());
+    write_pack_icon(game_dir, version_dir_name, icon_data.as_deref())?;
     Ok(())
 }
 
