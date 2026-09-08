@@ -277,7 +277,9 @@ pub fn run() {
             }
             spawn_backend(app, &pipe_name);
             let mut runtime = plugin_gateway::loader::PluginRuntime::new().unwrap();
-            let _ = runtime.scan_and_load();
+            if let Err(e) = runtime.scan_and_load() {
+                tauri_log!("gateway", "plugin scan failed: {e:#}");
+            }
             tauri::async_runtime::spawn(async move {
                 match plugin_gateway::server::start_gateway(runtime).await {
                     Ok(port) => tauri_log!("gateway", "ready on 127.0.0.1:{port}"),

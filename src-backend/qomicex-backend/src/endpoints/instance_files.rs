@@ -320,7 +320,11 @@ fn write_mods_cache(
     dir_signature: u64,
 ) {
     let path = mods_cache_path(data_dir, instance_id);
-    let _ = std::fs::create_dir_all(path.parent().unwrap());
+    if let Some(dir) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            tracing::warn!("mods cache: create dir failed: {e}");
+        }
+    }
     let cache = ModsCacheEntry {
         fetched_at: now_secs(),
         entries,
@@ -414,7 +418,11 @@ fn read_update_cache_stale(data_dir: &PathBuf, instance_id: &str) -> Option<Upda
 
 fn write_update_cache(data_dir: &PathBuf, instance_id: &str, updates: Vec<ModUpdateEntryDto>) {
     let path = update_cache_path(data_dir, instance_id);
-    let _ = std::fs::create_dir_all(path.parent().unwrap());
+    if let Some(dir) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            tracing::warn!("mods update cache: create dir failed: {e}");
+        }
+    }
     let cache = UpdateCacheEntry {
         fetched_at: now_secs(),
         updates,
@@ -676,7 +684,12 @@ fn category_dir(r: &Resolved, sub: &str) -> PathBuf {
     } else {
         r.game_dir.join(sub)
     };
-    let _ = std::fs::create_dir_all(&full);
+    if let Err(e) = std::fs::create_dir_all(&full) {
+        tracing::warn!(
+            "instance files: create category dir {} failed: {e}",
+            full.display()
+        );
+    }
     full
 }
 
@@ -998,9 +1011,7 @@ fn map_mod_dtos(list: &[qomicex_core::models::expansion::local::ModInfo]) -> Vec
                     None
                 },
                 source,
-                // TODO: mcmod Chinese-name enrichment (McmodService has no
-                // Rust peer yet), so mcmod_id / chinese_name are left empty;
-                // iconUrl is filled by fill_remote_icons below.
+                // mcmod_id / chinese_name 由调用方 list_mods 经 mcmod 索引回填
                 mcmod_id: None,
                 chinese_name: None,
                 active: m.is_active(),
@@ -2099,7 +2110,10 @@ async fn copy_save(
             "Save directory not found",
         ));
     }
-    copy_dir(&src, &saves_dir.join(&req.new_name));
+    copy_dir(&src, &saves_dir.join(&req.new_name)).map_err(|e| {
+        tracing::warn!("copy save {} -> {} failed: {e}", req.name, req.new_name);
+        ApiError::internal(format!("copy save failed: {e}"))
+    })?;
     Ok(StatusCode::OK)
 }
 
@@ -2482,19 +2496,20 @@ fn delete_file(path: &Path) {
 }
 
 /// Recursive directory copy (C# CopyDirectory).
-fn copy_dir(source: &Path, dest: &Path) {
-    let _ = std::fs::create_dir_all(dest);
-    if let Ok(rd) = std::fs::read_dir(source) {
-        for e in rd.filter_map(|e| e.ok()) {
-            let from = e.path();
-            let to = dest.join(e.file_name());
-            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                copy_dir(&from, &to);
-            } else {
-                let _ = std::fs::copy(&from, &to);
-            }
+/// Errors propagate: callers must not report success on partial copies.
+fn copy_dir(source: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for e in std::fs::read_dir(source)? {
+        let e = e?;
+        let from = e.path();
+        let to = dest.join(e.file_name());
+        if e.file_type()?.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
         }
     }
+    Ok(())
 }
 
 fn instance_not_found(id: &str) -> ApiError {
