@@ -80,7 +80,7 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <p className="mt-1 text-right text-xs text-muted-foreground">{progress}%</p>
+            <p className="mt-1 text-right text-xs text-muted-foreground">{progress.toFixed(2)}%</p>
           </div>
         )}
 
@@ -105,7 +105,7 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
         {downloading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <RotateCw className="h-3 w-3 animate-spin" />
-            <span>{t('dialogs.update.downloading', { progress })}</span>
+            <span>{t('dialogs.update.downloading', { progress: progress.toFixed(2) })}</span>
           </div>
         )}
         {phase === 'idle' && !required && (
