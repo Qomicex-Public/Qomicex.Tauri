@@ -338,6 +338,7 @@ jobs:
           name: qomicex-launcher-windows-x64
           path: |
             src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.exe.sig
             src-tauri/binaries/Packet.dll
             src-tauri/binaries/wintun.dll
 
@@ -434,6 +435,7 @@ jobs:
           name: qomicex-launcher-windows-arm64
           path: |
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe.sig
             src-tauri/binaries/Packet.dll
             src-tauri/binaries/wintun.dll
 

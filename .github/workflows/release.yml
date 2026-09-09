@@ -364,6 +364,7 @@ jobs:
           name: qomicex-launcher-windows-x64
           path: |
             src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.exe.sig
 
   windows-arm64:
     if: |
@@ -482,6 +483,7 @@ jobs:
           name: qomicex-launcher-windows-arm64
           path: |
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.exe.sig
 
   linux-x64:
     if: |
