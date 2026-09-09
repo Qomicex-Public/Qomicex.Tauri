@@ -107,8 +107,15 @@ async fn plan(
         return Err(ApiError::upstream(format!("HTTP {status}")));
     }
 
-    let mut plan: UpdatePlanResponse = serde_json::from_str(&text)
+    let value: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| ApiError::upstream(format!("update plan parse failed: {e}")))?;
+    // Upstream 200 bodies carry only metadata — the key is absent, so a 200
+    // IS the "update available" signal; an explicit hasUpdate=false (future
+    // contract) still wins.
+    let explicit = value.get("hasUpdate").and_then(|v| v.as_bool());
+    let mut plan: UpdatePlanResponse = serde_json::from_value(value)
+        .map_err(|e| ApiError::upstream(format!("update plan parse failed: {e}")))?;
+    plan.has_update = explicit.unwrap_or(true);
 
     // Only route through the fastest mirror when there actually is an update;
     // upstream may answer 200 with hasUpdate=false instead of 204.
@@ -120,7 +127,6 @@ async fn plan(
     }
     Ok(Json(plan))
 }
-
 /// GET /api/update/check?current=...&channel=...
 async fn check(
     State(state): State<SharedState>,
@@ -418,6 +424,10 @@ struct ManifestQuery {
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct UpdatePlanResponse {
+    /// 204 → false. Upstream 200 bodies never carry this key (their contract:
+    /// 204 = no update, 200 = the metadata below), so it is filled from the
+    /// status code before parse — see `plan()`.
+    #[serde(default)]
     has_update: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<String>,
