@@ -236,7 +236,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
           </div>
         </div>
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+          <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
             <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
         ) : filtered.length === 0 ? (
@@ -352,7 +352,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
           </div>
         </div>
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="animate-pulse rounded-xl border bg-card overflow-hidden">
                 <div className="aspect-video bg-muted" />
@@ -735,7 +735,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
           )}
 
           {loading ? (
-            <div className="space-y-3">
+            <div className="space-y-3 p-4">
               {loadProgress && loadProgress.total > 0 && (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -750,7 +750,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                   </div>
                 </div>
               )}
-              <div className="flex flex-col gap-2 p-4">
+              <div className="flex flex-col gap-2">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
                     <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
@@ -1474,7 +1474,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
           </div>
         </div>
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+          <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
             <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
         ) : filtered.length === 0 ? (
@@ -1711,7 +1711,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
             </div>
           </div>
           {loading ? (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 p-4">
               {Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="animate-pulse flex items-center gap-3 rounded-lg px-3 py-2.5">
                   <div className="h-4 w-4 shrink-0 rounded bg-muted" />
@@ -1732,7 +1732,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
               {search ? t('instanceDetail.servers.noMatch') : t('instanceDetail.servers.empty')}
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2 p-4">
               {filtered.map((s, i) => {
                 const ps = pingStates[s.ip]
                 const contextItems: ContextMenuItem[] = [
@@ -1815,11 +1815,11 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
           {lanGames.length > 0 && (
             <>
               <Separator className="my-3" />
-              <div className="mb-2 flex items-center gap-2">
-                <Wifi className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground">{t('instanceDetail.servers.lanGames', { count: lanGames.length })}</span>
-              </div>
-              <div className="space-y-2">
+              <div className="space-y-2 p-4">
+                <div className="flex items-center gap-2">
+                  <Wifi className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs font-medium text-muted-foreground">{t('instanceDetail.servers.lanGames', { count: lanGames.length })}</span>
+                </div>
                 {lanGames.map((g, i) => (
                   <Card key={`${g.ip}:${g.port}-${i}`} className="group border-dashed border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm">
                     <CardContent className="flex items-start gap-3 p-4">
@@ -2147,7 +2147,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
         {!loading && <span className="shrink-0 text-xs font-normal text-muted-foreground">({settings.length})</span>}
       </div>
         {loading ? (
-          <div className="space-y-3">
+          <div className="space-y-3 p-4">
             {Array.from({ length: 8 }).map((_, i) => (
               <div key={i} className="animate-pulse flex items-center gap-3">
                 <div className="flex-1 space-y-1.5">
@@ -2163,7 +2163,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
             {search ? t('instanceDetail.gamesettings.noMatch') : t('instanceDetail.gamesettings.empty')}
           </div>
         ) : (
-          <div className="space-y-1 overflow-hidden">
+          <div className="space-y-1 overflow-hidden p-4">
             {filtered.map((s) => {
               const range = parseRange(s.validValuesRaw)
               const enumOpts = parseEnum(s.validValuesRaw)
@@ -2681,81 +2681,75 @@ export default function InstanceDetailPage() {
           />
         </div>
 
-        <div className="flex-1 min-w-0 overflow-y-auto scroll-fade-mask relative" style={{ transform: 'translateZ(0)' }}>
+        <div className="flex-1 min-w-0 overflow-y-auto scroll-fade-mask relative pb-8" style={{ transform: 'translateZ(0)' }}>
           <TabContent activeTab={tab} tabId="overview">
             <div className="space-y-4">
-              <Card>
-                <CardContent className="p-5 space-y-4">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.gameVersion')}</p>
-                      <p className="font-medium">{instance.gameVersion}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.loader')}</p>
-                      {instance.loader ? (
-                        <span className={cn('inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium mt-0.5', LOADER_COLORS[instance.loader.toLowerCase()] ?? 'bg-muted text-muted-foreground border-border')}>
-                          {instance.loader} {instance.loaderVersion}
-                        </span>
-                      ) : <p className="font-medium text-muted-foreground">{t('instanceDetail.overview.pureVanilla')}</p>}
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.lastPlayed')}</p>
-                      <p className="font-medium">{formatDate(instance.lastPlayed, t, lang)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.totalPlayTime')}</p>
-                      <p className="font-medium">{formatPlayTime(instance.playTime, t)}</p>
-                    </div>
+              <SettingSection title={t('instances.basicInfo')} icon={<Info className="h-4 w-4" />}>
+                <div className="grid grid-cols-2 gap-4 p-4 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.gameVersion')}</p>
+                    <p className="font-medium">{instance.gameVersion}</p>
                   </div>
-                </CardContent>
-              </Card>
+                  <div>
+                    <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.loader')}</p>
+                    {instance.loader ? (
+                      <span className={cn('inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium mt-0.5', LOADER_COLORS[instance.loader.toLowerCase()] ?? 'bg-muted text-muted-foreground border-border')}>
+                        {instance.loader} {instance.loaderVersion}
+                      </span>
+                    ) : <p className="font-medium text-muted-foreground">{t('instanceDetail.overview.pureVanilla')}</p>}
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.lastPlayed')}</p>
+                    <p className="font-medium">{formatDate(instance.lastPlayed, t, lang)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.totalPlayTime')}</p>
+                    <p className="font-medium">{formatPlayTime(instance.playTime, t)}</p>
+                  </div>
+                </div>
+              </SettingSection>
 
               {/* 备注区域 */}
-              <Card>
-                <CardContent className="p-5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.remark')}</p>
-                      {editingRemark ? (
-                        <Input
-                          value={remarkValue}
-                          onChange={(e) => setRemarkValue(e.target.value)}
-                          onBlur={() => saveRemark()}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveRemark()
-                            if (e.key === 'Escape') { setEditingRemark(false); setRemarkValue(instance.remark || '') }
-                          }}
-                          className="mt-1 h-7 text-sm"
-                          autoFocus
-                        />
-                      ) : (
-                        <p
-                          className="font-medium cursor-pointer hover:text-muted-foreground transition-colors"
-                          onClick={() => { setEditingRemark(true); setRemarkValue(instance.remark || '') }}
-                        >
-                          {instance.remark || <span className="text-muted-foreground italic">{t('instanceDetail.overview.remarkPlaceholder')}</span>}
-                        </p>
-                      )}
-                    </div>
-                    {!editingRemark && (
-                      <Tooltip content={t('instanceDetail.overview.editRemark')}>
-                        <button
-                          onClick={() => { setEditingRemark(true); setRemarkValue(instance.remark || '') }}
-                          className="ml-2 h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                        >
-                          <Pen className="h-3.5 w-3.5" />
-                        </button>
-                      </Tooltip>
+              <SettingSection title={t('instanceDetail.overview.remark')} icon={<Pen className="h-4 w-4" />}>
+                <div className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    {editingRemark ? (
+                      <Input
+                        value={remarkValue}
+                        onChange={(e) => setRemarkValue(e.target.value)}
+                        onBlur={() => saveRemark()}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveRemark()
+                          if (e.key === 'Escape') { setEditingRemark(false); setRemarkValue(instance.remark || '') }
+                        }}
+                        className="h-8 text-sm"
+                        autoFocus
+                      />
+                    ) : (
+                      <p
+                        className="text-sm font-medium cursor-pointer transition-colors hover:text-muted-foreground"
+                        onClick={() => { setEditingRemark(true); setRemarkValue(instance.remark || '') }}
+                      >
+                        {instance.remark || <span className="italic text-muted-foreground">{t('instanceDetail.overview.remarkPlaceholder')}</span>}
+                      </p>
                     )}
                   </div>
-                </CardContent>
-              </Card>
+                  {!editingRemark && (
+                    <Tooltip content={t('instanceDetail.overview.editRemark')}>
+                      <button
+                        onClick={() => { setEditingRemark(true); setRemarkValue(instance.remark || '') }}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                      >
+                        <Pen className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
+              </SettingSection>
 
               {instance.modpackName && (
-                <Card>
-                  <CardContent className="p-5 space-y-3">
-                    <h3 className="text-sm font-medium">{t('instanceDetail.overview.modpackInfo')}</h3>
+                <SettingSection title={t('instanceDetail.overview.modpackInfo')} icon={<Package className="h-4 w-4" />}>
+                  <div className="space-y-3 p-4">
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
                         <p className="text-xs text-muted-foreground">{t('instanceDetail.overview.modpackName')}</p>
@@ -2776,60 +2770,53 @@ export default function InstanceDetailPage() {
                     </div>
                     {instance.modpackSummary && (
                       <div className="pt-1">
-                        <p className="text-xs text-muted-foreground mb-1">{t('instanceDetail.overview.summary')}</p>
-                        <div className="text-sm text-muted-foreground prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: instance.modpackSummary }} />
+                        <p className="mb-1 text-xs text-muted-foreground">{t('instanceDetail.overview.summary')}</p>
+                        <div className="prose prose-sm max-w-none text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: instance.modpackSummary }} />
                       </div>
                     )}
-                  </CardContent>
-                </Card>
+                  </div>
+                </SettingSection>
               )}
 
-              <Card>
-                <CardContent className="p-5 space-y-3">
-                  <h3 className="text-sm font-medium">{t('instanceDetail.overview.quickActions')}</h3>
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <Select
-                      value={selectedAccountUuid ?? ''}
-                      onChange={(v) => setSelectedAccountUuid(v || null)}
-                      placeholder={t('instanceDetail.overview.defaultAccount')}
-                      className="min-w-[120px]"
-                    >
-                      <SelectOption value="">{t('instanceDetail.overview.defaultAccount')}</SelectOption>
-                      {accounts.map((a) => (
-                        <SelectOption key={a.uuid} value={a.uuid}>{a.name}</SelectOption>
-                      ))}
-                    </Select>
-                    <Button size="sm" onClick={handleLaunch} className="gap-2">
-                      <Play className="h-3.5 w-3.5" />{t('instanceDetail.overview.launchGame')}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setTab('settings')} className="gap-2">
-                      <Settings className="h-3.5 w-3.5" />{t('instanceDetail.overview.instanceSettings')}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing} className="gap-2">
-                      <RotateCw className={cn('h-3.5 w-3.5', verifying && 'animate-spin')} />{t('instanceDetail.overview.verifyIntegrity')}
-                    </Button>
-                    {repairing && (
-                      <span className="self-center text-xs text-muted-foreground">{t('instanceDetail.overview.repairing', { progress: repairProgress })}</span>
-                    )}
-                    <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch(() => {})}>
-                      <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.overview.openGameDir')}
-                    </Button>
-                    <Button size="sm" variant="outline" className="gap-2" onClick={() => setExportOpen(true)}>
-                      <FileOutput className="h-3.5 w-3.5" />{t('instanceDetail.overview.exportModpack')}
-                    </Button>
-                    <Button size="sm" variant="outline" className="gap-2 text-destructive hover:text-destructive" onClick={handleDelete}>
-                      <Trash2 className="h-3.5 w-3.5" />{t('instanceDetail.overview.deleteInstance')}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+              <SettingSection title={t('instanceDetail.overview.quickActions')} icon={<Play className="h-4 w-4" />}>
+                <div className="flex flex-wrap items-center gap-2 p-4">
+                  <Select
+                    value={selectedAccountUuid ?? ''}
+                    onChange={(v) => setSelectedAccountUuid(v || null)}
+                    placeholder={t('instanceDetail.overview.defaultAccount')}
+                    className="min-w-[120px]"
+                  >
+                    <SelectOption value="">{t('instanceDetail.overview.defaultAccount')}</SelectOption>
+                    {accounts.map((a) => (
+                      <SelectOption key={a.uuid} value={a.uuid}>{a.name}</SelectOption>
+                    ))}
+                  </Select>
+                  <Button size="sm" onClick={handleLaunch} className="gap-2">
+                    <Play className="h-3.5 w-3.5" />{t('instanceDetail.overview.launchGame')}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setTab('settings')} className="gap-2">
+                    <Settings className="h-3.5 w-3.5" />{t('instanceDetail.overview.instanceSettings')}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={handleVerifyResources} disabled={verifying || repairing} className="gap-2">
+                    <RotateCw className={cn('h-3.5 w-3.5', verifying && 'animate-spin')} />{t('instanceDetail.overview.verifyIntegrity')}
+                  </Button>
+                  {repairing && (
+                    <span className="self-center text-xs text-muted-foreground">{t('instanceDetail.overview.repairing', { progress: repairProgress })}</span>
+                  )}
+                  <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch(() => {})}>
+                    <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.overview.openGameDir')}
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-2" onClick={() => setExportOpen(true)}>
+                    <FileOutput className="h-3.5 w-3.5" />{t('instanceDetail.overview.exportModpack')}
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-2 text-destructive hover:text-destructive" onClick={handleDelete}>
+                    <Trash2 className="h-3.5 w-3.5" />{t('instanceDetail.overview.deleteInstance')}
+                  </Button>
+                </div>
+              </SettingSection>
 
-              <Card>
-                <CardContent className="p-5 space-y-3">
-                  <h3 className="text-sm font-medium flex items-center gap-2">
-                    <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-                    {t('instances.groups')}
-                  </h3>
+              <SettingSection title={t('instances.groups')} icon={<Layers className="h-4 w-4" />}>
+                <div className="space-y-3 p-4">
                   {groups.length === 0 ? (
                     <p className="text-xs text-muted-foreground">{t('instances.noGroups')}</p>
                   ) : (
@@ -2852,8 +2839,8 @@ export default function InstanceDetailPage() {
                     </div>
                   )}
                   <p className="text-xs text-muted-foreground">{t('instances.groupsHint')}</p>
-                </CardContent>
-              </Card>
+                </div>
+              </SettingSection>
             </div>
           </TabContent>
 
