@@ -42,7 +42,7 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
       setIsClosing(false)
     } else {
       // 所有关闭路径（按钮/Esc/backdrop/调用方 setState）都走这里，统一有退出动画
-      const { enabled, speed } = readAnimConfig()
+      const { enabled, multiplier } = readAnimConfig()
       if (!mounted || !enabled) {
         setMounted(false)
         return
@@ -50,7 +50,7 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
       setIsClosing(true)
       const backdrop = backdropRef.current
       const content = contentRef.current
-      const duration = 0.15 / speed
+      const duration = 0.15 * multiplier
       if (backdrop) {
         gsap.to(backdrop, { opacity: 0, duration, ease: EASE_OUT })
       }
@@ -82,10 +82,10 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
     const content = contentRef.current
     if (!backdrop || !content) return
 
-    const { enabled, speed } = readAnimConfig()
+    const { enabled, multiplier } = readAnimConfig()
     if (!enabled) return
 
-    const duration = 0.2 / speed
+    const duration = 0.2 * multiplier
     gsap.fromTo(
       backdrop,
       { opacity: 0 },

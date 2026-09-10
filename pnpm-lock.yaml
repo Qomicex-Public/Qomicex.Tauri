@@ -156,6 +156,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      gsap:
+        specifier: ^3.15.0
+        version: 3.15.0
       quidlass:
         specifier: ^1.2.2
         version: 1.2.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8)

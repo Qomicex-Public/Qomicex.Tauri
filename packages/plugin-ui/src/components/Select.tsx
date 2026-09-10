@@ -66,7 +66,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
     if (closeAnimRef.current) return
 
     const popup = popupAnimRef.current
-    const { enabled, speed } = readAnimConfig()
+    const { enabled, multiplier } = readAnimConfig()
     if (!popup || !enabled) {
       setOpen(false)
       setSearch('')
@@ -75,7 +75,7 @@ export function Select({ value, onChange, children, className, placeholder, disa
 
     setIsClosing(true)
 
-    const duration = 0.12 / speed
+    const duration = 0.12 * multiplier
     closeAnimRef.current = gsap.to(popup, {
       opacity: 0,
       scale: 0.94,
@@ -115,10 +115,10 @@ export function Select({ value, onChange, children, className, placeholder, disa
     }
     if (!popupAnimRef.current) return
 
-    const { enabled, speed } = readAnimConfig()
+    const { enabled, multiplier } = readAnimConfig()
     if (!enabled) return
 
-    const duration = 0.15 / speed
+    const duration = 0.15 * multiplier
 
     gsap.fromTo(popupAnimRef.current,
       { opacity: 0, scale: 0.94, y: -4 },

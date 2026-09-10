@@ -38,7 +38,7 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
     if (closeAnimRef.current) return
 
     const popup = popupAnimRef.current
-    const { enabled, speed } = readAnimConfig()
+    const { enabled, multiplier } = readAnimConfig()
     if (!popup || !enabled) {
       setOpen(false)
       return
@@ -46,7 +46,7 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
 
     setIsClosing(true)
 
-    const duration = 0.12 / speed
+    const duration = 0.12 * multiplier
     closeAnimRef.current = gsap.to(popup, {
       opacity: 0,
       scale: 0.94,
@@ -94,10 +94,10 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
   useEffect(() => {
     if (!open || isClosing || !popupAnimRef.current) return
 
-    const { enabled, speed } = readAnimConfig()
+    const { enabled, multiplier } = readAnimConfig()
     if (!enabled) return
 
-    const duration = 0.15 / speed
+    const duration = 0.15 * multiplier
 
     gsap.fromTo(popupAnimRef.current,
       { opacity: 0, scale: 0.94, y: -4 },

@@ -42,7 +42,7 @@ export function Popover({ open: controlledOpen, onOpenChange, trigger, children,
       return
     }
     if (!mounted) return
-    const { enabled, speed } = readAnimConfig()
+    const { enabled, multiplier } = readAnimConfig()
     if (!enabled) {
       setMounted(false)
       return
@@ -58,7 +58,7 @@ export function Popover({ open: controlledOpen, onOpenChange, trigger, children,
       opacity: 0,
       scale: 0.94,
       y: -4,
-      duration: 0.12 / speed,
+      duration: 0.12 * multiplier,
       ease: EASE_OUT,
       ...withGpu({}),
       onComplete: () => {
@@ -71,11 +71,11 @@ export function Popover({ open: controlledOpen, onOpenChange, trigger, children,
   // 进入动画：DOM 挂载后执行
   useEffect(() => {
     if (!isOpen || isClosing || !contentRef.current) return
-    const { enabled, speed } = readAnimConfig()
+    const { enabled, multiplier } = readAnimConfig()
     if (!enabled) return
     gsap.fromTo(contentRef.current,
       { opacity: 0, scale: 0.94, y: -4 },
-      { opacity: 1, scale: 1, y: 0, duration: 0.15 / speed, ease: EASE_IN, ...withGpu({}) }
+      { opacity: 1, scale: 1, y: 0, duration: 0.15 * multiplier, ease: EASE_IN, ...withGpu({}) }
     )
   }, [isOpen, isClosing, mounted])
 

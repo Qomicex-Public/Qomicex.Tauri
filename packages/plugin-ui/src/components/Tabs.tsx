@@ -81,7 +81,7 @@ export function TabContent({ activeTab, tabId, children, className }: {
   if (activeTab !== tabId) return null
 
   return (
-    <div className={cn(justMounted ? '' : 'animate-in slide-in-right', className)}>
+    <div className={cn(justMounted ? '' : 'animate-slide-in-right', className)}>
       {children}
     </div>
   )

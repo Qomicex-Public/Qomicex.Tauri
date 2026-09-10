@@ -264,14 +264,14 @@
 
   .anim-stagger > *:nth-child(1) { animation-delay: 0ms; }
   .anim-stagger > *:nth-child(2) { animation-delay: 40ms; }
-  .anim-stagger > *:nth-child(3) { animation-delay: 80px; }
-  .anim-stagger > *:nth-child(4) { animation-delay: 120px; }
-  .anim-stagger > *:nth-child(5) { animation-delay: 160px; }
-  .anim-stagger > *:nth-child(6) { animation-delay: 200px; }
-  .anim-stagger > *:nth-child(7) { animation-delay: 240px; }
-  .anim-stagger > *:nth-child(8) { animation-delay: 280px; }
-  .anim-stagger > *:nth-child(9) { animation-delay: 320px; }
-  .anim-stagger > *:nth-child(10) { animation-delay: 360px; }
+  .anim-stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .anim-stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .anim-stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .anim-stagger > *:nth-child(6) { animation-delay: 200ms; }
+  .anim-stagger > *:nth-child(7) { animation-delay: 240ms; }
+  .anim-stagger > *:nth-child(8) { animation-delay: 280ms; }
+  .anim-stagger > *:nth-child(9) { animation-delay: 320ms; }
+  .anim-stagger > *:nth-child(10) { animation-delay: 360ms; }
 
   [data-anim-enabled="false"] .anim-stagger > * {
     animation: none !important;

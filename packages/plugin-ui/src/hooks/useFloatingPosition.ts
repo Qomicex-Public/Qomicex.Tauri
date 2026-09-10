@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, type RefObject, type CSSProperties } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, type RefObject, type CSSProperties } from 'react'
 
 interface FloatingOptions {
   maxHeight?: number
@@ -156,7 +156,7 @@ export function useTooltipPosition(
     setState({ style, resolvedSide: resolved })
   }, [triggerRef, side])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled) return
     update()
   }, [enabled, update])

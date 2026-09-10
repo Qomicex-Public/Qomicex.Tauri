@@ -31,14 +31,15 @@ function Tooltip({ content, children, side = "top", delay = 300, className }: To
     <div ref={wrapperRef} className="inline-flex min-w-0 max-w-full" onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}>
       {children}
       {visible && createPortal(
-        <div
-          className={cn(
-            "pointer-events-none fixed z-[9999] rounded-md border border-border/50 bg-popover px-2.5 py-1.5 text-xs font-medium text-popover-foreground shadow-md whitespace-nowrap animate-in zoom-in-95",
-            className
-          )}
-          style={floating.style}
-        >
-          {content}
+        <div className="pointer-events-none fixed z-[9999]" style={floating.style}>
+          <div
+            className={cn(
+              "animate-zoom-fade-in rounded-md border border-border/50 bg-popover px-2.5 py-1.5 text-xs font-medium text-popover-foreground shadow-md whitespace-nowrap",
+              className
+            )}
+          >
+            {content}
+          </div>
         </div>,
         document.body
       )}
