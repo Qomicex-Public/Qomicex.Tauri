@@ -446,10 +446,9 @@ Console - Qomicex Launcher ======================================`)
     }
     function applyCardStyle(opacity: number | undefined, borderColor: string | undefined, borderWidth: number | undefined) {
       const root = document.documentElement
-      // 透明度：0-100 → 0-1；100（默认）时移除变量回退到不透明
-      const o = Math.min(100, Math.max(0, opacity ?? 100))
-      if (o >= 100) root.style.removeProperty('--card-opacity')
-      else root.style.setProperty('--card-opacity', String(o / 100))
+      // 透明度：0-100 → 0-1；默认 50（半透明）
+      const o = Math.min(100, Math.max(0, opacity ?? 50))
+      root.style.setProperty('--card-opacity', String(o / 100))
       // 边框颜色：合法 hex 才覆盖，否则回退主题边框色
       if (borderColor && /^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$/.test(borderColor.trim())) {
         root.style.setProperty('--card-border-color', borderColor.trim())

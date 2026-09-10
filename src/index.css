@@ -384,9 +384,9 @@
 /* 组件材质规则（非分层，确保优先覆盖 Tailwind utilities） */
 
 /* 默认材质：卡片/分类容器的透明度、边框颜色与厚度可调。
-   变量由 App.tsx 依据设置写入根元素；未设置时回退到主题默认（不透明 + 主题边框色 + 1px）。 */
+   变量由 App.tsx 依据设置写入根元素；未设置时回退到主题默认（半透明 0.5 + 主题边框色 + 1px）。 */
 :root[data-material="default"] .glass-surface {
-  background-color: hsl(var(--card) / var(--card-opacity, 1));
+  background-color: hsl(var(--card) / var(--card-opacity, 0.5));
   border-color: var(--card-border-color, hsl(var(--border)));
   border-width: var(--card-border-width, 1px);
 }

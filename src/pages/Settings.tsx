@@ -143,9 +143,8 @@ function saveSettings(settings: AppSettings) {
   document.documentElement.dataset.material = settings.componentMaterial ?? 'default'
   document.documentElement.style.setProperty('--glass-blur', `${Math.max(0, settings.glassBlur ?? 18)}px`)
   // 默认材质卡片样式：与 App.tsx applyCardStyle 同步，设置页改动立即生效
-  const o = Math.min(100, Math.max(0, settings.cardOpacity ?? 100))
-  if (o >= 100) document.documentElement.style.removeProperty('--card-opacity')
-  else document.documentElement.style.setProperty('--card-opacity', String(o / 100))
+  const o = Math.min(100, Math.max(0, settings.cardOpacity ?? 50))
+  document.documentElement.style.setProperty('--card-opacity', String(o / 100))
   const bc = settings.cardBorderColor?.trim()
   if (bc && /^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$/.test(bc)) document.documentElement.style.setProperty('--card-border-color', bc)
   else document.documentElement.style.removeProperty('--card-border-color')
@@ -2112,11 +2111,11 @@ export default function Settings() {
                               min={0}
                               max={100}
                               step={1}
-                              value={settings.cardOpacity ?? 100}
+                              value={settings.cardOpacity ?? 50}
                               onChange={(e) => update('cardOpacity', parseInt(e.target.value))}
                               className="flex-1"
                             />
-                            <span className="w-12 shrink-0 text-right text-sm tabular-nums text-muted-foreground">{settings.cardOpacity ?? 100}%</span>
+                            <span className="w-12 shrink-0 text-right text-sm tabular-nums text-muted-foreground">{settings.cardOpacity ?? 50}%</span>
                           </div>
                           <div className="flex justify-between text-[11px] text-muted-foreground">
                             <span>{t('settings.appearance.transparent')}</span>

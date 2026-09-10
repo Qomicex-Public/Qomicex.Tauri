@@ -66,7 +66,7 @@ export interface AppSettings {
   componentMaterial?: 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid'
   /** 毛玻璃/亚克力玻璃/液态玻璃模糊强度（px，默认 18）；材质为 default 时不生效 */
   glassBlur?: number
-  /** 默认材质卡片透明度（0-100，100 = 不透明，默认 100）；材质为 default 时生效 */
+  /** 默认材质卡片透明度（0-100，100 = 不透明，默认 50）；材质为 default 时生效 */
   cardOpacity?: number
   /** 默认材质卡片边框颜色（hex，如 `#333333`）；空/缺失 = 使用主题边框色 */
   cardBorderColor?: string
@@ -137,7 +137,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeColor: '',
   componentMaterial: 'default',
   glassBlur: 18,
-  cardOpacity: 100,
+  cardOpacity: 50,
   cardBorderColor: '',
   cardBorderWidth: 1,
   initialized: false,

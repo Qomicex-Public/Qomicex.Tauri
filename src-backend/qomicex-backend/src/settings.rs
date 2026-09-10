@@ -139,7 +139,7 @@ pub struct SettingsResponse {
     #[serde(default)]
     pub glass_blur: Option<i32>,
     /// 默认材质卡片透明度（0-100，100 = 不透明）。仅 `component_material` 为默认时生效；
-    /// `None` = 前端默认 100。
+    /// `None` = 前端默认 50（半透明）。
     #[serde(default)]
     pub card_opacity: Option<i32>,
     /// 默认材质卡片边框颜色（hex，如 `#333333`）。仅默认材质生效；`None`/空 = 使用主题边框色。
