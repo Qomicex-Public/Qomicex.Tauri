@@ -330,3 +330,99 @@ Web.Backend deploy.yml 仍持续失败：`Cloudflare API Authentication failed (
 3. MANAGED/UPDATER_PATH env 被新壳继承 → 新壳不自管 backend（e0b8901 修：launch 前剥离）
 4. version 未校验直进文件名（安全）（faec8e8 修）
 
+
+
+### 2026-09-10 更新
+# 自更新安装全流程规格（释放物/路径/参数全量）
+
+> 对应 ADR-067。本文为运行时规格：每个环节跑了什么程序、完整参数、写了哪些文件到哪里。
+> 路径占位：`<INST>`=安装根（Windows 默认 `%LOCALAPPDATA%\Qomicex Launcher`）；`<TMP>`=`%LOCALAPPDATA%\Temp\qomicex`；`<DATA>`=backend settings 的 dataDir（用户可改，如 `C:\qomicex-launcher`）；`<VER>`=目标版本号（如 `0.1.0-beta23.0`）；`<UPD>`=`<DATA>\updates`（更新域：包+updater+sig 同目录）。
+> 日志域：壳/launcher 侧 → `{BaseDir}\logs\qomicex-tauri.log`；backend → `{BaseDir}\logs\qomicex-backend.log`；**updater → `<DATA>\log\qomicex-updater-<pid>.log`**（`<UPD>` 的 `../log/`，由壳以 `--log` 传入）。
+
+## 阶段 0：检查更新
+
+| 步 | 动作 | 位置/参数 |
+|---|---|---|
+| 0.1 | 前端 `fetchUpdatePlan(channel)` | App.tsx 启动 5s 后 / Settings 手动 |
+| 0.2 | `GET /api/update/plan?channel=` | 本地 backend（`<TMP>\qomicex-backend.exe`，env `QOMICEX_IPC_PIPE=\\.\pipe\qomicex-backend-<pid>` `QOMICEX_NO_TCP=1`，CREATE_NO_WINDOW） |
+| 0.3 | 转发 `https://api.qomicex.top/api/client/update/plan` | query: `current=<壳 APP_VERSION> target=<consts::OS> arch=<consts::ARCH> mode=<linux: $APPIMAGE 无→system> channel=<透传>` |
+| 0.4 | upstream 灰度裁决（weight+machineHash）→ 200 plan / 204 | update-plan.ts；packageUrl 套 gh-proxy 竞速前缀（本地后端 L117） |
+| 返回 | `{hasUpdate,version,strategy,packageUrl,signature,changelog,required}` | signature=minisign armor 的 base64 包裹（tauri signer 格式） |
+
+## 阶段 1：下载（下载中心任务）
+
+| 步 | 动作 | 位置/参数 |
+|---|---|---|
+| 1.1 | `POST /api/plugins/download/start` | body `{url: packageUrl, targetPath: "<UPD>/qomicex-update-<VER>.zip"}`（updaterStore.ts） |
+| 1.2 | backend `DownloadManager.add(task)` 多线程下载 | 落盘 `<UPD>/qomicex-update-<VER>.zip`（暂存 `.qdtmp` 后缀，完成 rename） |
+| 1.3 | session 进下载中心 SSE | session_json type=resource |
+| 1.4 | 前端轮询 `GET /api/plugins/download/{taskId}/progress` | 1s 间隔；completed→阶段 2；failed/cancelled→error |
+
+## 阶段 2：交接（Tauri 壳内，src-tauri/src/updater.rs）
+
+壳侧每一步（stage1-6）以**实际求值**写入 tauri log（tag `[updater]`），每步写后 `flush_log()`（write+sync_all）；`app.exit(0)` 前再总 flush——detached updater 启动前的壳侧观测全程可见。
+
+| 步 | 动作 | 位置/参数 |
+|---|---|---|
+| 2.1 | `invoke('run_updater', {packagePath, signature, version})` | updaterStore.ts；updatesDir 由 packagePath.parent() 推导 |
+| 2.2 | extract_updater(updatesDir)：release 走 `include_bytes!("../binaries/updater.exe")` → **写 `<UPD>\qomicex-updater.exe`**；dev：`QOMICEX_UPDATER_PATH`/兄弟仓库构建产物**统一复制落位** `<UPD>` | unix chmod 755；dev 源不可复制时回退原路径 |
+| 2.3 | version semver 校验（剥 `v`）→ 防路径穿越 | INVALID_VERSION 短路 |
+| 2.4 | 签名落盘：写 `<UPD>\qomicex-update-<VER>.sig`（随包同目录） | |
+| 2.5 | detect_strategy()：windows→`dir`+`--install-dir <壳exe父目录>`；macos→`app`+`--app-bundle`；linux→`$APPIMAGE`有→`appimage` / 无→`system` | |
+| 2.6 | `--launch <current_exe>`（当前壳 exe 全路径） | |
+| 2.7 | `--wait-pid <launcher pid>` + `--log <DATA>\log\qomicex-updater-<launcher pid>.log` | log 目录壳侧 create_dir_all |
+| 2.8 | spawn updater（DETACHED_PROCESS\|CREATE_NEW_PROCESS_GROUP\|CREATE_NO_WINDOW），argv 逐项带引号写入 tauri log | **完整命令行**见下 |
+| 2.9 | sleep 300ms → 总 flush → `app.exit(0)` → RunEvent::Exit：kill 内嵌 backend + wait | tauri log `stage6 exiting` |
+
+**阶段 2.8 完整命令行**（argv 原样，Windows 实例）：
+```text
+<UPD>\qomicex-updater.exe
+  --package    <UPD>\qomicex-update-<VER>.zip
+  --signature  <UPD>\qomicex-update-<VER>.sig
+  --strategy   dir
+  --wait-pid   <launcher pid>
+  --log        <DATA>\log\qomicex-updater-<launcher pid>.log
+  --install-dir "C:\Users\<u>\AppData\Local\Qomicex Launcher"
+  --launch     "C:\Users\<u>\AppData\Local\Qomicex Launcher\Qomicex Launcher.exe"
+```
+
+## 阶段 3：updater 执行（Qomicex.Updater，独立无 GUI 进程）
+
+| 步 | 动作 | 失败退出码 |
+|---|---|---|
+| 3.0 | ulog 落盘：`--log` 优先，fallback sig 同目录；每节点（start/verify/wait/install/launch/done）+ rename 失败明细（含文件名） | — |
+| 3.1 | minisign 校验 zip 全文（公钥 `35DD6AE53301ABE3` 内嵌；sig 兼容 base64 包裹/裸 armor） | 3 |
+| 3.2 | wait_process_exit(--wait-pid)：tasklist 轮询 500ms，上限 180s（launcher 退出实测可慢） | 5 |
+| 3.3 | dir 策略 install_dir：staging=`<INST>` 同卷父级 `.dir-update-tmp-Qomicex Launcher` → zip 解压到 staging（mangled_name 防穿越，unix 保留 mode）→ move_tree 逐项 remove+rename 到 `<INST>` → 清 staging | 2 |
+| 3.4 | launch：先剥 `QOMICEX_LAUNCHER_MANAGED`/`QOMICEX_UPDATER_PATH` env → `Command::new(--launch 值)` + DETACHED\|NEW_GROUP | 2 |
+| 3.5 | done，进程退出 | 0 |
+
+**覆盖后的 `<INST>` 内容**（= zip 内容 = NSIS 安装布局）：`Qomicex Launcher.exe`（新壳，内嵌新 backend）+ `uninstall.exe` +（CI 收集目录里的 Packet.dll/wintun.dll 若有）。**不含独立 qomicex-backend.exe**（backend 嵌壳运行时释放）。
+
+## 阶段 4：新壳启动
+
+| 步 | 动作 |
+|---|---|
+| 4.1 | 新版壳（`<INST>\Qomicex Launcher.exe`）启动 → extract_backend：写 `<TMP>\qomicex-backend.exe` + Packet.dll + wintun.dll |
+| 4.2 | spawn backend：env `QOMICEX_IPC_PIPE=\\.\pipe\qomicex-backend-<pid>` + `QOMICEX_NO_TCP=1`，CREATE_NO_WINDOW，stdout/stderr piped → `{BaseDir}/logs/qomicex-backend.log` |
+| 4.3 | 前端 initApiTransport 探测 qomicex:// 管道成功 → 正常运行（关于页显示新版本号） |
+
+## 退出码表（qomicex-updater）
+
+`0` 成功 | `1` 用法错误 | `2` IO/启动失败 | `3` 签名无效 | `4` 策略失败（system/app） | `5` 等待超时
+
+## 可观测性
+
+- launcher 侧：tauri log `[updater] stage1-6 ...`（全步骤实际求值；`{BaseDir}/logs/qomicex-tauri.log`）
+- updater 侧：`<DATA>\log\qomicex-updater-<pid>.log`（全节点，rename 失败含文件名）
+- 下载：下载中心 SSE + `GET /api/plugins/download/{taskId}/progress`
+- 诊断路径收敛：更新域（包/updater/sig 在 `<UPD>`）+ 双日志（tauri log 与 updater log）
+
+## 已知事故史（回归防护）
+
+1. sig 为 base64 包裹格式未兼容 → exit 3（27b40ed 修）
+2. wait 30s 超时（launcher 退出实测慢）→ exit 5 → install/launch 全跳（e0b8901 修：180s）
+3. MANAGED/UPDATER_PATH env 被新壳继承 → 新壳不自管 backend（e0b8901 修：launch 前剥离）
+4. version 未校验直进文件名（安全）（faec8e8 修）
+5. updater 释放落 %TEMP%（系统清理误删/诊断分散）→ 27b40ed+20a8da1 修：统一 `<UPD>` + `--log` 日志落位
+
