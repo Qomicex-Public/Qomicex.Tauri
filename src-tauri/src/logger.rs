@@ -63,6 +63,16 @@ pub fn log_line(tag: &str, msg: &str) {
     eprintln!("{line}");
 }
 
+/// 落盘当前缓冲（append 模式每行已 write，这里再做 OS 级 flush）。
+/// app.exit(0) 前显式调用——run_updater 等关键路径的日志必须先于退出可见。
+pub fn flush_log() {
+    let mut guard = LOG_FILE.lock().unwrap();
+    if let Some(f) = guard.as_mut() {
+        let _ = f.flush();
+        let _ = f.sync_all();
+    }
+}
+
 /// 便捷宏：`tauri_log!("backend", "spawn failed: {e}")`。
 #[macro_export]
 macro_rules! tauri_log {
