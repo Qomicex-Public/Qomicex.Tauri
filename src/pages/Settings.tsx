@@ -155,6 +155,59 @@ function saveSettings(settings: AppSettings) {
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
 
+/** 背景资源类型：按扩展名判定 */
+function bgKind(name: string): 'video' | 'animation' | 'image' {
+  const ext = name.split('?')[0].split('.').pop()?.toLowerCase() ?? ''
+  if (['mp4', 'webm', 'ogv', 'ogg', 'mov'].includes(ext)) return 'video'
+  if (['gif', 'webp', 'apng'].includes(ext)) return 'animation'
+  return 'image'
+}
+
+/**
+ * 背景预览缩略图：
+ * - 视频：`<video preload="metadata">` 显示首帧（浏览器自动渲染第一帧）
+ * - 动图（GIF/APNG/WebP）：静态首帧 canvas，鼠标悬停时切换为 `<img>` 播放
+ * - 静态图：直接 `<img>`
+ */
+function BackgroundPreview({ name, url, className }: { name: string; url: string; className?: string }) {
+  const kind = bgKind(name)
+  const [hover, setHover] = useState(false)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    if (kind !== 'animation') return
+    const img = new window.Image()
+    img.onload = () => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      canvas.width = img.naturalWidth || 1
+      canvas.height = img.naturalHeight || 1
+      canvas.getContext('2d')?.drawImage(img, 0, 0)
+    }
+    img.src = url
+    return () => { img.onload = null }
+  }, [kind, url])
+
+  if (kind === 'video') {
+    // `#t=0.1` 片段强制解码定位到首帧，避免 preload=metadata 下部分引擎显示黑屏
+    return (
+      <video
+        src={`${url}#t=0.1`}
+        muted
+        preload="metadata"
+        playsInline
+        className={className}
+      />
+    )
+  }
+  if (kind === 'animation') {
+    return hover
+      ? <img src={url} alt={name} className={className} onMouseLeave={() => setHover(false)} />
+      : <canvas ref={canvasRef} className={className} onMouseEnter={() => setHover(true)} />
+  }
+  return <img src={url} alt={name} className={className} />
+}
+
 function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   sysInfo: SystemInfo | null
   licenseStatus: LicenseStatus | null
@@ -2226,9 +2279,9 @@ export default function Settings() {
                               : 'border-border hover:border-muted-foreground/30'
                           )}
                         >
-                          <img
-                            src={`${API_BASE}/settings/backgrounds/${encodeURIComponent(name)}`}
-                            alt={name}
+                          <BackgroundPreview
+                            name={name}
+                            url={`${API_BASE}/settings/backgrounds/${encodeURIComponent(name)}`}
                             className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
                           />
                           <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-3 text-[10px] leading-tight text-white">
