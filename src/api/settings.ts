@@ -31,7 +31,7 @@ export interface AppSettings {
   /** 自动选择资源（文件 CDN）下载源 */
   autoSelectFileDownloadSource: boolean
   downloadTimeout: number
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light' | 'system'
   themePreset: 'default' | 'latte' | 'frappe' | 'macchiato' | 'mocha'
   animationsEnabled: boolean
   animationSpeed: number
@@ -40,6 +40,10 @@ export interface AppSettings {
   maxFrameRate: number
   backgroundImage: string
   backgroundRandom: boolean
+  /** 播放背景动图（GIF/APNG/动态 WebP）；缺失 = 开启（默认开），false = 只显示首帧 */
+  backgroundAnimationsEnabled?: boolean
+  /** 播放背景视频（MP4/WebM）；缺失 = 关闭（默认关） */
+  backgroundVideoEnabled?: boolean
   bgOverlayOpacity: number
   bgBlur: number
   watermarkEnabled: boolean
@@ -62,6 +66,12 @@ export interface AppSettings {
   componentMaterial?: 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid'
   /** 毛玻璃/亚克力玻璃/液态玻璃模糊强度（px，默认 18）；材质为 default 时不生效 */
   glassBlur?: number
+  /** 默认材质卡片透明度（0-100，100 = 不透明，默认 100）；材质为 default 时生效 */
+  cardOpacity?: number
+  /** 默认材质卡片边框颜色（hex，如 `#333333`）；空/缺失 = 使用主题边框色 */
+  cardBorderColor?: string
+  /** 默认材质卡片边框厚度（px，0 = 无边框，默认 1） */
+  cardBorderWidth?: number
   /** 是否已完成首次启动初始化向导；false/缺失 = 显示向导 */
   initialized?: boolean
   /** 自动上报严重错误日志（崩溃类恶性 bug）；缺失 = 开启（默认开） */
@@ -109,6 +119,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   maxFrameRate: 0,
   backgroundImage: '',
   backgroundRandom: false,
+  backgroundAnimationsEnabled: true,
+  backgroundVideoEnabled: false,
   bgOverlayOpacity: 78,
   bgBlur: 0,
   watermarkEnabled: true,
@@ -125,6 +137,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeColor: '',
   componentMaterial: 'default',
   glassBlur: 18,
+  cardOpacity: 100,
+  cardBorderColor: '',
+  cardBorderWidth: 1,
   initialized: false,
   autoReportErrors: true,
   telemetryEnabled: false,

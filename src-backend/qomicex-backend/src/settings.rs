@@ -99,6 +99,14 @@ pub struct SettingsResponse {
     pub max_frame_rate: Option<i32>,
     pub background_image: Option<String>,
     pub background_random: Option<bool>,
+    /// 播放背景动图（GIF/APNG/动态 WebP）。`None`/`Some(true)` = 开启（默认开）；
+    /// `Some(false)` = 只显示动图首帧（静态渲染）。
+    #[serde(default)]
+    pub background_animations_enabled: Option<bool>,
+    /// 播放背景视频（MP4/WebM）。`None`/`Some(false)` = 关闭（默认关，省资源）；
+    /// `Some(true)` = 用 `<video autoplay muted loop>` 播放。
+    #[serde(default)]
+    pub background_video_enabled: Option<bool>,
     pub bg_overlay_opacity: Option<i32>,
     pub bg_blur: Option<i32>,
     pub watermark_enabled: Option<bool>,
@@ -106,6 +114,7 @@ pub struct SettingsResponse {
     pub watermark_subtext: Option<String>,
     pub directories: Option<Vec<String>>,
     pub custom_java_runtimes: Option<Vec<CustomJavaEntryDto>>,
+    /// 主题模式：`"dark"` / `"light"` / `"system"`（跟随系统 prefers-color-scheme）。
     pub theme: Option<String>,
     #[serde(default)]
     pub theme_preset: Option<String>,
@@ -129,6 +138,16 @@ pub struct SettingsResponse {
     /// 毛玻璃/液态玻璃模糊强度（像素）。材质为默认时忽略；`None` = 前端默认 18px。
     #[serde(default)]
     pub glass_blur: Option<i32>,
+    /// 默认材质卡片透明度（0-100，100 = 不透明）。仅 `component_material` 为默认时生效；
+    /// `None` = 前端默认 100。
+    #[serde(default)]
+    pub card_opacity: Option<i32>,
+    /// 默认材质卡片边框颜色（hex，如 `#333333`）。仅默认材质生效；`None`/空 = 使用主题边框色。
+    #[serde(default)]
+    pub card_border_color: Option<String>,
+    /// 默认材质卡片边框厚度（像素，0 = 无边框）。仅默认材质生效；`None` = 前端默认 1。
+    #[serde(default)]
+    pub card_border_width: Option<i32>,
     /// 是否已完成首次启动初始化向导。`Some(false)` = 新安装待初始化；
     /// 老配置文件缺失该字段时在 [`load_settings`] 中视为已初始化（`Some(true)`），
     /// 避免老用户升级后被迫重走向导。
@@ -205,6 +224,8 @@ impl Default for SettingsResponse {
             max_frame_rate: None,
             background_image: None,
             background_random: None,
+            background_animations_enabled: None,
+            background_video_enabled: None,
             bg_overlay_opacity: None,
             bg_blur: None,
             watermark_enabled: None,
@@ -225,6 +246,9 @@ impl Default for SettingsResponse {
             theme_color: None,
             component_material: None,
             glass_blur: None,
+            card_opacity: None,
+            card_border_color: None,
+            card_border_width: None,
             initialized: Some(false),
             auto_report_errors: Some(true),
             telemetry_enabled: None,

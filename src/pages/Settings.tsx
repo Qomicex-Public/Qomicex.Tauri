@@ -142,6 +142,16 @@ function saveSettings(settings: AppSettings) {
   // 确保设置页修改后立即生效（apiSaveSettings 的监听器链是异步的）。
   document.documentElement.dataset.material = settings.componentMaterial ?? 'default'
   document.documentElement.style.setProperty('--glass-blur', `${Math.max(0, settings.glassBlur ?? 18)}px`)
+  // 默认材质卡片样式：与 App.tsx applyCardStyle 同步，设置页改动立即生效
+  const o = Math.min(100, Math.max(0, settings.cardOpacity ?? 100))
+  if (o >= 100) document.documentElement.style.removeProperty('--card-opacity')
+  else document.documentElement.style.setProperty('--card-opacity', String(o / 100))
+  const bc = settings.cardBorderColor?.trim()
+  if (bc && /^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$/.test(bc)) document.documentElement.style.setProperty('--card-border-color', bc)
+  else document.documentElement.style.removeProperty('--card-border-color')
+  const bw = Math.max(0, settings.cardBorderWidth ?? 1)
+  if (bw === 1) document.documentElement.style.removeProperty('--card-border-width')
+  else document.documentElement.style.setProperty('--card-border-width', `${bw}px`)
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
 
@@ -1976,9 +1986,10 @@ export default function Settings() {
                 <SettingRow
                   label={t('settings.appearance.themeMode')}
                   control={
-                    <Select value={settings.theme} onChange={(v) => update('theme', v as 'dark' | 'light')} className="w-48">
+                    <Select value={settings.theme} onChange={(v) => update('theme', v as AppSettings['theme'])} className="w-48">
                       <SelectOption value="dark">{t('settings.appearance.dark')}</SelectOption>
                       <SelectOption value="light">{t('settings.appearance.light')}</SelectOption>
+                      <SelectOption value="system">{t('settings.appearance.themeSystem')}</SelectOption>
                     </Select>
                   }
                 />
@@ -2034,6 +2045,82 @@ export default function Settings() {
                       <span>{t('settings.appearance.glassBlurHigh')}</span>
                     </div>
                   </div>
+                )}
+                {(settings.componentMaterial ?? 'default') === 'default' && (
+                  <>
+                    <SettingRow
+                      label={t('settings.appearance.cardOpacity')}
+                      description={t('settings.appearance.cardOpacityDesc')}
+                      control={
+                        <div className="w-44 space-y-1">
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={settings.cardOpacity ?? 100}
+                              onChange={(e) => update('cardOpacity', parseInt(e.target.value))}
+                              className="flex-1"
+                            />
+                            <span className="w-12 shrink-0 text-right text-sm tabular-nums text-muted-foreground">{settings.cardOpacity ?? 100}%</span>
+                          </div>
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>{t('settings.appearance.transparent')}</span>
+                            <span>{t('settings.appearance.opaque')}</span>
+                          </div>
+                        </div>
+                      }
+                    />
+                    <SettingRow
+                      label={t('settings.appearance.cardBorderColor')}
+                      description={t('settings.appearance.cardBorderColorDesc')}
+                      control={
+                        <div className="flex items-center gap-2">
+                          <div className="relative h-7 w-7 overflow-hidden rounded-full border border-border/60">
+                            <input
+                              type="color"
+                              value={(settings.cardBorderColor && normalizeHex(settings.cardBorderColor)) || '#888888'}
+                              onChange={(e) => update('cardBorderColor', e.target.value)}
+                              className="absolute -inset-2 h-12 w-12 cursor-pointer"
+                            />
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => update('cardBorderColor', '')}
+                          >
+                            {t('settings.appearance.themeColorReset')}
+                          </Button>
+                        </div>
+                      }
+                    />
+                    <SettingRow
+                      label={t('settings.appearance.cardBorderWidth')}
+                      description={t('settings.appearance.cardBorderWidthDesc')}
+                      control={
+                        <div className="w-44 space-y-1">
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="range"
+                              min={0}
+                              max={4}
+                              step={1}
+                              value={settings.cardBorderWidth ?? 1}
+                              onChange={(e) => update('cardBorderWidth', parseInt(e.target.value))}
+                              className="flex-1"
+                            />
+                            <span className="w-12 shrink-0 text-right text-sm tabular-nums text-muted-foreground">{settings.cardBorderWidth ?? 1}px</span>
+                          </div>
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>{t('settings.appearance.borderNone')}</span>
+                            <span>{t('settings.appearance.borderThick')}</span>
+                          </div>
+                        </div>
+                      }
+                    />
+                  </>
                 )}
               </SettingSection>
 
@@ -2169,6 +2256,28 @@ export default function Settings() {
                         update('backgroundRandom', c === true)
                         if (c && !settings.backgroundImage) update('backgroundImage', 'random')
                       }}
+                    />
+                  }
+                />
+
+                <SettingRow
+                  label={t('settings.appearance.backgroundAnimations')}
+                  description={t('settings.appearance.backgroundAnimationsDesc')}
+                  control={
+                    <Switch
+                      checked={settings.backgroundAnimationsEnabled !== false}
+                      onCheckedChange={(c) => update('backgroundAnimationsEnabled', c === true)}
+                    />
+                  }
+                />
+
+                <SettingRow
+                  label={t('settings.appearance.backgroundVideo')}
+                  description={t('settings.appearance.backgroundVideoDesc')}
+                  control={
+                    <Switch
+                      checked={settings.backgroundVideoEnabled === true}
+                      onCheckedChange={(c) => update('backgroundVideoEnabled', c === true)}
                     />
                   }
                 />

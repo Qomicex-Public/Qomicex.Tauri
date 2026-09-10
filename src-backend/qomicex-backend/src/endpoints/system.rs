@@ -318,7 +318,37 @@ async fn get_background(AxumPath(name): AxumPath<String>) -> ApiResult<Response>
         ));
     }
     let bytes = std::fs::read(&path)?;
-    Ok((StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], bytes).into_response())
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, background_content_type(&name))],
+        bytes,
+    )
+        .into_response())
+}
+
+/// 按扩展名返回背景资源的 MIME 类型。支持静态图片、动图（GIF/APNG/动态 WebP）
+/// 与视频（MP4/WebM）；未知扩展名回退 `application/octet-stream`。
+fn background_content_type(name: &str) -> &'static str {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "apng" => "image/apng",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "ogv" | "ogg" => "video/ogg",
+        "mov" => "video/quicktime",
+        _ => "application/octet-stream",
+    }
 }
 
 async fn ping_download_sources() -> ApiResult<Json<Vec<DownloadSourcePing>>> {

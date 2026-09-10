@@ -360,6 +360,10 @@ const savedTheme = localStorage.getItem('qomicex-theme')
 if (savedTheme === 'light' || savedTheme === 'dark') {
   document.documentElement.classList.toggle('dark', savedTheme === 'dark')
   document.documentElement.classList.toggle('light', savedTheme === 'light')
+} else if (savedTheme === 'system') {
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  document.documentElement.classList.toggle('dark', prefersDark)
+  document.documentElement.classList.toggle('light', !prefersDark)
 }
 
 function I18nMessageBoxProvider({ children }: { children: ReactNode }) {
@@ -396,15 +400,30 @@ Console - Qomicex Launcher ======================================`)
   }, [])
 
   useEffect(() => {
-    async function setTheme(theme: 'dark' | 'light') {
-      document.documentElement.classList.toggle('dark', theme === 'dark')
-      document.documentElement.classList.toggle('light', theme === 'light')
-      localStorage.setItem('qomicex-theme', theme)
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    // 当前设置的主题模式；'system' 时随系统变化实时重解析
+    let currentMode: AppSettings['theme'] = 'dark'
+    async function applyResolved(resolved: 'dark' | 'light') {
+      document.documentElement.classList.toggle('dark', resolved === 'dark')
+      document.documentElement.classList.toggle('light', resolved === 'light')
       try {
         const { getCurrentWindow } = await import('@tauri-apps/api/window')
-        void getCurrentWindow().setTheme(theme)
+        void getCurrentWindow().setTheme(resolved)
       } catch { /* 非 Tauri 环境忽略 */ }
     }
+    function setTheme(theme: AppSettings['theme']) {
+      currentMode = theme
+      const resolved: 'dark' | 'light' = theme === 'system' ? (mql.matches ? 'dark' : 'light') : theme
+      localStorage.setItem('qomicex-theme', theme)
+      void applyResolved(resolved)
+    }
+    // 系统主题变化：仅当模式为 system 时响应
+    function onSystemThemeChange() {
+      if (currentMode !== 'system') return
+      void applyResolved(mql.matches ? 'dark' : 'light')
+    }
+    mql.addEventListener('change', onSystemThemeChange)
+
     function applyFont(family: string | undefined) {
       const root = document.documentElement
       if (family && family.trim()) {
@@ -425,6 +444,23 @@ Console - Qomicex Launcher ======================================`)
       root.dataset.material = material ?? 'default'
       root.style.setProperty('--glass-blur', `${Math.max(0, blur ?? 18)}px`)
     }
+    function applyCardStyle(opacity: number | undefined, borderColor: string | undefined, borderWidth: number | undefined) {
+      const root = document.documentElement
+      // 透明度：0-100 → 0-1；100（默认）时移除变量回退到不透明
+      const o = Math.min(100, Math.max(0, opacity ?? 100))
+      if (o >= 100) root.style.removeProperty('--card-opacity')
+      else root.style.setProperty('--card-opacity', String(o / 100))
+      // 边框颜色：合法 hex 才覆盖，否则回退主题边框色
+      if (borderColor && /^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$/.test(borderColor.trim())) {
+        root.style.setProperty('--card-border-color', borderColor.trim())
+      } else {
+        root.style.removeProperty('--card-border-color')
+      }
+      // 边框厚度：默认 1px 时移除变量回退；其余（含 0）覆盖
+      const w = Math.max(0, borderWidth ?? 1)
+      if (w === 1) root.style.removeProperty('--card-border-width')
+      else root.style.setProperty('--card-border-width', `${w}px`)
+    }
     // 初始设置不在这里加载：backend 可能尚未监听（Tauri release 冷启动要先解压
     // + spawn），fetch 失败会让 UI 用默认值渲染。加载移到 AppContent 中
     // backendState==='ready' 之后；首次加载成功会触发下方 listener 完成初始应用。
@@ -444,8 +480,12 @@ Console - Qomicex Launcher ======================================`)
       applyFont(s.fontFamily)
       applyThemeColor(s.themeColor)
       applyGlassMaterial(s.componentMaterial, s.glassBlur)
+      applyCardStyle(s.cardOpacity, s.cardBorderColor, s.cardBorderWidth)
     })
-    return unsub
+    return () => {
+      unsub()
+      mql.removeEventListener('change', onSystemThemeChange)
+    }
   }, [])
 
   // 恢复持久化的自定义 .qtheme（无已保存主题时 no-op，不影响既有 light/dark/预设流）。

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo, type CSSProperties } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import gsap from 'gsap'
 import Sidebar from './Sidebar.tsx'
@@ -15,6 +15,25 @@ import { PluginEventBridge } from './PluginEventBridge.tsx'
 import GlobalDropInstaller from './GlobalDropInstaller.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { setThemeBackground } from '../lib/themeColor.ts'
+
+/** 动图关闭时用 canvas 截取首帧静态渲染（GIF/APNG/WebP 无原生停帧能力）。
+    跨源图片 drawImage 合法（仅读取像素受限），故无需 crossOrigin。 */
+function FrozenAnimation({ src, className, style }: { src: string; className?: string; style?: CSSProperties }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      canvas.width = img.naturalWidth || 1
+      canvas.height = img.naturalHeight || 1
+      canvas.getContext('2d')?.drawImage(img, 0, 0)
+    }
+    img.src = src
+    return () => { img.onload = null }
+  }, [src])
+  return <canvas ref={canvasRef} className={className} style={style} />
+}
 
 function DebugEffects() {
   const { state, unlock } = useDebug()
@@ -79,6 +98,8 @@ export default function Layout() {
   const [bg, setBg] = useState('')
   const [opacity, setOpacity] = useState(() => getSettings().bgOverlayOpacity ?? 78)
   const [blur, setBlur] = useState(() => getSettings().bgBlur ?? 0)
+  const [bgAnim, setBgAnim] = useState(() => getSettings().backgroundAnimationsEnabled !== false)
+  const [bgVideo, setBgVideo] = useState(() => getSettings().backgroundVideoEnabled === true)
   const randomBgRef = useRef('')
   const prevBgRef = useRef({ image: '', random: false })
   const { confirm: msgConfirm } = useMessageBox()
@@ -111,6 +132,8 @@ export default function Layout() {
     return onSettingsChange((s) => {
       setOpacity(s.bgOverlayOpacity ?? 78)
       setBlur(s.bgBlur ?? 0)
+      setBgAnim(s.backgroundAnimationsEnabled !== false)
+      setBgVideo(s.backgroundVideoEnabled === true)
       document.documentElement.style.setProperty('--radius', `${s.cornerRadius ?? 8}px`)
       const prev = prevBgRef.current
       if (s.backgroundImage !== prev.image || s.backgroundRandom !== prev.random) {
@@ -167,15 +190,45 @@ export default function Layout() {
   const isLinux = useMemo(() => navigator.userAgent.includes('Linux'), [])
   const isMacos = useMemo(() => navigator.userAgent.includes('Mac'), [])
 
+  // 背景类型：按扩展名判定。视频需「播放视频」开关；动图（GIF/APNG/WebP）需「播放动图」开关，
+  // 关闭时用 canvas 截首帧静态渲染（这些格式无原生停帧能力）。
+  const bgType = useMemo<'video' | 'animation' | 'image' | 'none'>(() => {
+    if (!bg) return 'none'
+    const ext = bg.split('?')[0].split('.').pop()?.toLowerCase() ?? ''
+    if (['mp4', 'webm', 'ogv', 'ogg', 'mov'].includes(ext)) return 'video'
+    if (['gif', 'webp', 'apng'].includes(ext)) return 'animation'
+    return 'image'
+  }, [bg])
+
+  const bgFilter = blur > 0 ? `blur(${blur}px)` : undefined
+  // 渲染背景：静态图恒显示；视频仅在「播放视频」开启时显示（关闭则不渲染，仅留遮罩底色）；
+  // 动图在「播放动图」开启时显示，关闭时用 canvas 截首帧静态渲染。
+  const renderBg = bgType === 'image' || (bgType === 'video' && bgVideo) || bgType === 'animation'
+
   return (
     <DebugProvider>
     <div className="flex h-screen">
       <DebugEffects />
       <PluginEventBridge />
       <GlobalDropInstaller />
-      {bg && (
+      {bg && renderBg && (
         <>
-          <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: blur > 0 ? `blur(${blur}px)` : 'none' }} />
+          {bgType === 'video' ? (
+            <video
+              key={bg}
+              src={bg}
+              autoPlay
+              muted
+              loop
+              playsInline
+              className="fixed inset-0 z-0 h-full w-full object-cover"
+              style={{ filter: bgFilter }}
+            />
+          ) : bgType === 'animation' && !bgAnim ? (
+            <FrozenAnimation src={bg} className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: bgFilter }} />
+          ) : (
+            <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: bgFilter }} />
+          )}
           <div className="fixed inset-0 z-0" style={{ backgroundColor: `hsl(var(--background)/${(opacity / 100).toFixed(2)})` }} />
         </>
       )}
