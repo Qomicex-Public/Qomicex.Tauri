@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-09-07 12:44
+最后更新：2026-09-11 01:51
 
 ## 1-决策记录
 
@@ -68,6 +68,10 @@
 - [ADR-065：主页小组件化：react-grid-layout 编辑模式网格](1-决策记录/ADR-065-主页小组件化-react-grid-layout-编辑模式网格.md)
 - [ADR-066：qml-docs 用户指南补全：8 篇功能文档覆盖启动器全部功能](1-决策记录/ADR-066-qml-docs-用户指南补全-8-篇功能文档覆盖启动器全部功能.md)
 - [ADR-067：启动器自更新改为独立 Updater + zip 覆盖式更新](1-决策记录/ADR-067-启动器自更新改为独立-Updater---zip-覆盖式更新.md)
+- [ADR-068：plugin-ui 动画改为 preset 自含，不引入 tailwindcss-animate](1-决策记录/ADR-068-plugin-ui-动画改为-preset-自含-不引入-tailwindcss-animate.md)
+- [ADR-069：plugin-ui 动画速度口径统一与组件细节动效增强](1-决策记录/ADR-069-plugin-ui-动画速度口径统一与组件细节动效增强.md)
+- [ADR-070：实例详情列表内边距统一与概况页重构为 SettingSection](1-决策记录/ADR-070-实例详情列表内边距统一与概况页重构为-SettingSection.md)
+- [ADR-071：个性化增强：视频/动图背景、默认材质细化参数、主题跟随系统](1-决策记录/ADR-071-个性化增强-视频-动图背景-默认材质细化参数-主题跟随系统.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
@@ -81,7 +85,10 @@
 - [主题语义 Token 规范 v1 + .qtheme（颜色主题）](2-架构设计/主题语义Token规范v1.md)
 - [前端浏览器调试：Playwright Tauri mock 注入与挂载](2-架构设计/前端浏览器调试-Playwright-Tauri-mock注入.md)
 - [动画系统](2-架构设计/动画系统.md)
+- [启动流程](2-架构设计/启动前Java检查与自动下载.md)
+- [启动器自更新一键链路（独立 Updater + zip 覆盖）](2-架构设计/启动器自更新一键链路-独立-Updater.md)
 - [启动流程](2-架构设计/启动流程.md)
+- [启动进度](2-架构设计/启动进度分步显示.md)
 - [项目架构](2-架构设计/完整项目架构图.md)
 - [Mod 名称交叉匹配设计](2-架构设计/崩溃分析-Mod名称交叉匹配设计.md)
 - [技术选型](2-架构设计/技术选型.md)
@@ -109,8 +116,11 @@
 *RESTful API 设计规范*
 
 - [API 端点参考](3-API规范/API列表.md)
+- [Forge / NeoForge 安装器 — 缺失库下载 URL 决策](3-API规范/Forge-NeoForge-安装器缺失库URL决策.md)
 - [Qomicex Launcher 联机（SCF）扩展协议规范 v2.0](3-API规范/SCF联机扩展协议规范.md)
+- [实例删除与安装失败回滚](3-API规范/实例删除与安装失败回滚.md)
 - [插件系统 API](3-API规范/插件系统API.md)
+- [API规范](3-API规范/设置-缓存清理端点.md)
 
 ## 4-编码规范
 
@@ -147,6 +157,7 @@
 *部署架构、环境配置*
 
 - [PHASE1 端到端联调记录](8-部署运维/PHASE1-联调记录.md)
+- [待办清单](8-部署运维/TODO.md)
 - [Windows DLL 打包与运行时解压机制](8-部署运维/Windows-DLL打包与运行时解压机制.md)
 - [构建与部署](8-部署运维/构建部署.md)
 - [环境配置说明](8-部署运维/环境配置说明.md)
