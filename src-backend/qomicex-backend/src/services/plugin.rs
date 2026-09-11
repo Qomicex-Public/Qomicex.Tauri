@@ -410,11 +410,13 @@ impl PluginStore {
             if !dir.is_dir() {
                 continue;
             }
-            // 跳过升级快照目录（.bak-{version}），避免扫描出重复条目
+            // 跳过内部目录，避免扫描出重复条目：
+            // - 升级快照 `{id}.bak-{version}`（snapshot_existing_dir 命名）
+            // - 提取/回滚临时目录 `.{id}.tmp-*` / `.{id}.rollback-*`（以 . 开头）
             if dir
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, |n| n.starts_with(".bak-"))
+                .map_or(false, is_internal_plugin_dir)
             {
                 continue;
             }
@@ -586,6 +588,14 @@ pub fn install_from_package(
         installed_at: now_o(),
         has_rollback,
     }))
+}
+
+/// `plugins/` 下的内部目录（升级快照 / 临时提取 / 回滚中转），扫描时须跳过：
+/// - `{id}.bak-{version}`：升级快照（`snapshot_existing_dir` 命名），内含旧 manifest.json，
+///   若不跳过会与正目录同 id 重复出现在插件列表。
+/// - `.{id}.tmp-*` / `.{id}.rollback-*`：以 `.` 开头的临时目录。
+fn is_internal_plugin_dir(name: &str) -> bool {
+    name.starts_with('.') || name.contains(".bak-")
 }
 
 /// 升级覆盖前把旧版本目录快照为 `{id}.bak-{version}`（同卷 rename，原子）以便回滚。
@@ -990,6 +1000,21 @@ mod tests {
         assert_eq!(info.manifest.id, "com.qomicex.demo");
         // 清理仅测试自己创建的产物
         store.uninstall("com.qomicex.demo");
+    }
+
+    /// 回归：升级快照 `{id}.bak-{version}` 必须被识别为内部目录，
+    /// 否则 scan_plugins 会把快照与正目录同 id 扫成两条（UI 重复插件）。
+    #[test]
+    fn internal_dir_detects_snapshot_and_temp() {
+        // 快照：以插件 id 开头、含 .bak-（旧实现的 starts_with(".bak-") 会漏判）
+        assert!(is_internal_plugin_dir("top.qomicex.assistant.bak-1.0.0"));
+        assert!(is_internal_plugin_dir("my.plugin.bak-2.5.0"));
+        // 临时目录：以 . 开头
+        assert!(is_internal_plugin_dir(".my.plugin.tmp-abc123"));
+        assert!(is_internal_plugin_dir(".my.plugin.rollback-abc123"));
+        // 正常插件目录不得被跳过
+        assert!(!is_internal_plugin_dir("top.qomicex.assistant"));
+        assert!(!is_internal_plugin_dir("my.plugin"));
     }
 
     #[test]
