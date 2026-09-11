@@ -430,14 +430,17 @@
 :root[data-material="liquid"] .glass-surface {
   background-color: hsl(var(--card) / 0.42);
   background-image:
-    linear-gradient(135deg, hsl(0 0% 100% / 0.10), transparent 42%),
-    linear-gradient(-45deg, hsl(0 0% 100% / 0.03), hsl(0 0% 0% / 0.06) 62%, transparent);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
-  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
-  border-color: hsl(0 0% 100% / 0.16);
+    linear-gradient(135deg, hsl(0 0% 100% / 0.14), transparent 42%),
+    linear-gradient(-45deg, hsl(0 0% 100% / 0.05), hsl(0 0% 0% / 0.08) 62%, transparent),
+    radial-gradient(120% 90% at 18% 0%, hsl(0 0% 100% / 0.10), transparent 55%);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(165%) contrast(1.06) brightness(1.03);
+  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(165%) contrast(1.06) brightness(1.03);
+  border-color: hsl(0 0% 100% / 0.20);
   box-shadow:
-    inset 0 1px 1px hsl(0 0% 100% / 0.18),
-    0 6px 18px -10px hsl(0 0% 0% / 0.35);
+    inset 0 1px 1px hsl(0 0% 100% / 0.24),
+    inset 0 0 0 1px hsl(0 0% 100% / 0.05),
+    inset 0 -12px 24px -18px hsl(0 0% 0% / 0.45),
+    0 8px 22px -12px hsl(0 0% 0% / 0.42);
 }
 
 /* 液态玻璃 Card（quidlass LiquidGlass 容器）统一底色。
@@ -445,6 +448,22 @@
    由主题统一给半透明底色保证可读性，透明度与上方 .glass-surface 的 liquid 规则同源。 */
 :root[data-material="liquid"] [data-liquid-glass] {
   background-color: hsl(var(--card) / 0.42);
+}
+
+/* 亮色模式液态玻璃：--card 近白（0 0% 98%），42% 白底叠在模糊层上会把折射/模糊
+   淹没成纯白，看不出玻璃效果。改用中性灰底 + 低不透明度，保留折射可见性；
+   亮色下玻璃本就偏亮，用灰调而非白调避免过曝。 */
+.light[data-material="liquid"] .glass-surface,
+.light[data-material="liquid"] [data-liquid-glass] {
+  background-color: hsl(228 10% 88% / 0.18);
+}
+.light[data-material="liquid"] .glass-surface {
+  border-color: hsl(228 10% 40% / 0.22);
+  box-shadow:
+    inset 0 1px 1px hsl(0 0% 100% / 0.45),
+    inset 0 0 0 1px hsl(0 0% 100% / 0.20),
+    inset 0 -12px 24px -18px hsl(228 20% 30% / 0.28),
+    0 8px 22px -12px hsl(228 20% 20% / 0.30);
 }
 
 /* 液态玻璃 Card 内部隔离与间距还原。
