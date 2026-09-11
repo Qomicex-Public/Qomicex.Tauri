@@ -32,12 +32,15 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
 
   const downloading = phase === 'starting' || phase === 'downloading'
   const done = phase === 'installing'
+  // 下载/安装进行中禁止关闭：对话框只是视图，后台任务仍在跑，
+  // 关闭会让用户失去进度可见性且无法取消（backdrop/Esc/关闭按钮三条路径都要禁）。
+  const locked = required || downloading || done
   const versionTag = `v${plan.version?.replace(/^v/, '') ?? ''}`
   const releaseUrl = `${REPOSITORY_URL}/releases/tag/${versionTag}`
 
   return (
-    <Dialog open={open} onClose={required ? () => {} : onClose} closeOnBackdrop={!required} closeOnEsc={!required}>
-      <DialogHeader onClose={required || downloading || done ? undefined : onClose}>
+    <Dialog open={open} onClose={locked ? () => {} : onClose} closeOnBackdrop={!locked} closeOnEsc={!locked}>
+      <DialogHeader onClose={locked ? undefined : onClose}>
         <DialogTitle className="flex items-center gap-2">
           {required ? (
             <TriangleAlert className="h-4 w-4 text-amber-400" />
