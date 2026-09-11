@@ -122,32 +122,16 @@ export function AccountWidget() {
           </div>
         )}
         <div className="min-w-0 flex-1">
-          {h > 1 ? (
-            <>
-              <p className="truncate text-sm font-medium">{defaultAccount ? defaultAccount.name : t('dashboard.noDefaultAccount')}</p>
-              {defaultAccount ? (
-                <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60">
-                  <span className={cn('flex h-3 w-3 shrink-0 items-center justify-center', getAccountIcon(defaultAccount.loginMethod).color)}>
-                    {getAccountIcon(defaultAccount.loginMethod).icon}
-                  </span>
-                  {getAccountTypeLabel(defaultAccount.loginMethod, t)}
-                </span>
-              ) : (
-                <p className="text-[10px] text-muted-foreground/60">{t('dashboard.addInSettings')}</p>
-              )}
-            </>
+          <p className="truncate text-sm font-medium">{defaultAccount ? defaultAccount.name : t('dashboard.noDefaultAccount')}</p>
+          {defaultAccount ? (
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60">
+              <span className={cn('flex h-3 w-3 shrink-0 items-center justify-center', getAccountIcon(defaultAccount.loginMethod).color)}>
+                {getAccountIcon(defaultAccount.loginMethod).icon}
+              </span>
+              {getAccountTypeLabel(defaultAccount.loginMethod, t)}
+            </span>
           ) : (
-            <div className="flex min-w-0 items-center gap-1.5">
-              <p className="truncate text-sm font-medium">{defaultAccount ? defaultAccount.name : t('dashboard.noDefaultAccount')}</p>
-              {defaultAccount && (
-                <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/60">
-                  <span className={cn('flex h-3 w-3 items-center justify-center', getAccountIcon(defaultAccount.loginMethod).color)}>
-                    {getAccountIcon(defaultAccount.loginMethod).icon}
-                  </span>
-                  {getAccountTypeLabel(defaultAccount.loginMethod, t)}
-                </span>
-              )}
-            </div>
+            <p className="text-[10px] text-muted-foreground/60">{t('dashboard.addInSettings')}</p>
           )}
         </div>
         <Button variant="ghost" size="sm" onClick={openAccountDropdown} className="h-6 w-6 shrink-0 p-0">
