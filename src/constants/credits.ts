@@ -89,7 +89,7 @@ export const SERVICES: CreditService[] = [
   { name: 'bangbang93', description: '提供BMCLAPI下载镜像服务', url: 'https://bmclapi2.bangbang93.com', icon: '/services/bangbang93.png' },
   { name: 'mcmod', description: '中文 Mod 数据库', url: 'https://www.mcmod.cn', icon: '/services/mcmod.png' },
   { name: 'Minecraft官网', description: 'Minecraft 官方网站,支持正版!', url: 'https://www.minecraft.net', icon: '/services/minecraft.png' },
-  { name: 'xphost008', description: '启动流程参考教程', url: 'https://github.com/xphost008', icon: 'https://github.com/xphost008.png' },
+  { name: 'xphost008', description: '启动流程参考教程', url: 'https://github.com/xphost008', icon: '/services/xphost008.jpg' },
 ]
 
 export const LICENSE: LicenseInfo = {
