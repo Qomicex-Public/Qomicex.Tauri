@@ -3,7 +3,7 @@ import type { DragEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMicrosoft, faKeycdn } from '@fortawesome/free-brands-svg-icons'
-import { Check, CircleUser, Cloud, Copy, ExternalLink, Fingerprint, GripVertical, Loader2, LogIn, Plus, Search, Star, Trash2, User } from 'lucide-react'
+import { Check, CircleUser, Cloud, Copy, ExternalLink, Fingerprint, GripVertical, Loader2, LogIn, Plus, Search, ShieldAlert, Star, Trash2, User } from 'lucide-react'
 import { Loader2 as Loader2Data, RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Button } from '../components/ui'
@@ -60,7 +60,7 @@ type MicrosoftStep = 'idle' | 'fetching-oauth' | 'waiting-auth' | 'fetching-info
 
 export default function Accounts() {
   const navigate = useNavigate()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const { error: msgError, confirm: msgConfirm } = useMessageBox()
 
   function fmtOAuthError(code: string): string {
@@ -86,6 +86,11 @@ export default function Accounts() {
   }
 
   const [accounts, setAccounts] = useState<Account[]>([])
+  // 版权合规：非 zh-CN 语言下需先有至少 1 个 Microsoft 正版账户，才允许新增离线/第三方账户。
+  const needOfficial = useMemo(
+    () => lang !== 'zh-CN' && !accounts.some((a) => a.loginMethod === 'Microsoft'),
+    [lang, accounts],
+  )
   const [addOpen, setAddOpen] = useState(false)
   const [addTab, setAddTab] = useState<'microsoft' | 'offline' | 'yggdrasil' | 'tongyi'>('microsoft')
   const [loading, setLoading] = useState(false)
@@ -210,6 +215,11 @@ export default function Accounts() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 门禁生效（语言切换/账户删除）时，强制回到 Microsoft tab，避免停留在被锁定的 tab 内容
+  useEffect(() => {
+    if (needOfficial && addTab !== 'microsoft') setAddTab('microsoft')
+  }, [needOfficial, addTab])
 
   function startAdd() {
     setAddOpen(true)
@@ -627,26 +637,46 @@ export default function Accounts() {
         </DialogHeader>
         <DialogBody>
           <div className="mb-4 flex flex-wrap gap-1 rounded-lg bg-muted p-1">
-            {(['microsoft', 'offline', 'yggdrasil', 'tongyi'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setAddTab(tab)}
-                className={cn(
-                  'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-                  addTab === tab ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                )}
-              >
-                {tab === 'microsoft' && <FontAwesomeIcon icon={faMicrosoft} className="h-3 w-3" />}
-                {tab === 'offline' && <CircleUser className="h-3 w-3" />}
-                {tab === 'yggdrasil' && <FontAwesomeIcon icon={faKeycdn} className="h-3 w-3" />}
-                {tab === 'tongyi' && <Cloud className="h-3 w-3" />}
-                {tab === 'microsoft' && 'Microsoft'}
-                {tab === 'offline' && t('accounts.tabOffline')}
-                {tab === 'yggdrasil' && 'Yggdrasil'}
-                {tab === 'tongyi' && t('accounts.tabUnified')}
-              </button>
-            ))}
+            {(['microsoft', 'offline', 'yggdrasil', 'tongyi'] as const).map((tab) => {
+              const locked = needOfficial && tab !== 'microsoft'
+              return (
+                <button
+                  key={tab}
+                  onClick={() => { if (!locked) setAddTab(tab) }}
+                  disabled={locked}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    addTab === tab ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                    locked && 'cursor-not-allowed opacity-40 hover:text-muted-foreground'
+                  )}
+                >
+                  {tab === 'microsoft' && <FontAwesomeIcon icon={faMicrosoft} className="h-3 w-3" />}
+                  {tab === 'offline' && <CircleUser className="h-3 w-3" />}
+                  {tab === 'yggdrasil' && <FontAwesomeIcon icon={faKeycdn} className="h-3 w-3" />}
+                  {tab === 'tongyi' && <Cloud className="h-3 w-3" />}
+                  {tab === 'microsoft' && 'Microsoft'}
+                  {tab === 'offline' && t('accounts.tabOffline')}
+                  {tab === 'yggdrasil' && 'Yggdrasil'}
+                  {tab === 'tongyi' && t('accounts.tabUnified')}
+                </button>
+              )
+            })}
           </div>
+
+          {needOfficial && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <div className="flex-1 space-y-2">
+                <p>{t('accounts.officialRequired')}</p>
+                <button
+                  onClick={() => setAddTab('microsoft')}
+                  className="rounded-md border border-amber-500/50 px-2.5 py-1 font-medium transition-colors hover:bg-amber-500/15"
+                >
+                  {t('accounts.goOfficial')}
+                </button>
+              </div>
+            </div>
+          )}
 
           {addTab === 'microsoft' && (
             <div key="microsoft" className="animate-in slide-up space-y-4">
