@@ -460,6 +460,11 @@ Console - Qomicex Launcher ======================================`)
       if (w === 1) root.style.removeProperty('--card-border-width')
       else root.style.setProperty('--card-border-width', `${w}px`)
     }
+    function applyDialogOpacity(opacity: number | undefined) {
+      // 对话框透明度：0-100 → 0-1；默认 75（半透明，独立于卡片材质）
+      const o = Math.min(100, Math.max(0, opacity ?? 75))
+      document.documentElement.style.setProperty('--dialog-opacity', String(o / 100))
+    }
     // 初始设置不在这里加载：backend 可能尚未监听（Tauri release 冷启动要先解压
     // + spawn），fetch 失败会让 UI 用默认值渲染。加载移到 AppContent 中
     // backendState==='ready' 之后；首次加载成功会触发下方 listener 完成初始应用。
@@ -480,6 +485,7 @@ Console - Qomicex Launcher ======================================`)
       applyThemeColor(s.themeColor)
       applyGlassMaterial(s.componentMaterial, s.glassBlur)
       applyCardStyle(s.cardOpacity, s.cardBorderColor, s.cardBorderWidth)
+      applyDialogOpacity(s.dialogOpacity)
     })
     return () => {
       unsub()

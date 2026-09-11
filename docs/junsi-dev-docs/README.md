@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-09-11 16:08
+最后更新：2026-09-11 19:38
 
 ## 1-决策记录
 
@@ -77,6 +77,7 @@
 - [ADR-074：Switch 开关圆点位置对称修正](1-决策记录/ADR-074-Switch-开关圆点位置对称修正.md)
 - [ADR-075：亮色模式液态玻璃底色改为中性灰低透明度](1-决策记录/ADR-075-亮色模式液态玻璃底色改为中性灰低透明度.md)
 - [ADR-076：裸 glass-surface 表面强化液态玻璃观感（不引入 JS 位移）](1-决策记录/ADR-076-裸-glass-surface-表面强化液态玻璃观感-不引入-JS-位移-.md)
+- [ADR-077：新增独立 Dialog 透明度设置](1-决策记录/ADR-077-新增独立-Dialog-透明度设置.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

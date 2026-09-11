@@ -151,6 +151,9 @@ function saveSettings(settings: AppSettings) {
   const bw = Math.max(0, settings.cardBorderWidth ?? 1)
   if (bw === 1) document.documentElement.style.removeProperty('--card-border-width')
   else document.documentElement.style.setProperty('--card-border-width', `${bw}px`)
+  // 对话框透明度：与 App.tsx applyDialogOpacity 同步
+  const dop = Math.min(100, Math.max(0, settings.dialogOpacity ?? 75))
+  document.documentElement.style.setProperty('--dialog-opacity', String(dop / 100))
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
 }
 
@@ -2174,6 +2177,30 @@ export default function Settings() {
                     />
                   </>
                 )}
+                <SettingRow
+                  label={t('settings.appearance.dialogOpacity')}
+                  description={t('settings.appearance.dialogOpacityDesc')}
+                  control={
+                    <div className="w-44 space-y-1">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={settings.dialogOpacity ?? 75}
+                          onChange={(e) => update('dialogOpacity', parseInt(e.target.value))}
+                          className="flex-1"
+                        />
+                        <span className="w-12 shrink-0 text-right text-sm tabular-nums text-muted-foreground">{settings.dialogOpacity ?? 75}%</span>
+                      </div>
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>{t('settings.appearance.transparent')}</span>
+                        <span>{t('settings.appearance.opaque')}</span>
+                      </div>
+                    </div>
+                  }
+                />
               </SettingSection>
 
               <SettingSection title={t('settings.appearance.cornerRadius')} icon={<Monitor className="h-4 w-4" />}>

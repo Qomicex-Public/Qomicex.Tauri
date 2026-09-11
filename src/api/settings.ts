@@ -72,6 +72,8 @@ export interface AppSettings {
   cardBorderColor?: string
   /** 默认材质卡片边框厚度（px，0 = 无边框，默认 1） */
   cardBorderWidth?: number
+  /** 对话框透明度（0-100，100 = 不透明，默认 75）；所有组件材质通用 */
+  dialogOpacity?: number
   /** 是否已完成首次启动初始化向导；false/缺失 = 显示向导 */
   initialized?: boolean
   /** 自动上报严重错误日志（崩溃类恶性 bug）；缺失 = 开启（默认开） */
@@ -140,6 +142,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cardOpacity: 50,
   cardBorderColor: '',
   cardBorderWidth: 1,
+  dialogOpacity: 75,
   initialized: false,
   autoReportErrors: true,
   telemetryEnabled: false,

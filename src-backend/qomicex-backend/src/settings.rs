@@ -148,6 +148,9 @@ pub struct SettingsResponse {
     /// 默认材质卡片边框厚度（像素，0 = 无边框）。仅默认材质生效；`None` = 前端默认 1。
     #[serde(default)]
     pub card_border_width: Option<i32>,
+    /// 对话框透明度（0-100，100 = 不透明）。所有组件材质通用；`None` = 前端默认 75。
+    #[serde(default)]
+    pub dialog_opacity: Option<i32>,
     /// 是否已完成首次启动初始化向导。`Some(false)` = 新安装待初始化；
     /// 老配置文件缺失该字段时在 [`load_settings`] 中视为已初始化（`Some(true)`），
     /// 避免老用户升级后被迫重走向导。
@@ -249,6 +252,7 @@ impl Default for SettingsResponse {
             card_opacity: None,
             card_border_color: None,
             card_border_width: None,
+            dialog_opacity: None,
             initialized: Some(false),
             auto_report_errors: Some(true),
             telemetry_enabled: None,
