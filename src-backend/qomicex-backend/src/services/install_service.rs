@@ -1071,8 +1071,12 @@ pub(crate) async fn download_batch(
         if let Some(parent) = dest.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
+        let mirrors = crate::services::file_mirror::mirror_fallback_urls(&url);
         let mut task = DownloadTask::new(url, dest);
         task.headers = headers;
+        if !mirrors.is_empty() {
+            task = task.with_mirrors(mirrors);
+        }
         ids.push(mgr.add(task));
     }
 

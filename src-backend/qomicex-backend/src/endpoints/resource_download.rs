@@ -302,7 +302,11 @@ async fn start(
         &req.url,
         state.settings.read().await.file_download_source,
     );
+    let mirrors = crate::services::file_mirror::mirror_fallback_urls(&download_url);
     let mut task = DownloadTask::new(download_url, full_path);
+    if !mirrors.is_empty() {
+        task = task.with_mirrors(mirrors);
+    }
     if is_cf_url(&req.url) && !state.curse_forge_api_key.is_empty() {
         task = task.with_header("x-api-key", state.curse_forge_api_key.clone());
     }
@@ -356,7 +360,11 @@ async fn download_to(
         &req.url,
         state.settings.read().await.file_download_source,
     );
+    let mirrors = crate::services::file_mirror::mirror_fallback_urls(&download_url);
     let mut task = DownloadTask::new(download_url, target.clone());
+    if !mirrors.is_empty() {
+        task = task.with_mirrors(mirrors);
+    }
     if is_cf_url(&req.url) && !state.curse_forge_api_key.is_empty() {
         task = task.with_header("x-api-key", state.curse_forge_api_key.clone());
     }
