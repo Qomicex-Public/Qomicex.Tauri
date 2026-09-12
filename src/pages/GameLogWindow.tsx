@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { openStream, createSseParser, type StreamHandle } from '../api/ipc.ts'
+import { openStream, createSseParser, initApiTransport, type StreamHandle } from '../api/ipc.ts'
 import { cancelLaunch, type GameLogLine } from '../api/instance.ts'
 import { Button, Input, Tooltip } from '../components/ui'
 import { useI18n } from '../i18n/index.tsx'
@@ -77,30 +77,41 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
   }
 
   useEffect(() => {
+    let cancelled = false
     let handle: StreamHandle | null = null
-    const parser = createSseParser(text => {
-      try {
-        const d = JSON.parse(text)
-        if (d.type === 'snapshot') {
-          const arr: Line[] = (d.lines || []).map((l: GameLogLine) => lineFrom(l))
-          setLines(arr)
-        } else if (d.type === 'line') {
-          const l = d.entry as GameLogLine
-          setLines(prev => {
-            const next = [...prev, lineFrom(l)]
-            return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next
-          })
-        }
-      } catch { /* ignore malformed frame */ }
-    })
-    handle = openStream(`/instance/${encodeURIComponent(instanceId)}/logs/stream`, parser.feed)
-    setConnected(true)
-    // 流断开（游戏退出/后端关闭）→ 断线重连拿最新 snapshot
-    handle.done.then(
-      () => { parser.flush(); setConnected(false) },
-      () => setConnected(false),
-    )
-    return () => handle?.close()
+    ;(async () => {
+      // release 下后端仅走 qomicex:// IPC 管道（QOMICEX_NO_TCP=1，无 :5000 监听）。
+      // 独立日志窗口不经过 AppContent 的健康轮询，必须自行解析传输层，否则
+      // isIpcMode() 恒 false → 走 HTTP :5000 → release 下完全无日志。
+      await initApiTransport()
+      if (cancelled) return
+      const parser = createSseParser(text => {
+        if (cancelled) return
+        try {
+          const d = JSON.parse(text)
+          if (d.type === 'snapshot') {
+            const arr: Line[] = (d.lines || []).map((l: GameLogLine) => lineFrom(l))
+            setLines(arr)
+          } else if (d.type === 'line') {
+            const l = d.entry as GameLogLine
+            setLines(prev => {
+              const next = [...prev, lineFrom(l)]
+              return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next
+            })
+          }
+        } catch { /* ignore malformed frame */ }
+      })
+      handle = openStream(`/instance/${encodeURIComponent(instanceId)}/logs/stream`, parser.feed)
+      setConnected(true)
+      // 流断开（游戏退出/后端关闭）→ 标记未连接。cleanup（含 StrictMode 的
+      // mount→cleanup→mount）会先 abort 旧流，其 reject 回调若不加 cancelled 守卫，
+      // 会在新流 setConnected(true) 之后落地并把状态覆盖回 false → 永久"未连接"。
+      handle.done.then(
+        () => { if (!cancelled) { parser.flush(); setConnected(false) } },
+        () => { if (!cancelled) setConnected(false) },
+      )
+    })()
+    return () => { cancelled = true; handle?.close() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instanceId])
 

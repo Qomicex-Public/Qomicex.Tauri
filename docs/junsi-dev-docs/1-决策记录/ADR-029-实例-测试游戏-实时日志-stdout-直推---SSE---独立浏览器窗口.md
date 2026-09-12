@@ -42,6 +42,7 @@
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-08-20 | v1.0 | 初版创建 | AI Agent |
+| 2026-09-12 | v1.1 | 修复日志窗口两个缺陷（非 UTF-8 读取中断 + 连接状态竞态）并补齐 release IPC 初始化 | AI Agent |
 
 ### 2026-08-21 更新
 
@@ -56,4 +57,16 @@
 - 能力配置 `src-tauri/capabilities/default.json`：新增 `core:webview:allow-create-webview-window`，并把 `windows` 覆盖到 `game-log-window`（窗口内 close/minimize/toggle-maximize/start-dragging）。
 - i18n submodule 新增 `gameLog` 命名空间（7 语言）。
 - 后端 `/logs-view/{id}` 独立页不再被日志窗口使用（保留后端 `/instance/{id}/logs` + `/logs/stream` SSE 数据接口）。
+
+## 修订（2026-09-12）：修复日志窗口中途停止 / 未连接
+
+用户反馈：日志窗口右上角恒「未连接」，且输出一段后停止（游戏本体仍正常运行）。诊断为三个独立缺陷：
+
+1. **非 UTF-8 输出中断读取（日志中途停止的根因）** — `qomicex-core-rust/src/services/launch/process.rs` 的 `forward_pipe` 原用 `BufReader::read_line`（严格 UTF-8）。游戏 stdout 常含系统代码页字节（如 GBK 编码的中文 mod 文件名 `[JEI物品管理器]`），`read_line` 遇非法字节返回 `InvalidData`，`Ok(0) | Err(_) => break` 直接终止读取线程 → 此后所有输出丢失。**修复**：改 `read_until(b'\n', &mut Vec<u8>)` 读原始字节 + `String::from_utf8_lossy` 逐行解码（非法字节 → U+FFFD），读取永不中断。新增回归测试 `forward_pipe_survives_invalid_utf8`（去掉修复必 FAIL：读到 0 行 vs 5 行）。
+
+2. **连接状态竞态（右上角恒「未连接」）** — `src/pages/GameLogWindow.tsx` 的流 effect 无取消守卫。`main.tsx` 无条件 `<React.StrictMode>`，dev 下 mount→cleanup→mount：第一条流被 `close()` abort，其 reject 回调在第二条流 `setConnected(true)` 之后落地，把状态覆盖回 `false`（第二条流其实活着，所以日志仍在流）。**修复**：加 `cancelled` 守卫，仅当前流回调可改状态。
+
+3. **release 下日志窗口无 IPC 初始化（潜在）** — 独立日志窗口不经过 `AppContent` 健康轮询，从不调用 `initApiTransport()` → `isIpcMode()` 恒 false → 走 HTTP `:5000`；release 下 `QOMICEX_NO_TCP=1` 无 TCP 监听 → 完全无输出。**修复**：打开流前 `await initApiTransport()`。
+
+验证：debug 后端独立实例（5055 端口）+ Playwright Tauri mock 实测——输出由修复前卡在第 69 行（首个 GBK 字节处）变为持续到 213+ 行；连接状态由恒「未连接」变为恒「已连接」。
 
