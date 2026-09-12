@@ -285,22 +285,53 @@ pub async fn run_install_pipeline(
             } else {
                 ModLoaderType::Cleanroom
             };
-            let loaders = core_a
-                .installer_provider()
-                .get_available_mod_loaders(&gv_a, loader_type)
-                .await
-                .map_err(|e| format!("获取 {loader_a:?} 可用版本失败: {e}"))?;
+            // 中文环境（zh*）优先 BMCLAPI（与 `/loader/versions` 的 is_chinese_lang 判定一致）。
+            let prefer_bmclapi = crate::settings::load_settings()
+                .language
+                .trim()
+                .to_ascii_lowercase()
+                .starts_with("zh");
             let lver = lv_a.as_deref().unwrap_or("");
-            let matched = loaders
-                .iter()
-                .find(|l| l.version.eq_ignore_ascii_case(lver))
-                .ok_or_else(|| {
-                    format!(
-                        "找不到 {} {} 的安装器",
-                        loader_a.as_deref().unwrap_or(""),
-                        lver
-                    )
-                })?;
+            let missing_err = || {
+                format!(
+                    "找不到 {} {} 的安装器",
+                    loader_a.as_deref().unwrap_or(""),
+                    lver
+                )
+            };
+
+            // NeoForge：与 `/loader/versions` 一致走「按语言优先级 + 缓存」的获取路径（中文
+            // 环境 BMCLAPI 优先）。此前安装路径恒用 official-first 的 `get_available_mod_loaders`，
+            // 其回退仅在版本列表**为空**时触发；当官方 API 在部分网络下返回非空但过期/残缺的
+            // 列表时不会回退，导致较新的安装器版本（如 BMC5 所需的 21.1.250）查找失败。
+            let loaders = if is_neoforge {
+                core_a
+                    .installer_provider()
+                    .get_neoforge_versions_with_priority(&gv_a, prefer_bmclapi, false)
+                    .await
+                    .map_err(|e| format!("获取 {loader_a:?} 可用版本失败: {e}"))?
+            } else {
+                core_a
+                    .installer_provider()
+                    .get_available_mod_loaders(&gv_a, loader_type)
+                    .await
+                    .map_err(|e| format!("获取 {loader_a:?} 可用版本失败: {e}"))?
+            };
+
+            // 首轮未命中且为 NeoForge 时，换另一数据源并跳过缓存重试一次（官方列表可能非空但缺该版本）。
+            let matched = match pick_loader_by_version(loaders, lver) {
+                Some(m) => m,
+                None if is_neoforge => pick_loader_by_version(
+                    core_a
+                        .installer_provider()
+                        .get_neoforge_versions_with_priority(&gv_a, !prefer_bmclapi, true)
+                        .await
+                        .unwrap_or_default(),
+                    lver,
+                )
+                .ok_or_else(missing_err)?,
+                None => return Err(missing_err()),
+            };
             if matched.url.trim().is_empty() {
                 return Err(format!(
                     "{} {} 安装器的下载链接为空，可能是版本列表解析异常",
@@ -636,6 +667,16 @@ fn build_core(
         .use_download_mirror(mirror)
         .with_http_client(http_client);
     builder.build()
+}
+
+/// 在加载器版本列表中按版本号忽略大小写精确匹配，返回命中的条目。
+fn pick_loader_by_version(
+    loaders: Vec<qomicex_core::models::installer::ModLoaderResult>,
+    version: &str,
+) -> Option<qomicex_core::models::installer::ModLoaderResult> {
+    loaders
+        .into_iter()
+        .find(|l| l.version.eq_ignore_ascii_case(version))
 }
 
 fn check_cancel(handle: &InstallHandle) -> Result<(), String> {
@@ -1377,6 +1418,29 @@ mod tests {
             got, expected,
             "relative game_dir must anchor to BaseDir, not cwd"
         );
+    }
+
+    #[test]
+    fn pick_loader_by_version_matches_case_insensitively_and_reports_miss() {
+        use qomicex_core::models::installer::{ModLoaderResult, ModLoaderType};
+        let mk = |v: &str| ModLoaderResult {
+            r#type: ModLoaderType::NeoForge,
+            version: v.to_string(),
+            game_version: "1.21.1".to_string(),
+            url: format!("https://example/{v}.jar"),
+            sha1: String::new(),
+            is_recommand: true,
+            release_time: String::new(),
+        };
+
+        // 命中（忽略大小写）：BMC5 需要的 21.1.250 存在时必须被选中。
+        let list = vec![mk("21.1.249"), mk("21.1.250")];
+        let got = pick_loader_by_version(list, "21.1.250").expect("应命中 21.1.250");
+        assert_eq!(got.url, "https://example/21.1.250.jar");
+
+        // 未命中：列表非空但缺目标版本 → None（此前安装因不重试而直接失败）。
+        let list = vec![mk("21.1.248"), mk("21.1.249")];
+        assert!(pick_loader_by_version(list, "21.1.250").is_none());
     }
 
     #[test]
