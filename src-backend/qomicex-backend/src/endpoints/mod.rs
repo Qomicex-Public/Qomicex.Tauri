@@ -21,6 +21,7 @@ pub mod resource;
 pub mod resource_center;
 pub mod resource_download;
 pub mod skin;
+pub mod sponsors;
 pub mod system;
 pub mod telemetry;
 pub mod update;

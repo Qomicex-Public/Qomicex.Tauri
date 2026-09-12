@@ -2067,3 +2067,93 @@ Yggdrasil 外置登录的 **ALI（API 地址指示）** 解析：把用户输入
 | insecure | boolean | apiRoot 是否为明文 `http://`（前端据此显示明文传输警告） |
 
 **错误：** 空 url → `400 BAD_REQUEST`；网络/TLS/DNS 等传输失败 → `502 UPSTREAM_ERROR`（非 2xx 响应不算失败，仍按上述规则检查 ALI 头）。
+
+
+### 2026-09-12 更新
+
+### 2026-09-12 更新：赞助者鸣谢（爱发电代理）
+
+### GET `/api/client/sponsors`
+
+返回爱发电赞助者列表，供「设置 → 关于 → 鸣谢赞助者」卡片展示。后端代理爱发电开放 API
+`POST https://afdian.com/api/open/query-sponsor`（分页合并，按累计金额降序）。
+
+**凭证（仅后端环境变量，绝不进前端/仓库）：**
+
+| 变量 | 说明 |
+|------|------|
+| `AFDIAN_USER_ID` | 爱发电开发者 user_id |
+| `AFDIAN_API_TOKEN` | 爱发电 API Token（仅参与签名，不传输） |
+
+签名规则：`sign = md5(token + "params" + params + "ts" + ts + "user_id" + user_id)`，params 固定 `{"page":N}`。
+
+**响应体：** `SponsorDto[]`（camelCase）
+```json
+[
+  {
+    "name": "Hee",
+    "avatar": "https://pic1.afdiancdn.com/user/xxx/avatar/xxx.jpg",
+    "amount": "13.00",
+    "plan": "独立永久方案"
+  }
+]
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| name | string | 赞助者昵称（非唯一） |
+| avatar | string | 头像 URL |
+| amount | string | 累计赞助金额（折扣前，含兑换码虚拟值，非实际提现额） |
+| plan | string | 当前赞助方案名；无方案时为空串 |
+
+**行为：**
+- 未配置凭证 → 返回 `[]`（前端据此隐藏卡片），不报错。
+- 上游失败 → 回退 `{BaseDir}/QML/sponsors.json` 缓存；成功则写回缓存。
+- 分页安全上限 20 页（每页 20 条）。
+
+
+
+### 2026-09-12 更新
+
+### 2026-09-12 修订：赞助者鸣谢端点（架构修正）
+
+### GET `/api/client/sponsors`
+
+返回爱发电赞助者列表，供「设置 → 关于 → 鸣谢赞助者」卡片展示。
+
+**架构（重要）：** 爱发电凭证（user_id / api_token）属秘密，**只存放于 Qomicex Web 后端服务器**
+（`api.qomicex.top`，仓库 `C:\Project\Web.Backend`，Cloudflare Worker）。启动器本地后端**不持有任何凭证**，
+仅转发 Web 后端端点，因此所有用户看到同一份列表。
+
+```
+爱发电 API ──(token，仅服务器)──> api.qomicex.top /api/client/sponsors ──转发──> 启动器后端 ──> 关于页
+```
+
+**启动器后端行为：** 转发 `GET https://api.qomicex.top/api/client/sponsors`；失败时回退
+`{BaseDir}/QML/sponsors.json` 缓存，成功写回缓存（同 announcement 模式）。
+
+**响应体：** `SponsorDto[]`（camelCase），按累计金额降序
+```json
+[
+  {
+    "name": "爱发电用户_5bc5c",
+    "avatar": "https://pic1.afdiancdn.com/...",
+    "amount": "12.00",
+    "plan": "长期支持"
+  }
+]
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| name | string | 赞助者昵称（非唯一） |
+| avatar | string | 头像 URL |
+| amount | string | 累计赞助金额（折扣前，含兑换码虚拟值，非实际提现额） |
+| plan | string | 当前赞助方案名；无方案时为空串 |
+
+**Web 后端端点**（`api/src/routes/client/sponsors.ts`）：代理爱发电
+`POST https://afdian.com/api/open/query-sponsor`（分页合并，签名
+`md5(token + "params" + params + "ts" + ts + "user_id" + user_id)`，用 `node:crypto`）。
+成功响应经 Workers Cache API 缓存 10 分钟；凭证缺失或上游失败返回 `[]`。
+凭证经 `wrangler secret put AFDIAN_USER_ID` / `AFDIAN_API_TOKEN` 配置。
+

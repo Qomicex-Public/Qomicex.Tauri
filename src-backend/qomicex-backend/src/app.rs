@@ -31,6 +31,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(endpoints::skin::router())
         .merge(endpoints::modpack::router())
         .merge(endpoints::announcement::router())
+        .merge(endpoints::sponsors::router())
         .merge(endpoints::client_logs::router())
         .merge(endpoints::update::router())
         .merge(endpoints::log::router())

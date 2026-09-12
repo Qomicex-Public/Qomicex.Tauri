@@ -57,6 +57,7 @@ import { FILE_NAMING_OPTIONS } from '../lib/download-naming.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
 import { LegalDialog } from '../components/LegalDialog.tsx'
 import { PrivacyDialog } from '../components/PrivacyDialog.tsx'
+import { fetchSponsors, type Sponsor } from '../api/sponsors.ts'
 
 const CATEGORIES = [
   { id: 'launcher', icon: Rocket },
@@ -226,7 +227,15 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [pendingRequired, setPendingRequired] = useState(false)
   const [legalDialogOpen, setLegalDialogOpen] = useState(false)
   const [privacyDialogOpen, setPrivacyDialogOpen] = useState(false)
+  const [sponsors, setSponsors] = useState<Sponsor[]>([])
+  const [sponsorsFailed, setSponsorsFailed] = useState(false)
   const { t } = useI18n()
+
+  useEffect(() => {
+    fetchSponsors()
+      .then(setSponsors)
+      .catch(() => setSponsorsFailed(true))
+  }, [])
 
   const isPreRelease = /-/.test(APP_INFO.version)
   const versionType = isPreRelease ? t('settings.about.beta') : t('settings.about.stable')
@@ -459,8 +468,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
         </div>
       </SettingSection>
 
-      {/* Reference Projects */}
-      <SettingSection title={t('settings.about.referenceProjects')}>
+      {/* Reference Projects */}      <SettingSection title={t('settings.about.referenceProjects')}>
         <div className="p-2">
           <div className="space-y-2">
             {REFERENCE_PROJECTS.map((proj) => (
@@ -603,6 +611,33 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
           control={<ChevronRight className="h-3 w-3 text-muted-foreground/50" />}
         />
       </SettingSection>
+
+      {/* Sponsors (鸣谢赞助者) */}
+      {(sponsors.length > 0 || sponsorsFailed) && (
+        <SettingSection title={t('settings.about.sponsors')} icon={<Heart className="h-4 w-4 text-destructive" />}>
+          {sponsorsFailed ? (
+            <div className="p-4 text-sm text-muted-foreground">{t('settings.about.sponsorsFailed')}</div>
+          ) : (
+            <div className="grid grid-cols-1 gap-2 p-4 sm:grid-cols-2">
+              {sponsors.map((s, i) => (
+                <div key={`${s.name}-${i}`} className="flex items-center gap-3 rounded-lg px-3 py-2">
+                  {s.avatar ? (
+                    <img src={s.avatar} alt={s.name} className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
+                      {s.name.slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{s.name}</div>
+                    <div className="truncate text-xs text-muted-foreground">{t('settings.about.sponsorsAmount', { amount: `￥${s.amount}` })}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </SettingSection>
+      )}
 
       <LegalDialog open={legalDialogOpen} onClose={() => setLegalDialogOpen(false)} />
       <PrivacyDialog open={privacyDialogOpen} onClose={() => setPrivacyDialogOpen(false)} />
