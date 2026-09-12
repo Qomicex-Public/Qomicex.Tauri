@@ -20,7 +20,7 @@ import { formatBytes } from '../lib/download-format.ts'
 import InstallStepsList from '../components/InstallStepsList.tsx'
 import DownloadSpeedGraph from '../components/DownloadSpeedGraph.tsx'
 
-import type { DownloadTask } from '../types/index.ts'
+import type { DownloadTask, InstallStepInfo } from '../types/index.ts'
 import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
@@ -43,6 +43,18 @@ function formatDate(dateStr: string): string {
     const d = new Date(dateStr)
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   } catch { return dateStr }
+}
+
+/**
+ * 并行管线中多个 step 可同时 active，且它们共用同一个 ProgressField（后端
+ * set_stage/current_file 会被各分支每 ~300ms 互相覆写）。取权重最大的 active
+ * step 作为「当前步骤」派生文案，确定性且不随并行分支抖动。
+ */
+function dominantStep(steps?: InstallStepInfo[]): InstallStepInfo | undefined {
+  if (!steps || steps.length === 0) return undefined
+  const active = steps.filter((s) => s.status === 'active')
+  if (active.length === 0) return undefined
+  return active.reduce((a, b) => ((b.weight ?? 0) > (a.weight ?? 0) ? b : a))
 }
 
 const TYPE_ICON: Record<string, typeof Box> = {
@@ -357,13 +369,11 @@ if (task.instanceId && task.type !== 'batch') {
             const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
             const stepsLive = task.status === 'downloading' || task.status === 'paused'
             const stepsDoneCount = steps?.filter((s) => s.status === 'done').length ?? 0
-            // java/file 任务的 stage 即状态值（'downloading'）；install 任务的
-            // stage 是管线阶段，仅 downloading-* 表示字节在流动。
-            // file 任务的 SSE/创建路径均不写 stage，按类型直接视为下载阶段；
-            // batch（快捷安装聚合）由 aggregate 循环供 speed，同理。
-            const stage = task.stage ?? ''
-            const isDownloadPhase = task.type === 'file' || task.type === 'batch' || stage === 'downloading' || (STAGE_LABELS[stage]?.startsWith('downloading') ?? false)
-            const showSpeedGraph = (task.status === 'downloading' || task.status === 'paused') && isDownloadPhase
+            // 速度图只在字节流动时才有意义，但不应被 stage 门控：整合包的
+            // modpack-files 等阶段同样在下载，旧逻辑按 downloading-* 前缀过滤
+            // 会让图在多个 step 间消失/重挂（历史被清空）。按状态判断即可常显。
+            const showSpeedGraph = task.status === 'downloading' || task.status === 'paused'
+            const activeStep = dominantStep(steps)
             return (
               <div key={task.id} className="group glass-surface rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
                 <div className="flex items-start justify-between gap-4">
@@ -527,6 +537,16 @@ if (task.instanceId && task.type !== 'batch') {
                        task.status === 'failed' ? (task.error ? t('downloads.statusText.failedWith', { error: task.error }) : t('downloads.statusText.failed')) :
                        task.status === 'paused' ? t('downloads.statusText.pausedProgress', { progress: task.progress }) :
                        task.status === 'queued' ? t('downloads.statusText.waiting') :
+                       // 有 steps 的管线任务：从「权重最大的 active step」派生，避免并行分支
+                       // 共用 ProgressField 导致的 stage/currentFile 互相覆写（鬼畜闪烁）。
+                       // percent 为该步自身进度，扫描/安装类步骤无字节进度时不显示数字
+                       // （避免把合成总进度误读成该步完成度）。
+                       activeStep ? (
+                         <>
+                           {t(`downloads.steps.${activeStep.id}`)}
+                           {(activeStep.percent ?? 0) > 0 && ` (${Math.round(activeStep.percent!)}%)`}
+                         </>
+                       ) :
                        // "连接中" only while nothing is known yet — a large file can sit at
                        // a rounded 0% with bytes already flowing.
                          (task.progress > 0 || (task.downloadedBytes ?? 0) > 0 || (task.totalBytes ?? 0) > 0) ? (

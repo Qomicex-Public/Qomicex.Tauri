@@ -53,3 +53,26 @@
 ### 已知既有行为（未在本次修改）
 - 动态拆分 abort 时在途字节会计入 downloaded 但需重下，进度计数可短暂超过 total（幂等写盘保证文件正确性，最终以磁盘大小校验）。
 - 小文件流式路径仍按 use_h1 路由（默认 H2 复用）：Modrinth CDN 实测不受限，14MB/s+ 无压力；若其他源海量小文件偏慢可再评估切独立 TCP。
+
+
+### 2026-09-12 更新
+
+### 2026-09-12 补完：client 级 total timeout 遗漏（本 ADR 未竟事项）
+
+**问题复现**：用户反馈「下载文件太慢会超时（不是连接失败，是规定时间内没下完）」。本 ADR 当时只移除了 `engine.rs` 的 **per-request** `.timeout(60s)`，但 `manager.rs::build_clients` 给 h1/h2/h3 三个 `reqwest::Client` 仍设了 `.timeout(options.timeout)`。reqwest 的 `ClientBuilder::timeout` 是**整包总超时**（`TotalTimeoutBody`：从建连计时到 body 读完），per-request 移除对它无效——慢源上稍大的文件仍会在 60s 被杀。注释「body 不限时」与实现不符，属遗漏。
+
+**探针实测**（96KB @ 16KB/s，故意把 timeout 压到 1s，idle watchdog 默认 30s）：
+```
+CASE ranged:   state=Failed   ← 分片路径被杀
+CASE streamed: state=Failed   ← 流式路径被杀
+```
+（对照：96KB@48KB/s 传输 2.6s 时侥幸 Completed，说明旧行为是「传输时长 > timeout 即失败」的硬杀。）
+
+**修复**：`manager.rs::build_clients` 三个 client 全部删掉 `.timeout()`，保留 `.connect_timeout()`。TTFB 由 `engine.rs` 每请求的 `tokio::time::timeout(..., send)` 守卫（`try_segment_once` / `try_streamed_once`），body 传输由 idle watchdog 守卫——正是本 ADR 声明的设计意图。
+
+**回归测试**：`download_core.rs::slow_but_progressing_body_not_killed_by_timeout`（no_range=false/true 两路径）。验证「没修复时会失败」：stash 掉 `manager.rs` 修复后该用例 FAILED（Failed vs Completed），还原后 PASS。全量 22 测试通过、clippy 0 警告。
+
+**验证方法**：`cd qomicex-downloader-rust && cargo test slow_but_progressing && cargo test && cargo clippy --all-targets`。
+
+**影响**：`qomicex-downloader-rust/src/manager.rs`（3 行删除）。backend 经 path 依赖自动生效，无 API 变化。
+
