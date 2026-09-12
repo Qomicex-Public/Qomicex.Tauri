@@ -89,7 +89,7 @@ export const SERVICES: CreditService[] = [
   { name: 'bangbang93', description: '提供BMCLAPI下载镜像服务', url: 'https://bmclapi2.bangbang93.com', icon: '/services/bangbang93.png' },
   { name: 'mcmod', description: '中文 Mod 数据库', url: 'https://www.mcmod.cn', icon: '/services/mcmod.png' },
   { name: 'Minecraft官网', description: 'Minecraft 官方网站,支持正版!', url: 'https://www.minecraft.net', icon: '/services/minecraft.png' },
-  { name: 'xphost008', description: '启动流程参考教程', url: 'https://github.com/xphost008', icon: '/services/xphost008.jpg' },
+  { name: 'xphost008', description: '为启动器开发提供了很多帮助', url: 'https://github.com/xphost008', icon: '/services/xphost008.jpg' },
 ]
 
 export const LICENSE: LicenseInfo = {
@@ -119,8 +119,8 @@ export interface ReferenceProject {
 }
 
 export const REFERENCE_PROJECTS: ReferenceProject[] = [
-  { name: 'HMCL', url: 'https://github.com/HMCL-dev/HMCL/tree/main', description: '版本检测参考' },
-  { name: 'ProjBobcat', url: 'https://github.com/Corona-Studio/ProjBobcat', description: 'ModLoader 安装器参考' },
-  { name: 'PCL-CE', url: 'https://github.com/PCL-Community/PCL2-CE', description: '模组中文名数据文件来源' },
+  { name: 'HMCL', url: 'https://github.com/HMCL-dev/HMCL/tree/main', description: '参考了 HMCL 的原版游戏版本检测、MMC 整合包安装原理' },
+  { name: 'ProjBobcat', url: 'https://github.com/Corona-Studio/ProjBobcat', description: '参考了 Forge、Fabric 安装器的安装原理' },
+  { name: 'PCL-CE', url: 'https://github.com/PCL-Community/PCL2-CE', description: '参考了 PCL 的模组中文搜索实现' },
 ]
 

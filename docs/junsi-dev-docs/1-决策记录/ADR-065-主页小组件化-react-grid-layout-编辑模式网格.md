@@ -134,3 +134,22 @@ i18n：`widget.launch` 键已不再被引用（7 语言文件中保留，作为�
 - 验证：tsc ✅ / vitepress build ✅ / grep 断言（credits.ts:92、:124；Settings.tsx:117）
 - 文档同步：qml-docs `docs/guide/legal.md` 服务致谢表与参考项目表
 - 启动流程参考的真实来源：xphost008（https://github.com/xphost008 ，用户证言；GitHub 在线验证因网络不通未完成）
+
+
+### 2026-09-13 更新
+
+### 2026-09-12 更新：关于页鸣谢文案修改
+
+用户要求细化关于页鸣谢与参考项目的文案。改动 `src/constants/credits.ts`（description 兜底）+ i18n 7 语言对应值：
+
+| 条目 | key | 新文案（zh-CN） |
+|------|-----|----------------|
+| xphost008（鸣谢） | `refLaunchFlow` | 为启动器开发提供了很多帮助 |
+| HMCL（参考项目） | `refVersionCheck` | 参考了 HMCL 的原版游戏版本检测、MMC 整合包安装原理 |
+| ProjBobcat（参考项目） | `refModloaderInstaller` | 参考了 Forge、Fabric 安装器的安装原理 |
+| PCL-CE（参考项目） | `refModCnData` | 参考了 PCL 的模组中文搜索实现 |
+
+**决策**：保留现有 key 名不重命名（改动最小；重命名需改 7 文件×4 key + Settings.tsx 映射，纯文案任务不值得）。渲染走 `Settings.tsx` 的 `t(SERVICE_DESC_KEYS/REF_DESC_KEYS[...])`，`credits.ts` 的 description 仅为兜底。
+
+**验证**：`pnpm run build` 通过；7 语言值经 UTF-8 码点复核（ja-JP 的 `・` = U+30FB 正确写入）。
+
