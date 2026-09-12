@@ -38,6 +38,7 @@ import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import ImportDialog from '../components/ImportDialog.tsx'
 import { cacheInvalidate, cacheGet, cacheSet } from '../lib/simple-cache.ts'
+import { logWindowUrl, openLogWindow } from '../lib/gameLogWindow.ts'
 import { useRunning } from '../contexts/RunningContext.tsx'
 
 interface ManagedDir {
@@ -149,6 +150,8 @@ export default function Instances() {
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [instanceRefreshKey, setInstanceRefreshKey] = useState(0)
+  /** 实例列表请求序号（见 doScan / init 的竞态说明）。 */
+  const instancesReqRef = useRef(0)
 
   const refreshInstances = useCallback(() => {
     cacheInvalidate('api-instances')
@@ -211,10 +214,14 @@ export default function Instances() {
     catch {}
     setScannedLocal(versions)
 
+    // 实例列表请求序号：init 的 getInstances 与 doScan 的 syncScan 并发写同一状态，
+    // 慢请求（如 getRemoteVersions 拖住 Promise.all）后到会用旧快照覆盖新列表，
+    // 导致失效实例记录缺失 → 右键删除被禁用。仅允许最新发起的请求落状态。
+    const reqId = ++instancesReqRef.current
     try {
       // 使用 syncScan 将扫描结果同步到后端，返回同步后的实例列表
       const instances = await syncScan(dir, versions)
-      setBackedInstances(instances)
+      if (reqId === instancesReqRef.current) setBackedInstances(instances)
     } catch {}
     finally { setScanning(false) }
   }, [])
@@ -222,12 +229,15 @@ export default function Instances() {
   useEffect(() => {
     async function init() {
       setLoading(true)
+      const reqId = ++instancesReqRef.current
       try {
         const cached = await cacheGet<Awaited<ReturnType<typeof getInstances>>>('api-instances')
         if (cached) setBackedInstances(cached)
         const [remote, instances, def, settings] = await Promise.all([getRemoteVersions(), getInstances(), getDefaultInstance(), apiLoadSettings()])
         setRemoteVersions(remote)
-        setBackedInstances(instances)
+        // 与 doScan 的 syncScan 共用序号：getRemoteVersions 慢时本次 getInstances 会晚于
+        // syncScan 落状态，用旧快照覆盖新列表（失效实例记录丢失 → 删除被禁用）。仅最新请求生效。
+        if (reqId === instancesReqRef.current) setBackedInstances(instances)
         cacheSet('api-instances', instances)
         setDefaultInstanceId(def?.id ?? null)
         if (settings.gameDir) setCurrentDir(settings.gameDir)
@@ -461,29 +471,50 @@ export default function Instances() {
     }
   }
 
-  async function handleLaunch(v: ScannedVersion) {
-    let inst = getInstanceForVersion(v)
-    if (!inst) {
-      try {
-        inst = await createInstance({
-          name: v.name,
-          gameVersion: v.gameVersion,
-          loader: firstRealLoader(v).type,
-          loaderVersion: firstRealLoader(v).version,
-          gameDir: currentDir!,
-          maxMemory: 4096,
-          iconData: v.iconData ?? v.modpack?.iconData,
-          modpackName: v.modpack?.modpackName,
-          modpackVersion: v.modpack?.modpackVersion,
-          modpackAuthor: v.modpack?.modpackAuthor,
-          modpackSummary: v.modpack?.modpackSummary,
-        })
-        setBackedInstances((prev) => [...prev, inst!])
-      } catch (e) {
-        await msgAlert(t('instances.createInstanceFailed', { error: e instanceof Error ? e.message : String(e) }))
-        return
-      }
+  /** 取该版本的实例记录；不存在则按扫描结果补建。失败返回 null（已弹窗）。 */
+  async function ensureInstance(v: ScannedVersion): Promise<GameInstance | null> {
+    const existing = getInstanceForVersion(v)
+    if (existing) return existing
+    try {
+      const inst = await createInstance({
+        name: v.name,
+        gameVersion: v.gameVersion,
+        loader: firstRealLoader(v).type,
+        loaderVersion: firstRealLoader(v).version,
+        gameDir: currentDir!,
+        maxMemory: 4096,
+        iconData: v.iconData ?? v.modpack?.iconData,
+        modpackName: v.modpack?.modpackName,
+        modpackVersion: v.modpack?.modpackVersion,
+        modpackAuthor: v.modpack?.modpackAuthor,
+        modpackSummary: v.modpack?.modpackSummary,
+      })
+      setBackedInstances((prev) => [...prev, inst])
+      return inst
+    } catch (e) {
+      await msgAlert(t('instances.createInstanceFailed', { error: e instanceof Error ? e.message : String(e) }))
+      return null
     }
+  }
+
+  /** 启动相关错误统一处理：令牌失效 / 网络错误 / 通用失败。 */
+  async function handleLaunchError(e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const code = e instanceof ApiError ? e.code : ''
+    if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
+      setShowMicrosoftReauth(true)
+      return
+    }
+    if (code.includes('NETWORK_ERROR')) {
+      await msgAlert(t('errors.networkError'))
+      return
+    }
+    await msgAlert(t('instances.launchFailed', { error: msg }))
+  }
+
+  async function handleLaunch(v: ScannedVersion) {
+    const inst = await ensureInstance(v)
+    if (!inst) return
 
     if (needsAccount) {
       const ok = await resolveAccountCheck()
@@ -491,22 +522,36 @@ export default function Instances() {
     }
 
     try {
-      const result = await ctxLaunchInstance(inst!.id, inst!.name, { path: inst!.javaPath, gameVersion: inst!.gameVersion, gameDir: inst!.gameDir })
+      const result = await ctxLaunchInstance(inst.id, inst.name, { path: inst.javaPath, gameVersion: inst.gameVersion, gameDir: inst.gameDir })
       if (!result.success) {
         await msgAlert(t('instances.launchFailedDetail', { error: result.error || '', detail: result.detail || '' }))
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      const code = e instanceof ApiError ? e.code : ''
-      if (msg.includes('TOKEN_EXPIRED') || msg.includes('invalid_grant') || msg.includes('AADSTS70008') || code.includes('TOKEN_EXPIRED')) {
-        setShowMicrosoftReauth(true)
-        return
-      }
-      if (code.includes('NETWORK_ERROR')) {
-        await msgAlert(t('errors.networkError'))
-        return
-      }
-      await msgAlert(t('instances.launchFailed', { error: e instanceof Error ? e.message : String(e) }))
+      await handleLaunchError(e)
+    }
+  }
+
+  /** 测试游戏：启动实例并打开独立实时日志窗口（同实例详情页行为）。 */
+  async function handleTestGame(v: ScannedVersion) {
+    const inst = await ensureInstance(v)
+    if (!inst) return
+
+    // 纯浏览器 dev：window.open 非同步会丢失手势被弹窗拦截，故在点击内先同步打开。
+    const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+    let win: Window | null = null
+    if (!isTauri) win = window.open(logWindowUrl(inst.id), '_blank')
+
+    if (needsAccount) {
+      const ok = await resolveAccountCheck()
+      if (!ok) { win?.close(); return }
+    }
+
+    try {
+      await ctxLaunchInstance(inst.id, inst.name, { path: inst.javaPath, gameVersion: inst.gameVersion, gameDir: inst.gameDir })
+      if (isTauri) await openLogWindow(inst.id)
+    } catch (e) {
+      win?.close()
+      await handleLaunchError(e)
     }
   }
 
@@ -942,14 +987,17 @@ export default function Instances() {
     }
   }
 
-  /** 实例卡片右键菜单：启动（运行中禁用）/ 详情 / 删除（未创建或运行中禁用 + 二次确认）。 */
+  /** 实例卡片右键菜单：启动游戏 / 测试游戏 / 实例详情 / 浏览文件夹 / 删除实例（运行中禁用）。 */
   function buildInstanceContextItems(v: ScannedVersion): ContextMenuItem[] {
     const inst = getInstanceForVersion(v)
     const running = inst ? runningInstances.some((r) => r.instanceId === inst.id) : false
+    const versionDir = `${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`
     return [
-      { label: t('instances.launch'), onClick: () => handleLaunch(v), disabled: running },
-      { label: t('instances.settings'), onClick: () => openVersionSettings(v) },
-      { label: t('common.delete'), onClick: () => handleDeleteInstance(v), disabled: !inst || running, danger: true },
+      { label: t('instances.launchGame'), onClick: () => handleLaunch(v), disabled: running },
+      { label: t('instances.testGame'), onClick: () => handleTestGame(v), disabled: running },
+      { label: t('instances.instanceDetail'), onClick: () => openVersionSettings(v) },
+      { label: t('instances.browseFolder'), onClick: () => { openFolder(versionDir).catch(() => {}) } },
+      { label: t('instances.deleteInstance'), onClick: () => handleDeleteInstance(v), disabled: !inst || running, danger: true },
     ]
   }
 

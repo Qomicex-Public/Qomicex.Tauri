@@ -48,47 +48,11 @@ import ScreenshotCard from '../components/ScreenshotCard.tsx'
 import DataPackCard from '../components/DataPackCard.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
 import { useDebug } from '../components/DebugContext.tsx'
+import { logWindowUrl, openLogWindow } from '../lib/gameLogWindow.ts'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import SchematicPreviewDialog from '../components/SchematicPreviewDialog.tsx'
-
-/** 测试游戏的独立日志窗口 label（固定，重复点击先关旧的再开新的）。 */
-const GAME_LOG_WINDOW_LABEL = 'game-log-window'
-
-/** 独立日志窗口加载本 SPA 的地址（带 logWindow 分支参数）。 */
-function logWindowUrl(instanceId: string): string {
-  return `${window.location.origin}/?logWindow=1&instance=${encodeURIComponent(instanceId)}`
-}
-
-/**
- * 打开独立的游戏实时日志窗口（Tauri 原生子窗口，加载本 SPA 的 `?logWindow=1` 分支，
- * 与主窗口共用主题/字体）。Windows 下隐藏系统标题栏并渲染自定义标题栏（同主窗口做法）；
- * 非 Windows 保留系统标题栏。
- * 非 Tauri（纯浏览器 dev）退回 `window.open`。
- */
-async function openLogWindow(instanceId: string): Promise<void> {
-  try {
-    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
-    const existing = await WebviewWindow.getByLabel(GAME_LOG_WINDOW_LABEL)
-    if (existing) await existing.close().catch(() => {})
-    const isWindows = !navigator.userAgent.includes('Linux') && !navigator.userAgent.includes('Mac')
-    // eslint-disable-next-line no-new
-    new WebviewWindow(GAME_LOG_WINDOW_LABEL, {
-      url: logWindowUrl(instanceId),
-      title: '实时游戏日志',
-      width: 780,
-      height: 620,
-      minWidth: 480,
-      minHeight: 360,
-      resizable: true,
-      center: true,
-      decorations: !isWindows,
-    })
-  } catch {
-    window.open(logWindowUrl(instanceId), '_blank')
-  }
-}
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
