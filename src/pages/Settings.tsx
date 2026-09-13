@@ -243,7 +243,9 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       .catch(() => setSponsorsFailed(true))
   }, [])
 
-  const isPreRelease = /-/.test(APP_INFO.version)
+  // 正式版号形如 1.2.3-release5.0（release.yml 构造），同样带 "-"，
+  // 故需排除 release 后缀，否则正式版会被误判为测试版。
+  const isPreRelease = /-/.test(APP_INFO.version) && !APP_INFO.version.toLowerCase().includes('release')
   const versionType = isPreRelease ? t('settings.about.beta') : t('settings.about.stable')
 
   useEffect(() => {
