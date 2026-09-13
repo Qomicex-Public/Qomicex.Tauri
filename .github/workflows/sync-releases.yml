@@ -1,0 +1,30 @@
+name: Sync Releases
+
+# 自愈发布签名：发布后 release.yml 会立即调用 /api/internal/releases/sync，
+# 但 GitHub 对刚 publish 的 release 的 .sig 资产常有十几分钟延迟，导致签名
+# 以空串落库、/plan 对所有人返回 204。后端 sync 对签名不全的行会自动重拉并
+# 合并，此处提供手动触发入口，发布后待 .sig 就绪时点一下即可补全。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Sync releases
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger backend release sync
+        env:
+          RELEASE_SYNC_TOKEN: ${{ secrets.RELEASE_SYNC_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_SYNC_TOKEN" ]; then
+            echo "::error::RELEASE_SYNC_TOKEN 未配置，请在仓库 Secrets 中添加。"
+            exit 1
+          fi
+          echo "==> POST /api/internal/releases/sync"
+          response=$(curl -sS -f -X POST https://api.qomicex.top/api/internal/releases/sync \
+            -H "Authorization: Bearer ${RELEASE_SYNC_TOKEN}")
+          echo "Response: ${response}"
+          echo "✅ 同步完成（synced 为本次自愈的版本数）"
