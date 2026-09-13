@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { Download, ExternalLink, RotateCw, Search, Tag, User, X } from 'lucide-react'
+import { ChevronDown, Download, ExternalLink, RotateCw, Search, Tag, User, X } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
@@ -105,6 +105,9 @@ const SORT_OPTIONS: Record<string, { key: string }[]> = {
 // 两套独立的标签体系：Modrinth 与 CurseForge 的 category 词汇完全不同。
 // 前端按来源展示对应的一套；后端各自解析（Modrinth 直接用 slug，CurseForge
 // 把 slug 映射到其数字 categoryId）。
+
+// 类别标签折叠时的高度（单行），超出即出现展开/收起按钮（按实际高度自适应）。
+const TAG_COLLAPSED_PX = 28
 
 // Modrinth 模组分类 slug（直接作为 categories facet）。
 const MOD_TAGS = [
@@ -333,6 +336,10 @@ export default function ResourceCenter() {
 
   // 动态类别列表（按 source+category 拉取；失败时回退静态列表 staticTagsFor）
   const [categoryOptions, setCategoryOptions] = useState<ResourceCategory[] | null>(null)
+  const [tagsExpanded, setTagsExpanded] = useState(false)
+  const [tagsOverflow, setTagsOverflow] = useState(false)
+  const [tagsFullHeight, setTagsFullHeight] = useState(TAG_COLLAPSED_PX)
+  const tagsRowRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!tagsSupported(source, category)) {
@@ -489,6 +496,30 @@ export default function ResourceCenter() {
   const clearLoader = () => setLoader('')
 
   const currentSortOptions = SORT_OPTIONS[source] ?? SORT_OPTIONS.modrinth
+  const allTags = useMemo(
+    () => (categoryOptions ? categoryOptions.map((o) => o.slug) : staticTagsFor(source, category)),
+    [categoryOptions, source, category],
+  )
+  // 折叠时把已选标签排到最前，避免被裁掉
+  const orderedTags = tagsExpanded
+    ? allTags
+    : [...allTags.filter((s) => tags.includes(s)), ...allTags.filter((s) => !tags.includes(s))]
+
+  useLayoutEffect(() => { setTagsExpanded(false) }, [allTags])
+
+  useLayoutEffect(() => {
+    const el = tagsRowRef.current
+    if (!el) return
+    const measure = () => {
+      const full = el.scrollHeight
+      setTagsFullHeight(full)
+      setTagsOverflow(full > TAG_COLLAPSED_PX + 1)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [allTags, tags, lang])
   const activeCategoryLabel = useMemo(() => {
     const found = CATEGORIES.find((item) => item.key === category)
     return found ? t(`resource.categories.${found.key}`) : category
@@ -559,8 +590,12 @@ export default function ResourceCenter() {
                 <p className="text-[11px] font-medium text-muted-foreground">
                   {t('resource.categoryFilterLabel')}
                 </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {(categoryOptions ? categoryOptions.map(o => o.slug) : staticTagsFor(source, category)).map((slug) => {
+                <div
+                  ref={tagsRowRef}
+                  className="flex flex-wrap gap-1.5 overflow-hidden transition-[max-height] duration-300 ease-out"
+                  style={{ maxHeight: tagsExpanded ? tagsFullHeight : TAG_COLLAPSED_PX }}
+                >
+                  {orderedTags.map((slug) => {
                     const active = tags.includes(slug)
                     return (
                       <button
@@ -578,17 +613,31 @@ export default function ResourceCenter() {
                       </button>
                     )
                   })}
-                  {tags.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setTags([])}
-                      className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="h-3 w-3" />
-                      {t('resource.clearFilter')}
-                    </button>
-                  )}
                 </div>
+                {(tagsOverflow || tags.length > 0) && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {tags.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setTags([])}
+                        className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3 w-3" />
+                        {t('resource.clearFilter')}
+                      </button>
+                    )}
+                    {tagsOverflow && (
+                      <button
+                        type="button"
+                        onClick={() => setTagsExpanded((v) => !v)}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        <ChevronDown className={cn('h-3 w-3 transition-transform', tagsExpanded && 'rotate-180')} />
+                        {t(tagsExpanded ? 'resource.collapseTags' : 'resource.expandTags')}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

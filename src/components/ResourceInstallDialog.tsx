@@ -26,7 +26,8 @@ interface ResourceInstallDialogProps {
   source: string
   category: string
   instanceId?: string
-  initialVersionId?: string
+  /** 从资源详情某版本直接安装时固定该版本，不再让用户重选 */
+  initialVersion?: ResourceVersion | null
   /** 中文名（mcmod.cn），用于 [{cn}] 命名模板 */
   resourceCnName?: string | null
 }
@@ -38,7 +39,7 @@ function versionCacheKey(resourceId: string, gameVersion: string, loader: string
 }
 
 export default function ResourceInstallDialog({
-  open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId, initialVersionId, resourceCnName,
+  open, onClose, resourceId, resourceTitle, resourceIcon, source, category, instanceId, initialVersion, resourceCnName,
 }: ResourceInstallDialogProps) {
   const { t, lang } = useI18n()
   const { notify } = useMessageBox()
@@ -65,7 +66,7 @@ export default function ResourceInstallDialog({
     if (!open) return
     versionCache.clear()
     setSelectedInstance(null)
-    setSelectedVersion(null)
+    setSelectedVersion(initialVersion ?? null)
     setDeps([])
     setInstalledNames(new Set())
     setVersions([])
@@ -95,6 +96,8 @@ export default function ResourceInstallDialog({
   // on instance change, fetch versions filtered by gameVersion + loader
   useEffect(() => {
     if (!selectedInstance) { setVersions([]); return }
+    // 从详情页固定版本安装：无需再拉取/重选版本列表
+    if (initialVersion) return
     const loaderFilter = category === 'mod'
       ? (selectedInstance.loader || '').toLowerCase() || undefined
       : category === 'datapack' ? 'datapack' : undefined
@@ -102,11 +105,6 @@ export default function ResourceInstallDialog({
     const cached = versionCache.get(key)
     if (cached) {
       setVersions(cached)
-      // auto-select initial version from cache
-      if (initialVersionId) {
-        const match = cached.find(v => v.id === initialVersionId)
-        if (match) setSelectedVersion(match)
-      }
       return
     }
     setLoadingVersions(true)
@@ -125,16 +123,11 @@ export default function ResourceInstallDialog({
         if (cancelled) return
         versionCache.set(key, vlist)
         setVersions(vlist)
-        // auto-select initial version
-        if (initialVersionId) {
-          const match = vlist.find(v => v.id === initialVersionId)
-          if (match) setSelectedVersion(match)
-        }
       } catch { notify(t('dialogs.resourceInstall.versionsLoadFailed'), 'error') }
       if (!cancelled) setLoadingVersions(false)
     })()
     return () => { cancelled = true }
-  }, [selectedInstance, resourceId, source, notify, initialVersionId])
+  }, [selectedInstance, resourceId, source, notify, initialVersion])
 
   const versionOptions = useMemo(() => {
     return [...versions].sort((a, b) => new Date(b.datePublished).getTime() - new Date(a.datePublished).getTime())
@@ -316,7 +309,11 @@ export default function ResourceInstallDialog({
 
         <div className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">{t('dialogs.resourceInstall.selectVersion')}</span>
-          {!selectedInstance ? (
+          {initialVersion ? (
+            <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm text-foreground">
+              {initialVersion.versionNumber}
+            </div>
+          ) : !selectedInstance ? (
             <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
               {t('dialogs.resourceInstall.selectInstanceFirst')}
             </div>

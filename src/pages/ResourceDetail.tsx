@@ -558,7 +558,7 @@ export default function ResourceDetailPage() {
                 <div className="space-y-5 p-6">
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-2xl font-semibold leading-tight">{cnName ? <>{cnName}<span className="ml-1.5 text-sm font-normal text-muted-foreground/60">| {detail.title}</span></> : detail.title}</h2>
+                      <h2 className="text-2xl font-semibold leading-tight">{lang.startsWith('zh') && cnName ? <>{cnName}<span className="ml-1.5 text-sm font-normal text-muted-foreground/60">| {detail.title}</span></> : detail.title}</h2>
                       <Badge variant="secondary">{getSourceLabel(detail.source)}</Badge>
                       {detail.latestVersion && <Badge variant="outline">{t('resourceDetail.latest', { version: detail.latestVersion })}</Badge>}
                     </div>
@@ -915,7 +915,7 @@ export default function ResourceDetailPage() {
           source={source}
           category={category}
           instanceId={instanceIdParam || undefined}
-          initialVersionId={installVersion.id}
+          initialVersion={installVersion}
           resourceCnName={cnName}
         />
       )}
