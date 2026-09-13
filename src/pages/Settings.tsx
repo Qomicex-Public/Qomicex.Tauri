@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
-import { ArrowUp, Bot, Bug, Check, CheckCircle2, ChevronRight, Coffee, Copy, Database, Download, ExternalLink, FileText, Folder, FolderOpen, Globe, Heart, Image, Info, Key, Loader2, Minus, Monitor, Palette, Plus, Puzzle, Rocket, RotateCw, Scale, Search, Settings as SettingsIcon, ShieldHalf, SlidersHorizontal, Tag, Trash2, TriangleAlert, Zap } from 'lucide-react'
+import { ArrowUp, BookOpen, Boxes, Bot, Bug, Check, CheckCircle2, ChevronRight, Coffee, Copy, Database, Download, ExternalLink, FileText, Folder, FolderOpen, Globe, Heart, Image, Info, Key, Loader2, Minus, Monitor, Palette, Plus, Puzzle, Rocket, RotateCw, Scale, Search, Server, Settings as SettingsIcon, ShieldHalf, SlidersHorizontal, Tag, Trash2, TriangleAlert, Users, Zap } from 'lucide-react'
 import { ArrowUp as ArrowUpData, ChevronDown as ChevronDownData, ChevronRight as ChevronRightData, RotateCw as RotateCwData, Search as SearchData, Trash2 as Trash2Data, Zap as ZapData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { MorphIcon } from 'morphicons/react'
@@ -104,6 +104,11 @@ const SERVICE_DESC_KEYS: Record<string, string> = {
   mcmod: 'settings.about.serviceMcmod',
   'Minecraft官网': 'settings.about.serviceMinecraft',
   xphost008: 'settings.about.refLaunchFlow',
+  '吸管解说': 'settings.about.serviceStrawxgDesc',
+  OakChaser: 'settings.about.serviceOakChaserDesc',
+  '飘飘白云': 'settings.about.servicePiaoPiaoBaiYunDesc',
+  ECLTeam: 'settings.about.serviceEclTeamDesc',
+  '所有为启动器提供反馈的人': 'settings.about.serviceAllContributorsDesc',
 }
 const SERVICE_NAME_KEYS: Record<string, string> = {
   Modrinth: 'settings.about.serviceModrinthName',
@@ -113,6 +118,7 @@ const SERVICE_NAME_KEYS: Record<string, string> = {
   mcmod: 'settings.about.serviceMcmodName',
   'Minecraft官网': 'settings.about.serviceMinecraftName',
   xphost008: 'settings.about.serviceXphost008Name',
+  '所有为启动器提供反馈的人': 'settings.about.serviceAllContributorsName',
 }
 const REF_DESC_KEYS: Record<string, string> = {
   HMCL: 'settings.about.refVersionCheck',
@@ -306,7 +312,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       </SettingSection>
 
       {/* Version Info */}
-      <SettingSection title={t('settings.about.versionInfo')}>
+      <SettingSection title={t('settings.about.versionInfo')} icon={<Tag className="h-4 w-4" />}>
         <div className="p-4">
           <div className="rounded-lg bg-background p-4 text-sm">
             <div className="grid grid-cols-2 gap-3">
@@ -417,7 +423,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       />
 
       {/* Contributors */}
-      <SettingSection title={t('settings.about.developers')}>
+      <SettingSection title={t('settings.about.developers')} icon={<Users className="h-4 w-4" />}>
         <div className="p-2">
           <div className="space-y-3">
             {CONTRIBUTORS.map((c) => (
@@ -446,29 +452,38 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       <SettingSection title={t('settings.about.acknowledgements')} icon={<Heart className="h-4 w-4 text-destructive" />}>
         <div className="p-4">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {SERVICES.map((svc) => (
+            {SERVICES.map((svc) => {
+              const clickable = !!svc.url
+              return (
               <button
                 key={svc.name}
-                onClick={() => openUrl(svc.url).catch(() => window.open(svc.url, '_blank'))}
-                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent"
+                disabled={!clickable}
+                onClick={clickable ? () => openUrl(svc.url!).catch(() => window.open(svc.url!, '_blank')) : undefined}
+                className={cn(
+                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm',
+                  clickable ? 'hover:bg-accent' : 'cursor-default'
+                )}
               >
                 {svc.icon ? (
                   <img src={svc.icon} alt={svc.name} className="h-6 w-6 shrink-0 rounded object-contain" />
                 ) : (
-                  <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium">{t(SERVICE_NAME_KEYS[svc.name] ?? svc.name)}</div>
-                  <div className="truncate text-xs text-muted-foreground">{t(SERVICE_DESC_KEYS[svc.name] ?? svc.description)}</div>
+                  <div className="font-medium">{SERVICE_NAME_KEYS[svc.name] ? t(SERVICE_NAME_KEYS[svc.name]) : svc.name}</div>
+                  <Tooltip content={SERVICE_DESC_KEYS[svc.name] ? t(SERVICE_DESC_KEYS[svc.name]) : svc.description} side="top" className="max-w-[280px] whitespace-normal leading-relaxed">
+                    <div className="truncate text-xs text-muted-foreground">{SERVICE_DESC_KEYS[svc.name] ? t(SERVICE_DESC_KEYS[svc.name]) : svc.description}</div>
+                  </Tooltip>
                 </div>
-                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+                {clickable && <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50" />}
               </button>
-            ))}
+              )
+            })}
           </div>
         </div>
       </SettingSection>
 
-      {/* Reference Projects */}      <SettingSection title={t('settings.about.referenceProjects')}>
+      {/* Reference Projects */}      <SettingSection title={t('settings.about.referenceProjects')} icon={<BookOpen className="h-4 w-4" />}>
         <div className="p-2">
           <div className="space-y-2">
             {REFERENCE_PROJECTS.map((proj) => (
@@ -490,7 +505,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       </SettingSection>
 
       {/* Backend Dependencies */}
-      <SettingSection title={t('settings.about.backendDependencies')}>
+      <SettingSection title={t('settings.about.backendDependencies')} icon={<Server className="h-4 w-4" />}>
         <div className="p-2">
           <div className="space-y-1">
             {Object.entries(BACKEND_DEPENDENCIES).map(([category, deps]) => {
@@ -535,7 +550,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       </SettingSection>
 
       {/* Frontend Dependencies */}
-      <SettingSection title={t('settings.about.frontendDependencies')}>
+      <SettingSection title={t('settings.about.frontendDependencies')} icon={<Boxes className="h-4 w-4" />}>
         <div className="p-2">
           <div className="space-y-1">
             {Object.entries(DEPENDENCIES).map(([category, deps]) => {
@@ -576,7 +591,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       </SettingSection>
 
       {/* License */}
-      <SettingSection title={t('settings.about.openSourceLicense')}>
+      <SettingSection title={t('settings.about.openSourceLicense')} icon={<Scale className="h-4 w-4" />}>
         <div className="p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -1833,7 +1848,7 @@ export default function Settings() {
                   </div>
               </SettingSection>
 
-              <SettingSection title={t('settings.java.defaultConfig')}>
+              <SettingSection title={t('settings.java.defaultConfig')} icon={<SlidersHorizontal className="h-4 w-4" />}>
                 <SettingRow
                   label={t('settings.java.defaultRuntime')}
                   description={t('settings.java.defaultRuntimeDesc')}
@@ -2072,7 +2087,7 @@ export default function Settings() {
                   }
                 />
               </SettingSection>
-              <SettingSection title={t('settings.appearance.themeMode')}>
+              <SettingSection title={t('settings.appearance.themeMode')} icon={<Palette className="h-4 w-4" />}>
                 <SettingRow
                   label={t('settings.appearance.themeMode')}
                   control={
