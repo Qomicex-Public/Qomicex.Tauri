@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Info, Layers, List, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, ChevronDown, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Info, Layers, LayoutList, List, ListChecks, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Rows3, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
 import { ArrowUp as ArrowUpData, RotateCw as RotateCwData, Upload as UploadData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
@@ -13,6 +13,7 @@ import { Checkbox, Switch } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { Tabs, TabContent } from '../components/ui'
+import { Popover } from '../components/ui'
 import { I18nBatchToolbar } from '../components/I18nBatchToolbar.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
 import { cn } from '../lib/utils.ts'
@@ -35,7 +36,7 @@ import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { PageShell } from '../components/PageShell.tsx'
-import ModCard from '../components/ModCard.tsx'
+import ModCard, { type ModViewMode } from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
 import ModUpdateDialog from '../components/ModUpdateDialog.tsx'
 import ExportModpackDialog from '../components/ExportModpackDialog.tsx'
@@ -64,18 +65,24 @@ const LOADER_COLORS: Record<string, string> = {
   babric: 'bg-amber-500/10 text-amber-400 border-amber-400/25',
 }
 
+/** Mod 列表密度偏好（localStorage） */
+const MOD_VIEW_KEY = 'qomicex:mods-view-mode'
+
+/** 侧边标签分组（渲染时经 instanceDetail.tabGroups.* 取译名） */
+const TAB_GROUPS = { instance: 'instance', resources: 'resources', online: 'online' } as const
+
 const TABS = [
-  { id: 'overview', icon: Info },
-  { id: 'settings', icon: SlidersHorizontal },
-  { id: 'gamesettings', icon: Gamepad2 },
-  { id: 'saves', icon: Save },
-  { id: 'screenshots', icon: Camera },
-  { id: 'mods', icon: Box },
-  { id: 'resourcepacks', icon: Package },
-  { id: 'shaderpacks', icon: Sun },
-  { id: 'datapacks', icon: Database },
-  { id: 'schematics', icon: PenTool },
-  { id: 'servers', icon: Server },
+  { id: 'overview', icon: Info, group: TAB_GROUPS.instance },
+  { id: 'settings', icon: SlidersHorizontal, group: TAB_GROUPS.instance },
+  { id: 'gamesettings', icon: Gamepad2, group: TAB_GROUPS.instance },
+  { id: 'saves', icon: Save, group: TAB_GROUPS.instance },
+  { id: 'screenshots', icon: Camera, group: TAB_GROUPS.instance },
+  { id: 'mods', icon: Box, group: TAB_GROUPS.resources },
+  { id: 'resourcepacks', icon: Package, group: TAB_GROUPS.resources },
+  { id: 'shaderpacks', icon: Sun, group: TAB_GROUPS.resources },
+  { id: 'datapacks', icon: Database, group: TAB_GROUPS.resources },
+  { id: 'schematics', icon: PenTool, group: TAB_GROUPS.resources },
+  { id: 'servers', icon: Server, group: TAB_GROUPS.online },
 ] as const
 
 function isQuickPlaySupported(gameVersion: string | undefined | null): boolean {
@@ -391,6 +398,15 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 
   const [filterType, setFilterType] = useState('all')
   const [sortBy, setSortBy] = useState('name-asc')
+  // 列表模式（紧凑 / 详细），持久化到 localStorage。
+  // 默认紧凑：日常管理场景，一屏可见更多 Mod（产品定为默认）。
+  const [modViewMode, setModViewMode] = useState<ModViewMode>(() => {
+    try { return localStorage.getItem(MOD_VIEW_KEY) === 'detailed' ? 'detailed' : 'compact' } catch { return 'compact' }
+  })
+  const changeModViewMode = useCallback((mode: ModViewMode) => {
+    setModViewMode(mode)
+    try { localStorage.setItem(MOD_VIEW_KEY, mode) } catch { /* 忽略隐私模式写入失败 */ }
+  }, [])
 
   const FILTER_OPTIONS = [
     { key: 'all', label: t('instanceDetail.mods.filterAll'), icon: List },
@@ -407,6 +423,29 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     { key: 'size-desc', label: t('instanceDetail.mods.sortSizeDesc') },
     { key: 'size-asc', label: t('instanceDetail.mods.sortSizeAsc') },
   ]
+
+  // 各筛选桶的数量（在搜索之后、筛选之前统计，随搜索实时收窄）。
+  // 搜索匹配规则与下方 filtered 保持一致。
+  const filterCounts = useMemo(() => {
+    const q = search.toLowerCase()
+    const matchCnName = lang.startsWith('zh')
+    let base = mods
+    if (q) base = base.filter(m =>
+      m.name.toLowerCase().includes(q) ||
+      (matchCnName && m.chineseName?.toLowerCase().includes(q)) ||
+      m.fileName.toLowerCase().includes(q)
+    )
+    const activeCount = base.filter(m => m.active).length
+    const seen = new Map<string, number>()
+    base.forEach(m => seen.set(m.name.toLowerCase(), (seen.get(m.name.toLowerCase()) ?? 0) + 1))
+    return {
+      all: base.length,
+      active: activeCount,
+      disabled: base.length - activeCount,
+      updatable: base.filter(m => updateFileNames.has(m.fileName)).length,
+      duplicate: base.filter(m => (seen.get(m.name.toLowerCase()) ?? 0) > 1).length,
+    } as Record<string, number>
+  }, [mods, search, updateFileNames, lang])
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchConfirm, setBatchConfirm] = useState<{ type: 'enable' | 'disable' | 'delete' } | null>(null)
@@ -545,12 +584,16 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     return result
   }, [mods, search, filterType, sortBy, updateFileNames, lang])
 
-  const modsAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
+  // 依赖含 modViewMode：切换模式时重新播放入场动画（Instances.tsx 的 grid/list 同此做法）
+  const modsAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading, modViewMode], { y: 12, scale: 0.95 })
 
   const lastClickedRef = useRef(-1)
   const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
     const index = filtered.findIndex(m => m.fileName === fileName)
     if (index === -1) return
+    // Ctrl/Shift 点击即「多选意图」→ 进入选择模式（复选框常驻）。
+    // 普通单击只选中该行（该行复选框因 selected 而显示），不把整列表变成小方框阵列。
+    if (shift || ctrl) setManualSelectMode(true)
     const prevLastClicked = lastClickedRef.current
     setSelected(prev => {
       const next = new Set(prev)
@@ -568,6 +611,35 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       return next
     })
     lastClickedRef.current = index
+  }, [filtered])
+
+  // 批量选择模式（复选框常驻）。只由「显式多选意图」进入：工具栏按钮、Ctrl/Shift 点击、Ctrl+A。
+  // 不用 selected.size > 0 推导——否则单击一行会让整列表立刻布满复选框，回到「后台管理系统感」。
+  // 单击选中的那一行，其复选框因自身 selected 而显示（见 ModCard）。
+  const [manualSelectMode, setManualSelectMode] = useState(false)
+  const selectMode = manualSelectMode
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      // 输入框内不劫持：搜索框里的 Ctrl+A 应选中文本、Esc 应交给输入框自身处理
+      const inInput = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+      // Ctrl/Cmd+A 全选（仅本 tab 挂载时生效；TabContent 非激活即卸载，不会跨 tab 干扰）
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        if (inInput) return
+        e.preventDefault()
+        setManualSelectMode(true)
+        setSelected(new Set(filtered.map(m => m.fileName)))
+        return
+      }
+      // Esc 退出批量选择（清空选中 + 关闭常驻复选框）
+      if (e.key === 'Escape' && !inInput) {
+        setSelected(new Set())
+        setManualSelectMode(false)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
   }, [filtered])
 
   const handleBatchAction = useCallback(async () => {
@@ -650,41 +722,78 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
 
   return (
     <>
-      <SettingSection title={mods.length > 0 ? `${t('instanceDetail.tabs.mods')} (${mods.length})` : t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
-          <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
-            <div className="flex items-center gap-2 flex-1 max-w-sm">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.mods.search')} className="h-8 pl-8 text-xs" />
-              </div>
+      <SettingSection
+        title={mods.length > 0 ? `${t('instanceDetail.tabs.mods')} (${mods.length})` : t('instanceDetail.tabs.mods')}
+        icon={<Box className="h-4 w-4" />}
+        action={
+          <div className="flex items-center gap-2">
+            {/* 列表模式切换：紧凑（默认，日常管理）/ 详细（查看信息） */}
+            <div className="flex items-center rounded-md border border-input p-0.5">
+              <Tooltip content={t('instanceDetail.mods.viewCompact')}>
+                <button
+                  onClick={() => changeModViewMode('compact')}
+                  aria-label={t('instanceDetail.mods.viewCompact')}
+                  aria-pressed={modViewMode === 'compact'}
+                  className={cn('flex h-6 w-6 items-center justify-center rounded transition-colors', modViewMode === 'compact' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+                >
+                  <Rows3 className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip content={t('instanceDetail.mods.viewDetailed')}>
+                <button
+                  onClick={() => changeModViewMode('detailed')}
+                  aria-label={t('instanceDetail.mods.viewDetailed')}
+                  aria-pressed={modViewMode === 'detailed'}
+                  className={cn('flex h-6 w-6 items-center justify-center rounded transition-colors', modViewMode === 'detailed' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+                >
+                  <LayoutList className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
             </div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="gap-1.5 h-7 text-xs">
-                <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
+            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setManualSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Tooltip content={t('instanceDetail.openFolder')}>
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="h-7 w-7 p-0">
+                <FolderOpen className="h-3.5 w-3.5" />
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setUpdateDialogOpen(true)} className="gap-1.5 h-7 text-xs">
-                <Download className="h-3.5 w-3.5" />{t('instanceDetail.mods.checkUpdates')}
-              </Button>
-              <Button size="sm" onClick={() => {
-                const p = new URLSearchParams({ category: 'mod', source: 'modrinth' })
-                if (gameVersion) p.set('gameVersion', gameVersion)
-                if (loader) p.set('loader', loader.toLowerCase())
-                if (instanceId) p.set('instanceId', instanceId)
-                navigate(`/resource-center?${p.toString()}`)
-              }} className="gap-1.5 h-7 text-xs">
-                <Download className="h-3.5 w-3.5" />{t('instanceDetail.mods.install')}
-              </Button>
-            </div>
+            </Tooltip>
+            <Button size="sm" variant="outline" onClick={() => setUpdateDialogOpen(true)} className="gap-1.5 h-7 text-xs">
+              <Download className="h-3.5 w-3.5" />{t('instanceDetail.mods.checkUpdates')}
+            </Button>
+            <Button size="sm" onClick={() => {
+              const p = new URLSearchParams({ category: 'mod', source: 'modrinth' })
+              if (gameVersion) p.set('gameVersion', gameVersion)
+              if (loader) p.set('loader', loader.toLowerCase())
+              if (instanceId) p.set('instanceId', instanceId)
+              navigate(`/resource-center?${p.toString()}`)
+            }} className="gap-1.5 h-7 text-xs">
+              <Download className="h-3.5 w-3.5" />{t('instanceDetail.mods.install')}
+            </Button>
           </div>
-
-          <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
+        }
+      >
+          {/* 单行工具栏：搜索占满剩余宽度，筛选与排序靠右 */}
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+            <div className="relative min-w-[160px] flex-1">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.mods.search')} className="h-8 pl-8 text-xs" />
+            </div>
             <Tabs
-              tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" /> }))}
+              tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" />, count: filterCounts[o.key] }))}
               activeTab={filterType}
               onChange={setFilterType}
               className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
             />
-            <Select value={sortBy} onChange={setSortBy} className="w-32">
+            <Select value={sortBy} onChange={setSortBy} className="w-32 shrink-0">
               {SORT_OPTIONS.map((item) => (
                 <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
               ))}
@@ -714,19 +823,27 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                   </div>
                 </div>
               )}
-              <div className="flex flex-col gap-2">
+              {/* 骨架尺寸与真实卡片一致（图标 12/7、右侧单个开关），避免加载完成后跳动 */}
+              <div className={cn('flex flex-col', modViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
                 {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
-                    <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 w-2/5 rounded bg-muted" />
-                      <div className="h-3 w-3/5 rounded bg-muted" />
+                  modViewMode === 'compact' ? (
+                    <div key={i} className="animate-pulse flex items-center gap-3 rounded-lg border px-3 py-2">
+                      <div className="h-4 w-4 shrink-0 rounded bg-muted" />
+                      <div className="h-7 w-7 shrink-0 rounded-md bg-muted" />
+                      <div className="h-3 flex-1 rounded bg-muted" />
+                      <div className="h-5 w-9 shrink-0 rounded-full bg-muted" />
                     </div>
-                    <div className="flex gap-1.5">
-                      <div className="h-6 w-14 rounded bg-muted" />
-                      <div className="h-6 w-14 rounded bg-muted" />
+                  ) : (
+                    <div key={i} className="animate-pulse flex items-center gap-4 rounded-xl border p-4">
+                      <div className="h-4 w-4 shrink-0 rounded bg-muted" />
+                      <div className="h-12 w-12 shrink-0 rounded-xl bg-muted" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 w-2/5 rounded bg-muted" />
+                        <div className="h-3 w-3/5 rounded bg-muted" />
+                      </div>
+                      <div className="h-5 w-9 shrink-0 rounded-full bg-muted" />
                     </div>
-                  </div>
+                  )
                 ))}
               </div>
             </div>
@@ -740,7 +857,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             </div>
           ) : (
             <DragSelectArea onSelect={handleDragSelect}>
-              <div ref={modsAnimRef} className="flex flex-col gap-2 p-4">
+              <div ref={modsAnimRef} className={cn('flex flex-col p-4', modViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
                 {filtered.map((mod) => (
                   <div key={mod.fileName} data-key={mod.fileName} data-select-item={mod.fileName}>
                     <ModCard
@@ -755,6 +872,9 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                       onSelect={(fileName, shift, ctrl) => toggleSelect(fileName, shift, ctrl)}
                       update={updateMap.get(mod.fileName)}
                       onUpdated={(fn) => setUpdates(prev => prev.filter(u => u.fileName !== fn))}
+                      viewMode={modViewMode}
+                      modsDir={`${gameDir}/mods`}
+                      selectMode={selectMode}
                     />
                   </div>
                 ))}
@@ -2618,9 +2738,42 @@ export default function InstanceDetailPage() {
               <RotateCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             </Button>
           </Tooltip>
-          <Button onClick={handleLaunch} className="gap-2">
-            <Play className="h-3.5 w-3.5" />{t('instanceDetail.overview.launch')}
-          </Button>
+          {/* #1 启动：主按钮 + 下拉（次级启动入口收纳在菜单里，避免一排同级按钮） */}
+          <div className="flex items-center">
+            <Button onClick={handleLaunch} className="gap-2 rounded-r-none">
+              <Play className="h-3.5 w-3.5" />{t('instanceDetail.overview.launch')}
+            </Button>
+            <Popover
+              align="end"
+              contentClassName="min-w-[200px]"
+              trigger={
+                <button
+                  type="button"
+                  aria-label={t('instanceDetail.overview.launchOptions')}
+                  className="flex h-9 w-8 items-center justify-center rounded-r-md border-l border-primary-foreground/25 bg-primary text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              }
+            >
+              <div className="flex flex-col">
+                <button
+                  type="button"
+                  onClick={() => { void handleTestGame() }}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-accent"
+                >
+                  <SquareTerminal className="h-3.5 w-3.5" />{t('instanceDetail.overview.launchWithLog')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setTab('settings') }}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-accent"
+                >
+                  <Settings className="h-3.5 w-3.5" />{t('instanceDetail.overview.instanceSettings')}
+                </button>
+              </div>
+            </Popover>
+          </div>
           <Button variant="outline" onClick={handleTestGame} className="gap-2">
             <SquareTerminal className="h-3.5 w-3.5" />{t('instanceDetail.overview.testGame')}
           </Button>
@@ -2638,7 +2791,7 @@ export default function InstanceDetailPage() {
       <div className="flex-1 min-h-0 flex gap-4">
         <div className="flex w-44 shrink-0 flex-col">
           <Tabs
-            tabs={TABS.map(tab => ({ id: tab.id, label: t(`instanceDetail.tabs.${tab.id}`), icon: <tab.icon className="h-4 w-4" /> }))}
+            tabs={TABS.map(tab => ({ id: tab.id, label: t(`instanceDetail.tabs.${tab.id}`), icon: <tab.icon className="h-4 w-4" />, group: t(`instanceDetail.tabGroups.${tab.group}`) }))}
             activeTab={tab}
             onChange={(id) => setTab(id as typeof tab)}
             orientation="vertical"
