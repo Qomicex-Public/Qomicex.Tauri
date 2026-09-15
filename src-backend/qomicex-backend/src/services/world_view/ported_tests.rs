@@ -1667,3 +1667,120 @@ mod dim_cache_isolation {
         );
     }
 }
+
+mod height_range {
+    //! 维度垂直范围检测（移植自上游 `height_range.rs`）。
+    //!
+    //! 1.13+ 区块携带完整 section 列表，其极值就是维度真实范围（1.20 主世界
+    //! 报 -64..319）；1.13 之前的区块只存非空 section，必须回退 0..255，而不是
+    //! 把稀疏采样当成世界高度（GTNH 只有 Y=0..4，会截断大部分世界）。
+    //!
+    //! 两种情况都对真实存档断言，缺文件时 SKIP。
+
+    use std::path::PathBuf;
+
+    use crate::services::world_view::testing;
+
+    fn modern_save() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\Aegis of the Frozen Sky\saves\新的世界")
+    }
+
+    fn legacy_save() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本")
+    }
+
+    /// 1.20 主世界：section -4..19 => 方块 Y -64..319。
+    #[test]
+    fn modern_dimension_reports_negative_and_high_limits() {
+        if !modern_save().join("level.dat").is_file() {
+            eprintln!("SKIP: modern save not present");
+            return;
+        }
+        let world = testing::open_world(&modern_save()).expect("open world");
+        let overworld = world
+            .dimensions
+            .iter()
+            .find(|d| d.id == 0)
+            .expect("overworld dimension");
+
+        assert_eq!(
+            overworld.min_y, -64,
+            "1.20 overworld must start at Y=-64, got {}",
+            overworld.min_y
+        );
+        assert_eq!(
+            overworld.max_y, 319,
+            "1.20 overworld must reach Y=319, got {}",
+            overworld.max_y
+        );
+    }
+
+    /// 旧格式（1.12.2）区块是稀疏的，范围必须是原版 0..255，而不是采样到的
+    /// 非空 section（GTNH 只报 Y=0..4 => 0..79，会截断大部分世界）。
+    #[test]
+    fn legacy_dimension_falls_back_to_full_range() {
+        if !legacy_save().join("level.dat").is_file() {
+            eprintln!("SKIP: legacy save not present");
+            return;
+        }
+        let world = testing::open_world(&legacy_save()).expect("open world");
+        let overworld = world
+            .dimensions
+            .iter()
+            .find(|d| d.id == 0)
+            .expect("overworld dimension");
+
+        assert_eq!(overworld.min_y, 0, "legacy worlds start at Y=0");
+        assert_eq!(
+            overworld.max_y, 255,
+            "legacy worlds must not be truncated below 255, got {}",
+            overworld.max_y
+        );
+    }
+
+    /// `u32::MAX` 哨兵必须解析为维度自身的天花板。
+    ///
+    /// 固定 255 会在 1.20+ 的世界里静默隐藏所有 Y>255 的方块，也会让「全高」
+    /// URL 与实际全高不符。
+    #[test]
+    fn full_height_sentinel_resolves_to_dimension_ceiling() {
+        let modern = testing::DimensionInfo {
+            id: 0,
+            name: "overworld".into(),
+            region_dir: String::new(),
+            chunk_count: 1,
+            has_data: true,
+            min_y: -64,
+            max_y: 319,
+        };
+        assert_eq!(
+            testing::resolve_ymax(testing::YMAX_FULL, &modern),
+            319,
+            "full-height sentinel must reach the dimension ceiling, not 255"
+        );
+        // 显式值被钳到维度范围内。
+        assert_eq!(testing::resolve_ymax(70, &modern), 70);
+        assert_eq!(testing::resolve_ymax(0, &modern), 0);
+        assert_eq!(testing::resolve_ymax(1000, &modern), 319);
+        // 超过 i32::MAX 的值不得回绕成负高度。
+        assert_eq!(testing::resolve_ymax(0x8000_0000, &modern), 319);
+
+        // 1.18+ 世界里负高度是合法的，必须能通过过滤，而不是被当作无法解析的
+        // u32 拒绝（那会静默回退全高，忽略用户选择）。
+        assert_eq!(testing::resolve_ymax(-64, &modern), -64);
+        assert_eq!(testing::resolve_ymax(-1, &modern), -1);
+        assert_eq!(testing::resolve_ymax(-1000, &modern), -64);
+
+        let legacy = testing::DimensionInfo {
+            min_y: 0,
+            max_y: 255,
+            ..modern.clone()
+        };
+        assert_eq!(testing::resolve_ymax(testing::YMAX_FULL, &legacy), 255);
+        assert_eq!(
+            testing::resolve_ymax(-1, &legacy),
+            0,
+            "clamped to legacy floor"
+        );
+    }
+}

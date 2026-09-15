@@ -4,10 +4,10 @@ import 'leaflet/dist/leaflet.css'
 import { Layers, Map as MapIcon, RotateCw, TriangleAlert, X } from 'lucide-react'
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitle, Tooltip } from './ui/index.ts'
 import { useI18n } from '../i18n/index.tsx'
-import { openWorld, closeWorld, tileUrlTemplate, worldKeyOf, WorldApiError } from '../api/world-view.ts'
+import { openWorld, closeWorld, tileUrlTemplate, worldKeyOf, probeBlock, WorldApiError } from '../api/world-view.ts'
 import { CachedTileLayer } from '../lib/world-tile-layer.ts'
 import { cn } from '../lib/utils.ts'
-import type { WorldInfo } from '../types/index.ts'
+import type { WorldInfo, WorldBlockInfo } from '../types/index.ts'
 
 const MIN_ZOOM = 0
 const MAX_ZOOM = 4
@@ -31,6 +31,12 @@ function esc(s: string): string {
   )
 }
 
+/** 某个维度的垂直范围，缺失时回退到原版旧范围。 */
+function rangeOf(world: WorldInfo, id: number): { min: number; max: number } {
+  const d = world.dimensions.find((x) => x.id === id)
+  return { min: d?.minY ?? 0, max: d?.maxY ?? 255 }
+}
+
 export default function WorldPreviewDialog({ open, instanceId, saveName, savePath, onClose }: Props) {
   const { t } = useI18n()
   const mapDivRef = useRef<HTMLDivElement | null>(null)
@@ -45,11 +51,65 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
   const [dim, setDim] = useState(0)
   const [ymax, setYmax] = useState(255)
   const [mouse, setMouse] = useState<{ x: number; z: number } | null>(null)
+  const [block, setBlock] = useState<WorldBlockInfo | null>(null)
 
   const activeDim = useMemo(
     () => info?.dimensions.find((d) => d.id === dim) ?? null,
     [info, dim],
   )
+  // 当前维度的垂直范围。1.20+ 主世界到 Y=319，旧存档 0..255，模组数据包还能
+  // 改动两端，因此滑块范围与「全高」判定都跟随世界自身，而不是固定 255。
+  const range = { min: activeDim?.minY ?? 0, max: activeDim?.maxY ?? 255 }
+  const atFullHeight = ymax >= range.max
+
+  // 悬停探测：150ms 节流 + 递增序号丢弃过期响应（慢回包不得覆盖新结果）。
+  // mousemove 只注册一次，故通过 ref 读取当前的 dim/ymax/是否已加载。
+  const probeSeqRef = useRef(0)
+  const probeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestRef = useRef({ loaded: false, dim: 0, ymax: 255, maxY: 255, key: '' })
+  latestRef.current = {
+    loaded: !!info,
+    dim,
+    ymax,
+    maxY: range.max,
+    key: worldKeyRef.current,
+  }
+  const lastProbeRef = useRef<{ x: number; z: number } | null>(null)
+
+  const runProbe = useCallback(async (x: number, z: number) => {
+    lastProbeRef.current = { x, z }
+    const cur = latestRef.current
+    if (!cur.loaded) {
+      setBlock(null)
+      return
+    }
+    const seq = ++probeSeqRef.current
+    try {
+      const r = await probeBlock(instanceId, cur.key, cur.dim, x, z, cur.ymax, cur.maxY)
+      if (seq === probeSeqRef.current) setBlock(r)
+    } catch {
+      if (seq === probeSeqRef.current) setBlock(null)
+    }
+  }, [instanceId])
+
+  const scheduleProbe = useCallback(
+    (x: number, z: number) => {
+      lastProbeRef.current = { x, z }
+      if (probeTimerRef.current !== null) return
+      probeTimerRef.current = setTimeout(() => {
+        probeTimerRef.current = null
+        const p = lastProbeRef.current
+        if (p) void runProbe(p.x, p.z)
+      }, 150)
+    },
+    [runProbe],
+  )
+
+  useEffect(() => {
+    return () => {
+      if (probeTimerRef.current !== null) clearTimeout(probeTimerRef.current)
+    }
+  }, [])
 
   // --- 地图生命周期 ---
 
@@ -67,15 +127,18 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
     map.setView([0, 0], 1)
     // CRS.Simple：lat = -worldZ，lng = worldX（zoom 0 时 1 单位 = 1 方块）
     map.on('mousemove', (e: L.LeafletMouseEvent) => {
-      setMouse({ x: Math.round(e.latlng.lng), z: Math.round(-e.latlng.lat) })
+      const x = Math.round(e.latlng.lng)
+      const z = Math.round(-e.latlng.lat)
+      setMouse({ x, z })
+      scheduleProbe(x, z)
     })
     mapRef.current = map
     return map
-  }, [])
+  }, [scheduleProbe])
 
   const buildTileLayer = useCallback(
-    (map: L.Map, dimension: number, height: number) => {
-      const template = tileUrlTemplate(instanceId, worldKeyRef.current, dimension, height)
+    (map: L.Map, dimension: number, height: number, maxY: number) => {
+      const template = tileUrlTemplate(instanceId, worldKeyRef.current, dimension, height, maxY)
       const existing = layerRef.current
       if (existing) {
         // 复用图层（连同缓存），除非世界或高度切层变化。世界键在 URL 里，
@@ -155,11 +218,12 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
       // 打开后看到一张空白地图。
       const first =
         world.dimensions.find((d) => d.hasData)?.id ?? world.dimensions[0]?.id ?? 0
+      const firstRange = rangeOf(world, first)
       setDim(first)
-      setYmax(255)
+      setYmax(firstRange.max)
       setStage('ready')
       if (map) {
-        buildTileLayer(map, first, 255)
+        buildTileLayer(map, first, firstRange.max, firstRange.max)
         drawMarkers(map, world, first)
         const p = world.player
         if (p) map.setView([-p.z, p.x], 2)
@@ -198,9 +262,15 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
   const switchDim = useCallback(
     (id: number) => {
       setDim(id)
+      setBlock(null)
       const map = mapRef.current
       if (!map || !info) return
-      buildTileLayer(map, id, ymax)
+      // 每个维度有各自的垂直范围，因此高度过滤重置到新维度的天花板，
+      // 而不是把旧值带过去（那会越界或误截断）。
+      const nextRange = rangeOf(info, id)
+      const nextYmax = Math.min(ymax, nextRange.max)
+      setYmax(nextYmax)
+      buildTileLayer(map, id, nextYmax, nextRange.max)
       drawMarkers(map, info, id)
       // 飞到该维度的玩家位置，否则首个路径点，否则原点。
       const p = info.player && info.player.dimension === id ? info.player : null
@@ -216,9 +286,9 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
     (v: number) => {
       setYmax(v)
       const map = mapRef.current
-      if (map) buildTileLayer(map, dim, v)
+      if (map) buildTileLayer(map, dim, v, range.max)
     },
-    [dim, buildTileLayer],
+    [dim, range.max, buildTileLayer],
   )
 
   if (!open) return null
@@ -300,19 +370,25 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
                   <div className="flex items-center justify-between text-xs font-medium text-foreground/80">
                     <span>{t('instanceDetail.worldPreview.heightSlice')}</span>
                     <span className="tabular-nums text-muted-foreground">
-                      {ymax >= 255
+                      {atFullHeight
                         ? t('instanceDetail.worldPreview.fullHeight')
                         : t('instanceDetail.worldPreview.ymaxValue', { value: ymax })}
                     </span>
                   </div>
                   <input
                     type="range"
-                    min={0}
-                    max={255}
+                    min={range.min}
+                    max={range.max}
                     value={ymax}
                     onChange={(e) => applyYmax(Number(e.target.value))}
                     className="w-full"
                   />
+                  <p className="text-[10px] leading-snug text-muted-foreground">
+                    {t('instanceDetail.worldPreview.heightRange', {
+                      min: range.min,
+                      max: range.max,
+                    })}
+                  </p>
                   <p className="text-[10px] leading-snug text-muted-foreground">
                     {t('instanceDetail.worldPreview.heightHint')}
                   </p>
@@ -367,16 +443,24 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
               </div>
             </div>
             <div className="flex items-center gap-4 border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
-              <span>
+              <span className="truncate">
                 {t('instanceDetail.worldPreview.coords')}:{' '}
-                {mouse ? `X=${mouse.x} Z=${mouse.z}` : '—'}
+                {mouse
+                  ? `X=${mouse.x}${block?.y != null ? ` Y=${block.y}` : ''} Z=${mouse.z}`
+                  : '—'}
               </span>
-              <span>
+              <span className="min-w-0 flex-1 truncate">
+                {t('instanceDetail.worldPreview.block')}:{' '}
+                {block?.name
+                  ? `${block.name}${block.id && block.id !== block.name ? ` (${block.id})` : ''}`
+                  : '—'}
+              </span>
+              <span className="shrink-0">
                 {t('instanceDetail.worldPreview.dimension')}: {activeDim?.name ?? '—'}
               </span>
-              <span>
+              <span className="shrink-0">
                 {t('instanceDetail.worldPreview.layer')}:{' '}
-                {ymax >= 255
+                {atFullHeight
                   ? t('instanceDetail.worldPreview.fullHeight')
                   : t('instanceDetail.worldPreview.ymaxValue', { value: ymax })}
               </span>

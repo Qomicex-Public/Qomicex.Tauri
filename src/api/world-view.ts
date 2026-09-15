@@ -1,5 +1,5 @@
 import { API_BASE } from './client.ts'
-import type { WorldInfo } from '../types/index.ts'
+import type { WorldInfo, WorldBlockInfo } from '../types/index.ts'
 
 /**
  * 打开实例下的一个存档，后端返回世界元信息（维度 / 玩家 / 路径点 / 种子）。
@@ -54,15 +54,41 @@ export class WorldApiError extends Error {
 /**
  * 瓦片 URL 模板。`key` 段让浏览器缓存与前端缓存按存档隔离——否则切换存档后
  * 会继续复用上一个世界的地图。
+ *
+ * `maxY` 是该维度自身的高度天花板：1.20+ 主世界到 Y=319，固定用 255 判断
+ * 「全高」会把顶部方块误判成需要过滤。
  */
 export function tileUrlTemplate(
   instanceId: string,
   key: string,
   dim: number,
   ymax: number,
+  maxY: number,
 ): string {
-  const yPart = ymax >= 255 ? '4294967295' : String(ymax)
+  const yPart = ymax >= maxY ? '4294967295' : String(ymax)
   return `${API_BASE}/instance/${instanceId}/world/tile/${key}/${dim}/{z}/{x}/{y}?ymax=${yPart}`
+}
+
+/**
+ * 探测某个世界列最顶层的非空气方块（状态栏悬停显示 Y 与方块名）。
+ *
+ * 地图是二维平面，方块 Y 不在平面内，前端推不出来，只能问后端。
+ */
+export async function probeBlock(
+  instanceId: string,
+  key: string,
+  dim: number,
+  x: number,
+  z: number,
+  ymax: number,
+  maxY: number,
+): Promise<WorldBlockInfo> {
+  const yPart = ymax >= maxY ? '4294967295' : String(ymax)
+  const path =
+    `/instance/${instanceId}/world/probe/${key}/${dim}/${x}/${z}?ymax=${yPart}`
+  const res = await fetch(`${API_BASE}${path}`)
+  if (!res.ok) throw new WorldApiError('WORLD_PROBE_FAILED', `探测失败 (${res.status})`, res.status)
+  return (await res.json()) as WorldBlockInfo
 }
 
 /**

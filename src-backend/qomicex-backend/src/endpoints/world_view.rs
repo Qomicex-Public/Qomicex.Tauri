@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ApiError, ApiResult};
 use crate::services::world_view::world::WorldInfo;
+use crate::services::world_view::BlockInfo;
 use crate::state::SharedState;
 
 pub fn router() -> Router<SharedState> {
@@ -35,6 +36,7 @@ pub fn router() -> Router<SharedState> {
             "/instance/{id}/world/tile/{key}/{dim}/{z}/{x}/{y}",
             get(tile),
         )
+        .route("/instance/{id}/world/probe/{key}/{dim}/{x}/{z}", get(probe))
 }
 
 #[derive(Deserialize)]
@@ -50,10 +52,11 @@ struct OpenRequest {
 struct TileQuery {
     /// 高度切层上限；缺省为全高。
     ///
-    /// 用 `u32` 而非 `i32`：前端沿用上游的「全高」哨兵值 `4294967295`
-    /// （`u32::MAX`），`i32` 会反序列化失败。
+    /// 用 `i64` 而非 `u32`：1.18+ 的世界最低到 Y=-64，负高度是合法过滤值，
+    /// `u32` 会拒绝它并静默回退到全高（负 Y 过滤形同失效）。前端的「全高」
+    /// 哨兵值仍是 `4294967295`。
     #[serde(default)]
-    ymax: Option<u32>,
+    ymax: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -131,4 +134,22 @@ async fn tile(
         .header("X-Tile-Empty", if result.has_data { "0" } else { "1" })
         .body(axum::body::Body::from(result.png))
         .map_err(|e| ApiError::internal(format!("构造响应失败: {e}")))?)
+}
+
+/// GET /instance/{id}/world/probe/{key}/{dim}/{x}/{z}?ymax=N
+///
+/// 探测某一世界列最顶层的非空气方块，供前端状态栏悬停显示 Y 与方块名。
+/// 地图是二维平面，方块 Y 不在平面内，前端无法自行推导。
+async fn probe(
+    AxumPath((_id, key, dim, x, z)): AxumPath<(String, String, i32, i32, i32)>,
+    Query(q): Query<TileQuery>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<BlockInfo>> {
+    let svc = state.world_view.clone();
+    let result = tokio::task::spawn_blocking(move || svc.probe_block(&key, dim, x, z, q.ymax))
+        .await
+        .map_err(|e| ApiError::internal(format!("任务失败: {e}")))?;
+    result
+        .map(Json)
+        .map_err(|e| ApiError::new(StatusCode::CONFLICT, "WORLD_TILE_UNAVAILABLE", e))
 }

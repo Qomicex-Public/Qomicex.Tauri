@@ -5,7 +5,7 @@
 
 pub use super::palette::Palette;
 pub use super::render::{BlockRef, ChunkData};
-pub use super::world::World;
+pub use super::world::{resolve_ymax, DimensionInfo, World, YMAX_FULL};
 
 use std::path::{Path, PathBuf};
 

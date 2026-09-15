@@ -52,6 +52,23 @@ export class CachedTileLayer extends L.GridLayer {
     return this.urlTemplate
   }
 
+  /**
+   * Leaflet 的 `_setView` 会先对 zoom 取整再钳位，但 `redraw()` 与 `_update()`
+   * 直接把地图 zoom 透传。地图启用 `zoomSnap: 0.25`，滚轮缩放可能停在小数
+   * zoom（2.5）；这两条路径随后会把 `_tileZoom` 设为 2.5，并请求 z=2.5 的瓦片。
+   * 后端按整数解析 zoom 并返回 400/404，于是所有瓦片失败、地图保持全黑，直到
+   * 下一次整数 zoom 事件才恢复。
+   *
+   * 在这三个调用方共用的唯一收口处取整，保证 `_tileZoom` 始终是整数，同时保留
+   * 0.25 的平滑缩放粒度。
+   */
+  protected _clampZoom(zoom: number): number {
+    const base = L.GridLayer.prototype as unknown as {
+      _clampZoom(zoom: number): number
+    }
+    return base._clampZoom.call(this, Math.round(zoom))
+  }
+
   /** 丢弃上一个存档/高度的缓存，不触碰地图。 */
   clearCache() {
     this.cache.clear()

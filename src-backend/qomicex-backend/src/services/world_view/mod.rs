@@ -54,6 +54,18 @@ pub struct TileResult {
     pub has_data: bool,
 }
 
+/// 单个世界列最顶层非空气方块的信息（供状态栏悬停探测）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockInfo {
+    /// 顶层非空气方块的方块 Y；整列为空时为 `None`。
+    pub y: Option<i32>,
+    /// 人类可读名称（已知时优先用 JourneyMap 显示名）。
+    pub name: Option<String>,
+    /// 原始方块标识：命名方块为 `name`，旧格式为 `id:meta`。
+    pub id: Option<String>,
+}
+
 impl WorldViewService {
     pub fn new() -> Self {
         Self::default()
@@ -82,8 +94,8 @@ impl WorldViewService {
     /// 渲染一个瓦片。`key` 必须与打开时一致，否则说明前端拿的是上一个存档的
     /// 瓦片 URL，直接拒绝而不是渲染出错误世界的地图。
     ///
-    /// `ymax` 是高度切层上限；`None` 与 `u32::MAX`（前端的「全高」哨兵值）都表示
-    /// 全高（y <= 255）。
+    /// `ymax` 是高度切层上限。`None` 与 [`world::YMAX_FULL`]（前端的「全高」
+    /// 哨兵值）都表示该维度自身的天花板；其它值按维度真实范围钳位。
     pub fn tile(
         &self,
         key: &str,
@@ -91,21 +103,19 @@ impl WorldViewService {
         zoom: i32,
         tile_x: i32,
         tile_row: i32,
-        ymax: Option<u32>,
+        ymax: Option<i64>,
     ) -> Result<TileResult, String> {
         let mut guard = self.session.lock().unwrap();
         let session = guard.as_mut().ok_or("尚未打开任何存档")?;
         if session.key != key {
             return Err("瓦片所属存档与当前会话不符".into());
         }
-        let region_dir = PathBuf::from(
-            &session
-                .world
-                .dimension(dim)
-                .ok_or_else(|| format!("维度 {dim} 不存在"))?
-                .region_dir,
-        );
-        let ymax = ymax.unwrap_or(u32::MAX).min(255) as i32;
+        let dim_info = session
+            .world
+            .dimension(dim)
+            .ok_or_else(|| format!("维度 {dim} 不存在"))?;
+        let region_dir = PathBuf::from(&dim_info.region_dir);
+        let ymax = world::resolve_ymax(ymax.unwrap_or(world::YMAX_FULL), dim_info);
         let (png, has_data) = render::render_tile(
             &mut session.cache,
             &region_dir,
@@ -116,6 +126,72 @@ impl WorldViewService {
             ymax,
         )?;
         Ok(TileResult { png, has_data })
+    }
+
+    /// 探测某一世界列最顶层的非空气方块（供前端状态栏悬停显示 Y 与方块名）。
+    ///
+    /// 地图是 CRS.Simple 二维平面，方块 Y 不在平面内，前端推不出来，只能由
+    /// 后端用与渲染同源的列扫描给出。
+    pub fn probe_block(
+        &self,
+        key: &str,
+        dim: i32,
+        x: i32,
+        z: i32,
+        ymax: Option<i64>,
+    ) -> Result<BlockInfo, String> {
+        use render::{BlockRef, BlockRefRef};
+
+        let mut guard = self.session.lock().unwrap();
+        let session = guard.as_mut().ok_or("尚未打开任何存档")?;
+        if session.key != key {
+            return Err("瓦片所属存档与当前会话不符".into());
+        }
+        let dim_info = session
+            .world
+            .dimension(dim)
+            .ok_or_else(|| format!("维度 {dim} 不存在"))?;
+        let region_dir = PathBuf::from(&dim_info.region_dir);
+        let ymax = world::resolve_ymax(ymax.unwrap_or(world::YMAX_FULL), dim_info);
+
+        // 复用渲染器的区块缓存：悬停点几乎总落在某个可见瓦片已加载的区块内，
+        // 因此这里基本是 HashMap 命中。
+        let cx = x >> 4;
+        let cz = z >> 4;
+        let cache_key = (dim, cx, cz);
+        if !session.cache.chunks.contains_key(&cache_key) {
+            let loaded = render::load_chunk(&region_dir, cx, cz)?;
+            session.cache.insert_loaded(cache_key, loaded);
+        }
+        let empty = BlockInfo {
+            y: None,
+            name: None,
+            id: None,
+        };
+        let Some(chunk) = session
+            .cache
+            .chunks
+            .get(&cache_key)
+            .and_then(|c| c.as_ref())
+        else {
+            return Ok(empty);
+        };
+
+        // 区块内局部坐标：区块覆盖 x&15、z&15。
+        let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
+        let Some((block, by)) = chunk.top_block_ref(lx, lz, ymax) else {
+            return Ok(empty);
+        };
+        let id = match block {
+            BlockRefRef::Legacy(id, meta) => format!("{id}:{meta}"),
+            BlockRefRef::Named(name) => name.to_string(),
+        };
+        let owned: BlockRef = block.to_owned_ref();
+        Ok(BlockInfo {
+            y: Some(by),
+            name: Some(session.cache.palette.display_name(&owned)),
+            id: Some(id),
+        })
     }
 }
 

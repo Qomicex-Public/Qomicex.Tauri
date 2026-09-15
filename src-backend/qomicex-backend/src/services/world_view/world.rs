@@ -12,6 +12,10 @@ pub struct DimensionInfo {
     pub region_dir: String,
     pub chunk_count: u32,
     pub has_data: bool,
+    /// 该维度可能包含的最低方块 Y（含）。
+    pub min_y: i32,
+    /// 该维度可能包含的最高方块 Y（含）。
+    pub max_y: i32,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -111,13 +115,17 @@ pub fn open_world(
     // under dimensions/minecraft/overworld/ instead.
     let (files, chunks) = count_regions(&save_dir.join("region"));
     if files > 0 {
+        let region_dir = save_dir.join("region");
+        let (min_y, max_y) = detect_height_range(&region_dir);
         dimensions.push(DimensionInfo {
             id: 0,
             name: palette::dimension_name(0, &instance_root.join("config"))
                 .unwrap_or_else(|| "主世界".into()),
-            region_dir: save_dir.join("region").to_string_lossy().into_owned(),
+            region_dir: region_dir.to_string_lossy().into_owned(),
             chunk_count: chunks,
             has_data: true,
+            min_y,
+            max_y,
         });
     }
 
@@ -140,6 +148,7 @@ pub fn open_world(
         if files == 0 {
             continue;
         }
+        let (min_y, max_y) = detect_height_range(&dir);
         dimensions.push(DimensionInfo {
             id,
             name: palette::dimension_name(id, &instance_root.join("config"))
@@ -147,6 +156,8 @@ pub fn open_world(
             region_dir: dir.to_string_lossy().into_owned(),
             chunk_count: chunks,
             has_data: true,
+            min_y,
+            max_y,
         });
     }
 
@@ -226,12 +237,15 @@ fn scan_namespaced_dimensions(
         }
         let name = palette::dimension_name(id, &instance_root.join("config"))
             .unwrap_or_else(|| full.clone());
+        let (min_y, max_y) = detect_height_range(&region_dir);
         dimensions.push(DimensionInfo {
             id,
             name,
             region_dir: region_dir.to_string_lossy().into_owned(),
             chunk_count: chunks,
             has_data: true,
+            min_y,
+            max_y,
         });
     }
 }
@@ -247,6 +261,110 @@ fn stable_dimension_id(name: &str) -> i32 {
     }
     // Map into -2_000_000..=-1_000_001 to stay clear of -1 (nether).
     -1_000_001 - (h % 1_000_000) as i32
+}
+
+/// 维度在垂直方向可能包含的方块坐标范围。
+pub const LEGACY_MIN_Y: i32 = 0;
+pub const LEGACY_MAX_Y: i32 = 255;
+
+/// 采样一个已生成区块，推断该维度的方块 Y 范围。
+///
+/// 1.13+ 的区块携带**完整** section 列表（含空 section），因此极值就是维度的
+/// 真实上下限：1.20 主世界报 section -4..19，即方块 Y -64..319。模组数据包
+/// 还能进一步改动两端，采样会跟随世界实际使用的范围。
+///
+/// 1.13 之前的区块只存非空 section（GTNH 只有 Y=0..4），极值无法代表世界
+/// 高度，这类回退到原版旧范围 0..255。
+///
+/// 返回 `(min_y, max_y)`。
+fn detect_height_range(region_dir: &Path) -> (i32, i32) {
+    let Some((min_sec, max_sec)) = sample_section_range(region_dir) else {
+        return (LEGACY_MIN_Y, LEGACY_MAX_Y);
+    };
+    (min_sec * 16, max_sec * 16 + 15)
+}
+
+/// region 目录下第一个可读的 1.13+ 区块的 section-Y 极值。
+///
+/// 旧格式区块返回 `None`：它们的 section 列表是稀疏的，不能用来推导维度范围。
+fn sample_section_range(region_dir: &Path) -> Option<(i32, i32)> {
+    let entries = std::fs::read_dir(region_dir).ok()?;
+    let mut regions: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("mca"))
+        .collect();
+    regions.sort();
+
+    for region in regions.iter().take(2) {
+        let Ok(data) = std::fs::read(region) else {
+            continue;
+        };
+        if data.len() < 8192 {
+            continue;
+        }
+        for i in 0..1024 {
+            if data[i * 4 + 3] == 0 {
+                continue;
+            }
+            let cx = (i % 32) as i32 + region_coord(region, true) * 32;
+            let cz = (i / 32) as i32 + region_coord(region, false) * 32;
+            let Ok(Some(chunk)) = super::render::load_chunk(region_dir, cx, cz) else {
+                continue;
+            };
+            // `block_states` 只存在于 1.13+ 扁平化格式，而那正是会存完整
+            // section 列表的格式。
+            if !chunk.sections.iter().any(|s| s.block_states.is_some()) {
+                return None;
+            }
+            let min = chunk.sections.iter().map(|s| s.y).min()?;
+            let max = chunk.sections.iter().map(|s| s.y).max()?;
+            return Some((min, max));
+        }
+    }
+    None
+}
+
+/// 从 `r.<x>.<z>.mca` 文件名解析 region 的 X 或 Z 坐标。
+fn region_coord(path: &Path, x: bool) -> i32 {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return 0;
+    };
+    let mut parts = stem.split('.');
+    if parts.next() != Some("r") {
+        return 0;
+    }
+    let first = parts
+        .next()
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(0);
+    let second = parts
+        .next()
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(0);
+    if x {
+        first
+    } else {
+        second
+    }
+}
+
+/// 表示「不做高度过滤」的 `ymax` 值。
+///
+/// 沿用历史上的 `u32::MAX` 数值，但参数本身是有符号的：1.18+ 的世界最低到
+/// Y=-64，过滤器必须能表达负高度，而 `u32` 解析会拒绝负值并静默回退到全高。
+pub const YMAX_FULL: i64 = 4294967295;
+
+/// 把 `ymax` 解析到某个维度的真实高度范围。
+///
+/// `YMAX_FULL` 必须解析为该维度自身的天花板——而不是固定的 255，那会在
+/// 1.20+ 的世界里静默隐藏所有 Y>255 的方块。
+pub fn resolve_ymax(ymax: i64, dim: &DimensionInfo) -> i32 {
+    if ymax == YMAX_FULL {
+        dim.max_y
+    } else {
+        ymax.clamp(dim.min_y as i64, dim.max_y as i64) as i32
+    }
 }
 
 pub fn read_level_name(level_dat: &Path) -> Option<String> {

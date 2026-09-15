@@ -590,6 +590,20 @@ export interface WorldDimensionInfo {
   regionDir: string
   chunkCount: number
   hasData: boolean
+  /** 该维度可能包含的最低方块 Y（含）。1.18+ 主世界为 -64。 */
+  minY: number
+  /** 该维度可能包含的最高方块 Y（含）。1.20+ 主世界为 319。 */
+  maxY: number
+}
+
+/** 世界预览：某一世界列最顶层非空气方块（GET .../world/probe/...）。 */
+export interface WorldBlockInfo {
+  /** 顶层非空气方块的方块 Y；整列为空时为 null。 */
+  y: number | null
+  /** 人类可读名称（已知时优先用 JourneyMap 显示名）。 */
+  name: string | null
+  /** 原始方块标识：命名方块为 name，旧格式为 id:meta。 */
+  id: string | null
 }
 
 /** 世界预览：玩家最后位置。 */

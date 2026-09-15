@@ -2217,3 +2217,62 @@ Yggdrasil 外置登录的 **ALI（API 地址指示）** 解析：把用户输入
 
 后端 `services/world_view/ported_tests.rs` 的 `all_saves_smoke::tile_path_carries_a_world_key` 是该算法的镜像实现（含对真实前端产出的精确值断言），两端不能各自漂移。
 
+
+
+### 2026-09-15 更新
+
+## 世界预览：同步上游 world-viewer（2026-09-15）
+
+同步上游三个提交：`c9b7466`（小数 zoom 全黑修复）、`af8ec7f`（状态栏 Y/方块）、`fb12ca8`（高度范围动态适配）。
+
+### 小数 zoom 必须取整（`_clampZoom` 覆写）
+
+地图启用 `zoomSnap: 0.25`，滚轮缩放会停在小数 `mapZoom`（0.5 / 2.5）。Leaflet 的 `redraw()` 与 `_update()` 把 `map.getZoom()` **直接**当瓦片 zoom 用（不像 `_setView` 会先取整），`_tileZoom` 因此变成 0.5，URL 变成 `/0.5/-3/-2.png`。后端按整数解析 zoom → 400/404，前端记入 `failures` 后不再重试 → **地图全黑**；缩放一次走 `_setView`（内部取整）即恢复，所以现象是「全黑后随便缩放一次就正常」。
+
+修复：覆写 `_setView`/`redraw`/`_update` 三条路径共用的唯一收口 `_clampZoom`，在其中 `Math.round`。保留 0.25 的平滑缩放粒度。
+
+实测（`src/lib/world-tile-layer.ts`）：覆写后 `0.5→1`、`2.5→3`、`3.5→4`、`0.75→1`、`-0.25→0` 全为整数；原生实现同样输入原样返回小数。
+
+### 高度范围按维度动态适配
+
+`WorldDimensionInfo` 新增两个字段：
+
+| 字段 | 说明 |
+|------|------|
+| `minY` | 该维度可能包含的最低方块 Y（含）。1.18+ 主世界为 -64 |
+| `maxY` | 该维度可能包含的最高方块 Y（含）。1.20+ 主世界为 319 |
+
+高度不在 `level.dat` 里（`min_y`/`height` 属于数据包定义），只能从区块推导：1.13+ 区块携带完整 section 列表（含空 section），极值即真实范围；1.13 之前只存非空 section（GTNH 仅 Y=0..4），无法推导，回退 0..255。两种格式用 `block_states` 是否存在区分，**不能靠 section 数量**（legacy 的 section 数同样可能大于 1）。
+
+前端滑块绑定当前维度的 `minY..maxY`，切维度时重置高度避免越界，滑块下方显示范围。
+
+实测：GTNH(1.7.10) 为 `0..255`，Aegis(1.20+) 为 `-64..319`。
+
+### `ymax` 改为有符号（`i64`）
+
+原按 `u32` 解析，`ymax=-64` 会解析失败并**静默回退到全高**，负 Y 过滤形同失效。改为 `i64` 后负高度是合法过滤值；全高哨兵仍是 `4294967295`，但解析为该维度自身的 `maxY`（不再固定 255，否则 1.20+ 世界会静默隐藏所有 Y>255 的方块）。
+
+实测同一瓦片响应体大小：`4294967295` = `319`（91985B）> `0`（44698B）> `-64`（3125B，与上游记录一致）；`-1000` 正确钳位到 `-64`。
+
+### 悬停探测端点
+
+```
+GET /api/instance/{id}/world/probe/{key}/{dim}/{x}/{z}?ymax=N
+```
+
+返回该世界列最顶层非空气方块：
+
+```ts
+{ y: number | null; name: string | null; id: string | null }
+```
+
+地图是 `CRS.Simple` 二维平面，方块 Y 不在平面内，前端推不出来，只能由后端用与渲染同源的列扫描（复用 `TileCache` 的区块缓存与 `top_block_ref`）给出。`ymax` 语义与瓦片协议一致。未生成区块返回全 `null`；`key` 与当前会话不符返回 409。
+
+前端在 `mousemove` 上以 150ms 节流调用，并用递增序号丢弃过期响应（避免慢回包覆盖新结果）。
+
+实测：`(0,0)` 在 `ymax=4294967295/70` 取到 `y=64 minecraft:sand`，`ymax=0` 取到 `y=0 minecraft:deepslate`，`ymax=-64` 取到 `y=-64 minecraft:bedrock`；未生成区块返回 `null`。
+
+### 与上游的差异（移植适配）
+
+上游 `probe_block` 的缓存键是 `(x>>4, z>>4)`，**不含维度**——正是本项目已修复的缺陷（见 ADR-080）。移植时使用本项目的三元组 `ChunkKey = (dim, cx, cz)`。
+
