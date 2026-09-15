@@ -516,17 +516,35 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     setLoading(false)
   }, [instanceId])
 
+  /**
+   * 启禁 Mod 的实现是磁盘重命名（`{name}` ↔ `{name}.disabled`，见后端 `enable_mod`/
+   * `disable_mod`），而以文件名为键的派生状态（已选集合、更新条目）不会自动跟着改。
+   * 不同步会导致：该行因 key 变化丢失选中态，批量工具栏却仍按旧计数显示，
+   * 后续批量启用/禁用/删除/更新会针对一个已不存在的文件名执行（静默无效）。
+   */
+  const renameKey = useCallback((fileName: string): string => {
+    return /\.disabled$/i.test(fileName)
+      ? fileName.slice(0, -'.disabled'.length)
+      : fileName + '.disabled'
+  }, [])
+
   const toggleModLocal = useCallback((fileName: string) => {
+    const renamed = renameKey(fileName)
     setMods(prev => prev.map(m => {
       if (m.fileName !== fileName) return m
-      if (m.active) {
-        return { ...m, fileName: m.fileName + '.disabled', active: false }
-      } else {
-        const newName = m.fileName.endsWith('.disabled') ? m.fileName.slice(0, -9) : m.fileName
-        return { ...m, fileName: newName, active: true }
-      }
+      return { ...m, fileName: renamed, active: !m.active }
     }))
-  }, [])
+    // 选择集合换键（保持该行的选中态，而不是丢掉）
+    setSelected(prev => {
+      if (!prev.has(fileName)) return prev
+      const next = new Set(prev)
+      next.delete(fileName)
+      next.add(renamed)
+      return next
+    })
+    // 更新条目同样换键：否则「可更新」筛选/蓝点标记会指向旧文件名
+    setUpdates(prev => prev.map(u => (u.fileName === fileName ? { ...u, fileName: renamed } : u)))
+  }, [renameKey])
 
   useEffect(() => {
     loadMods()
@@ -2762,7 +2780,7 @@ export default function InstanceDetailPage() {
                   onClick={() => { void handleTestGame() }}
                   className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-accent"
                 >
-                  <SquareTerminal className="h-3.5 w-3.5" />{t('instanceDetail.overview.launchWithLog')}
+                  <SquareTerminal className="h-3.5 w-3.5" />{t('instanceDetail.overview.testGame')}
                 </button>
                 <button
                   type="button"
@@ -2774,9 +2792,8 @@ export default function InstanceDetailPage() {
               </div>
             </Popover>
           </div>
-          <Button variant="outline" onClick={handleTestGame} className="gap-2">
-            <SquareTerminal className="h-3.5 w-3.5" />{t('instanceDetail.overview.testGame')}
-          </Button>
+          {/* 次级启动入口已收纳进上方下拉菜单（「测试游戏」= handleTestGame），
+              此处不再并列重复同一操作 */}
           <Tooltip content={isDefault ? t('instanceDetail.overview.unpin') : t('instanceDetail.overview.pin')}>
             <Button variant="outline" size="icon" onClick={toggleDefault}>
               <Star className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />

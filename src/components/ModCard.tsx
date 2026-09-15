@@ -133,7 +133,17 @@ export default function ModCard({
     contextItems.push({ label: t('dialogs.common.viewDetail'), onClick: openDetail })
   }
   contextItems.push(
-    { label: t('instanceDetail.mods.openModsFolder'), onClick: () => { if (modsDir) openPath(modsDir).catch(() => {}) } },
+    {
+      label: t('instanceDetail.mods.openModsFolder'),
+      onClick: () => {
+        // 失败不能静默：目录缺失 / 平台打开器拒绝时给出可见反馈（与其它资源卡片一致）
+        if (!modsDir) { notify(t('dialogs.common.openFailed'), 'error'); return }
+        openPath(modsDir).catch((e) => {
+          console.error('Open mods folder failed:', modsDir, e)
+          notify(t('dialogs.common.openFailed'), 'error')
+        })
+      },
+    },
     { label: t('dialogs.mod.changeVersion'), onClick: () => onChangeVersion(mod) },
     {
       label: t('dialogs.mod.update'),
