@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Layers, Map as MapIcon, RotateCw, TriangleAlert, X } from 'lucide-react'
+import { Layers, Map as MapIcon, Minus, Plus, RotateCw, TriangleAlert, X } from 'lucide-react'
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitle, Tooltip } from './ui/index.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { openWorld, closeWorld, tileUrlTemplate, worldKeyOf, probeBlock, WorldApiError } from '../api/world-view.ts'
@@ -52,6 +52,7 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
   const [ymax, setYmax] = useState(255)
   const [mouse, setMouse] = useState<{ x: number; z: number } | null>(null)
   const [block, setBlock] = useState<WorldBlockInfo | null>(null)
+  const [zoom, setZoom] = useState(1)
 
   const activeDim = useMemo(
     () => info?.dimensions.find((d) => d.id === dim) ?? null,
@@ -120,11 +121,14 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
       crs: L.CRS.Simple,
       minZoom: MIN_ZOOM,
       maxZoom: MAX_ZOOM,
-      zoomControl: true,
+      // 用启动器 Button 组件自绘缩放控件（Leaflet 原生的是白色方块 + 粗体字符，
+      // 与启动器的圆角/暗色/图标风格不搭）。见下方 overlay。
+      zoomControl: false,
       attributionControl: false,
       zoomSnap: 0.25,
     })
     map.setView([0, 0], 1)
+    setZoom(map.getZoom())
     // CRS.Simple：lat = -worldZ，lng = worldX（zoom 0 时 1 单位 = 1 方块）
     map.on('mousemove', (e: L.LeafletMouseEvent) => {
       const x = Math.round(e.latlng.lng)
@@ -132,6 +136,7 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
       setMouse({ x, z })
       scheduleProbe(x, z)
     })
+    map.on('zoomend', () => setZoom(map.getZoom()))
     mapRef.current = map
     return map
   }, [scheduleProbe])
@@ -291,6 +296,13 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
     [dim, range.max, buildTileLayer],
   )
 
+  /** 自绘缩放控件：步进与 Leaflet 原生一致（zoomDelta 默认 1）。 */
+  const zoomBy = useCallback((delta: number) => {
+    const map = mapRef.current
+    if (!map) return
+    map.setZoom(Math.round(map.getZoom()) + delta)
+  }, [])
+
   if (!open) return null
 
   const waypointSources = (() => {
@@ -335,6 +347,35 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
             <div className="flex h-[70vh] min-h-[26rem]">
               <div className="relative flex-1">
                 <div ref={mapDivRef} className="absolute inset-0 z-0" />
+                {/* 缩放控件：用启动器 Button + Tooltip 自绘，替代 Leaflet 原生控件
+                    （原生的是白色方块 + 粗体字符，与启动器风格不搭）。位置与原生
+                    一致（左上角）。 */}
+                <div className="absolute left-3 top-3 z-[500] flex flex-col gap-1">
+                  <Tooltip content={t('instanceDetail.worldPreview.zoomIn')}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label={t('instanceDetail.worldPreview.zoomIn')}
+                      disabled={zoom >= MAX_ZOOM}
+                      onClick={() => zoomBy(1)}
+                      className="h-7 w-7 bg-background/80 p-0 backdrop-blur"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content={t('instanceDetail.worldPreview.zoomOut')}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label={t('instanceDetail.worldPreview.zoomOut')}
+                      disabled={zoom <= MIN_ZOOM}
+                      onClick={() => zoomBy(-1)}
+                      className="h-7 w-7 bg-background/80 p-0 backdrop-blur"
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
+                </div>
                 <div className="pointer-events-none absolute bottom-2 left-2 z-[500] rounded bg-background/80 px-2 py-1 text-[10px] text-muted-foreground backdrop-blur">
                   {t('instanceDetail.worldPreview.controlsHint')}
                 </div>

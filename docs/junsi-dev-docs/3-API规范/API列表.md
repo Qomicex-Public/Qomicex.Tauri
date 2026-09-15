@@ -2276,3 +2276,36 @@ GET /api/instance/{id}/world/probe/{key}/{dim}/{x}/{z}?ymax=N
 
 上游 `probe_block` 的缓存键是 `(x>>4, z>>4)`，**不含维度**——正是本项目已修复的缺陷（见 ADR-080）。移植时使用本项目的三元组 `ChunkKey = (dim, cx, cz)`。
 
+
+
+### 2026-09-16 更新
+
+### 缩放控件自绘（2026-09-15）
+
+地图原先使用 Leaflet 原生缩放控件（`zoomControl: true`）。原生控件是白色方块 + 18px 粗体等宽字符（`.leaflet-control-zoom-in/out` 用 `'Lucida Console', Monaco, monospace`），与启动器的圆角/暗色/图标风格不搭。
+
+改为 `zoomControl: false`，用启动器组件自绘，位置与原生一致（地图左上角）：
+
+```tsx
+<div className="absolute left-3 top-3 z-[500] flex flex-col gap-1">
+  <Tooltip content={t('instanceDetail.worldPreview.zoomIn')}>
+    <Button size="sm" variant="outline" aria-label={...}
+            disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1)}
+            className="h-7 w-7 bg-background/80 p-0 backdrop-blur">
+      <Plus className="h-3.5 w-3.5" />
+    </Button>
+  </Tooltip>
+  {/* Minus 同理，disabled={zoom <= MIN_ZOOM} */}
+</div>
+```
+
+要点：
+
+- **组件**：`Button`（`variant="outline"` + `size="sm"`）+ `Tooltip`，与启动器其它图标按钮同一套样式（`rounded-md`、`border-input`、`hover:bg-accent`、`text-muted-foreground`）。
+- **图标**：`Plus`/`Minus`（lucide）。Button 的 `[&_svg]:size-4` 生效，实际 16x16，与底部「取消」按钮的图标一致。
+- **半透明**：`bg-background/80` + `backdrop-blur`，避免按钮完全遮住下方瓦片。
+- **边界禁用**：`zoom` 状态由 `zoomend` 事件维护（`ensureMap` 里 `setZoom(map.getZoom())` 初始化），到 `MAX_ZOOM`/`MIN_ZOOM` 时对应按钮 `disabled`。
+- **步进**：`zoomBy(delta)` 用 `Math.round(map.getZoom()) + delta`，与 Leaflet `zoomDelta` 默认值 1 一致；先取整是为了兼容 `zoomSnap: 0.25` 留下的小数 zoom。
+
+实测（Chromium + Tauri mock 注入）：原生控件节点数 `0`；两个按钮均为 `28x28`、图标 `16x16`、`rounded-md`；点击放大瓦片 URL 的 z 段 `2 → 3` 逐级递增且全为整数；到上限 `放大` 按钮 `disabled`、到下限 `缩小` 按钮 `disabled`。
+
