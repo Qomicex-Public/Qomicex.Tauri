@@ -59,6 +59,9 @@ const LOADER_COLORS: Record<string, string> = {
   Vanilla: 'text-muted-foreground bg-muted border-border',
 }
 
+/** 自定义分组配色（模块级常量：保证引用稳定，弹窗内表单状态不会被父级重渲染重置） */
+const GROUP_COLORS = ['#22d3ee', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#3b82f6', '#ec4899', '#84cc16']
+
 const TYPE_LABEL: Record<string, string> = { release: 'instances.type.release', snapshot: 'instances.type.snapshot', old_beta: 'instances.type.old_beta', old_alpha: 'instances.type.old_alpha', april_fools: 'instances.type.april_fools' }
 const TYPE_ORDER: Record<string, number> = { release: 0, snapshot: 1, april_fools: 1.5, old_beta: 2, old_alpha: 3 }
 const REMOTE_VERSION_CATEGORIES = [
@@ -1040,22 +1043,37 @@ export default function Instances() {
     setSettingsTab('basic')
   }
 
-  const GROUP_COLORS = ['#22d3ee', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#3b82f6', '#ec4899', '#84cc16']
+  /** 分组操作失败统一用 toast 反馈：不再套一层二级对话框，也不打断当前编辑上下文 */
+  function notifyGroupError(kind: 'create' | 'save' | 'delete', e: unknown) {
+    const error = e instanceof ApiError ? e.displayMessage : t('dialogs.common.unknownError')
+    const message = kind === 'delete'
+      ? t('dialogs.common.deleteFailed', { error })
+      : kind === 'create'
+        ? t('instances.createFailed', { error })
+        : t('instances.saveFailed', { error })
+    notify(message, 'error')
+  }
 
   async function handleCreateGroup(name: string, color: string) {
-    if (!name.trim()) return
+    const trimmed = name.trim()
+    if (!trimmed) return
     try {
-      await createInstanceGroup(name.trim(), color)
+      await createInstanceGroup(trimmed, color)
       setGroupsDirty(d => d + 1)
-    } catch {}
+    } catch (e) {
+      notifyGroupError('create', e)
+    }
   }
 
   async function handleRenameGroup(id: string, name: string, color: string) {
-    if (!name.trim()) return
+    const trimmed = name.trim()
+    if (!trimmed) return
     try {
-      await updateInstanceGroup(id, name.trim(), color)
+      await updateInstanceGroup(id, trimmed, color)
       setGroupsDirty(d => d + 1)
-    } catch {}
+    } catch (e) {
+      notifyGroupError('save', e)
+    }
   }
 
   async function handleDeleteGroup(id: string) {
@@ -1064,7 +1082,9 @@ export default function Instances() {
       if (groupFilter === id) setGroupFilter(null)
       setGroupsDirty(d => d + 1)
       refreshInstances()
-    } catch {}
+    } catch (e) {
+      notifyGroupError('delete', e)
+    }
   }
 
   async function handleAssignGroup(v: ScannedVersion, groupId: string) {
@@ -1594,16 +1614,52 @@ export default function Instances() {
     )
   }
 
-/** 管理自定义分组弹窗：创建 / 重命名 / 改色 / 删除 */
+/** 选中态高亮环：1.5px 底色间隙 + 中性前景色描边（刻意避开品牌绿，防止与绿色系配色混淆） */
+const SWATCH_RING_SELECTED = '0 0 0 1.5px hsl(var(--popover)), 0 0 0 3px hsl(var(--foreground) / 0.8)'
+const SWATCH_RING_IDLE = '0 0 0 1px hsl(var(--foreground) / 0.14)'
+
+/** 分组色板：圆点尺寸统一 h-4/w-4，外层 20px 热区保证可点击性，选中态用细环而非重描边 */
+function GroupColorPicker({ colors, value, onChange, className }: {
+  colors: string[]
+  value: string
+  onChange: (color: string) => void
+  className?: string
+}) {
+  const { t } = useI18n()
+  return (
+    <div className={cn('flex items-center gap-1', className)}>
+      {colors.map((c) => {
+        const selected = c === value
+        return (
+          <button
+            key={c}
+            type="button"
+            aria-label={`${t('instances.groupColor')} ${c}`}
+            aria-pressed={selected}
+            onClick={() => onChange(c)}
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground/60"
+          >
+            <span
+              className={cn('h-4 w-4 rounded-full transition-[opacity,transform] duration-150', selected ? 'opacity-100' : 'opacity-70 hover:scale-110 hover:opacity-100')}
+              style={{ backgroundColor: c, boxShadow: selected ? SWATCH_RING_SELECTED : SWATCH_RING_IDLE }}
+            />
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 管理自定义分组弹窗：创建 / 原位改名改色 / 删除（内联二次确认，不起二级弹窗） */
 function ManageGroupsDialog({ open, groups, colors, groupCounts, onClose, onCreate, onRename, onDelete }: {
   open: boolean
   groups: InstanceGroup[]
   colors: string[]
   groupCounts?: Record<string, number>
   onClose: () => void
-  onCreate: (name: string, color: string) => void
-  onRename: (id: string, name: string, color: string) => void
-  onDelete: (id: string) => void
+  onCreate: (name: string, color: string) => void | Promise<void>
+  onRename: (id: string, name: string, color: string) => void | Promise<void>
+  onDelete: (id: string) => void | Promise<void>
 }) {
   const { t } = useI18n()
   const [name, setName] = useState('')
@@ -1611,16 +1667,66 @@ function ManageGroupsDialog({ open, groups, colors, groupCounts, onClose, onCrea
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editColor, setEditColor] = useState('')
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [deletingGroup, setDeletingGroup] = useState<string | null>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  const editInputRef = useRef<HTMLInputElement>(null)
 
+  // 打开时重置瞬时状态；colors 为模块级常量，引用稳定，不会在父级重渲染时清掉正在输入的内容
   useEffect(() => {
-    if (open) { setName(''); setColor(colors[0] ?? '#22d3ee'); setEditingId(null) }
+    if (open) {
+      setName('')
+      setColor(colors[0] ?? '#22d3ee')
+      setEditingId(null)
+      setPendingDeleteId(null)
+    }
   }, [open, colors])
 
+  // 进入编辑态：聚焦并全选原名，可直接覆盖输入
+  useEffect(() => {
+    if (!editingId) return
+    const el = editInputRef.current
+    if (!el) return
+    el.focus()
+    el.select()
+  }, [editingId])
+
+  /** 与后端 GROUP_NAME_EXISTS 同规则（ASCII 大小写不敏感）的重名预检，避免提交后才报错 */
+  function isDuplicate(value: string, excludeId?: string) {
+    const v = value.trim().toLowerCase()
+    return v.length > 0 && groups.some((g) => g.id !== excludeId && g.name.toLowerCase() === v)
+  }
+
+  const newName = name.trim()
+  const canCreate = newName.length > 0 && !isDuplicate(newName)
+  const editedName = editName.trim()
+  const canSave = editedName.length > 0 && !isDuplicate(editedName, editingId ?? undefined)
+
   function startEdit(g: InstanceGroup) {
+    setPendingDeleteId(null)
     setEditingId(g.id)
     setEditName(g.name)
     setEditColor(g.color)
+  }
+
+  async function submitCreate() {
+    if (!canCreate) return
+    await onCreate(newName, color)
+    setName('')
+    nameInputRef.current?.focus()
+  }
+
+  async function commitEdit(g: InstanceGroup) {
+    if (!canSave) return
+    await onRename(g.id, editedName, editColor)
+    setEditingId(null)
+  }
+
+  async function confirmDelete(id: string) {
+    setDeletingGroup(id)
+    setPendingDeleteId(null)
+    await onDelete(id)
+    setDeletingGroup(null)
   }
 
   return (
@@ -1631,68 +1737,150 @@ function ManageGroupsDialog({ open, groups, colors, groupCounts, onClose, onCrea
           {t('instances.manageGroups')}
         </DialogTitle>
       </DialogHeader>
+
       <DialogBody className="space-y-4">
-        {/* 新建 */}
+        {/* 创建区：名称 + 颜色 + 主按钮收进同一个容器，视觉上是一件事 */}
         <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
           <Input
+            ref={nameInputRef}
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void submitCreate()
+              }
+            }}
             placeholder={t('instances.groupNamePlaceholder')}
+            aria-invalid={newName.length > 0 && !canCreate || undefined}
           />
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              {colors.map(c => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setColor(c)}
-                  className={cn('h-5 w-5 rounded-full border-2 transition-transform', color === c ? 'scale-110 border-primary ring-2 ring-primary/20' : 'border-transparent hover:scale-110')}
-                  style={{ backgroundColor: c }}
-                />
-              ))}
+          {newName.length > 0 && !canCreate && (
+            <p className="-mt-2 text-xs text-destructive">{t('instances.groupNameDuplicate')}</p>
+          )}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="shrink-0 text-xs text-muted-foreground">{t('instances.groupColor')}</span>
+              <GroupColorPicker colors={colors} value={color} onChange={setColor} />
             </div>
-            <Button size="sm" disabled={!name.trim()} onClick={() => { onCreate(name, color); setName('') }}>
-              {t('common.create')}
+            <Button size="sm" className="shrink-0" disabled={!canCreate} onClick={() => void submitCreate()}>
+              {t('instances.createGroup')}
             </Button>
           </div>
         </div>
 
-        {/* 列表 */}
-        <div className="space-y-1.5">
+        {/* 已有分组：标题带数量，高度自适应，超出仅列表内部滚动 */}
+        <div className="flex min-h-0 flex-col gap-2">
+          <div className="flex items-center justify-between px-0.5">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
+              {t('instances.existingGroups')}
+            </p>
+            {groups.length > 0 && (
+              <span className="text-xs tabular-nums text-muted-foreground/60">{groups.length}</span>
+            )}
+          </div>
+
           {groups.length === 0 ? (
-            <p className="py-6 text-center text-xs text-muted-foreground">{t('instances.noGroups')}</p>
-          ) : groups.map((g) => (
-            <div key={g.id} className="flex items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors hover:bg-muted/20">
-              <span className="h-3 w-3 shrink-0 rounded-full ring-1 ring-black/10" style={{ backgroundColor: g.color }} />
-              {editingId === g.id ? (
-                <>
-                  <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-8 flex-1 text-sm" autoFocus />
-                  <div className="flex items-center gap-1">
-                    {colors.map(c => (
-                      <button key={c} type="button" onClick={() => setEditColor(c)} className={cn('h-4 w-4 rounded-full border-2', editColor === c ? 'border-primary scale-110' : 'border-transparent')} style={{ backgroundColor: c }} />
-                    ))}
-                  </div>
-                  <Button size="sm" variant="default" onClick={() => { onRename(g.id, editName, editColor); setEditingId(null) }}><Check className="h-3 w-3" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>{t('common.cancel')}</Button>
-                </>
-              ) : (
-                <>
-                  <span className="flex-1 truncate text-sm font-medium">{g.name}</span>
-                  {groupCounts && groupCounts[g.id] !== undefined && (
-                    <span className="text-xs text-muted-foreground/60">{groupCounts[g.id] + '个'}</span>
-                  )}
-                  <Tooltip content={t('common.edit')}>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEdit(g)}><Pencil className="h-3 w-3" /></Button>
-                  </Tooltip>
-                  <Tooltip content={t('common.delete')}>
-                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { setDeletingGroup(g.id); setTimeout(() => { onDelete(g.id); setDeletingGroup(null) }, 400) }}>
-                      <MorphActionIcon active={deletingGroup === g.id} busy={RotateCwData} rest={Trash2Data} className="h-3 w-3" />
-                    </Button>
-                  </Tooltip>
-                </>
-              )}
+            <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed px-4 py-6 text-center">
+              <FolderPlus className="h-4 w-4 text-muted-foreground/40" />
+              <p className="text-xs text-muted-foreground">{t('instances.noGroups')}</p>
+              <p className="text-[11px] leading-relaxed text-muted-foreground/60">{t('instances.noGroupsHint')}</p>
             </div>
-          ))}
+          ) : (
+            <ul className="scroll-fade-mask max-h-[min(38vh,300px)] space-y-1 overflow-y-auto pr-1">
+              {groups.map((g) => {
+                const count = groupCounts?.[g.id] ?? 0
+                const editing = editingId === g.id
+                const pending = pendingDeleteId === g.id
+                return (
+                  <li key={g.id} className="animate-in slide-up">
+                    {editing ? (
+                      <div className="rounded-lg border border-primary/25 bg-accent/50 p-2.5">
+                        <div className="flex items-center gap-2">
+                          <Input
+                            ref={editInputRef}
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                void commitEdit(g)
+                              } else if (e.key === 'Escape') {
+                                // 仅退出编辑态，不要把 Escape 冒泡给 Dialog 关掉整个弹窗
+                                e.preventDefault()
+                                e.stopPropagation()
+                                setEditingId(null)
+                              }
+                            }}
+                            className="h-8 min-w-0 flex-1 text-sm"
+                          />
+                          <Button size="sm" className="h-8 shrink-0" disabled={!canSave} onClick={() => void commitEdit(g)}>
+                            {t('common.save')}
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-8 shrink-0" onClick={() => setEditingId(null)}>
+                            {t('common.cancel')}
+                          </Button>
+                        </div>
+                        {editedName.length > 0 && !canSave && (
+                          <p className="mt-1.5 text-xs text-destructive">{t('instances.groupNameDuplicate')}</p>
+                        )}
+                        <GroupColorPicker colors={colors} value={editColor} onChange={setEditColor} className="mt-2" />
+                      </div>
+                    ) : (
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label={t('common.edit')}
+                        onClick={() => startEdit(g)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            startEdit(g)
+                          }
+                        }}
+                        className={cn(
+                          'group/row flex w-full cursor-pointer items-center gap-2.5 rounded-lg border border-transparent px-2.5 py-2 outline-none transition-colors',
+                          'hover:border-border hover:bg-accent/60 focus-visible:border-primary/40 focus-visible:bg-accent/60',
+                          pending && 'border-destructive/30 bg-destructive/5',
+                        )}
+                      >
+                        <span className="h-3 w-3 shrink-0 rounded-full ring-1 ring-inset ring-black/10" style={{ backgroundColor: g.color }} />
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{g.name}</span>
+                        {count > 0 && (
+                          <Tooltip content={t('instances.groupInstanceCount', { count })}>
+                            <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{count}</span>
+                          </Tooltip>
+                        )}
+                        {pending ? (
+                          <div className="animate-in fade-in flex shrink-0 items-center gap-1.5">
+                            <span className="whitespace-nowrap text-xs text-muted-foreground">{t('instances.confirmDeleteGroup')}</span>
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={(e) => { e.stopPropagation(); setPendingDeleteId(null) }}>
+                              {t('common.cancel')}
+                            </Button>
+                            <Button size="sm" variant="destructive" className="h-7 px-2.5 text-xs" onClick={(e) => { e.stopPropagation(); void confirmDelete(g.id) }}>
+                              {t('common.delete')}
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
+                            <Tooltip content={t('common.edit')}>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground" onClick={(e) => { e.stopPropagation(); startEdit(g) }}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                            </Tooltip>
+                            <Tooltip content={t('common.delete')}>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); setPendingDeleteId(g.id); setEditingId(null) }}>
+                                <MorphActionIcon active={deletingGroup === g.id} busy={RotateCwData} rest={Trash2Data} className="h-3.5 w-3.5" />
+                              </Button>
+                            </Tooltip>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
         </div>
       </DialogBody>
     </Dialog>
