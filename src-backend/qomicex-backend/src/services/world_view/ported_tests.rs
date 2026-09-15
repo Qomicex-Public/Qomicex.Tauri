@@ -1,0 +1,1669 @@
+//! 上游 world-viewer 的集成测试，逐文件移植（仅 world_viewer_lib::testing 改为
+//! crate::services::world_view::testing）。
+//!
+//! 这些测试直接读本机真实存档，找不到文件时 SKIP 并返回，因此在 CI（无存档）
+//! 下也不会失败。断言是精确值/像素级统计，而不是弱断言。
+
+mod real_world {
+    //! Integration tests against the real GTNH save (read-only).
+    //! These skip gracefully when the save is not present (e.g. CI).
+
+    use std::path::PathBuf;
+
+    use crate::services::world_view::testing;
+
+    fn save_dir() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本")
+    }
+
+    fn instance_root() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4")
+    }
+
+    #[test]
+    fn opens_real_world_and_finds_dimensions() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let world = testing::open_world(&dir).expect("open_world failed");
+        assert_eq!(
+            world.dimensions[0].id, 0,
+            "first dimension must be overworld"
+        );
+        assert!(
+            world.dimensions.iter().any(|d| d.id == 112),
+            "DIM112 (ExtraUtilities last millennium) must be listed, got: {:?}",
+            world.dimensions.iter().map(|d| d.id).collect::<Vec<_>>()
+        );
+        for d in &world.dimensions {
+            assert!(d.has_data, "dimension {} listed but has no data", d.id);
+            assert!(d.chunk_count > 0, "dimension {} has 0 chunks", d.id);
+        }
+    }
+
+    #[test]
+    fn block_id_to_name_mapping_works() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let world = testing::open_world(&dir).expect("open_world failed");
+        let p = &world.palette;
+        assert_eq!(p.name_of(1), "minecraft:stone");
+        assert_eq!(p.name_of(9), "minecraft:water");
+        assert_eq!(p.name_of(2289), "etfuturum:deepslate");
+        assert_eq!(p.name_of(2711), "gregtech:gt.blockores");
+        let (rgb, src, _) = p.color(1, 0);
+        assert_eq!(src, "exact", "stone must resolve exactly from JM palette");
+        assert_eq!(rgb, [0x7d, 0x7d, 0x7d]);
+    }
+
+    #[test]
+    fn reads_chunk_sections_and_top_block() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let region_dir = dir.join("region");
+        let chunk = testing::load_chunk(&region_dir, 1, 1)
+            .expect("read failed")
+            .expect("chunk (1,1) must exist in r.0.0.mca");
+        assert!(!chunk.sections.is_empty(), "chunk has no sections");
+        let mut non_air = 0;
+        for z in 0..16 {
+            for x in 0..16 {
+                if chunk.top_block(x, z, 255).is_some() {
+                    non_air += 1;
+                }
+            }
+        }
+        assert!(
+            non_air > 200,
+            "expected a populated chunk, non_air={}",
+            non_air
+        );
+    }
+
+    #[test]
+    fn waypoints_and_player_are_loaded() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let world = testing::open_world(&dir).expect("open_world failed");
+        assert!(
+            !world.waypoints.is_empty(),
+            "expected at least one JourneyMap waypoint"
+        );
+        let wp = &world.waypoints[0];
+        assert!(wp.x != 0 || wp.z != 0, "waypoint coordinates look empty");
+        let player = world.player.as_ref().expect("player must be in level.dat");
+        assert_eq!(player.dimension, 0);
+        assert!((player.x + 415.0).abs() < 2.0, "player x={}", player.x);
+    }
+
+    #[test]
+    fn renders_chunk_to_non_empty_image() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let region_dir = dir.join("region");
+        let world = testing::open_world(&dir).expect("open world");
+        // chunk (1,1) lives in tile (0,0) at zoom 0
+        let png = testing::render_tile(&world.palette, &region_dir, 0, 0, 0, 0, 255)
+            .expect("render tile");
+        let decoder = png::Decoder::new(&png[..]);
+        let mut reader = decoder.read_info().expect("valid png");
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        let opaque = buf.chunks(4).filter(|p| p[3] > 0).count();
+        assert!(
+            opaque > 200,
+            "rendered tile mostly empty: {} opaque pixels ({}x{})",
+            opaque,
+            info.width,
+            info.height
+        );
+    }
+
+    #[test]
+    fn instance_root_detected_for_waypoints() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let world = testing::open_world(&dir).expect("open world");
+        assert_eq!(
+            world.instance_root,
+            instance_root(),
+            "instance root must walk up to the GTNH folder"
+        );
+    }
+}
+
+mod tile_pipeline {
+    //! End-to-end tile pipeline test: renders real tiles to disk so we can visually inspect.
+
+    use std::path::PathBuf;
+
+    use crate::services::world_view::testing;
+
+    #[test]
+    fn render_full_tile_png_for_real_world() {
+        let dir = PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本");
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let world = testing::open_world(&dir).expect("open world");
+        let region_dir = dir.join("region");
+
+        // Player is around X=-415, Z=-286 -> chunk (-26, -18)
+        // z=0 tile covers 16 chunks -> tile x = -26/16 = -2, row = -18/16 = -2
+        let tile = testing::render_tile(
+            &world.palette,
+            &region_dir,
+            0,   // dim
+            0,   // zoom
+            -2,  // tile x
+            -2,  // tile row
+            255, // ymax
+        )
+        .expect("render tile");
+
+        let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("tiles");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let out_path = out_dir.join("dim0_z0_x-2_y-2.png");
+        std::fs::write(&out_path, &tile).unwrap();
+
+        // PNG must be valid and non-trivial
+        assert!(
+            tile.len() > 1000,
+            "tile suspiciously small: {} bytes",
+            tile.len()
+        );
+        let decoder = png::Decoder::new(&tile[..]);
+        let mut reader = decoder.read_info().expect("valid png");
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        assert_eq!(info.width, 256);
+        assert_eq!(info.height, 256);
+        // Count non-transparent pixels
+        let opaque = buf.chunks(4).filter(|p| p[3] > 0).count();
+        assert!(
+            opaque > 5000,
+            "tile mostly empty: {} opaque pixels of 65536; wrote {}",
+            opaque,
+            out_path.display()
+        );
+        eprintln!(
+            "wrote {} ({} bytes, {} opaque px)",
+            out_path.display(),
+            tile.len(),
+            opaque
+        );
+    }
+
+    #[test]
+    fn render_cave_slice_differs_from_surface() {
+        let dir = PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本");
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let world = testing::open_world(&dir).expect("open world");
+        let region_dir = dir.join("region");
+
+        let surface = testing::render_tile(&world.palette, &region_dir, 0, 0, -2, -2, 255).unwrap();
+        let cave = testing::render_tile(&world.palette, &region_dir, 0, 0, -2, -2, 30).unwrap();
+        assert_ne!(
+            surface, cave,
+            "Y<=30 slice must differ from full-height render"
+        );
+        eprintln!(
+            "surface {} bytes vs cave {} bytes",
+            surface.len(),
+            cave.len()
+        );
+    }
+
+    /// A tile whose own area is empty must be flagged empty even when its
+    /// hillshading margin overlaps generated chunks. Getting this wrong makes the
+    /// frontend show a fully transparent tile as if it were still loading.
+    #[test]
+    fn empty_tile_is_flagged_even_with_populated_margin() {
+        let dir = PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本");
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let world = testing::open_world(&dir).expect("open world");
+        let region_dir = dir.join("region");
+
+        // Find one tile with data and one without, at the same zoom, and assert
+        // the flag matches what the PNG actually contains.
+        let mut saw_data = false;
+        let mut saw_empty = false;
+        for tx in -4..=2 {
+            for ty in -8..=-1 {
+                let (png, has_data) = testing::render_tile_with_data_flag(
+                    &world.palette,
+                    &region_dir,
+                    0,
+                    2,
+                    tx,
+                    ty,
+                    255,
+                )
+                .unwrap();
+                let opaque = count_opaque(&png);
+                if has_data {
+                    assert!(
+                        opaque > 0,
+                        "tile ({},{}) flagged has_data but PNG has no opaque pixels",
+                        tx,
+                        ty
+                    );
+                    saw_data = true;
+                } else {
+                    assert_eq!(
+                        opaque, 0,
+                        "tile ({},{}) flagged empty but PNG has {} opaque pixels",
+                        tx, ty, opaque
+                    );
+                    saw_empty = true;
+                }
+            }
+        }
+        assert!(saw_data, "expected at least one populated tile in range");
+        assert!(saw_empty, "expected at least one empty tile in range");
+        eprintln!("has_data flag matches PNG contents for both populated and empty tiles");
+    }
+
+    fn count_opaque(png: &[u8]) -> usize {
+        let decoder = png::Decoder::new(png);
+        let mut reader = decoder.read_info().expect("valid png");
+        let mut buf = vec![0; reader.output_buffer_size()];
+        reader.next_frame(&mut buf).unwrap();
+        buf.chunks(4).filter(|p| p[3] > 0).count()
+    }
+
+    /// Relief shading must produce visible variation in real terrain.
+    /// Without it, flat plains collapse to a single flat colour (the reported bug).
+    #[test]
+    fn relief_shading_produces_height_variation() {
+        let dir = PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本");
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let world = testing::open_world(&dir).expect("open world");
+        let region_dir = dir.join("region");
+        let png = testing::render_tile(&world.palette, &region_dir, 0, 0, -2, -2, 255).unwrap();
+
+        let decoder = png::Decoder::new(&png[..]);
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0; reader.output_buffer_size()];
+        reader.next_frame(&mut buf).unwrap();
+
+        // Count distinct colours among opaque pixels: relief shading must create
+        // many shades of the same base block colour.
+        let mut colors = std::collections::HashSet::new();
+        for px in buf.chunks(4) {
+            if px[3] > 0 {
+                colors.insert([px[0], px[1], px[2]]);
+            }
+        }
+        assert!(
+            colors.len() > 400,
+            "expected rich shading variation, got only {} distinct colours",
+            colors.len()
+        );
+
+        // Luminance spread must be non-trivial (i.e. not one flat value).
+        let lums: Vec<u32> = buf
+            .chunks(4)
+            .filter(|p| p[3] > 0)
+            .map(|p| (p[0] as u32 * 30 + p[1] as u32 * 59 + p[2] as u32 * 11) / 100)
+            .collect();
+        let min = *lums.iter().min().unwrap();
+        let max = *lums.iter().max().unwrap();
+        assert!(
+            max - min > 60,
+            "luminance range too flat: {}..{} (relief shading not applied?)",
+            min,
+            max
+        );
+        eprintln!(
+            "relief check: {} distinct colours, luminance {}..{}",
+            colors.len(),
+            min,
+            max
+        );
+    }
+}
+
+mod fast_parser {
+    //! Correctness + speed of the targeted chunk parser vs the generic one.
+
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    use crate::services::world_view::testing;
+
+    fn save_dir() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本")
+    }
+
+    /// The fast parser must produce byte-identical sections to the generic one.
+    #[test]
+    fn fast_parser_matches_generic_parser() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let region_dir = dir.join("region");
+
+        let mut compared = 0;
+        for cx in 0..8 {
+            for cz in 0..8 {
+                let raw = match testing::read_chunk_nbt(&region_dir, cx, cz) {
+                    Ok(Some(r)) => r,
+                    _ => continue,
+                };
+                let generic = testing::parse_sections_generic(&raw)
+                    .unwrap_or_else(|e| panic!("generic parse ({},{}) failed: {}", cx, cz, e));
+                let fast = testing::parse_sections_fast(&raw)
+                    .unwrap_or_else(|e| panic!("fast parse ({},{}) failed: {}", cx, cz, e));
+
+                assert_eq!(
+                    generic.len(),
+                    fast.len(),
+                    "section count differs at ({},{})",
+                    cx,
+                    cz
+                );
+                for (g, f) in generic.iter().zip(fast.iter()) {
+                    assert_eq!(g.y, f.y, "section Y differs at ({},{})", cx, cz);
+                    assert_eq!(
+                        g.blocks16, f.blocks16,
+                        "Blocks16 differs at ({},{}) y={}",
+                        cx, cz, g.y
+                    );
+                    assert_eq!(
+                        g.blocks, f.blocks,
+                        "Blocks differs at ({},{}) y={}",
+                        cx, cz, g.y
+                    );
+                    assert_eq!(
+                        g.data16, f.data16,
+                        "Data16 differs at ({},{}) y={}",
+                        cx, cz, g.y
+                    );
+                    assert_eq!(g.data, f.data, "Data differs at ({},{}) y={}", cx, cz, g.y);
+                    assert_eq!(g.add, f.add, "Add differs at ({},{}) y={}", cx, cz, g.y);
+                }
+                compared += 1;
+            }
+        }
+        assert!(
+            compared > 20,
+            "expected to compare real chunks, got {}",
+            compared
+        );
+        eprintln!("compared {} chunks: generic == fast", compared);
+    }
+
+    #[test]
+    fn fast_parser_is_faster() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let region_dir = dir.join("region");
+
+        let mut raws = Vec::new();
+        for cx in 0..8 {
+            for cz in 0..8 {
+                if let Ok(Some(r)) = testing::read_chunk_nbt(&region_dir, cx, cz) {
+                    raws.push(r);
+                }
+            }
+        }
+        if raws.is_empty() {
+            eprintln!("SKIP: no chunks read");
+            return;
+        }
+        let n = raws.len() as f64;
+
+        let t = Instant::now();
+        for raw in &raws {
+            let _ = testing::parse_sections_generic(raw);
+        }
+        let generic_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+        let t = Instant::now();
+        for raw in &raws {
+            let _ = testing::parse_sections_fast(raw);
+        }
+        let fast_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+        eprintln!(
+            "parse {} chunks: generic {:>7.1} ms ({:.3} ms/chunk) | fast {:>7.1} ms ({:.3} ms/chunk) | speedup {:.1}x",
+            raws.len(),
+            generic_ms,
+            generic_ms / n,
+            fast_ms,
+            fast_ms / n,
+            generic_ms / fast_ms
+        );
+        assert!(
+            fast_ms < generic_ms,
+            "fast parser should be faster: {} vs {}",
+            fast_ms,
+            generic_ms
+        );
+    }
+}
+
+mod modern_format {
+    //! 1.13+ flattened chunk format (`sections[].block_states`), checked against
+    //! the real 1.20+ save. Tests skip when the save is absent.
+
+    use std::path::PathBuf;
+
+    use crate::services::world_view::testing;
+
+    fn modern_save() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\Aegis of the Frozen Sky\saves\新的世界")
+    }
+
+    fn has_modern() -> bool {
+        modern_save().join("level.dat").is_file()
+    }
+
+    #[test]
+    fn parses_modern_sections_with_palette_and_data() {
+        if !has_modern() {
+            eprintln!("SKIP: modern save not present");
+            return;
+        }
+        let region_dir = modern_save().join("region");
+        let chunk = testing::load_chunk(&region_dir, 0, 0)
+            .expect("read ok")
+            .expect("chunk (0,0) must exist");
+
+        assert!(!chunk.sections.is_empty(), "modern chunk has no sections");
+        // 1.20+ overworld chunks have sections below y=0
+        assert!(
+            chunk.sections.iter().any(|s| s.y < 0),
+            "expected negative-Y sections, got {:?}",
+            chunk.sections.iter().map(|s| s.y).collect::<Vec<_>>()
+        );
+
+        // Every section must have a palette.
+        for s in &chunk.sections {
+            let bs = s
+                .block_states
+                .as_ref()
+                .expect("section must use block_states");
+            assert!(
+                !bs.palette.is_empty(),
+                "section Y={} has empty palette",
+                s.y
+            );
+            // Names must be namespaced block ids, not empty strings.
+            assert!(
+                bs.palette.iter().all(|n| n.contains(':')),
+                "section Y={} palette has non-namespaced entries: {:?}",
+                s.y,
+                bs.palette
+            );
+        }
+
+        // Top block at spawn column must be a real block with a plausible height.
+        let (block, y) = chunk
+            .top_visible(0, 0, 255)
+            .expect("spawn column must have a top block");
+        let name = match &block {
+            testing::BlockRef::Named(n) => n.clone(),
+            other => panic!("modern chunk must yield named blocks, got {:?}", other),
+        };
+        assert!(name.contains(':'), "bad block name {:?}", name);
+        assert!(
+            (0..=320).contains(&y),
+            "implausible block height {} for {}",
+            y,
+            name
+        );
+        eprintln!("spawn column top: {} at y={}", name, y);
+    }
+
+    #[test]
+    fn modern_blocks_resolve_to_real_colours() {
+        if !has_modern() {
+            eprintln!("SKIP: modern save not present");
+            return;
+        }
+        let save = modern_save();
+        let world = testing::open_world(&save).expect("open world");
+        let region_dir = save.join("region");
+
+        let (png, has_data) =
+            testing::render_tile_with_data_flag(&world.palette, &region_dir, 0, 0, 0, 0, 255)
+                .expect("render tile");
+        assert!(has_data, "tile (0,0) at zoom 0 must contain terrain");
+
+        let decoder = png::Decoder::new(&png[..]);
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0; reader.output_buffer_size()];
+        reader.next_frame(&mut buf).unwrap();
+
+        let opaque = buf.chunks(4).filter(|p| p[3] > 0).count();
+        assert!(opaque > 1000, "tile mostly empty: {} opaque px", opaque);
+
+        // Terrain must be coloured, not uniform grey from the fallback.
+        let mut colors = std::collections::HashSet::new();
+        for px in buf.chunks(4) {
+            if px[3] > 0 {
+                colors.insert([px[0], px[1], px[2]]);
+            }
+        }
+        assert!(
+            colors.len() > 200,
+            "expected varied terrain colours, got {} distinct",
+            colors.len()
+        );
+
+        // The built-in vanilla table must produce recognisable hues: the tile
+        // should contain greenish pixels (grass/leaves) rather than only grey.
+        let greenish = buf
+            .chunks(4)
+            .filter(|p| p[3] > 0 && p[1] > p[0].saturating_add(8) && p[1] > p[2].saturating_add(8))
+            .count();
+        assert!(
+            greenish > 50,
+            "expected green vegetation pixels, found {}",
+            greenish
+        );
+        eprintln!(
+            "modern tile: {} opaque px, {} distinct colours, {} greenish",
+            opaque,
+            colors.len(),
+            greenish
+        );
+    }
+
+    #[test]
+    fn modern_and_legacy_parsers_do_not_cross_contaminate() {
+        // A legacy chunk must still parse through the legacy path, and a modern
+        // chunk through the modern one, with the auto-detection in load_chunk.
+        let legacy =
+            PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本\region");
+        let modern = modern_save().join("region");
+        if !legacy.is_dir() || !has_modern() {
+            eprintln!("SKIP: saves not present");
+            return;
+        }
+
+        let lc = testing::load_chunk(&legacy, 1, 1).unwrap().unwrap();
+        assert!(
+            lc.sections
+                .iter()
+                .any(|s| s.blocks16.is_some() || s.blocks.is_some()),
+            "legacy chunk must use legacy arrays"
+        );
+        assert!(
+            lc.sections.iter().all(|s| s.block_states.is_none()),
+            "legacy chunk must not produce block_states"
+        );
+
+        let mc = testing::load_chunk(&modern, 0, 0).unwrap().unwrap();
+        assert!(
+            mc.sections.iter().any(|s| s.block_states.is_some()),
+            "modern chunk must use block_states"
+        );
+        assert!(
+            mc.sections
+                .iter()
+                .all(|s| s.blocks16.is_none() && s.blocks.is_none()),
+            "modern chunk must not produce legacy arrays"
+        );
+    }
+
+    #[test]
+    fn parses_1_12_2_legacy_add_format() {
+        let region = PathBuf::from(
+            r"C:\.minecraft\versions\1.12.2-Forge-14.23.5.2864\saves\新的世界\region",
+        );
+        if !region.is_dir() {
+            eprintln!("SKIP: 1.12.2 save not present");
+            return;
+        }
+        let chunk = match testing::load_chunk(&region, 0, 0).expect("read ok") {
+            Some(c) => c,
+            None => {
+                // Chunk (0,0) may not be generated; find any present chunk.
+                let mut found = None;
+                'outer: for cx in 0..8 {
+                    for cz in -8..8 {
+                        if let Some(c) = testing::load_chunk(&region, cx, cz).expect("read ok") {
+                            found = Some(c);
+                            break 'outer;
+                        }
+                    }
+                }
+                found.expect("at least one chunk must exist in the 1.12.2 save")
+            }
+        };
+        assert!(!chunk.sections.is_empty());
+
+        // 1.12.2 uses Blocks plus (when needed) Add for ids above 255.
+        let has_blocks = chunk.sections.iter().any(|s| s.blocks.is_some());
+        assert!(has_blocks, "1.12.2 sections must use Blocks");
+
+        let (block, y) = chunk
+            .top_visible(8, 8, 255)
+            .expect("column must have a top block");
+        assert!(!block.is_air(), "top block must not be air");
+        assert!((0..=255).contains(&y));
+    }
+}
+
+mod colors {
+    //! Colour correctness: the reported bug was grass/foliage rendering grey
+    //! (1.7.10 partly) and entire worlds rendering grey (1.12.2, no id->name map).
+
+    use std::path::PathBuf;
+
+    use crate::services::world_view::testing;
+
+    fn gtnh_save() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本")
+    }
+
+    fn forge_1_12_2_save() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\1.12.2-Forge-14.23.5.2864\saves\新的世界")
+    }
+
+    /// The reported bug: in the 1.12.2 save every block was grey because no
+    /// id -> name mapping existed (that level.dat has no FML.ItemData).
+    #[test]
+    fn one_twelve_two_blocks_have_names_and_colours() {
+        let save = forge_1_12_2_save();
+        if !save.is_dir() {
+            eprintln!("SKIP: 1.12.2 save not present");
+            return;
+        }
+        let world = testing::open_world(&save).expect("open world");
+
+        // Vanilla ids must resolve now.
+        assert_eq!(
+            world.palette.name_of(1),
+            "minecraft:stone",
+            "id 1 must map to stone"
+        );
+        assert_eq!(world.palette.name_of(2), "minecraft:grass");
+        assert_eq!(world.palette.name_of(31), "minecraft:tallgrass");
+        assert_eq!(world.palette.name_of(9), "minecraft:water");
+
+        // And they must produce real colours, not the grey fallback.
+        let fallback = world.palette.fallback;
+        let (stone, src, _) = world.palette.color(1, 0);
+        assert_ne!(stone, fallback, "stone must not be the fallback grey");
+        assert_eq!(src, "vanilla", "stone should resolve via the vanilla table");
+
+        // The rendered tile must contain colour, not just grey.
+        let region_dir = save.join("region");
+        let (png, has_data) =
+            testing::render_tile_with_data_flag(&world.palette, &region_dir, 0, 0, 0, 0, 255)
+                .expect("render");
+        assert!(has_data, "tile (0,0) must have data");
+
+        let decoder = png::Decoder::new(&png[..]);
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0; reader.output_buffer_size()];
+        reader.next_frame(&mut buf).unwrap();
+
+        let mut grey = 0usize;
+        let mut coloured = 0usize;
+        for px in buf.chunks(4) {
+            if px[3] == 0 {
+                continue;
+            }
+            let (r, g, b) = (px[0], px[1], px[2]);
+            // allow a little slack for shading
+            if r.abs_diff(g) <= 3 && g.abs_diff(b) <= 3 {
+                grey += 1;
+            } else {
+                coloured += 1;
+            }
+        }
+        let total = grey + coloured;
+        assert!(total > 1000, "tile too empty: {} px", total);
+        let coloured_pct = 100.0 * coloured as f64 / total as f64;
+        assert!(
+            coloured_pct > 25.0,
+            "1.12.2 tile is still mostly greyscale: {:.1}% coloured ({} grey / {} total)",
+            coloured_pct,
+            grey,
+            total
+        );
+        eprintln!(
+            "1.12.2 tile: {:.1}% coloured ({} of {} px)",
+            coloured_pct, coloured, total
+        );
+    }
+
+    /// The reported bug: GTNH grass rendered grey while stone/dirt looked right.
+    #[test]
+    fn gtnh_grass_and_foliage_are_green() {
+        let save = gtnh_save();
+        if !save.is_dir() {
+            eprintln!("SKIP: GTNH save not present");
+            return;
+        }
+        let world = testing::open_world(&save).expect("open world");
+
+        // The palette itself stores grey for these (that is the root cause).
+        let (grass_raw, _, _) = world.palette.color(2, 0);
+        let grey_ish = grass_raw[0].abs_diff(grass_raw[1]) <= 6;
+        eprintln!(
+            "palette grass raw = {:?} (greyscale: {})",
+            grass_raw, grey_ish
+        );
+
+        let region_dir = save.join("region");
+
+        // The surface near the player is mostly water, so measure over several
+        // tiles and take the best one: what matters is that land renders green.
+        let mut best_green = 0.0f64;
+        let mut best_tile = (0, 0);
+        for (tx, ty) in [(-2, -2), (-2, -1), (-1, -2), (-1, -1), (-3, -2), (-2, -3)] {
+            let (png, has_data) =
+                testing::render_tile_with_data_flag(&world.palette, &region_dir, 0, 0, tx, ty, 255)
+                    .expect("render");
+            if !has_data {
+                continue;
+            }
+            let decoder = png::Decoder::new(&png[..]);
+            let mut reader = decoder.read_info().unwrap();
+            let mut buf = vec![0; reader.output_buffer_size()];
+            reader.next_frame(&mut buf).unwrap();
+
+            let mut green = 0usize;
+            let mut opaque = 0usize;
+            for px in buf.chunks(4) {
+                if px[3] == 0 {
+                    continue;
+                }
+                opaque += 1;
+                let (r, g, b) = (px[0] as i32, px[1] as i32, px[2] as i32);
+                if g > r + 12 && g > b + 12 {
+                    green += 1;
+                }
+            }
+            let pct = 100.0 * green as f64 / opaque.max(1) as f64;
+            eprintln!("tile ({},{}) green = {:.1}%", tx, ty, pct);
+            if pct > best_green {
+                best_green = pct;
+                best_tile = (tx, ty);
+            }
+        }
+
+        assert!(
+            best_green > 8.0,
+            "no GTNH tile showed meaningful green foliage; best was {:.1}% at {:?}",
+            best_green,
+            best_tile
+        );
+        eprintln!(
+            "best GTNH tile: {:.1}% green at {:?}",
+            best_green, best_tile
+        );
+    }
+
+    /// `is_foliage` must match the vanilla tint categories exactly: blocks that
+    /// the game tints with the biome colour, and nothing else. Tinting a flower
+    /// or a crop turns it green, which is wrong.
+    #[test]
+    fn foliage_classification_matches_vanilla_tint_categories() {
+        // Vanilla `grass` tint: grass_block top, short/tall grass, ferns, reeds.
+        // Vanilla `foliage` tint: leaves and vines.
+        // Plus modded ground cover observed on the real GTNH surface.
+        let must_tint = [
+            "minecraft:grass",
+            "minecraft:grass_block",
+            "minecraft:tallgrass",
+            "minecraft:short_grass",
+            "minecraft:tall_grass",
+            "minecraft:fern",
+            "minecraft:large_fern",
+            "minecraft:reeds",
+            "minecraft:double_plant",
+            "minecraft:leaves",
+            "minecraft:leaves2",
+            "minecraft:vine",
+            "minecraft:oak_leaves",
+            "minecraft:spruce_leaves",
+            "minecraft:acacia_leaves",
+            "BiomesOPlenty:foliage",
+            "Thaumcraft:blockMagicalLeaves",
+            "IC2:blockRubLeaves",
+        ];
+        // These have their own colours and must NOT be tinted green.
+        let must_not_tint = [
+            "minecraft:stone",
+            "minecraft:dirt",
+            "minecraft:water",
+            "minecraft:sand",
+            "minecraft:gravel",
+            "minecraft:log",
+            "gregtech:gt.blockores",
+            "minecraft:red_flower",
+            "minecraft:yellow_flower",
+            "minecraft:wheat",
+            "minecraft:carrots",
+            "minecraft:brown_mushroom",
+            "minecraft:red_mushroom",
+            "minecraft:cactus",
+            "minecraft:waterlily",
+            "BiomesOPlenty:flowers",
+            "BiomesOPlenty:lilyBop",
+        ];
+        for name in must_tint {
+            assert!(
+                testing::is_foliage(name),
+                "{} must be tinted (vanilla tint category)",
+                name
+            );
+        }
+        for name in must_not_tint {
+            assert!(
+                !testing::is_foliage(name),
+                "{} must NOT be tinted — it has its own colour",
+                name
+            );
+        }
+    }
+
+    /// Tinting grey texture colours must yield a recognisable green.
+    #[test]
+    fn foliage_tint_produces_green() {
+        // The real palette values for grass / tallgrass in the GTNH save.
+        for grey in [[0x93u8, 0x93, 0x93], [0x87, 0x87, 0x87], [0x74, 0x74, 0x74]] {
+            let out = testing::apply_foliage_tint(grey);
+            let (r, g, b) = (out[0] as i32, out[1] as i32, out[2] as i32);
+            assert!(
+                g > r && g > b,
+                "tinted {:?} must be green, got {:?}",
+                grey,
+                out
+            );
+            assert!(g > 80, "tinted {:?} too dark: {:?}", grey, out);
+        }
+    }
+}
+
+mod tint_regression {
+    //! Confirm the tint regression: color_ref returns the JourneyMap *display*
+    //! name, so is_foliage never matches real block ids.
+
+    use std::path::PathBuf;
+
+    use crate::services::world_view::testing;
+
+    #[test]
+    fn color_ref_name_is_usable_for_classification() {
+        let save = PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本");
+        if !save.is_dir() {
+            eprintln!("SKIP: GTNH save not present");
+            return;
+        }
+        let world = testing::open_world(&save).expect("open world");
+
+        // Grass id 2 in 1.7.10.
+        let block = testing::BlockRef::Legacy(2, 0);
+        let (_rgb, src, name) = world.palette.color_ref(&block);
+        eprintln!("color_ref(grass) -> src={} name={:?}", src, name);
+        eprintln!("is_foliage({:?}) = {}", name, testing::is_foliage(&name));
+        eprintln!("palette.name_of(2) = {:?}", world.palette.name_of(2));
+
+        // The name returned by color_ref MUST be classifiable. If it is a
+        // JourneyMap display name like "草方块", tinting silently stops working.
+        assert!(
+            testing::is_foliage(&name),
+            "color_ref returned {:?}, which is_foliage cannot classify. \
+             The renderer relies on this name to decide whether to apply the \
+             biome tint, so returning a display name breaks grass colouring.",
+            name
+        );
+    }
+}
+
+mod waypoints {
+    //! Waypoint parsers for Xaero's minimap and VoxelMap, checked against the
+    //! real files on this machine. Tests skip when the files are absent.
+
+    use std::path::{Path, PathBuf};
+
+    use crate::services::world_view::testing;
+
+    fn xaero_instance() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\Create+")
+    }
+
+    fn voxelmap_instance() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\1.12.2-Forge-14.23.5.2864")
+    }
+
+    fn has_xaero() -> bool {
+        xaero_instance().join("xaero").join("minimap").is_dir()
+    }
+
+    fn has_voxelmap() -> bool {
+        voxelmap_instance().join("voxelmap").is_dir()
+    }
+
+    #[test]
+    fn parses_xaero_waypoints_from_real_files() {
+        if !has_xaero() {
+            eprintln!("SKIP: xaero data not present");
+            return;
+        }
+        let wps = testing::load_waypoints(&xaero_instance(), "");
+        let xaero: Vec<_> = wps.iter().filter(|w| w.source == "xaero").collect();
+        assert!(
+            !xaero.is_empty(),
+            "expected Xaero waypoints, got none (all sources: {})",
+            wps.len()
+        );
+
+        // The real file contains: overworld "home" (84,65,-701), two deathpoints,
+        // a nether deathpoint and a nether waypoint with a non-ASCII name.
+        let home = xaero
+            .iter()
+            .find(|w| w.name == "home")
+            .expect("overworld 'home' waypoint must be parsed");
+        assert_eq!(home.x, 84);
+        assert_eq!(home.y, 65);
+        assert_eq!(home.z, -701);
+        assert_eq!(home.dimension, 0, "dim%0 must map to dimension 0");
+
+        let deaths: Vec<_> = xaero.iter().filter(|w| w.kind == "Death").collect();
+        assert!(
+            !deaths.is_empty(),
+            "expected at least one deathpoint in the nether"
+        );
+        assert!(
+            deaths.iter().any(|w| w.dimension == -1),
+            "deathpoint from dim%-1 must map to dimension -1, got {:?}",
+            deaths.iter().map(|w| w.dimension).collect::<Vec<_>>()
+        );
+
+        // Colours must be real hex triples, not a palette index.
+        for w in &xaero {
+            assert!(
+                w.color.starts_with('#') && w.color.len() == 7,
+                "bad colour {:?} for {}",
+                w.color,
+                w.name
+            );
+        }
+    }
+
+    #[test]
+    fn xaero_dedupes_minimap_and_worldmap_trees() {
+        if !has_xaero() {
+            eprintln!("SKIP: xaero data not present");
+            return;
+        }
+        let wps = testing::load_waypoints(&xaero_instance(), "");
+        let mut seen = std::collections::HashSet::new();
+        for w in wps.iter().filter(|w| w.source == "xaero") {
+            let key = (w.name.clone(), w.x, w.y, w.z, w.dimension);
+            assert!(
+                seen.insert(key),
+                "duplicate Xaero waypoint after merging minimap/world-map: {} at {},{},{} dim {}",
+                w.name,
+                w.x,
+                w.y,
+                w.z,
+                w.dimension
+            );
+        }
+    }
+
+    #[test]
+    fn parses_voxelmap_waypoints_from_real_file() {
+        if !has_voxelmap() {
+            eprintln!("SKIP: voxelmap data not present");
+            return;
+        }
+        // The file is named after the world; pass the matching name.
+        let dir = voxelmap_instance().join("voxelmap");
+        let stem = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .find_map(|e| {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) == Some("points") {
+                    p.file_stem().map(|s| s.to_string_lossy().into_owned())
+                } else {
+                    None
+                }
+            })
+            .expect("a .points file must exist");
+
+        let wps = testing::load_waypoints(&voxelmap_instance(), &stem);
+        let vm: Vec<_> = wps.iter().filter(|w| w.source == "voxelmap").collect();
+        assert!(
+            !vm.is_empty(),
+            "expected VoxelMap waypoints for world {:?}",
+            stem
+        );
+
+        // Real file has "point222" at x=256 z=233 y=63 dim 0.
+        let p = vm
+            .iter()
+            .find(|w| w.name == "point222")
+            .expect("'point222' must be parsed");
+        assert_eq!(p.x, 256);
+        assert_eq!(p.z, 233);
+        assert_eq!(p.y, 63);
+        assert_eq!(p.dimension, 0, "dimensions:0 must map to dimension 0");
+        // green:1.0 red:0.399 green:0.239 blue:0.574 -> ~#663d92
+        assert!(
+            p.color.starts_with('#') && p.color.len() == 7,
+            "bad colour {:?}",
+            p.color
+        );
+    }
+
+    #[test]
+    fn voxelmap_skips_disabled_waypoints() {
+        if !has_voxelmap() {
+            eprintln!("SKIP: voxelmap data not present");
+            return;
+        }
+        let dir = voxelmap_instance().join("voxelmap");
+        let stem = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .find_map(|e| {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) == Some("points") {
+                    p.file_stem().map(|s| s.to_string_lossy().into_owned())
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        // Count enabled records in the raw file, compare with parsed count.
+        let raw = std::fs::read_to_string(dir.join(format!("{}.points", stem))).unwrap();
+        let enabled_in_file = raw
+            .lines()
+            .filter(|l| l.contains("name:") && l.contains("enabled:true"))
+            .count();
+        let parsed = testing::load_waypoints(&voxelmap_instance(), &stem)
+            .iter()
+            .filter(|w| w.source == "voxelmap")
+            .count();
+        assert_eq!(
+            parsed, enabled_in_file,
+            "parsed count must match enabled records in the file"
+        );
+    }
+
+    #[test]
+    fn waypoint_sources_are_labelled() {
+        // JourneyMap source label must survive the refactor.
+        let save = PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本");
+        if !save.is_dir() {
+            eprintln!("SKIP: GTNH save not present");
+            return;
+        }
+        let wps =
+            testing::load_waypoints(Path::new(r"C:\.minecraft\versions\GTNH 2.8.4"), "新的世界");
+        assert!(!wps.is_empty(), "expected JourneyMap waypoints");
+        assert!(
+            wps.iter().all(|w| w.source == "journeymap"),
+            "GTNH instance only has JourneyMap data"
+        );
+    }
+}
+
+mod waypoints_e2e {
+    //! End-to-end: point the viewer at a synthetic instance that contains all
+    //! three waypoint formats, and confirm all are loaded and merged.
+
+    use std::path::PathBuf;
+
+    use crate::services::world_view::testing;
+
+    fn tmp_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join("wv-waypoint-e2e").join(name);
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn loads_all_three_sources_together() {
+        let root = tmp_dir("instance");
+        let save = root.join("saves").join("TestWorld");
+        std::fs::create_dir_all(&save).unwrap();
+
+        // --- JourneyMap ---
+        let jm = root
+            .join("journeymap")
+            .join("data")
+            .join("sp")
+            .join("TestWorld")
+            .join("waypoints");
+        std::fs::create_dir_all(&jm).unwrap();
+        std::fs::write(
+            jm.join("home.json"),
+            r#"{"name":"jm-home","x":10,"y":64,"z":20,"r":255,"g":0,"b":0,
+                "enable":true,"type":"Normal","dimensions":[0]}"#,
+        )
+        .unwrap();
+
+        // --- Xaero (minimap tree, dim%0 and dim%-1) ---
+        let xa = root.join("xaero").join("minimap").join("TestWorld");
+        std::fs::create_dir_all(xa.join("dim%0")).unwrap();
+        std::fs::create_dir_all(xa.join("dim%-1")).unwrap();
+        std::fs::write(
+            xa.join("dim%0").join("waypoints.txt"),
+            "#\n#waypoint:name:initials:x:y:z:color:disabled:type:set:rotate_on_tp:tp_yaw:visibility_type:destination\n#\n\
+             waypoint:xa-home:H:100:65:-200:13:false:0:gui.xaero_default:false:0:0:false\n\
+             waypoint:gui.xaero_deathpoint:D:-50:70:30:0:false:1:gui.xaero_default:false:0:1:true\n\
+             waypoint:disabled-one:X:1:2:3:0:true:0:gui.xaero_default:false:0:0:false\n",
+        )
+        .unwrap();
+        std::fs::write(
+            xa.join("dim%-1").join("waypoints.txt"),
+            "waypoint:nether-spot:N:-426:74:-867:0:false:0:gui.xaero_default:false:0:0:false\n",
+        )
+        .unwrap();
+
+        // --- VoxelMap ---
+        let vm = root.join("voxelmap");
+        std::fs::create_dir_all(&vm).unwrap();
+        std::fs::write(
+            vm.join("TestWorld.points"),
+            "name:vm-point,x:256,z:233,y:63,enabled:true,red:0.4,green:0.24,blue:0.57,suffix:,world:,dimensions:0#\n\
+             name:vm-nether,x:5,z:6,y:70,enabled:true,red:1.0,green:1.0,blue:1.0,suffix:,world:,dimensions:-1#\n\
+             name:vm-disabled,x:9,z:9,y:9,enabled:false,red:0.0,green:0.0,blue:0.0,suffix:,world:,dimensions:0#\n",
+        )
+        .unwrap();
+
+        let wps = testing::load_waypoints(&root, "TestWorld");
+
+        let jm_count = wps.iter().filter(|w| w.source == "journeymap").count();
+        let xa_count = wps.iter().filter(|w| w.source == "xaero").count();
+        let vm_count = wps.iter().filter(|w| w.source == "voxelmap").count();
+
+        assert_eq!(jm_count, 1, "JourneyMap: {:?}", wps);
+        // xaero: 2 overworld (home + deathpoint) + 1 nether; disabled skipped
+        assert_eq!(xa_count, 3, "Xaero: {:?}", wps);
+        // voxelmap: 2 enabled (overworld + nether); disabled skipped
+        assert_eq!(vm_count, 2, "VoxelMap: {:?}", wps);
+
+        // Dimension routing must be per-source correct.
+        let xa_home = wps.iter().find(|w| w.name == "xa-home").unwrap();
+        assert_eq!(xa_home.dimension, 0);
+        assert_eq!((xa_home.x, xa_home.y, xa_home.z), (100, 65, -200));
+
+        let xa_nether = wps.iter().find(|w| w.name == "nether-spot").unwrap();
+        assert_eq!(xa_nether.dimension, -1, "dim%-1 must become -1");
+
+        let vm_nether = wps.iter().find(|w| w.name == "vm-nether").unwrap();
+        assert_eq!(vm_nether.dimension, -1, "dimensions:-1 must become -1");
+
+        // Death point naming and kind.
+        let death = wps.iter().find(|w| w.kind == "Death").unwrap();
+        assert_eq!(
+            death.name, "死亡点",
+            "xaero i18n death key must be localised"
+        );
+
+        // Disabled entries from both mods must be dropped.
+        assert!(!wps.iter().any(|w| w.name == "disabled-one"));
+        assert!(!wps.iter().any(|w| w.name == "vm-disabled"));
+
+        eprintln!(
+            "merged: {} journeymap + {} xaero + {} voxelmap = {} total",
+            jm_count,
+            xa_count,
+            vm_count,
+            wps.len()
+        );
+    }
+
+    #[test]
+    fn instance_without_any_waypoint_data_is_safe() {
+        let root = tmp_dir("empty-instance");
+        std::fs::create_dir_all(root.join("saves").join("W")).unwrap();
+        let wps = testing::load_waypoints(&root, "W");
+        assert!(wps.is_empty(), "expected no waypoints, got {:?}", wps);
+    }
+}
+
+mod all_saves_smoke {
+    //! Smoke-test open_world across every save on this machine.
+
+    use std::path::PathBuf;
+
+    use crate::services::world_view::testing;
+
+    fn saves() -> Vec<(&'static str, PathBuf)> {
+        vec![
+            (
+                "GTNH 2.8.4 (1.7.10)",
+                PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本"),
+            ),
+            (
+                "1.12.2-Forge",
+                PathBuf::from(r"C:\.minecraft\versions\1.12.2-Forge-14.23.5.2864\saves\新的世界"),
+            ),
+            (
+                "Aegis 1.20+",
+                PathBuf::from(r"C:\.minecraft\versions\Aegis of the Frozen Sky\saves\新的世界"),
+            ),
+            (
+                "1.12.2 (vanilla)",
+                PathBuf::from(r"C:\.minecraft\versions\1.12.2\saves\新的世界"),
+            ),
+            (
+                "26.2 (dimensions/<ns>/<name>)",
+                PathBuf::from(r"C:\.minecraft\versions\26.2\saves\新的世界"),
+            ),
+        ]
+    }
+
+    #[test]
+    fn all_saves_open_and_render() {
+        let mut failures = Vec::new();
+        for (label, dir) in saves() {
+            if !dir.is_dir() {
+                eprintln!("SKIP {}: not present", label);
+                continue;
+            }
+            let world = match testing::open_world(&dir) {
+                Ok(w) => w,
+                Err(e) => {
+                    failures.push(format!("{}: open_world failed: {}", label, e));
+                    continue;
+                }
+            };
+
+            let dims: Vec<i32> = world.dimensions.iter().map(|d| d.id).collect();
+            let with_data: Vec<i32> = world
+                .dimensions
+                .iter()
+                .filter(|d| d.has_data)
+                .map(|d| d.id)
+                .collect();
+            eprintln!(
+                "{}: {} dims {:?} (with data: {:?}), {} waypoints, {} block names",
+                label,
+                world.dimensions.len(),
+                dims,
+                with_data,
+                world.waypoints.len(),
+                world.palette.block_names_len()
+            );
+
+            if with_data.is_empty() {
+                failures.push(format!("{}: no dimension has data", label));
+                continue;
+            }
+
+            // Render the first dimension that has data.
+            let dim = world
+                .dimensions
+                .iter()
+                .find(|d| d.has_data)
+                .expect("checked above");
+            let region_dir = PathBuf::from(&dim.region_dir);
+
+            // Try a few tile positions; at least one must render terrain.
+            let mut best_opaque = 0usize;
+            let mut best_tile = (0, 0);
+            for (tx, ty) in [(0, 0), (-1, -1), (-2, -2), (-1, 0), (0, -1), (-3, -3)] {
+                let (png, has_data) = match testing::render_tile_with_data_flag(
+                    &world.palette,
+                    &region_dir,
+                    0,
+                    0,
+                    tx,
+                    ty,
+                    255,
+                ) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        failures.push(format!(
+                            "{}: render tile ({},{}) failed: {}",
+                            label, tx, ty, e
+                        ));
+                        continue;
+                    }
+                };
+                if !has_data {
+                    continue;
+                }
+                let decoder = png::Decoder::new(&png[..]);
+                let mut reader = decoder.read_info().expect("png");
+                let mut buf = vec![0; reader.output_buffer_size()];
+                reader.next_frame(&mut buf).unwrap();
+                let opaque = buf.chunks(4).filter(|p| p[3] > 0).count();
+                if opaque > best_opaque {
+                    best_opaque = opaque;
+                    best_tile = (tx, ty);
+                }
+            }
+            eprintln!("  best tile {:?} -> {} opaque px", best_tile, best_opaque);
+            if best_opaque < 1000 {
+                failures.push(format!(
+                    "{}: no tile rendered terrain (best {} px at {:?})",
+                    label, best_opaque, best_tile
+                ));
+            }
+        }
+
+        if !failures.is_empty() {
+            panic!("failures:\n  {}", failures.join("\n  "));
+        }
+    }
+
+    /// Tile URLs must differ per save. If they do not, the frontend reuses the
+    /// previous world's tile cache when the user switches saves.
+    ///
+    /// This mirrors the frontend's `worldKeyOf` exactly (32-bit wrapping hash,
+    /// base 36) so the two implementations cannot drift apart unnoticed.
+    #[test]
+    fn tile_path_carries_a_world_key() {
+        fn key_of(save_dir: &str) -> String {
+            // JS: h = (Math.imul(31, h) + charCode) | 0  then  (h >>> 0).toString(36)
+            let mut h: i32 = 0;
+            for ch in save_dir.encode_utf16() {
+                h = 31i32.wrapping_mul(h).wrapping_add(ch as i32);
+            }
+            let mut n = h as u32;
+            if n == 0 {
+                return "w0".to_string();
+            }
+            const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+            let mut buf = Vec::new();
+            while n > 0 {
+                buf.push(DIGITS[(n % 36) as usize]);
+                n /= 36;
+            }
+            buf.reverse();
+            format!("w{}", String::from_utf8(buf).unwrap())
+        }
+
+        let gtnh = key_of(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本");
+        let forge = key_of(r"C:\.minecraft\versions\1.12.2-Forge-14.23.5.2864\saves\新的世界");
+        let aegis = key_of(r"C:\.minecraft\versions\Aegis of the Frozen Sky\saves\新的世界");
+
+        // These exact values are what the running frontend produced, so the
+        // mirror is verified against reality rather than against itself.
+        assert_eq!(gtnh, "w16yu5cm", "GTNH key must match the frontend");
+        assert_eq!(forge, "wtvdbut", "1.12.2-Forge key must match the frontend");
+
+        assert_ne!(gtnh, forge, "GTNH and 1.12.2 must not share a tile key");
+        assert_ne!(gtnh, aegis, "GTNH and Aegis must not share a tile key");
+        assert_ne!(forge, aegis, "1.12.2 and Aegis must not share a tile key");
+        eprintln!("tile keys: gtnh={} forge={} aegis={}", gtnh, forge, aegis);
+    }
+
+    /// The tile path must have five segments: world key + dim + z + x + row.
+    /// The backend rejects anything else, so a URL built without the key would
+    /// 404 rather than silently render the wrong world.
+    #[test]
+    fn tile_path_shape_is_five_segments() {
+        let frontend_url = "http://tile.localhost/w16yu5cm/0/2/-1/-7.png?ymax=4294967295";
+        let path = frontend_url
+            .trim_start_matches("http://tile.localhost/")
+            .split('?')
+            .next()
+            .unwrap()
+            .trim_end_matches(".png");
+        let parts: Vec<&str> = path.split('/').collect();
+        assert_eq!(
+            parts.len(),
+            5,
+            "path must be key/dim/z/x/row, got {:?}",
+            parts
+        );
+        assert_eq!(parts[0], "w16yu5cm", "first segment must be the world key");
+        assert_eq!(parts[1], "0");
+        assert_eq!(parts[2], "2");
+        assert_eq!(parts[3], "-1");
+        assert_eq!(parts[4], "-7");
+    }
+}
+
+mod perf_profile {
+    //! Timing profile for the tile pipeline. Run with:
+    //!   cargo test --test perf_profile -- --nocapture
+
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    use crate::services::world_view::testing;
+
+    fn save_dir() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本")
+    }
+
+    #[test]
+    fn profile_tile_pipeline() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let world = testing::open_world(&dir).expect("open world");
+        let region_dir = dir.join("region");
+
+        // --- single chunk (cold) ---
+        let t = Instant::now();
+        let c = testing::load_chunk(&region_dir, 1, 1).unwrap();
+        let chunk_ms = t.elapsed().as_secs_f64() * 1000.0;
+        eprintln!(
+            "1 chunk cold load+parse : {:>8.2} ms  (present={})",
+            chunk_ms,
+            c.is_some()
+        );
+
+        // --- z=0 tile (16x16 chunks + 1 margin = 324 chunks) ---
+        let t = Instant::now();
+        let z0 = testing::render_tile(&world.palette, &region_dir, 0, 0, -2, -2, 255).unwrap();
+        let z0_ms = t.elapsed().as_secs_f64() * 1000.0;
+        eprintln!(
+            "z=0 tile (324 chunks)   : {:>8.2} ms  ({} bytes)",
+            z0_ms,
+            z0.len()
+        );
+
+        // --- z=4 tile (1 chunk + margin = 9 chunks) ---
+        let t = Instant::now();
+        let z4 = testing::render_tile(&world.palette, &region_dir, 0, 4, -30, -30, 255).unwrap();
+        let z4_ms = t.elapsed().as_secs_f64() * 1000.0;
+        eprintln!(
+            "z=4 tile (9 chunks)     : {:>8.2} ms  ({} bytes)",
+            z4_ms,
+            z4.len()
+        );
+
+        // --- a viewport's worth: 20 z=0 tiles, as the frontend would request ---
+        let t = Instant::now();
+        let mut total = 0usize;
+        for tx in -4..0 {
+            for ty in -4..0 {
+                let p =
+                    testing::render_tile(&world.palette, &region_dir, 0, 0, tx, ty, 255).unwrap();
+                total += p.len();
+            }
+        }
+        let batch_ms = t.elapsed().as_secs_f64() * 1000.0;
+        eprintln!(
+            "16 z=0 tiles (viewport) : {:>8.2} ms total, {:.1} ms/tile avg ({} bytes)",
+            batch_ms,
+            batch_ms / 16.0,
+            total
+        );
+
+        eprintln!(
+            "\nNOTE: a z=0 tile needs {} chunks; the server cache holds 4096, so panning",
+            18 * 18
+        );
+        eprintln!("a few screens evicts the working set and every tile reloads from disk.");
+    }
+}
+
+mod perf_stages {
+    //! Stage-by-stage timing to find where the 2.2 ms/chunk goes.
+    //!   cargo test --test perf_stages -- --nocapture
+
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    fn save_dir() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本")
+    }
+
+    #[test]
+    fn profile_stages() {
+        let dir = save_dir();
+        if !dir.is_dir() {
+            eprintln!("SKIP: test save not present");
+            return;
+        }
+        let region_dir = dir.join("region");
+
+        // pick 30 real chunks from r.0.0.mca
+        let mut coords = Vec::new();
+        for cx in 0..8 {
+            for cz in 0..8 {
+                coords.push((cx, cz));
+            }
+        }
+
+        // stage 1: open + read + decompress
+        let t = Instant::now();
+        let mut raws = Vec::new();
+        for &(cx, cz) in &coords {
+            if let Ok(Some(raw)) =
+                crate::services::world_view::testing::read_chunk_nbt(&region_dir, cx, cz)
+            {
+                raws.push(raw);
+            }
+        }
+        let s1 = t.elapsed().as_secs_f64() * 1000.0;
+
+        // stage 2: full NBT parse
+        let t = Instant::now();
+        let mut parsed = 0;
+        for raw in &raws {
+            if crate::services::world_view::testing::parse_nbt(raw).is_ok() {
+                parsed += 1;
+            }
+        }
+        let s2 = t.elapsed().as_secs_f64() * 1000.0;
+
+        let n = raws.len().max(1) as f64;
+        let total_mb: f64 = raws.iter().map(|r| r.len() as f64).sum::<f64>() / 1_048_576.0;
+        eprintln!("chunks sampled          : {}", raws.len());
+        eprintln!("decompressed total      : {:.1} MB", total_mb);
+        eprintln!(
+            "1) open+read+decompress  : {:>7.1} ms total  ({:.3} ms/chunk)",
+            s1,
+            s1 / n
+        );
+        eprintln!(
+            "2) full NBT parse        : {:>7.1} ms total  ({:.3} ms/chunk)  [{} parsed]",
+            s2,
+            s2 / n,
+            parsed
+        );
+        eprintln!(
+            "   => parse is {:.0}% of the per-chunk cost",
+            100.0 * s2 / (s1 + s2)
+        );
+    }
+}
+
+mod dim_cache_isolation {
+    //! 回归：区块缓存键必须含维度。
+    //!
+    //! 上游 world-viewer 的 `ChunkKey` 是 `(cx, cz)`，`render_tile` 收下 `_dim`
+    //! 却不用它。后果：先渲染主世界，再请求下界，会直接命中主世界的区块缓存，
+    //! 下界地图显示成主世界的地形（反之亦然）。这里用一个共享缓存按「先 A 后 B」
+    //! 的顺序渲染两个维度，断言两次结果不同——缓存键丢掉维度时该断言必然失败。
+
+    use std::path::PathBuf;
+
+    use crate::services::world_view::testing;
+
+    fn gtnh_save() -> PathBuf {
+        PathBuf::from(r"C:\.minecraft\versions\GTNH 2.8.4\saves\新的世界 - 副本")
+    }
+
+    #[test]
+    fn chunks_from_one_dimension_never_serve_another() {
+        let save = gtnh_save();
+        if !save.is_dir() {
+            eprintln!("SKIP: GTNH save not present");
+            return;
+        }
+        let world = testing::open_world(&save).expect("open world");
+
+        // 主世界（region/）与末地（DIM1/region/）在同一批区块坐标上内容必然不同。
+        let overworld = save.join("region");
+        let end = save.join("DIM1").join("region");
+        if !overworld.is_dir() || !end.is_dir() {
+            eprintln!("SKIP: dimensions not present");
+            return;
+        }
+
+        // 共享同一个缓存：若缓存键不含维度，第二次调用会命中第一次的区块。
+        let mut cache = testing::new_cache(&world.palette);
+        let a = testing::render_tile_shared_cache(&mut cache, &overworld, 0, 0, 0, 0, 255)
+            .expect("render overworld");
+        let b = testing::render_tile_shared_cache(&mut cache, &end, 1, 0, 0, 0, 255)
+            .expect("render end");
+
+        assert_ne!(
+            a, b,
+            "同一批区块坐标在两个维度下渲染出了完全相同的瓦片——\
+             区块缓存键没有包含维度，先渲染的维度把地形借给了另一个维度。"
+        );
+
+        // 反过来也成立：清空缓存后单独渲染末地，结果必须与上面一致
+        // （证明差异来自维度本身，而不是渲染顺序的副作用）。
+        let mut fresh = testing::new_cache(&world.palette);
+        let b_alone = testing::render_tile_shared_cache(&mut fresh, &end, 1, 0, 0, 0, 255)
+            .expect("render end alone");
+        assert_eq!(
+            b, b_alone,
+            "末地瓦片在共享缓存与干净缓存下结果不一致，说明渲染受前一次调用污染"
+        );
+    }
+}

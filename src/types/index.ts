@@ -583,6 +583,52 @@ export interface SaveMetadata {
   iconBase64?: string | null
 }
 
+/** 世界预览：单个维度的元信息（POST /instance/{id}/world/open）。 */
+export interface WorldDimensionInfo {
+  id: number
+  name: string
+  regionDir: string
+  chunkCount: number
+  hasData: boolean
+}
+
+/** 世界预览：玩家最后位置。 */
+export interface WorldPlayerInfo {
+  x: number
+  y: number
+  z: number
+  dimension: number
+  name: string
+}
+
+/** 世界预览：路径点（JourneyMap / Xaero / VoxelMap 合并）。 */
+export interface WorldWaypoint {
+  name: string
+  x: number
+  y: number
+  z: number
+  dimension: number
+  color: string
+  kind: string
+  /** "journeymap" | "xaero" | "voxelmap" */
+  source: string
+}
+
+/** 世界预览：存档元信息。 */
+export interface WorldInfo {
+  saveDir: string
+  saveName: string
+  levelName: string
+  /** 世界种子。必须以字符串传递：i64 超出 JS 安全整数范围会静默丢精度。 */
+  worldSeed: string
+  instanceRoot: string
+  dimensions: WorldDimensionInfo[]
+  player: WorldPlayerInfo | null
+  waypoints: WorldWaypoint[]
+  paletteEntries: number
+  paletteMappedBlocks: number
+}
+
 /** 精选游戏规则子集（level.dat Data.GameRules，String "true"/"false" 或数字字符串） */
 export interface SaveGameRules {
   keepInventory: boolean

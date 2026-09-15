@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-09-12 00:17
+最后更新：2026-09-15 16:05
 
 ## 1-决策记录
 
@@ -80,6 +80,7 @@
 - [ADR-077：新增独立 Dialog 透明度设置](1-决策记录/ADR-077-新增独立-Dialog-透明度设置.md)
 - [ADR-078：安装期库去重改为按完整坐标保留所有版本（修复 NeoForge 安装 404）](1-决策记录/ADR-078-安装期库去重改为按完整坐标保留所有版本-修复-NeoForge-安装-404-.md)
 - [ADR-079：processor 下载 URL 复用 maven_to_path（剥离 @type + 多源探测）](1-决策记录/ADR-079-processor-下载-URL-复用-maven_to_path-剥离--type---多源探测-.md)
+- [ADR-080：世界预览：移植 world-viewer 领域层为后端服务 + HTTP 瓦片端点](1-决策记录/ADR-080-世界预览-移植-world-viewer-领域层为后端服务---HTTP-瓦片端点.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
@@ -151,6 +152,7 @@
 - [UI 组件设计规范](6-UI/组件设计/UI组件设计规范.md)
 - [Qomicex Launcher — UI Design Specification](6-UI/组件设计/UI设计系统.md)
 - [Qomicex Launcher 设计规范](6-UI/组件设计/UI设计规范.md)
+- [关于页鸣谢列表](6-UI/组件设计/关于页鸣谢列表.md)
 
 ## 7-调用规范
 

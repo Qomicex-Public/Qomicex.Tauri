@@ -2157,3 +2157,63 @@ Yggdrasil 外置登录的 **ALI（API 地址指示）** 解析：把用户输入
 成功响应经 Workers Cache API 缓存 10 分钟；凭证缺失或上游失败返回 `[]`。
 凭证经 `wrangler secret put AFDIAN_USER_ID` / `AFDIAN_API_TOKEN` 配置。
 
+
+
+### 2026-09-15 更新
+
+## 世界预览（存档地图瓦片）
+
+移植自独立工具 world-viewer（Tauri + Leaflet）。存档只读打开，按需渲染 256×256 地图瓦片（浮雕着色）。详见 `1-决策记录/ADR-080-世界预览-移植-world-viewer-领域层为后端服务---HTTP-瓦片端点.md`。
+
+### POST /api/instance/{id}/world/open
+
+打开实例下的一个存档，返回世界元信息并替换当前预览会话。
+
+**请求体**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | string | 存档目录名（`saves/` 下的一级目录，不接受路径分隔符） |
+| `key` | string | 前端生成的会话/缓存键（存档路径哈希，见下） |
+
+**响应** `{ key, info: WorldInfo }`。失败：400 `INVALID_NAME`/`INVALID_KEY`/`WORLD_OPEN_FAILED`、404 `SAVE_NOT_FOUND`/`INSTANCE_NOT_FOUND`。
+
+`WorldInfo`（camelCase）：
+
+```ts
+{
+  saveDir: string; saveName: string; levelName: string;
+  worldSeed: string;        // 字符串：i64 超出 JS 安全整数范围会静默丢精度
+  instanceRoot: string;
+  dimensions: { id: number; name: string; regionDir: string; chunkCount: number; hasData: boolean }[];
+  player: { x: number; y: number; z: number; dimension: number; name: string } | null;
+  waypoints: { name: string; x: number; y: number; z: number; dimension: number;
+               color: string; kind: string; source: 'journeymap'|'xaero'|'voxelmap' }[];
+  paletteEntries: number; paletteMappedBlocks: number;
+}
+```
+
+### GET /api/instance/{id}/world/tile/{key}/{dim}/{z}/{x}/{y}?ymax=N
+
+渲染一个瓦片，返回 `image/png`（`Cache-Control: no-store`）。
+
+| 参数 | 说明 |
+|------|------|
+| `key` | 必须与 `open` 时的 key 一致，否则 409 `WORLD_TILE_UNAVAILABLE`（防止切换存档后残留请求渲染出错误世界） |
+| `dim` | 维度 id（0 主世界 / -1 下界 / 1 末地 / 其余为模组维度） |
+| `z` | 缩放 0..4（z=0 覆盖 16×16 区块，1 像素 = 1 方块；z=4 覆盖 1 区块） |
+| `x`,`y` | 瓦片坐标（可为负） |
+| `ymax` | 高度切层上限，0..255。缺省或 `4294967295`（前端的「全高」哨兵值）表示全高 |
+
+**响应头**：`X-Tile-Empty: 1` 表示该瓦片覆盖区域没有任何已生成区块（前端画棋盘格占位，与「仍在加载」区分），`0` 表示有地形。
+
+### POST /api/instance/{id}/world/close
+
+关闭会话并释放区块缓存。204，无响应体。
+
+### 前端瓦片缓存键
+
+瓦片 URL 中的 `key` 由 `src/api/world-view.ts` 的 `worldKeyOf(savePath)` 生成：32 位回绕哈希（`Math.imul(31, h) + charCode`）后 base36 编码，前缀 `w`。它同时参与浏览器 HTTP 缓存与 `CachedTileLayer` 内存缓存的键，因此切换存档不会复用上一个世界的地图。
+
+后端 `services/world_view/ported_tests.rs` 的 `all_saves_smoke::tile_path_carries_a_world_key` 是该算法的镜像实现（含对真实前端产出的精确值断言），两端不能各自漂移。
+

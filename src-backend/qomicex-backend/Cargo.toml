@@ -70,6 +70,9 @@ md-5 = "0.10"
 sha1 = "0.10"
 http-body-util = "0.1"
 
+# --- 世界预览：存档地图瓦片 PNG 编码 ---
+png = "0.17"
+
 # --- 崩溃报告 mclo.gs 链接二维码（零依赖 QR 矩阵生成，PNG 编码用 flate2）---
 qrcodegen = "1.8"
 
