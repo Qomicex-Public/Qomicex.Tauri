@@ -2516,6 +2516,11 @@ fn instance_not_found(id: &str) -> ApiError {
     ApiError::not_found("INSTANCE_NOT_FOUND", format!("Instance {id} not found"))
 }
 
+/// 实例的 `saves` 目录（按版本隔离规则解析）。供其它端点模块复用。
+pub(crate) fn instance_saves_dir(id: &str, state: &crate::state::AppState) -> ApiResult<PathBuf> {
+    Ok(category_dir(&resolve(id, state)?, "saves"))
+}
+
 /// Map core errors to backend API errors (mirrors the source middleware:
 /// upstream HTTP >=500 -> 502, otherwise -> 500).
 fn map_core_error(e: qomicex_core::error::Error) -> ApiError {

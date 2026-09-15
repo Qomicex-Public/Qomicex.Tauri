@@ -23,3 +23,4 @@ pub mod plugin_store;
 pub mod schematic_assets;
 pub mod trace;
 pub mod translation;
+pub mod world_view;

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Copy, Pen, Play, Save, Settings, Trash2 } from 'lucide-react'
+import { Copy, Map as MapIcon, Pen, Play, Save, Settings, Trash2 } from 'lucide-react'
 import { Card, CardContent } from './ui'
 import { Tooltip } from './ui'
 import { Input } from './ui'
@@ -7,6 +7,7 @@ import { Button } from './ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu.tsx'
 import SaveSettingsDialog from './SaveSettingsDialog.tsx'
+import WorldPreviewDialog from './WorldPreviewDialog.tsx'
 import type { SaveMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 import { useI18n } from '../i18n/index.tsx'
@@ -30,6 +31,7 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
   const [renameValue, setRenameValue] = useState(save.name)
   const [backingUp, setBackingUp] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   /** 存档目录名（= filePath 末段，API 路径用；与 handleDelete 一致） */
   const folderName = save.filePath.replace(/\\/g, '/').split('/').pop() ?? save.name
@@ -65,6 +67,7 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
   }, [instanceId, save.name, save.filePath, onRefresh])
 
   const contextItems: ContextMenuItem[] = [
+    { label: t('dialogs.save.worldPreview'), onClick: () => setPreviewOpen(true) },
     { label: t('dialogs.save.settings'), onClick: () => setSettingsOpen(true) },
     { label: t('dialogs.save.backup'), onClick: () => handleBackup() },
     { label: t('dialogs.save.rename'), onClick: () => { setRenameValue(save.name); setRenaming(true) } },
@@ -107,6 +110,11 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
           )}
         </div>
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Tooltip content={t('dialogs.save.worldPreview')}>
+            <button aria-label={t('dialogs.save.worldPreview')} onClick={(e) => { e.stopPropagation(); setPreviewOpen(true) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
+              <MapIcon className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
           <Tooltip content={t('dialogs.save.settings')}>
             <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
               <Settings className="h-3.5 w-3.5" />
@@ -158,6 +166,13 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
         folderName={folderName}
         running={running ?? false}
         onSaved={onRefresh}
+      />
+      <WorldPreviewDialog
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        instanceId={instanceId}
+        saveName={folderName}
+        savePath={save.filePath}
       />
     </Card>
     </ContextMenu>

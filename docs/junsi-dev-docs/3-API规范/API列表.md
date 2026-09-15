@@ -2157,3 +2157,155 @@ Yggdrasil 外置登录的 **ALI（API 地址指示）** 解析：把用户输入
 成功响应经 Workers Cache API 缓存 10 分钟；凭证缺失或上游失败返回 `[]`。
 凭证经 `wrangler secret put AFDIAN_USER_ID` / `AFDIAN_API_TOKEN` 配置。
 
+
+
+### 2026-09-15 更新
+
+## 世界预览（存档地图瓦片）
+
+移植自独立工具 world-viewer（Tauri + Leaflet）。存档只读打开，按需渲染 256×256 地图瓦片（浮雕着色）。详见 `1-决策记录/ADR-080-世界预览-移植-world-viewer-领域层为后端服务---HTTP-瓦片端点.md`。
+
+### POST /api/instance/{id}/world/open
+
+打开实例下的一个存档，返回世界元信息并替换当前预览会话。
+
+**请求体**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | string | 存档目录名（`saves/` 下的一级目录，不接受路径分隔符） |
+| `key` | string | 前端生成的会话/缓存键（存档路径哈希，见下） |
+
+**响应** `{ key, info: WorldInfo }`。失败：400 `INVALID_NAME`/`INVALID_KEY`/`WORLD_OPEN_FAILED`、404 `SAVE_NOT_FOUND`/`INSTANCE_NOT_FOUND`。
+
+`WorldInfo`（camelCase）：
+
+```ts
+{
+  saveDir: string; saveName: string; levelName: string;
+  worldSeed: string;        // 字符串：i64 超出 JS 安全整数范围会静默丢精度
+  instanceRoot: string;
+  dimensions: { id: number; name: string; regionDir: string; chunkCount: number; hasData: boolean }[];
+  player: { x: number; y: number; z: number; dimension: number; name: string } | null;
+  waypoints: { name: string; x: number; y: number; z: number; dimension: number;
+               color: string; kind: string; source: 'journeymap'|'xaero'|'voxelmap' }[];
+  paletteEntries: number; paletteMappedBlocks: number;
+}
+```
+
+### GET /api/instance/{id}/world/tile/{key}/{dim}/{z}/{x}/{y}?ymax=N
+
+渲染一个瓦片，返回 `image/png`（`Cache-Control: no-store`）。
+
+| 参数 | 说明 |
+|------|------|
+| `key` | 必须与 `open` 时的 key 一致，否则 409 `WORLD_TILE_UNAVAILABLE`（防止切换存档后残留请求渲染出错误世界） |
+| `dim` | 维度 id（0 主世界 / -1 下界 / 1 末地 / 其余为模组维度） |
+| `z` | 缩放 0..4（z=0 覆盖 16×16 区块，1 像素 = 1 方块；z=4 覆盖 1 区块） |
+| `x`,`y` | 瓦片坐标（可为负） |
+| `ymax` | 高度切层上限，0..255。缺省或 `4294967295`（前端的「全高」哨兵值）表示全高 |
+
+**响应头**：`X-Tile-Empty: 1` 表示该瓦片覆盖区域没有任何已生成区块（前端画棋盘格占位，与「仍在加载」区分），`0` 表示有地形。
+
+### POST /api/instance/{id}/world/close
+
+关闭会话并释放区块缓存。204，无响应体。
+
+### 前端瓦片缓存键
+
+瓦片 URL 中的 `key` 由 `src/api/world-view.ts` 的 `worldKeyOf(savePath)` 生成：32 位回绕哈希（`Math.imul(31, h) + charCode`）后 base36 编码，前缀 `w`。它同时参与浏览器 HTTP 缓存与 `CachedTileLayer` 内存缓存的键，因此切换存档不会复用上一个世界的地图。
+
+后端 `services/world_view/ported_tests.rs` 的 `all_saves_smoke::tile_path_carries_a_world_key` 是该算法的镜像实现（含对真实前端产出的精确值断言），两端不能各自漂移。
+
+
+
+### 2026-09-15 更新
+
+## 世界预览：同步上游 world-viewer（2026-09-15）
+
+同步上游三个提交：`c9b7466`（小数 zoom 全黑修复）、`af8ec7f`（状态栏 Y/方块）、`fb12ca8`（高度范围动态适配）。
+
+### 小数 zoom 必须取整（`_clampZoom` 覆写）
+
+地图启用 `zoomSnap: 0.25`，滚轮缩放会停在小数 `mapZoom`（0.5 / 2.5）。Leaflet 的 `redraw()` 与 `_update()` 把 `map.getZoom()` **直接**当瓦片 zoom 用（不像 `_setView` 会先取整），`_tileZoom` 因此变成 0.5，URL 变成 `/0.5/-3/-2.png`。后端按整数解析 zoom → 400/404，前端记入 `failures` 后不再重试 → **地图全黑**；缩放一次走 `_setView`（内部取整）即恢复，所以现象是「全黑后随便缩放一次就正常」。
+
+修复：覆写 `_setView`/`redraw`/`_update` 三条路径共用的唯一收口 `_clampZoom`，在其中 `Math.round`。保留 0.25 的平滑缩放粒度。
+
+实测（`src/lib/world-tile-layer.ts`）：覆写后 `0.5→1`、`2.5→3`、`3.5→4`、`0.75→1`、`-0.25→0` 全为整数；原生实现同样输入原样返回小数。
+
+### 高度范围按维度动态适配
+
+`WorldDimensionInfo` 新增两个字段：
+
+| 字段 | 说明 |
+|------|------|
+| `minY` | 该维度可能包含的最低方块 Y（含）。1.18+ 主世界为 -64 |
+| `maxY` | 该维度可能包含的最高方块 Y（含）。1.20+ 主世界为 319 |
+
+高度不在 `level.dat` 里（`min_y`/`height` 属于数据包定义），只能从区块推导：1.13+ 区块携带完整 section 列表（含空 section），极值即真实范围；1.13 之前只存非空 section（GTNH 仅 Y=0..4），无法推导，回退 0..255。两种格式用 `block_states` 是否存在区分，**不能靠 section 数量**（legacy 的 section 数同样可能大于 1）。
+
+前端滑块绑定当前维度的 `minY..maxY`，切维度时重置高度避免越界，滑块下方显示范围。
+
+实测：GTNH(1.7.10) 为 `0..255`，Aegis(1.20+) 为 `-64..319`。
+
+### `ymax` 改为有符号（`i64`）
+
+原按 `u32` 解析，`ymax=-64` 会解析失败并**静默回退到全高**，负 Y 过滤形同失效。改为 `i64` 后负高度是合法过滤值；全高哨兵仍是 `4294967295`，但解析为该维度自身的 `maxY`（不再固定 255，否则 1.20+ 世界会静默隐藏所有 Y>255 的方块）。
+
+实测同一瓦片响应体大小：`4294967295` = `319`（91985B）> `0`（44698B）> `-64`（3125B，与上游记录一致）；`-1000` 正确钳位到 `-64`。
+
+### 悬停探测端点
+
+```
+GET /api/instance/{id}/world/probe/{key}/{dim}/{x}/{z}?ymax=N
+```
+
+返回该世界列最顶层非空气方块：
+
+```ts
+{ y: number | null; name: string | null; id: string | null }
+```
+
+地图是 `CRS.Simple` 二维平面，方块 Y 不在平面内，前端推不出来，只能由后端用与渲染同源的列扫描（复用 `TileCache` 的区块缓存与 `top_block_ref`）给出。`ymax` 语义与瓦片协议一致。未生成区块返回全 `null`；`key` 与当前会话不符返回 409。
+
+前端在 `mousemove` 上以 150ms 节流调用，并用递增序号丢弃过期响应（避免慢回包覆盖新结果）。
+
+实测：`(0,0)` 在 `ymax=4294967295/70` 取到 `y=64 minecraft:sand`，`ymax=0` 取到 `y=0 minecraft:deepslate`，`ymax=-64` 取到 `y=-64 minecraft:bedrock`；未生成区块返回 `null`。
+
+### 与上游的差异（移植适配）
+
+上游 `probe_block` 的缓存键是 `(x>>4, z>>4)`，**不含维度**——正是本项目已修复的缺陷（见 ADR-080）。移植时使用本项目的三元组 `ChunkKey = (dim, cx, cz)`。
+
+
+
+### 2026-09-16 更新
+
+### 缩放控件自绘（2026-09-15）
+
+地图原先使用 Leaflet 原生缩放控件（`zoomControl: true`）。原生控件是白色方块 + 18px 粗体等宽字符（`.leaflet-control-zoom-in/out` 用 `'Lucida Console', Monaco, monospace`），与启动器的圆角/暗色/图标风格不搭。
+
+改为 `zoomControl: false`，用启动器组件自绘，位置与原生一致（地图左上角）：
+
+```tsx
+<div className="absolute left-3 top-3 z-[500] flex flex-col gap-1">
+  <Tooltip content={t('instanceDetail.worldPreview.zoomIn')}>
+    <Button size="sm" variant="outline" aria-label={...}
+            disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1)}
+            className="h-7 w-7 bg-background/80 p-0 backdrop-blur">
+      <Plus className="h-3.5 w-3.5" />
+    </Button>
+  </Tooltip>
+  {/* Minus 同理，disabled={zoom <= MIN_ZOOM} */}
+</div>
+```
+
+要点：
+
+- **组件**：`Button`（`variant="outline"` + `size="sm"`）+ `Tooltip`，与启动器其它图标按钮同一套样式（`rounded-md`、`border-input`、`hover:bg-accent`、`text-muted-foreground`）。
+- **图标**：`Plus`/`Minus`（lucide）。Button 的 `[&_svg]:size-4` 生效，实际 16x16，与底部「取消」按钮的图标一致。
+- **半透明**：`bg-background/80` + `backdrop-blur`，避免按钮完全遮住下方瓦片。
+- **边界禁用**：`zoom` 状态由 `zoomend` 事件维护（`ensureMap` 里 `setZoom(map.getZoom())` 初始化），到 `MAX_ZOOM`/`MIN_ZOOM` 时对应按钮 `disabled`。
+- **步进**：`zoomBy(delta)` 用 `Math.round(map.getZoom()) + delta`，与 Leaflet `zoomDelta` 默认值 1 一致；先取整是为了兼容 `zoomSnap: 0.25` 留下的小数 zoom。
+
+实测（Chromium + Tauri mock 注入）：原生控件节点数 `0`；两个按钮均为 `28x28`、图标 `16x16`、`rounded-md`；点击放大瓦片 URL 的 z 段 `2 → 3` 逐级递增且全为整数；到上限 `放大` 按钮 `disabled`、到下限 `缩小` 按钮 `disabled`。
+

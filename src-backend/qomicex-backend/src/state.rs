@@ -27,6 +27,7 @@ use crate::services::plugin::{FileAuthService, PluginGatewayClient, PluginStore}
 use crate::services::trace::{
     init_file_log, FileLog, LogLevelManager, TraceBufferStore, TraceDumpService,
 };
+use crate::services::world_view::WorldViewService;
 use crate::settings;
 use crate::settings::SettingsResponse;
 
@@ -96,6 +97,8 @@ pub struct AppState {
     pub settings: Arc<RwLock<SettingsResponse>>,
     /// CurseForge 版本异步拉取服务（对应 CurseForgeVersionFetchService）。
     pub curseforge_fetch: Arc<CurseForgeVersionFetchService>,
+    /// 世界预览会话（存档地图瓦片渲染）。
+    pub world_view: Arc<WorldViewService>,
 }
 
 impl AppState {
@@ -213,6 +216,7 @@ impl AppState {
             curse_forge_api_key.clone(),
             settings_now.curseforge_fetch_config(),
         );
+        let world_view = Arc::new(WorldViewService::new());
 
         Self {
             core,
@@ -238,6 +242,7 @@ impl AppState {
             proxy_client,
             settings,
             curseforge_fetch,
+            world_view,
         }
     }
 
