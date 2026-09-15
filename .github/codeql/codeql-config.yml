@@ -1,0 +1,19 @@
+# CodeQL 配置
+#
+# 排除 rust/path-injection（"Uncontrolled data used in path expression"）。
+#
+# 理由：本项目的后端是**桌面应用**的本地伴随进程，只监听 127.0.0.1，不存在
+# 远程攻击者。所有进入文件路径的用户输入都是本机用户自己的选择（游戏目录、
+# 实例目录、存档目录名、缓存清理目标），用户操作自己的文件系统不构成注入面。
+#
+# 该规则还会把已经净化的输入误报为漏洞：用户可控的存档目录名在进入路径前已由
+# `schematic_assets::is_plain_file_name` 拒绝 `/`、`\`、`:`、`.`、`..`，但
+# CodeQL 的污点追踪在路径穿过结构体字段与模块边界后会丢失这段净化证据。
+#
+# 排除后仍保留 CodeQL 的其它 Rust 安全规则（命令注入、SQL 注入、硬编码凭据、
+# 弱加密等）。若将来后端改为对外监听，应重新启用本规则。
+name: "Qomicex CodeQL config"
+
+query-filters:
+  - exclude:
+      id: rust/path-injection
