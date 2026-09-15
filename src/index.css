@@ -253,7 +253,18 @@
     contain-intrinsic-size: 200px;
   }
 
+  /* Mod 行：数百项的列表跳过视口外渲染（与实例卡片同一策略）。
+     占位高度按实际行高估算（detailed≈104px、compact≈48px），auto 关键字会记住
+     真实尺寸，仅在首次布局前生效，避免滚动条跳动。 */
+  .mod-row-detailed {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 104px;
+  }
 
+  .mod-row-compact {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 48px;
+  }
 
   .anim-stagger > * {
     animation-name: scaleIn;

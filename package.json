@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build:plugin-ui": "pnpm --filter @qomicex/plugin-ui build",
+    "build": "pnpm run build:plugin-ui && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "bump-version": "node scripts/bump-version.mjs",
