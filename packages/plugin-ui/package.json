@@ -36,14 +36,14 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@radix-ui/react-checkbox": "^1.3.5",
-    "@radix-ui/react-slot": "^1.3.0",
+    "@radix-ui/react-checkbox": "^1.3.11",
+    "@radix-ui/react-slot": "^1.3.3",
     "@radix-ui/react-switch": "^1.3.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "gsap": "^3.15.0",
     "quidlass": "^1.2.2",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.7.0"
   },
   "peerDependencies": {
     "react": "^19",
