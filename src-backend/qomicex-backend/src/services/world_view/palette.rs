@@ -294,6 +294,11 @@ fn legacy_alias(name: &str) -> &str {
         .unwrap_or(name)
 }
 
+/// The alias table, exposed for the regression scan in `ported_tests`.
+pub fn legacy_aliases() -> &'static [(&'static str, &'static str)] {
+    LEGACY_ALIASES
+}
+
 /// Built-in colours for vanilla blocks, used when no JourneyMap palette is
 /// available (e.g. a vanilla or Xaero-only instance). Values approximate the
 /// average top-face colour of each block.
@@ -486,6 +491,13 @@ fn vanilla_color(name: &str) -> Option<[u8; 3]> {
         ("minecraft:nether_portal", [90, 30, 150]),
         ("minecraft:end_portal", [20, 10, 40]),
         ("minecraft:end_portal_frame", [60, 110, 90]),
+        ("minecraft:piston", [110, 110, 110]),
+        ("minecraft:sticky_piston", [90, 130, 90]),
+        ("minecraft:piston_head", [110, 110, 110]),
+        // `wooden_slab`/`double_wooden_slab` alias into this; without an exact
+        // entry the generic `contains("slab")` rule would paint them stone
+        // grey instead of wood.
+        ("minecraft:oak_slab", [156, 127, 78]),
         ("minecraft:fire", [220, 140, 40]),
         ("minecraft:note_block", [120, 90, 60]),
         ("minecraft:spawner", [30, 35, 40]),

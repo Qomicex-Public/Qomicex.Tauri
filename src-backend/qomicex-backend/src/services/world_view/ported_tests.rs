@@ -2005,7 +2005,9 @@ mod legacy_colors {
             ("minecraft:fence_gate", [156, 127, 78]),
             ("minecraft:trapdoor", [156, 127, 78]),
             ("minecraft:wooden_door", [156, 127, 78]),
-            ("minecraft:wooden_slab", [125, 125, 125]),
+            // 偏离上游：上游此处期望 [125,125,125]，那是 `contains("slab")`
+            // 通用规则给出的石灰色——木板本该是木色。见 ADR-081 修订记录。
+            ("minecraft:wooden_slab", [156, 127, 78]),
             ("minecraft:sapling", [75, 115, 50]),
             ("minecraft:unpowered_repeater", [160, 160, 160]),
             ("minecraft:unpowered_comparator", [160, 160, 160]),
@@ -2111,6 +2113,45 @@ mod legacy_colors {
                 total,
                 unknown
             );
+        }
+    }
+
+    /// Every alias target must resolve to a real colour.
+    ///
+    /// An alias pointing at a name the colour table does not know is a silent
+    /// no-op: the legacy block still falls through to the grey fallback, so the
+    /// mapping looks fixed while nothing changed. Two such aliases
+    /// (`piston_head`/`piston_extension` -> `minecraft:piston`) shipped that
+    /// way, so this scans the whole table instead of trusting it.
+    #[test]
+    fn alias_targets_all_resolve_to_colours() {
+        let palette = testing::Palette::empty();
+        let mut unresolved = Vec::new();
+        for (old, new) in testing::legacy_aliases() {
+            let (rgb, src, _) = palette.color_ref(&testing::BlockRef::Named(new.to_string()));
+            if src == "unknown" {
+                unresolved.push((*old, *new, rgb));
+            }
+        }
+        assert!(
+            unresolved.is_empty(),
+            "these aliases point at names with no colour: {unresolved:?}"
+        );
+    }
+
+    /// The two legacy slab aliases must land on a wood colour, not the stone
+    /// grey the generic `contains("slab")` rule would give them.
+    #[test]
+    fn legacy_slab_aliases_are_wood_coloured() {
+        let palette = testing::Palette::empty();
+        for name in ["minecraft:wooden_slab", "minecraft:double_wooden_slab"] {
+            let (rgb, src, _) = palette.color_ref(&testing::BlockRef::Named(name.to_string()));
+            assert_ne!(
+                rgb,
+                [125, 125, 125],
+                "{name} fell through to the generic stone-slab colour (src={src})"
+            );
+            assert_eq!(rgb, [156, 127, 78], "{name} must be oak wood");
         }
     }
 }

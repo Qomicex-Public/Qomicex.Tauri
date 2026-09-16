@@ -111,3 +111,7 @@ pub fn new_cache(palette: &Palette) -> super::render::TileCache {
 pub fn path_buf(s: &str) -> PathBuf {
     PathBuf::from(s)
 }
+/// 别名表，供 ported_tests 的回归扫描（防止别名指向表中不存在的目标）。
+pub fn legacy_aliases() -> &'static [(&'static str, &'static str)] {
+    super::palette::legacy_aliases()
+}

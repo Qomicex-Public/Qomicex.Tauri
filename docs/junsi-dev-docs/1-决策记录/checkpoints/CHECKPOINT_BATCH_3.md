@@ -74,3 +74,17 @@ ported_tests::all_saves_smoke::all_saves_open_and_render
 - 上游 1.13–1.15 连续打包布局本机无存档可验，仅靠合成数据测试
   （`palette_packing::contiguous_layout_is_detected_and_decoded`）覆盖。
 - 领域层在主仓与上游各一份，后续上游演进仍需手工同步（ADR-080 已记录）。
+
+
+## 修订：PR #96 审查意见处理（Sourcery）
+
+| 审查断言 | 核实 | 处理 |
+|---|---|---|
+| wooden_slab/double_wooden_slab → oak_slab 返回 unknown 灰 | 不成立（src=vanilla [125,125,125]），但颜色是石灰色而非木色 | 补 minecraft:oak_slab [156,127,78] |
+| piston_head/piston_extension → minecraft:piston 返回 unknown 灰 | 成立（src=unknown [80,80,80]） | 补 piston/piston_head/sticky_piston 颜色 |
+
+新增护栏：alias_targets_all_resolve_to_colours（扫描全部 55 项别名目标）、legacy_slab_aliases_are_wood_coloured。
+
+负向验证：移除新增颜色后 alias_targets_all_resolve_to_colours FAILED，精确复现审查报的两个别名。
+
+测试数：180 → **182**（全绿）。
