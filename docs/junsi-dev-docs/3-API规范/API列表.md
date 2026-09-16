@@ -2309,3 +2309,154 @@ GET /api/instance/{id}/world/probe/{key}/{dim}/{x}/{z}?ymax=N
 
 实测（Chromium + Tauri mock 注入）：原生控件节点数 `0`；两个按钮均为 `28x28`、图标 `16x16`、`rounded-md`；点击放大瓦片 URL 的 z 段 `2 → 3` 逐级递增且全为整数；到上限 `放大` 按钮 `disabled`、到下限 `缩小` 按钮 `disabled`。
 
+### 2026-09-16 更新
+
+## 世界预览：同步上游 world-viewer `8828130`（1.13-1.17 区块格式 + 旧版方块名配色）
+
+同步上游 `8828130`（fix(world): 支持 1.13-1.17 区块格式与旧版方块名配色）。端点契约**无变更**，仅领域层解析与配色修复。
+
+### 1.13–1.17 是独立于 1.18+ 的第三种区块布局
+
+| 版本 | sections 位置 | 调色板 / 数据 | 解析入口 |
+|---|---|---|---|
+| ≤1.12.2 | `Level.Sections[]` | `Blocks`/`Data`/`Add` 数字 id | `parse_sections_fast` |
+| 1.13–1.17 | `Level.Sections[]` | `Palette` + `BlockStates` **平级标签** | `parse_sections_fast`（新增分支） |
+| 1.18+ | 根级 `sections[]` | `block_states` 复合标签 | `parse_sections_modern` |
+
+修复前 1.13–1.17 存档被解析成空 section → 地图一片空白（实测 1.14.4/1.16.5 渲染 0 像素）。
+
+### 两种 long 打包布局（bits 不能整除 64 时）
+
+| 版本 | 布局 |
+|---|---|
+| 1.13–1.15 | 连续打包，条目可跨 long 边界 |
+| 1.16+ | 补齐打包，条目不跨界 |
+
+由 long 数组长度反推（`BlockStates::from_parts` 的 `spans`），无需读版本号：
+
+```
+per_long   = 64 / bits
+padded     = ceil(4096 / per_long)
+contiguous = ceil(4096 * bits / 64)
+spans = (len == contiguous && len != padded)
+```
+
+bits 为 4/8 时两种布局恰好一致，故只需区分 5/6/7。
+
+### 旧版方块名配色（LEGACY_ALIASES）
+
+1.13 扁平化重命名了大量方块但外观未变，而内置颜色表按**现代名**建键 → 1.0–1.12.2 存档拿旧名查表全部落空、返回兜底灰 `#505050`。实测 1.8.9 地表 68% 的列落灰。
+
+修复：`palette::LEGACY_ALIASES`（55 项，如 `minecraft:grass` → `minecraft:grass_block`）在 `vanilla_color()` 查表前解析。旧名集合在整个 1.0–1.12.2 区间固定，故一张表覆盖全部版本，无需按版本枚举。
+
+实测覆盖（每存档 16 区块 × 4096 地表列，统计 `color_ref` 返回 `unknown` 的比例）：
+
+| 存档 | 修复前 | 修复后 |
+|---|---|---|
+| 1.6.4 (`New World`) | — | 0.0% |
+| 1.8.9 | 68.0% | 0.0% |
+| 1.14.4 | 25.3% | 0.0% |
+
+### 回归保护
+
+`services/world_view/ported_tests.rs`：`mod palette_packing`（5 项，含合成数据的连续布局覆盖——本机无 1.13–1.15 存档）、`mod legacy_colors`（3 项）、`mod all_saves_smoke`（扩至 9 个存档）。
+
+负向验证：注释掉 `legacy_alias()` 调用 → `legacy_colors` 2 项 FAILED；还原 `block_states: None` → `all_saves_smoke` FAILED（1.14.4/1.16.5 渲染 0 像素）。
+
+### 顺带修复的本地缺陷
+
+`palette_index` 在 `bits == 0` 且 `data.is_some()` 时执行 `64 / 0` → panic（上游同样存在）。现已提前返回 `Some(0)`。
+
+### 2026-09-17 更新
+
+## 世界预览：同步上游 world-viewer `4e6f71d` + `1dc33cf`（生物群系染色/水面透视 + 缓存并发优化）
+
+同步上游两个提交。**端点路径不变**，但瓦片查询参数新增三个渲染开关。
+
+### 瓦片 URL 新增渲染开关
+
+```
+GET /api/instance/{id}/world/tile/{key}/{dim}/{z}/{x}/{y}?ymax=N&water=1&shade=1&alt=1
+```
+
+| 参数 | 类型 | 效果 | 缺省 |
+|---|---|---|---|
+| `water` | 0\|1 | 透视水面（扫描到水底并按深度混色） | 开 |
+| `shade` | 0\|1 | 地形浮雕着色 | 开 |
+| `alt` | 0\|1 | 高度明暗项（`shade` 的子项） | 开 |
+
+三个开关均**缺省为开**，因此不带它们的旧 URL 行为不变。
+
+### 生物群系染色（真实 biome，非固定平原绿）
+
+原先草/叶一律乘固定平原绿，全图一个色。现按真实 biome 查表：
+
+| 存档版本 | biome 来源 | 索引方式 |
+|---|---|---|
+| 1.18+ | 每个 section 的 `biomes`（palette + packed data） | 4×4×4 格：`(y>>2)*16 + (z>>2)*4 + (x>>2)` |
+| 1.15–1.17 | `Level.Biomes` IntArray，1024 项 | 同上 |
+| 1.7–1.14 | `Level.Biomes` ByteArray，256 项 | 每列 `z*16 + x` |
+
+数据表 `biome_tints.rs`：79 条数字 id + 67 条命名空间 biome。
+
+**两条染色公式（易错点）**——调色板对不同方块存的颜色性质不同：
+
+| 调色板颜色 | 判定 | 公式 |
+|---|---|---|
+| 灰色（草、树叶等原版未染色纹理） | `max-min <= 24` | `(base * tint) >> 8`（原版公式） |
+| 已着色（水 `#2e43f4`、芦苇、模组树叶） | 否 | 相对平原基准的比例缩放，保留亮度只换色相 |
+
+若对已着色方块也直接乘 tint，会被二次压暗（水变近黑）。这是除 ADR-001 之外新增的一条契约。
+
+实测（GTNH 同瓦片 dim0 z0 x-2 y-2）：
+
+| 指标 | 数值 |
+|---|---|
+| 水下像素色数（开水面透视） | 139 |
+| 水下像素色数（关） | 16 |
+| 水下蓝色通道均值（开/关） | 181.2 / 238.8 |
+| 水列解析出水底 | 2179 / 2179（100%） |
+| 实测草方块出现的群系数 | 3（色值各不相同） |
+
+### 性能：缓存与并发（实测视口渲染 332ms → 164ms，2.0x）
+
+| 项 | 改动 |
+|---|---|
+| region IO | 缓存文件句柄与 8KB header，改用位置读（pread）使句柄可跨线程共享。原先每 chunk 重开文件，一个 z=0 瓦片 open 324 次 |
+| 淘汰策略 | 「随机踢 25%」→ LRU，并修掉 O(n²) 的逐条最小值扫描（改为每批排序一次） |
+| 并发 | chunk 以 `Arc<ChunkData>` 交出，锁只保护 map，几十毫秒的 surface 扫描移出锁 |
+| 容量 | 4096 → 8192（根因是容量而非淘汰策略：一个 z=0 视口需约 6500 chunk） |
+| 前端 | `CachedTileLayer` bitmap 缓存加上限 512，此前无上限 |
+
+本机实测（`perf_*` 测试）：
+
+```
+A) old: open+header/chunk:  21.8 ms  (0.067 ms/chunk)
+B) new: cached handle     :  13.5 ms  (0.042 ms/chunk)   => 省 38%
+byte-identical chunks     : 256
+
+cap   4096 ( 39 MB)  hit 17%  evict 60416
+cap   8192 ( 78 MB)  hit 53%  evict 33792
+cap  12288 (116 MB)  hit 71%  evict 21504
+
+per chunk: 9.7 KiB
+mismatching renders: 0 / 24   (8 线程 × 3 轮，容量 64 的极端压力下仍字节一致)
+```
+
+### 本项目相对上游的适配
+
+`WorldViewService.tile()` 原先把**整个 session 锁**跨 `render_tile` 持有，比上游的 cache 锁更粗，串行化问题同样存在（上游实测 6 并发仅 0.94x）。移植时一并收窄：`WorldSession.cache` 改 `Arc<TileCache>`，只在取 `region_dir`/`ymax` 那一段持锁。
+
+另沿用本项目在 ADR-080 已修的 `ChunkKey = (dim, cx, cz)`（上游是二元组）。
+
+### 回归保护
+
+`services/world_view/ported_tests.rs` 新增 5 个 mod：`water_and_biomes`（7 项）、`perf_concurrency`（2 项）、`perf_region_io`（2 项）、`perf_chunk_memory`（1 项）、`perf_sweep`（1 项）；`biome.rs` 内置 7 项单测。
+
+负向验证（三次，均已还原）：
+
+1. `needs_tint` 阈值 24 → 255 → `biome::tests::already_coloured_blocks_are_left_alone` FAILED
+2. 关掉 shade 的水面混合 → `water_toggle_changes_the_render` FAILED
+3. 读 raw 时偏移量去掉 `+5` → `cached_reader_matches_original_bytes` FAILED
+
+测试总数 182 → **203**（全绿）。

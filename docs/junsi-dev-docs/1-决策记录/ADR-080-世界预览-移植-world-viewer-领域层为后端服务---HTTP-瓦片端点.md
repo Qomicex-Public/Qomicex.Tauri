@@ -94,3 +94,10 @@
 
 **未采纳上游的项**：无。三个提交的功能/修复全部同步，行为与上游对齐。
 
+### 2026-09-16：同步上游 world-viewer 8828130\r
+
+上游新增提交 8828130（fix(world): 支持 1.13-1.17 区块格式与旧版方块名配色），本项目移植版同样存在该缺口，已同步。详见 ADR-081 与 checkpoints/CHECKPOINT_BATCH_3.md。
+
+- 1.13-1.17 平级 Palette/BlockStates 布局解析（修复前 1.14.4/1.16.5 渲染 0 像素）
+- LEGACY_ALIASES 旧版方块名配色（1.8.9 地表落灰 68.0% → 0.0%）
+- 顺带修复 palette_index 在 bits==0 && data.is_some() 时的 64/0 panic

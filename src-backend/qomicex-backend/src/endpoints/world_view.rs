@@ -24,6 +24,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ApiError, ApiResult};
+use crate::services::world_view::render::RenderOpts;
 use crate::services::world_view::world::WorldInfo;
 use crate::services::world_view::BlockInfo;
 use crate::state::SharedState;
@@ -50,13 +51,34 @@ struct OpenRequest {
 
 #[derive(Deserialize)]
 struct TileQuery {
-    /// 高度切层上限；缺省为全高。
+    /// 高度切层上限，缺省为全高。
     ///
-    /// 用 `i64` 而非 `u32`：1.18+ 的世界最低到 Y=-64，负高度是合法过滤值，
-    /// `u32` 会拒绝它并静默回退到全高（负 Y 过滤形同失效）。前端的「全高」
-    /// 哨兵值仍是 `4294967295`。
+    /// 用 `i64` 而非 `u32`：1.18+ 世界最低到 Y=-64，负高度是合法输入值。
+    /// `u32` 会拒绝负值并默认成「全高」，让 Y 过滤如同失效（前端的「全高」
+    /// 哨兵值是 `4294967295`）。
     #[serde(default)]
     ymax: Option<i64>,
+    /// 水面透视（显示水底）。缺省为开。
+    #[serde(default)]
+    water: Option<i32>,
+    /// 地形浮雕着色。缺省为开。
+    #[serde(default)]
+    shade: Option<i32>,
+    /// 高度明暗项（`shade` 的子项）。缺省为开。
+    #[serde(default)]
+    alt: Option<i32>,
+}
+
+impl TileQuery {
+    /// 三个渲染开关缺省全开，因此不带它们的旧 URL 行为不变。
+    fn render_opts(&self) -> RenderOpts {
+        let flag = |v: Option<i32>| v.map(|v| v != 0).unwrap_or(true);
+        RenderOpts {
+            water: flag(self.water),
+            shading: flag(self.shade),
+            altitude: flag(self.alt),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -114,9 +136,10 @@ async fn tile(
     let svc = state.world_view.clone();
     // 瓦片渲染是 CPU 密集的同步任务（zoom 0 单瓦片需读解析最多 324 个区块），
     // 必须离开 async worker，否则并发请求会把事件循环占满。
-    let result = tokio::task::spawn_blocking(move || svc.tile(&key, dim, z, x, y, q.ymax))
-        .await
-        .map_err(|e| ApiError::internal(format!("任务失败: {e}")))?;
+    let result =
+        tokio::task::spawn_blocking(move || svc.tile(&key, dim, z, x, y, q.ymax, q.render_opts()))
+            .await
+            .map_err(|e| ApiError::internal(format!("任务失败: {e}")))?;
     let result = match result {
         Ok(r) => r,
         Err(e) => {

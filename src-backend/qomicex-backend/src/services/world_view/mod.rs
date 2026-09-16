@@ -12,6 +12,8 @@
 //! - [`world`]      存档打开、维度扫描、实例根探测
 //! - [`legacy_ids`] 内置原版 ID→名称表（1.7.10 / 1.12.2）
 
+pub mod biome;
+pub mod biome_tints;
 pub mod legacy_ids;
 pub mod nbt;
 pub mod palette;
@@ -25,19 +27,21 @@ mod ported_tests;
 mod testing;
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use render::TileCache;
+use render::{RenderOpts, TileCache};
 use world::{World, WorldInfo};
 
-/// 单个世界预览会话：世界元信息 + 瓦片区块缓存。
+/// 世界预览会话：领域世界 + 瓦片区块缓存。
 ///
-/// 同一时刻只保留一个会话（与上游 `AppState` 的单例语义一致），前端打开新存档
-/// 即替换。`key` 由前端生成并参与瓦片 URL，用于隔离浏览器端与前端缓存。
+/// 同一时间只有一个会话（与 `AppState` 的单例语义一致）；前端带新存档时
+/// 整体替换。`key` 由前端生成并写进瓦片 URL，用于隔离浏览器缓存。
 pub struct WorldSession {
     pub key: String,
     pub world: World,
-    pub cache: TileCache,
+    /// `Arc` 以便瓦片请求克隆后释放锁再渲染——跨 `render_tile` 持锁会把
+    /// 前端 6 路并发串行化（上游实测仅 0.94x 加速）。
+    pub cache: Arc<TileCache>,
 }
 
 /// 世界预览服务（注册进 `AppState`）。
@@ -77,18 +81,21 @@ impl WorldViewService {
         let info = w.info();
         let pal = palette::Palette::load(&w.instance_root, &w.level_dat)
             .unwrap_or_else(|_| palette::Palette::empty());
-        let cache = TileCache::new(pal, CACHE_CAPACITY);
+        let cache = Arc::new(TileCache::new(pal, CACHE_CAPACITY));
         *self.session.lock().unwrap() = Some(WorldSession {
             key,
             world: w,
             cache,
         });
+        // 上一个世界的 region 句柄指向不同的文件。
+        region::clear_region_cache();
         Ok(info)
     }
 
     /// 关闭当前会话（释放区块缓存）。
     pub fn close(&self) {
         *self.session.lock().unwrap() = None;
+        region::clear_region_cache();
     }
 
     /// 渲染一个瓦片。`key` 必须与打开时一致，否则说明前端拿的是上一个存档的
@@ -104,27 +111,28 @@ impl WorldViewService {
         tile_x: i32,
         tile_row: i32,
         ymax: Option<i64>,
+        opts: RenderOpts,
     ) -> Result<TileResult, String> {
-        let mut guard = self.session.lock().unwrap();
-        let session = guard.as_mut().ok_or("尚未打开任何存档")?;
-        if session.key != key {
-            return Err("瓦片所属存档与当前会话不符".into());
-        }
-        let dim_info = session
-            .world
-            .dimension(dim)
-            .ok_or_else(|| format!("维度 {dim} 不存在"))?;
-        let region_dir = PathBuf::from(&dim_info.region_dir);
-        let ymax = world::resolve_ymax(ymax.unwrap_or(world::YMAX_FULL), dim_info);
-        let (png, has_data) = render::render_tile(
-            &mut session.cache,
-            &region_dir,
-            dim,
-            zoom,
-            tile_x,
-            tile_row,
-            ymax,
-        )?;
+        // 只在这一段持锁：取出渲染所需的全部数据后立即释放，几十毫秒的
+        // surface 扫描在锁外进行。
+        let (cache, region_dir, ymax) = {
+            let guard = self.session.lock().unwrap();
+            let session = guard.as_ref().ok_or("尚未打开任何存档")?;
+            if session.key != key {
+                return Err("瓦片所属存档与当前会话不符".into());
+            }
+            let dim_info = session
+                .world
+                .dimension(dim)
+                .ok_or_else(|| format!("维度 {dim} 不存在"))?;
+            (
+                session.cache.clone(),
+                PathBuf::from(&dim_info.region_dir),
+                world::resolve_ymax(ymax.unwrap_or(world::YMAX_FULL), dim_info),
+            )
+        };
+        let (png, has_data) =
+            render::render_tile(&cache, &region_dir, dim, zoom, tile_x, tile_row, ymax, opts)?;
         Ok(TileResult { png, has_data })
     }
 
@@ -142,38 +150,34 @@ impl WorldViewService {
     ) -> Result<BlockInfo, String> {
         use render::{BlockRef, BlockRefRef};
 
-        let mut guard = self.session.lock().unwrap();
-        let session = guard.as_mut().ok_or("尚未打开任何存档")?;
-        if session.key != key {
-            return Err("瓦片所属存档与当前会话不符".into());
-        }
-        let dim_info = session
-            .world
-            .dimension(dim)
-            .ok_or_else(|| format!("维度 {dim} 不存在"))?;
-        let region_dir = PathBuf::from(&dim_info.region_dir);
-        let ymax = world::resolve_ymax(ymax.unwrap_or(world::YMAX_FULL), dim_info);
+        let (cache, region_dir, ymax) = {
+            let guard = self.session.lock().unwrap();
+            let session = guard.as_ref().ok_or("尚未打开任何存档")?;
+            if session.key != key {
+                return Err("瓦片所属存档与当前会话不符".into());
+            }
+            let dim_info = session
+                .world
+                .dimension(dim)
+                .ok_or_else(|| format!("维度 {dim} 不存在"))?;
+            (
+                session.cache.clone(),
+                PathBuf::from(&dim_info.region_dir),
+                world::resolve_ymax(ymax.unwrap_or(world::YMAX_FULL), dim_info),
+            )
+        };
 
         // 复用渲染器的区块缓存：悬停点几乎总落在某个可见瓦片已加载的区块内，
         // 因此这里基本是 HashMap 命中。
         let cx = x >> 4;
         let cz = z >> 4;
         let cache_key = (dim, cx, cz);
-        if !session.cache.chunks.contains_key(&cache_key) {
-            let loaded = render::load_chunk(&region_dir, cx, cz)?;
-            session.cache.insert_loaded(cache_key, loaded);
-        }
         let empty = BlockInfo {
             y: None,
             name: None,
             id: None,
         };
-        let Some(chunk) = session
-            .cache
-            .chunks
-            .get(&cache_key)
-            .and_then(|c| c.as_ref())
-        else {
+        let Some(chunk) = cache.get_or_load(&region_dir, cache_key) else {
             return Ok(empty);
         };
 
@@ -189,15 +193,18 @@ impl WorldViewService {
         let owned: BlockRef = block.to_owned_ref();
         Ok(BlockInfo {
             y: Some(by),
-            name: Some(session.cache.palette.display_name(&owned)),
+            name: Some(cache.palette.display_name(&owned)),
             id: Some(id),
         })
     }
 }
 
-/// 区块缓存容量。单瓦片最多需要 324 个区块（zoom 0，含 1 区块边距），
-/// 一屏约 16 瓦片，4096 约覆盖两屏多（与上游一致）。
-const CACHE_CAPACITY: usize = 4096;
+/// 区块缓存容量。单瓦片最多需要 324 个区块（zoom 0，含 1 区块边距）。
+///
+/// 一个 zoom-0 视口是 5x5 瓦片、每瓦片 18x18 区块，工作集约 6500 个区块。
+/// 4096 只装得下一屏的 63% 并反复抖动（实测命中率仅 17%），8192 可容纳整屏
+/// （命中率约 53%，整屏渲染时间约减半）。区块约 9.7 KiB，即约 78 MB。
+const CACHE_CAPACITY: usize = 8192;
 
 #[cfg(test)]
 mod tests {
@@ -207,7 +214,9 @@ mod tests {
     #[test]
     fn tile_without_open_session_is_an_error() {
         let svc = WorldViewService::new();
-        let err = svc.tile("k", 0, 0, 0, 0, None).unwrap_err();
+        let err = svc
+            .tile("k", 0, 0, 0, 0, None, render::RenderOpts::default())
+            .unwrap_err();
         assert!(err.contains("尚未打开"), "unexpected error: {err}");
     }
 
@@ -219,6 +228,8 @@ mod tests {
         // 用一个必然不存在的存档路径，确认 open 失败时不会留下半初始化会话。
         let bad = dir.join("__no_such_save__");
         assert!(svc.open("k1".into(), &bad).is_err());
-        assert!(svc.tile("k1", 0, 0, 0, 0, None).is_err());
+        assert!(svc
+            .tile("k1", 0, 0, 0, 0, None, render::RenderOpts::default())
+            .is_err());
     }
 }

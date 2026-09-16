@@ -4,7 +4,16 @@ import 'leaflet/dist/leaflet.css'
 import { Layers, Map as MapIcon, Minus, Plus, RotateCw, TriangleAlert, X } from 'lucide-react'
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitle, Tooltip } from './ui/index.ts'
 import { useI18n } from '../i18n/index.tsx'
-import { openWorld, closeWorld, tileUrlTemplate, worldKeyOf, probeBlock, WorldApiError } from '../api/world-view.ts'
+import {
+  openWorld,
+  closeWorld,
+  tileUrlTemplate,
+  worldKeyOf,
+  probeBlock,
+  WorldApiError,
+  DEFAULT_RENDER_FLAGS,
+  type RenderFlags,
+} from '../api/world-view.ts'
 import { CachedTileLayer } from '../lib/world-tile-layer.ts'
 import { cn } from '../lib/utils.ts'
 import type { WorldInfo, WorldBlockInfo } from '../types/index.ts'
@@ -53,6 +62,7 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
   const [mouse, setMouse] = useState<{ x: number; z: number } | null>(null)
   const [block, setBlock] = useState<WorldBlockInfo | null>(null)
   const [zoom, setZoom] = useState(1)
+  const [flags, setFlags] = useState<RenderFlags>(DEFAULT_RENDER_FLAGS)
 
   const activeDim = useMemo(
     () => info?.dimensions.find((d) => d.id === dim) ?? null,
@@ -142,12 +152,19 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
   }, [scheduleProbe])
 
   const buildTileLayer = useCallback(
-    (map: L.Map, dimension: number, height: number, maxY: number) => {
-      const template = tileUrlTemplate(instanceId, worldKeyRef.current, dimension, height, maxY)
+    (map: L.Map, dimension: number, height: number, maxY: number, flags: RenderFlags) => {
+      const template = tileUrlTemplate(
+        instanceId,
+        worldKeyRef.current,
+        dimension,
+        height,
+        maxY,
+        flags,
+      )
       const existing = layerRef.current
       if (existing) {
-        // 复用图层（连同缓存），除非世界或高度切层变化。世界键在 URL 里，
-        // 因此切换存档会在这里被识别并丢弃上一个世界的瓦片。
+        // 复用图层（连同缓存），除非世界、高度切层或渲染开关变化。三者都在
+        // URL 里，因此切换存档会在这里被识别并丢弃上一个世界的瓦片。
         if (existing.getUrlTemplate() !== template) existing.clearCache()
         existing.setUrlTemplate(template)
         existing.redraw()
@@ -228,7 +245,7 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
       setYmax(firstRange.max)
       setStage('ready')
       if (map) {
-        buildTileLayer(map, first, firstRange.max, firstRange.max)
+        buildTileLayer(map, first, firstRange.max, firstRange.max, flags)
         drawMarkers(map, world, first)
         const p = world.player
         if (p) map.setView([-p.z, p.x], 2)
@@ -275,7 +292,7 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
       const nextRange = rangeOf(info, id)
       const nextYmax = Math.min(ymax, nextRange.max)
       setYmax(nextYmax)
-      buildTileLayer(map, id, nextYmax, nextRange.max)
+      buildTileLayer(map, id, nextYmax, nextRange.max, flags)
       drawMarkers(map, info, id)
       // 飞到该维度的玩家位置，否则首个路径点，否则原点。
       const p = info.player && info.player.dimension === id ? info.player : null
@@ -284,17 +301,29 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
       else if (wp) map.setView([-wp.z, wp.x], 2)
       else map.setView([0, 0], 1)
     },
-    [info, ymax, buildTileLayer, drawMarkers],
+    [info, ymax, flags, buildTileLayer, drawMarkers],
   )
 
   const applyYmax = useCallback(
     (v: number) => {
       setYmax(v)
       const map = mapRef.current
-      if (map) buildTileLayer(map, dim, v, range.max)
+      if (map) buildTileLayer(map, dim, v, range.max, flags)
     },
-    [dim, range.max, buildTileLayer],
+    [dim, range.max, buildTileLayer, flags],
   )
+
+  /**
+   * 切换一个渲染开关。立即以新值重建瓦片图层，而不是依赖 React 状态更新时序
+   * （`buildTileLayer` 需要拿到新值，`setFlags` 后同一轮里 `flags` 还是旧的）。
+   */
+  const toggleFlag = (key: keyof RenderFlags) => {
+    const next = { ...flags, [key]: !flags[key] }
+    setFlags(next)
+    const map = mapRef.current
+    if (!map) return
+    buildTileLayer(map, dim, ymax, range.max, next)
+  }
 
   /** 自绘缩放控件：步进与 Leaflet 原生一致（zoomDelta 默认 1）。 */
   const zoomBy = useCallback((delta: number) => {
@@ -433,6 +462,51 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
                   <p className="text-[10px] leading-snug text-muted-foreground">
                     {t('instanceDetail.worldPreview.heightHint')}
                   </p>
+                </div>
+                <div className="space-y-2 border-b border-border p-3">
+                  <div className="mb-2 text-xs font-medium text-foreground/80">
+                    {t('instanceDetail.worldPreview.render')}
+                  </div>
+                  <ul className="space-y-1.5 text-xs text-muted-foreground">
+                    <li>
+                      <label className="flex cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={flags.water}
+                          disabled={!info}
+                          onChange={() => toggleFlag('water')}
+                        />
+                        {t('instanceDetail.worldPreview.waterToggle')}
+                      </label>
+                    </li>
+                    <li>
+                      <label className="flex cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={flags.shading}
+                          disabled={!info}
+                          onChange={() => toggleFlag('shading')}
+                        />
+                        {t('instanceDetail.worldPreview.shadingToggle')}
+                      </label>
+                    </li>
+                    <li>
+                      <label
+                        className={cn(
+                          'flex items-center gap-2',
+                          flags.shading ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={flags.altitude}
+                          disabled={!info || !flags.shading}
+                          onChange={() => toggleFlag('altitude')}
+                        />
+                        {t('instanceDetail.worldPreview.altitudeToggle')}
+                      </label>
+                    </li>
+                  </ul>
                 </div>
                 <div className="border-b border-border p-3">
                   <div className="mb-2 text-xs font-medium text-foreground/80">
