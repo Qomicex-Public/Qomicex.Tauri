@@ -27,11 +27,45 @@ export class CachedTileLayer extends L.GridLayer {
   /** 键含 `dim|ymax`——任一变化都会作废全部瓦片。 */
   private urlTemplate = ''
   private maxConcurrent: number
+  /**
+   * 缓存位图上限。一张 256x256 RGBA 位图约 256 KiB，无上限时平移上千张后会到
+   * 约 256 MB。前端缓存只是服务端区块缓存之前的快速路径，不必装下整个世界，
+   * 只需要视口附近的瓦片。
+   */
+  private maxCached: number
   private failures = new Set<string>()
 
-  constructor(options?: L.GridLayerOptions & { maxConcurrent?: number }) {
+  constructor(options?: L.GridLayerOptions & { maxConcurrent?: number; maxCached?: number }) {
     super({ tileSize: 256, ...options })
     this.maxConcurrent = options?.maxConcurrent ?? 6
+    this.maxCached = options?.maxCached ?? 512
+  }
+
+  /**
+   * 把 `key` 移到最近使用端，并丢弃最旧的条目。
+   *
+   * `Map` 按插入顺序迭代，因此每次使用时重新插入就让迭代顺序等于使用顺序，
+   * 淘汰只需取第一个 key——整个 LRU 就这一处，无需额外簿记。
+   */
+  private remember(key: string, bitmap: ImageBitmap) {
+    this.cache.delete(key)
+    this.cache.set(key, bitmap)
+    while (this.cache.size > this.maxCached) {
+      const oldest = this.cache.keys().next().value
+      if (oldest === undefined) break
+      this.cache.delete(oldest)
+      // 空瓦片集合是缓存的兄弟结构，不能比缓存本身还大。
+      this.empty.delete(oldest)
+    }
+  }
+
+  private recall(key: string): ImageBitmap | undefined {
+    const bitmap = this.cache.get(key)
+    if (bitmap) {
+      this.cache.delete(key)
+      this.cache.set(key, bitmap)
+    }
+    return bitmap
   }
 
   setUrlTemplate(template: string) {
@@ -111,7 +145,7 @@ export class CachedTileLayer extends L.GridLayer {
   }
 
   private load(key: string, url: string, onReady: (img: TileImage | null) => void) {
-    const cached = this.cache.get(key)
+    const cached = this.recall(key)
     if (cached) {
       onReady({ bitmap: cached, isEmpty: this.empty.has(key) })
       return
@@ -138,7 +172,7 @@ export class CachedTileLayer extends L.GridLayer {
           const isEmpty = resp.headers.get('X-Tile-Empty') === '1'
           const blob = await resp.blob()
           const bitmap = await createImageBitmap(blob)
-          this.cache.set(key, bitmap)
+          this.remember(key, bitmap)
           this.done()
           if (isEmpty) this.empty.add(key)
           else this.empty.delete(key)
@@ -182,7 +216,7 @@ export class CachedTileLayer extends L.GridLayer {
       const qx = coords.x - px * 2
       const qy = coords.y - py * 2
       const parentKey = this.urlFor({ ...coords, z: coords.z - 1, x: px, y: py })
-      const parent = this.cache.get(parentKey)
+      const parent = this.recall(parentKey)
       if (parent) {
         ctx.imageSmoothingEnabled = true
         ctx.drawImage(parent, -qx * size.x, -qy * size.y, size.x * 2, size.y * 2)

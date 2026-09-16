@@ -52,11 +52,32 @@ export class WorldApiError extends Error {
 }
 
 /**
- * 瓦片 URL 模板。`key` 段让浏览器缓存与前端缓存按存档隔离——否则切换存档后
- * 会继续复用上一个世界的地图。
+ * 渲染开关，与瓦片 URL 查询参数一一对应。
  *
- * `maxY` 是该维度自身的高度天花板：1.20+ 主世界到 Y=319，固定用 255 判断
- * 「全高」会把顶部方块误判成需要过滤。
+ * 三者都**写进 URL**，因此 `CachedTileLayer` 的模板比较会自动清缓存重绘，
+ * 不需要额外的失效逻辑。
+ */
+export type RenderFlags = {
+  /** 透视水面（显示水底）。关则水渲染为单色平面。 */
+  water: boolean
+  /** 地形浮雕着色。关则完全不做浮雕着色。 */
+  shading: boolean
+  /** 高度明暗项（`shading` 的子项）。关则去掉高度项，只保留坡度项。 */
+  altitude: boolean
+}
+
+export const DEFAULT_RENDER_FLAGS: RenderFlags = {
+  water: true,
+  shading: true,
+  altitude: true,
+}
+
+/**
+ * 瓦片 URL 模板。`key` 参与缓存键，避免前端缓存按存档隔离——否则切换存档后
+ * 会复用上一个世界的地图。
+ *
+ * `maxY` 是该维度自身的最高天花板：1.20+ 主世界到 Y=319，固定用 255 判定
+ * 「全高」会漏掉高处的方块，所以需要传进来。
  */
 export function tileUrlTemplate(
   instanceId: string,
@@ -64,10 +85,15 @@ export function tileUrlTemplate(
   dim: number,
   ymax: number,
   maxY: number,
+  flags: RenderFlags = DEFAULT_RENDER_FLAGS,
 ): string {
   const yPart = ymax >= maxY ? '4294967295' : String(ymax)
-  return `${API_BASE}/instance/${instanceId}/world/tile/${key}/${dim}/{z}/{x}/{y}?ymax=${yPart}`
+  const f = `water=${flags.water ? 1 : 0}&shade=${flags.shading ? 1 : 0}&alt=${
+    flags.altitude ? 1 : 0
+  }`
+  return `${API_BASE}/instance/${instanceId}/world/tile/${key}/${dim}/{z}/{x}/{y}?ymax=${yPart}&${f}`
 }
+
 
 /**
  * 探测某个世界列最顶层的非空气方块（状态栏悬停显示 Y 与方块名）。
