@@ -59,3 +59,42 @@ files:
 not_converted:
   - "Connect.tsx L556/599/618/690：ternary 一侧为 null 或文本，非两图标切换"
   - "静态图标用法（无状态切换）"
+
+# =====================================================================
+# 迁移批次 2 — world-viewer 8828130 → backend world_view（1.13-1.17 区块格式 + 旧版方块名配色）
+# 方向：适配新架构（路径改写 + 测试并入 ported_tests.rs），非逐字翻译
+# =====================================================================
+migration_batch_2:
+  source: "C:\\Project\\world-viewer @ 8828130 (fix(world): 支持 1.13-1.17 区块格式与旧版方块名配色)"
+  target: "C:\\Project\\Qomicex.Tauri src-backend/qomicex-backend/src/services/world_view/"
+
+  path_mapping:
+    "crate::nbt": "super::nbt"
+    "crate::palette": "super::palette"
+    "crate::region": "super::region"
+    "crate::render": "super::render"
+    "crate::legacy_ids": "super::legacy_ids"
+    "crate::render::BlockRefRef": "super::render::BlockRefRef"
+    "world_viewer_lib::testing": "crate::services::world_view::testing"
+    "world_viewer_lib": "crate::services::world_view::testing"
+
+  type_mapping:
+    BlockStates: "region::BlockStates（新增 spans: bool 字段）"
+    BlockStates::from_parts: "region::BlockStates::from_parts(palette, data) -> Self"
+    Section: "region::Section（已存在，字段不变）"
+    Tag::LongArray: "nbt::Tag::LongArray(Vec<i64>)（既有，用于 1.13-1.17 BlockStates）"
+    LEGACY_ALIASES: "palette::LEGACY_ALIASES（私有 const，55 项）"
+    legacy_alias: "palette::legacy_alias(name) -> &str（私有）"
+
+  test_mapping:
+    "tests/palette_packing.rs": "ported_tests.rs::mod palette_packing"
+    "tests/legacy_colors.rs": "ported_tests.rs::mod legacy_colors"
+    "tests/all_saves_smoke.rs (saves 列表)": "ported_tests.rs::mod all_saves_smoke::saves() 追加 4 项"
+    "上游硬编码存档路径": "本机实测存在，路径原样保留（1.6.4/1.8.9 在 C:\\Minecraft，1.14.4/1.16.5 分别在 C:\\Minecraft 与 C:\\.minecraft）"
+
+  api_mapping: "无 API 变更（纯领域层修复，端点契约不变）"
+
+  deliberate_divergence:
+    - "测试从独立 tests/*.rs 并入 ported_tests.rs 的 mod：本项目后端是 bin crate，无 lib target，integration tests 目录不可用"
+    - "注释保留上游英文原文（未翻译），与既有 world_view 模块风格一致"
+    - "顺带修掉 palette_index 在 bits==0 且 data.is_some() 时的除零 panic（上游同样存在）"

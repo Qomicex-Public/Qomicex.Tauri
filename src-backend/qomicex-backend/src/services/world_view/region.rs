@@ -77,11 +77,51 @@ pub struct Section {
 }
 
 /// 1.13+ `block_states`: a palette plus bit-packed indices.
+///
+/// Two on-disk layouts produce this: 1.13–1.17 keep `Palette`/`BlockStates`
+/// as sibling tags under `Level.Sections[]`, 1.18+ nest both inside a
+/// `block_states` compound at the chunk root.
 pub struct BlockStates {
     pub palette: Vec<String>,
     pub data: Option<Vec<u64>>,
     /// Bits per entry, derived from palette length (per the wiki).
     pub bits: u32,
+    /// 1.13–1.15 pack entries contiguously across long boundaries; 1.16+
+    /// pad each long instead. The layouts only differ when `bits` does not
+    /// divide 64 (bits 5, 6, 7), where the array length tells them apart.
+    pub spans: bool,
+}
+
+impl BlockStates {
+    /// Derive `bits` and the packing layout from a palette and its long array.
+    pub fn from_parts(palette: Vec<String>, data: Option<Vec<u64>>) -> Self {
+        let bits = match palette.len() {
+            0 | 1 => 0,
+            n if n <= 16 => 4,
+            n if n <= 32 => 5,
+            n if n <= 64 => 6,
+            n if n <= 128 => 7,
+            n if n <= 256 => 8,
+            _ => 9,
+        };
+        // 4096 block positions per section. When `bits` divides 64 the two
+        // layouts coincide, so this only has to decide bits 5..7.
+        let spans = match (bits, data.as_ref().map(|d| d.len())) {
+            (0, _) | (_, None) => false,
+            (b, Some(len)) => {
+                let per_long = 64 / b as usize;
+                let padded = 4096usize.div_ceil(per_long);
+                let contiguous = (4096 * b as usize).div_ceil(64);
+                len == contiguous && len != padded
+            }
+        };
+        BlockStates {
+            palette,
+            data,
+            bits,
+            spans,
+        }
+    }
 }
 
 impl Section {
@@ -137,14 +177,36 @@ impl Section {
             return Some(0);
         };
         let bits = bs.bits as usize;
-        let per_long = 64 / bits;
-        let long_idx = i / per_long;
-        if long_idx >= data.len() {
-            return None;
+        if bits == 0 {
+            return Some(0);
         }
-        let offset = (i % per_long) * bits;
         let mask = (1u64 << bits) - 1;
-        let v = (data[long_idx] >> offset) & mask;
+        let v = if bs.spans {
+            // 1.13–1.15: entries are packed contiguously, so one may straddle
+            // a long boundary. Take the low bits here and the high bits there.
+            let bit = i * bits;
+            let long_idx = bit / 64;
+            if long_idx >= data.len() {
+                return None;
+            }
+            let offset = bit % 64;
+            let lo = data[long_idx] >> offset;
+            let hi = if offset + bits > 64 {
+                data.get(long_idx + 1).copied().unwrap_or(0) << (64 - offset)
+            } else {
+                0
+            };
+            (lo | hi) & mask
+        } else {
+            // 1.16+: each entry is padded to start at a long boundary.
+            let per_long = 64 / bits;
+            let long_idx = i / per_long;
+            if long_idx >= data.len() {
+                return None;
+            }
+            let offset = (i % per_long) * bits;
+            (data[long_idx] >> offset) & mask
+        };
         Some(v as usize)
     }
 
@@ -194,12 +256,32 @@ pub fn parse_sections(chunk_nbt: &[u8]) -> Result<Vec<Section>, String> {
                 data16: get_bytes("Data16"),
                 data: get_bytes("Data"),
                 add: get_bytes("Add"),
-                block_states: None,
+                block_states: legacy_block_states(s),
             });
         }
     }
     out.sort_by(|a, b| b.y.cmp(&a.y));
     Ok(out)
+}
+
+/// 1.13–1.17 sections keep `Palette` (list of compounds) and `BlockStates`
+/// (long array) as sibling tags. `None` for other formats.
+fn legacy_block_states(s: &Tag) -> Option<BlockStates> {
+    let palette = s.get("Palette").and_then(|t| t.as_list())?;
+    let names: Vec<String> = palette
+        .iter()
+        .map(|e| {
+            e.get("Name")
+                .and_then(|n| n.as_str())
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    let data = s.get("BlockStates").and_then(|t| match t {
+        Tag::LongArray(d) => Some(d.iter().map(|v| *v as u64).collect::<Vec<u64>>()),
+        _ => None,
+    });
+    Some(BlockStates::from_parts(names, data))
 }
 
 /// Targeted section parser for 1.13+ chunks (`sections[].block_states`).
@@ -315,21 +397,40 @@ fn parse_block_states(r: &mut nbt::Reader) -> Result<BlockStates, String> {
     }
 
     // Bits per entry follows the wiki's rules for the flattened format.
-    let bits = match palette.len() {
-        0 | 1 => 0,
-        n if n <= 16 => 4,
-        n if n <= 32 => 5,
-        n if n <= 64 => 6,
-        n if n <= 128 => 7,
-        n if n <= 256 => 8,
-        _ => 9,
-    };
+    Ok(BlockStates::from_parts(palette, data))
+}
 
-    Ok(BlockStates {
-        palette,
-        data,
-        bits,
-    })
+/// Palette entries of a 1.13–1.17 `Palette` tag: a list of compounds whose
+/// only interesting key is `Name`.
+fn parse_legacy_palette(r: &mut nbt::Reader) -> Result<Vec<String>, String> {
+    let elem = r.u8()?;
+    let count = r.i32()?;
+    if count < 0 {
+        return Err("negative palette len".into());
+    }
+    let mut palette = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        if elem == 10 {
+            palette.push(parse_palette_entry(r)?);
+        } else {
+            r.skip(elem, 2)?;
+            palette.push(String::new());
+        }
+    }
+    Ok(palette)
+}
+
+/// Long array of a 1.13–1.17 `BlockStates` tag (TAG_Long_Array).
+fn parse_legacy_block_states(r: &mut nbt::Reader) -> Result<Vec<u64>, String> {
+    let n = r.i32()?;
+    if n < 0 {
+        return Err("negative BlockStates len".into());
+    }
+    let mut v = Vec::with_capacity(n as usize);
+    for _ in 0..n {
+        v.push(r.u64()?);
+    }
+    Ok(v)
 }
 
 fn parse_palette_entry(r: &mut nbt::Reader) -> Result<String, String> {
@@ -424,6 +525,10 @@ fn parse_section(r: &mut nbt::Reader) -> Result<Section, String> {
     let mut data16 = None;
     let mut data = None;
     let mut add = None;
+    // 1.13–1.17: `Palette` and `BlockStates` are siblings; whichever comes
+    // first is buffered until both are known.
+    let mut palette: Option<Vec<String>> = None;
+    let mut long_data: Option<Vec<u64>> = None;
 
     loop {
         let t = r.u8()?;
@@ -435,6 +540,8 @@ fn parse_section(r: &mut nbt::Reader) -> Result<Section, String> {
             // MC 1.7.10 stores section Y as TAG_Byte; 1.13+ uses TAG_Int.
             ("Y", 1) => y = r.u8()? as i8 as i32,
             ("Y", 3) => y = r.i32()?,
+            ("Palette", 9) => palette = Some(parse_legacy_palette(r)?),
+            ("BlockStates", 12) => long_data = Some(parse_legacy_block_states(r)?),
             ("Blocks16", 7) => {
                 let n = r.i32()?;
                 if n < 0 {
@@ -474,6 +581,8 @@ fn parse_section(r: &mut nbt::Reader) -> Result<Section, String> {
         }
     }
 
+    let block_states = palette.map(|p| BlockStates::from_parts(p, long_data));
+
     Ok(Section {
         y,
         blocks16,
@@ -481,6 +590,6 @@ fn parse_section(r: &mut nbt::Reader) -> Result<Section, String> {
         data16,
         data,
         add,
-        block_states: None,
+        block_states,
     })
 }

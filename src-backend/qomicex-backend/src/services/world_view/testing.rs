@@ -4,6 +4,7 @@
 //! 换成了 `super::`。仅编译进测试目标。
 
 pub use super::palette::Palette;
+pub use super::region::{BlockStates, Section};
 pub use super::render::{BlockRef, ChunkData};
 pub use super::world::{resolve_ymax, DimensionInfo, World, YMAX_FULL};
 

@@ -2309,3 +2309,60 @@ GET /api/instance/{id}/world/probe/{key}/{dim}/{x}/{z}?ymax=N
 
 实测（Chromium + Tauri mock 注入）：原生控件节点数 `0`；两个按钮均为 `28x28`、图标 `16x16`、`rounded-md`；点击放大瓦片 URL 的 z 段 `2 → 3` 逐级递增且全为整数；到上限 `放大` 按钮 `disabled`、到下限 `缩小` 按钮 `disabled`。
 
+### 2026-09-16 更新
+
+## 世界预览：同步上游 world-viewer `8828130`（1.13-1.17 区块格式 + 旧版方块名配色）
+
+同步上游 `8828130`（fix(world): 支持 1.13-1.17 区块格式与旧版方块名配色）。端点契约**无变更**，仅领域层解析与配色修复。
+
+### 1.13–1.17 是独立于 1.18+ 的第三种区块布局
+
+| 版本 | sections 位置 | 调色板 / 数据 | 解析入口 |
+|---|---|---|---|
+| ≤1.12.2 | `Level.Sections[]` | `Blocks`/`Data`/`Add` 数字 id | `parse_sections_fast` |
+| 1.13–1.17 | `Level.Sections[]` | `Palette` + `BlockStates` **平级标签** | `parse_sections_fast`（新增分支） |
+| 1.18+ | 根级 `sections[]` | `block_states` 复合标签 | `parse_sections_modern` |
+
+修复前 1.13–1.17 存档被解析成空 section → 地图一片空白（实测 1.14.4/1.16.5 渲染 0 像素）。
+
+### 两种 long 打包布局（bits 不能整除 64 时）
+
+| 版本 | 布局 |
+|---|---|
+| 1.13–1.15 | 连续打包，条目可跨 long 边界 |
+| 1.16+ | 补齐打包，条目不跨界 |
+
+由 long 数组长度反推（`BlockStates::from_parts` 的 `spans`），无需读版本号：
+
+```
+per_long   = 64 / bits
+padded     = ceil(4096 / per_long)
+contiguous = ceil(4096 * bits / 64)
+spans = (len == contiguous && len != padded)
+```
+
+bits 为 4/8 时两种布局恰好一致，故只需区分 5/6/7。
+
+### 旧版方块名配色（LEGACY_ALIASES）
+
+1.13 扁平化重命名了大量方块但外观未变，而内置颜色表按**现代名**建键 → 1.0–1.12.2 存档拿旧名查表全部落空、返回兜底灰 `#505050`。实测 1.8.9 地表 68% 的列落灰。
+
+修复：`palette::LEGACY_ALIASES`（55 项，如 `minecraft:grass` → `minecraft:grass_block`）在 `vanilla_color()` 查表前解析。旧名集合在整个 1.0–1.12.2 区间固定，故一张表覆盖全部版本，无需按版本枚举。
+
+实测覆盖（每存档 16 区块 × 4096 地表列，统计 `color_ref` 返回 `unknown` 的比例）：
+
+| 存档 | 修复前 | 修复后 |
+|---|---|---|
+| 1.6.4 (`New World`) | — | 0.0% |
+| 1.8.9 | 68.0% | 0.0% |
+| 1.14.4 | 25.3% | 0.0% |
+
+### 回归保护
+
+`services/world_view/ported_tests.rs`：`mod palette_packing`（5 项，含合成数据的连续布局覆盖——本机无 1.13–1.15 存档）、`mod legacy_colors`（3 项）、`mod all_saves_smoke`（扩至 9 个存档）。
+
+负向验证：注释掉 `legacy_alias()` 调用 → `legacy_colors` 2 项 FAILED；还原 `block_states: None` → `all_saves_smoke` FAILED（1.14.4/1.16.5 渲染 0 像素）。
+
+### 顺带修复的本地缺陷
+
+`palette_index` 在 `bits == 0` 且 `data.is_some()` 时执行 `64 / 0` → panic（上游同样存在）。现已提前返回 `Some(0)`。

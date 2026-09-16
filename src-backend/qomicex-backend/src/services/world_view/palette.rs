@@ -209,12 +209,100 @@ impl Palette {
     }
 }
 
+/// Pre-1.13 block name -> the name the same block has after flattening.
+///
+/// The 1.13 flattening renamed a large part of the block set without changing
+/// what any of it looks like (`grass` -> `grass_block`, `leaves` ->
+/// `oak_leaves`, `stonebrick` -> `stone_bricks`, ...). Older saves name their
+/// blocks the pre-1.13 way, so without this every one of them falls through to
+/// the grey fallback.
+///
+/// This is deliberately **not** a per-version mapping: the legacy name set is
+/// fixed for the whole 1.0–1.12.2 era, so one table covers every version in
+/// it. Names that 1.13 kept unchanged are absent and resolve directly.
+///
+/// Where the legacy name did not carry a variant (e.g. `stained_hardened_clay`,
+/// whose colour is chosen by block metadata), the meta-0 variant is used — the
+/// palette lookup here has no access to metadata, and a plausible colour beats
+/// the fallback grey.
+const LEGACY_ALIASES: &[(&str, &str)] = &[
+    ("minecraft:grass", "minecraft:grass_block"),
+    ("minecraft:tallgrass", "minecraft:short_grass"),
+    ("minecraft:double_plant", "minecraft:tall_grass"),
+    ("minecraft:leaves", "minecraft:oak_leaves"),
+    ("minecraft:leaves2", "minecraft:dark_oak_leaves"),
+    ("minecraft:log", "minecraft:oak_log"),
+    ("minecraft:log2", "minecraft:dark_oak_log"),
+    ("minecraft:planks", "minecraft:oak_planks"),
+    ("minecraft:sapling", "minecraft:oak_sapling"),
+    ("minecraft:reeds", "minecraft:sugar_cane"),
+    ("minecraft:waterlily", "minecraft:lily_pad"),
+    ("minecraft:deadbush", "minecraft:dead_bush"),
+    ("minecraft:web", "minecraft:cobweb"),
+    ("minecraft:yellow_flower", "minecraft:dandelion"),
+    ("minecraft:red_flower", "minecraft:poppy"),
+    ("minecraft:stonebrick", "minecraft:stone_bricks"),
+    ("minecraft:brick_block", "minecraft:bricks"),
+    ("minecraft:nether_brick", "minecraft:nether_bricks"),
+    ("minecraft:hardened_clay", "minecraft:terracotta"),
+    (
+        "minecraft:stained_hardened_clay",
+        "minecraft:white_terracotta",
+    ),
+    ("minecraft:monster_egg", "minecraft:infested_stone"),
+    ("minecraft:slime", "minecraft:slime_block"),
+    ("minecraft:melon_block", "minecraft:melon"),
+    ("minecraft:lit_pumpkin", "minecraft:jack_o_lantern"),
+    ("minecraft:lit_furnace", "minecraft:furnace"),
+    ("minecraft:lit_redstone_lamp", "minecraft:redstone_lamp"),
+    ("minecraft:unlit_redstone_torch", "minecraft:redstone_torch"),
+    ("minecraft:noteblock", "minecraft:note_block"),
+    ("minecraft:mob_spawner", "minecraft:spawner"),
+    ("minecraft:golden_rail", "minecraft:powered_rail"),
+    ("minecraft:snow_layer", "minecraft:snow"),
+    ("minecraft:grass_path", "minecraft:dirt_path"),
+    ("minecraft:carpet", "minecraft:white_carpet"),
+    ("minecraft:portal", "minecraft:nether_portal"),
+    ("minecraft:piston_head", "minecraft:piston"),
+    ("minecraft:piston_extension", "minecraft:piston"),
+    ("minecraft:unpowered_repeater", "minecraft:repeater"),
+    ("minecraft:powered_repeater", "minecraft:repeater"),
+    ("minecraft:unpowered_comparator", "minecraft:comparator"),
+    ("minecraft:powered_comparator", "minecraft:comparator"),
+    ("minecraft:fence", "minecraft:oak_fence"),
+    ("minecraft:fence_gate", "minecraft:oak_fence_gate"),
+    ("minecraft:trapdoor", "minecraft:oak_trapdoor"),
+    ("minecraft:wooden_door", "minecraft:oak_door"),
+    ("minecraft:wooden_button", "minecraft:oak_button"),
+    (
+        "minecraft:wooden_pressure_plate",
+        "minecraft:oak_pressure_plate",
+    ),
+    ("minecraft:standing_sign", "minecraft:oak_sign"),
+    ("minecraft:wall_sign", "minecraft:oak_wall_sign"),
+    ("minecraft:wooden_slab", "minecraft:oak_slab"),
+    ("minecraft:double_wooden_slab", "minecraft:oak_slab"),
+    ("minecraft:skull", "minecraft:skeleton_skull"),
+];
+
+/// Resolve a pre-1.13 block name to its post-flattening name.
+fn legacy_alias(name: &str) -> &str {
+    LEGACY_ALIASES
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map(|(_, new)| *new)
+        .unwrap_or(name)
+}
+
 /// Built-in colours for vanilla blocks, used when no JourneyMap palette is
 /// available (e.g. a vanilla or Xaero-only instance). Values approximate the
 /// average top-face colour of each block.
 fn vanilla_color(name: &str) -> Option<[u8; 3]> {
     // Strip properties: "minecraft:oak_log[axis=y]" -> "minecraft:oak_log"
     let base = name.split('[').next().unwrap_or(name);
+    // Pre-1.13 saves use the pre-flattening names; map them onto the modern
+    // ones the table below is keyed by.
+    let base = legacy_alias(base);
     let table: &[(&str, [u8; 3])] = &[
         ("minecraft:stone", [125, 125, 125]),
         ("minecraft:cobblestone", [122, 122, 122]),
@@ -363,6 +451,66 @@ fn vanilla_color(name: &str) -> Option<[u8; 3]> {
         ("minecraft:green_wool", [84, 109, 27]),
         ("minecraft:red_wool", [161, 39, 34]),
         ("minecraft:black_wool", [20, 21, 25]),
+        // Blocks the table was missing outright. These matter because the
+        // legacy aliases above resolve *into* them, and because modern saves
+        // use them directly.
+        ("minecraft:sugar_cane", [110, 150, 70]),
+        ("minecraft:dandelion", [255, 216, 60]),
+        ("minecraft:poppy", [200, 45, 45]),
+        ("minecraft:lily_pad", [40, 90, 35]),
+        ("minecraft:dead_bush", [145, 105, 55]),
+        ("minecraft:oak_sapling", [75, 115, 50]),
+        ("minecraft:cobweb", [228, 234, 234]),
+        ("minecraft:vine", [60, 95, 40]),
+        ("minecraft:cactus", [70, 120, 50]),
+        ("minecraft:pumpkin", [200, 130, 30]),
+        ("minecraft:jack_o_lantern", [220, 155, 45]),
+        ("minecraft:melon", [120, 150, 50]),
+        ("minecraft:smooth_stone", [158, 158, 158]),
+        ("minecraft:bricks", [150, 97, 83]),
+        ("minecraft:chiseled_stone_bricks", [122, 121, 121]),
+        ("minecraft:sunflower", [255, 220, 60]),
+        ("minecraft:lilac", [190, 150, 200]),
+        ("minecraft:rose_bush", [190, 50, 50]),
+        ("minecraft:peony", [220, 160, 190]),
+        ("minecraft:redstone_block", [175, 25, 20]),
+        ("minecraft:iron_block", [220, 220, 220]),
+        ("minecraft:gold_block", [245, 220, 70]),
+        ("minecraft:diamond_block", [95, 220, 220]),
+        ("minecraft:emerald_block", [60, 200, 90]),
+        ("minecraft:lapis_block", [40, 70, 190]),
+        ("minecraft:coal_block", [20, 20, 20]),
+        ("minecraft:iron_bars", [200, 200, 200]),
+        ("minecraft:infested_stone", [110, 110, 110]),
+        ("minecraft:slime_block", [110, 190, 110]),
+        ("minecraft:nether_portal", [90, 30, 150]),
+        ("minecraft:end_portal", [20, 10, 40]),
+        ("minecraft:end_portal_frame", [60, 110, 90]),
+        ("minecraft:fire", [220, 140, 40]),
+        ("minecraft:note_block", [120, 90, 60]),
+        ("minecraft:spawner", [30, 35, 40]),
+        ("minecraft:powered_rail", [180, 150, 90]),
+        ("minecraft:repeater", [160, 160, 160]),
+        ("minecraft:comparator", [160, 160, 160]),
+        ("minecraft:redstone_lamp", [140, 100, 60]),
+        ("minecraft:redstone_torch", [200, 60, 60]),
+        ("minecraft:skeleton_skull", [200, 200, 190]),
+        ("minecraft:carpet", [233, 236, 236]),
+        ("minecraft:white_carpet", [233, 236, 236]),
+        ("minecraft:oak_fence", [156, 127, 78]),
+        ("minecraft:oak_fence_gate", [156, 127, 78]),
+        ("minecraft:oak_trapdoor", [156, 127, 78]),
+        ("minecraft:oak_door", [156, 127, 78]),
+        ("minecraft:oak_button", [156, 127, 78]),
+        ("minecraft:oak_pressure_plate", [156, 127, 78]),
+        ("minecraft:oak_sign", [156, 127, 78]),
+        ("minecraft:oak_wall_sign", [156, 127, 78]),
+        // Small plants that appear as surface cover in modern saves.
+        ("minecraft:oxeye_daisy", [235, 235, 235]),
+        ("minecraft:azure_bluet", [225, 230, 225]),
+        ("minecraft:cornflower", [70, 100, 200]),
+        ("minecraft:red_mushroom", [200, 45, 45]),
+        ("minecraft:brown_mushroom", [150, 115, 90]),
     ];
     table
         .iter()
