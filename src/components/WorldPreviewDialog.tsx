@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Layers, Map as MapIcon, Minus, Plus, RotateCw, TriangleAlert, X } from 'lucide-react'
-import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitle, Tooltip } from './ui/index.ts'
+import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitle, Switch, Tooltip } from './ui/index.ts'
 import { useI18n } from '../i18n/index.tsx'
 import {
   openWorld,
@@ -467,46 +467,40 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
                   <div className="mb-2 text-xs font-medium text-foreground/80">
                     {t('instanceDetail.worldPreview.render')}
                   </div>
-                  <ul className="space-y-1.5 text-xs text-muted-foreground">
-                    <li>
-                      <label className="flex cursor-pointer items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={flags.water}
-                          disabled={!info}
-                          onChange={() => toggleFlag('water')}
-                        />
-                        {t('instanceDetail.worldPreview.waterToggle')}
-                      </label>
-                    </li>
-                    <li>
-                      <label className="flex cursor-pointer items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={flags.shading}
-                          disabled={!info}
-                          onChange={() => toggleFlag('shading')}
-                        />
-                        {t('instanceDetail.worldPreview.shadingToggle')}
-                      </label>
-                    </li>
-                    <li>
-                      <label
-                        className={cn(
-                          'flex items-center gap-2',
-                          flags.shading ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
-                        )}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={flags.altitude}
-                          disabled={!info || !flags.shading}
-                          onChange={() => toggleFlag('altitude')}
-                        />
-                        {t('instanceDetail.worldPreview.altitudeToggle')}
-                      </label>
-                    </li>
-                  </ul>
+                  <div className="space-y-2 text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{t('instanceDetail.worldPreview.waterToggle')}</span>
+                      <Switch
+                        checked={flags.water}
+                        disabled={!info}
+                        onCheckedChange={() => toggleFlag('water')}
+                        aria-label={t('instanceDetail.worldPreview.waterToggle')}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{t('instanceDetail.worldPreview.shadingToggle')}</span>
+                      <Switch
+                        checked={flags.shading}
+                        disabled={!info}
+                        onCheckedChange={() => toggleFlag('shading')}
+                        aria-label={t('instanceDetail.worldPreview.shadingToggle')}
+                      />
+                    </div>
+                    <div
+                      className={cn(
+                        'flex items-center justify-between gap-2',
+                        !flags.shading && 'opacity-50',
+                      )}
+                    >
+                      <span>{t('instanceDetail.worldPreview.altitudeToggle')}</span>
+                      <Switch
+                        checked={flags.altitude}
+                        disabled={!info || !flags.shading}
+                        onCheckedChange={() => toggleFlag('altitude')}
+                        aria-label={t('instanceDetail.worldPreview.altitudeToggle')}
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div className="border-b border-border p-3">
                   <div className="mb-2 text-xs font-medium text-foreground/80">

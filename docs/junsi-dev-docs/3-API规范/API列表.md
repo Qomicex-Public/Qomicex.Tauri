@@ -2460,3 +2460,23 @@ mismatching renders: 0 / 24   (8 线程 × 3 轮，容量 64 的极端压力下�
 3. 读 raw 时偏移量去掉 `+5` → `cached_reader_matches_original_bytes` FAILED
 
 测试总数 182 → **203**（全绿）。
+
+
+### 2026-09-17 更新
+
+### 渲染开关的 UI 实现
+
+三个开关（`water`/`shade`/`alt`）在侧栏「渲染」区使用 **plugin-ui 的 `Switch` 组件**（`src/components/ui` 导出），而非原生 `<input type="checkbox">`——启动器 UI 规范统一用 Switch 表达布尔开关。
+
+| 项 | 实现 |
+|---|---|
+| 组件 | `Switch`（radix `SwitchPrimitive`，`role="switch"`） |
+| 布局 | `flex items-center justify-between gap-2` + `text-xs`，标签左、开关右；与相邻「高度切层」section 的 `p-3` + `border-b` 风格一致 |
+| 事件 | `onCheckedChange`（radix 语义，非 `onChange`） |
+| 无障碍 | 每个 Switch 带 `aria-label`（同标签文案） |
+| 联动 | `altitude` 是 `shading` 的子项：`shading` 关闭时 `altitude` 的 Switch `disabled`，其所在行 `opacity-50` |
+
+> 不复用 `SettingRow`：该组件为全宽 Settings 页设计（`px-4 py-3` + `glass-surface` 卡片），塞进 240px（`w-60`）侧栏过重且与相邻 section 风格冲突。
+
+**开关变化不新增失效逻辑**：三个开关都写进瓦片 URL，`CachedTileLayer` 的模板比较会自动清缓存重绘。
+
