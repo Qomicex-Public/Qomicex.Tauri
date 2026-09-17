@@ -125,9 +125,65 @@ impl RegionFile {
                 Ok(Some(out))
             }
             3 => Ok(Some(raw)),
+            4 => Ok(Some(decompress_lz4(&raw)?)),
             other => Err(format!("unknown region compression {}", other)),
         }
     }
+}
+
+/// lz4-java `LZ4BlockInputStream` stream, the format Minecraft 1.20.5+ writes
+/// when `region-file-compression=lz4`. Note this is *not* the LZ4 frame format:
+/// the stream is a sequence of blocks, each with an 8-byte ASCII `LZ4Block`
+/// magic, a token byte, and three little-endian i32 fields (compressed length,
+/// original length, xxhash checksum). The token's high nibble is the method:
+/// `0x10` raw, `0x20` LZ4.
+///
+/// Reference: Amulet-Core PR #283 (the fix for Amulet issue #1027), which is
+/// the same header layout the Minecraft client reads.
+const LZ4_MAGIC: &[u8; 8] = b"LZ4Block";
+const LZ4_HEADER_LEN: usize = 8 + 1 + 4 + 4 + 4;
+
+fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while pos < data.len() {
+        if pos + LZ4_HEADER_LEN > data.len() {
+            return Err("lz4: truncated block header".into());
+        }
+        let header = &data[pos..pos + LZ4_HEADER_LEN];
+        if &header[..8] != LZ4_MAGIC {
+            return Err("lz4: bad block magic".into());
+        }
+        let token = header[8];
+        let compressed_len = i32::from_le_bytes([header[9], header[10], header[11], header[12]]);
+        let original_len = i32::from_le_bytes([header[13], header[14], header[15], header[16]]);
+        pos += LZ4_HEADER_LEN;
+        if compressed_len < 0 || original_len < 0 {
+            return Err("lz4: negative block length".into());
+        }
+        let (compressed_len, original_len) = (compressed_len as usize, original_len as usize);
+        if pos + compressed_len > data.len() {
+            return Err("lz4: truncated block body".into());
+        }
+        let body = &data[pos..pos + compressed_len];
+        pos += compressed_len;
+
+        match token & 0xF0 {
+            0x10 => {
+                if compressed_len != original_len {
+                    return Err("lz4: raw block length mismatch".into());
+                }
+                out.extend_from_slice(body);
+            }
+            0x20 => {
+                let block = lz4_flex::block::decompress(body, original_len)
+                    .map_err(|e| format!("lz4: {}", e))?;
+                out.extend_from_slice(&block);
+            }
+            other => return Err(format!("lz4: unknown compression method {:#x}", other)),
+        }
+    }
+    Ok(out)
 }
 
 /// Open region handles, keyed by `.mca` path.
@@ -861,4 +917,55 @@ fn parse_section(r: &mut nbt::Reader) -> Result<Section, String> {
         block_states,
         biomes,
     })
+}
+
+#[cfg(test)]
+mod lz4_tests {
+    use super::decompress_lz4;
+
+    /// One lz4-java block: `LZ4Block` magic, token, then three little-endian
+    /// i32s (compressed length, original length, checksum), then the body.
+    fn block(method: u8, compressed: &[u8], original_len: usize) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"LZ4Block");
+        b.push(method);
+        b.extend_from_slice(&(compressed.len() as i32).to_le_bytes());
+        b.extend_from_slice(&(original_len as i32).to_le_bytes());
+        b.extend_from_slice(&0i32.to_le_bytes());
+        b.extend_from_slice(compressed);
+        b
+    }
+
+    /// No local save uses compression type 4, so the stream is built here. A
+    /// raw block followed by an LZ4 block is the shape Minecraft writes.
+    #[test]
+    fn decodes_raw_then_lz4_blocks() {
+        let raw = b"hello raw block".to_vec();
+        let payload = vec![7u8; 4096];
+        let compressed = lz4_flex::block::compress(&payload);
+
+        let mut stream = block(0x10, &raw, raw.len());
+        stream.extend_from_slice(&block(0x20, &compressed, payload.len()));
+
+        let out = decompress_lz4(&stream).expect("decode");
+        let mut want = raw.clone();
+        want.extend_from_slice(&payload);
+        assert_eq!(out, want);
+    }
+
+    #[test]
+    fn rejects_bad_magic_and_truncation() {
+        assert!(decompress_lz4(b"not-an-lz4-stream").is_err());
+        let good = block(0x10, b"abc", 3);
+        assert!(decompress_lz4(&good[..10]).is_err());
+    }
+
+    /// The LZ4 frame magic (`0x184D2204`) is *not* what Minecraft writes; a
+    /// stream starting with it must be rejected rather than misparsed.
+    #[test]
+    fn rejects_lz4_frame_magic() {
+        let mut frame = vec![0x04, 0x22, 0x4d, 0x18];
+        frame.extend_from_slice(&[0u8; 32]);
+        assert!(decompress_lz4(&frame).is_err());
+    }
 }

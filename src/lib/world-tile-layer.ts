@@ -4,6 +4,20 @@ import L from 'leaflet'
 type TileImage = { bitmap: ImageBitmap; isEmpty: boolean }
 
 /**
+ * 等待并发槽位的瓦片请求。
+ *
+ * 除任务本身外还携带瓦片坐标，`pump` 据此优先取距视口中心最近的一项。
+ * Leaflet 按行优先顺序请求瓦片，若不带坐标，新视口会先把顶部几行取完，
+ * 而用户正看着的中心区域反而排在后面。
+ */
+type QueuedTile = {
+  z: number
+  x: number
+  y: number
+  job: () => void
+}
+
+/**
  * 瓦片层：加载过程中不留空洞。
  *
  * 原生 `L.tileLayer` 会一次性请求所有可见瓦片，并在每个瓦片到达前显示空白，
@@ -21,7 +35,7 @@ export class CachedTileLayer extends L.GridLayer {
   private empty = new Set<string>()
   /** 同一瓦片的待通知回调；全部一起触发。 */
   private waiting = new Map<string, Array<(img: TileImage | null) => void>>()
-  private queue: Array<() => void> = []
+  private queue: QueuedTile[] = []
   private active = 0
 
   /** 键含 `dim|ymax`——任一变化都会作废全部瓦片。 */
@@ -47,13 +61,35 @@ export class CachedTileLayer extends L.GridLayer {
    * `Map` 按插入顺序迭代，因此每次使用时重新插入就让迭代顺序等于使用顺序，
    * 淘汰只需取第一个 key——整个 LRU 就这一处，无需额外簿记。
    */
+  /**
+   * 释放被淘汰位图的 GPU 内存。
+   *
+   * `ImageBitmap.close()` 立即生效，而位图可能仍被 `createTile` 中排在
+   * `setTimeout` 队列里的回调引用（父瓦片占位绘制与清晰瓦片绘制都在那里执行）。
+   * 同一轮内关闭会让那次 `drawImage` 抛 `InvalidStateError`，因此关闭延后一个
+   * 宏任务，等所有已排队的绘制跑完。
+   *
+   * 延后又开了一个竞争窗口：同一张位图可能在超时触发前被重新命中并记回缓存。
+   * 关闭前复核它是否仍存活，避免把已被缓存重新持有的位图关掉。
+   */
+  private closeSoon(bitmap: ImageBitmap) {
+    setTimeout(() => {
+      for (const live of this.cache.values()) {
+        if (live === bitmap) return
+      }
+      bitmap.close()
+    }, 0)
+  }
+
   private remember(key: string, bitmap: ImageBitmap) {
     this.cache.delete(key)
     this.cache.set(key, bitmap)
     while (this.cache.size > this.maxCached) {
       const oldest = this.cache.keys().next().value
       if (oldest === undefined) break
+      const evicted = this.cache.get(oldest)
       this.cache.delete(oldest)
+      if (evicted) this.closeSoon(evicted)
       // 空瓦片集合是缓存的兄弟结构，不能比缓存本身还大。
       this.empty.delete(oldest)
     }
@@ -105,6 +141,9 @@ export class CachedTileLayer extends L.GridLayer {
 
   /** 丢弃上一个存档/高度的缓存，不触碰地图。 */
   clearCache() {
+    for (const bitmap of this.cache.values()) {
+      this.closeSoon(bitmap)
+    }
     this.cache.clear()
     this.waiting.clear()
     this.failures.clear()
@@ -119,16 +158,56 @@ export class CachedTileLayer extends L.GridLayer {
     })
   }
 
+  /**
+   * 视口中心所在的瓦片坐标；无地图时返回 null。
+   *
+   * 用于给队列按距离排序，让视口中心下方的瓦片先加载。Leaflet 自身的请求
+   * 顺序是行优先的，新视口会先把顶部几行填满，而用户正看的中心反而靠后。
+   */
+  private centerTile(): { z: number; x: number; y: number } | null {
+    const map = (this as unknown as { _map?: L.Map })._map
+    const zoom = (this as unknown as { _tileZoom?: number })._tileZoom
+    if (!map || zoom === undefined || zoom === null) return null
+    const size = this.getTileSize()
+    const center = map.project(map.getCenter(), zoom).divideBy(size.x)
+    return { z: zoom, x: center.x, y: center.y }
+  }
+
+  /**
+   * 取队列中距视口中心最近的一项。
+   *
+   * 刻意用线性扫描：队列最多装一个视口的瓦片数（几十张，快速平移时偶尔几百张），
+   * 每个槽位做一次 O(n) 挑选比维护有序结构更便宜，且到中心的距离会随地图移动而变化。
+   *
+   * 只对当前 `_tileZoom` 的项排序。缩放过程中队列会短暂混入两个 z，
+   * 跨坐标系算出的距离没有意义；其它 zoom 的项保持到达顺序。
+   */
   private pump() {
     while (this.active < this.maxConcurrent && this.queue.length > 0) {
-      const job = this.queue.shift()!
+      let pick = 0
+      const center = this.centerTile()
+      if (center && this.queue.length > 1) {
+        let best = Infinity
+        for (let i = 0; i < this.queue.length; i++) {
+          const t = this.queue[i]
+          if (t.z !== center.z) continue
+          const dx = t.x + 0.5 - center.x
+          const dy = t.y + 0.5 - center.y
+          const d = dx * dx + dy * dy
+          if (d < best) {
+            best = d
+            pick = i
+          }
+        }
+      }
+      const [entry] = this.queue.splice(pick, 1)
       this.active++
-      job()
+      entry.job()
     }
   }
 
-  private enqueue(job: () => void) {
-    this.queue.push(job)
+  private enqueue(z: number, x: number, y: number, job: () => void) {
+    this.queue.push({ z, x, y, job })
     this.pump()
   }
 
@@ -144,7 +223,12 @@ export class CachedTileLayer extends L.GridLayer {
     for (const cb of list) cb(img)
   }
 
-  private load(key: string, url: string, onReady: (img: TileImage | null) => void) {
+  private load(
+    key: string,
+    coords: L.Coords,
+    url: string,
+    onReady: (img: TileImage | null) => void,
+  ) {
     const cached = this.recall(key)
     if (cached) {
       onReady({ bitmap: cached, isEmpty: this.empty.has(key) })
@@ -164,7 +248,7 @@ export class CachedTileLayer extends L.GridLayer {
     }
 
     this.waiting.set(key, [onReady])
-    this.enqueue(() => {
+    this.enqueue(coords.z, coords.x, coords.y, () => {
       // 用 fetch 而非 <img>，才能读到 X-Tile-Empty 响应头。
       fetch(url)
         .then(async (resp) => {
@@ -228,7 +312,7 @@ export class CachedTileLayer extends L.GridLayer {
     // load() 会同步回调，done() 就发生在写入之前，`_tileReady` 查不到该 key、
     // 不会加 'leaflet-tile-loaded'，瓦片永久 visibility:hidden（缩放到已缓存
     // 瓦片时整屏变黑的根因）。延后一个任务让写入先完成。
-    this.load(key, this.urlFor(coords), (img) => {
+    this.load(key, coords, this.urlFor(coords), (img) => {
       setTimeout(() => {
         if (!img) {
           // 保留父瓦片占位（可能什么都没有），并告知 Leaflet 请求已结束。
