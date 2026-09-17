@@ -70,7 +70,7 @@ pub fn is_air_name(name: &str) -> bool {
 
 /// A borrowed block reference, used on hot paths to avoid allocating a
 /// `String` for every block inspected while scanning a column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlockRefRef<'a> {
     Legacy(u16, u16),
     Named(&'a str),
@@ -378,6 +378,45 @@ pub fn resolve_color(c: [u8; 3], name: &str, biome: BiomeDef) -> [u8; 3] {
     biome::tint_color(c, tint_kind(name), biome)
 }
 
+/// Per-render memo of `block -> (rgb, tint kind)`.
+///
+/// A single tile resolves the same few block types tens of thousands of times
+/// (a GTNH z=0 tile scans ~83k columns). Each `Palette::color_ref` call
+/// allocated a `String` for the block name, another for `to_owned_ref`, and a
+/// lowercase `String` inside `tint_kind`; measured, colour resolution was ~80%
+/// of render time (24.5 ms vs a 4.2 ms column scan).
+///
+/// The memo is local to one render, so there is no lock and no cross-thread
+/// contention — a shared cache would make the six concurrent tile requests
+/// serialize on the map. Both the palette and a block's tint kind are fixed
+/// for the lifetime of the world, so a hit can never return a stale answer.
+struct ColorMemo<'a> {
+    entries: HashMap<BlockRefRef<'a>, ([u8; 3], TintKind)>,
+}
+
+impl<'a> ColorMemo<'a> {
+    fn new() -> Self {
+        ColorMemo {
+            entries: HashMap::new(),
+        }
+    }
+
+    /// Final colour for `block` under `biome`, resolving the palette entry and
+    /// its tint kind only the first time the block is seen.
+    fn resolve(&mut self, palette: &Palette, block: BlockRefRef<'a>, biome: BiomeDef) -> [u8; 3] {
+        let (rgb, kind) = match self.entries.get(&block) {
+            Some(hit) => *hit,
+            None => {
+                let (rgb, _src, name) = palette.color_ref(&block.to_owned_ref());
+                let kind = tint_kind(&name);
+                self.entries.insert(block, (rgb, kind));
+                (rgb, kind)
+            }
+        };
+        biome::tint_color(rgb, kind, biome)
+    }
+}
+
 /// Directional relief shading, in the spirit of VoxelMap's `applyHeight()`.
 /// Light comes from the north-west, so slopes rising toward NW are lit.
 /// `h` is a square height buffer of width `w` with a 1-block margin already applied.
@@ -489,6 +528,7 @@ impl Surface {
         let chunks = cache.acquire(region_dir, &keys);
 
         // 3. copy the visible surface out of the acquired chunks
+        let mut memo = ColorMemo::new();
         for (i, chunk) in keys.iter().zip(chunks.iter()) {
             let Some(chunk) = chunk else { continue };
             // Row-major chunk index within the tile, offset by the -1 margin.
@@ -506,8 +546,7 @@ impl Surface {
                         continue;
                     };
 
-                    let (rgb, _src, name) = cache.palette.color_ref(&block.to_owned_ref());
-                    let c = resolve_color(rgb, &name, scan.tint);
+                    let c = memo.resolve(&cache.palette, block, scan.tint);
                     let si = self.idx(gx, gz);
                     self.color[si] = c;
                     self.height[si] = y;
@@ -515,8 +554,7 @@ impl Surface {
                     if scan.water_top.is_some() {
                         self.water_top[si] = y;
                         if let Some((fb, fy)) = scan.floor_block {
-                            let (frgb, _s, fname) = cache.palette.color_ref(&fb.to_owned_ref());
-                            self.floor_color[si] = resolve_color(frgb, &fname, scan.tint);
+                            self.floor_color[si] = memo.resolve(&cache.palette, fb, scan.tint);
                             self.floor_height[si] = fy;
                         } else {
                             // Water column with no floor (void world).
