@@ -48,6 +48,7 @@ import SaveCard from '../components/SaveCard.tsx'
 import ScreenshotCard from '../components/ScreenshotCard.tsx'
 import DataPackCard from '../components/DataPackCard.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { useListSelection } from '../hooks/useListSelection.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { logWindowUrl, openLogWindow } from '../lib/gameLogWindow.ts'
 import { MinecraftText } from '../components/MinecraftText.tsx'
@@ -65,8 +66,11 @@ const LOADER_COLORS: Record<string, string> = {
   babric: 'bg-amber-500/10 text-amber-400 border-amber-400/25',
 }
 
-/** Mod 列表密度偏好（localStorage） */
+/** 各资源列表的密度偏好（localStorage）：紧凑 / 详细 */
 const MOD_VIEW_KEY = 'qomicex:mods-view-mode'
+const RESOURCEPACKS_VIEW_KEY = 'qomicex:resourcepacks-view-mode'
+const SHADERS_VIEW_KEY = 'qomicex:shaders-view-mode'
+const DATAPACKS_VIEW_KEY = 'qomicex:datapacks-view-mode'
 
 /** 侧边标签分组（渲染时经 instanceDetail.tabGroups.* 取译名） */
 const TAB_GROUPS = { instance: 'instance', resources: 'resources', online: 'online' } as const
@@ -133,63 +137,86 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel, loading }: {
   )
 }
 
+/** 批量删除结果提示：全部成功报「已删除 N 个{type}」；有失败则报「完成 N 个，失败 M 个」并附失败名单（≤3 个时列出） */
+function notifyBatchDeleteResult(
+  notify: (message: string, type?: 'info' | 'error' | 'warning' | 'success') => void,
+  t: (key: string, params?: Record<string, string | number>) => string,
+  type: string,
+  success: number,
+  failed: string[],
+): void {
+  if (failed.length === 0) {
+    notify(t('instanceDetail.batchDeleteDone', { count: success, type }), 'success')
+    return
+  }
+  const failNames = failed.length <= 3 ? `：${failed.join('、')}` : ''
+  notify(t('instanceDetail.batchDeleteResult', { success, failed: failed.length, failNames }), 'error')
+}
+
 function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQuickJoinWorld, gameVersion, running }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void; onQuickJoinWorld: (name: string) => void; gameVersion: string | undefined; running: boolean }) {
   const { t } = useI18n()
+  const { notify } = useMessageBox()
   const [search, setSearch] = useState('')
   const [saves, setSaves] = useState<SaveMetadata[]>([])
   const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const lastClickedRef = useRef(-1)
+  const [sortBy, setSortBy] = useState('name-asc')
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
   const [batchDeleting, setBatchDeleting] = useState(false)
+
+  // 排序选项：仅使用 SaveMetadata 真实存在的字段（name / lastPlayed）
+  const SORT_OPTIONS = [
+    { key: 'name-asc', label: t('instanceDetail.mods.sortNameAsc') },
+    { key: 'name-desc', label: t('instanceDetail.mods.sortNameDesc') },
+    { key: 'time-desc', label: t('instanceDetail.mods.sortTimeDesc') },
+    { key: 'time-asc', label: t('instanceDetail.mods.sortTimeAsc') },
+  ]
+
+  // 顺序约束：filtered 只依赖 state，必须排在 useListSelection 之前——
+  // 否则 load() 里引用的 setSelected 会在渲染期被提升访问（TDZ ReferenceError，tsc 不报）。
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    const result = q ? saves.filter(s => s.name.toLowerCase().includes(q)) : [...saves]
+    result.sort((a, b) => {
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name)
+      if (sortBy === 'name-desc') return b.name.localeCompare(a.name)
+      if (sortBy === 'time-desc') return b.lastPlayed - a.lastPlayed
+      if (sortBy === 'time-asc') return a.lastPlayed - b.lastPlayed
+      return 0
+    })
+    return result
+  }, [saves, search, sortBy])
+
+  const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (s) => s.filePath)
 
   const load = useCallback(async () => {
     setSelected(new Set())
     setLoading(true)
     try { const data = await getSavesMetadata(instanceId); setSaves(data) }
-    catch { setSaves([]) }
+    catch (e) {
+      setSaves([])
+      notify(t('instanceDetail.saves.loadFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
+    }
     setLoading(false)
-  }, [instanceId])
+  }, [instanceId, notify, t, setSelected])
 
   useEffect(() => { load() }, [load, refreshKey])
-
-  const toggleSelect = useCallback((filePath: string, shift?: boolean, ctrl?: boolean) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (ctrl) {
-        if (next.has(filePath)) next.delete(filePath); else next.add(filePath)
-      } else if (shift && lastClickedRef.current >= 0) {
-        const start = Math.min(lastClickedRef.current, saves.findIndex(s => s.filePath === filePath))
-        const end = Math.max(lastClickedRef.current, saves.findIndex(s => s.filePath === filePath))
-        for (let i = start; i <= end; i++) next.add(saves[i].filePath)
-      } else {
-        next.clear(); next.add(filePath)
-      }
-      return next
-    })
-    lastClickedRef.current = saves.findIndex(s => s.filePath === filePath)
-  }, [saves])
 
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
     const names = Array.from(selected).map(fp => fp.replace(/\\/g, '/').split('/').pop()!).filter(Boolean)
+    const failed: string[] = []
     try {
       const { deleteSave } = await import('../api/instance-files.ts')
       for (const name of names) {
-        try { await deleteSave(instanceId, name) } catch {}
+        try { await deleteSave(instanceId, name) } catch { failed.push(name) }
       }
-    } catch {}
+    } catch (e) { console.error('Batch delete failed:', e) }
+    notifyBatchDeleteResult(notify, t, t('instanceDetail.saves.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
     setBatchDeleting(false)
     load()
-  }, [instanceId, selected, saves, load])
-
-  const filtered = useMemo(() => {
-    if (!search) return saves
-    const q = search.toLowerCase()
-    return saves.filter(s => s.name.toLowerCase().includes(q))
-  }, [saves, search])
+  }, [instanceId, selected, load, notify, t, setSelected])
 
   return (
     <SettingSection title={saves.length > 0 ? `${t('instanceDetail.tabs.saves')} (${saves.length})` : t('instanceDetail.tabs.saves')} icon={<Save className="h-4 w-4" />}>
@@ -201,7 +228,23 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch(() => {})} className="gap-1.5 h-7 text-xs">
+            <Select value={sortBy} onChange={setSortBy} className="w-32 shrink-0">
+              {SORT_OPTIONS.map((item) => (
+                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+              ))}
+            </Select>
+            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch((e) => { console.error('Open folder failed:', gameDir + '/saves', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
           </div>
@@ -215,16 +258,20 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             {search ? t('instanceDetail.saves.noMatch') : t('instanceDetail.saves.empty')}
           </div>
         ) : (
-          <div className="flex flex-col gap-2 p-4">
-            {filtered.map((save) => (
-              <SaveCard key={save.filePath} save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} running={running} />
-            ))}
-          </div>
+          <DragSelectArea onSelect={handleDragSelect}>
+            <div className="flex flex-col gap-2 p-4">
+              {filtered.map((save) => (
+                <div key={save.filePath} data-key={save.filePath} data-select-item={save.filePath}>
+                  <SaveCard save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} running={running} />
+                </div>
+              ))}
+            </div>
+          </DragSelectArea>
         )}
       <I18nBatchToolbar
         selectedCount={selected.size}
-        onClear={() => setSelected(new Set())}
-        onSelectAll={() => setSelected(new Set(filtered.map(s => s.filePath)))}
+        onClear={clear}
+        onSelectAll={selectAll}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <Trash2 className="h-3.5 w-3.5" />
@@ -251,61 +298,71 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
 
 function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void }) {
   const { t } = useI18n()
+  const { notify } = useMessageBox()
   const [search, setSearch] = useState('')
   const [screenshots, setScreenshots] = useState<ScreenshotMetadata[]>([])
   const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const lastClickedRef = useRef(-1)
+  const [sortBy, setSortBy] = useState('name-asc')
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
   const [batchDeleting, setBatchDeleting] = useState(false)
+
+  // 排序选项：仅使用 ScreenshotMetadata 真实存在的字段（fileName / createdAt / fileSize）
+  const SORT_OPTIONS = [
+    { key: 'name-asc', label: t('instanceDetail.mods.sortNameAsc') },
+    { key: 'name-desc', label: t('instanceDetail.mods.sortNameDesc') },
+    { key: 'time-desc', label: t('instanceDetail.mods.sortTimeDesc') },
+    { key: 'time-asc', label: t('instanceDetail.mods.sortTimeAsc') },
+    { key: 'size-desc', label: t('instanceDetail.mods.sortSizeDesc') },
+    { key: 'size-asc', label: t('instanceDetail.mods.sortSizeAsc') },
+  ]
+
+  // 顺序约束：filtered 只依赖 state，必须排在 useListSelection 之前（详见 SavesTab 注释）
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    const result = q ? screenshots.filter(s => s.fileName.toLowerCase().includes(q)) : [...screenshots]
+    result.sort((a, b) => {
+      if (sortBy === 'name-asc') return a.fileName.localeCompare(b.fileName)
+      if (sortBy === 'name-desc') return b.fileName.localeCompare(a.fileName)
+      if (sortBy === 'time-desc') return b.createdAt.localeCompare(a.createdAt)
+      if (sortBy === 'time-asc') return a.createdAt.localeCompare(b.createdAt)
+      if (sortBy === 'size-desc') return b.fileSize - a.fileSize
+      if (sortBy === 'size-asc') return a.fileSize - b.fileSize
+      return 0
+    })
+    return result
+  }, [screenshots, search, sortBy])
+
+  const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (s) => s.filePath)
 
   const load = useCallback(async () => {
     setSelected(new Set())
     setLoading(true)
     try { const data = await getScreenshotsMetadata(instanceId); setScreenshots(data) }
-    catch { setScreenshots([]) }
+    catch (e) {
+      setScreenshots([])
+      notify(t('instanceDetail.screenshots.loadFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
+    }
     setLoading(false)
-  }, [instanceId])
+  }, [instanceId, notify, t, setSelected])
 
   useEffect(() => { load() }, [load, refreshKey])
-
-  const toggleSelect = useCallback((filePath: string, shift?: boolean, ctrl?: boolean) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (ctrl) {
-        if (next.has(filePath)) next.delete(filePath); else next.add(filePath)
-      } else if (shift && lastClickedRef.current >= 0) {
-        const start = Math.min(lastClickedRef.current, screenshots.findIndex(s => s.filePath === filePath))
-        const end = Math.max(lastClickedRef.current, screenshots.findIndex(s => s.filePath === filePath))
-        for (let i = start; i <= end; i++) next.add(screenshots[i].filePath)
-      } else {
-        next.clear(); next.add(filePath)
-      }
-      return next
-    })
-    lastClickedRef.current = screenshots.findIndex(s => s.filePath === filePath)
-  }, [screenshots])
 
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
     const names = Array.from(selected).map(fp => screenshots.find(s => s.filePath === fp)?.fileName).filter((n): n is string => !!n)
+    const failed: string[] = []
     try {
       const { deleteScreenshot } = await import('../api/instance-files.ts')
       for (const name of names) {
-        try { await deleteScreenshot(instanceId, name) } catch {}
+        try { await deleteScreenshot(instanceId, name) } catch { failed.push(name) }
       }
-    } catch {}
+    } catch (e) { console.error('Batch delete failed:', e) }
+    notifyBatchDeleteResult(notify, t, t('instanceDetail.screenshots.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
     setBatchDeleting(false)
     load()
-  }, [instanceId, selected, screenshots, load])
-
-  const filtered = useMemo(() => {
-    if (!search) return screenshots
-    const q = search.toLowerCase()
-    return screenshots.filter(s => s.fileName.toLowerCase().includes(q))
-  }, [screenshots, search])
+  }, [instanceId, selected, screenshots, load, notify, t, setSelected])
 
   return (
     <SettingSection title={screenshots.length > 0 ? `${t('instanceDetail.tabs.screenshots')} (${screenshots.length})` : t('instanceDetail.tabs.screenshots')} icon={<Camera className="h-4 w-4" />}>
@@ -317,7 +374,23 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch(() => {})} className="gap-1.5 h-7 text-xs">
+            <Select value={sortBy} onChange={setSortBy} className="w-32 shrink-0">
+              {SORT_OPTIONS.map((item) => (
+                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+              ))}
+            </Select>
+            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch((e) => { console.error('Open folder failed:', gameDir + '/screenshots', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
           </div>
@@ -339,16 +412,20 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             {search ? t('instanceDetail.screenshots.noMatch') : t('instanceDetail.screenshots.empty')}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
-            {filtered.map((s) => (
-              <ScreenshotCard key={s.filePath} screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.filePath)} onSelect={(e) => toggleSelect(s.filePath, e.shiftKey, e.ctrlKey)} />
-            ))}
-          </div>
+          <DragSelectArea onSelect={handleDragSelect}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
+              {filtered.map((s) => (
+                <div key={s.filePath} data-key={s.filePath} data-select-item={s.filePath}>
+                  <ScreenshotCard screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.filePath)} onSelect={(e) => toggleSelect(s.filePath, e.shiftKey, e.ctrlKey)} />
+                </div>
+              ))}
+            </div>
+          </DragSelectArea>
         )}
       <I18nBatchToolbar
         selectedCount={selected.size}
-        onClear={() => setSelected(new Set())}
-        onSelectAll={() => setSelected(new Set(filtered.map(s => s.filePath)))}
+        onClear={clear}
+        onSelectAll={selectAll}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <Trash2 className="h-3.5 w-3.5" />
@@ -780,7 +857,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               </button>
             </Tooltip>
             <Tooltip content={t('instanceDetail.openFolder')}>
-              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch(() => {})} className="h-7 w-7 p-0">
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch((e) => { console.error('Open folder failed:', gameDir + '/mods', e); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
                 <FolderOpen className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
@@ -964,10 +1041,63 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
   const [packs, setPacks] = useState<ResourcePackMetadata[]>([])
   const [loading, setLoading] = useState(true)
   const { notify } = useMessageBox()
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const lastClickedRef = useRef(-1)
+  const [filterType, setFilterType] = useState('all')
+  const [sortBy, setSortBy] = useState('name-asc')
+  // 列表模式（紧凑 / 详细），持久化到 localStorage；默认紧凑（与 ModsTab 一致）
+  const [packViewMode, setPackViewMode] = useState<ModViewMode>(() => {
+    try { return localStorage.getItem(RESOURCEPACKS_VIEW_KEY) === 'detailed' ? 'detailed' : 'compact' } catch { return 'compact' }
+  })
+  const changePackViewMode = useCallback((mode: ModViewMode) => {
+    setPackViewMode(mode)
+    try { localStorage.setItem(RESOURCEPACKS_VIEW_KEY, mode) } catch { /* 忽略隐私模式写入失败 */ }
+  }, [])
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
   const [batchDeleting, setBatchDeleting] = useState(false)
+
+  // 来源筛选（本地 / Modrinth / CurseForge）。三项均为 metadata 真实存在的字段派生。
+  const FILTER_OPTIONS = [
+    { key: 'all', label: t('instanceDetail.mods.filterAll'), icon: List },
+    { key: 'local', label: t('instanceDetail.mods.filterLocal'), icon: List },
+    { key: 'modrinth', label: 'Modrinth', icon: List },
+    { key: 'curseforge', label: 'CurseForge', icon: List },
+  ]
+  // 排序选项：仅使用 ResourcePackMetadata 真实存在的字段（name）
+  const SORT_OPTIONS = [
+    { key: 'name-asc', label: t('instanceDetail.mods.sortNameAsc') },
+    { key: 'name-desc', label: t('instanceDetail.mods.sortNameDesc') },
+  ]
+
+  // 各筛选桶数量：在搜索之后、筛选之前统计（与 ModsTab 的 filterCounts 同规则）。
+  // 必须声明在 filtered 之前——filtered 现在排在 useListSelection 之前。
+  const filterCounts = useMemo(() => {
+    const q = search.toLowerCase()
+    const base = q
+      ? packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
+      : packs
+    return {
+      all: base.length,
+      local: base.filter(p => !p.curseForgeId && !p.modrinthId).length,
+      modrinth: base.filter(p => p.source === 'modrinth').length,
+      curseforge: base.filter(p => p.source === 'curseforge').length,
+    } as Record<string, number>
+  }, [packs, search])
+
+  // 顺序约束：filtered 只依赖 state，必须排在 useListSelection 之前（详见 SavesTab 注释）
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    let result = q ? packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q)) : [...packs]
+    if (filterType === 'local') result = result.filter(p => !p.curseForgeId && !p.modrinthId)
+    else if (filterType === 'modrinth') result = result.filter(p => p.source === 'modrinth')
+    else if (filterType === 'curseforge') result = result.filter(p => p.source === 'curseforge')
+    result.sort((a, b) => {
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name)
+      if (sortBy === 'name-desc') return b.name.localeCompare(a.name)
+      return 0
+    })
+    return result
+  }, [packs, search, filterType, sortBy])
+
+  const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (p) => p.fileName)
 
   const load = useCallback(async () => {
     setSelected(new Set())
@@ -983,61 +1113,26 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
       notify(t('instanceDetail.resourcepacks.loadFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
     }
     setLoading(false)
-  }, [instanceId, notify])
+  }, [instanceId, notify, t, setSelected])
 
   useEffect(() => { load() }, [load, refreshKey])
-
-  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (ctrl) {
-        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
-      } else if (shift && lastClickedRef.current >= 0) {
-        const start = Math.min(lastClickedRef.current, packs.findIndex(p => p.fileName === fileName))
-        const end = Math.max(lastClickedRef.current, packs.findIndex(p => p.fileName === fileName))
-        for (let i = start; i <= end; i++) next.add(packs[i].fileName)
-      } else {
-        next.clear(); next.add(fileName)
-      }
-      return next
-    })
-    lastClickedRef.current = packs.findIndex(p => p.fileName === fileName)
-  }, [packs])
-
-  // 拖动框选：Shift 追加，普通替换
-  const handleDragSelect = useCallback((names: string[], mode: 'replace' | 'add') => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (mode === 'add') {
-        names.forEach(n => next.add(n))
-      } else {
-        next.clear()
-        names.forEach(n => next.add(n))
-      }
-      return next
-    })
-  }, [])
 
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
     const names = Array.from(selected)
+    const failed: string[] = []
     try {
       const { deleteResourcePack } = await import('../api/instance-files.ts')
       for (const name of names) {
-        try { await deleteResourcePack(instanceId, name) } catch {}
+        try { await deleteResourcePack(instanceId, name) } catch { failed.push(name) }
       }
-    } catch {}
+    } catch (e) { console.error('Batch delete failed:', e) }
+    notifyBatchDeleteResult(notify, t, t('instanceDetail.resourcepacks.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
     setBatchDeleting(false)
     load()
-  }, [instanceId, selected, load])
-
-  const filtered = useMemo(() => {
-    if (!search) return packs
-    const q = search.toLowerCase()
-    return packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
-  }, [packs, search])
+  }, [instanceId, selected, load, notify, t, setSelected])
 
   const rpAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
 
@@ -1051,7 +1146,53 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
+            {/* 列表模式切换：紧凑（默认，日常管理）/ 详细（查看信息） */}
+            <div className="flex items-center rounded-md border border-input p-0.5">
+              <Tooltip content={t('instanceDetail.mods.viewCompact')}>
+                <button
+                  onClick={() => changePackViewMode('compact')}
+                  aria-label={t('instanceDetail.mods.viewCompact')}
+                  aria-pressed={packViewMode === 'compact'}
+                  className={cn('flex h-6 w-6 items-center justify-center rounded transition-colors', packViewMode === 'compact' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+                >
+                  <Rows3 className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip content={t('instanceDetail.mods.viewDetailed')}>
+                <button
+                  onClick={() => changePackViewMode('detailed')}
+                  aria-label={t('instanceDetail.mods.viewDetailed')}
+                  aria-pressed={packViewMode === 'detailed'}
+                  className={cn('flex h-6 w-6 items-center justify-center rounded transition-colors', packViewMode === 'detailed' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+                >
+                  <LayoutList className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            </div>
+            {/* 来源筛选：本地 / Modrinth / CurseForge */}
+            <Tabs
+              tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" />, count: filterCounts[o.key] }))}
+              activeTab={filterType}
+              onChange={setFilterType}
+              className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
+            />
+            <Select value={sortBy} onChange={setSortBy} className="w-32 shrink-0">
+              {SORT_OPTIONS.map((item) => (
+                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+              ))}
+            </Select>
+            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch((e) => { console.error('Open folder failed:', gameDir + '/resourcepacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => {
@@ -1084,10 +1225,10 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div ref={rpAnimRef} className="flex flex-col gap-2 p-4">
+            <div ref={rpAnimRef} className={cn('flex flex-col p-4', packViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
               {filtered.map((pack) => (
                 <div key={pack.fileName} data-key={pack.fileName} data-select-item={pack.fileName}>
-                  <ResourcePackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
+                  <ResourcePackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} viewMode={packViewMode} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
             </div>
@@ -1095,8 +1236,8 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
         )}
       <I18nBatchToolbar
         selectedCount={selected.size}
-        onClear={() => setSelected(new Set())}
-        onSelectAll={() => setSelected(new Set(filtered.map(p => p.fileName)))}
+        onClear={clear}
+        onSelectAll={selectAll}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <Trash2 className="h-3.5 w-3.5" />
@@ -1128,10 +1269,63 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
   const [shaders, setShaders] = useState<ShaderMetadata[]>([])
   const [loading, setLoading] = useState(true)
   const { notify } = useMessageBox()
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const lastClickedRef = useRef(-1)
+  const [filterType, setFilterType] = useState('all')
+  const [sortBy, setSortBy] = useState('name-asc')
+  // 列表模式（紧凑 / 详细），持久化到 localStorage；默认紧凑（与 ModsTab 一致）
+  const [shaderViewMode, setShaderViewMode] = useState<ModViewMode>(() => {
+    try { return localStorage.getItem(SHADERS_VIEW_KEY) === 'detailed' ? 'detailed' : 'compact' } catch { return 'compact' }
+  })
+  const changeShaderViewMode = useCallback((mode: ModViewMode) => {
+    setShaderViewMode(mode)
+    try { localStorage.setItem(SHADERS_VIEW_KEY, mode) } catch { /* 忽略隐私模式写入失败 */ }
+  }, [])
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
   const [batchDeleting, setBatchDeleting] = useState(false)
+
+  // 来源筛选（本地 / Modrinth / CurseForge）。三项均为 metadata 真实存在的字段派生。
+  const FILTER_OPTIONS = [
+    { key: 'all', label: t('instanceDetail.mods.filterAll'), icon: List },
+    { key: 'local', label: t('instanceDetail.mods.filterLocal'), icon: List },
+    { key: 'modrinth', label: 'Modrinth', icon: List },
+    { key: 'curseforge', label: 'CurseForge', icon: List },
+  ]
+  // 排序选项：仅使用 ShaderMetadata 真实存在的字段（name）
+  const SORT_OPTIONS = [
+    { key: 'name-asc', label: t('instanceDetail.mods.sortNameAsc') },
+    { key: 'name-desc', label: t('instanceDetail.mods.sortNameDesc') },
+  ]
+
+  // 各筛选桶数量：在搜索之后、筛选之前统计（与 ModsTab 的 filterCounts 同规则）。
+  // 必须声明在 filtered 之前——filtered 现在排在 useListSelection 之前。
+  const filterCounts = useMemo(() => {
+    const q = search.toLowerCase()
+    const base = q
+      ? shaders.filter(s => s.name.toLowerCase().includes(q) || s.fileName.toLowerCase().includes(q))
+      : shaders
+    return {
+      all: base.length,
+      local: base.filter(s => !s.curseForgeId && !s.modrinthId).length,
+      modrinth: base.filter(s => s.source === 'modrinth').length,
+      curseforge: base.filter(s => s.source === 'curseforge').length,
+    } as Record<string, number>
+  }, [shaders, search])
+
+  // 顺序约束：filtered 只依赖 state，必须排在 useListSelection 之前（详见 SavesTab 注释）
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    let result = q ? shaders.filter(s => s.name.toLowerCase().includes(q) || s.fileName.toLowerCase().includes(q)) : [...shaders]
+    if (filterType === 'local') result = result.filter(s => !s.curseForgeId && !s.modrinthId)
+    else if (filterType === 'modrinth') result = result.filter(s => s.source === 'modrinth')
+    else if (filterType === 'curseforge') result = result.filter(s => s.source === 'curseforge')
+    result.sort((a, b) => {
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name)
+      if (sortBy === 'name-desc') return b.name.localeCompare(a.name)
+      return 0
+    })
+    return result
+  }, [shaders, search, filterType, sortBy])
+
+  const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (s) => s.fileName)
 
   const load = useCallback(async () => {
     setSelected(new Set())
@@ -1147,61 +1341,26 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
       notify(t('instanceDetail.shaderpacks.loadFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
     }
     setLoading(false)
-  }, [instanceId, notify])
+  }, [instanceId, notify, t, setSelected])
 
   useEffect(() => { load() }, [load, refreshKey])
-
-  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (ctrl) {
-        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
-      } else if (shift && lastClickedRef.current >= 0) {
-        const start = Math.min(lastClickedRef.current, shaders.findIndex(s => s.fileName === fileName))
-        const end = Math.max(lastClickedRef.current, shaders.findIndex(s => s.fileName === fileName))
-        for (let i = start; i <= end; i++) next.add(shaders[i].fileName)
-      } else {
-        next.clear(); next.add(fileName)
-      }
-      return next
-    })
-    lastClickedRef.current = shaders.findIndex(s => s.fileName === fileName)
-  }, [shaders])
-
-  // 拖动框选：Shift 追加，普通替换
-  const handleDragSelect = useCallback((names: string[], mode: 'replace' | 'add') => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (mode === 'add') {
-        names.forEach(n => next.add(n))
-      } else {
-        next.clear()
-        names.forEach(n => next.add(n))
-      }
-      return next
-    })
-  }, [])
 
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
     const names = Array.from(selected)
+    const failed: string[] = []
     try {
       const { deleteShaderPack } = await import('../api/instance-files.ts')
       for (const name of names) {
-        try { await deleteShaderPack(instanceId, name) } catch {}
+        try { await deleteShaderPack(instanceId, name) } catch { failed.push(name) }
       }
-    } catch {}
+    } catch (e) { console.error('Batch delete failed:', e) }
+    notifyBatchDeleteResult(notify, t, t('instanceDetail.shaderpacks.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
     setBatchDeleting(false)
     load()
-  }, [instanceId, selected, load])
-
-  const filtered = useMemo(() => {
-    if (!search) return shaders
-    const q = search.toLowerCase()
-    return shaders.filter(s => s.name.toLowerCase().includes(q) || s.fileName.toLowerCase().includes(q))
-  }, [shaders, search])
+  }, [instanceId, selected, load, notify, t, setSelected])
 
   const shaderAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
 
@@ -1215,7 +1374,53 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
+            {/* 列表模式切换：紧凑（默认，日常管理）/ 详细（查看信息） */}
+            <div className="flex items-center rounded-md border border-input p-0.5">
+              <Tooltip content={t('instanceDetail.mods.viewCompact')}>
+                <button
+                  onClick={() => changeShaderViewMode('compact')}
+                  aria-label={t('instanceDetail.mods.viewCompact')}
+                  aria-pressed={shaderViewMode === 'compact'}
+                  className={cn('flex h-6 w-6 items-center justify-center rounded transition-colors', shaderViewMode === 'compact' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+                >
+                  <Rows3 className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip content={t('instanceDetail.mods.viewDetailed')}>
+                <button
+                  onClick={() => changeShaderViewMode('detailed')}
+                  aria-label={t('instanceDetail.mods.viewDetailed')}
+                  aria-pressed={shaderViewMode === 'detailed'}
+                  className={cn('flex h-6 w-6 items-center justify-center rounded transition-colors', shaderViewMode === 'detailed' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+                >
+                  <LayoutList className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            </div>
+            {/* 来源筛选：本地 / Modrinth / CurseForge */}
+            <Tabs
+              tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" />, count: filterCounts[o.key] }))}
+              activeTab={filterType}
+              onChange={setFilterType}
+              className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
+            />
+            <Select value={sortBy} onChange={setSortBy} className="w-32 shrink-0">
+              {SORT_OPTIONS.map((item) => (
+                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+              ))}
+            </Select>
+            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch((e) => { console.error('Open folder failed:', gameDir + '/shaderpacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => {
@@ -1248,10 +1453,10 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div ref={shaderAnimRef} className="flex flex-col gap-2 p-4">
+            <div ref={shaderAnimRef} className={cn('flex flex-col p-4', shaderViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
               {filtered.map((shader) => (
                 <div key={shader.fileName} data-key={shader.fileName} data-select-item={shader.fileName}>
-                  <ShaderCard shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(shader.fileName)} onSelect={(e) => toggleSelect(shader.fileName, e.shiftKey, e.ctrlKey)} />
+                  <ShaderCard shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} viewMode={shaderViewMode} selected={selected.has(shader.fileName)} onSelect={(e) => toggleSelect(shader.fileName, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
             </div>
@@ -1259,8 +1464,8 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
         )}
       <I18nBatchToolbar
         selectedCount={selected.size}
-        onClear={() => setSelected(new Set())}
-        onSelectAll={() => setSelected(new Set(filtered.map(s => s.fileName)))}
+        onClear={clear}
+        onSelectAll={selectAll}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <Trash2 className="h-3.5 w-3.5" />
@@ -1288,13 +1493,67 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
 function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRefresh: _onRefresh }: { instanceId: string; gameDir: string; gameVersion?: string; loader?: string; refreshKey: number; onRefresh: () => void }) {
   const navigate = useNavigate()
   const { t } = useI18n()
+  const { notify } = useMessageBox()
   const [search, setSearch] = useState('')
   const [packs, setPacks] = useState<DataPackMetadata[]>([])
   const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const lastClickedRef = useRef(-1)
+  const [filterType, setFilterType] = useState('all')
+  const [sortBy, setSortBy] = useState('name-asc')
+  // 列表模式（紧凑 / 详细），持久化到 localStorage；默认紧凑（与 ModsTab 一致）
+  const [dataPackViewMode, setDataPackViewMode] = useState<ModViewMode>(() => {
+    try { return localStorage.getItem(DATAPACKS_VIEW_KEY) === 'detailed' ? 'detailed' : 'compact' } catch { return 'compact' }
+  })
+  const changeDataPackViewMode = useCallback((mode: ModViewMode) => {
+    setDataPackViewMode(mode)
+    try { localStorage.setItem(DATAPACKS_VIEW_KEY, mode) } catch { /* 忽略隐私模式写入失败 */ }
+  }, [])
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
   const [batchDeleting, setBatchDeleting] = useState(false)
+
+  // 来源筛选（本地 / Modrinth / CurseForge）。三项均为 metadata 真实存在的字段派生。
+  const FILTER_OPTIONS = [
+    { key: 'all', label: t('instanceDetail.mods.filterAll'), icon: List },
+    { key: 'local', label: t('instanceDetail.mods.filterLocal'), icon: List },
+    { key: 'modrinth', label: 'Modrinth', icon: List },
+    { key: 'curseforge', label: 'CurseForge', icon: List },
+  ]
+  // 排序选项：仅使用 DataPackMetadata 真实存在的字段（name）
+  const SORT_OPTIONS = [
+    { key: 'name-asc', label: t('instanceDetail.mods.sortNameAsc') },
+    { key: 'name-desc', label: t('instanceDetail.mods.sortNameDesc') },
+  ]
+
+  // 各筛选桶数量：在搜索之后、筛选之前统计（与 ModsTab 的 filterCounts 同规则）。
+  // 必须声明在 filtered 之前——filtered 现在排在 useListSelection 之前。
+  const filterCounts = useMemo(() => {
+    const q = search.toLowerCase()
+    const base = q
+      ? packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
+      : packs
+    return {
+      all: base.length,
+      local: base.filter(p => !p.curseForgeId && !p.modrinthId).length,
+      modrinth: base.filter(p => p.source === 'modrinth').length,
+      curseforge: base.filter(p => p.source === 'curseforge').length,
+    } as Record<string, number>
+  }, [packs, search])
+
+  // 顺序约束：filtered 只依赖 state，必须排在 useListSelection 之前（详见 SavesTab 注释）
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    let result = q ? packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q)) : [...packs]
+    if (filterType === 'local') result = result.filter(p => !p.curseForgeId && !p.modrinthId)
+    else if (filterType === 'modrinth') result = result.filter(p => p.source === 'modrinth')
+    else if (filterType === 'curseforge') result = result.filter(p => p.source === 'curseforge')
+    result.sort((a, b) => {
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name)
+      if (sortBy === 'name-desc') return b.name.localeCompare(a.name)
+      return 0
+    })
+    return result
+  }, [packs, search, filterType, sortBy])
+
+  const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (p) => p.fileName)
 
   const load = useCallback(async () => {
     setSelected(new Set())
@@ -1305,63 +1564,31 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
     if (stale) { setPacks(stale); setLoading(false) }
     setLoading(true)
     try { const data = await getDataPacksMetadata(instanceId); setPacks(data); cacheSet(cacheKey, data) }
-    catch { setPacks([]) }
+    catch (e) {
+      setPacks([])
+      notify(t('instanceDetail.datapacks.loadFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
+    }
     setLoading(false)
-  }, [instanceId])
+  }, [instanceId, notify, t, setSelected])
 
   useEffect(() => { load() }, [load, refreshKey])
-
-  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (ctrl) {
-        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
-      } else if (shift && lastClickedRef.current >= 0) {
-        const start = Math.min(lastClickedRef.current, packs.findIndex(p => p.fileName === fileName))
-        const end = Math.max(lastClickedRef.current, packs.findIndex(p => p.fileName === fileName))
-        for (let i = start; i <= end; i++) next.add(packs[i].fileName)
-      } else {
-        next.clear(); next.add(fileName)
-      }
-      return next
-    })
-    lastClickedRef.current = packs.findIndex(p => p.fileName === fileName)
-  }, [packs])
-
-  // 拖动框选：Shift 追加，普通替换
-  const handleDragSelect = useCallback((names: string[], mode: 'replace' | 'add') => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (mode === 'add') {
-        names.forEach(n => next.add(n))
-      } else {
-        next.clear()
-        names.forEach(n => next.add(n))
-      }
-      return next
-    })
-  }, [])
 
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
     const names = Array.from(selected)
+    const failed: string[] = []
     try {
       const { deleteDataPack } = await import('../api/instance-files.ts')
       for (const name of names) {
-        try { await deleteDataPack(instanceId, name) } catch {}
+        try { await deleteDataPack(instanceId, name) } catch { failed.push(name) }
       }
-    } catch {}
+    } catch (e) { console.error('Batch delete failed:', e) }
+    notifyBatchDeleteResult(notify, t, t('instanceDetail.datapacks.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
     setBatchDeleting(false)
     load()
-  }, [instanceId, selected, load])
-
-  const filtered = useMemo(() => {
-    if (!search) return packs
-    const q = search.toLowerCase()
-    return packs.filter(p => p.name.toLowerCase().includes(q) || p.fileName.toLowerCase().includes(q))
-  }, [packs, search])
+  }, [instanceId, selected, load, notify, t, setSelected])
 
   const dpAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
 
@@ -1375,7 +1602,53 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch(() => {})} className="gap-1.5 h-7 text-xs">
+            {/* 列表模式切换：紧凑（默认，日常管理）/ 详细（查看信息） */}
+            <div className="flex items-center rounded-md border border-input p-0.5">
+              <Tooltip content={t('instanceDetail.mods.viewCompact')}>
+                <button
+                  onClick={() => changeDataPackViewMode('compact')}
+                  aria-label={t('instanceDetail.mods.viewCompact')}
+                  aria-pressed={dataPackViewMode === 'compact'}
+                  className={cn('flex h-6 w-6 items-center justify-center rounded transition-colors', dataPackViewMode === 'compact' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+                >
+                  <Rows3 className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip content={t('instanceDetail.mods.viewDetailed')}>
+                <button
+                  onClick={() => changeDataPackViewMode('detailed')}
+                  aria-label={t('instanceDetail.mods.viewDetailed')}
+                  aria-pressed={dataPackViewMode === 'detailed'}
+                  className={cn('flex h-6 w-6 items-center justify-center rounded transition-colors', dataPackViewMode === 'detailed' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+                >
+                  <LayoutList className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            </div>
+            {/* 来源筛选：本地 / Modrinth / CurseForge */}
+            <Tabs
+              tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" />, count: filterCounts[o.key] }))}
+              activeTab={filterType}
+              onChange={setFilterType}
+              className="[&>button]:px-3 [&>button]:py-1.5 [&>button]:text-xs"
+            />
+            <Select value={sortBy} onChange={setSortBy} className="w-32 shrink-0">
+              {SORT_OPTIONS.map((item) => (
+                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+              ))}
+            </Select>
+            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch((e) => { console.error('Open folder failed:', gameDir + '/datapacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => {
@@ -1408,10 +1681,10 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div ref={dpAnimRef} className="flex flex-col gap-2 p-4">
+            <div ref={dpAnimRef} className={cn('flex flex-col p-4', dataPackViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
               {filtered.map((pack) => (
                 <div key={pack.fileName} data-key={pack.fileName} data-select-item={pack.fileName}>
-                  <DataPackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
+                  <DataPackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} viewMode={dataPackViewMode} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
             </div>
@@ -1419,8 +1692,8 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
         )}
       <I18nBatchToolbar
         selectedCount={selected.size}
-        onClear={() => setSelected(new Set())}
-        onSelectAll={() => setSelected(new Set(filtered.map(p => p.fileName)))}
+        onClear={clear}
+        onSelectAll={selectAll}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <Trash2 className="h-3.5 w-3.5" />
@@ -1451,8 +1724,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
   const [search, setSearch] = useState('')
   const [files, setFiles] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const lastClickedRef = useRef(-1)
+  const [sortBy, setSortBy] = useState('name-asc')
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
   const [batchDeleting, setBatchDeleting] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -1462,32 +1734,43 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
   const [renameValue, setRenameValue] = useState('')
   const [renaming, setRenaming] = useState(false)
 
+  // 排序选项：仅使用 FileEntry 真实存在的字段（name / lastModified / size）
+  const SORT_OPTIONS = [
+    { key: 'name-asc', label: t('instanceDetail.mods.sortNameAsc') },
+    { key: 'name-desc', label: t('instanceDetail.mods.sortNameDesc') },
+    { key: 'time-desc', label: t('instanceDetail.mods.sortTimeDesc') },
+    { key: 'time-asc', label: t('instanceDetail.mods.sortTimeAsc') },
+    { key: 'size-desc', label: t('instanceDetail.mods.sortSizeDesc') },
+    { key: 'size-asc', label: t('instanceDetail.mods.sortSizeAsc') },
+  ]
+
+  // 顺序约束：filtered 只依赖 state，必须排在 useListSelection 之前（详见 SavesTab 注释）
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    const result = q ? files.filter(f => f.name.toLowerCase().includes(q)) : [...files]
+    result.sort((a, b) => {
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name)
+      if (sortBy === 'name-desc') return b.name.localeCompare(a.name)
+      if (sortBy === 'time-desc') return b.lastModified.localeCompare(a.lastModified)
+      if (sortBy === 'time-asc') return a.lastModified.localeCompare(b.lastModified)
+      if (sortBy === 'size-desc') return b.size - a.size
+      if (sortBy === 'size-asc') return a.size - b.size
+      return 0
+    })
+    return result
+  }, [files, search, sortBy])
+
+  const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (f) => f.name)
+
   const load = useCallback(async () => {
     setSelected(new Set())
     setLoading(true)
-    try { const data = await getSchematics(instanceId); setFiles(data.filter((f) => !f.isDirectory).sort((a, b) => b.lastModified.localeCompare(a.lastModified))) }
+    try { const data = await getSchematics(instanceId); setFiles(data.filter((f) => !f.isDirectory)) }
     catch { setFiles([]) }
     setLoading(false)
-  }, [instanceId])
+  }, [instanceId, setSelected])
 
   useEffect(() => { load() }, [load, refreshKey])
-
-  const toggleSelect = useCallback((fileName: string, shift?: boolean, ctrl?: boolean) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (ctrl) {
-        if (next.has(fileName)) next.delete(fileName); else next.add(fileName)
-      } else if (shift && lastClickedRef.current >= 0) {
-        const start = Math.min(lastClickedRef.current, files.findIndex(f => f.name === fileName))
-        const end = Math.max(lastClickedRef.current, files.findIndex(f => f.name === fileName))
-        for (let i = start; i <= end; i++) next.add(files[i].name)
-      } else {
-        next.clear(); next.add(fileName)
-      }
-      return next
-    })
-    lastClickedRef.current = files.findIndex(f => f.name === fileName)
-  }, [files])
 
   const handleImport = useCallback(async (file: File) => {
     setImporting(true)
@@ -1525,22 +1808,19 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
 
   const handleBatchDelete = useCallback(async () => {
     setBatchDeleting(true)
+    const names = Array.from(selected)
+    const failed: string[] = []
     try {
-      for (const name of Array.from(selected)) {
-        try { await deleteSchematic(instanceId, name) } catch {}
+      for (const name of names) {
+        try { await deleteSchematic(instanceId, name) } catch { failed.push(name) }
       }
-    } catch {}
+    } catch (e) { console.error('Batch delete failed:', e) }
+    notifyBatchDeleteResult(notify, t, t('instanceDetail.schematics.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
     setBatchDeleting(false)
     load()
-  }, [instanceId, selected, load])
-
-  const filtered = useMemo(() => {
-    if (!search) return files
-    const q = search.toLowerCase()
-    return files.filter(f => f.name.toLowerCase().includes(q))
-  }, [files, search])
+  }, [instanceId, selected, load, notify, t, setSelected])
 
   const schemAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
 
@@ -1554,7 +1834,23 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/schematics').catch(() => {})} className="gap-1.5 h-7 text-xs">
+            <Select value={sortBy} onChange={setSortBy} className="w-32 shrink-0">
+              {SORT_OPTIONS.map((item) => (
+                <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
+              ))}
+            </Select>
+            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/schematics').catch((e) => { console.error('Open folder failed:', gameDir + '/schematics', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={importing} className="gap-1.5 h-7 text-xs">
@@ -1584,56 +1880,59 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
             {search ? t('instanceDetail.schematics.noMatch') : t('instanceDetail.schematics.empty')}
           </div>
         ) : (
-          <div ref={schemAnimRef} className="flex flex-col gap-2 p-4">
-            {filtered.map((f) => (
-              <div
-                key={f.name}
-                data-key={f.name}
-                onClick={(e) => toggleSelect(f.name, e.shiftKey, e.ctrlKey)}
-                className={cn(
-                  'group glass-surface flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all',
-                  selected.has(f.name) ? 'border-primary/50 bg-primary/5' : 'border-border/60 bg-card hover:border-primary/20 hover:shadow-sm'
-                )}
-              >
-                <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors', selected.has(f.name) ? 'bg-primary/10 text-primary' : 'bg-muted/60 group-hover:text-primary')}>
-                  <PenTool className="h-4 w-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{f.name}</div>
-                  <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>{(f.size / 1024).toFixed(f.size >= 1024 * 1024 ? 1 : 0)}{f.size >= 1024 * 1024 ? ' MB' : ' KB'}</span>
-                    <span className="text-border">·</span>
-                    <span>{new Date(f.lastModified).toLocaleString()}</span>
-                    {f.extension === 'litematic' && (
-                      <span className="rounded border px-1 py-px text-[10px] text-muted-foreground/70">litematic</span>
-                    )}
+          <DragSelectArea onSelect={handleDragSelect}>
+            <div ref={schemAnimRef} className="flex flex-col gap-2 p-4">
+              {filtered.map((f) => (
+                <div
+                  key={f.name}
+                  data-key={f.name}
+                  data-select-item={f.name}
+                  onClick={(e) => toggleSelect(f.name, e.shiftKey, e.ctrlKey)}
+                  className={cn(
+                    'group glass-surface flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all',
+                    selected.has(f.name) ? 'border-primary/50 bg-primary/5' : 'border-border/60 bg-card hover:border-primary/20 hover:shadow-sm'
+                  )}
+                >
+                  <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors', selected.has(f.name) ? 'bg-primary/10 text-primary' : 'bg-muted/60 group-hover:text-primary')}>
+                    <PenTool className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{f.name}</div>
+                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>{(f.size / 1024).toFixed(f.size >= 1024 * 1024 ? 1 : 0)}{f.size >= 1024 * 1024 ? ' MB' : ' KB'}</span>
+                      <span className="text-border">·</span>
+                      <span>{new Date(f.lastModified).toLocaleString()}</span>
+                      {f.extension === 'litematic' && (
+                        <span className="rounded border px-1 py-px text-[10px] text-muted-foreground/70">litematic</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <Tooltip content={t('instanceDetail.schematics.preview')}>
+                      <button aria-label={t('instanceDetail.schematics.preview')} onClick={(e) => { e.stopPropagation(); setPreviewFile(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip content={t('instanceDetail.schematics.rename')}>
+                      <button aria-label={t('instanceDetail.schematics.rename')} onClick={(e) => { e.stopPropagation(); setRenameTarget(f.name); setRenameValue(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                        <Pen className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip content={t('instanceDetail.schematics.delete')}>
+                      <button aria-label={t('instanceDetail.schematics.delete')} onClick={(e) => { e.stopPropagation(); handleDeleteOne(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
-                <div className="flex items-center gap-0.5 shrink-0">
-                  <Tooltip content={t('instanceDetail.schematics.preview')}>
-                    <button aria-label={t('instanceDetail.schematics.preview')} onClick={(e) => { e.stopPropagation(); setPreviewFile(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary">
-                      <Eye className="h-3.5 w-3.5" />
-                    </button>
-                  </Tooltip>
-                  <Tooltip content={t('instanceDetail.schematics.rename')}>
-                    <button aria-label={t('instanceDetail.schematics.rename')} onClick={(e) => { e.stopPropagation(); setRenameTarget(f.name); setRenameValue(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                      <Pen className="h-3.5 w-3.5" />
-                    </button>
-                  </Tooltip>
-                  <Tooltip content={t('instanceDetail.schematics.delete')}>
-                    <button aria-label={t('instanceDetail.schematics.delete')} onClick={(e) => { e.stopPropagation(); handleDeleteOne(f.name) }} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </Tooltip>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </DragSelectArea>
         )}
       <I18nBatchToolbar
         selectedCount={selected.size}
-        onClear={() => setSelected(new Set())}
-        onSelectAll={() => setSelected(new Set(filtered.map(f => f.name)))}
+        onClear={clear}
+        onSelectAll={selectAll}
       >
         <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}>
           <Trash2 className="h-3.5 w-3.5" />
@@ -2799,7 +3098,7 @@ export default function InstanceDetailPage() {
               <Star className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />
             </Button>
           </Tooltip>
-          <Button variant="outline" size="icon" onClick={() => openFolder(gameDir).catch(() => {})}>
+          <Button variant="outline" size="icon" onClick={() => openFolder(gameDir).catch((e) => { console.error('Open folder failed:', gameDir, e); notify(t('dialogs.common.openFailed'), 'error') })}>
             <FolderOpen className="h-4 w-4" />
           </Button>
         </div>
@@ -2937,7 +3236,7 @@ export default function InstanceDetailPage() {
                   {repairing && (
                     <span className="self-center text-xs text-muted-foreground">{t('instanceDetail.overview.repairing', { progress: repairProgress })}</span>
                   )}
-                  <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch(() => {})}>
+                  <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch((e) => { console.error('Open folder failed:', gameDir, e); notify(t('dialogs.common.openFailed'), 'error') })}>
                     <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.overview.openGameDir')}
                   </Button>
                   <Button size="sm" variant="outline" className="gap-2" onClick={() => setExportOpen(true)}>

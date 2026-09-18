@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Expand, Trash2 } from 'lucide-react'
-import { Tooltip } from './ui'
+import { Expand, Trash2, Ellipsis } from 'lucide-react'
+import { Tooltip, Popover } from './ui'
 import { Button } from './ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import type { ScreenshotMetadata } from '../types/index.ts'
+import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { cn } from '../lib/utils.ts'
 
 interface Props {
@@ -19,6 +20,7 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh, sele
   const { t } = useI18n()
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [preview, setPreview] = useState(false)
   const [imgSrc, setImgSrc] = useState('')
   const imgInited = useRef(false)
@@ -38,8 +40,21 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh, sele
     } catch { setDeleting(false) }
   }, [instanceId, screenshot.fileName, onRefresh])
 
+  const contextItems: ContextMenuItem[] = [
+    {
+      label: t('instanceDetail.schematics.preview'),
+      onClick: () => setPreview(true),
+    },
+    {
+      label: t('common.delete'),
+      onClick: () => setConfirmOpen(true),
+      danger: true,
+    },
+  ]
+
   return (
     <>
+      <ContextMenu items={contextItems}>
       <div className={cn('group glass-surface relative overflow-hidden rounded-lg border bg-card transition-all hover:shadow-md hover:border-primary/20 cursor-pointer', selected && 'border-primary/40 ring-1 ring-primary/30')} onClick={onSelect}>
         <div className="aspect-[4/3] overflow-hidden bg-muted" onClick={(e) => { e.stopPropagation(); setPreview(true) }}>
           {imgSrc && <img src={imgSrc} alt={screenshot.fileName} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />}
@@ -60,8 +75,44 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh, sele
           <button onClick={(e) => { e.stopPropagation(); setPreview(true) }} className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">
             <Expand className="h-3.5 w-3.5" />
           </button>
+          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+            <Popover
+              open={menuOpen}
+              onOpenChange={setMenuOpen}
+              align="end"
+              contentClassName="min-w-[180px]"
+              trigger={
+                <button
+                  type="button"
+                  aria-label={t('instanceDetail.mods.moreActions')}
+                  className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', menuOpen ? 'opacity-100' : 'opacity-0')}
+                >
+                  <Ellipsis className="h-4 w-4" />
+                </button>
+              }
+            >
+              <div className="flex flex-col">
+                {contextItems.map((item, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    disabled={item.disabled}
+                    onClick={() => { item.onClick(); setMenuOpen(false) }}
+                    className={cn(
+                      'flex w-full items-center rounded-md px-3 py-2 text-left text-sm transition-colors',
+                      item.danger ? 'text-destructive hover:bg-destructive/10' : 'text-popover-foreground hover:bg-accent',
+                      item.disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent'
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </Popover>
+          </div>
         </div>
       </div>
+      </ContextMenu>
 
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
         <DialogHeader onClose={() => setConfirmOpen(false)}>

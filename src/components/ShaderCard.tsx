@@ -1,8 +1,8 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Sun } from 'lucide-react'
+import { Sun, Ellipsis } from 'lucide-react'
 import { MinecraftText } from './MinecraftText.tsx'
-import { Card, CardContent } from './ui'
+import { Card, CardContent, Popover } from './ui'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { useMessageBox } from './ui'
 import { ApiError } from '../api/client.ts'
@@ -12,6 +12,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './u
 import { useI18n } from '../i18n/index.tsx'
 import type { ShaderMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
+import type { ModViewMode } from './ModCard.tsx'
 
 interface Props {
   shader: ShaderMetadata
@@ -20,17 +21,20 @@ interface Props {
   gameVersion?: string
   loader?: string
   onDelete: (fileName: string) => void
-  compact?: boolean
+  /** 列表模式：compact 日常管理（紧凑行）/ detailed 查看信息（含描述） */
+  viewMode?: ModViewMode
   selected?: boolean
   onSelect?: React.MouseEventHandler
 }
 
-export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, loader, onDelete, compact, selected, onSelect }: Props) {
+export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, loader, onDelete, viewMode = 'compact', selected, onSelect }: Props) {
   const { t } = useI18n()
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const compact = viewMode === 'compact'
 
   const handleDelete = useCallback(async () => {
     setDeleting(true)
@@ -93,7 +97,7 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
               {shader.version && <span>{shader.version}</span>}
             </div>
             <div className="h-5">
-              {shader.description && (
+              {!compact && shader.description && (
                 <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
                   <MinecraftText text={shader.description} />
                 </p>
@@ -107,6 +111,41 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
               {sourceLabel}
             </span>
           )}
+          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+            <Popover
+              open={menuOpen}
+              onOpenChange={setMenuOpen}
+              align="end"
+              contentClassName="min-w-[180px]"
+              trigger={
+                <button
+                  type="button"
+                  aria-label={t('instanceDetail.mods.moreActions')}
+                  className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', menuOpen ? 'opacity-100' : 'opacity-0')}
+                >
+                  <Ellipsis className="h-4 w-4" />
+                </button>
+              }
+            >
+              <div className="flex flex-col">
+                {contextItems.map((item, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    disabled={item.disabled}
+                    onClick={() => { item.onClick(); setMenuOpen(false) }}
+                    className={cn(
+                      'flex w-full items-center rounded-md px-3 py-2 text-left text-sm transition-colors',
+                      item.danger ? 'text-destructive hover:bg-destructive/10' : 'text-popover-foreground hover:bg-accent',
+                      item.disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent'
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </Popover>
+          </div>
         </CardContent>
       </Card>
     </ContextMenu>
