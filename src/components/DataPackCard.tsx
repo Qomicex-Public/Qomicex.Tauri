@@ -81,7 +81,7 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
   // 数据包语义：名称 | 版本 + format N。与资源包同层级（详细模式追加描述），无值的字段不渲染。
   const formatText = pack.packFormat > 0 ? t('instanceDetail.datapacks.format', { version: pack.packFormat }) : ''
   const compactMeta = [pack.version, formatText].filter(Boolean).join(' · ')
-  const detailedMeta = [pack.version, formatText, pack.source === 'curseforge' ? 'CurseForge' : pack.source === 'modrinth' ? 'Modrinth' : ''].filter(Boolean)
+  const detailedMeta = [pack.version, formatText].filter(Boolean)
 
   return (
     <>

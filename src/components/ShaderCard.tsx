@@ -81,7 +81,7 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
   // 光影包语义：名称 | 版本（有则显示）。不伪造 "Shader Pack" / 作者 / 来源等 Mod 独有字段。
   // 命名惯例常把版本编进文件名，名称本身已含版本时 metadata.version 多为空 → 自然不重复显示。
   const compactMeta = shader.version || ''
-  const detailedMeta = [shader.version, shader.source === 'curseforge' ? 'CurseForge' : shader.source === 'modrinth' ? 'Modrinth' : ''].filter(Boolean)
+  const detailedMeta = [shader.version].filter(Boolean)
 
   return (
     <>

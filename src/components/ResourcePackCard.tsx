@@ -82,7 +82,7 @@ export default function ResourcePackCard({ pack, instanceId, gameDir, gameVersio
   // 规则（spec 六 / 十）：「组件视觉统一，信息语义按资源类型变化」，不为填充空间添加无意义文本。
   const formatText = pack.packFormat > 0 ? t('instanceDetail.resourcepacks.format', { version: pack.packFormat }) : ''
   const compactMeta = [pack.version, formatText].filter(Boolean).join(' · ')
-  const detailedMeta = [pack.version, formatText, pack.source === 'curseforge' ? 'CurseForge' : pack.source === 'modrinth' ? 'Modrinth' : ''].filter(Boolean)
+  const detailedMeta = [pack.version, formatText].filter(Boolean)
 
   return (
     <>
