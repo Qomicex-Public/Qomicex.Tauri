@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Database, Ellipsis } from 'lucide-react'
 import { MinecraftText } from './MinecraftText.tsx'
-import { Card, CardContent, Popover, Checkbox } from './ui'
+import { Card, CardContent, Popover, Checkbox, Tooltip } from './ui'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { useMessageBox } from './ui'
 import { ApiError } from '../api/client.ts'
@@ -33,8 +33,8 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
   const { t } = useI18n()
   const navigate = useNavigate()
   const { notify } = useMessageBox()
-  const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const compact = viewMode === 'compact'
 
@@ -78,14 +78,29 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
     danger: true,
   })
 
-  const sourceLabel = pack.source === 'curseforge' ? 'CurseForge' : pack.source === 'modrinth' ? 'Modrinth' : null
+  // 数据包语义：名称 | 版本 + format N。与资源包同层级（详细模式追加描述），无值的字段不渲染。
+  const formatText = pack.packFormat > 0 ? t('instanceDetail.datapacks.format', { version: pack.packFormat }) : ''
+  const compactMeta = [pack.version, formatText].filter(Boolean).join(' · ')
+  const detailedMeta = [pack.version, formatText, pack.source === 'curseforge' ? 'CurseForge' : pack.source === 'modrinth' ? 'Modrinth' : ''].filter(Boolean)
 
   return (
     <>
     <ContextMenu items={contextItems}>
-      <Card className={cn('group cursor-pointer border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
-        {/* 复选框展开时由左侧 padding 让出空间，避免与图标重叠（同 Mod 卡片） */}
-        <CardContent className={cn('flex items-center gap-4 relative transition-[padding] duration-200', selectMode || selected ? 'pl-10' : `${compact ? 'p-3' : 'p-4'} group-hover:pl-10 focus-within:pl-10`)}>
+      <Card
+        className={cn(
+          'group cursor-pointer select-none border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm',
+          compact ? 'mod-row-compact rounded-lg' : 'mod-row-detailed',
+          selected && 'border-primary/40 bg-primary/[0.03]'
+        )}
+        onClick={onSelect}
+      >
+        <CardContent className={cn(
+          'relative flex items-center transition-[padding] duration-200',
+          compact ? 'gap-2.5 px-2.5 py-2' : 'gap-4 p-4',
+          (selectMode || selected)
+            ? (compact ? 'pl-9' : 'pl-10')
+            : (compact ? 'group-hover:pl-9 focus-within:pl-9' : 'group-hover:pl-10 focus-within:pl-10')
+        )}>
           <div className={cn('absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200', selected ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0')} />
           {/* 复选框：批量选择模式 / 已选中时常驻，否则 Hover 淡入；点击独立于卡片选中逻辑 */}
           {onSelect && (
@@ -106,33 +121,47 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
               <Checkbox checked={!!selected} aria-label={t('instanceDetail.mods.selectMod', { name: pack.name })} />
             </div>
           )}
-          <div className={`flex ${compact ? 'h-10 w-10' : 'h-12 w-12'} shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden`}>
+          <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-muted text-muted-foreground', compact ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')}>
             {pack.iconBase64 ? (
               <img src={`data:image/png;base64,${pack.iconBase64}`} alt={pack.name} className="h-full w-full object-cover" loading="lazy" />
             ) : (
-              <Database className="h-5 w-5 opacity-50" />
+              <Database className={cn('opacity-50', compact ? 'h-3.5 w-3.5' : 'h-5 w-5')} />
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm font-semibold text-foreground">{pack.name}</h3>
-            <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-              {pack.version && <span>{pack.version}</span>}
-              {pack.version && pack.packFormat > 0 && <span className="text-border">·</span>}
-              {pack.packFormat > 0 && <span>format {pack.packFormat}</span>}
-            </div>
-            {!compact && pack.description && (
-              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
-                <MinecraftText text={pack.description} />
-              </p>
+            {compact ? (
+              // 固定列轨道：名称 + 元信息右对齐轨道；元信息缺失时留空，不挤动名称。
+              <div className="grid grid-cols-[minmax(0,1fr)_7rem] items-center gap-2">
+                <h3 className="truncate text-xs font-medium text-foreground">{pack.name}</h3>
+                {compactMeta ? (
+                  <Tooltip content={compactMeta}>
+                    <span className="truncate text-right text-[11px] tabular-nums text-muted-foreground">{compactMeta}</span>
+                  </Tooltip>
+                ) : (
+                  <span className="truncate text-[11px] tabular-nums text-muted-foreground" />
+                )}
+              </div>
+            ) : (
+              <>
+                <h3 className="truncate text-sm font-semibold text-foreground">{pack.name}</h3>
+                {detailedMeta.length > 0 && (
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                    {detailedMeta.map((item, i) => (
+                      <span key={i} className="flex items-center gap-2">
+                        {i > 0 && <span className="text-border">·</span>}
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {pack.description && (
+                  <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
+                    <MinecraftText text={pack.description} />
+                  </p>
+                )}
+              </>
             )}
           </div>
-          {sourceLabel && (
-            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-              pack.source === 'curseforge' ? 'bg-orange-500/10 text-orange-500' : 'bg-green-500/10 text-green-500'
-            }`}>
-              {sourceLabel}
-            </span>
-          )}
           <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
             <Popover
               open={menuOpen}
