@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { Copy, Map as MapIcon, Pen, Play, Save, Settings, Trash2 } from 'lucide-react'
-import { Card, CardContent } from './ui'
+import { Card, CardContent, Checkbox } from './ui'
 import { Tooltip } from './ui'
 import { Input } from './ui'
 import { Button } from './ui'
@@ -18,12 +18,14 @@ interface Props {
   onRefresh: () => void
   selected?: boolean
   onSelect?: React.MouseEventHandler
+  /** 批量选择模式：true 时常驻显示复选框（由工具栏多选按钮 / Ctrl+点击 / Ctrl+A 置位） */
+  selectMode?: boolean
   onQuickJoin?: () => void
   /** 实例是否运行中（存档设置弹窗内提示写入会被游戏覆盖） */
   running?: boolean
 }
 
-export default function SaveCard({ save, instanceId, onRefresh, selected, onSelect, onQuickJoin, running }: Props) {
+export default function SaveCard({ save, instanceId, onRefresh, selected, onSelect, selectMode, onQuickJoin, running }: Props) {
   const { t, lang } = useI18n()
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -78,8 +80,28 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
   return (
     <ContextMenu items={contextItems}>
     <Card className={cn('group cursor-pointer border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
-      <CardContent className="flex items-center gap-4 p-4 relative">
+      {/* 复选框展开时由左侧 padding 让出空间，避免与图标重叠（同 Mod 卡片） */}
+      <CardContent className={cn('flex items-center gap-4 relative transition-[padding] duration-200', selectMode || selected ? 'pl-10' : 'p-4 group-hover:pl-10 focus-within:pl-10')}>
         <div className={cn('absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200', selected ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0')} />
+        {/* 复选框：批量选择模式 / 已选中时常驻，否则 Hover 淡入；点击独立于卡片选中逻辑 */}
+        {onSelect && (
+          <div
+            className={cn(
+              'absolute left-2.5 top-1/2 z-10 -translate-y-1/2 transition-all duration-200',
+              selectMode || selected
+                ? 'opacity-100 scale-100'
+                : 'pointer-events-none opacity-0 scale-90 group-hover:pointer-events-auto group-hover:opacity-100 group-hover:scale-100 focus-within:pointer-events-auto focus-within:opacity-100'
+            )}
+            onClick={(e) => {
+              // 阻止冒泡避免触发卡片自身的 onClick 造成二次 toggle
+              e.stopPropagation()
+              // 构造「Ctrl+点击」语义的事件对象，复用 onSelect 的切换分支
+              onSelect({ shiftKey: false, ctrlKey: true, stopPropagation: () => {}, preventDefault: () => {} } as unknown as React.MouseEvent)
+            }}
+          >
+            <Checkbox checked={!!selected} aria-label={t('instanceDetail.mods.selectMod', { name: save.name })} />
+          </div>
+        )}
         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden">
           {save.iconBase64 ? (
             <img src={`data:image/png;base64,${save.iconBase64}`} alt={save.name} className="h-full w-full object-cover" loading="lazy" />
