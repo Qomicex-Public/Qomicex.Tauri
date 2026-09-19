@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Expand, Trash2, Ellipsis } from 'lucide-react'
-import { Tooltip, Popover } from './ui'
+import { Tooltip, Popover, Checkbox } from './ui'
 import { Button } from './ui'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { useI18n } from '../i18n/index.tsx'
@@ -14,9 +14,11 @@ interface Props {
   onRefresh: () => void
   selected?: boolean
   onSelect?: React.MouseEventHandler
+  /** 批量选择模式：true 时常驻显示复选框（由工具栏多选按钮 / Ctrl+点击 / Ctrl+A 置位） */
+  selectMode?: boolean
 }
 
-export default function ScreenshotCard({ screenshot, instanceId, onRefresh, selected, onSelect }: Props) {
+export default function ScreenshotCard({ screenshot, instanceId, onRefresh, selected, onSelect, selectMode }: Props) {
   const { t } = useI18n()
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -60,6 +62,25 @@ export default function ScreenshotCard({ screenshot, instanceId, onRefresh, sele
           {imgSrc && <img src={imgSrc} alt={screenshot.fileName} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />}
         </div>
         <div className={cn('absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200 z-10', selected ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0')} />
+        {/* 复选框：批量选择模式 / 已选中时常驻，否则 Hover 淡入；点击独立于卡片选中逻辑 */}
+        {onSelect && (
+          <div
+            className={cn(
+              'absolute left-2.5 top-1/2 z-10 -translate-y-1/2 transition-all duration-200',
+              selectMode || selected
+                ? 'opacity-100 scale-100'
+                : 'pointer-events-none opacity-0 scale-90 group-hover:pointer-events-auto group-hover:opacity-100 group-hover:scale-100 focus-within:pointer-events-auto focus-within:opacity-100'
+            )}
+            onClick={(e) => {
+              // 阻止冒泡避免触发卡片自身的 onClick 造成二次 toggle
+              e.stopPropagation()
+              // 构造「Ctrl+点击」语义的事件对象，复用 onSelect 的切换分支
+              onSelect({ shiftKey: false, ctrlKey: true, stopPropagation: () => {}, preventDefault: () => {} } as unknown as React.MouseEvent)
+            }}
+          >
+            <Checkbox checked={!!selected} aria-label={t('instanceDetail.mods.selectMod', { name: screenshot.fileName })} />
+          </div>
+        )}
         <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <Tooltip content={t('common.delete')}>
             <button onClick={(e) => { e.stopPropagation(); setConfirmOpen(true) }} disabled={deleting} className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">

@@ -210,7 +210,11 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
       for (const name of names) {
         try { await deleteSave(instanceId, name) } catch { failed.push(name) }
       }
-    } catch (e) { console.error('Batch delete failed:', e) }
+    } catch (e) {
+      console.error('Batch delete failed:', e)
+      // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
+      failed.push(...names.filter(n => !failed.includes(n)))
+    }
     notifyBatchDeleteResult(notify, t, t('instanceDetail.saves.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
@@ -262,7 +266,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             <div className="flex flex-col gap-2 p-4">
               {filtered.map((save) => (
                 <div key={save.filePath} data-key={save.filePath} data-select-item={save.filePath}>
-                  <SaveCard save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} running={running} />
+                  <SaveCard save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} selectMode={selectMode} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} running={running} />
                 </div>
               ))}
             </div>
@@ -356,7 +360,11 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
       for (const name of names) {
         try { await deleteScreenshot(instanceId, name) } catch { failed.push(name) }
       }
-    } catch (e) { console.error('Batch delete failed:', e) }
+    } catch (e) {
+      console.error('Batch delete failed:', e)
+      // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
+      failed.push(...names.filter(n => !failed.includes(n)))
+    }
     notifyBatchDeleteResult(notify, t, t('instanceDetail.screenshots.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
@@ -416,7 +424,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
               {filtered.map((s) => (
                 <div key={s.filePath} data-key={s.filePath} data-select-item={s.filePath}>
-                  <ScreenshotCard screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.filePath)} onSelect={(e) => toggleSelect(s.filePath, e.shiftKey, e.ctrlKey)} />
+                  <ScreenshotCard screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.filePath)} selectMode={selectMode} onSelect={(e) => toggleSelect(s.filePath, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
             </div>
@@ -1126,7 +1134,11 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
       for (const name of names) {
         try { await deleteResourcePack(instanceId, name) } catch { failed.push(name) }
       }
-    } catch (e) { console.error('Batch delete failed:', e) }
+    } catch (e) {
+      console.error('Batch delete failed:', e)
+      // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
+      failed.push(...names.filter(n => !failed.includes(n)))
+    }
     notifyBatchDeleteResult(notify, t, t('instanceDetail.resourcepacks.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
@@ -1228,7 +1240,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             <div ref={rpAnimRef} className={cn('flex flex-col p-4', packViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
               {filtered.map((pack) => (
                 <div key={pack.fileName} data-key={pack.fileName} data-select-item={pack.fileName}>
-                  <ResourcePackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} viewMode={packViewMode} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
+                  <ResourcePackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} viewMode={packViewMode} selected={selected.has(pack.fileName)} selectMode={selectMode} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
             </div>
@@ -1354,7 +1366,11 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
       for (const name of names) {
         try { await deleteShaderPack(instanceId, name) } catch { failed.push(name) }
       }
-    } catch (e) { console.error('Batch delete failed:', e) }
+    } catch (e) {
+      console.error('Batch delete failed:', e)
+      // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
+      failed.push(...names.filter(n => !failed.includes(n)))
+    }
     notifyBatchDeleteResult(notify, t, t('instanceDetail.shaderpacks.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
@@ -1456,7 +1472,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             <div ref={shaderAnimRef} className={cn('flex flex-col p-4', shaderViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
               {filtered.map((shader) => (
                 <div key={shader.fileName} data-key={shader.fileName} data-select-item={shader.fileName}>
-                  <ShaderCard shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} viewMode={shaderViewMode} selected={selected.has(shader.fileName)} onSelect={(e) => toggleSelect(shader.fileName, e.shiftKey, e.ctrlKey)} />
+                  <ShaderCard shader={shader} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} viewMode={shaderViewMode} selected={selected.has(shader.fileName)} selectMode={selectMode} onSelect={(e) => toggleSelect(shader.fileName, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
             </div>
@@ -1582,7 +1598,11 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
       for (const name of names) {
         try { await deleteDataPack(instanceId, name) } catch { failed.push(name) }
       }
-    } catch (e) { console.error('Batch delete failed:', e) }
+    } catch (e) {
+      console.error('Batch delete failed:', e)
+      // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
+      failed.push(...names.filter(n => !failed.includes(n)))
+    }
     notifyBatchDeleteResult(notify, t, t('instanceDetail.datapacks.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
@@ -1684,7 +1704,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
             <div ref={dpAnimRef} className={cn('flex flex-col p-4', dataPackViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
               {filtered.map((pack) => (
                 <div key={pack.fileName} data-key={pack.fileName} data-select-item={pack.fileName}>
-                  <DataPackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} viewMode={dataPackViewMode} selected={selected.has(pack.fileName)} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
+                  <DataPackCard pack={pack} instanceId={instanceId} gameDir={gameDir} gameVersion={gameVersion} loader={loader} onDelete={() => load()} viewMode={dataPackViewMode} selected={selected.has(pack.fileName)} selectMode={selectMode} onSelect={(e) => toggleSelect(pack.fileName, e.shiftKey, e.ctrlKey)} />
                 </div>
               ))}
             </div>
@@ -1765,10 +1785,16 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
   const load = useCallback(async () => {
     setSelected(new Set())
     setLoading(true)
-    try { const data = await getSchematics(instanceId); setFiles(data.filter((f) => !f.isDirectory)) }
-    catch { setFiles([]) }
+    try {
+      const data = await getSchematics(instanceId)
+      setFiles(data.filter((f) => !f.isDirectory))
+    } catch (e) {
+      // 失败不再静默清空——否则 API 失败与「目录为空」无法区分
+      setFiles([])
+      notify(t('instanceDetail.schematics.loadFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
+    }
     setLoading(false)
-  }, [instanceId, setSelected])
+  }, [instanceId, notify, t, setSelected])
 
   useEffect(() => { load() }, [load, refreshKey])
 
@@ -1814,7 +1840,11 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
       for (const name of names) {
         try { await deleteSchematic(instanceId, name) } catch { failed.push(name) }
       }
-    } catch (e) { console.error('Batch delete failed:', e) }
+    } catch (e) {
+      console.error('Batch delete failed:', e)
+      // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
+      failed.push(...names.filter(n => !failed.includes(n)))
+    }
     notifyBatchDeleteResult(notify, t, t('instanceDetail.schematics.type'), names.length - failed.length, failed)
     setSelected(new Set())
     setBatchDeleteOpen(false)
@@ -1889,10 +1919,28 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
                   data-select-item={f.name}
                   onClick={(e) => toggleSelect(f.name, e.shiftKey, e.ctrlKey)}
                   className={cn(
-                    'group glass-surface flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all',
+                    'group relative glass-surface flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-[padding,border-color,background-color] duration-200',
+                    // 复选框展开时由 padding 让出空间，避免与左侧图标重叠（同 Mod 卡片）
+                    selectMode || selected.has(f.name) ? 'pl-10' : 'group-hover:pl-10 focus-within:pl-10',
                     selected.has(f.name) ? 'border-primary/50 bg-primary/5' : 'border-border/60 bg-card hover:border-primary/20 hover:shadow-sm'
                   )}
                 >
+                  {/* 常驻复选框：多选模式 / 已选中时显示，否则 Hover 淡入（与 Mod 卡片一致） */}
+                  <div
+                    className={cn(
+                      'absolute left-2.5 top-1/2 z-10 -translate-y-1/2 transition-all duration-200',
+                      selectMode || selected.has(f.name)
+                        ? 'opacity-100 scale-100'
+                        : 'pointer-events-none opacity-0 scale-90 group-hover:pointer-events-auto group-hover:opacity-100 group-hover:scale-100 focus-within:pointer-events-auto focus-within:opacity-100'
+                    )}
+                    onClick={(e) => {
+                      // 复选框独立于行选中逻辑：阻止冒泡避免二次 toggle（一次点击 = 一次状态切换）
+                      e.stopPropagation()
+                      toggleSelect(f.name, false, true)
+                    }}
+                  >
+                    <Checkbox checked={selected.has(f.name)} aria-label={t('instanceDetail.mods.selectMod', { name: f.name })} />
+                  </div>
                   <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors', selected.has(f.name) ? 'bg-primary/10 text-primary' : 'bg-muted/60 group-hover:text-primary')}>
                     <PenTool className="h-4 w-4" />
                   </div>

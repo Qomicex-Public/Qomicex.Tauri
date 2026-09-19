@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Package, Ellipsis } from 'lucide-react'
 import { MinecraftText } from './MinecraftText.tsx'
-import { Card, CardContent, Popover } from './ui'
+import { Card, CardContent, Popover, Checkbox } from './ui'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { useMessageBox } from './ui'
 import { ApiError } from '../api/client.ts'
@@ -25,9 +25,11 @@ interface Props {
   viewMode?: ModViewMode
   selected?: boolean
   onSelect?: React.MouseEventHandler
+  /** 批量选择模式：true 时常驻显示复选框（由工具栏多选按钮 / Ctrl+点击 / Ctrl+A 置位） */
+  selectMode?: boolean
 }
 
-export default function ResourcePackCard({ pack, instanceId, gameDir, gameVersion, loader, onDelete, viewMode = 'compact', selected, onSelect }: Props) {
+export default function ResourcePackCard({ pack, instanceId, gameDir, gameVersion, loader, onDelete, viewMode = 'compact', selected, onSelect, selectMode }: Props) {
   const { t } = useI18n()
   const navigate = useNavigate()
   const { notify } = useMessageBox()
@@ -82,8 +84,28 @@ export default function ResourcePackCard({ pack, instanceId, gameDir, gameVersio
     <>
     <ContextMenu items={contextItems}>
       <Card className={cn('group cursor-pointer border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
-        <CardContent className={`flex items-center gap-4 ${compact ? 'p-3' : 'p-4'} relative`}>
+        {/* 复选框展开时由左侧 padding 让出空间，避免与图标重叠（同 Mod 卡片） */}
+        <CardContent className={cn('flex items-center gap-4 relative transition-[padding] duration-200', selectMode || selected ? 'pl-10' : `${compact ? 'p-3' : 'p-4'} group-hover:pl-10 focus-within:pl-10`)}>
           <div className={cn('absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200', selected ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0')} />
+          {/* 复选框：批量选择模式 / 已选中时常驻，否则 Hover 淡入；点击独立于卡片选中逻辑 */}
+          {onSelect && (
+            <div
+              className={cn(
+                'absolute left-2.5 top-1/2 z-10 -translate-y-1/2 transition-all duration-200',
+                selectMode || selected
+                  ? 'opacity-100 scale-100'
+                  : 'pointer-events-none opacity-0 scale-90 group-hover:pointer-events-auto group-hover:opacity-100 group-hover:scale-100 focus-within:pointer-events-auto focus-within:opacity-100'
+              )}
+              onClick={(e) => {
+                // 阻止冒泡避免触发卡片自身的 onClick 造成二次 toggle
+                e.stopPropagation()
+                // 构造「Ctrl+点击」语义的事件对象，复用 onSelect 的切换分支
+                onSelect({ shiftKey: false, ctrlKey: true, stopPropagation: () => {}, preventDefault: () => {} } as unknown as React.MouseEvent)
+              }}
+            >
+              <Checkbox checked={!!selected} aria-label={t('instanceDetail.mods.selectMod', { name: pack.name })} />
+            </div>
+          )}
           <div className={`flex ${compact ? 'h-10 w-10' : 'h-12 w-12'} shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground overflow-hidden`}>
             {pack.iconBase64 ? (
               <img src={`data:image/png;base64,${pack.iconBase64}`} alt={pack.name} className="h-full w-full object-cover" loading="lazy" />

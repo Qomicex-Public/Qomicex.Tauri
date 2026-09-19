@@ -9,13 +9,19 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * 语义（与 ModsTab 对齐）：
  * - 普通单击：替换选择（只选中该行）
  * - Ctrl/Cmd 单击：切换该行
- * - Shift 单击：从上次点击处范围选择
+ * - Shift 单击：从上次点击处范围选择（锚点按**稳定键**查找，见下）
  * - Ctrl/Shift 点击视为「多选意图」→ 进入选择模式（复选框常驻）
  * - Ctrl/Cmd+A：全选（输入框内不劫持）
  * - Esc：清空选择并退出选择模式
  *
  * `items` 应传入当前**过滤后**的列表（搜索/筛选生效），使范围选择与全选
  * 只作用于可见项。`getKey` 取列表项的稳定键（fileName / filePath / name）。
+ *
+ * 两条与「列表会变」相关的约束（均由代码审查发现，勿回退）：
+ * 1. `items` 变化时清理 `selected` 中已不可见的键——否则筛选/搜索后，隐藏项
+ *    仍被批量工具栏计为已选，批量删除更会真的删掉用户看不见的行。
+ * 2. 上次点击的锚点存**稳定键**而非索引——列表重排/筛选后索引会指向别的项
+ *    （范围选错），旧索引越界时还会取到 `undefined` 抛异常。
  */
 export function useListSelection<T>(items: T[], getKey: (item: T) => string) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -25,7 +31,8 @@ export function useListSelection<T>(items: T[], getKey: (item: T) => string) {
    * 会让整列表立刻布满复选框。
    */
   const [selectMode, setSelectMode] = useState(false)
-  const lastClickedRef = useRef(-1)
+  /** 上次点击的稳定键（null = 尚无锚点）。失效时范围选择回退为单击。 */
+  const lastClickedKeyRef = useRef<string | null>(null)
 
   // items / getKey 每次渲染都可能是新引用（调用方常传内联箭头函数）。
   // 放进 ref 让回调与事件监听保持稳定标识，避免逐渲染重注册 keydown。
@@ -34,19 +41,43 @@ export function useListSelection<T>(items: T[], getKey: (item: T) => string) {
   const getKeyRef = useRef(getKey)
   getKeyRef.current = getKey
 
+  // 过滤/排序变化后，剔除已不可见的选中键（约束 1）。
+  // 仅依赖 items：getKey 经 ref 读取，故内联箭头不会导致逐渲染执行；
+  // 无变化时返回原引用，React 会跳过更新，不会形成循环。
+  useEffect(() => {
+    const keyOf = getKeyRef.current
+    const visible = new Set(itemsRef.current.map(keyOf))
+    setSelected(prev => {
+      if (prev.size === 0) return prev
+      let changed = false
+      const next = new Set<string>()
+      for (const k of prev) {
+        if (visible.has(k)) next.add(k)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [items])
+
   const toggleSelect = useCallback((key: string, shift?: boolean, ctrl?: boolean) => {
     const list = itemsRef.current
     const keyOf = getKeyRef.current
     const index = list.findIndex(it => keyOf(it) === key)
     if (index === -1) return
     if (shift || ctrl) setSelectMode(true)
-    const prevLastClicked = lastClickedRef.current
+    // 锚点按稳定键在当前列表中查找；锚点已不可见时 prevIndex = -1，范围分支跳过，
+    // 自然退化为「只选中本行」（约束 2）。
+    const anchorKey = lastClickedKeyRef.current
+    const prevIndex = anchorKey === null ? -1 : list.findIndex(it => keyOf(it) === anchorKey)
     setSelected(prev => {
       const next = new Set(prev)
-      if (shift && prevLastClicked >= 0) {
-        const start = Math.min(prevLastClicked, index)
-        const end = Math.max(prevLastClicked, index)
-        for (let i = start; i <= end; i++) next.add(keyOf(list[i]))
+      if (shift && prevIndex >= 0) {
+        const start = Math.min(prevIndex, index)
+        const end = Math.max(prevIndex, index)
+        for (let i = start; i <= end; i++) {
+          const it = list[i]
+          if (it !== undefined) next.add(keyOf(it))
+        }
       } else if (ctrl) {
         if (next.has(key)) next.delete(key); else next.add(key)
       } else {
@@ -55,7 +86,7 @@ export function useListSelection<T>(items: T[], getKey: (item: T) => string) {
       }
       return next
     })
-    lastClickedRef.current = index
+    lastClickedKeyRef.current = key
   }, [])
 
   /** 拖动框选：Shift 追加，普通替换（DragSelectArea 回调） */
@@ -76,6 +107,7 @@ export function useListSelection<T>(items: T[], getKey: (item: T) => string) {
   const clear = useCallback(() => {
     setSelected(new Set())
     setSelectMode(false)
+    lastClickedKeyRef.current = null
   }, [])
 
   /** 全选当前可见项 */
@@ -102,6 +134,7 @@ export function useListSelection<T>(items: T[], getKey: (item: T) => string) {
       if (e.key === 'Escape' && !inInput) {
         setSelected(new Set())
         setSelectMode(false)
+        lastClickedKeyRef.current = null
       }
     }
     document.addEventListener('keydown', onKeyDown)
