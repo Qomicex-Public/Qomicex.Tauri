@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, ChevronDown, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Info, Layers, LayoutList, List, ListChecks, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Rows3, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
 import { ArrowUp as ArrowUpData, RotateCw as RotateCwData, Upload as UploadData } from 'lucide'
@@ -153,6 +153,27 @@ function notifyBatchDeleteResult(
   notify(t('instanceDetail.batchDeleteResult', { success, failed: failed.length, failNames }), 'error')
 }
 
+/** 资源类型空状态：轻量、有层级（icon → 标题 → 描述 → 主操作），不占整页面积。 */
+function ResourceEmptyState({ icon, title, description, actionLabel, onAction }: {
+  icon: ReactNode
+  title: string
+  description: string
+  actionLabel: string
+  onAction: () => void
+}) {
+  return (
+    <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
+      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground/70">
+        {icon}
+      </div>
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      <p className="max-w-sm text-xs text-muted-foreground">{description}</p>
+      <Button size="sm" onClick={onAction} className="mt-1 gap-1.5 h-7 text-xs">
+        <Download className="h-3.5 w-3.5" />{actionLabel}
+      </Button>
+    </div>
+  )
+}
 function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQuickJoinWorld, gameVersion, running }: { instanceId: string; gameDir: string; refreshKey: number; onRefresh: () => void; onQuickJoinWorld: (name: string) => void; gameVersion: string | undefined; running: boolean }) {
   const { t } = useI18n()
   const { notify } = useMessageBox()
@@ -1149,14 +1170,11 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
   const rpAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
 
   return (
-    <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.resourcepacks')} (${packs.length})` : t('instanceDetail.tabs.resourcepacks')} icon={<Package className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2 flex-1 max-w-sm">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.resourcepacks.search')} className="h-8 pl-8 text-xs" />
-            </div>
-          </div>
+    <>
+      <SettingSection
+        title={packs.length > 0 ? `${t('instanceDetail.tabs.resourcepacks')} (${packs.length})` : t('instanceDetail.tabs.resourcepacks')}
+        icon={<Package className="h-4 w-4" />}
+        action={
           <div className="flex items-center gap-2">
             {/* 列表模式切换：紧凑（默认，日常管理）/ 详细（查看信息） */}
             <div className="flex items-center rounded-md border border-input p-0.5">
@@ -1181,6 +1199,40 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
                 </button>
               </Tooltip>
             </div>
+            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Tooltip content={t('instanceDetail.openFolder')}>
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch((e) => { console.error('Open folder failed:', gameDir + '/resourcepacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
+                <FolderOpen className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
+            <Button size="sm" onClick={() => {
+              const p = new URLSearchParams({ category: 'resourcepack', source: 'modrinth' })
+              if (gameVersion) p.set('gameVersion', gameVersion)
+              if (loader) p.set('loader', loader.toLowerCase())
+              if (instanceId) p.set('instanceId', instanceId)
+              navigate(`/resource-center?${p.toString()}`)
+            }} className="gap-1.5 h-7 text-xs">
+              <Download className="h-3.5 w-3.5" />{t('instanceDetail.resourcepacks.install')}
+            </Button>
+          </div>
+        }
+      >
+          {/* 单行工具栏：搜索占满剩余宽度，筛选与排序靠右（与 ModsTab 同构）。 */}
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+            <div className="relative min-w-[160px] flex-1">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.resourcepacks.search')} className="h-8 pl-8 text-xs" />
+            </div>
             {/* 来源筛选：本地 / Modrinth / CurseForge */}
             <Tabs
               tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" />, count: filterCounts[o.key] }))}
@@ -1193,48 +1245,38 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
                 <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
               ))}
             </Select>
-            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
-            <Tooltip content={t('instanceDetail.mods.selectMode')}>
-              <button
-                onClick={() => setSelectMode(v => !v)}
-                aria-label={t('instanceDetail.mods.selectMode')}
-                aria-pressed={selectMode}
-                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
-              >
-                <ListChecks className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch((e) => { console.error('Open folder failed:', gameDir + '/resourcepacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
-              <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
-            </Button>
-            <Button size="sm" onClick={() => {
-              const p = new URLSearchParams({ category: 'resourcepack', source: 'modrinth' })
-              if (gameVersion) p.set('gameVersion', gameVersion)
-              if (loader) p.set('loader', loader.toLowerCase())
-              if (instanceId) p.set('instanceId', instanceId)
-              navigate(`/resource-center?${p.toString()}`)
-            }} className="gap-1.5 h-7 text-xs">
-              <Download className="h-3.5 w-3.5" />{t('instanceDetail.resourcepacks.install')}
-            </Button>
           </div>
-        </div>
         {loading ? (
-          <div className="flex flex-col gap-2 p-4">
+          <div className={cn('flex flex-col p-4', packViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
-                <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+              <div key={i} className={cn('animate-pulse flex items-center border', packViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
+                <div className={cn('shrink-0 rounded bg-muted', packViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
                 <div className="flex-1 space-y-2">
-                  <div className="h-4 w-1/3 rounded bg-muted" />
-                  <div className="h-3 w-1/2 rounded bg-muted" />
+                  <div className="h-3 w-1/3 rounded bg-muted" />
+                  <div className="h-2.5 w-1/2 rounded bg-muted" />
                 </div>
-                <div className="h-6 w-16 rounded bg-muted" />
+                <div className="h-6 w-7 rounded bg-muted" />
               </div>
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? t('instanceDetail.resourcepacks.noMatch') : t('instanceDetail.resourcepacks.empty')}
-          </div>
+          search ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t('instanceDetail.resourcepacks.noMatch')}</div>
+          ) : (
+            <ResourceEmptyState
+              icon={<Package className="h-5 w-5" />}
+              title={t('instanceDetail.resourcepacks.empty')}
+              description={t('instanceDetail.resourcepacks.emptyHint')}
+              actionLabel={t('instanceDetail.resourcepacks.install')}
+              onAction={() => {
+                const p = new URLSearchParams({ category: 'resourcepack', source: 'modrinth' })
+                if (gameVersion) p.set('gameVersion', gameVersion)
+                if (loader) p.set('loader', loader.toLowerCase())
+                if (instanceId) p.set('instanceId', instanceId)
+                navigate(`/resource-center?${p.toString()}`)
+              }}
+            />
+          )
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
             <div ref={rpAnimRef} className={cn('flex flex-col p-4', packViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
@@ -1246,6 +1288,8 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             </div>
           </DragSelectArea>
         )}
+      </SettingSection>
+
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={clear}
@@ -1270,7 +1314,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
           </Button>
         </DialogFooter>
       </Dialog>
-    </SettingSection>
+    </>
   )
 }
 
@@ -1381,16 +1425,12 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
   const shaderAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
 
   return (
-    <SettingSection title={shaders.length > 0 ? `${t('instanceDetail.tabs.shaderpacks')} (${shaders.length})` : t('instanceDetail.tabs.shaderpacks')} icon={<Sun className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2 flex-1 max-w-sm">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.shaderpacks.search')} className="h-8 pl-8 text-xs" />
-            </div>
-          </div>
+    <>
+      <SettingSection
+        title={shaders.length > 0 ? `${t('instanceDetail.tabs.shaderpacks')} (${shaders.length})` : t('instanceDetail.tabs.shaderpacks')}
+        icon={<Sun className="h-4 w-4" />}
+        action={
           <div className="flex items-center gap-2">
-            {/* 列表模式切换：紧凑（默认，日常管理）/ 详细（查看信息） */}
             <div className="flex items-center rounded-md border border-input p-0.5">
               <Tooltip content={t('instanceDetail.mods.viewCompact')}>
                 <button
@@ -1413,7 +1453,38 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
                 </button>
               </Tooltip>
             </div>
-            {/* 来源筛选：本地 / Modrinth / CurseForge */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Tooltip content={t('instanceDetail.openFolder')}>
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch((e) => { console.error('Open folder failed:', gameDir + '/shaderpacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
+                <FolderOpen className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
+            <Button size="sm" onClick={() => {
+              const p = new URLSearchParams({ category: 'shader', source: 'modrinth' })
+              if (gameVersion) p.set('gameVersion', gameVersion)
+              if (loader) p.set('loader', loader.toLowerCase())
+              if (instanceId) p.set('instanceId', instanceId)
+              navigate(`/resource-center?${p.toString()}`)
+            }} className="gap-1.5 h-7 text-xs">
+              <Download className="h-3.5 w-3.5" />{t('instanceDetail.shaderpacks.install')}
+            </Button>
+          </div>
+        }
+      >
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+            <div className="relative min-w-[160px] flex-1">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.shaderpacks.search')} className="h-8 pl-8 text-xs" />
+            </div>
             <Tabs
               tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" />, count: filterCounts[o.key] }))}
               activeTab={filterType}
@@ -1425,48 +1496,38 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
                 <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
               ))}
             </Select>
-            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
-            <Tooltip content={t('instanceDetail.mods.selectMode')}>
-              <button
-                onClick={() => setSelectMode(v => !v)}
-                aria-label={t('instanceDetail.mods.selectMode')}
-                aria-pressed={selectMode}
-                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
-              >
-                <ListChecks className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch((e) => { console.error('Open folder failed:', gameDir + '/shaderpacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
-              <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
-            </Button>
-            <Button size="sm" onClick={() => {
-              const p = new URLSearchParams({ category: 'shader', source: 'modrinth' })
-              if (gameVersion) p.set('gameVersion', gameVersion)
-              if (loader) p.set('loader', loader.toLowerCase())
-              if (instanceId) p.set('instanceId', instanceId)
-              navigate(`/resource-center?${p.toString()}`)
-            }} className="gap-1.5 h-7 text-xs">
-              <Download className="h-3.5 w-3.5" />{t('instanceDetail.shaderpacks.install')}
-            </Button>
           </div>
-        </div>
         {loading ? (
-          <div className="flex flex-col gap-2 p-4">
+          <div className={cn('flex flex-col p-4', shaderViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
-                <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+              <div key={i} className={cn('animate-pulse flex items-center border', shaderViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
+                <div className={cn('shrink-0 rounded bg-muted', shaderViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
                 <div className="flex-1 space-y-2">
-                  <div className="h-4 w-1/3 rounded bg-muted" />
-                  <div className="h-3 w-1/2 rounded bg-muted" />
+                  <div className="h-3 w-1/3 rounded bg-muted" />
+                  <div className="h-2.5 w-1/2 rounded bg-muted" />
                 </div>
-                <div className="h-6 w-16 rounded bg-muted" />
+                <div className="h-6 w-7 rounded bg-muted" />
               </div>
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? t('instanceDetail.shaderpacks.noMatch') : t('instanceDetail.shaderpacks.empty')}
-          </div>
+          search ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t('instanceDetail.shaderpacks.noMatch')}</div>
+          ) : (
+            <ResourceEmptyState
+              icon={<Sun className="h-5 w-5" />}
+              title={t('instanceDetail.shaderpacks.empty')}
+              description={t('instanceDetail.shaderpacks.emptyHint')}
+              actionLabel={t('instanceDetail.shaderpacks.install')}
+              onAction={() => {
+                const p = new URLSearchParams({ category: 'shader', source: 'modrinth' })
+                if (gameVersion) p.set('gameVersion', gameVersion)
+                if (loader) p.set('loader', loader.toLowerCase())
+                if (instanceId) p.set('instanceId', instanceId)
+                navigate(`/resource-center?${p.toString()}`)
+              }}
+            />
+          )
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
             <div ref={shaderAnimRef} className={cn('flex flex-col p-4', shaderViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
@@ -1478,6 +1539,8 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             </div>
           </DragSelectArea>
         )}
+      </SettingSection>
+
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={clear}
@@ -1502,7 +1565,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
           </Button>
         </DialogFooter>
       </Dialog>
-    </SettingSection>
+    </>
   )
 }
 
@@ -1613,16 +1676,12 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
   const dpAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
 
   return (
-    <SettingSection title={packs.length > 0 ? `${t('instanceDetail.tabs.datapacks')} (${packs.length})` : t('instanceDetail.tabs.datapacks')} icon={<Database className="h-4 w-4" />}>
-        <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2 flex-1 max-w-sm">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.datapacks.search')} className="h-8 pl-8 text-xs" />
-            </div>
-          </div>
+    <>
+      <SettingSection
+        title={packs.length > 0 ? `${t('instanceDetail.tabs.datapacks')} (${packs.length})` : t('instanceDetail.tabs.datapacks')}
+        icon={<Database className="h-4 w-4" />}
+        action={
           <div className="flex items-center gap-2">
-            {/* 列表模式切换：紧凑（默认，日常管理）/ 详细（查看信息） */}
             <div className="flex items-center rounded-md border border-input p-0.5">
               <Tooltip content={t('instanceDetail.mods.viewCompact')}>
                 <button
@@ -1645,7 +1704,38 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
                 </button>
               </Tooltip>
             </div>
-            {/* 来源筛选：本地 / Modrinth / CurseForge */}
+            <Tooltip content={t('instanceDetail.mods.selectMode')}>
+              <button
+                onClick={() => setSelectMode(v => !v)}
+                aria-label={t('instanceDetail.mods.selectMode')}
+                aria-pressed={selectMode}
+                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Tooltip content={t('instanceDetail.openFolder')}>
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch((e) => { console.error('Open folder failed:', gameDir + '/datapacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
+                <FolderOpen className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
+            <Button size="sm" onClick={() => {
+              const p = new URLSearchParams({ category: 'datapack', source: 'modrinth' })
+              if (gameVersion) p.set('gameVersion', gameVersion)
+              if (loader) p.set('loader', loader.toLowerCase())
+              if (instanceId) p.set('instanceId', instanceId)
+              navigate(`/resource-center?${p.toString()}`)
+            }} className="gap-1.5 h-7 text-xs">
+              <Download className="h-3.5 w-3.5" />{t('instanceDetail.datapacks.install')}
+            </Button>
+          </div>
+        }
+      >
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+            <div className="relative min-w-[160px] flex-1">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('instanceDetail.datapacks.search')} className="h-8 pl-8 text-xs" />
+            </div>
             <Tabs
               tabs={FILTER_OPTIONS.map(o => ({ id: o.key, label: o.label, icon: <o.icon className="h-3 w-3" />, count: filterCounts[o.key] }))}
               activeTab={filterType}
@@ -1657,48 +1747,38 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
                 <SelectOption key={item.key} value={item.key}>{item.label}</SelectOption>
               ))}
             </Select>
-            {/* 多选入口：显式进入批量选择模式（鼠标用户的发现入口，等价于 Ctrl+点击） */}
-            <Tooltip content={t('instanceDetail.mods.selectMode')}>
-              <button
-                onClick={() => setSelectMode(v => !v)}
-                aria-label={t('instanceDetail.mods.selectMode')}
-                aria-pressed={selectMode}
-                className={cn('flex h-7 w-7 items-center justify-center rounded-md border transition-colors', selectMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:bg-accent hover:text-foreground')}
-              >
-                <ListChecks className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch((e) => { console.error('Open folder failed:', gameDir + '/datapacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
-              <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
-            </Button>
-            <Button size="sm" onClick={() => {
-              const p = new URLSearchParams({ category: 'datapack', source: 'modrinth' })
-              if (gameVersion) p.set('gameVersion', gameVersion)
-              if (loader) p.set('loader', loader.toLowerCase())
-              if (instanceId) p.set('instanceId', instanceId)
-              navigate(`/resource-center?${p.toString()}`)
-            }} className="gap-1.5 h-7 text-xs">
-              <Download className="h-3.5 w-3.5" />{t('instanceDetail.datapacks.install')}
-            </Button>
           </div>
-        </div>
         {loading ? (
-          <div className="flex flex-col gap-2 p-4">
+          <div className={cn('flex flex-col p-4', dataPackViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="animate-pulse flex items-center gap-3 rounded-xl border p-4">
-                <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+              <div key={i} className={cn('animate-pulse flex items-center border', dataPackViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
+                <div className={cn('shrink-0 rounded bg-muted', dataPackViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
                 <div className="flex-1 space-y-2">
-                  <div className="h-4 w-1/3 rounded bg-muted" />
-                  <div className="h-3 w-1/2 rounded bg-muted" />
+                  <div className="h-3 w-1/3 rounded bg-muted" />
+                  <div className="h-2.5 w-1/2 rounded bg-muted" />
                 </div>
-                <div className="h-6 w-16 rounded bg-muted" />
+                <div className="h-6 w-7 rounded bg-muted" />
               </div>
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
-            {search ? t('instanceDetail.datapacks.noMatch') : t('instanceDetail.datapacks.empty')}
-          </div>
+          search ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t('instanceDetail.datapacks.noMatch')}</div>
+          ) : (
+            <ResourceEmptyState
+              icon={<Database className="h-5 w-5" />}
+              title={t('instanceDetail.datapacks.empty')}
+              description={t('instanceDetail.datapacks.emptyHint')}
+              actionLabel={t('instanceDetail.datapacks.install')}
+              onAction={() => {
+                const p = new URLSearchParams({ category: 'datapack', source: 'modrinth' })
+                if (gameVersion) p.set('gameVersion', gameVersion)
+                if (loader) p.set('loader', loader.toLowerCase())
+                if (instanceId) p.set('instanceId', instanceId)
+                navigate(`/resource-center?${p.toString()}`)
+              }}
+            />
+          )
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
             <div ref={dpAnimRef} className={cn('flex flex-col p-4', dataPackViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
@@ -1710,6 +1790,8 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
             </div>
           </DragSelectArea>
         )}
+      </SettingSection>
+
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={clear}
@@ -1734,7 +1816,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
           </Button>
         </DialogFooter>
       </Dialog>
-    </SettingSection>
+    </>
   )
 }
 
