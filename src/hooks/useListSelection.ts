@@ -116,6 +116,12 @@ export function useListSelection<T>(items: T[], getKey: (item: T) => string) {
     setSelected(new Set(itemsRef.current.map(keyOf)))
   }, [])
 
+  // 统一不变量：选中项为空 ⇒ 退出选择模式（复选框阵列不空挂）。
+  // 工具栏「取消选择」走 clear()、Esc 走 keydown，均已显式退出；这里补上
+  // 「勾选/再勾选取消最后一项」路径——勾选全取消后与工具栏行为保持一致。
+  useEffect(() => {
+    if (selected.size === 0) setSelectMode(false)
+  }, [selected])
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
