@@ -29,6 +29,10 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   const [parsed, setParsed] = useState<ModpackParseResult | MultiMcParseResult | null>(null)
   const [instanceName, setInstanceName] = useState('')
   const [error, setError] = useState('')
+  // 解析来源：本地整合包绝对路径（parse-path 流程）。安装时随 localPath 回传，
+  // 后端据此直接读本地包体；不回传会误走在线分支，把包内第一个 mod 直链当
+  // 整合包包体下载，最终报"整合包内缺少 modrinth.index.json"。
+  const [sourcePath, setSourcePath] = useState<string | null>(null)
   const [installing, setInstalling] = useState(false)
   // 防重入标记：不能用 installing state 兜底——标题栏 ×/Escape/背景关闭都会走 reset()
   // 清掉 state，请求进行中关闭再重开对话框就能绕过按钮 disabled 再次发起安装（PR#82 review）。
@@ -56,6 +60,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
       const reqId = ++parseReqIdRef.current
       const p = paths[0]
       if (/\.(zip|mrpack|qmodpack)$/i.test(p)) {
+        setSourcePath(p)
         setStep('parsing')
         setError('')
         try {
@@ -84,6 +89,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   /** 解析一个 MultiMC 实例文件夹。 */
   const parseFolder = async (path: string, reqId = ++parseReqIdRef.current) => {
     setStep('parsing')
+    setSourcePath(null)
     setError('')
     try {
       const result = await parseMultiMcFolder(path)
@@ -104,6 +110,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     if (typeof file !== 'string' || !file) return
     const reqId = ++parseReqIdRef.current
     setStep('parsing')
+    setSourcePath(file)
     setError('')
     try {
       const result = await parseModpackFileByPath(file)
@@ -154,8 +161,10 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             loaderVersion: parsed.loaderVersion,
             gameDir,
             versionIsolation,
-            modpackFiles: (parsed as ModpackParseResult).files,
-            overridesZip: (parsed as ModpackParseResult).overridesZip,
+            // 本地导入（parse-path）：modpackFiles 是包内 mod 直链，后端走本地包体
+            // 分支时不读它，回传只会白占请求体；仅在在线解析结果时才带上。
+            modpackFiles: sourcePath ? [] : (parsed as ModpackParseResult).files,
+            overridesZip: sourcePath ? null : (parsed as ModpackParseResult).overridesZip,
             iconData: parsed.iconData,
             modpackName: parsed.name,
             modpackVersion: (parsed as ModpackParseResult).version,
@@ -163,6 +172,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             modpackSummary: (parsed as ModpackParseResult).summary,
             source: (parsed as ModpackParseResult).source,
             fileId: (parsed as ModpackParseResult).fileId ?? undefined,
+            localPath: sourcePath ?? undefined,
           })).instanceId
       addTask({
         id: instanceId,
@@ -191,6 +201,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
 
   const reset = () => {
     parseReqIdRef.current++ // 作废在途解析请求，防止关闭后旧响应回写 state
+    setSourcePath(null)
     setStep('select')
     setParsed(null)
     setError('')
