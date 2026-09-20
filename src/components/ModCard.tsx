@@ -185,6 +185,14 @@ export default function ModCard({
       onClick={(e) => {
         // 复选框独立于卡片选中逻辑：阻止冒泡避免二次 toggle（一次点击 = 一次状态切换）
         e.stopPropagation()
+        // 鼠标点击后移除焦点：Radix 复选框是 <button>，点击会留下 DOM 焦点，而容器用
+        // focus-within 保持可见（键盘可达性）——不清焦点的话，最后操作的那个复选框
+        // 在取消选中、退出多选后仍常显（移开鼠标也不消失）。
+        // 仅对真实指针点击（detail > 0）失焦；键盘激活（detail === 0）保留焦点不破坏 Tab 流。
+        if (e.detail > 0) {
+          const focused = document.activeElement
+          if (focused instanceof HTMLElement && e.currentTarget.contains(focused)) focused.blur()
+        }
         onSelect(mod.fileName, e.shiftKey, true)
       }}
     >

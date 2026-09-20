@@ -114,6 +114,14 @@ export default function DataPackCard({ pack, instanceId, gameDir, gameVersion, l
               onClick={(e) => {
                 // 阻止冒泡避免触发卡片自身的 onClick 造成二次 toggle
                 e.stopPropagation()
+                // 鼠标点击后移除焦点：Radix 复选框是 <button>，点击会留下 DOM 焦点，而容器用
+                // focus-within 保持可见（键盘可达性）——不清焦点的话，最后操作的那个复选框
+                // 在取消选中、退出多选后仍常显（移开鼠标也不消失）。
+                // 仅对真实指针点击（detail > 0）失焦；键盘激活（detail === 0）保留焦点。
+                if (e.detail > 0) {
+                  const focused = document.activeElement
+                  if (focused instanceof HTMLElement && e.currentTarget.contains(focused)) focused.blur()
+                }
                 // 构造「Ctrl+点击」语义的事件对象，复用 onSelect 的切换分支
                 onSelect({ shiftKey: false, ctrlKey: true, stopPropagation: () => {}, preventDefault: () => {} } as unknown as React.MouseEvent)
               }}
