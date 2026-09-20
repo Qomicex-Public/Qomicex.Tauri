@@ -1405,8 +1405,9 @@ impl ModpackServiceData {
     /// Port of InstallAsync: create the GameInstance and register a background
     /// install task in InstallTracker, then return the instance id.
     async fn install(&self, req: ModpackInstallRequest) -> ApiResult<String> {
-        // 本地文件导入：file_id = parse 上传的临时文件句柄；local_path = 绝对路径
-        // （install-direct 直传，不属于上传目录，不清理）。
+        // 本地文件导入：file_id = parse 上传的临时文件句柄；local_path = 整合包
+        // 绝对路径（parse-path 流程由前端回传；install-direct 内部直传，均不属于
+        // 上传目录，不清理）。
         let (local_pack_path, cleanup_upload): (Option<PathBuf>, bool) =
             match (req.file_id.as_deref(), req.local_path.as_deref()) {
                 (Some(fid), _) => {
@@ -1419,7 +1420,19 @@ impl ModpackServiceData {
                     }
                     (Some(path), true)
                 }
-                (None, Some(p)) => (Some(PathBuf::from(p)), false),
+                (None, Some(p)) => {
+                    // parse-path 解析的本地包：装进管道前先确认文件还在（用户可能在
+                    // 预览后移动/删除/重命名了它），否则要到管道深处才报
+                    // “打开整合包文件失败”。
+                    let path = PathBuf::from(p);
+                    if !path.is_file() {
+                        return Err(ApiError::not_found(
+                            "MODPACK_FILE_NOT_FOUND",
+                            "整合包文件不存在或已被移动/删除，请重新选择",
+                        ));
+                    }
+                    (Some(path), false)
+                }
                 _ => (None, false),
             };
 
@@ -1714,6 +1727,12 @@ fn modpack_target_path(
     }
 }
 
+/// zip 条目名的大小写不敏感前缀匹配（打包工具决定目录名大小写）。
+fn name_has_prefix_ci(name: &str, prefix: &str) -> bool {
+    name.get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+}
+
 /// Modrinth 下载需 UA（API 强制）；CurseForge CDN 需 x-api-key（同 install_service 判定）。
 fn modpack_headers(url: &str, cf_api_key: &str) -> Vec<(String, String)> {
     if is_cf_host(url) {
@@ -1851,8 +1870,12 @@ pub(crate) async fn run_modpack_pipeline(
             handle.mark_step("parse-modpack", "active");
             let path = PathBuf::from(local);
             parsed = Some(if src == "modrinth" {
-                parse_modrinth_index(&path)
-                    .map_err(|e| format!("解析 modrinth.index.json 失败: {e}"))?
+                parse_modrinth_index(&path).map_err(|e| {
+                    format!(
+                        "解析 modrinth.index.json 失败: {e}（包体 {}）",
+                        path.display()
+                    )
+                })?
             } else {
                 parse_curseforge_manifest(&path)
                     .map_err(|e| format!("解析 manifest.json 失败: {e}"))?
@@ -1893,7 +1916,7 @@ pub(crate) async fn run_modpack_pipeline(
         handle.mark_step("parse-modpack", "active");
         parsed = Some(if src == "modrinth" {
             parse_modrinth_index(&path)
-                .map_err(|e| format!("解析 modrinth.index.json 失败: {e}"))?
+                .map_err(|e| format!("解析 modrinth.index.json 失败: {e}（包体来源 {url}）"))?
         } else {
             parse_curseforge_manifest(&path).map_err(|e| format!("解析 manifest.json 失败: {e}"))?
         });
@@ -2596,10 +2619,13 @@ fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
             "qmodpack.index.json" => has_qml = true,
             _ => {}
         }
-        if name.eq_ignore_ascii_case("override/") || name.starts_with("override/") {
+        // Modrinth 规范目录名为 `overrides/`（support.modrinth.com/en/articles/8802351），
+        // 兼容旧实现/非标准包的 `override/`；CurseForge 由 manifest `overrides` 字段指定
+        // （缺省即 `overrides/`）。
+        if name_has_prefix_ci(name, "overrides/") || name_has_prefix_ci(name, "override/") {
             has_mr_overrides = true;
         }
-        if name.eq_ignore_ascii_case("overrides/") || name.starts_with("overrides/") {
+        if name_has_prefix_ci(name, "overrides/") {
             has_cf_overrides = true;
         }
     }
@@ -2859,8 +2885,9 @@ pub struct ModpackInstallRequest {
     /// 本地导入：parse 返回的临时文件句柄。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_id: Option<String>,
-    /// 本地导入：绝对路径（仅 install-direct 内部使用，不走 HTTP）。
-    #[serde(skip)]
+    /// 本地导入：整合包绝对路径。前端经 parse-path 解析后回传（`localPath`），
+    /// install-direct 内部亦直传；供管道直接读本地包体，避免误走在线下载分支。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
 }
 
