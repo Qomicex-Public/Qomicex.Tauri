@@ -741,6 +741,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   // 不用 selected.size > 0 推导——否则单击一行会让整列表立刻布满复选框，回到「后台管理系统感」。
   // 单击选中的那一行，其复选框因自身 selected 而显示（见 ModCard）。
   const [manualSelectMode, setManualSelectMode] = useState(false)
+  // 统一不变量：选中项为空 ⇒ 退出选择模式（与 useListSelection / 工具栏「取消选择」一致）。
+  // 覆盖工具栏 onClear、Ctrl 取消最后一项、批量操作完成后三条路径。
+  useEffect(() => {
+    if (selected.size === 0) setManualSelectMode(false)
+  }, [selected])
   const selectMode = manualSelectMode
 
   useEffect(() => {
