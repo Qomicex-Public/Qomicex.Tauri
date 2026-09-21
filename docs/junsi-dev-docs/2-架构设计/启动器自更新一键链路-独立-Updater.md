@@ -570,10 +570,45 @@ Web.Backend deploy.yml 仍持续失败：`Cloudflare API Authentication failed (
 3. **开发版提示需更新到正式版**：`parseVersion` 的 `SIMPLE_RE` 把裸 `X.Y.Z` 归为
    `type:'release', suffix1:0`。现由 `trainOf` 判为 dev → 不推送。
 
-## ⚠️ 部署状态（2026-09-21）
+## ✅ 部署状态（2026-09-21，已部署生效）
 
-ADR-081 的 API 侧改动**尚未部署**：`deploy.yml` 自 2026-08-25 起因
-`Cloudflare API (/memberships) failed. Authentication failed (status: 400) [code: 9106]`
-无一次成功。部署前，启动器本地守卫会把上游误推的 release 计划拒掉
-（beta 用户看到"已是最新"而非错误的降级提示），但 beta 用户暂时收不到 beta31。
-修复需先修 GH secret `CLOUDFLARE_API_TOKEN` 或本地 `pnpm deploy:api`。
+ADR-081 的 API 侧改动**已部署**（本地 `pnpm deploy:api`，绕开持续失败的
+`deploy.yml`）：
+
+| 提交 | 内容 |
+|---|---|
+| `f7ec0b5` | 通道模型主体：`trainOf` / `isUpdateFor`、`getAllowedTypes('beta')` 收窄、两路由改判据 |
+| `78ddcaf` | 修正两个缺陷（见下） |
+
+部署后线上实测矩阵（`/api/client/update/plan`，Version `c853c784`）：
+
+| 已安装 | 请求通道 | 结果 |
+|---|---|---|
+| `0.1.0-beta23.0` | beta | 200 → **`0.1.0-beta31.0`**，`channelSwitch=false` |
+| `0.1.0-release1.0` | beta | 200 → **`0.1.0-beta31.0`**，`channelSwitch=true` |
+| `0.1.0-beta31.0` | stable | 204（拒绝降级） |
+| `0.1.0`（dev） | beta | 204（开发构建不推送） |
+| `0.1.0-alpha20260823.0` | alpha | 204（已是最新 alpha） |
+| `0.1.0-release1.0` | release | 204（已是最新 release） |
+
+`/api/client/version/check` 矩阵一致。
+
+### 首轮部署后实测发现并已修的两个缺陷（回归防护）
+
+1. **`currentRow` 在通道过滤后的列表里查找**：跨通道切换时 current 不在本通道
+   候选列表 → 恒找不到 → `isUpdateFor` 缺 `createdAt` 恒 false →
+   "正式版切到 beta" 永远 204（症状①复发）。修法：热路径先用 `allVersions`，
+   miss 再补一次不带 type 过滤的精确查询。
+2. **`/version/check` 从不读 query 的 `channel`**：历史上只从 `verifyLicense`
+   取通道，不带 Bearer 的请求（绝大多数）恒走 `getAllowedTypes(null)`
+   = `['beta','release']`，用户选的通道完全无效。修法：与 `/update/plan` 对齐。
+
+> 另：`update-plan.ts` 首轮编辑曾吞掉 `client-license` 的 import 行——vitest
+> 只测 `platformKey`/`strategyFor`、不触发路由故未暴露，是 `tsc --noEmit` 抓到的。
+> **教训：改该仓库必须跑 `pnpm --filter api run typecheck`，单跑 test 不够。**
+
+### 遗留
+
+`deploy.yml` 的 `Cloudflare API Authentication failed (status: 400) [code: 9106]`
+未修（GH secret `CLOUDFLARE_API_TOKEN` 仍无效）。本次为本地手动部署，
+后续 master push 不会自动生效，需继续手动 `pnpm deploy:api` 或修 secret。
