@@ -27,7 +27,6 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ApiError, ApiResult};
-use crate::services::update_channel;
 use crate::state::SharedState;
 
 const UPSTREAM_BASE: &str = "https://api.qomicex.top";
@@ -59,30 +58,12 @@ pub fn router() -> Router<SharedState> {
 ///
 /// Forwards to upstream `/api/client/update/plan` (rollout-weight gated) and
 /// returns the package url + minisign signature + install strategy for this
-/// machine. OS/arch/mode are detected locally; channel is forwarded and gates
-/// which release train (channel) upstream may answer with.
-///
-/// # 通道（train）裁决
-///
-/// 每条通道是独立的发布列车，序数各自计数（`beta31.0` vs `release1.0` 的
-/// 31/1 不可比）。上游按 `channel` 选该通道的最新版本；本地再做一层不变量
-/// 守卫，防止上游配置回退时把错误通道的版本推给用户（曾致 beta 用户被提示
-/// "更新到正式版"——实为降级）。见 `services/update_channel.rs`。
+/// machine. OS/arch/mode are detected locally; channel is forwarded for
+/// future channel-specific plans (upstream currently ignores it).
 async fn plan(
     State(state): State<SharedState>,
     Query(q): Query<PlanQuery>,
 ) -> ApiResult<Json<UpdatePlanResponse>> {
-    let current = state.app_version.as_str();
-    // 显式 channel（用户在设置里切换通道）优先；否则跟随已安装构建所属列车。
-    let Some(channel) = update_channel::effective_channel(q.channel.as_deref(), current) else {
-        // dev 构建（裸 X.Y.Z，无 pre-release 后缀）不属于任何已发布列车，
-        // 且用户未显式选择通道 → 不检查更新，也不打上游。
-        tracing::info!(
-            "update plan: dev build (current={current}), no channel selected — skipping check"
-        );
-        return Ok(Json(UpdatePlanResponse::no_update("dev-build")));
-    };
-
     let os = match std::env::consts::OS {
         "macos" => "darwin",
         other => other,
@@ -96,21 +77,19 @@ async fn plan(
         ""
     };
 
-    tracing::info!("checking update plan for current={current} channel={channel} os={os} arch={arch} mode={mode}");
+    tracing::info!("checking update plan for os={os} arch={arch} mode={mode}");
     let mut request = state
         .http_client
         .get(format!("{UPSTREAM_BASE}{UPDATE_PLAN_PATH}"))
         .query(&[
-            ("current", current),
+            ("current", state.app_version.as_str()),
             ("target", os),
             ("arch", arch),
             ("mode", mode),
-            ("channel", channel.as_str()),
-        ])
-        // 上游用 Bearer machineCode 做许可证通道钉住（alpha 许可证恒收 alpha）
-        // 与灰度门控（weight + machineHash 取模）。缺失时灰度静默失效：
-        // weight<100 的版本对无 machineHash 的请求恒 204。
-        .bearer_auth(license_machine_code());
+        ]);
+    if let Some(channel) = &q.channel {
+        request = request.query(&[("channel", channel)]);
+    }
     let response = request
         .send()
         .await
@@ -118,7 +97,7 @@ async fn plan(
 
     let status = response.status();
     if status == StatusCode::NO_CONTENT {
-        return Ok(Json(UpdatePlanResponse::no_update("up-to-date")));
+        return Ok(Json(UpdatePlanResponse::default()));
     }
     let text = response
         .text()
@@ -138,12 +117,6 @@ async fn plan(
         .map_err(|e| ApiError::upstream(format!("update plan parse failed: {e}")))?;
     plan.has_update = explicit.unwrap_or(true);
 
-    // 本地不变量守卫：上游若因配置回退/灰度命中而返回了别的通道，或同通道内
-    // 并不更新的版本，一律按"无更新"处理并留痕（不向用户展示错误计划）。
-    if plan.has_update {
-        plan = guard_train_plan(plan, current, &channel);
-    }
-
     // Only route through the fastest mirror when there actually is an update;
     // upstream may answer 200 with hasUpdate=false instead of 204.
     if plan.has_update {
@@ -154,117 +127,13 @@ async fn plan(
     }
     Ok(Json(plan))
 }
-
-/// 硬件绑定的机器码（供上游许可证通道钉住 + 灰度门控）。
-///
-/// `machine_code()` 无 feature gate（C# 的 GetMachineCode 同样不受
-/// LICENSE_REQUIRED 约束），未激活许可证时也会返回稳定值。
-fn license_machine_code() -> String {
-    crate::services::license_core::machine_code()
-}
-
-/// 通道守卫：校验上游返回的候选版本确实属于被请求的通道，且（同通道时）
-/// 确实比已安装构建更新。
-///
-/// 通过时补齐 `channel` / `channelSwitch` 两个前端需要的字段；
-/// 不通过时返回 `has_update=false` + `reason`（诊断用），并 `warn!` 留痕。
-fn guard_train_plan(
-    mut plan: UpdatePlanResponse,
-    current: &str,
-    requested_channel: &str,
-) -> UpdatePlanResponse {
-    let Some(version) = plan.version.as_deref() else {
-        tracing::warn!("update plan guard: 200 response without version — treating as no update");
-        return UpdatePlanResponse::no_update("no-version");
-    };
-
-    let candidate_train = update_channel::train_of(version);
-    let requested_train = match requested_channel {
-        "release" => update_channel::Train::Release,
-        "beta" => update_channel::Train::Beta,
-        "alpha" => update_channel::Train::Alpha,
-        "dev" => update_channel::Train::Dev,
-        _ => update_channel::Train::Unknown,
-    };
-
-    // ① 通道不匹配：上游给了别的通道（配置回退时曾把 release 推给 beta 请求）。
-    if candidate_train != requested_train {
-        tracing::warn!(
-            "update plan guard: channel mismatch — requested={requested_channel} \
-             candidate={version} (train={candidate_train:?}) — treating as no update"
-        );
-        return UpdatePlanResponse::no_update("channel-mismatch");
-    }
-
-    // ② 同通道且候选不比当前新（相等/更旧）。
-    if update_channel::train_of(current) == candidate_train
-        && !update_channel::is_train_upgrade(current, version)
-    {
-        tracing::warn!(
-            "update plan guard: candidate not newer — current={current} \
-             candidate={version} — treating as no update"
-        );
-        return UpdatePlanResponse::no_update("not-newer");
-    }
-
-    // ③ 跨通道 = 用户主动切换通道（显式选了别的 channel）。新鲜度由上游按
-    //    发布时间裁决，本地不再二次判断，只打标记让 UI 说明这是"切换通道"。
-    let channel_switch = update_channel::train_of(current) != candidate_train;
-    plan.channel = candidate_train.as_str().map(str::to_string);
-    plan.channel_switch = Some(channel_switch);
-    tracing::info!(
-        "update plan: current={current} candidate={version} \
-         channel={requested_channel} channel_switch={channel_switch}"
-    );
-    plan
-}
 /// GET /api/update/check?current=...&channel=...
-///
-/// `current` 由调用方给出（前端传已安装版本）；`channel` 显式指定订阅的通道，
-/// 缺省时回落到 `current` 所属列车。与 `/update/plan` 共用同一套通道守卫，
-/// 保证两个端点的"是否有更新"结论一致。
 async fn check(
     State(state): State<SharedState>,
     Query(q): Query<CheckQuery>,
 ) -> ApiResult<Json<UpdateCheckResponse>> {
-    let Some(channel) = update_channel::effective_channel(q.channel.as_deref(), &q.current) else {
-        // dev 构建且未显式选择通道 → 无更新，不打上游。
-        tracing::info!(
-            "update check: dev build (current={}), no channel selected — no update",
-            q.current
-        );
-        return Ok(Json(UpdateCheckResponse {
-            has_update: false,
-            ..Default::default()
-        }));
-    };
-    let mut result = check_update(&state, &q.current, &channel).await?;
-
-    // 与 plan() 相同的不变量守卫：候选必须属于被请求通道，且（同通道时）更新。
-    if result.has_update {
-        if let Some(version) = result.version.clone() {
-            let candidate_train = update_channel::train_of(&version);
-            if candidate_train.as_str() != Some(channel.as_str()) {
-                tracing::warn!(
-                    "update check guard: channel mismatch — requested={channel} \
-                     candidate={version} (train={candidate_train:?}) — no update"
-                );
-                result.has_update = false;
-            } else if update_channel::train_of(&q.current) == candidate_train
-                && !update_channel::is_train_upgrade(&q.current, &version)
-            {
-                tracing::warn!(
-                    "update check guard: candidate not newer — current={} \
-                     candidate={version} — no update",
-                    q.current
-                );
-                result.has_update = false;
-            }
-        } else {
-            result.has_update = false;
-        }
-    }
-    Ok(Json(result))
+    let _channel = q.channel; // channel is accepted but unused in the C# source.
+    Ok(Json(check_update(&state, &q.current).await?))
 }
 
 /// GET /api/update/manifest?current=...&target=...&arch=...
@@ -273,12 +142,11 @@ async fn manifest(
     headers: HeaderMap,
     Query(q): Query<ManifestQuery>,
 ) -> ApiResult<Response> {
-    // Legacy Tauri-updater clients send the channel in X-Updater-Channel.
-    let channel = manifest_channel(&headers).to_string();
+    let _channel = manifest_channel(&headers); // used only to mirror the C# read.
 
     // The upstream check precedes the try/catch in C#, so its failures
     // propagate (do not swallow them here).
-    let has_update = check_update(&state, &q.current, &channel).await?;
+    let has_update = check_update(&state, &q.current).await?;
 
     if !has_update.has_update {
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -348,21 +216,13 @@ fn manifest_channel(headers: &HeaderMap) -> &str {
 }
 
 /// Perform the version check (corresponds to UpdateService.CheckAsync).
-///
-/// `channel` 透传上游：它决定上游只在对应发布列车里挑选候选版本
-/// （见 Web.Backend `getAllowedTypes`）。历史上本端点完全忽略 channel，
-/// 导致 `/plan` 与 `/check` 结论可能相反。
-async fn check_update(
-    state: &SharedState,
-    current: &str,
-    channel: &str,
-) -> ApiResult<UpdateCheckResponse> {
-    tracing::info!("checking update for current={current} channel={channel}");
+async fn check_update(state: &SharedState, current: &str) -> ApiResult<UpdateCheckResponse> {
+    tracing::info!("checking update for current={current}");
+    tracing::info!("GET {UPSTREAM_BASE}{VERSION_CHECK_PATH} \nQuery current={current}");
     let response = state
         .http_client
         .get(format!("{UPSTREAM_BASE}{VERSION_CHECK_PATH}"))
-        .query(&[("current", current), ("channel", channel)])
-        .bearer_auth(license_machine_code())
+        .query(&[("current", current)])
         .send()
         .await
         .map_err(|e| ApiError::upstream(e.to_string()))?;
@@ -536,7 +396,6 @@ fn proxy_cache() -> &'static Mutex<ProxyCache> {
 // Query params
 // ---------------------------------------------------------------------------
 
-/// `current` 已安装版本；`channel` 显式订阅通道（缺省回落 current 所属列车）。
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CheckQuery {
@@ -585,28 +444,6 @@ struct UpdatePlanResponse {
     changelog: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     required: Option<bool>,
-    /// 候选版本所属发布列车（release | beta | alpha）。前端据此渲染通道标签。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    channel: Option<String>,
-    /// true = 跨通道更新（用户主动切换了通道，非普通版本升级）。UI 需明确标注，
-    /// 否则用户会以为只是同通道的小版本升级。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    channel_switch: Option<bool>,
-    /// hasUpdate=false 的原因（诊断用）：dev-build | up-to-date |
-    /// channel-mismatch | not-newer | no-version。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
-}
-
-impl UpdatePlanResponse {
-    /// 构造一个"无更新"响应，并带上可诊断的原因。
-    fn no_update(reason: &str) -> Self {
-        Self {
-            has_update: false,
-            reason: Some(reason.to_string()),
-            ..Self::default()
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -670,118 +507,4 @@ struct TauriPlatformEntry {
     #[serde(default)]
     signature: String,
     url: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn plan_for(version: &str) -> UpdatePlanResponse {
-        UpdatePlanResponse {
-            has_update: true,
-            version: Some(version.to_string()),
-            strategy: Some("dir".into()),
-            package_url: Some("https://example/qomicex-update.zip".into()),
-            signature: Some("RWTsig".into()),
-            ..Default::default()
-        }
-    }
-
-    /// 同通道内的正常升级必须原样通过，并补齐 channel/channelSwitch。
-    #[test]
-    fn same_train_upgrade_passes_with_channel_metadata() {
-        let out = guard_train_plan(plan_for("0.1.0-beta31.0"), "0.1.0-beta23.0", "beta");
-        assert!(out.has_update, "beta23 → beta31 应判定为有更新");
-        assert_eq!(out.version.as_deref(), Some("0.1.0-beta31.0"));
-        assert_eq!(out.channel.as_deref(), Some("beta"));
-        assert_eq!(out.channel_switch, Some(false));
-        assert!(out.reason.is_none());
-    }
-
-    /// 跨通道 = 用户主动切换通道：允许，但必须打 channelSwitch 标记。
-    #[test]
-    fn cross_train_switch_is_allowed_and_flagged() {
-        let out = guard_train_plan(plan_for("0.1.0-beta31.0"), "0.1.0-release1.0", "beta");
-        assert!(out.has_update);
-        assert_eq!(out.channel.as_deref(), Some("beta"));
-        assert_eq!(out.channel_switch, Some(true));
-    }
-
-    /// 上游给了别的通道（配置回退时曾把 release 推给 beta 请求）→ 拒掉。
-    /// 这是"beta 用户被提示更新到正式版"的防护。
-    #[test]
-    fn channel_mismatch_is_rejected() {
-        let out = guard_train_plan(plan_for("0.1.0-release1.0"), "0.1.0-beta23.0", "beta");
-        assert!(!out.has_update);
-        assert_eq!(out.reason.as_deref(), Some("channel-mismatch"));
-        assert!(out.package_url.is_none(), "拒掉的计划不得带下载地址");
-    }
-
-    /// 同通道但候选并不更新（相等/更旧）→ 拒掉。
-    #[test]
-    fn same_train_not_newer_is_rejected() {
-        let same = guard_train_plan(plan_for("0.1.0-beta23.0"), "0.1.0-beta23.0", "beta");
-        assert!(!same.has_update);
-        assert_eq!(same.reason.as_deref(), Some("not-newer"));
-
-        let older = guard_train_plan(plan_for("0.1.0-beta9.0"), "0.1.0-beta10.0", "beta");
-        assert!(!older.has_update);
-        assert_eq!(older.reason.as_deref(), Some("not-newer"));
-    }
-
-    /// 200 响应缺 version → 拒掉（不能拿一个没有目标版本的计划让用户点"立即更新"）。
-    #[test]
-    fn missing_version_is_rejected() {
-        let mut p = plan_for("0.1.0-beta31.0");
-        p.version = None;
-        let out = guard_train_plan(p, "0.1.0-beta23.0", "beta");
-        assert!(!out.has_update);
-        assert_eq!(out.reason.as_deref(), Some("no-version"));
-    }
-
-    /// 候选版本无法解析 → 拒掉。
-    #[test]
-    fn unparsable_candidate_is_rejected() {
-        let out = guard_train_plan(plan_for("0.1.0-rc1"), "0.1.0-beta23.0", "beta");
-        assert!(!out.has_update);
-        assert_eq!(out.reason.as_deref(), Some("channel-mismatch"));
-    }
-
-    /// dev 构建 + 显式通道：跨通道放行（联调用例），channelSwitch=true。
-    #[test]
-    fn dev_build_with_explicit_channel_is_a_switch() {
-        let out = guard_train_plan(plan_for("0.1.0-beta31.0"), "0.1.0", "beta");
-        assert!(out.has_update);
-        assert_eq!(out.channel_switch, Some(true));
-    }
-
-    /// alpha 通道：同列车按日期序数比较。
-    #[test]
-    fn alpha_train_uses_date_ordinals() {
-        let out = guard_train_plan(
-            plan_for("0.1.0-alpha20260823.0"),
-            "0.1.0-alpha20260822.2",
-            "alpha",
-        );
-        assert!(out.has_update);
-        assert_eq!(out.channel.as_deref(), Some("alpha"));
-
-        let older = guard_train_plan(
-            plan_for("0.1.0-alpha20260822.2"),
-            "0.1.0-alpha20260823.0",
-            "alpha",
-        );
-        assert!(!older.has_update);
-        assert_eq!(older.reason.as_deref(), Some("not-newer"));
-    }
-
-    /// no_update 构造函数必须带上原因，便于诊断。
-    #[test]
-    fn no_update_carries_reason() {
-        let out = UpdatePlanResponse::no_update("dev-build");
-        assert!(!out.has_update);
-        assert_eq!(out.reason.as_deref(), Some("dev-build"));
-        assert!(out.version.is_none());
-        assert!(out.package_url.is_none());
-    }
 }

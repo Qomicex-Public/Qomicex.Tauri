@@ -24,8 +24,7 @@ import ToolboxTab from '../components/ToolboxTab.tsx'
 import PluginStoreTab from '../components/PluginStoreTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
-import { fetchUpdatePlan, type UpdatePlan } from '../api/update.ts'
-import { isDevBuild, resolveChannel, trainLabelKey, trainOf } from '../lib/updateChannel.ts'
+import { checkRequired, fetchUpdatePlan, type UpdatePlan } from '../api/update.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useDebug } from '../components/DebugContext.tsx'
@@ -227,8 +226,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
   const [pendingUpdate, setPendingUpdate] = useState<UpdatePlan | null>(null)
   const [updateError, setUpdateError] = useState<string>()
-  // 默认通道跟随已安装构建所属列车（beta 构建默认 beta），不再硬编码 stable。
-  const [channel, setChannel] = useState(() => resolveChannel(APP_INFO.version) ?? 'stable')
+  const [channel, setChannel] = useState(() => localStorage.getItem('update-channel') || 'stable')
   const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [licenseCopied, setLicenseCopied] = useState(false)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
@@ -244,12 +242,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       .then(setSponsors)
       .catch(() => setSponsorsFailed(true))
   }, [])
-  // 版本徽章按发布列车渲染。旧实现用 `/-/ && !includes('release')` 判定，
-  // 会把正式版 `1.2.3-release5.0` 之外的所有带 `-` 版本都算 beta，
-  // 且 alpha 显示"测试版"、裸版本（开发构建）显示"稳定版"。
-  const installedTrain = trainOf(APP_INFO.version)
-  const versionType = t(trainLabelKey(installedTrain))
-  const devBuild = isDevBuild(APP_INFO.version)
+
+  // 正式版号形如 1.2.3-release5.0（release.yml 构造），同样带 "-"，
+  // 故需排除 release 后缀，否则正式版会被误判为测试版。
+  const isPreRelease = /-/.test(APP_INFO.version) && !APP_INFO.version.toLowerCase().includes('release')
+  const versionType = isPreRelease ? t('settings.about.beta') : t('settings.about.stable')
+
   useEffect(() => {
     if (licenseStatus?.valid && licenseStatus?.channel === 'alpha') {
       setChannelAndSave('alpha')
@@ -263,28 +261,23 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   }
 
   async function checkForUpdate() {
-    // 开发构建（裸 X.Y.Z）不属于任何已发布列车，不检查更新。
-    if (devBuild) {
-      setUpdateState('uptodate')
-      return
-    }
     setUpdateState('checking')
     setUpdateError(undefined)
     try {
-      // 与 App.tsx 一致：显式选择 > 已安装构建所属列车。
-      const channel = resolveChannel(APP_INFO.version)
-      if (!channel) {
-        setUpdateState('uptodate')
-        return
-      }
+      const channel = localStorage.getItem('update-channel') || 'stable'
       const plan = await fetchUpdatePlan(channel)
       if (!plan.hasUpdate || !plan.version) {
         setUpdateState('uptodate')
         return
       }
-      // required 由上游随 plan 一并给出。
+      // 必须传已安装版本：传目标版本会拿目标跟自己比，恒 false
+      let required = plan.required === true
+      try {
+        const info = await checkRequired(APP_INFO.version, channel)
+        required = required || (info.hasUpdate && info.required === true)
+      } catch {}
       setPendingUpdate(plan)
-      setPendingRequired(plan.required === true)
+      setPendingRequired(required)
       setUpdateState('available')
       setUpdateDialogOpen(true)
     } catch (e) {
@@ -399,15 +392,13 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
 <Select value={channel} onChange={setChannelAndSave} className="w-28">
   <SelectOption value="stable">{t('settings.about.stable')}</SelectOption>
   <SelectOption value="beta">{t('settings.about.beta')}</SelectOption>
-  <SelectOption value="alpha">{t('settings.about.alpha')}</SelectOption>
+  <SelectOption value="alpha">Alpha</SelectOption>
 </Select>
-            <Button size="sm" onClick={checkForUpdate} disabled={devBuild || updateState === 'checking' || updateState === 'downloading'}>
+            <Button size="sm" onClick={checkForUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}>
               <MorphActionIcon active={updateState === 'checking'} busy={RotateCwData} rest={ArrowUpData} className="mr-1 h-3 w-3" />
               {updateState === 'checking' ? t('settings.about.checking') : t('settings.about.checkUpdate')}
             </Button>
-            {devBuild ? (
-              <span className="text-sm text-muted-foreground">{t('settings.about.devBuildNoUpdate')}</span>
-            ) : updateState === 'uptodate' && (
+            {updateState === 'uptodate' && (
               <span className="flex items-center gap-1 text-sm text-muted-foreground">
                 <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
                 {t('settings.about.upToDate')}

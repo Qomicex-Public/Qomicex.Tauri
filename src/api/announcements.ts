@@ -1,6 +1,5 @@
 // src/api/announcements.ts
 import { APP_INFO } from '../constants/credits.ts'
-import { trainOf } from '../lib/updateChannel.ts'
 import { get } from './client.ts'
 
 const API_PATH = '/client/announcements'
@@ -14,16 +13,13 @@ export interface Announcement {
   createdAt: string
 }
 
-/**
- * 公告通道过滤：复用 `src/lib/updateChannel.ts` 的唯一版本→列车解析。
- *
- * 旧实现是本地一套 `includes('release'|'beta'|'alpha')` 判定，与更新检测的
- * 通道口径可能不一致；且 dev 构建（裸 X.Y.Z）返回 undefined 让服务端返回
- * 全部公告，这里保持同样语义。
- */
+/** 从 APP_INFO.version 提取渠道标识 */
 function resolveChannel(): string | undefined {
-  const train = trainOf(APP_INFO.version)
-  return train === 'release' || train === 'beta' || train === 'alpha' ? train : undefined
+  const v = APP_INFO.version.toLowerCase()
+  if (v.includes('release')) return 'release'
+  if (v.includes('beta')) return 'beta'
+  if (v.includes('alpha')) return 'alpha'
+  return undefined // dev → 不带 channel，服务端返回所有
 }
 
 /** 获取已关闭的公告 id 列表 */
