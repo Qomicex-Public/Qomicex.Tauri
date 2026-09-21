@@ -4,7 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import type { UpdatePlan } from '../api/update.ts'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Tooltip } from './ui'
 import { Button } from './ui'
-import { ArrowUp, CheckCircle2, Download, Eraser, ExternalLink, RotateCw, TriangleAlert } from 'lucide-react'
+import { ArrowLeftRight, ArrowUp, CheckCircle2, Download, Eraser, ExternalLink, RotateCw, TriangleAlert } from 'lucide-react'
 import { useI18n } from '../i18n/index.tsx'
 import { REPOSITORY_URL } from '../constants/credits.ts'
 import { useUpdaterStore } from '../stores/updaterStore.ts'
@@ -44,10 +44,14 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
         <DialogTitle className="flex items-center gap-2">
           {required ? (
             <TriangleAlert className="h-4 w-4 text-amber-400" />
+          ) : plan.channelSwitch ? (
+            <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
           ) : (
             <ArrowUp className="h-4 w-4 text-muted-foreground" />
           )}
-          {t('dialogs.update.foundNew', { version: plan.version ?? '' })}
+          {plan.channelSwitch
+            ? t('dialogs.update.channelSwitchTitle', { channel: plan.channel ?? '' })
+            : t('dialogs.update.foundNew', { version: plan.version ?? '' })}
         </DialogTitle>
       </DialogHeader>
       <DialogBody>
@@ -63,6 +67,13 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
             {t('dialogs.update.viewRelease')}
           </button>
         </div>
+
+        {plan.channelSwitch && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" />
+            {t('dialogs.update.channelSwitchNotice', { channel: plan.channel ?? '' })}
+          </div>
+        )}
 
         {required && (
           <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">

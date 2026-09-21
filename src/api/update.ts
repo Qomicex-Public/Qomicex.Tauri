@@ -23,18 +23,25 @@ export interface UpdatePlan {
   signature?: string
   changelog?: string
   required?: boolean
-}
-
-/** 查询指定版本是否有强制更新（走本地后端 /api/update/check，镜像 C# 逻辑） */
-export function checkRequired(current: string, channel: string): Promise<UpdateCheckResult> {
-  return get<UpdateCheckResult>(
-    `/update/check?current=${encodeURIComponent(current)}&channel=${encodeURIComponent(channel)}`,
-  )
+  /** 候选版本所属发布列车（release | beta | alpha） */
+  channel?: string
+  /**
+   * true = 跨通道更新（用户在设置里主动切换了通道）。
+   * UI 必须把这种情况标注为"切换通道"，否则用户会误以为是普通版本升级。
+   */
+  channelSwitch?: boolean
+  /**
+   * hasUpdate=false 的原因（诊断用）：dev-build | up-to-date |
+   * channel-mismatch | not-newer | no-version。
+   */
+  reason?: string
 }
 
 /**
- * 查询本机更新计划（os/arch/mode 由后端检测）。channel 作为 query 传透本地后端
- * → upstream plan（当前服务端语义：三通道取最新，与旧 manifest 端点一致）。
+ * 查询本机更新计划（os/arch/mode 由后端检测）。
+ *
+ * `channel` 不传时由后端回落到"已安装构建所属列车"——这正是修复的关键：
+ * 旧前端硬编码 `|| 'stable'`，导致 beta/alpha/开发构建全被按稳定通道请求。
  * 204 → hasUpdate=false
  */
 export async function fetchUpdatePlan(channel?: string): Promise<UpdatePlan> {
