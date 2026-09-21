@@ -32,7 +32,8 @@ import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
 import { get } from './api/client.ts'
 import { initApiTransport, isIpcMode } from './api/ipc.ts'
-import { checkRequired, fetchUpdatePlan, type UpdatePlan } from './api/update.ts'
+import { fetchUpdatePlan, type UpdatePlan } from './api/update.ts'
+import { resolveChannel } from './lib/updateChannel.ts'
 import { APP_INFO } from './constants/credits.ts'
 import { applyThemeColor } from './lib/themeColor.ts'
 import { restoreSavedTheme } from './theme/index.ts'
@@ -162,26 +163,26 @@ function AppContent() {
 
   useEffect(() => {
     if (backendState !== 'ready' || autoCheckDone.current) return
-    autoCheckDone.current = true
     const timer = setTimeout(async () => {
       try {
-        const channel = localStorage.getItem('update-channel') || 'stable'
+        // 通道裁决：用户显式选择 > 已安装构建所属列车。undefined = 开发构建
+        // （裸 X.Y.Z）或无法识别的版本 → 不检查更新。
+        // 旧逻辑是 `|| 'stable'`，把 beta/alpha/开发构建全按稳定通道请求。
+        const channel = resolveChannel(APP_INFO.version)
+        if (!channel) return
+
         const plan = await fetchUpdatePlan(channel)
         if (!plan.hasUpdate || !plan.version) return
 
-        // 强制更新标记：来自后端 /api/update/check（后端镜像 C# 逻辑，按 current 判断）
-        // 必须传已安装版本：传目标版本会拿目标跟自己比，恒 false
-        let required = plan.required === true
-        try {
-          const info = await checkRequired(APP_INFO.version, channel)
-          required = required || (info.hasUpdate && info.required === true)
-        } catch {}
+        // required 由上游随 plan 一并给出，无需再打一次 /update/check。
+        const required = plan.required === true
 
+        // snooze 键带通道：同版本号在不同通道下是不同目标，不能互相抵消。
         const snooze = localStorage.getItem('snooze-update')
         if (!required && snooze) {
           try {
             const s = JSON.parse(snooze)
-            if (s.version === plan.version && s.until > Date.now()) return
+            if (s.key === `${channel}:${plan.version}` && s.until > Date.now()) return
           } catch {}
         }
 
@@ -296,7 +297,7 @@ function AppContent() {
         required={pendingUpdateRequired}
         onClose={() => {
           if (pendingUpdate && !pendingUpdateRequired) {
-            localStorage.setItem('snooze-update', JSON.stringify({ version: pendingUpdate.version, until: Date.now() + 86400000 }))
+            localStorage.setItem('snooze-update', JSON.stringify({ key: `${pendingUpdate.channel ?? 'release'}:${pendingUpdate.version}`, until: Date.now() + 86400000 }))
           }
           setPendingUpdate(null)
           setPendingUpdateRequired(false)
