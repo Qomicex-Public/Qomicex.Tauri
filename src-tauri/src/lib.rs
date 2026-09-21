@@ -10,8 +10,6 @@ mod dialog_cmd;
 mod ipc;
 mod plugin_gateway;
 mod updater;
-#[doc(hidden)]
-pub mod version_order;
 
 #[cfg(all(windows, not(debug_assertions)))]
 const BACKEND: &[u8] = include_bytes!("../binaries/backend.exe");

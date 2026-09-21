@@ -524,3 +524,91 @@ Web.Backend deploy.yml 仍持续失败：`Cloudflare API Authentication failed (
 6. **tasklist 进程探测中文系统失效**（无任务行本地化「信息:」不含 "INFO:"）→ process_alive 恒真 → wait 永久超时/挂起（三轮实测失败根因）→ be5e1ef 修：改文件锁探测
 7. **taskkill /T 树递归自杀**（/T 深入共享 WebView2 进程池，updater 在同池被连带强杀，ulog 止于 unlocked 且 $LASTEXITCODE 空）→ be5e1ef 修：去 /T 只杀本体
 
+
+
+### 2026-09-21 更新（ADR-081：更新检测改为通道模型）
+
+阶段 0 的"是否有更新"改为按**发布通道（train）**裁决。完整背景见
+`1-决策记录/ADR-081-启动器更新检测改为通道模型.md`。
+
+## 阶段 0：检查更新（通道裁决）
+
+| 步 | 动作 | 位置/参数 |
+|---|---|---|
+| 0.1 | 前端 `resolveChannel(APP_INFO.version)` | `src/lib/updateChannel.ts`：localStorage 显式选择 > 已安装构建所属列车；dev/unknown → `undefined`（跳过检查） |
+| 0.2 | `GET /api/update/plan?channel=` | 本地 backend |
+| 0.3 | 通道解析 + dev 短路 | `services/update_channel.rs`：`effective_channel()`；推导为 dev/unknown 时直接返回 `hasUpdate=false` + `reason:"dev-build"`，**不打上游** |
+| 0.4 | 转发上游 | query 追加 `channel=<归一化通道>`（`stable`→`release`）；header `Authorization: Bearer <license_core::machine_code()>`（恢复灰度门控 + 许可证通道钉住） |
+| 0.5 | 上游裁决 | `isUpdateFor(current, latest, currentCreatedAt, latestCreatedAt)`：同列车 → `compareVersions`；跨列车 → 比 `versions.createdAt`；`current` 不在表中 → false |
+| 0.6 | **本地不变量守卫** | `guard_train_plan()`：候选解析失败 / 候选列车 ≠ 请求通道 / 同列车且候选 ≤ 当前 → `hasUpdate=false` + `tracing::warn!` |
+
+## `/plan` 响应新增字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `channel` | string | 候选版本所属列车（release / beta / alpha） |
+| `channelSwitch` | bool | true = 跨通道（用户主动切换通道）。UI 必须标注为"切换通道"而非普通升级 |
+| `reason` | string | `hasUpdate=false` 的原因：`dev-build` / `up-to-date` / `channel-mismatch` / `not-newer` / `no-version` |
+
+## 通道语义表
+
+| 已安装 | 请求通道 | 上游候选 | 结果 |
+|---|---|---|---|
+| `0.1.0-beta23.0` | beta（推导） | `0.1.0-beta31.0` | 有更新（同列车，31>23） |
+| `0.1.0-release1.0` | beta（显式） | `0.1.0-beta31.0` | 有更新 + `channelSwitch=true`（发布时间 09/21 > 09/13） |
+| `0.1.0-beta31.0` | stable（显式） | `0.1.0-release1.0` | **无更新**（跨通道且发布时间更早 = 降级，拒绝） |
+| `0.1.0`（dev） | 无（推导失败） | — | 无更新 + `reason=dev-build`，不打上游 |
+| `0.1.0-beta23.0` | beta | `0.1.0-release1.0`（上游配置回退） | 本地守卫拒掉 → `channel-mismatch` |
+
+## 关联回归（三个症状的防护）
+
+1. **beta 持续提示更新到正式版**：`getAllowedTypes('beta')` 曾含 `release`，叠加
+   `TYPE_ORDER(release>beta)` 后 `latest` 恒为 release。已收窄为 `['beta']`，
+   并由本地守卫二次校验候选列车。
+2. **正式版无法更新到 beta**：同根因。`null`（旧版启动器未传）保持
+   `['beta','release']` 不变以兼容存量客户端。
+3. **开发版提示需更新到正式版**：`parseVersion` 的 `SIMPLE_RE` 把裸 `X.Y.Z` 归为
+   `type:'release', suffix1:0`。现由 `trainOf` 判为 dev → 不推送。
+
+## ✅ 部署状态（2026-09-21，已部署生效）
+
+ADR-081 的 API 侧改动**已部署**（本地 `pnpm deploy:api`，绕开持续失败的
+`deploy.yml`）：
+
+| 提交 | 内容 |
+|---|---|
+| `f7ec0b5` | 通道模型主体：`trainOf` / `isUpdateFor`、`getAllowedTypes('beta')` 收窄、两路由改判据 |
+| `78ddcaf` | 修正两个缺陷（见下） |
+
+部署后线上实测矩阵（`/api/client/update/plan`，Version `c853c784`）：
+
+| 已安装 | 请求通道 | 结果 |
+|---|---|---|
+| `0.1.0-beta23.0` | beta | 200 → **`0.1.0-beta31.0`**，`channelSwitch=false` |
+| `0.1.0-release1.0` | beta | 200 → **`0.1.0-beta31.0`**，`channelSwitch=true` |
+| `0.1.0-beta31.0` | stable | 204（拒绝降级） |
+| `0.1.0`（dev） | beta | 204（开发构建不推送） |
+| `0.1.0-alpha20260823.0` | alpha | 204（已是最新 alpha） |
+| `0.1.0-release1.0` | release | 204（已是最新 release） |
+
+`/api/client/version/check` 矩阵一致。
+
+### 首轮部署后实测发现并已修的两个缺陷（回归防护）
+
+1. **`currentRow` 在通道过滤后的列表里查找**：跨通道切换时 current 不在本通道
+   候选列表 → 恒找不到 → `isUpdateFor` 缺 `createdAt` 恒 false →
+   "正式版切到 beta" 永远 204（症状①复发）。修法：热路径先用 `allVersions`，
+   miss 再补一次不带 type 过滤的精确查询。
+2. **`/version/check` 从不读 query 的 `channel`**：历史上只从 `verifyLicense`
+   取通道，不带 Bearer 的请求（绝大多数）恒走 `getAllowedTypes(null)`
+   = `['beta','release']`，用户选的通道完全无效。修法：与 `/update/plan` 对齐。
+
+> 另：`update-plan.ts` 首轮编辑曾吞掉 `client-license` 的 import 行——vitest
+> 只测 `platformKey`/`strategyFor`、不触发路由故未暴露，是 `tsc --noEmit` 抓到的。
+> **教训：改该仓库必须跑 `pnpm --filter api run typecheck`，单跑 test 不够。**
+
+### 遗留
+
+`deploy.yml` 的 `Cloudflare API Authentication failed (status: 400) [code: 9106]`
+未修（GH secret `CLOUDFLARE_API_TOKEN` 仍无效）。本次为本地手动部署，
+后续 master push 不会自动生效，需继续手动 `pnpm deploy:api` 或修 secret。
