@@ -177,11 +177,18 @@ fn train_reject_reason(
     requested_channel: &str,
 ) -> Option<&'static str> {
     let candidate_train = update_channel::train_of(candidate);
-    let requested_train = match requested_channel {
-        "release" => update_channel::Train::Release,
-        "beta" => update_channel::Train::Beta,
-        "alpha" => update_channel::Train::Alpha,
-        "dev" => update_channel::Train::Dev,
+    // 通道字符串先归一化（`stable`→`release`、大小写不敏感、无法识别→None）。
+    //
+    // 必须在这里做，不能在调用方：`/update/manifest` 的 `manifest_channel()`
+    // 默认返回 `"stable"`，而 Tauri updater 的 endpoint（tauri.conf.json）
+    // 并不带 `X-Updater-Channel` header。若此处只认 `"release"`，这类请求的
+    // requested_train 会落成 Unknown → 把所有合法 release 候选一律 204 拒掉，
+    // stable 通道的 manifest 更新永远到不了拉取步骤。
+    let requested_train = match update_channel::normalize_channel(requested_channel).as_deref() {
+        Some("release") => update_channel::Train::Release,
+        Some("beta") => update_channel::Train::Beta,
+        Some("alpha") => update_channel::Train::Alpha,
+        Some("dev") => update_channel::Train::Dev,
         _ => update_channel::Train::Unknown,
     };
 
@@ -840,6 +847,23 @@ mod tests {
         // 拒绝：候选无法解析
         assert_eq!(
             train_reject_reason("0.1.0-rc1", "0.1.0-beta23.0", "beta"),
+            Some("channel-mismatch")
+        );
+        // `stable` 是 `release` 的 UI/header 别名：manifest_channel() 默认返回它，
+        // 而 Tauri updater 不带 X-Updater-Channel header。不识别会导致 stable
+        // 通道的 manifest 请求被一律 204 拒掉。
+        assert_eq!(
+            train_reject_reason("0.1.0-release2.0", "0.1.0-release1.0", "stable"),
+            None
+        );
+        // 大小写不敏感
+        assert_eq!(
+            train_reject_reason("0.1.0-beta31.0", "0.1.0-beta23.0", "BETA"),
+            None
+        );
+        // 空字符串同样无法识别 → 拒绝（不静默放行）
+        assert_eq!(
+            train_reject_reason("0.1.0-beta31.0", "0.1.0-beta23.0", ""),
             Some("channel-mismatch")
         );
         // 拒绝：请求通道本身无法识别
