@@ -163,22 +163,20 @@ fn license_machine_code() -> String {
     crate::services::license_core::machine_code()
 }
 
-/// 通道守卫：校验上游返回的候选版本确实属于被请求的通道，且（同通道时）
+/// 通道守卫的**纯裁决**部分：校验候选版本是否属于被请求的通道，且（同通道时）
 /// 确实比已安装构建更新。
 ///
-/// 通过时补齐 `channel` / `channelSwitch` 两个前端需要的字段；
-/// 不通过时返回 `has_update=false` + `reason`（诊断用），并 `warn!` 留痕。
-fn guard_train_plan(
-    mut plan: UpdatePlanResponse,
+/// 返回 `None` = 通过；`Some(reason)` = 拒绝的原因（诊断用）。
+///
+/// `plan()` / `check()` / `manifest()` 三处共用，保证"是否有更新"的结论一致——
+/// 漏掉任一路径都会重新打开跨通道降级的口子（`/update/manifest` 正是如此，
+/// 见 ADR-081 的回归记录）。
+fn train_reject_reason(
+    candidate: &str,
     current: &str,
     requested_channel: &str,
-) -> UpdatePlanResponse {
-    let Some(version) = plan.version.as_deref() else {
-        tracing::warn!("update plan guard: 200 response without version — treating as no update");
-        return UpdatePlanResponse::no_update("no-version");
-    };
-
-    let candidate_train = update_channel::train_of(version);
+) -> Option<&'static str> {
+    let candidate_train = update_channel::train_of(candidate);
     let requested_train = match requested_channel {
         "release" => update_channel::Train::Release,
         "beta" => update_channel::Train::Beta,
@@ -189,26 +187,43 @@ fn guard_train_plan(
 
     // ① 通道不匹配：上游给了别的通道（配置回退时曾把 release 推给 beta 请求）。
     if candidate_train != requested_train {
-        tracing::warn!(
-            "update plan guard: channel mismatch — requested={requested_channel} \
-             candidate={version} (train={candidate_train:?}) — treating as no update"
-        );
-        return UpdatePlanResponse::no_update("channel-mismatch");
+        return Some("channel-mismatch");
     }
 
     // ② 同通道且候选不比当前新（相等/更旧）。
     if update_channel::train_of(current) == candidate_train
-        && !update_channel::is_train_upgrade(current, version)
+        && !update_channel::is_train_upgrade(current, candidate)
     {
+        return Some("not-newer");
+    }
+
+    None
+}
+
+/// 通道守卫（`/update/plan` 用）：校验候选版本，通过时补齐
+/// `channel` / `channelSwitch`；不通过时返回 `has_update=false` + `reason`
+/// 并 `warn!` 留痕。
+fn guard_train_plan(
+    mut plan: UpdatePlanResponse,
+    current: &str,
+    requested_channel: &str,
+) -> UpdatePlanResponse {
+    let Some(version) = plan.version.as_deref() else {
+        tracing::warn!("update plan guard: 200 response without version — treating as no update");
+        return UpdatePlanResponse::no_update("no-version");
+    };
+
+    if let Some(reason) = train_reject_reason(version, current, requested_channel) {
         tracing::warn!(
-            "update plan guard: candidate not newer — current={current} \
-             candidate={version} — treating as no update"
+            "update plan guard: rejected ({reason}) — requested={requested_channel} \
+             current={current} candidate={version}"
         );
-        return UpdatePlanResponse::no_update("not-newer");
+        return UpdatePlanResponse::no_update(reason);
     }
 
     // ③ 跨通道 = 用户主动切换通道（显式选了别的 channel）。新鲜度由上游按
     //    发布时间裁决，本地不再二次判断，只打标记让 UI 说明这是"切换通道"。
+    let candidate_train = update_channel::train_of(version);
     let channel_switch = update_channel::train_of(current) != candidate_train;
     plan.channel = candidate_train.as_str().map(str::to_string);
     plan.channel_switch = Some(channel_switch);
@@ -242,25 +257,17 @@ async fn check(
 
     // 与 plan() 相同的不变量守卫：候选必须属于被请求通道，且（同通道时）更新。
     if result.has_update {
-        if let Some(version) = result.version.clone() {
-            let candidate_train = update_channel::train_of(&version);
-            if candidate_train.as_str() != Some(channel.as_str()) {
-                tracing::warn!(
-                    "update check guard: channel mismatch — requested={channel} \
-                     candidate={version} (train={candidate_train:?}) — no update"
-                );
-                result.has_update = false;
-            } else if update_channel::train_of(&q.current) == candidate_train
-                && !update_channel::is_train_upgrade(&q.current, &version)
-            {
-                tracing::warn!(
-                    "update check guard: candidate not newer — current={} \
-                     candidate={version} — no update",
-                    q.current
-                );
-                result.has_update = false;
-            }
-        } else {
+        let reason = result
+            .version
+            .as_deref()
+            .and_then(|v| train_reject_reason(v, &q.current, &channel));
+        if let Some(reason) = reason {
+            tracing::warn!(
+                "update check guard: rejected ({reason}) — requested={channel} \
+                 current={} candidate={:?} — no update",
+                q.current,
+                result.version
+            );
             result.has_update = false;
         }
     }
@@ -283,6 +290,27 @@ async fn manifest(
     if !has_update.has_update {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
+
+    // 通道守卫：与 /update/plan、/update/check 同一套裁决。
+    //
+    // 历史上此路径把 channel 传给了 check_update 却**没有**过守卫——上游若对
+    // beta 请求返回 release 候选（配置回退），这里会照单全收其 download_url、
+    // 拉取该 manifest 并交给 Tauri updater，跨通道降级由此路径复发。
+    // Tauri updater 把 204 当作终态"无更新"，所以守卫命中时返回 204 是安全的。
+    let reject = has_update
+        .version
+        .as_deref()
+        .and_then(|v| train_reject_reason(v, &q.current, &channel));
+    if let Some(reason) = reject {
+        tracing::warn!(
+            "update manifest guard: rejected ({reason}) — requested={channel} \
+             current={} candidate={:?} — 204",
+            q.current,
+            has_update.version
+        );
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+
     let Some(download_url) = has_update.download_url.filter(|u| !u.is_empty()) else {
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
@@ -783,5 +811,41 @@ mod tests {
         assert_eq!(out.reason.as_deref(), Some("dev-build"));
         assert!(out.version.is_none());
         assert!(out.package_url.is_none());
+    }
+
+    /// `train_reject_reason` 是 plan/check/manifest 三路共用的纯裁决，必须单独锁住。
+    /// `/update/manifest` 正是曾漏掉它的路径（跨通道降级复发口子）。
+    #[test]
+    fn train_reject_reason_shared_by_all_three_paths() {
+        // 通过：同通道升级
+        assert_eq!(
+            train_reject_reason("0.1.0-beta31.0", "0.1.0-beta23.0", "beta"),
+            None
+        );
+        // 通过：跨通道切换（用户显式选了别的 channel）
+        assert_eq!(
+            train_reject_reason("0.1.0-beta31.0", "0.1.0-release1.0", "beta"),
+            None
+        );
+        // 拒绝：通道不匹配（上游把 release 推给 beta 请求）
+        assert_eq!(
+            train_reject_reason("0.1.0-release1.0", "0.1.0-beta23.0", "beta"),
+            Some("channel-mismatch")
+        );
+        // 拒绝：同通道但候选不更新
+        assert_eq!(
+            train_reject_reason("0.1.0-beta23.0", "0.1.0-beta23.0", "beta"),
+            Some("not-newer")
+        );
+        // 拒绝：候选无法解析
+        assert_eq!(
+            train_reject_reason("0.1.0-rc1", "0.1.0-beta23.0", "beta"),
+            Some("channel-mismatch")
+        );
+        // 拒绝：请求通道本身无法识别
+        assert_eq!(
+            train_reject_reason("0.1.0-beta31.0", "0.1.0-beta23.0", "nightly"),
+            Some("channel-mismatch")
+        );
     }
 }

@@ -83,7 +83,9 @@ export function trainLabelKey(train: UpdateTrain): string {
       return 'settings.about.alpha'
     case 'dev':
       return 'settings.about.devBuild'
-    default:
-      return 'settings.about.stable'
+    case 'unknown':
+      // 不能回落 stable：无法识别的 pre-release 后缀（如 `-rc1`）显示成
+      // "稳定版"会与解析结果矛盾，并让用户误以为跑在稳定通道上。
+      return 'settings.about.unknownBuild'
   }
 }
