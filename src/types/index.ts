@@ -889,6 +889,8 @@ export interface ModpackInstallRequest {
   optifineVersion?: string | null
   /** 本地导入：parse 返回的临时文件句柄 */
   fileId?: string | null
+  /** 本地导入：整合包绝对路径（parse-path 流程回传，后端直接读本地包体） */
+  localPath?: string | null
 }
 
 export interface ModpackExportRequest {
