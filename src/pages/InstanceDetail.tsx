@@ -833,18 +833,19 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     })
   }, [])
 
+  // 无加载器（纯净原版）：空状态与资源包/光影包/数据包同构（icon → 标题 → 描述 → 主操作），
+  // 保证同一实例详情页各资源页签视觉统一。加载器只能在创建实例时选择，
+  // 故主操作为前往实例列表创建带加载器的实例，而不是引导安装必然失效的 Mod。
   if (!loader) {
     return (
       <SettingSection title={t('instanceDetail.tabs.mods')} icon={<Box className="h-4 w-4" />}>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <Box className="h-5 w-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium">{t('instanceDetail.mods.management')}</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">{t('instanceDetail.mods.noModsHint')}</p>
-            </div>
-          </div>
+        <ResourceEmptyState
+          icon={<Box className="h-5 w-5" />}
+          title={t('instanceDetail.mods.empty')}
+          description={t('instanceDetail.mods.noModsHint')}
+          actionLabel={t('instanceDetail.mods.noLoaderAction')}
+          onAction={() => navigate('/instances')}
+        />
       </SettingSection>
     )
   }
