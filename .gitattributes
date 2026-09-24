@@ -1,0 +1,19 @@
+# 仓库内文件以 LF 存储（实测绝大多数 blob 是 LF）；仅显式声明文本/二进制判定，
+# 不改动任何既有文件的行尾——全量 renormalize 属独立提交，见 AGENTS.md「Prettier 现状」同批排期。
+* text=auto
+
+# 二进制资源不做行尾/编码转换（缺了这些规则时 Git 会尝试按文本 diff/转换）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.gz binary
+*.qplugin binary
+*.wasm binary
+*.dll binary
+*.exe binary
+*.pdb binary
+
+# 生成物不进 diff 展示
+pnpm-lock.yaml -diff
