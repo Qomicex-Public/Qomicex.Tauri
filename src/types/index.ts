@@ -313,6 +313,14 @@ export interface ScanVersionsResponse {
   path: string
   versions: ScannedVersion[]
   noJsonDirs: string[]
+  /** 有版本目录的 jar 级探测结果还没算过（首次扫描/刚装好），
+   *  此时 fast 段给出的 gameVersion 只是 JSON 链的猜测，应再请求 `?mode=full` 回填。 */
+  refineRequired?: boolean
+}
+
+/** `scanVersions` 顺手带回的后端元信息（不占用返回值，保持 hook 契约稳定）。 */
+export interface ScanMeta {
+  refineRequired: boolean
 }
 
 export interface ScannedVersion {

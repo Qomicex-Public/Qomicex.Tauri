@@ -1564,11 +1564,20 @@ data: [plugin:com.example.demo:info] hello
 
 获取远程版本列表。
 
-### GET `/api/versions/scan?gameDir={dir}`
+### GET `/api/versions/scan?gameDir={dir}&mode={fast|full}`
 
 扫描指定目录下的已安装版本，自动修复实例的 `gameVersion` 和 `loader`。
 
-**响应：** `ScanVersionsResponse`
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `gameDir` | — | 游戏根目录（其下 `versions/` 为实际扫描目标） |
+| `mode` | `fast` | `fast`：命中扫描缓存的版本直接复用 jar 级结果，未命中的先走 JSON 链（毫秒级返回）；`full`：给未命中的条目补算 jar 级探测并写缓存 |
+
+响应多一个 `refineRequired`（布尔）：有版本目录还没算过 jar 级探测（首次扫描、刚装好）时为 `true`，前端应再发一次 `?mode=full` 回填 `gameVersion`。
+
+缓存落在 `{base_dir}/data/version-scan-cache.json`（按 `{name}.json` / `{name}.jar` 的长度+mtime 指纹失效）；删除该文件可强制全量重算。详见 ADR-082。
+
+**响应：** `ScanVersionsResponse`（见核心数据模型）
 
 ### GET `/api/versions/{name}`
 
