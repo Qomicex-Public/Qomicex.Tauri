@@ -13,7 +13,7 @@
 //! - `/versions/{name}` 及子路由通过 axum 静态路由优先匹配，与较长的
 //!   `/latest`/`/installed`/`/remote`/`/scan` 无冲突。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::routing::{get, post};
@@ -27,8 +27,13 @@ use qomicex_core::models::version_metadata::CompleteVersionMetadata;
 
 use crate::error::{ApiError, ApiResult};
 use crate::services::instance::InstanceService;
+use crate::services::scan_cache::CachedVersion;
 use crate::state::SharedState;
 use crate::util::pcl_icon::resolve_pcl_icon;
+
+/// 版本扫描的并行度（`std::thread::scope` 小线程池）。版本目录互不依赖，纯磁盘 I/O；
+/// 钳位上限是为避免几十个实例时线程风暴（低配机械盘上并发的边际收益会趋零）。
+const MAX_SCAN_WORKERS: usize = 6;
 
 // =====================================================================
 // DTO
@@ -60,6 +65,9 @@ struct ScanVersionsResponse {
     path: String,
     versions: Vec<ScannedVersionEntry>,
     no_json_dirs: Vec<String>,
+    /// 有版本目录未命中扫描指纹缓存、只能用 JSON 链给出 gameVersion 时为 `true`，
+    /// 前端应再发一次 `?mode=full` 回填 jar 级结果（见第 4 期两段式扫描）。
+    refine_required: bool,
 }
 
 #[derive(Serialize)]
@@ -80,6 +88,8 @@ struct ForceRefreshQuery {
 #[serde(rename_all = "camelCase")]
 struct ScanQuery {
     game_dir: String,
+    /// `fast`（默认）/ `full`。见 `scan_impl` 的两级短路说明。
+    mode: Option<String>,
 }
 
 // =====================================================================
@@ -142,115 +152,344 @@ async fn remote(
     }
 }
 
+/// 扫描的磁盘 I/O 全部走 `spawn_blocking` 执行。同步扫描在集成包目录上要跑几秒到
+/// 几十秒，若留在 tokio worker 上会把 `/api/health` 轮询等一起卡住。
 async fn scan(
     State(state): State<SharedState>,
     Query(q): Query<ScanQuery>,
 ) -> ApiResult<Json<ScanVersionsResponse>> {
-    let mut result: Vec<ScannedVersionEntry> = Vec::new();
+    let requested_full = match q.mode.as_deref() {
+        None | Some("fast") => false,
+        Some("full") => true,
+        Some(other) => {
+            // 显式拒绝未知取值：静默按 fast 处理会让调用方（含插件）以为跑了完整扫描。
+            return Err(ApiError::bad_request(
+                "INVALID_SCAN_MODE",
+                format!("mode only accepts fast/full, got: {other}"),
+            ));
+        }
+    };
+    // 用户设置「跳过 jar 级探测」优先于请求参数：开启后 mode=full 静默降级为 fast，
+    // refineRequired 恒为 false（否则前端会反复发注定被降级的 full 请求）。
+    let skip_jar = state
+        .settings
+        .read()
+        .await
+        .scan_skip_jar_probe
+        .unwrap_or(false);
+    if skip_jar && requested_full {
+        tracing::debug!("scan: skip_jar_probe enabled, downgrading mode=full to fast");
+    }
+    let full_mode = requested_full && !skip_jar;
+    let game_dir = q.game_dir.clone();
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || scan_impl(&state, &game_dir, full_mode, skip_jar))
+        .await
+        .map_err(|e| ApiError::internal(format!("scan task failed: {e}")))?
+}
+
+/// 扫描 `{gameDir}/versions/` 下的已装版本，返回探测结果。
+///
+/// 每个版本目录的成本结构（73 个实例实测，jar ~10MB/个）：
+/// - 读 `{name}.json` + `detect_loaders`：毫秒级（73 个合计约 100ms）；
+/// - 打开 `{name}.jar` 读 `version.json`：73 个合计约 1.6-2s；
+/// - 前两级都读不到 → 整包 SHA1（1.24GB）：冷盘 **37.6s** —— 这就是用户看到的"1 分多钟"。
+///
+/// 所以按"版本目录"做两级短路：
+/// 1. **指纹命中的版本目录完全不打开 jar**，直接复用上次的 `game_version`/`loaders`；
+/// 2. 未命中的版本目录在 `fast` 下只跑 JSON 链（`refineRequired` 提示前端再 `full`），
+///    在 `full` 下才付 jar 级的钱，并把结果写回指纹缓存。
+fn scan_impl(
+    state: &SharedState,
+    game_dir: &str,
+    full_mode: bool,
+    skip_jar: bool,
+) -> ApiResult<Json<ScanVersionsResponse>> {
     let abs_dir =
-        std::path::absolute(&q.game_dir).unwrap_or_else(|_| Path::new(&q.game_dir).to_path_buf());
+        std::path::absolute(game_dir).unwrap_or_else(|_| Path::new(game_dir).to_path_buf());
     let versions_dir = abs_dir.join("versions");
+    // 缓存 key：规范化后的绝对路径，同一目录的不同写法命中同一份缓存。
+    let cache_key = abs_dir.to_string_lossy().into_owned();
+    let started = std::time::Instant::now();
 
     tracing::info!(
-        game_dir = %q.game_dir,
+        game_dir = %game_dir,
         abs_dir = %abs_dir.display(),
         versions_dir = %versions_dir.display(),
         versions_exists = versions_dir.is_dir(),
+        mode = if full_mode { "full" } else { "fast" },
         "scan"
     );
 
-    if versions_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&versions_dir) {
-            for dir in entries.flatten() {
-                let dir_path = dir.path();
-                if !dir_path.is_dir() {
-                    continue;
-                }
-                let name = dir.file_name().to_string_lossy().into_owned();
-                let json_path = dir_path.join(format!("{name}.json"));
-                if !json_path.is_file() {
-                    result.push(ScannedVersionEntry {
-                        name: name.clone(),
-                        game_version: name.clone(),
-                        state: "Corrupted".to_string(),
-                        state_describe: "版本文件缺失".to_string(),
-                        loaders: None,
-                        icon_data: None,
-                    });
-                    continue;
-                }
+    if !versions_dir.is_dir() {
+        // 目录被整体删掉/改名 → 丢掉该 gameDir 的缓存，避免缓存文件无限增长。
+        state.scan_cache.drop_game_dir(&cache_key);
+        state.scan_cache.flush();
+        return Ok(Json(ScanVersionsResponse {
+            path: abs_dir.to_string_lossy().into_owned(),
+            versions: Vec::new(),
+            no_json_dirs: Vec::new(),
+            refine_required: false,
+        }));
+    }
 
-                let root = match std::fs::read(&json_path).and_then(|bytes| {
-                    serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-                    })
-                }) {
-                    Ok(root) => root,
-                    Err(e) => {
-                        tracing::warn!(name = %name, error = %e, "scan: failed to parse json");
-                        continue;
-                    }
-                };
-
-                let id = root
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| name.clone());
-                let inherits_from = root
-                    .get("inheritsFrom")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                let mc_version = root
-                    .get("minecraftVersion")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                let client_version = root
-                    .get("clientVersion")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                let main_class = root
-                    .get("mainClass")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                let game_version = resolve_game_version(
-                    &root,
-                    &id,
-                    inherits_from.as_deref(),
-                    client_version.as_deref(),
-                    mc_version.as_deref(),
-                    &dir_path,
-                );
-
-                let loaders = detect_loaders(&root, &main_class, &id, inherits_from.as_deref());
-
-                result.push(ScannedVersionEntry {
-                    name: id.clone(),
-                    game_version,
-                    state: "Available".to_string(),
-                    state_describe: String::new(),
-                    loaders: if loaders.is_empty() {
-                        None
-                    } else {
-                        Some(loaders)
-                    },
-                    icon_data: resolve_pcl_icon(&dir_path),
-                });
+    // 1. 收集版本目录（73 次 metadata 约 1ms）。排序只为输出稳定（前端列表不跳动）。
+    let mut inputs: Vec<ScanInput> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&versions_dir) {
+        for dir in entries.flatten() {
+            let dir_path = dir.path();
+            if !dir_path.is_dir() {
+                continue;
             }
+            let name = dir.file_name().to_string_lossy().into_owned();
+            inputs.push(ScanInput { name, dir_path });
         }
+    }
+    inputs.sort_by(|a, b| a.name.cmp(&b.name));
 
-        tracing::info!(count = result.len(), "scan: found versions");
-        fix_instance_game_versions(&state.instance, &result, &q.game_dir);
-        fix_instance_loaders(&state.instance, &result, &q.game_dir);
+    // 2. 逐版本探测。版本之间互不依赖，用小线程池并行（纯磁盘 I/O，不涉及 async）；
+    //    并发度钳位是为了避免几十个实例时线程风暴。
+    let workers = inputs.len().clamp(1, MAX_SCAN_WORKERS);
+    // `&str` 是 Copy：`move` 闭包共享同一份缓存 key，不会转移所有权。
+    let cache_key = cache_key.as_str();
+    let outcomes: Vec<ScanOutcome> = if workers <= 1 {
+        inputs
+            .iter()
+            .filter_map(|input| scan_one_version(state, cache_key, input, full_mode))
+            .collect()
+    } else {
+        let chunk_len = inputs.len().div_ceil(workers).max(1);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = inputs
+                .chunks(chunk_len)
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .filter_map(|input| {
+                                scan_one_version(state, cache_key, input, full_mode)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| match h.join() {
+                    Ok(outcomes) => outcomes,
+                    // 工作线程 panic 时不能静默丢弃：那一整块版本目录会从响应里消失，
+                    // 而接口仍返回 200。至少留下痕迹，方便定位是哪个目录的什么数据触发的。
+                    Err(e) => {
+                        tracing::error!(
+                            chunk_start = ?inputs.first().map(|i| i.name.clone()),
+                            "scan: worker thread panicked, its versions are omitted: {e:?}"
+                        );
+                        Vec::new()
+                    }
+                })
+                .collect()
+        })
+    };
+
+    // 3. 淘汰已删除版本目录的缓存条目（保留本次扫到的），然后统一落盘一次。
+    state
+        .scan_cache
+        .prune_versions(cache_key, inputs.iter().map(|i| i.name.as_str()));
+
+    let result: Vec<ScannedVersionEntry> = outcomes.iter().map(|o| o.entry.clone()).collect();
+    let cache_hits = outcomes.iter().filter(|o| !o.cache_missed).count();
+    let cache_misses = outcomes.len() - cache_hits;
+    state.scan_cache.flush();
+
+    tracing::info!(
+        count = result.len(),
+        cache_hits,
+        cache_misses,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        mode = if full_mode { "full" } else { "fast" },
+        "scan: found versions"
+    );
+    // 自动修复只在 full 段做。fast 段的 gameVersion 是 JSON 链的猜测值，把它
+    // 写回 instances.json 会在 full 段失败/超时后永久留下脏数据（ADR-082 决策 4）。
+    if full_mode {
+        fix_instance_game_versions(&state.instance, &result, game_dir);
+        fix_instance_loaders(&state.instance, &result, game_dir);
     }
 
     Ok(Json(ScanVersionsResponse {
         path: abs_dir.to_string_lossy().into_owned(),
         versions: result,
         no_json_dirs: Vec::new(),
+        // fast 段有未命中缓存的版本 → 它们的 gameVersion 只是 JSON 链的猜测，
+        // 前端应再发 `mode=full` 用 jar 级结果回填。
+        // `skip_jar` 打开时不能要求 refine：请求里的 `mode=full` 已被静默降级，
+        // 恒为 true 的 refineRequired 只会让前端反复发注定被降级的 full 扫描。
+        refine_required: cache_misses > 0 && !full_mode && !skip_jar,
     }))
+}
+
+/// 一个待扫描的版本目录。
+struct ScanInput {
+    name: String,
+    dir_path: PathBuf,
+}
+
+/// 单版本探测结果 + 是否发生了缓存未命中。
+struct ScanOutcome {
+    entry: ScannedVersionEntry,
+    cache_missed: bool,
+}
+
+/// 探测单个版本目录；`{name}.json` 损坏/不可解析时返回 `None`（原行为：跳过）。
+fn scan_one_version(
+    state: &SharedState,
+    cache_key: &str,
+    input: &ScanInput,
+    full_mode: bool,
+) -> Option<ScanOutcome> {
+    let name = input.name.as_str();
+    let dir_path = input.dir_path.as_path();
+    let json_path = dir_path.join(format!("{name}.json"));
+    if !json_path.is_file() {
+        return Some(ScanOutcome {
+            entry: ScannedVersionEntry {
+                name: name.to_string(),
+                game_version: name.to_string(),
+                state: "Corrupted".to_string(),
+                state_describe: "版本文件缺失".to_string(),
+                loaders: None,
+                icon_data: None,
+            },
+            cache_missed: false,
+        });
+    }
+
+    let root = match std::fs::read(&json_path).and_then(|bytes| {
+        serde_json::from_slice::<serde_json::Value>(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+    }) {
+        Ok(root) => root,
+        Err(e) => {
+            tracing::warn!(name = %name, error = %e, "scan: failed to parse json");
+            return None;
+        }
+    };
+
+    let id = root
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| name.to_string());
+    let inherits_from = root
+        .get("inheritsFrom")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let mc_version = root
+        .get("minecraftVersion")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let client_version = root
+        .get("clientVersion")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let main_class = root
+        .get("mainClass")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let loaders = detect_loaders(&root, &main_class, &id, inherits_from.as_deref());
+    let loaders_opt = (!loaders.is_empty()).then_some(loaders);
+
+    // ── 指纹命中：直接复用 jar 级探测结果，完全不打开 jar ──
+    // JSON 仍要解析：响应的 `name` 来自 JSON 的 `id`（可能与目录名不同），
+    // 且 `detect_loaders` 只读 JSON —— 这两件事加起来也就几十毫秒。
+    //
+    // 指纹覆盖：`{name}.json` + **`effective_jar_path` 选出的那个 jar**
+    // （`inheritsFrom != id` 时是 `{inheritsFrom}.jar`，不是 `{name}.jar`）。
+    let effective_jar = effective_jar_path(dir_path, inherits_from.as_deref(), &id);
+    let Some(fingerprint) = state
+        .scan_cache
+        .fingerprint(&json_path, effective_jar.as_deref())
+    else {
+        // json 的 metadata 都拿不到：按原行为仍然给出条目，只是不进缓存。
+        tracing::warn!(name = %name, "scan: cannot stat version json");
+        let game_version = resolve_game_version_from_json(
+            &root,
+            &id,
+            inherits_from.as_deref(),
+            client_version.as_deref(),
+            mc_version.as_deref(),
+        );
+        return Some(ScanOutcome {
+            entry: ScannedVersionEntry {
+                name: id,
+                game_version,
+                state: "Available".to_string(),
+                state_describe: String::new(),
+                loaders: loaders_opt,
+                icon_data: resolve_pcl_icon(dir_path),
+            },
+            cache_missed: true,
+        });
+    };
+    if let Some(hit) = state.scan_cache.get(cache_key, name, &fingerprint) {
+        return Some(ScanOutcome {
+            entry: ScannedVersionEntry {
+                name: id,
+                game_version: hit.game_version,
+                state: "Available".to_string(),
+                state_describe: String::new(),
+                loaders: loaders_opt,
+                icon_data: resolve_pcl_icon(dir_path),
+            },
+            cache_missed: false,
+        });
+    }
+
+    let game_version = if full_mode {
+        let v = resolve_game_version(
+            &root,
+            &id,
+            inherits_from.as_deref(),
+            client_version.as_deref(),
+            mc_version.as_deref(),
+            dir_path,
+        );
+        // 写回缓存：下次同样的指纹直接命中，省掉 jar 的花销。
+        // 用的就是上面 `get` 时那份指纹（同一个 jar 选择逻辑），避免两侧不一致。
+        state.scan_cache.put(
+            cache_key,
+            name,
+            CachedVersion {
+                game_version: v.clone(),
+
+                ..fingerprint
+            },
+        );
+        v
+    } else {
+        // fast：不碰 jar，只走 JSON 链；真正准确的值由随后的 mode=full 回填。
+        resolve_game_version_from_json(
+            &root,
+            &id,
+            inherits_from.as_deref(),
+            client_version.as_deref(),
+            mc_version.as_deref(),
+        )
+    };
+
+    Some(ScanOutcome {
+        entry: ScannedVersionEntry {
+            name: id,
+            game_version,
+            state: "Available".to_string(),
+            state_describe: String::new(),
+            loaders: loaders_opt,
+            icon_data: resolve_pcl_icon(dir_path),
+        },
+        cache_missed: true,
+    })
 }
 
 async fn version_metadata(
@@ -334,6 +573,47 @@ fn from_jar_game_version(jar_path: &Path) -> Option<String> {
     qomicex_core::util::version_json::from_jar(&jar_path.to_string_lossy())
 }
 
+/// jar 级探测实际会打开的那个 jar 路径（`{inheritsFrom}.jar` 优先，回退 `{id}.jar`）。
+///
+/// 抽成函数是给指纹用的：缓存指纹必须覆盖**真正被打开的那个 jar**，否则
+/// 改了 `{inheritsFrom}.jar` 而它又不是 `{id}.jar` 时会读到旧版本号。
+pub(crate) fn effective_jar_path(
+    version_dir: &Path,
+    inherits_from: Option<&str>,
+    id: &str,
+) -> Option<PathBuf> {
+    let jar_id = inherits_from.unwrap_or(id);
+    let primary = version_dir.join(format!("{jar_id}.jar"));
+    if primary.is_file() {
+        return Some(primary);
+    }
+    if jar_id != id {
+        let fallback = version_dir.join(format!("{id}.jar"));
+        if fallback.is_file() {
+            return Some(fallback);
+        }
+    }
+    None
+}
+
+/// JAR 级探测（`resolve_game_version` 的第 1 级）：打开 `{jarId}.jar` 读版本号。
+///
+/// 成本最高的探测级（zip 中央目录 → 常量池 → 整包 SHA1），所以扫描按版本目录缓存
+/// 它的结果（见 `services/scan_cache.rs`）；只在缓存未命中时才走到这里。
+fn game_version_from_jar(
+    version_dir: &Path,
+    inherits_from: Option<&str>,
+    id: &str,
+) -> Option<String> {
+    let jar_path = effective_jar_path(version_dir, inherits_from, id)?;
+    let v = from_jar_game_version(&jar_path)?;
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
 /// 游戏版本探测回退链（源 6 级：JAR → clientVersion → minecraftVersion →
 /// inheritsFrom → arguments → regex → id 兜底）。
 ///
@@ -353,19 +633,24 @@ pub(crate) fn resolve_game_version(
     version_dir: &Path,
 ) -> String {
     // 1. JAR（最高精度）
-    let jar_id = inherits_from.unwrap_or(id);
-    let mut jar_path = version_dir.join(format!("{jar_id}.jar"));
-    if !jar_path.is_file() && jar_id != id {
-        jar_path = version_dir.join(format!("{id}.jar"));
-    }
-    if jar_path.is_file() {
-        if let Some(v) = from_jar_game_version(&jar_path) {
-            if !v.is_empty() {
-                return v;
-            }
-        }
+    if let Some(v) = game_version_from_jar(version_dir, inherits_from, id) {
+        return v;
     }
 
+    resolve_game_version_from_json(root, id, inherits_from, client_version, mc_version)
+}
+
+/// 仅走 JSON 回退链的第 2-6 级（不碰 jar）。
+///
+/// `/versions/scan?mode=fast` 用它：先毫秒级出列表，jar 级结果由被缓存或后续
+/// `mode=full` 补齐。语义上等价于原 `resolve_game_version` 去掉第 1 级。
+pub(crate) fn resolve_game_version_from_json(
+    root: &serde_json::Value,
+    id: &str,
+    inherits_from: Option<&str>,
+    client_version: Option<&str>,
+    mc_version: Option<&str>,
+) -> String {
     // 2. clientVersion（源安装器 MergeVersionJson 后写入）
     if let Some(cv) = client_version {
         if !cv.is_empty() {
@@ -790,7 +1075,9 @@ fn fix_instance_loaders(
 
 #[cfg(test)]
 mod tests {
-    use super::{fix_instance_game_versions, resolve_game_version, ScannedVersionEntry};
+    use super::{
+        effective_jar_path, fix_instance_game_versions, resolve_game_version, ScannedVersionEntry,
+    };
     use crate::services::instance::GameInstance;
     use crate::services::instance::InstanceService;
     use std::io::Write as _;
@@ -895,24 +1182,63 @@ mod tests {
         );
     }
 
-    /// from_jar 接线：jar 内 version.json id 直接解出（GTNH 类目录的核心兜底路径）。
+    /// jar 级探测实际打开的路径：`{inheritsFrom}.jar` 优先，回退 `{id}.jar`。
+    /// 指纹必须覆盖它，否则只记 `{id}.jar` 会漏掉 `{inheritsFrom}.jar` 的变化。
     #[test]
-    fn from_jar_reads_version_json_entry() {
-        use zip::ZipWriter;
+    fn effective_jar_path_prefers_inherits_then_falls_back() {
+        let base = temp_dir("effective-jar");
+        let name = "1.20.1-Forge-47.2.0";
+        let vdir = base.join("versions").join(name);
+        std::fs::create_dir_all(&vdir).unwrap();
+        std::fs::write(vdir.join(format!("{name}.json")), "{}").unwrap();
+        std::fs::write(vdir.join(format!("{name}.jar")), b"mine").unwrap();
 
-        let dir = temp_dir("jar-vjson");
-        std::fs::create_dir_all(&dir).unwrap();
-        let jar_path = dir.join("vjson-probe.jar");
-        let file = std::fs::File::create(&jar_path).unwrap();
-        let mut zip = ZipWriter::new(file);
-        zip.start_file("version.json", zip::write::SimpleFileOptions::default())
-            .unwrap();
-        zip.write_all(br#"{"id":"1.2.3-probe"}"#).unwrap();
-        zip.finish().unwrap();
-
+        // 只有 {id}.jar
         assert_eq!(
-            super::from_jar_game_version(&jar_path).as_deref(),
-            Some("1.2.3-probe")
+            effective_jar_path(&vdir, Some("1.20.1-parent"), name),
+            Some(vdir.join(format!("{name}.jar")))
         );
+
+        // 同时存在 {inheritsFrom}.jar → 优先它（与 game_version_from_jar 的选择一致）
+        std::fs::write(vdir.join("1.20.1-parent.jar"), b"parent").unwrap();
+        assert_eq!(
+            effective_jar_path(&vdir, Some("1.20.1-parent"), name),
+            Some(vdir.join("1.20.1-parent.jar"))
+        );
+
+        // 两个都没有（jar 缺失）→ None
+        let other = base.join("versions/other");
+        std::fs::create_dir_all(&other).unwrap();
+        assert_eq!(
+            effective_jar_path(&other, Some("1.20.1-parent"), name),
+            None
+        );
+
+        // inheritsFrom == id 时不重复探测同一个路径
+        assert_eq!(
+            effective_jar_path(&vdir, Some(name), name),
+            Some(vdir.join(format!("{name}.jar")))
+        );
+        let _ = std::fs::remove_dir_all(&base);
+
+        #[test]
+        fn from_jar_reads_version_json_entry() {
+            use zip::ZipWriter;
+
+            let dir = temp_dir("jar-vjson");
+            std::fs::create_dir_all(&dir).unwrap();
+            let jar_path = dir.join("vjson-probe.jar");
+            let file = std::fs::File::create(&jar_path).unwrap();
+            let mut zip = ZipWriter::new(file);
+            zip.start_file("version.json", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(br#"{"id":"1.2.3-probe"}"#).unwrap();
+            zip.finish().unwrap();
+
+            assert_eq!(
+                super::from_jar_game_version(&jar_path).as_deref(),
+                Some("1.2.3-probe")
+            );
+        }
     }
 }

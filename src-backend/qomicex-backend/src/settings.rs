@@ -183,6 +183,26 @@ pub struct SettingsResponse {
     /// 按连接限速的 CDN 自动走 H1 并行，其余源（Mojang/BMCLAPI/CurseForge 等）走 HTTP/2。
     #[serde(default)]
     pub http1_parallel: bool,
+    /// 跳过实例扫描的 JAR 级探测。`None`/`Some(false)` = 关闭（默认）：`/versions/scan`
+    /// 的 `mode=full` 会为未命中缓存的版本打开 `{name}.jar` 读版本号（最准，但首次冷扫
+    /// 要读几十秒）。`Some(true)` = 一律按 JSON 链推断（`clientVersion` →
+    /// `minecraftVersion` → `inheritsFrom` → `--fml.mcVersion` → id 正则），
+    /// **不再打开任何 jar**。
+    ///
+    /// 作用范围：只影响 `/api/versions/scan`，且开启后请求里的 `mode=full` 会被
+    /// 静默降级为 fast、`refineRequired` 恒为 false。**不影响**启动实例、
+    /// 安装/卸载、整合包导入导出、联机等任何其它路径。已有指纹缓存继续复用
+    /// （缓存命中不打开 jar，是纯赚），只是不再计算新的 jar 级结果。
+    ///
+    /// 影响：对于 JSON 字段齐全的版本（现代 Forge/Fabric/NeoForge、vanilla）结果
+    /// 完全一致；对于 JSON 缺字段的版本（部分手工整合包、GTNH 类）gameVersion 可能
+    /// 退回成 `inheritsFrom` 或目录名 —— **并且这个值会被写进 `instances.json`**。
+    /// 机制：`refineRequired` 恒为 false 让前端跳过 full 段、直接拿 fast 段的结果
+    /// 调 `syncScan`，而后端 `sync_scan` → `list_existing` → `sync_from_disk`
+    /// 会把扫描到的 `game_version` 落盘（`save_to_file`）。这正是开启该开关想要的
+    /// 语义（JSON 链的值就是最终值），但要清楚：ADR-082「fast 段猜测值不落盘」的
+    /// 前提（前端只在 full 后 sync）在这里被有意打破。关掉开关即恢复原语义。
+    pub scan_skip_jar_probe: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +281,7 @@ impl Default for SettingsResponse {
             proxy_host: String::new(),
             ignore_ssl_cert: None,
             http1_parallel: false,
+            scan_skip_jar_probe: None,
         }
     }
 }

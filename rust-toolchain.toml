@@ -1,0 +1,6 @@
+# 工具链唯一事实来源：CI 与本地必须同一版本，否则 clippy 结论会漂移。
+# dtolnay/rust-toolchain@stable 装的是 rustup 默认链，本文件在这里覆盖它。
+# 升级：改 channel，并同步更新 AGENTS.md「工具链」段与 CI 缓存 key。
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

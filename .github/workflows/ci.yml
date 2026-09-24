@@ -18,8 +18,6 @@ jobs:
           git config --global url."https://x-access-token:${QOMICEX_PAT}@github.com/Qomicex-Public/".insteadOf "git@github.com:Qomicex-Public/"
           git submodule update --init --depth 1 qomicex-tauri-i18n
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -72,14 +70,18 @@ jobs:
         run: |
           cargo fmt --manifest-path src-backend/qomicex-backend/Cargo.toml -- --check
           cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-      - name: Cargo clippy
+      # `--cap-lints warn` 只应作用于依赖；它会把本仓 crate 的 lint 一并封顶，
+      # 导致 `-D warnings` 完全失效（旧配置下 136 条首方告警被吞）。
+      # 存量告警见 AGENTS.md「Clippy 存量」；清理到 0 后去掉 continue-on-error。
+      - name: Cargo clippy (first-party)
+        continue-on-error: true
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}
           VC_LTL: ""
           YY_THUNKS: ""
         run: |
-          cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml -- -D warnings --cap-lints warn
-          cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings --cap-lints warn
+          cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml --no-deps -- -D warnings
+          cargo clippy --manifest-path src-tauri/Cargo.toml --no-deps -- -D warnings
       # 预编译二进制，省去 cargo install 源码编译（≈4-5 分钟）
       - uses: taiki-e/install-action@v2
         with:
@@ -119,8 +121,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

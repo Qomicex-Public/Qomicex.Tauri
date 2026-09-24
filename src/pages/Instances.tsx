@@ -21,6 +21,7 @@ import { ContextMenu } from '../components/ContextMenu.tsx'
 import type { ContextMenuItem } from '../components/ContextMenu.tsx'
 import { useMessageBox } from '../components/ui'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
+import type { ScanResult } from '../api/versions.ts'
 import { createInstance, startInstall, getInstances, syncScan, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, deleteInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
@@ -211,22 +212,50 @@ export default function Instances() {
   const doScan = useCallback(async (dir: string) => {
     if (!dir) { setScannedLocal([]); return }
     setScanning(true)
-
-    let versions: ScannedVersion[] = []
-    try { versions = await scanVersions(dir) }
-    catch {}
-    setScannedLocal(versions)
-
-    // 实例列表请求序号：init 的 getInstances 与 doScan 的 syncScan 并发写同一状态，
-    // 慢请求（如 getRemoteVersions 拖住 Promise.all）后到会用旧快照覆盖新列表，
-    // 导致失效实例记录缺失 → 右键删除被禁用。仅允许最新发起的请求落状态。
+    // 请求序号必须在发请求**之前**取：否则 fast 段返回后、syncScan 之前切目录，
+    // 旧目录的列表会先落到 scannedLocal，与新的列表短暂重叠。
     const reqId = ++instancesReqRef.current
+    const stale = () => reqId !== instancesReqRef.current
+
+    // 第一段（fast）：后端命中扫描缓存的版本直接复用，未命中的先走 JSON 链。73 个实例
+    // 通常在 100ms 量级返回，列表立刻可交互 —— 不用等所有 jar 解完。
+    // 注意：fast 段的结果**不写盘**。JSON 链的 gameVersion 是"猜测值"（可能只是
+    // 目录名），而 syncScan / 后端自动修复都会把它持久化；full 段一旦超时/失败，
+    // 猜测值就会永久留在 instances.json 里污染 Java 选择与联机实例匹配。
+    let refine = false
+    let versions: ScanResult = [] as ScanResult
     try {
-      // 使用 syncScan 将扫描结果同步到后端，返回同步后的实例列表
+      versions = await scanVersions(dir, 'fast')
+      // 插件若整体接管 scanVersions 时拿不到 scanMeta → 不再发 full（由插件自己负责）。
+      refine = versions.scanMeta?.refineRequired === true
+    } catch (e) {
+      // 失败时保留上一份列表、只记日志：一次网络抖动不该把刚渲染好的 73 个实例
+      // 变成"未检测到版本"，更不该触发一次带残留清理的全量 sync。
+      console.error(e)
+      setScanning(false)
+      return
+    }
+    if (!stale()) setScannedLocal(versions)
+    setScanning(false)
+
+    // 第二段（full）：只按需触发 —— 有版本目录还没算过 jar 级探测（首次扫描、刚装好的
+    // 实例）时补算并写缓存。跑完再同步一次，把 gameVersion/loader 校正成 jar 级的值。
+    if (refine) {
+      try {
+        const full = await scanVersions(dir, 'full')
+        if (stale()) return
+        setScannedLocal(full)
+        const instances = await syncScan(dir, full)
+        if (!stale()) setBackedInstances(instances)
+      } catch (e) { console.error(e) }
+      return
+    }
+
+    // 没有待校正的条目 → fast 段拿到的就是已验证（缓存命中）的值，可以安全落盘。
+    try {
       const instances = await syncScan(dir, versions)
-      if (reqId === instancesReqRef.current) setBackedInstances(instances)
-    } catch {}
-    finally { setScanning(false) }
+      if (!stale()) setBackedInstances(instances)
+    } catch (e) { console.error(e) }
   }, [])
 
   useEffect(() => {

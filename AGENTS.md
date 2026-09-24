@@ -19,7 +19,7 @@ External Rust crates are git submodules at the repo root: `qomicex-core-rust/` (
 
 `qomicex-tauri-i18n/` 也是 repo root 的 submodule：前端 i18n 多语言资源仓库（`src/zh-CN/` + `src/en/` TS 模块 + 类型）。启动器 `src/i18n/` 仅保留 Provider/错误映射/类型 re-export，全部语言资源经 `../../qomicex-tauri-i18n/src/index.ts` 导入。**编辑翻译必须改 submodule 内文件**（并在 i18n 仓库单独提交推送），不要在 `src/i18n/` 下建 zh-CN/en 目录。改完 submodule 需 `git submodule update --remote` 拉取最新。
 
-Submodules (recursive checkout): `qomicex-core-rust/`, `qomicex-downloader-rust/`, `qomicex-connector-rust/`, `qomicex-tauri-i18n/`.
+Submodules (recursive checkout): `qomicex-core-rust/`, `qomicex-downloader-rust/`, `qomicex-connector-rust/`, `qomicex-tauri-i18n/`, `Qomicex.Updater/`（外部更新器，release 打包会用到）.
 
 Legacy code (pre-Neo / pre-Rust) is preserved on the `legacy` branch.
 
@@ -62,9 +62,39 @@ pnpm run tauri dev
 
 # Build (tsc then vite build — type errors fail the build)
 pnpm run build
+
+# 质量门禁（push 前必跑，见「工具链」节）
+pnpm run typecheck   # tsc --noEmit
+pnpm run lint        # eslint .（存量见「Lint 现状」）
+pnpm run format:check
 ```
 
 No test framework. Backend API test script: `bash scripts/test-api-filters.sh` (and a `test-api-filters.ps1` twin) against `http://localhost:5000/api`.
+
+## 工具链（Toolchain）
+
+| 层 | 工具 | 配置 | 命令 |
+|---|---|---|---|
+| 前端 | TypeScript 5.8 strict | `tsconfig.json` | `pnpm run typecheck` |
+| 前端 | ESLint 10（flat） | `eslint.config.js` | `pnpm run lint` |
+| 前端 | Prettier 3 | `.prettierrc.json` + `.prettierignore` | `pnpm run format` / `format:check` |
+| 前端 | EditorConfig | `.editorconfig` | 编辑器自动 |
+| 包管理 | pnpm 11（仓库唯一事实来源） | `pnpm-workspace.yaml` + `engines`/`packageManager` | `pnpm install --frozen-lockfile` |
+| Rust | rustfmt / clippy | `rust-toolchain.toml` | `cargo fmt` / `cargo clippy --no-deps -- -D warnings` |
+
+**Rust 工具链被 `rust-toolchain.toml` 钉在 1.95.0**（`dtolnay/rust-toolchain@stable` 装的是 rustup 默认链，本文件覆盖它）。不钉的后果：clippy 每次发版新增 lint，本地/CI 结论漂移、门禁时绿时红。升级需同时改 `rust-toolchain.toml` 与本节。
+
+**Clippy 存量（2026-09 基线，工具链 1.95.0，`cargo clippy --no-deps -- -D warnings`）**：后端 138 条、Tauri 11 条（数字随代码增量浮动）。CI 的 clippy 步骤目前是 advisory（`continue-on-error`），清到 0 后去掉该标记并改为阻断。
+常见分布：`endpoints/connector.rs`（锁守卫 unwrap）、`endpoints/instance.rs`（guard across await）、`endpoints/modpack.rs`（参数过多 10+）、`services/log_analysis.rs`（循环内编译正则）。
+**Lint 现状**：`pnpm run lint` 目前有 63 error / 116 warning 存量（ESLint 初始基线，2026-09）。存量见
+`docs/junsi-dev-docs/4-编码规范/` 之外的阶段 3 清理计划；清理期间 lint 不进 CI 阻断。`no-empty`(31) 对应静默 `catch {}`；`@typescript-eslint/no-explicit-any`(41) 与 `no-console`(23) 为 warning。`react-hooks/v7` 的 compiler 系规则（static-components / use-memo / immutability）暂不启用。
+`src/pages/Settings.tsx:523,568` 与 `src/plugins/plugin-loader.tsx:152` 存在 hook 在非组件函数里调用的历史写法（能跑但违反规则，属阶段 3 待修项）。
+
+**Prettier 现状**：仓库尚未格式化（`src/` 172/181 文件不符）。不要顺手 `pnpm run format`——格式化必须是一次独立的 `style:` 提交，全量重排在阶段 2 之后单独排期。
+
+**ESLint / Prettier 的遍历排除项**：`src-backend/Qomicex.Launcher.Backend.Neo/` 是本地运行时残留，内含一个 NTFS 保留名目录（`D:\Test\.minecraft`），任何递归扫描工具都会 ENOENT——`.gitignore`、`eslint.config.js`、`.prettierignore` 都要显式排除它。
+
+**前端无测试框架**：`playwright` 仅用于 `scripts/harness/` 的插件联调，不是单元测试框架。关键行为测试的引入属阶段 4 之前提，见本仓「生产级化」阶段计划。
 
 ## Rust 测试
 
@@ -78,7 +108,7 @@ No test framework. Backend API test script: `bash scripts/test-api-filters.sh` (
   `cd src-tauri/tests/fixtures/dev-test-wasm-src && cargo build --release --target wasm32-unknown-unknown`，
   把 `target/wasm32-unknown-unknown/release/dev_test_wasm.wasm` 复制为
   `../dev.test.wasm/plugin.wasm`。
-- **Rust 后端**（`src-backend/qomicex-backend/`）：少量单元测试（如 `services/kick.rs` 的重连审核状态机，`cargo test` 全量 21 个）；行为验证走 `bash scripts/test-api-filters.sh`。
+- **Rust 后端**（`src-backend/qomicex-backend/`）：单元测试（如 `services/kick.rs` 的重连审核状态机），`cargo test` 全量 239+ 个（2026-09 基线，实际随新增用例增长）；行为验证走 `bash scripts/test-api-filters.sh`。
 
 ## Conventional Commits
 
@@ -145,7 +175,7 @@ Exception: directory barrels like `src/components/ui` (its `index.ts`) resolve f
 
 ## Backend conventions
 
-- **23 endpoint modules** in `src-backend/qomicex-backend/src/endpoints/` → `api/<name>` routes, assembled in `app.rs` (`build_router`). `main.rs` loads config (`settings.rs`) then serves.
+- **30 endpoint modules** in `src-backend/qomicex-backend/src/endpoints/` → `api/<name>` routes, assembled in `app.rs` (`build_router`). `main.rs` loads config (`settings.rs`) then serves.
 - **Log analysis** (`endpoints/loganalysis.rs` → `api/loganalysis`): `POST /loganalysis/analyze`（body `{logContent}`，逐行/`(?s)` 跨行模式匹配）和 `POST /loganalysis/analyze-crash/{instanceId}`（读 `LaunchTracker` 内存中的 `crash_report`，无则 400 `NO_CRASH_REPORT`；成功后可选上传 mclo.gs）。模式库在 `Resources/error-patterns.json`（44 种），分析引擎 `services/log_analysis.rs`（去重+按 Critical>Error>Warning>Info 排序）。
 - Router: `.nest("/api", ...)` + permissive CORS (`CorsLayer`) + `TraceLayer`; `/api/ping` (in `app.rs`) and `/api/health` (in `system.rs`) liveness probes — the frontend polls `/api/health`. `middleware/not_found.rs` handles 404 (registered before `.layer()` so CORS wraps fallback).
 - Data dir resolution (`settings.rs` `resolve_base_dir`): `QOMICEX_HOME` env → `.qomicex-bootstrap` file (content is the path) → `{LocalAppData}/qomicex-launcher`.

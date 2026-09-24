@@ -20,6 +20,7 @@ pub mod options;
 pub mod plugin;
 pub mod plugin_signature;
 pub mod plugin_store;
+pub mod scan_cache;
 pub mod schematic_assets;
 pub mod trace;
 pub mod translation;

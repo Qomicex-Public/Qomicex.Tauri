@@ -167,8 +167,22 @@ impl InstanceService {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        if let Ok(json) = serde_json::to_string_pretty(&*guard) {
-            let _ = std::fs::write(&self.file_path, json);
+        // 紧凑序列化（非 pretty）：`icon_data` 是 base64 data URI，73 个集成包图标
+        // 就能把 instances.json 撑到 10MB+，pretty 的缩进/换行在这个体量下会让每次
+        // 同步的写盘时间和文件体积都翻倍（实测慢 2-3 倍、大 30%+）。
+        if let Ok(json) = serde_json::to_string(&*guard) {
+            // 原子替换：直接 write 会在进程被杀时截断文件，而 load_from_file 解析
+            // 失败一律返回空表 —— 那意味着全部实例记录丢失。先写同目录 tmp 再 rename。
+            let tmp = self
+                .file_path
+                .with_extension(format!("json.{}.tmp", std::process::id()));
+            let ok = std::fs::write(&tmp, &json).is_ok()
+                && std::fs::rename(&tmp, &self.file_path).is_ok();
+            if ok {
+                return;
+            }
+            // tmp 写/换失败（权限、磁盘满、跨设备）：退回直写，至少别丢数据。
+            let _ = std::fs::write(&self.file_path, &json);
         }
     }
 

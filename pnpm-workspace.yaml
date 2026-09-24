@@ -1,9 +1,11 @@
 packages:
   - 'packages/*'
+# esbuild 的平台二进制由 optionalDependencies(@esbuild/<platform>) 提供，无需 postinstall。
+# 两个构建脚本开关必须保持一致——旧配置里 allowBuilds=false 与
+# onlyBuiltDependencies=[esbuild] 互相矛盾，新克隆机行为不可预期。
 allowBuilds:
-  esbuild: false
-minimumReleaseAgeExclude:
-  - '@qomicex/plugin-ui@0.1.0'
-onlyBuiltDependencies: '["esbuild"]'
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild
 overrides:
   '@qomicex/cli': link:packages/qomicex-cli

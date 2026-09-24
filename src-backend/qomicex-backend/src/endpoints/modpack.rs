@@ -574,7 +574,14 @@ async fn multimc_import_impl(
     inst.max_memory = meta.max_memory.unwrap_or(4096);
     inst.game_dir = game_dir.to_string_lossy().into_owned();
     inst.version_isolation = Some(version_isolation);
-    inst.icon_data = meta.icon_data.clone();
+    // 归一化到缩略图尺寸：否则 instances.json 与 /api/instance 响应里存/发的还是
+    // 512x512 的全尺寸 base64（73 个实例就是 10MB+，每次 GET /api/instance 全量重传）。
+    // 注意这**只**影响实例记录：落盘的 `versions/{name}/icon.png` 仍写原图
+    // （见本函数末尾的 write_pack_icon），原图是用户资产，扫描时会自行缩小。
+    inst.icon_data = meta
+        .icon_data
+        .as_deref()
+        .map(crate::util::pcl_icon::normalize_icon_data_uri);
     inst.modpack_name = Some(name.clone());
     let created = s.instance.create(inst);
     drop(_guard);
@@ -1448,7 +1455,11 @@ impl ModpackServiceData {
         instance.modpack_version = req.modpack_version.clone();
         instance.modpack_author = req.modpack_author.clone();
         instance.modpack_summary = req.modpack_summary.clone();
-        instance.icon_data = req.icon_data.clone();
+        // 同 MultiMC 导入：只缩小实例记录里的 icon_data，落盘的原图 icon.png 不受影响。
+        instance.icon_data = req
+            .icon_data
+            .as_deref()
+            .map(crate::util::pcl_icon::normalize_icon_data_uri);
         let created = self.instance.create(instance);
         let instance_id = created.id.clone();
         let version_dir_name = created.name.clone();
