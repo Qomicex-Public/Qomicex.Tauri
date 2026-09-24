@@ -24,6 +24,7 @@ use crate::services::instance::InstanceService;
 use crate::services::instance_group::InstanceGroupService;
 use crate::services::launch_tracker::LaunchTracker;
 use crate::services::plugin::{FileAuthService, PluginGatewayClient, PluginStore};
+use crate::services::scan_cache::VersionScanCache;
 use crate::services::trace::{
     init_file_log, FileLog, LogLevelManager, TraceBufferStore, TraceDumpService,
 };
@@ -99,6 +100,9 @@ pub struct AppState {
     pub curseforge_fetch: Arc<CurseForgeVersionFetchService>,
     /// 世界预览会话（存档地图瓦片渲染）。
     pub world_view: Arc<WorldViewService>,
+    /// 版本扫描指纹缓存（`/versions/scan` 的 gameVersion/loader 探测结果，
+    /// 按文件指纹复用，避免每次进实例页都全量解析 client jar）。
+    pub scan_cache: Arc<VersionScanCache>,
 }
 
 impl AppState {
@@ -217,6 +221,7 @@ impl AppState {
             settings_now.curseforge_fetch_config(),
         );
         let world_view = Arc::new(WorldViewService::new());
+        let scan_cache = Arc::new(VersionScanCache::new());
 
         Self {
             core,
@@ -243,6 +248,7 @@ impl AppState {
             settings,
             curseforge_fetch,
             world_view,
+            scan_cache,
         }
     }
 
