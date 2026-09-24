@@ -28,10 +28,6 @@ export function collectDir(root: string, prefix: string): { name: string; data: 
   return out
 }
 
-export function assertProjectRoot(cwd: string): string {
-  if (cwd === '' || cwd === undefined) return ''
-  return cwd
-}
 
 /** 从 cwd 逐级向上查找仓库根下的 scripts/harness/run.mjs；找不到返回 null。 */
 export function findHarnessStart(cwd: string): string | null {
