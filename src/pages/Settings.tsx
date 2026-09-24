@@ -1354,6 +1354,16 @@ export default function Settings() {
                 }
               />
               <SettingRow
+                label={t('settings.launcher.scanSkipJarProbe')}
+                description={t('settings.launcher.scanSkipJarProbeDesc')}
+                control={
+                  <Switch
+                    checked={settings.scanSkipJarProbe === true}
+                    onCheckedChange={(c) => update('scanSkipJarProbe', c === true)}
+                  />
+                }
+              />
+              <SettingRow
                 label={t('settings.launcher.fileNaming')}
                 description={t('settings.launcher.fileNamingDesc')}
                 control={

@@ -158,7 +158,7 @@ async fn scan(
     State(state): State<SharedState>,
     Query(q): Query<ScanQuery>,
 ) -> ApiResult<Json<ScanVersionsResponse>> {
-    let full_mode = match q.mode.as_deref() {
+    let requested_full = match q.mode.as_deref() {
         None | Some("fast") => false,
         Some("full") => true,
         Some(other) => {
@@ -169,9 +169,21 @@ async fn scan(
             ));
         }
     };
+    // 用户设置「跳过 jar 级探测」优先于请求参数：开启后 mode=full 静默降级为 fast，
+    // refineRequired 恒为 false（否则前端会反复发注定被降级的 full 请求）。
+    let skip_jar = state
+        .settings
+        .read()
+        .await
+        .scan_skip_jar_probe
+        .unwrap_or(false);
+    if skip_jar && requested_full {
+        tracing::debug!("scan: skip_jar_probe enabled, downgrading mode=full to fast");
+    }
+    let full_mode = requested_full && !skip_jar;
     let game_dir = q.game_dir.clone();
     let state = state.clone();
-    tokio::task::spawn_blocking(move || scan_impl(&state, &game_dir, full_mode))
+    tokio::task::spawn_blocking(move || scan_impl(&state, &game_dir, full_mode, skip_jar))
         .await
         .map_err(|e| ApiError::internal(format!("scan task failed: {e}")))?
 }
@@ -191,6 +203,7 @@ fn scan_impl(
     state: &SharedState,
     game_dir: &str,
     full_mode: bool,
+    skip_jar: bool,
 ) -> ApiResult<Json<ScanVersionsResponse>> {
     let abs_dir =
         std::path::absolute(game_dir).unwrap_or_else(|_| Path::new(game_dir).to_path_buf());
@@ -309,7 +322,9 @@ fn scan_impl(
         no_json_dirs: Vec::new(),
         // fast 段有未命中缓存的版本 → 它们的 gameVersion 只是 JSON 链的猜测，
         // 前端应再发 `mode=full` 用 jar 级结果回填。
-        refine_required: cache_misses > 0 && !full_mode,
+        // `skip_jar` 打开时不能要求 refine：请求里的 `mode=full` 已被静默降级，
+        // 恒为 true 的 refineRequired 只会让前端反复发注定被降级的 full 扫描。
+        refine_required: cache_misses > 0 && !full_mode && !skip_jar,
     }))
 }
 

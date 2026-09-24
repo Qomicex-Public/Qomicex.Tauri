@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -188,6 +188,15 @@ struct LaunchResultDto {
 // Router
 // =====================================================================
 
+/// `/instance/sync-scan` 的请求体上限。
+///
+/// 请求体会把当前 gameDir 下全部实例的 `iconData`（base64 data URI）回传：
+/// axum 对 `Json` 提取器的默认上限只有 2MB，实测 73 个实例 + 512x512 图标就是
+/// 11.7MB，直接 413 —— 而前端 `catch {}` 会把它吞掉，表现为实例分组/元数据
+/// 静默不更新。图标已在 `util::pcl_icon` 缩到 128px（约 34KB base64/个），
+/// 取 64MB 覆盖数百个实例的情况，同时保留对异常大请求的防护。
+const SYNC_SCAN_MAX_BYTES: usize = 64 * 1024 * 1024;
+
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/instance", get(list_instances).post(create_instance))
@@ -215,8 +224,12 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/install/pause", post(install_pause))
         .route("/instance/{id}/install/resume", post(install_resume))
         .route("/instance/{id}/install/cancel", post(install_cancel))
-        // 实例扫描同步
-        .route("/instance/sync-scan", post(sync_scan))
+        // 实例扫描同步。请求体会把全部实例的 iconData（base64 data URI）回传，
+        // 默认 2MB 的 axum body 上限在几十个实例时就爆（413），必须显式放大。
+        .route(
+            "/instance/sync-scan",
+            post(sync_scan).route_layer(DefaultBodyLimit::max(SYNC_SCAN_MAX_BYTES)),
+        )
         // 实例自定义分组
         .route("/instance-groups", get(list_groups).post(create_group))
         .route(

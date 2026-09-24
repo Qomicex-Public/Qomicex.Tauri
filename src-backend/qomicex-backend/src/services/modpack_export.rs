@@ -338,9 +338,12 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
                 if !resolved.contains_key(&e.rel) {
                     continue;
                 }
-                if let Ok(bytes) = std::fs::read(&e.abs) {
-                    mod_sha1s.insert(e.rel.clone(), sha1_hex(&bytes));
-                    mod_sizes.insert(e.rel.clone(), bytes.len() as u64);
+                if let (Ok(hash), Ok(size)) = (
+                    sha1_file_hex(&e.abs),
+                    std::fs::metadata(&e.abs).map(|m| m.len()),
+                ) {
+                    mod_sha1s.insert(e.rel.clone(), hash);
+                    mod_sizes.insert(e.rel.clone(), size);
                 }
             }
             write_qml_index(
@@ -689,9 +692,44 @@ async fn cf_reverse_lookup<P: FnMut(ExportProgress)>(
     Ok(resolved)
 }
 
+/// 一次性（整包在内存）计算 SHA-1 的小写十六进制串。
+///
+/// 只保留给测试当参照物：两条导出哈希路径都已换成流式的 [`sha1_file_hex`]，
+/// 保留它整天价 `fs::read` 会诱使后人再走一遍"先读整个 jar 再哈希"的老路。
+#[cfg(test)]
 fn sha1_hex(data: &[u8]) -> String {
     let digest = Sha1::digest(data);
     digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 流式计算文件 SHA-1 的小写十六进制串。
+///
+/// 与 `Sha1::digest(fs::read(path))` 等价，但不把整个 jar 读进堆：
+/// 整合包导出的反查阶段要哈希几百个 mod，单个动辄几 MB，整包读会让峰值内存
+/// 跟着最大的 mod 线性涨。`sha1` 0.10 在 x86/x86_64 上默认走 SHA-NI
+/// （`compress/x86.rs` + cpufeatures 运行时分发，实测 ~2.2 GB/s，
+/// 软件实现 ~724 MB/s），哈希本身几乎免费，所以瓶颈是读盘与分配 ——
+/// 用固定缓冲喂 `update` 才能让硬件路径真正吃到带宽。
+fn sha1_file_hex(path: &std::path::Path) -> std::io::Result<String> {
+    use std::io::Read as _;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha1::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => hasher.update(&buf[..n]),
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(40);
+    for b in digest {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{b:02x}");
+    }
+    Ok(out)
 }
 
 async fn mr_reverse_lookup<P: FnMut(ExportProgress)>(
@@ -708,9 +746,9 @@ async fn mr_reverse_lookup<P: FnMut(ExportProgress)>(
         if cancelled.load(Ordering::Relaxed) {
             return Err(EXPORT_CANCELLED_MSG.to_string());
         }
-        let bytes =
-            std::fs::read(&e.abs).map_err(|err| format!("读取 mod 失败 {}: {err}", e.rel))?;
-        sha1s.push(sha1_hex(&bytes));
+        let hash =
+            sha1_file_hex(&e.abs).map_err(|err| format!("读取 mod 失败 {}: {err}", e.rel))?;
+        sha1s.push(hash);
         progress(ExportProgress {
             stage: "lookup",
             percent: 15.0 * (i as f64 + 1.0) / n,
@@ -1094,9 +1132,50 @@ mod tests {
 
     use super::{
         cf_fingerprint, collect_export_tree, filter_by_include, flatten_tree, meta_override,
-        ExportTreeNode,
+        sha1_file_hex, sha1_hex, ExportTreeNode,
     };
 
+    /// 流式 `sha1_file_hex` 必须与整包 `sha1_hex` 逐字节一致。
+    /// 这是整合包导出把反查阶段改成流式读取的正确性底线：Modrinth 按 sha1
+    /// 反查版本，摘要差一个字符就会整个 mod 匹配不上、被降级打进 overrides。
+    #[test]
+    fn sha1_file_hex_matches_oneshot_digest() {
+        let root = temp_root("sha1-stream");
+        // 覆盖 0 字节、小于缓冲、跨多个 64KiB 缓冲、非对齐边界
+        let cases: [(usize, u8); 4] = [
+            (0, 0),
+            (1024, 0x5A),
+            (64 * 1024 * 3 + 7, 0x33),
+            (65_537, 0x11),
+        ];
+        for (idx, (len, fill)) in cases.into_iter().enumerate() {
+            let path = root.join(format!("blob-{idx}.bin"));
+            std::fs::write(&path, vec![fill; len]).unwrap();
+            let streaming = sha1_file_hex(&path).expect("streaming hash");
+            let oneshot = sha1_hex(&std::fs::read(&path).unwrap());
+            assert_eq!(
+                streaming, oneshot,
+                "size {len} fill {fill:#04x}: streaming {streaming} != oneshot {oneshot}"
+            );
+            assert_eq!(streaming.len(), 40, "sha1 hex must be 40 chars");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 空文件与不存在文件的语义：空文件仍是合法摘要，不存在则报错。
+    #[test]
+    fn sha1_file_hex_empty_and_missing() {
+        let root = temp_root("sha1-edge");
+        let empty = root.join("empty.bin");
+        std::fs::write(&empty, b"").unwrap();
+        // SHA-1("") = da39a3ee5e6b4b0d3255bfef95601890afd80709
+        assert_eq!(
+            sha1_file_hex(&empty).unwrap(),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
+        assert!(sha1_file_hex(&root.join("nope.bin")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
     /// 测试用临时根目录（按进程 id 隔离，避免并行测试冲突）。
     fn temp_root(tag: &str) -> PathBuf {
         let dir =
@@ -1224,9 +1303,11 @@ mod tests {
 
     #[test]
     fn cf_fingerprint_is_uint32_range() {
-        // CF API 的 fingerprints 字段为 UInt32（实测 400：超出 2^32-1 报错）
+        // CF API 的 fingerprints 字段为 UInt32（实测 400：超出 2^32-1 报错）。
+        // 上界由返回类型 u32 保证，这里只验证非零 + 不同输入给出不同指纹
+        // （这正是把整包读成 u32 指纹的意义）。
         let fp = cf_fingerprint(&[0xAB; 777]);
-        assert!(fp <= u32::MAX);
         assert!(fp > 0);
+        assert_ne!(fp, cf_fingerprint(&[0xAB; 778]));
     }
 }

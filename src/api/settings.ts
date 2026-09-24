@@ -90,6 +90,10 @@ export interface AppSettings {
   ignoreSslCert?: boolean
   /** 强制所有下载用 HTTP/1.1 并行连接；false（默认）= 按来源自动（Modrinth 用并行，其余用 HTTP/2） */
   http1Parallel: boolean
+  /** 跳过实例扫描的 JAR 级探测；false（默认）= mode=full 会打开 jar 读版本号（最准）。
+   *  true = 一律按 JSON 链推断，不再打开任何 jar（大实例目录冷扫更快，但 JSON 缺字段的
+   *  整合包 gameVersion 可能退化成 inheritsFrom/目录名）。仅影响 /versions/scan。 */
+  scanSkipJarProbe?: boolean
   /** 资源文件下载命名格式（ENH-10）：cn-name-ver / name-cn-ver / cn-name / name-ver / name */
   fileNaming?: string
 }

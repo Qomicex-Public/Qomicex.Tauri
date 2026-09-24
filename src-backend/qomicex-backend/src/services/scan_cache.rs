@@ -440,7 +440,11 @@ mod tests {
         svc.put("C:/mc", "keep", entry("1.0.0"));
         svc.put("C:/mc", "drop", entry("2.0.0"));
         svc.prune_versions("C:/mc", ["keep"].into_iter());
-        assert!(svc.get("C:/mc", "keep", &entry("x")).is_none() || true);
+        // keep 的条目还在，但只要 json 指纹变了就必须读不到 —— 缓存防的正是这种情况。
+        // （旧写法 `is_none() || true` 恒真，什么都没验。）
+        let mut stale = entry("1.0.0");
+        stale.json = (1, None);
+        assert!(svc.get("C:/mc", "keep", &stale).is_none());
         // 直接用 map 断言：keep 还在，drop 没了
         let map = svc.map();
         assert!(map.get("C:/mc").unwrap().contains_key("keep"));
