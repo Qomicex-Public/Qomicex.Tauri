@@ -1,0 +1,24 @@
+# 构建产物与依赖
+node_modules/
+**/dist/
+**/target/
+**/.git/
+
+# 本地运行时数据 / 第三方大目录
+.shots-home/
+.minecraft/
+build-test/
+plugins-dev/
+promo-video/
+video-assets/
+src-backend/Qomicex.Launcher.Backend.Neo/
+
+# 锁文件与压缩包
+pnpm-lock.yaml
+package-lock.json
+*.tgz
+*.zip
+
+# 文档与静态资源
+docs/
+public/
