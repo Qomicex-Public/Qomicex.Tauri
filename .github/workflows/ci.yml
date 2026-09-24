@@ -18,8 +18,6 @@ jobs:
           git config --global url."https://x-access-token:${QOMICEX_PAT}@github.com/Qomicex-Public/".insteadOf "git@github.com:Qomicex-Public/"
           git submodule update --init --depth 1 qomicex-tauri-i18n
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -123,8 +121,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
