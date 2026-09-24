@@ -1,4 +1,4 @@
-# ADR-057：Settings 页重构为 Split View + List + Switch
+# ADR-061：Settings 页重构为 Split View + List + Switch
 
 | 属性 | 内容 |
 |---|---|
