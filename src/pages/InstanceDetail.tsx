@@ -606,7 +606,10 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         try {
           const p = await getModsProgress(instanceId)
           if (p) setLoadProgress(p)
-        } catch {}
+        } catch {
+          // 300ms 轮询：单个周期失败就保留上一次的进度，下一周期还会重试，
+          // 属预期降级路径。刻意不记日志——否则后端瞬时抖动会让控制台每 300ms 刷一条。
+        }
       }, 300)
       const data = await getModsMetadata(instanceId)
       clearInterval(pollId)
@@ -2152,7 +2155,10 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
         try {
           const state = await pingServer(instanceId, s.ip)
           setPingStates(p => ({ ...p, [s.ip]: state }))
-        } catch {}
+        } catch {
+          // 服务器离线/超时会走到这里，属预期情况：单个失败没有可展示的错误位置，
+          // 逐个提示又会一次弹出 N 条。这里不处理，仅注释说明。
+        }
       })
       await Promise.allSettled(pingTasks)
     }
@@ -2171,7 +2177,11 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
       try {
         const games = await getLanGames(instanceId)
         setLanGames(games)
-      } catch {}
+      } catch {
+        // 局域网浏览失败时列表保持为空，与「局域网内确实没有游戏」无法区分。
+        // 要改成 notify 提示需要新增 i18n key，而翻译词条位于 i18n submodule，
+        // 本次不跨仓改动，故先留注释说明。
+      }
     }
     fetchLan()
   }, [loading, instanceId])
@@ -2593,6 +2603,7 @@ function GameListSettingEditor({ name, value, onChange, t }: {
 }
 
 function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { instanceId: string; refreshKey: number; onRefresh: () => void }) {
+  const { notify } = useMessageBox()
   const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [settings, setSettings] = useState<GameSettingDto[]>([])
@@ -2603,9 +2614,14 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
   const load = useCallback(async () => {
     setLoading(true)
     try { const data = await getGameSettings(instanceId); setSettings(data) }
-    catch { setSettings([]) }
+    catch (e) {
+      setSettings([])
+      // 读取失败会被静默显示成「暂无游戏设置」，与实例本就没有设置项无法区分，
+      // 用户会以为这个页面坏了；这里必须把失败原因说出来。
+      notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+    }
     setLoading(false)
-  }, [instanceId])
+  }, [instanceId, notify])
 
   useEffect(() => { load() }, [load, refreshKey])
 
@@ -2621,13 +2637,18 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
   const handleChange = useCallback(async (name: string, value: string) => {
     setSettings(prev => prev.map(s => s.name === name ? { ...s, currentValue: value } : s))
     setSaving(prev => new Set(prev).add(name))
-    try { await setGameSetting(instanceId, name, value) } catch {}
+    try { await setGameSetting(instanceId, name, value) }
+    catch (e) {
+      // 写失败的代价最大：上面那行已把新值渲染到界面上，若无提示用户会以为已保存，
+      // 刷新后才发现配置没变。这里给出失败原因，但不回滚本地值（见报告待确认项）。
+      notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+    }
     setSaving(prev => {
       const next = new Set(prev)
       next.delete(name)
       return next
     })
-  }, [instanceId])
+  }, [instanceId, notify])
 
   const parseRange = (vv: string): [number, number, number, boolean] | null => {
     const m = vv.match(/^(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)$/)
@@ -2941,8 +2962,11 @@ export default function InstanceDetailPage() {
       const updated = await updateInstance(id, { customGroupIds: next })
       setInstance(updated)
       cacheSet(`api-instance-${id}`, updated)
-    } catch {}
-  }, [id, instance])
+    } catch (e) {
+      // 分组变更写失败时本地未改动，用户点击看起来毫无反应；给出原因。
+      notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+    }
+  }, [id, instance, notify])
 
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
@@ -3129,8 +3153,11 @@ export default function InstanceDetailPage() {
       await deleteInstance(id)
       cacheInvalidate('api-')
       navigate('/instances')
-    } catch {}
-  }, [id, instance, navigate])
+    } catch (e) {
+      // 删不掉时页面不会跳转，用户停在原处且不知道原因。
+      notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+    }
+  }, [id, instance, navigate, notify])
 
   const handleDelete = useCallback(() => {
     setDeleteConfirmOpen(true)
@@ -3146,8 +3173,12 @@ export default function InstanceDetailPage() {
         await setDefaultInstance(id)
         setIsDefault(true)
       }
-    } catch {}
-  }, [id, isDefault])
+    } catch (e) {
+      // isDefault 只在成功后更新，所以界面不会说谎；但点击无任何反馈，
+      // 用户无法区分「没点上」还是「失败了」。
+      notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+    }
+  }, [id, isDefault, notify])
 
   const update = useCallback((field: string, value: unknown) => {
     setForm((f) => {
