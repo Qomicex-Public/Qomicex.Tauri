@@ -1,0 +1,97 @@
+name: OpenCodeReview PR Review
+
+# 自动审查 PR：opened/synchronize/reopened 时触发；评论 /open-code-review 手动重跑
+#
+# 需要在 Settings -> Secrets and variables -> Actions 配置：
+#   secret   OCR_LLM_URL             LLM API 地址，如 https://api.anthropic.com
+#   secret   OCR_LLM_AUTH_TOKEN      LLM API Key
+#   variable OCR_LLM_MODEL          模型名，如 claude-opus-4-6
+#   variable OCR_LLM_USE_ANTHROPIC  Anthropic 传 'true'，OpenAI 兼容端点传 'false'
+#
+# pull_request_target 让 fork PR 也能拿到 secrets；官方 action 只读 diff、
+# 不执行 PR 代码，安全。每次审查消耗 LLM token。
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# 同一 PR 的新审查取消旧审查，避免级联刷屏；
+# 不匹配的评论落到 noop 组，立即跳过不打扰跑着的审查。
+concurrency:
+  group: >-
+    ${{
+    (
+      github.event_name == 'pull_request_target'
+      || (
+        github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && github.event.comment.user.type != 'Bot'
+        && (
+          github.event.comment.author_association == 'MEMBER'
+          || github.event.comment.author_association == 'OWNER'
+          || github.event.comment.author_association == 'COLLABORATOR'
+        )
+        && (
+          startsWith(github.event.comment.body, '/open-code-review')
+          || startsWith(github.event.comment.body, '@open-code-review')
+        )
+      )
+    )
+    && format('ocr-{0}', github.event.pull_request.number || github.event.issue.number)
+    || format('noop-{0}', github.run_id)
+    }}
+  cancel-in-progress: true
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 仅 PR 事件，或人类维护者发起的触发评论
+    if: |
+      github.event_name == 'pull_request_target'
+      || (
+        github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && github.event.comment.user.type != 'Bot'
+        && (
+          github.event.comment.author_association == 'MEMBER'
+          || github.event.comment.author_association == 'OWNER'
+          || github.event.comment.author_association == 'COLLABORATOR'
+        )
+        && (
+          startsWith(github.event.comment.body, '/open-code-review')
+          || startsWith(github.event.comment.body, '@open-code-review')
+        )
+      )
+    steps:
+      # issue_comment 没有顶层 pull_request 载荷，需解析 base/head 供审查
+      - name: Get PR context
+        id: pr-context
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.issue.number;
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            core.setOutput('base_ref', pullRequest.base.ref);
+            core.setOutput('head_sha', pullRequest.head.sha);
+
+      - name: Run OpenCodeReview
+        uses: alibaba/open-code-review@main
+        with:
+          llm_url: ${{ secrets.OCR_LLM_URL }}
+          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          llm_model: ${{ vars.OCR_LLM_MODEL }}
+          llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}
+          # pull_request_target 时 action 自行解析，issue_comment 用上面拿到的 refs
+          base_ref: ${{ steps.pr-context.outputs.base_ref }}
+          head_sha: ${{ steps.pr-context.outputs.head_sha }}
