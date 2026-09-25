@@ -20,9 +20,9 @@ jobs:
         working-directory: packages/plugin-ui
     steps:
       - uses: actions/checkout@v7
+      # 不传 version：pnpm 版本由 package.json 的 packageManager 决定。
+      # 两者同时声明会让 pnpm/action-setup 报 ERR_PNPM_BAD_PM_VERSION 而失败。
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'

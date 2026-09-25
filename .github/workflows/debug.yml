@@ -205,8 +205,6 @@ jobs:
         with: { targets: x86_64-pc-windows-msvc }
       - uses: swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
@@ -302,8 +300,6 @@ jobs:
         with: { targets: aarch64-pc-windows-msvc }
       - uses: swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
@@ -399,8 +395,6 @@ jobs:
         with: { targets: x86_64-unknown-linux-gnu }
       - uses: swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: |
@@ -495,8 +489,6 @@ jobs:
         with: { targets: aarch64-unknown-linux-gnu }
       - uses: swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: |
@@ -688,8 +680,6 @@ jobs:
         with: { targets: aarch64-apple-darwin }
       - uses: swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
@@ -803,8 +793,6 @@ jobs:
         with: { targets: x86_64-apple-darwin }
       - uses: swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
