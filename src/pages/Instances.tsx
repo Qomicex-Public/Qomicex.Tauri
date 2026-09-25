@@ -484,8 +484,11 @@ export default function Instances() {
           const result = await autoSelectDownloadSource()
           downloadSource = result.id
         } catch {
-          // 自动测速选源失败时回退到 settings.downloadSource / 默认源，属合理降级；
-          // 此处若弹提示会打断安装流程，故仅注释说明不处理。
+          // 自动测速选源失败时回退到 settings.downloadSource（用户手动选过的源）/
+          // 默认源——那本身就是有效配置，属合理降级。
+          // 有意不弹提示：若随后安装也用不了这个源，失败会经下载任务的 error 在
+          // 下载中心暴露；若安装成功，说明源可用，选源失败只是没拿到最优解。
+          // 此处再弹一条只会与任务错误重复打扰。需要排查时看控制台即可。
         }
       }
 
