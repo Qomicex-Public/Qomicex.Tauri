@@ -27,13 +27,21 @@ function load(key: string): JavaRuntime[] {
 function saveScanned() {
   try {
     localStorage.setItem(SCANNED_KEY, JSON.stringify(scannedRuntimes))
-  } catch {}
+  } catch (e) {
+    // localStorage 在无痕/隐私上下文或被禁用时抛异常，超配额时抛 QuotaExceededError。
+    // 失败只意味着缓存没写进去（刷新后需重扫），不阻断调用方，但不能无声——
+    // 否则表现为「扫描结果莫名不见了」且无从排查。
+    console.warn('保存 Java 扫描缓存失败：', e)
+  }
 }
 
 function saveCustom() {
   try {
     localStorage.setItem(CUSTOM_KEY, JSON.stringify(customRuntimes))
-  } catch {}
+  } catch (e) {
+    // 同上：自定义 Java 运行时会因此不落盘，重启后从界面消失；留日志以便定位。
+    console.warn('保存自定义 Java 运行时缓存失败：', e)
+  }
 }
 
 function emitChange() {
@@ -90,7 +98,11 @@ export function clearRuntimes() {
   try {
     localStorage.removeItem(SCANNED_KEY)
     localStorage.removeItem(CUSTOM_KEY)
-  } catch {}
+  } catch (e) {
+    // 清不掉则重启后旧的 Java 运行时又会回来，用户看到「清除了却仍在」；
+    // 不阻断内存中的清理结果，但必须留下线索。
+    console.warn('清除 Java 运行时缓存失败：', e)
+  }
   emitChange()
 }
 
@@ -110,7 +122,13 @@ export async function loadCustomRuntimes(): Promise<JavaRuntime[]> {
     customRuntimes = [...list]
     saveCustom()
     emitChange()
-  } catch {}
+  } catch (e) {
+    // 不 rethrow：调用方（DownloadCenter.tsx:181/193/317）以无 catch 的方式调用
+    // refreshCustomRuntimes()，抛出去会变成 unhandled rejection 并触发全局错误处理。
+    // 失败时 customRuntimes 保持为空，与「本来就没有自定义运行时」在 UI 上无法区分，
+    // 因此这里必须留下日志。注意 customLoaded 已被置 true，本次启动内不会自动重试。
+    console.error('加载自定义 Java 运行时失败：', e)
+  }
   return customRuntimes
 }
 
