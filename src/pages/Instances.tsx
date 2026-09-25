@@ -101,6 +101,17 @@ function autoInstanceName(gameVersion: string, loader: string, loaderVersion: st
   return name
 }
 
+/** 实例管理页视图模式（localStorage，键名规范同 qomicex:mods-view-mode）：网格 / 列表 */
+const INSTANCE_VIEW_KEY = 'qomicex:instances-view-mode'
+const REMOTE_VIEW_KEY = 'qomicex:remote-versions-view-mode'
+
+function loadViewMode(key: string): 'grid' | 'list' {
+  try { return localStorage.getItem(key) === 'list' ? 'list' : 'grid' } catch { return 'grid' }
+}
+function saveViewMode(key: string, mode: 'grid' | 'list') {
+  try { localStorage.setItem(key, mode) } catch { /* 忽略隐私模式写入失败 */ }
+}
+
 function loadDirs(): ManagedDir[] {
   try { return JSON.parse(localStorage.getItem('qomicex-directories') || '[]') } catch { return [] }
 }
@@ -185,8 +196,17 @@ export default function Instances() {
   const [versionSearch, setVersionSearch] = useState('')
   const [remoteCategory, setRemoteCategory] = useState('all')
   const [remoteSort, setRemoteSort] = useState('recommended')
-  const [remoteViewMode, setRemoteViewMode] = useState<'grid' | 'list'>('grid')
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [remoteViewMode, setRemoteViewMode] = useState<'grid' | 'list'>(() => loadViewMode(REMOTE_VIEW_KEY))
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => loadViewMode(INSTANCE_VIEW_KEY))
+  // 视图模式切换时同步持久化，页面导航/刷新/重进页面后保持用户选择。
+  const changeViewMode = useCallback((mode: 'grid' | 'list') => {
+    setViewMode(mode)
+    saveViewMode(INSTANCE_VIEW_KEY, mode)
+  }, [])
+  const changeRemoteViewMode = useCallback((mode: 'grid' | 'list') => {
+    setRemoteViewMode(mode)
+    saveViewMode(REMOTE_VIEW_KEY, mode)
+  }, [])
   const [filterType, setFilterType] = useState('all')
   const [groups, setGroups] = useState<InstanceGroup[]>([])
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
@@ -801,7 +821,7 @@ export default function Instances() {
               ))}
             </Select>
 
-            <button onClick={() => setRemoteViewMode(remoteViewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', remoteViewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
+            <button onClick={() => changeRemoteViewMode(remoteViewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', remoteViewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
               <MorphIcon icon={remoteViewMode === 'grid' ? GripData : ListData} className="h-3.5 w-3.5" spring="snappy" reducedMotion="user" />
             </button>
           </div>
@@ -1391,7 +1411,7 @@ export default function Instances() {
             <FolderPlus className="h-3.5 w-3.5" />
           </Button>
         </Tooltip>
-        <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-background text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', viewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
+        <button onClick={() => changeViewMode(viewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-background text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', viewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
           <MorphIcon icon={viewMode === 'grid' ? GripData : ListData} className="h-3.5 w-3.5" spring="snappy" reducedMotion="user" />
         </button>
       </div>
