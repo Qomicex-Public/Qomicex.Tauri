@@ -483,7 +483,10 @@ export default function Instances() {
         try {
           const result = await autoSelectDownloadSource()
           downloadSource = result.id
-        } catch {}
+        } catch {
+          // 自动测速选源失败时回退到 settings.downloadSource / 默认源，属合理降级；
+          // 此处若弹提示会打断安装流程，故仅注释说明不处理。
+        }
       }
 
       startInstall(instance.id, data.loader, data.loaderVersion, selectedAddons.length > 0 ? selectedAddons : undefined, threads, versionIsolation, downloadSource, downloadTimeout).catch((e) => {
@@ -643,7 +646,10 @@ export default function Instances() {
         await setDefaultInstance(inst.id)
         setDefaultInstanceId(inst.id)
       }
-    } catch {}
+    } catch (e) {
+      // 切换默认实例失败时界面不更新，用户看到默认标识没变但不知道为何。
+      notify(e instanceof ApiError ? e.displayMessage : t('dialogs.common.unknownError'), 'error')
+    }
   }
 
   const versionTypeMap = useMemo(() => {
@@ -1124,7 +1130,10 @@ export default function Instances() {
     try {
       const updated = await updateInstance(inst.id, { customGroupIds: next } as Partial<CreateInstanceRequest>)
       setBackedInstances(prev => prev.map(i => i.id === updated.id ? { ...i, customGroupIds: updated.customGroupIds } : i))
-    } catch {}
+    } catch (e) {
+      // 与上面分组保存共用同一条失败提示路径
+      notifyGroupError('save', e)
+    }
   }
 
   return (

@@ -157,7 +157,11 @@ function AppContent() {
         if (!getRuntimes().some(r => r.state === 'Valid')) {
           alert(t('common.javaRuntimeRequired'), t('common.javaRuntimeRequiredTitle'))
         }
-      } catch {}
+      } catch (e) {
+        // 引导失败时下面那句「缺少 Java」 alert 不会出现，用户卡在向导前；
+        // 这里用 console 而非 alert——引导期连弹两个对话框会把窗口挡死。
+        console.error('Java 运行时引导失败：', e)
+      }
     })()
   }, [backendState, settingsReady, showWizard, alert])
 
@@ -183,7 +187,10 @@ function AppContent() {
           try {
             const s = JSON.parse(snooze)
             if (s.key === `${channel}:${plan.version}` && s.until > Date.now()) return
-          } catch {}
+          } catch {
+            // localStorage 里的 snooze 值是本地写入的，损坏/被改格式时按「未延迟」处理即可，
+            // 静默回退是正确语义，这里仅说明为何可以不处理。
+          }
         }
 
         setPendingUpdate(plan)
