@@ -2178,17 +2178,19 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
         const games = await getLanGames(instanceId)
         setLanGames(games)
       } catch (e) {
-        // 局域网浏览失败时列表保持为空，与「局域网内确实没有游戏」在 UI 上无法区分。
-        // 有意只记日志而不弹提示：局域网游戏是辅助信息（主服务器列表的失败已有
-        // servers.loadFailed 提示），此处再弹一条会与之叠加；而准确文案需要在 i18n
-        // submodule 新增 key——该 submodule 当前检出在未推送、无 upstream 的特性分支上，
-        // 改动它会让 CI 无法检出对应 SHA，故本仓不动它。
-        // 控制台保留完整错误，便于排查「局域网里明明有游戏却看不到」。
-        console.error('获取局域网游戏列表失败：', e)
+        // 局域网浏览失败时列表保持为空，与「局域网内确实没有游戏」在 UI 上无法区分，
+        // 用户会以为局域网里确实没有游戏。这里给出失败原因。
+        // 文案结构与本 tab 主列表的 loadFailed 保持一致（见 servers.lanLoadFailed）。
+        notify(
+          t('instanceDetail.servers.lanLoadFailed') +
+            ': ' +
+            (e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError')),
+          'error',
+        )
       }
     }
     fetchLan()
-  }, [loading, instanceId])
+  }, [loading, instanceId, notify, t])
 
   const filtered = useMemo(() => {
     if (!search) return servers
