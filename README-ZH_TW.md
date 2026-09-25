@@ -2,7 +2,7 @@
 
 <div align="center">
   
-<img width="80" height="80" alt="QML Icon" src="/public/logo.svg" />
+<img width="80" height="80" alt="QML Icon" src="public/logo.svg" />
 
 # Qomicex Minecraft 啟動器
 

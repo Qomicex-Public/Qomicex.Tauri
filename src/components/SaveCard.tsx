@@ -11,6 +11,8 @@ import WorldPreviewDialog from './WorldPreviewDialog.tsx'
 import type { SaveMetadata } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
 import { useI18n } from '../i18n/index.tsx'
+import { ApiError } from '../api/client.ts'
+import { useMessageBox } from './ui'
 
 interface Props {
   save: SaveMetadata
@@ -27,6 +29,7 @@ interface Props {
 
 export default function SaveCard({ save, instanceId, onRefresh, selected, onSelect, selectMode, onQuickJoin, running }: Props) {
   const { t, lang } = useI18n()
+  const { notify } = useMessageBox()
   const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -44,9 +47,12 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
       const { backupSave } = await import('../api/instance-files.ts')
       await backupSave(instanceId, save.name)
       onRefresh()
-    } catch { }
+    } catch (e) {
+      // 备份失败时界面上只有一个 stopped 的 loading，用户以为成功了；必须给出原因。
+      notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+    }
     setBackingUp(false)
-  }, [instanceId, save.name, onRefresh])
+  }, [instanceId, save.name, onRefresh, notify])
 
   const handleRename = useCallback(async () => {
     if (!renameValue.trim() || renameValue === save.name) { setRenaming(false); return }
@@ -54,9 +60,12 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
       const { renameSave } = await import('../api/instance-files.ts')
       await renameSave(instanceId, save.name, renameValue.trim())
       onRefresh()
-    } catch { }
+    } catch (e) {
+      // 重命名失败时输入框关掉、名字没变，用户不知道发生了什么。
+      notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+    }
     setRenaming(false)
-  }, [instanceId, save.name, renameValue, onRefresh])
+  }, [instanceId, save.name, renameValue, onRefresh, notify])
 
   const handleDelete = useCallback(async () => {
     setDeleting(true)

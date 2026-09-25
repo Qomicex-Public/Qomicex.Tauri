@@ -4,6 +4,7 @@ import { launchInstance as apiLaunchInstance, getLaunchProgress, cancelLaunch as
 import type { LaunchInstanceOptions } from '../api/instance.ts'
 import { getJavaRequirement, searchJava, getJavaDownloadCatalog, startJavaDownload, getJavaDownloadProgress, cancelJavaDownload } from '../api/java.ts'
 import { getProcessResourceUsage } from '../api/system.ts'
+import { ApiError } from '../api/client.ts'
 import type { ProcessResourceUsage } from '../api/system.ts'
 import { analyzeCrash } from '../api/crashDiagnostics.ts'
 import { getRuntimes } from '../stores/javaStore.ts'
@@ -354,7 +355,10 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     // 期间被取消（seq 失配）：apiLaunchInstance 已在后端开跑，由后端 cancel
     // 兜底终止；前端只保证不再建立轮询链（否则 dialog 在关闭后弹回）
     if (launchSeqRef.current.get(id) !== seq) {
-      try { await apiCancelLaunch(id) } catch {}
+      try { await apiCancelLaunch(id) } catch (e) {
+        // 兜底取消失败意味着后端进程可能仍在启动；这里不能影响主流程，但必须留痕。
+        notifyRef.current?.(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+      }
       return result
     }
     startPoll(id, name)
@@ -374,13 +378,19 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     }
     setRunningInstances(prev => prev.filter(r => r.instanceId !== targetId))
     if (targetId) {
-      try { await apiCancelLaunch(targetId) } catch {}
+      try { await apiCancelLaunch(targetId) } catch (e) {
+        // 取消失败时界面仍会显示「已取消启动」，但后端进程可能还在跑；必须告知用户。
+        notifyRef.current?.(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+      }
     }
     notifyRef.current?.(tRef.current('running.launchCancelled'), 'info')
   }, [bumpLaunchSeq, clearInstancePoll])
 
   const killInstance = useCallback(async (id: string) => {
-    try { await apiCancelLaunch(id) } catch {}
+    try { await apiCancelLaunch(id) } catch (e) {
+      // 停止失败时界面已把实例移出运行列表并提示「已停止游戏」，与实际不符；必须告知用户。
+      notifyRef.current?.(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+    }
     clearInstancePoll(id)
     setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
     notifyRef.current?.(tRef.current('running.gameStopped'), 'info')

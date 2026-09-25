@@ -10,11 +10,29 @@
  *   node scripts/harness/stub.mjs [--port 5100] [--plugin-dir <dir>]
  */
 import { createServer } from 'node:http'
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { join, resolve, extname, normalize, isAbsolute } from 'node:path'
 
-const PORT = Number(process.argv.find((a, i) => a === '--port') ? process.argv[process.argv.indexOf('--port') + 1] : process.env.QOMICEX_HARNESS_PORT || 5100)
-const PLUGIN_DIR = process.argv.find((a, i) => a === '--plugin-dir') ? process.argv[process.argv.indexOf('--plugin-dir') + 1] : resolve('plugins-dev')
+// `--flag 值` 必须取到紧跟其后的参数：此前用 indexOf(...) + 1 且不判边界，
+// `--port` 出现在最后一个参数时取到 undefined，Number(undefined) → NaN，
+// listen(NaN) 会落到随机端口，harness 的请求转发全部打空。
+function flagValue(name, fallback) {
+  const i = process.argv.indexOf(name)
+  if (i < 0) return fallback
+  if (i + 1 >= process.argv.length) {
+    console.error(`参数 ${name} 缺少取值`)
+    process.exit(1)
+  }
+  return process.argv[i + 1]
+}
+
+const rawPort = flagValue('--port', process.env.QOMICEX_HARNESS_PORT || '5100')
+const PORT = Number(rawPort)
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  console.error(`无效端口：${rawPort}（--port 应为 1-65535 的整数）`)
+  process.exit(1)
+}
+const PLUGIN_DIR = flagValue('--plugin-dir', resolve('plugins-dev'))
 
 const ROOT = process.cwd()
 

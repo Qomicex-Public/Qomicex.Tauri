@@ -67,6 +67,13 @@ export default tseslint.config(
       'no-console': 'off',
     },
   },
+  {
+    // CLI 的职责就是往终端输出，console 是其对用户的唯一界面（info/warn/fail 封装）。
+    files: ['packages/qomicex-cli/src/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
   // 必须放在最后：关闭所有与 Prettier 排版冲突的 stylistic 规则。
   prettier,
 )

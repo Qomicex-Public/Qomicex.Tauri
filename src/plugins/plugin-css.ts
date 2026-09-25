@@ -205,7 +205,10 @@ export function registerThemeSync(iframe: HTMLIFrameElement) {
     const vars = getThemeVars()
     const scheme = getThemeScheme()
     themeSyncTargets.forEach(f => {
-      try { f.contentWindow?.postMessage({ type: '__qomicex_theme', vars, scheme }, '*') } catch { }
+      try { f.contentWindow?.postMessage({ type: '__qomicex_theme', vars, scheme }, '*') } catch {
+        // iframe 已卸载或跨域时 postMessage 会抛；主题同步是高频操作（observer + resize），
+        // 下一次触发会重试，单个 iframe 失败不应中断对其余目标的同步。
+      }
     })
   }
   if (!themeObserver) {

@@ -1,4 +1,4 @@
-# ADR-058：InstanceDetail 设置页重构为 List + Switch
+# ADR-062：InstanceDetail 设置页重构为 List + Switch
 
 | 属性 | 内容 |
 |---|---|

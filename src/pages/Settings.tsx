@@ -932,7 +932,10 @@ export default function Settings() {
   async function handleOpenBackgrounds() {
     try {
       await fetch(`${API_BASE}/settings/open-backgrounds`, { method: 'POST' })
-    } catch {}
+    } catch (e) {
+      // 用户点了按钮却没有任何反应；复用 dialogs.common.openFailed，不新增翻译 key。
+      notify(t('dialogs.common.openFailed'), 'error')
+    }
   }
 
   function handleManualAdd() {
@@ -951,7 +954,10 @@ export default function Settings() {
         },
       })
       if (selected) setAddPath(selected)
-    } catch {}
+    } catch (e) {
+      // 系统文件选择器打不开时，用户点「浏览…」没有任何反应。
+      notify(t('dialogs.common.openFailed'), 'error')
+    }
   }
 
   async function confirmAddJava() {

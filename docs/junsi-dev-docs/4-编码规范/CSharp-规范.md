@@ -1,6 +1,12 @@
-# C# 编码规范
+# C# 编码规范（已废止）
 
-从项目 `AGENTS.md` 和代码库提取的约定。
+> **状态：已废止，不再适用。**
+> 后端自 ADR-004 起重写为 Rust（`src-backend/qomicex-backend`），仓库内已无任何
+> `.cs` / `.csproj` / `.sln` 文件（已核实：`git ls-files` 命中 0）。旧 C# 实现仅存在于
+> `legacy` 分支。
+>
+> 现行规范见 [Rust-规范.md](Rust-规范.md) 与 [TypeScript-规范.md](TypeScript-规范.md)。
+> 本文件保留仅为在 `legacy` 分支上继续工作时可参考。
 
 ## 跨平台规则
 

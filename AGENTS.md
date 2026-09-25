@@ -110,6 +110,13 @@ No test framework. Backend API test script: `bash scripts/test-api-filters.sh` (
   `../dev.test.wasm/plugin.wasm`。
 - **Rust 后端**（`src-backend/qomicex-backend/`）：单元测试（如 `services/kick.rs` 的重连审核状态机），`cargo test` 全量 239+ 个（2026-09 基线，实际随新增用例增长）；行为验证走 `bash scripts/test-api-filters.sh`。
 
+## 文档（docs/）
+
+- **ADR 索引与编号**：`docs/junsi-dev-docs/README.md` 是 ADR 索引；条目编号由**文件名**承载，正文首行标题必须与文件名编号一致（历史上有 4 篇不一致，已在 2026-09 修正）。
+- **已知编号重复**：`ADR-015` 有两篇（NAT 检测 / 版权隐私入口），日期相同、主题不同。这是有意的既成事实，两篇正文顶部互相标注；**新增 ADR 请从 086 起编号**（015 与 085 已被占用，084 是扫描缓存、085 是更新通道）。
+- **`4-编码规范/CSharp-规范.md` 已废止**：后端重写为 Rust 后仓库内无任何 `.cs`/`.csproj`/`.sln`（`git ls-files` 命中 0），该文件仅对 `legacy` 分支有效。
+- **`2-架构设计/技术选型.md` 的结构**：顶部是**当前**技术栈，`### 2026-08-09 更新` 一节是历史快照。改技术栈时改顶部，不要动历史快照。
+
 ## Conventional Commits
 
 All commits must follow [Conventional Commits v1.0.0](https://www.conventionalcommits.org/zh-hans/v1.0.0/):

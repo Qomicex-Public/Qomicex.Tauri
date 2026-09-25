@@ -1578,14 +1578,14 @@ data: [plugin:com.example.demo:info] hello
 
 响应多一个 `refineRequired`（布尔）：有版本目录还没算过 jar 级探测（首次扫描、刚装好）时为 `true`，前端应再发一次 `?mode=full` 回填 `gameVersion`。
 
-缓存落在 `{base_dir}/data/version-scan-cache.json`（按 `{name}.json` / `{name}.jar` 的长度+mtime 指纹失效）；删除该文件可强制全量重算。详见 ADR-082。
+缓存落在 `{base_dir}/data/version-scan-cache.json`（按 `{name}.json` / `{name}.jar` 的长度+mtime 指纹失效）；删除该文件可强制全量重算。详见 ADR-084。
 
 **与用户设置 `scanSkipJarProbe` 的交互**：该设置（`GET/PUT /api/settings`，默认关闭）
 **优先于 `mode` 参数**。开启后请求里的 `mode=full` 被静默降级为 fast（不再打开任何
 `{name}.jar`），且 `refineRequired` 恒为 `false`（否则调用方会反复发注定被降级的
 full 请求）。作用范围仅限本端点，不影响启动/安装/整合包/联机；已有指纹缓存继续复用。
 代价是 JSON 缺字段的版本 `gameVersion` 可能退化为 `inheritsFrom` 或目录名。
-详见 ADR-082 决策 6。
+详见 ADR-084 决策 6。
 
 **响应：** `ScanVersionsResponse`（见核心数据模型）
 

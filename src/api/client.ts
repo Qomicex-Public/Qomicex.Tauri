@@ -115,7 +115,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       if (json && typeof json.code === 'string' && typeof json.message === 'string') {
         parsed = json as ApiErrorResponse
       }
-    } catch { }
+    } catch {
+      // 非 JSON 响应体（HTML 错误页 / 空体）是预期情况：下面按通用 HTTP 状态处理，
+      // 不需要知道 body 内容，静默回退即可。
+    }
     if (parsed) {
       console.error(`[API] ${method} ${path} => ${res.status} [${parsed.code}] ${parsed.message}${parsed.detail ? ` (${parsed.detail})` : ''}`)
       throw new ApiError(parsed)

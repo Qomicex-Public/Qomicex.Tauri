@@ -49,6 +49,11 @@ export function zipWrite(files: ZipEntry[]): Uint8Array {
   const central: Uint8Array[] = []
   let offset = 0
   const UTF8_FLAG = 0x0800
+  // 固定时间戳（1980-01-01，DOS 纪元 0）：插件包内容相同即字节相同，
+  // 便于校验/复现与 CI 产物比对。此前写 0 也让 DOS 时间非法，部分解压器
+  // 会显示为 1979/随机值。
+  const DOS_TIME = 0
+  const DOS_DATE = (1 << 5) | 1
 
   for (const file of files) {
     const nameBytes = new TextEncoder().encode(file.name)
@@ -61,7 +66,7 @@ export function zipWrite(files: ZipEntry[]): Uint8Array {
       u16(20),              // version needed
       u16(UTF8_FLAG),       // flags
       u16(method),
-      u16(0), u16(0),       // mod time/date
+      u16(DOS_TIME), u16(DOS_DATE),
       u32(crc),
       u32(comp.length),
       u32(file.data.length),
@@ -77,7 +82,7 @@ export function zipWrite(files: ZipEntry[]): Uint8Array {
       u16(20),
       u16(UTF8_FLAG),
       u16(method),
-      u16(0), u16(0),
+      u16(DOS_TIME), u16(DOS_DATE),
       u32(crc),
       u32(comp.length),
       u32(file.data.length),

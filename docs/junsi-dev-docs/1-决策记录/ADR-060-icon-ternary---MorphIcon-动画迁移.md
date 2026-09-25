@@ -1,4 +1,4 @@
-# ADR-056：icon ternary → MorphIcon 动画迁移
+# ADR-060：icon ternary → MorphIcon 动画迁移
 
 | 属性 | 内容 |
 |---|---|

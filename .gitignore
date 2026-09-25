@@ -6,11 +6,9 @@ backend.err
 # Frontend build
 dist/
 
-# Rust (Tauri)
-src-tauri/target/
-
-# Rust standalone backend build
-src-backend/qomicex-backend/target/
+# Rust build output: 一条规则覆盖 src-tauri/ 与所有 src-backend crate。
+# 原先是两个按目录写死的规则，新增 crate 时会漏。
+target/
 
 # Legacy C# backend runtime leftovers (deleted source; dir contains a test
 # artifact with an NTFS-reserved name that cannot be removed via Win32 APIs)
@@ -22,8 +20,9 @@ src-backend/Qomicex.Downloader.Refactor/
 # VS junk
 .vs/
 
-# Runtime data
-data/
+# Runtime data: 只忽略实际产生数据的目录。原来无锚定的 `data/` 会连带吞掉
+# 任何层级的 data 目录（如未来的 src/data/）。
+/.shots-home/data/
 
 # Minecraft runtime files
 .minecraft/
@@ -34,8 +33,6 @@ build-test/
 # Plugin build artifacts (loose copies outside plugin dirs)
 plugins-dev/*.qplugin
 plugins-dev/*.zip
-**/D:\\Test\\.minecraft/
-
 
 # Editor
 #.vscode/
@@ -56,6 +53,15 @@ npm-debug.log*
 # Runtime stdout/stderr dumps
 stdout.txt
 stderr.txt
+
+# Local environment overrides (may hold tokens)
+.env
+.env.local
+
+# Local preview / asset working dirs (contain their own node_modules)
+promo-video/
+video-assets/
+.shots-home/
 
 # Reference / external source
 /参考/
@@ -83,6 +89,9 @@ skills-lock.json
 **/LicenseSecrets*.cs
 **/LicenseCore.cs
 
+# 打包产物（pnpm pack 产生的 tarball）
+*.tgz
+
 # Minecraft runtime artifacts (config, logs, mixin output)
 src-backend/**/.mixin.out/
 src-backend/**/config/
@@ -91,7 +100,6 @@ src-backend/**/logs/
 
 # Website submodule (separate repo)
 /website/
-qomicex-plugin-ui-0.1.0.tgz
 
 .playwright-mcp/
 stuck_urls.txt

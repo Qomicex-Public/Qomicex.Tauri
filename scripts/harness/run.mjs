@@ -170,7 +170,7 @@ await page.route('http://127.0.0.1:5000/api/**', async (route) => {
       headers: Object.fromEntries(res.headers.entries()),
       body: Buffer.from(data),
     })
-  } catch (e) {
+  } catch {
     await route.abort('failed')
   }
 })
@@ -181,7 +181,7 @@ await page.route('http://localhost:5000/api/**', async (route) => {
   try {
     const res = await fetch(url, { method: req.method(), headers: req.headers(), body: req.postDataBuffer?.() })
     await route.fulfill({ status: res.status, headers: Object.fromEntries(res.headers.entries()), body: Buffer.from(await res.arrayBuffer()) })
-  } catch (e) {
+  } catch {
     await route.abort('failed')
   }
 })
@@ -255,6 +255,10 @@ const watchers = srcDirs.map((p) => {
   })
 })
 
+// 退出时关闭文件监听句柄，避免 harness 已退出而 watcher 仍占着资源。
+process.on('exit', () => {
+  for (const w of watchers) w?.close()
+})
 console.log(`[harness] 监听热重载: ${srcDirs.join(', ')}`)
 console.log('[harness] Ctrl+C 退出并清理（stub/Vite 一并停掉）')
 

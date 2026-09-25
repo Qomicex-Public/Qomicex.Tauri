@@ -75,7 +75,7 @@ export async function createCommand(id: string, templateName?: string): Promise<
     info('依赖方需在 manifest dependencies 声明本库 id。')
   } else if (tpl === 'react') {
     info('提示：模板依赖已发布的 @qomicex/plugin-ui，可在任意目录独立构建；')
-    info('若项目创建在仓库 plugins-dev/ 内（pnpm workspace 覆盖区），请用 npm install 安装依赖。')
+    info('若项目创建在仓库 plugins-dev/ 内（pnpm workspace 覆盖区），请用 pnpm install 安装依赖。')
   } else if (tpl === 'wasm') {
     info('提示：L3 WASM 插件运行在 wasmtime 沙箱，无浏览器环境；')
     info('在 src/lib.rs 中实现逻辑，编译产物 plugin.wasm 由网关按固定文件名加载。')
