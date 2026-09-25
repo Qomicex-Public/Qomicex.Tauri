@@ -483,7 +483,13 @@ export default function Instances() {
         try {
           const result = await autoSelectDownloadSource()
           downloadSource = result.id
-        } catch {}
+        } catch {
+          // 自动测速选源失败时回退到 settings.downloadSource（用户手动选过的源）/
+          // 默认源——那本身就是有效配置，属合理降级。
+          // 有意不弹提示：若随后安装也用不了这个源，失败会经下载任务的 error 在
+          // 下载中心暴露；若安装成功，说明源可用，选源失败只是没拿到最优解。
+          // 此处再弹一条只会与任务错误重复打扰。需要排查时看控制台即可。
+        }
       }
 
       startInstall(instance.id, data.loader, data.loaderVersion, selectedAddons.length > 0 ? selectedAddons : undefined, threads, versionIsolation, downloadSource, downloadTimeout).catch((e) => {
@@ -643,7 +649,10 @@ export default function Instances() {
         await setDefaultInstance(inst.id)
         setDefaultInstanceId(inst.id)
       }
-    } catch {}
+    } catch (e) {
+      // 切换默认实例失败时界面不更新，用户看到默认标识没变但不知道为何。
+      notify(e instanceof ApiError ? e.displayMessage : t('dialogs.common.unknownError'), 'error')
+    }
   }
 
   const versionTypeMap = useMemo(() => {
@@ -1124,7 +1133,10 @@ export default function Instances() {
     try {
       const updated = await updateInstance(inst.id, { customGroupIds: next } as Partial<CreateInstanceRequest>)
       setBackedInstances(prev => prev.map(i => i.id === updated.id ? { ...i, customGroupIds: updated.customGroupIds } : i))
-    } catch {}
+    } catch (e) {
+      // 与上面分组保存共用同一条失败提示路径
+      notifyGroupError('save', e)
+    }
   }
 
   return (

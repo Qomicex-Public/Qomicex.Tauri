@@ -66,7 +66,7 @@ export async function signedPayloadBytes(entries: Record<string, Uint8Array>): P
  * 解析私钥 → PKCS#8 DER。支持：PKCS#8 PEM、PKCS#8 DER base64、raw 32 字节 seed base64。
  */
 export function parsePrivateKey(input: string): Uint8Array {
-  let pem = input.trim()
+  const pem = input.trim()
   if (pem.includes('-----BEGIN')) {
     const body = pem.replace(/-----BEGIN[^-]+-----/, '').replace(/-----END[^-]+-----/, '').replace(/\s+/g, '')
     const der = base64ToBytes(body)
@@ -128,7 +128,6 @@ export async function makeSelfSignedCert(
   keyId: string,
   developerName = '',
 ): Promise<string> {
-  const { derivePublicKey } = await import('./signature.ts')
   const publicKey = await derivePublicKey(privDer)
   const body: CertJson = {
     alg: ALG,

@@ -7,6 +7,8 @@ set -euo pipefail
 #   3. Modrinth: empty Loaders [] included in filter results
 
 BASE="${BASE:-http://localhost:5000/api/resources}"
+# 每个请求都有总超时：后端卡死时 CI 不能再无限期挂住。
+CURL_TIMEOUT="${CURL_TIMEOUT:-60}"
 PASS=0
 FAIL=0
 
@@ -16,7 +18,7 @@ fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
 # ─── CurseForge: old mod with gameVersion+loader filter ──────────────────────
 echo "=== CurseForge local loader filter ==="
 # JEI (238222) has 1.12.2 forge versions — many old files lack modLoaderType field
-resp=$(curl -sf "$BASE/238222/versions?source=curseforge&gameVersion=1.12.2&loader=forge" 2>&1) || {
+resp=$(curl -sf --max-time "$CURL_TIMEOUT" "$BASE/238222/versions?source=curseforge&gameVersion=1.12.2&loader=forge" 2>&1) || {
     fail "CF versions endpoint unreachable: $resp"
     resp="[]"
 }
@@ -36,7 +38,7 @@ fi
 
 # ─── CurseForge streaming ────────────────────────────────────────────────────
 echo "=== CurseForge streaming (start + progress + result) ==="
-task_json=$(curl -sf -X POST "$BASE/238222/versions/start-fetch?gameVersion=1.12.2&loader=forge" 2>&1) || {
+task_json=$(curl -sf --max-time "$CURL_TIMEOUT" -X POST "$BASE/238222/versions/start-fetch?gameVersion=1.12.2&loader=forge" 2>&1) || {
     fail "CF start-fetch unreachable: $task_json"
     task_json="{}"
 }
@@ -44,9 +46,12 @@ task_id=$(echo "$task_json" | jq -r '.taskId // empty')
 if [ -n "$task_id" ]; then
     ok "CF streaming started: taskId=$task_id"
     # poll for progress
+    done_flag=""
+    loaded=0
+    total=1
     for i in 1 2 3; do
         sleep 2
-        prog=$(curl -sf "$BASE/versions/fetch-progress/$task_id" 2>/dev/null || echo '{}')
+        prog=$(curl -sf --max-time "$CURL_TIMEOUT" "$BASE/versions/fetch-progress/$task_id" 2>/dev/null || echo '{}')
         done_flag=$(echo "$prog" | jq -r '.done // false')
         loaded=$(echo "$prog" | jq -r '.loadedVersionCount // 0')
         total=$(echo "$prog" | jq -r '.totalVersionCount // 1')
@@ -57,7 +62,7 @@ if [ -n "$task_id" ]; then
     if [ "$done_flag" = "true" ]; then
         ok "CF streaming completed ($loaded results)"
         # fetch result
-        result=$(curl -sf "$BASE/versions/fetch-result/$task_id" 2>/dev/null || echo '[]')
+        result=$(curl -sf --max-time "$CURL_TIMEOUT" "$BASE/versions/fetch-result/$task_id" 2>/dev/null || echo '[]')
         rcount=$(echo "$result" | jq 'length' 2>/dev/null || echo 0)
         if [ "$rcount" -gt 0 ]; then
             ok "CF streaming result: $rcount versions (all forge)"
@@ -73,7 +78,7 @@ fi
 
 # ─── Modrinth: empty Loaders [] should be included ───────────────────────────
 echo "=== Modrinth empty loaders filter ==="
-resp=$(curl -sf "$BASE/AANobbMI/versions?source=modrinth&gameVersion=1.21&loader=fabric" 2>&1) || {
+resp=$(curl -sf --max-time "$CURL_TIMEOUT" "$BASE/AANobbMI/versions?source=modrinth&gameVersion=1.21&loader=fabric" 2>&1) || {
     fail "Modrinth versions unreachable: $resp"
     resp="[]"
 }
@@ -86,7 +91,7 @@ fi
 
 # ─── Dependencies: empty Loaders [] should match ─────────────────────────────
 echo "=== Modrinth dependency resolution ==="
-dep_resp=$(curl -sf "$BASE/AANobbMI/dependencies?source=modrinth&gameVersion=1.21&loader=fabric" 2>&1) || {
+dep_resp=$(curl -sf --max-time "$CURL_TIMEOUT" "$BASE/AANobbMI/dependencies?source=modrinth&gameVersion=1.21&loader=fabric" 2>&1) || {
     # Sodium has no deps, that's OK -- the test is just that the endpoint doesn't crash
     dep_resp="[]"
 }

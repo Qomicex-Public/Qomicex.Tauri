@@ -10,15 +10,15 @@ jobs:
   frontend-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Init i18n submodule
         env:
           QOMICEX_PAT: ${{ secrets.QOMICEX_PAT }}
         run: |
           git config --global url."https://x-access-token:${QOMICEX_PAT}@github.com/Qomicex-Public/".insteadOf "git@github.com:Qomicex-Public/"
           git submodule update --init --depth 1 qomicex-tauri-i18n
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
           cache: pnpm
@@ -33,7 +33,7 @@ jobs:
       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
@@ -119,12 +119,41 @@ jobs:
   plugin-ui-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: pnpm --filter @qomicex/plugin-ui audit --audit-level moderate || true
+
+  frontend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # 与 frontend-check 相同：src/i18n 与 src/plugins/plugin-api.ts 经
+      # ../../qomicex-tauri-i18n/src 引用翻译资源，缺了它 tsc 直接报 Cannot find module。
+      - name: Init i18n submodule
+        env:
+          QOMICEX_PAT: ${{ secrets.QOMICEX_PAT }}
+        run: |
+          git config --global url."https://x-access-token:${QOMICEX_PAT}@github.com/Qomicex-Public/".insteadOf "git@github.com:Qomicex-Public/"
+          git submodule update --init --depth 1 qomicex-tauri-i18n
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      # typecheck 是硬门禁：tsc 全绿（含 noUnusedLocals/noUnusedParameters）。
+      - run: pnpm run typecheck
+      # lint 尚未进阻断：存量见 AGENTS.md「Lint 现状」，清零后再去掉 continue-on-error。
+      - name: ESLint
+        continue-on-error: true
+        run: pnpm run lint
+      - name: Prettier check
+        continue-on-error: true
+        run: pnpm run format:check

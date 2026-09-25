@@ -79,10 +79,10 @@ export function buildPackageEntries(root: string, manifest: Record<string, unkno
     const target = join(root, ref)
     if (existsSync(target)) continue
     const rootSrc = join(root, ref.slice('dist/'.length))
-    if (existsSync(rootSrc)) {
-      writeFileSync(target, readFileSync(rootSrc))
-      entries[ref] = readFileSync(target)
-    }
+    if (!existsSync(rootSrc)) continue
+    // 只把内容放进包内，不往项目 dist/ 写文件：打包命令不应改动工作区
+    // （此前会留下 dist/theme.css 之类的残留，让后续 diff/构建结果难以解释）。
+    entries[ref] = readFileSync(rootSrc)
   }
   return entries
 }

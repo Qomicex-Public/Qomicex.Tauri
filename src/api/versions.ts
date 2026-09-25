@@ -15,7 +15,7 @@ export type ScanResult = ScannedVersion[] & { readonly scanMeta?: ScanMeta }
 /// 扫描版本目录。可被插件 hook（`hook:scanVersions`）：before 修改 gameDir，
 /// after 修改返回的版本列表（增删改扫描结果 —— 虚拟版本/过滤）。
 ///
-/// `mode` 两段式的由来（见 ADR-082）：每个版本目录都要打开 `{name}.jar` 探测游戏版本，
+/// `mode` 两段式的由来（见 ADR-084）：每个版本目录都要打开 `{name}.jar` 探测游戏版本，
 /// 在 73 个集成包目录上要几十秒。后端按"文件指纹"缓存 jar 级的探测结果，所以：
 /// - `fast`（默认）：命中缓存者毫秒级返回，未命中者只走 JSON 链先出列表；
 /// - `full`：给未命中的条目补算 jar 级结果并写缓存。

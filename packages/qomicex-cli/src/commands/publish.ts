@@ -1,7 +1,7 @@
 // qomicex publish — 设备流登录（RFC 8628）→ 注册签名公钥 → 签名打包 → 上传到商店。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { buildPackageEntries, packCommand, type PackOptions } from './pack.ts'
+import { packCommand, type PackOptions } from './pack.ts'
 import { readManifestFile } from '../lib/project.ts'
 import { zipRead, zipWrite } from '../lib/zip.ts'
 import {
@@ -52,9 +52,10 @@ export async function publishCommand(opts: PublishOptions = {}): Promise<void> {
     if (!existsSync(p)) fail(`找不到包文件: ${p}`)
     entries = zipRead(readFileSync(p))
   } else {
-    const packOpts: PackOptions = { ...opts }
-    await packCommand({ ...packOpts, key: undefined })
-    entries = buildPackageEntries(root, manifest)
+    // packCommand 已经返回打包好的条目，直接复用；此前丢掉返回值又调一次
+    // buildPackageEntries，会把整包重新收集一遍（大插件包体翻倍耗时）。
+    const packed = await packCommand({ ...opts, key: undefined })
+    entries = packed.entries
   }
   // 清掉旧签名文件，避免脏残留
   for (const k of ['signature.json', 'signature.cert.json']) delete entries[k]
@@ -121,9 +122,9 @@ export async function publishCommand(opts: PublishOptions = {}): Promise<void> {
 
   // 6) 查找/创建插件记录
   info('==> 确认插件记录')
-  let pluginId = ''
   const mine = await fetchMinePlugins(api, token)
   const existing = mine.find((p) => p.slug === slug)
+  let pluginId: string
   if (existing) {
     pluginId = existing.id
     info(`✔ 找到已有插件 ${slug}（id: ${pluginId}）`)

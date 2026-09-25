@@ -24,7 +24,7 @@ export async function devCommand(opts: DevOptions = {}): Promise<void> {
     info(`✔ 检测到调试 harness（${harness}），进入完整调试环境（Tauri mock + stub + 热重载）`)
     info('  插件须位于仓库 plugins-dev/{id} 供 harness 定位；--port 参数在此模式不生效（固定 1420）')
     info('  停止：Ctrl+C（会一并清理 stub / Vite）')
-    const code = await runShell(`node ${JSON.stringify(harness)} --plugin ${JSON.stringify(pluginId)}`, root)
+    const code = await runShell(`node ${JSON.stringify(harness)} ${JSON.stringify(pluginId)}`, root)
     if (code !== 0) fail(`harness 退出（code ${code}）`)
     return
   }

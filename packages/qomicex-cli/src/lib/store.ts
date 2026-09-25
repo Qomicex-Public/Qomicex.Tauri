@@ -46,7 +46,7 @@ async function request<T>(base: string, path: string, init?: RequestInit, token?
     throw new StoreApiError(0, `无法连接商店 ${base}${path}（网络错误）`)
   }
   const text = await res.text()
-  let body: unknown = null
+  let body: unknown
   try {
     body = text ? JSON.parse(text) : null
   } catch {
