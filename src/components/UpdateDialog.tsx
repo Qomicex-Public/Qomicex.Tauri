@@ -50,11 +50,12 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
           ) : (
             <ArrowUp className="h-4 w-4 shrink-0 text-muted-foreground" />
           )}
-          {/* min-w-0 + break-all：共享 DialogHeader 的 flex-1 wrapper 带
-              min-width:auto，truncate 的 nowrap 会被 min-content 顶爆导致
-              Close 按钮被挤出；break-all 让 min-content 塌缩到单字符，
-              极端长版本号降级为换行而非溢出 */}
-          <span className="min-w-0 break-all">
+          {/* min-w-0 + [overflow-wrap:anywhere]：共享 DialogHeader 的 flex-1
+              wrapper 带 min-width:auto，truncate 的 nowrap 会被 min-content
+              顶爆导致 Close 按钮被挤出。overflow-wrap:anywhere 与 break-all
+              一样参与 min-content 计算（塌缩到单字符），但优先在词边界断行，
+              只在别无断点时才词中截断；leading-snug 兜底换行后的行距 */}
+          <span className="min-w-0 leading-snug [overflow-wrap:anywhere]">
             {plan.channelSwitch
               ? t('dialogs.update.channelSwitchTitle', { channel: plan.channel ?? '' })
               : t('dialogs.update.foundNew', { version: plan.version ?? '' })}
@@ -68,7 +69,7 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
             <span aria-hidden="true" className="shrink-0">
               →
             </span>
-            <span className="min-w-0 break-words font-medium text-foreground">{plan.version}</span>
+            <span className="min-w-0 break-words font-medium text-foreground">{plan.version ?? ''}</span>
           </span>
           <button
             onClick={() => openUrl(releaseUrl).catch(() => window.open(releaseUrl, '_blank'))}
