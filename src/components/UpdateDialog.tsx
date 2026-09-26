@@ -40,7 +40,7 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
 
   return (
     <Dialog open={open} onClose={locked ? () => {} : onClose} closeOnBackdrop={!locked} closeOnEsc={!locked}>
-      {/* 有/无关闭按钮两种状态高度拉平，避免下载开始后 Header 高度抽搐 */}
+      {/* Header 高度拉平：61px = py-4(32px) + 关闭按钮 28px + 1px 边框；两种状态不再抽搐 */}
       <DialogHeader onClose={locked ? undefined : onClose} className="min-h-[3.8125rem]">
         <DialogTitle className="flex min-w-0 items-center gap-2">
           {required ? (
@@ -50,7 +50,11 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
           ) : (
             <ArrowUp className="h-4 w-4 shrink-0 text-muted-foreground" />
           )}
-          <span className="truncate">
+          {/* min-w-0 + break-all：共享 DialogHeader 的 flex-1 wrapper 带
+              min-width:auto，truncate 的 nowrap 会被 min-content 顶爆导致
+              Close 按钮被挤出；break-all 让 min-content 塌缩到单字符，
+              极端长版本号降级为换行而非溢出 */}
+          <span className="min-w-0 break-all">
             {plan.channelSwitch
               ? t('dialogs.update.channelSwitchTitle', { channel: plan.channel ?? '' })
               : t('dialogs.update.foundNew', { version: plan.version ?? '' })}
@@ -59,10 +63,12 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
       </DialogHeader>
       <DialogBody className="space-y-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span className="flex items-center gap-2">
-            <span>{APP_INFO.version}</span>
-            <span aria-hidden="true">→</span>
-            <span className="font-medium text-foreground">{plan.version}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0">{APP_INFO.version}</span>
+            <span aria-hidden="true" className="shrink-0">
+              →
+            </span>
+            <span className="min-w-0 break-words font-medium text-foreground">{plan.version}</span>
           </span>
           <button
             onClick={() => openUrl(releaseUrl).catch(() => window.open(releaseUrl, '_blank'))}
@@ -99,7 +105,7 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
+            <span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
               {progress.toFixed(2)}%
             </span>
           </div>
@@ -113,7 +119,7 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
           </Tooltip>
         )}
       </DialogBody>
-      {/* 状态文本与按钮两种形态高度拉平，Footer 不因内容变化改变高度 */}
+      {/* Footer 高度拉平：65px = py-4(32px) + sm 按钮 32px + 1px 边框；两种形态不再改变高度 */}
       <DialogFooter className="min-h-[4.0625rem] flex-wrap gap-2">
         {phase === 'error' && (
           <span className="text-xs text-destructive">{t('dialogs.update.downloadFailed')}</span>
