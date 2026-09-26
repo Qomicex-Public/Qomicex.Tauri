@@ -1,0 +1,295 @@
+name: Issue & PR Triage
+
+# 自动打标（Issue / PR 的 "Type" 区分）
+#
+# 三层中的第二层：模板层（.github/ISSUE_TEMPLATE/*.yml 的 labels:/type:/title:）依赖
+# 标签已存在于仓库；本工作流负责
+#   1) 一致性校正与互斥（模板 issue、PR 标题前缀 Conventional Commits）；
+#   2) 存量 issue/PR 补录（workflow_dispatch 填 issue_number，留空则批量）；
+#   3) 判不出类型时用 opencode CLI 兜底分类（纯 API 打标，不 checkout/执行 PR 代码）。
+#
+# 配置（Settings → Secrets and variables → Actions）：
+#   secret   OPENCODE_API_KEY         opencode 账号密钥（与 opencode.yml 同一个）
+#   variable ISSUE_TRIAGE_MODEL       覆盖分类模型，默认 opencode/nemotron-3-ultra-free
+#   variable ISSUE_TRIAGE_ENABLED     设为 'off' 一键关闭 opencode 兜底（确定性打标不受影响）
+#
+# 详情与维护须知见 docs/junsi-dev-docs/8-部署运维/GitHub-Issue-模板与自动分类.md
+
+on:
+  issues:
+    types: [opened, reopened, edited]
+  pull_request_target:
+    types: [opened, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "要补标的 Issue 编号（留空则批量给无 type: 标签的存量 issue 补 status: needs-triage）| Issue number to backfill (leave empty for batch mode)"
+        required: false
+
+# 同一 issue/PR 的新事件取消旧任务，避免连续编辑抖动刷屏。
+concurrency:
+  group: triage-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  # 批量模式：给存量无 type: 的 open issue 补 status: needs-triage（走默认分支，不碰 PR 代码）
+  backfill:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.issue_number == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Mark open issues without a type label
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const TYPE_LABEL_PREFIX = 'type: ';
+            const needsTriage = 'status: needs-triage';
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100
+            });
+            const pending = open.filter(issue => !issue.pull_request && !issue.labels.some(l => l.name.startsWith(TYPE_LABEL_PREFIX)));
+            core.info(`found ${pending.length} open issue(s) without a type: label`);
+
+            const repoLabels = (await github.paginate(github.rest.issues.listLabelsForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, per_page: 100
+            })).map(l => l.name);
+            if (!repoLabels.includes(needsTriage)) {
+              core.setFailed(`label "${needsTriage}" does not exist yet; run the Label Sync workflow first`);
+              return;
+            }
+
+            const done = [];
+            for (const issue of pending.slice(0, 20)) {
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: issue.number, labels: [needsTriage]
+                });
+                done.push(issue.number);
+              } catch (err) {
+                core.warning(`failed to label #${issue.number}: ${err.message}`);
+              }
+            }
+            core.setOutput('backfilled', done.join(' '));
+            core.notice(`backfilled: ${done.join(', ') || '(none)'}`);
+
+  triage:
+    # issue_comment 未订阅，opencode 兜底不动 PR；指定编号的 dispatch 也走这个 job
+    if: >-
+      github.event_name == 'issues'
+      || github.event_name == 'pull_request_target'
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.issue_number != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # ---------- Step 0: 解析目标（dispatch 编号 / issue / PR）并导出待分类材料 ----------
+      - name: Resolve target issue
+        id: resolve
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const fromInput = (context.payload.inputs || {}).issue_number;
+            const target = context.payload.issue || context.payload.pull_request;
+            const number = Number(fromInput || (target && target.number) || 0);
+            if (!number) {
+              core.setFailed('no issue number in payload (expected issues / pull_request_target / workflow_dispatch with issue_number)');
+              return;
+            }
+            const { data } = await github.rest.issues.get({ owner, repo, issue_number: number });
+            const isPR = !!data.pull_request;
+
+            const parts = [
+              `title: ${data.title || ''}`,
+              `number: #${number}`,
+              `state: ${data.state}`,
+              `author: ${(data.user && data.user.login) || 'unknown'}`,
+              `labels: ${data.labels.map(l => l.name).join(', ') || '(none)'}`,
+              '---',
+              (data.body || '').slice(0, 8000)
+            ];
+            fs.writeFileSync(`${process.env.RUNNER_TEMP}/issue.md`, parts.join('\n'), 'utf8');
+            core.setOutput('number', String(number));
+            core.setOutput('is_pr', String(isPR));
+            core.setOutput('is_bot', String((data.user && data.user.type) === 'Bot'));
+            core.setOutput('has_type', String(data.labels.some(l => l.name.startsWith('type: '))));
+            core.info(`#${number} resolved (${isPR ? 'pr' : 'issue'})`);
+
+      # ---------- Step 1: 确定性打标（不依赖任何模型）----------
+      - name: Deterministic type label
+        id: label
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const TYPE_PREFIX = 'type: ';
+            const NEEDS_TRIAGE = 'status: needs-triage';
+            const empty = { result: { kind: 'none', type: '', added: [], removed: [] } };
+
+            // 判据来自 .github/ISSUE_TEMPLATE/*.yml 的 title: 与 body 字段渲染标题，
+            // 改模板字段名必须同步这里（详见 docs/junsi-dev-docs/8-部署运维/GitHub-Issue-模板与自动分类.md）。
+            const TITLE_PREFIXES = [
+              { re: /^\[Bug\]/i, type: 'type: bug' },
+              { re: /^\[Feature\]/i, type: 'type: feature' },
+              { re: /^\[Improvement\]/i, type: 'type: improvement' }
+            ];
+            const ISSUE_BODY_MARKERS = [
+              { marker: '### QML 版本号', type: 'type: bug' },
+              { marker: '### 复现步骤', type: 'type: bug' },
+              { marker: '### 功能描述', type: 'type: feature' },
+              { marker: '### 优化类型', type: 'type: improvement' }
+            ];
+            // Conventional Commits 前缀 → 类型（PR 标题）
+            const COMMIT_PREFIXES = [
+              { re: /^(feat|feature)(\(|!|:)/i, type: 'type: feature' },
+              { re: /^(fix|perf|refactor|revert)(\(|!|:)/i, type: 'type: bug' },
+              { re: /^docs?(\(|!|:)/i, type: 'type: docs' },
+              { re: /^(test|build|ci|style|chore)(\(|!|:)/i, type: 'type: chore' }
+            ];
+
+            function detectType(kind, title, body) {
+              for (const { re, type } of TITLE_PREFIXES) if (re.test(title)) return type;
+              if (kind === 'issue') {
+                for (const { marker, type } of ISSUE_BODY_MARKERS) if (body.includes(marker)) return type;
+                return null;
+              }
+              for (const { re, type } of COMMIT_PREFIXES) if (re.test(title)) return type;
+              return null;
+            }
+
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const number = Number(steps.resolve.outputs.number);
+            const isPR = steps.resolve.outputs.is_pr === 'true';
+            if (!number) return empty;
+
+            const { data } = await github.rest.issues.get({ owner, repo, issue_number: number });
+            const kind = isPR ? 'pr' : 'issue';
+            const detected = detectType(kind, data.title || '', data.body || '');
+            if (!detected) {
+              core.info(`#${number} (${kind}) no deterministic type`);
+              return { result: { kind, type: '', added: [], removed: [] } };
+            }
+
+            const repoLabels = (await github.paginate(github.rest.issues.listLabelsForRepo, { owner, repo, per_page: 100 })).map(l => l.name);
+            const existing = data.labels.map(l => l.name);
+            const typeLabels = repoLabels.filter(n => n.startsWith(TYPE_PREFIX));
+
+            const add = (!existing.includes(detected) && repoLabels.includes(detected)) ? [detected] : [];
+            const drop = typeLabels.filter(n => existing.includes(n) && n !== detected);
+            const addStatus = (!isPR && !existing.some(n => n.startsWith('status: ')) && repoLabels.includes(NEEDS_TRIAGE)) ? [NEEDS_TRIAGE] : [];
+
+            for (const name of add.concat(addStatus)) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [name] });
+            }
+            for (const name of drop) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name });
+            }
+            core.info(`#${number} (${kind}) add=[${add.concat(addStatus).join(',')}] remove=[${drop.join(',')}]`);
+            return { result: { kind, type: detected, added: add.concat(addStatus), removed: drop } };
+
+      # ---------- Step 2: opencode 兜底分类（仅 issue、非机器人、上一步判不出类型时）----------
+      # anomalyco/opencode/github 只能在 issue_comment / pull_request_review_comment 事件跑，
+      # 因此这里直接用 CLI 非交互模式 `opencode run`（与 opencode.yml 同款免费模型）。
+      - name: opencode fallback classification
+        id: classify
+        if: >-
+          github.event_name != 'pull_request_target'
+          && steps.resolve.outputs.is_bot != 'true'
+          && steps.resolve.outputs.is_pr != 'true'
+          && steps.resolve.outputs.has_type != 'true'
+          && fromJSON(steps.label.outputs.result).type == ''
+          && vars.ISSUE_TRIAGE_ENABLED != 'off'
+        continue-on-error: true
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          MODEL: ${{ vars.ISSUE_TRIAGE_MODEL || 'opencode/nemotron-3-ultra-free' }}
+        run: |
+          set -uo pipefail
+          curl -fsSL https://opencode.ai/install | bash
+          export PATH="$HOME/.opencode/bin:$PATH"
+
+          prompt="$(cat .github/opencode/issue-triage.md)"
+          rm -f "$RUNNER_TEMP/result.json"
+
+          set +e
+          opencode run --model "$MODEL" -f "$RUNNER_TEMP/issue.md" "$prompt" > "$RUNNER_TEMP/classify.log" 2>&1
+          code=$?
+          set -e
+          echo "opencode exit: $code"
+          tail -n 60 "$RUNNER_TEMP/classify.log" || true
+
+          # 从模型输出里抓最后一个带 "type" 字段的 ```json 块；抓不到就静默跳过，
+          # 留给维护者手工分诊（continue-on-error 已保证这一步失败不会中断打标）
+          if node -e '
+            const fs = require("fs");
+            const log = fs.readFileSync(process.argv[1], "utf8");
+            const blocks = (log.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g) || []).reverse();
+            for (const raw of blocks) {
+              const inner = raw.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+              let data;
+              try { data = JSON.parse(inner); } catch { continue; }
+              if (data && typeof data === "object" && data.type) {
+                fs.writeFileSync(process.argv[2], JSON.stringify(data), "utf8");
+                process.exit(0);
+              }
+            }
+            process.exit(1);
+          ' "$RUNNER_TEMP/classify.log" "$RUNNER_TEMP/result.json"; then
+            echo "parsed=yes" >> "$GITHUB_OUTPUT"
+            cat "$RUNNER_TEMP/result.json"
+          else
+            echo "parsed=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::no usable classification, leaving the issue for manual triage"
+          fi
+
+      # ---------- Step 3: 应用 opencode 结果（白名单内只加不删，确定性结果优先）----------
+      - name: Apply opencode classification
+        if: steps.classify.outputs.parsed == 'yes'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const parsed = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/result.json`, 'utf8'));
+
+            const ALLOWED_TYPE = ['type: bug', 'type: feature', 'type: improvement', 'type: docs', 'type: question', 'type: discussion', 'type: chore'];
+            const ALLOWED_AREA = ['area: frontend', 'area: backend', 'area: connector', 'area: updater', 'area: plugin', 'area: ci', 'area: docs', 'area: i18n'];
+
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const number = Number(steps.resolve.outputs.number);
+            const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: number });
+            const existing = issue.labels.map(l => l.name);
+            const repoLabels = (await github.paginate(github.rest.issues.listLabelsForRepo, { owner, repo, per_page: 100 })).map(l => l.name);
+
+            const candidates = [parsed.type].concat(Array.isArray(parsed.area) ? parsed.area : [])
+              .filter(n => ALLOWED_TYPE.includes(n) || ALLOWED_AREA.includes(n));
+            const wanted = [...new Set(candidates)].filter(n => repoLabels.includes(n) && !existing.includes(n));
+
+            if (wanted.length) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: wanted });
+            }
+            core.notice(`#${number} opencode labels: ${wanted.join(', ') || '(none)'}`);
+
+            const rawDup = String(parsed.duplicate_of ?? '').trim();
+            const dup = Number.parseInt(rawDup, 10);
+            if (/^\d+$/.test(rawDup) && Number.isFinite(dup) && dup !== number) {
+              try {
+                const { data } = await github.rest.issues.get({ owner, repo, issue_number: dup });
+                if (!data.pull_request && data.state === 'open') {
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: number,
+                    body: `疑似重复，请维护者确认。\nPossible duplicate of #${dup} — maintainers, please confirm.`
+                  });
+                  await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['status: duplicate'] });
+                }
+              } catch (err) {
+                core.info(`duplicate_of #${dup} unusable: ${err.message}`);
+              }
+            }

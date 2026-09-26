@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+
+# 关闭空白 Issue：未走模板的 Issue 无法获得 type:/status: 标签，
+# 也会绕过 Issue Type。有需要请改用 issue-triage.yml 的 workflow_dispatch 手动补标。
+#
+# 联系入口只写仓库真实存在的资源（homepage https://www.qomicex.top/）；
+# 仓库未开启 Discussions，discussions/URL 不写，避免指向 404。
+contact_links:
+  - name: "❓ 提问与使用求助 | Questions & Usage Help"
+    url: https://www.qomicex.top/
+    about: "下载、安装、账号、联机等使用问题请先访问官网获取帮助渠道 | Visit the website for download, install, account and multiplayer help"
+  - name: "🔐 安全问题 | Security Issues"
+    url: https://github.com/Qomicex-Public/Qomicex.Tauri/security/advisories
+    about: "涉及账号、密钥、远程代码执行等安全问题请走私密漏洞报告，不要公开提交 | Please report security issues privately instead of filing a public issue"

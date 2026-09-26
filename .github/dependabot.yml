@@ -1,0 +1,26 @@
+# 只跟进 GitHub Actions 依赖：本仓工作流钉版较多（actions/*、EndBug/label-sync、
+# anomalyco/opencode、alibaba/open-code-review），旧版 action 会随 Node/CLI 漂移失效。
+#
+# 不开 cargo / npm 生态：crates.io 与 npm 更新噪音大且会牵动 pnpm-lock 与大量
+# 业务代码评审，收益低于成本，改为人工按版本节奏评估（见 AGENTS.md）。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      prefix-separator: ": "
+    labels:
+      - "type: chore"
+      - "area: ci"
+      - "status: needs-triage"
+    groups:
+      actions:
+        patterns:
+          - "*"

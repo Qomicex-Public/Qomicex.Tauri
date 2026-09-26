@@ -1,6 +1,10 @@
 name: "🐛 Bug 反馈 | Bug Report"
 description: "提交一个 QML Bug | Report a Bug for QML"
-labels: ["bug", "needs-triage"]
+# labels: 引用的标签名必须已存在于仓库（由 .github/workflows/label-sync.yml 同步创建），
+# 否则 GitHub 会静默忽略；type: 写入 org 级原生 Issue Type（Bug/Feature/Task）。
+labels: ["type: bug", "status: needs-triage"]
+type: "Bug"
+title: "[Bug] <title>"
 body:
   - type: input
     id: version

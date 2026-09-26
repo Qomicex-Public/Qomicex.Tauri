@@ -1,0 +1,104 @@
+# 仓库标签体系（单一事实来源）
+#
+# 由 .github/workflows/label-sync.yml 在 push 到 main 且本文件变更时自动同步，
+# 也可在 Actions → Label Sync → Run workflow 手动执行。
+# 维护方式：只改本文件，不要手动在 GitHub UI 建/改标签，否则会在下次同步时被覆盖。
+#
+# 三段命名空间（与 issue/PR 模板、issue-triage.yml 的判定逻辑一一对应）：
+#   type: *    类型维度，互斥（一个 issue/PR 只有一个 type）
+#   status: *  状态维度，维护者手工维护，自动流程只补 status: needs-triage
+#   area: *    模块维度，可多个
+#
+# 注意：GitHub 内置标签（Bug / Enhancement / Documentation / Duplicate / Fixed /
+# invalid / question / wontfix / good first issue / help wanted / Processing）
+# 不在本文件内，因此不会被覆盖或删除；delete-other-labels 为 false，两者共存。
+#
+# label-sync 输入格式：name / color（不含 #）/ description。
+
+- name: "type: bug"
+  color: "d73a4a"
+  description: "缺陷：预期行为未实现、崩溃、数据丢失（Bug: something is broken）"
+
+- name: "type: feature"
+  color: "a2eeef"
+  description: "新功能请求（Feature request）"
+
+- name: "type: improvement"
+  color: "84b6eb"
+  description: "既有功能优化：性能 / 稳定性 / UI-UX / 易用性（Improvement）"
+
+- name: "type: docs"
+  color: "0075ca"
+  description: "文档变更（Documentation）"
+
+- name: "type: question"
+  color: "d876e3"
+  description: "提问与求助（Question）"
+
+- name: "type: discussion"
+  color: "c5def5"
+  description: "非正式讨论 / 想法征集（Discussion）"
+
+- name: "type: chore"
+  color: "ededed"
+  description: "工程杂项：构建 / 依赖 / CI / 重构（Chore）"
+
+- name: "status: needs-triage"
+  color: "fbca04"
+  description: "待分诊：尚未确认是否处理（Needs triage）"
+
+- name: "status: in-progress"
+  color: "1d76db"
+  description: "已确认并正在处理（In progress）"
+
+- name: "status: blocked"
+  color: "b60205"
+  description: "被其他 Issue / 外部因素阻塞（Blocked）"
+
+- name: "status: duplicate"
+  color: "cfd3d7"
+  description: "重复（Duplicate）"
+
+- name: "status: wontfix"
+  color: "ffffff"
+  description: "不处理（Won't fix）"
+
+- name: "status: invalid"
+  color: "e4e669"
+  description: "无效：无法复现 / 信息不足 / 使用方式有误（Invalid）"
+
+- name: "status: fixed"
+  color: "818bd4"
+  description: "已修复，等待发布验证（Fixed）"
+
+- name: "area: frontend"
+  color: "5319e7"
+  description: "前端 React / Vite / 插件 UI 包（Frontend）"
+
+- name: "area: backend"
+  color: "5319e7"
+  description: "Rust 后端 axum / qomicex-backend（Backend）"
+
+- name: "area: connector"
+  color: "5319e7"
+  description: "联机 / SCF 协议 / EasyTier（Connector）"
+
+- name: "area: updater"
+  color: "5319e7"
+  description: "启动器自更新通道 / Updater（Updater）"
+
+- name: "area: plugin"
+  color: "5319e7"
+  description: "插件系统 / plugin-ui / WASM 网关（Plugin system）"
+
+- name: "area: ci"
+  color: "5319e7"
+  description: "CI / CD / GitHub Actions / 发布流水线（CI）"
+
+- name: "area: docs"
+  color: "5319e7"
+  description: "文档与 ADR（Docs）"
+
+- name: "area: i18n"
+  color: "5319e7"
+  description: "多语言资源（i18n）"

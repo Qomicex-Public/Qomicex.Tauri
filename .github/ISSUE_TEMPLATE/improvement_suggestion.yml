@@ -1,6 +1,10 @@
 name: "🔧 优化建议 | Improvement Suggestion"
 description: "提交一个优化建议（性能 / 稳定性 / UI-UX / 易用性）| Suggest an improvement (performance / stability / UI-UX / usability)"
-labels: ["improvement", "needs-triage"]
+# labels: 必须与 .github/labels.yml 中已同步到仓库的标签名一致，否则 GitHub 静默忽略。
+# 原生 Issue Type 只有 Bug/Feature/Task 三种，优化建议归入 Task。
+labels: ["type: improvement", "status: needs-triage"]
+type: "Task"
+title: "[Improvement] <title>"
 body:
   - type: dropdown
     id: type

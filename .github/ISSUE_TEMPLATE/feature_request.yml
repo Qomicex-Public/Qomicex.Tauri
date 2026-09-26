@@ -1,6 +1,9 @@
 name: "✨ 新功能建议 | Feature Request"
 description: "建议一个新功能 | Suggest a new feature"
-labels: ["enhancement", "needs-triage"]
+# labels: 必须与 .github/labels.yml 中已同步到仓库的标签名一致，否则 GitHub 静默忽略。
+labels: ["type: feature", "status: needs-triage"]
+type: "Feature"
+title: "[Feature] <title>"
 body:
   - type: textarea
     id: summary

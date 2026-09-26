@@ -1,0 +1,38 @@
+name: Label Sync
+
+# 把 .github/labels.yml 声明的标签同步到仓库（类型/状态/模块三段命名空间）。
+# 只在本文件或 labels.yml 变更时自动跑，避免每次 push 都动仓库标签。
+#
+# 前提：issue form 的 `labels:` 前置元数据只会自动添加**仓库里已存在**的标签名，
+# 不存在的会被静默忽略（GitHub 官方文档 syntax-for-issue-forms）。
+# 因此本工作流合并后首次 push 就会把 type:/status:/area: 标签建出来，
+# 之后新提交的 Issue 打开即自动带上对应标签。
+#
+# 手动执行：Actions → Label Sync → Run workflow。
+# 删除为 false：GitHub 内置标签（Bug / Enhancement / Documentation 等）保留不动。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.yml"
+      - ".github/workflows/label-sync.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Sync labels
+        uses: EndBug/label-sync@v2
+        with:
+          config-file: .github/labels.yml
+          delete-other-labels: false

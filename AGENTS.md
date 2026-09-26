@@ -152,6 +152,18 @@ Mac 的 Create DMG 步骤必须给 `hdiutil create` 传显式 `-size`（按 `du 
 
 `.github/workflows/mirror.yml` — 将仓库（含子模块）镜像同步到 CNB（cnb.cool）。纯 git 操作（`git remote add cnb` + `push --mirror`，子模块逐个镜像并改写 `.gitmodules`），不依赖任何 CNB CLI。需要 `QOMICEX_PAT`、`CNB_ACCESS_TOKEN` secret 和 `CNB_REPO` variable。
 
+## Issue / PR 自动化（标签与分类）
+
+**Issue 选模板却不打 Type 的根因**：issue form 的 `labels:` 前置元数据只会自动添加**仓库里已存在**的标签名，不存在的被静默忽略（GitHub 官方 `syntax-for-issue-forms`）。历史模板写的 `bug`/`enhancement`/`improvement`/`needs-triage` 都不存在，所以 #101/#112/#114/#116/#117 全是 0 label。
+
+- `.github/labels.yml` — 标签体系唯一事实来源（`type:` 互斥 / `status:` 维护者手工 / `area:` 模块），改这里，不要手工在 GitHub UI 建标签。
+- `.github/workflows/label-sync.yml` — `push: main` 且这两个文件变更时用 `EndBug/label-sync@v2` 同步（`delete-other-labels: false`，GitHub 内置标签不动），也可 `workflow_dispatch` 手动跑。
+- `.github/workflows/issue-triage.yml` — `issues`/`pull_request_target` 的 opened/reopened/edited 上确定性打标（标题前缀 `^\[Bug\]`/`^\[Feature\]`/`^\[Improvement\]` → issue form 标题；issue 正文 marker `### QML 版本号`/`### 复现步骤`/`### 功能描述`/`### 优化类型`；PR 标题按 Conventional Commits 前缀）。模板 issue 已由 front matter 打好标签时，此步只做互斥校正，**幂等，无变更零 API 写**。
+- opcode 兜底 triage：上一步判不出类型时（空白 issue / 无前缀标题），仍在该工作流里用 `opencode run` 非交互模式分类并补 `type:`/`area:`——`anomalyco/opencode/github` action 内部 `assertContextEvent("issue_comment","pull_request_review_comment")`，**只能在评论事件跑**，所以 issue 打开即分类必须走 CLI 模式。需要 secret `OPENCODE_API_KEY`（与 `.github/workflows/opencode.yml` 共用）；variable `ISSUE_TRIAGE_MODEL`（默认 `opencode/nemotron-3-ultra-free`）、`ISSUE_TRIAGE_ENABLED=off` 一键关闭（确定性打标不受影响）。失败 `continue-on-error`，只补标签不删标签。
+- 存量补录：`Actions → Issue & PR Triage → Run workflow` 填 `issue_number`（留空则批量给无 `type:` 的 open issue 补 `status: needs-triage`）。
+- `.github/ISSUE_TEMPLATE/config.yml` 设 `blank_issues_enabled: false`，堵住绕过模板的Issue；`.github/PULL_REQUEST_TEMPLATE.md` 约束 PR 检查项；`.github/dependabot.yml` **只开 github-actions 生态**（不开 cargo/npm，避免噪音）。
+
+改模板字段名/标题前缀前必读 `docs/junsi-dev-docs/8-部署运维/GitHub-Issue-模板与自动分类.md`：`issue-triage.yml` 的正文 marker 是精确字符串匹配，改字段名会静默失效。根因与排障表同在该文档。
 ## Import rules (critical)
 
 All local TS/TSX imports **must include file extensions** — Vite path bug:

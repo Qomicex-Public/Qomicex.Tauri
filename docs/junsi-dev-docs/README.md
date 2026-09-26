@@ -172,6 +172,7 @@
 - [PHASE1 端到端联调记录](8-部署运维/PHASE1-联调记录.md)
 - [待办清单](8-部署运维/TODO.md)
 - [Windows DLL 打包与运行时解压机制](8-部署运维/Windows-DLL打包与运行时解压机制.md)
+- [GitHub Issue 模板与自动 Type 分类（标签体系 + 自动打标 + opencode 兜底 triage）](8-部署运维/GitHub-Issue-模板与自动分类.md)
 - [构建与部署](8-部署运维/构建部署.md)
 - [环境配置说明](8-部署运维/环境配置说明.md)
 
