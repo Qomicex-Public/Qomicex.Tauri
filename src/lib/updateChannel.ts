@@ -15,7 +15,17 @@ export type UpdateTrain = 'release' | 'beta' | 'alpha' | 'dev' | 'unknown'
 /** 设置页通道选择器的持久化键。 */
 export const UPDATE_CHANNEL_KEY = 'update-channel'
 
-const TRAIN_RE = /-(alpha|beta|release)(\d+)/i
+/**
+ * pre-release 首段（`.` 分隔的第一段）的「类型名 + 序数」：`beta32` / `release1` /
+ * `alpha20260823`；legacy `alpha260719.build3` 的首段即 `alpha260719`，
+ * 点号 legacy（`alpha.build3`）的首段是 `alpha`。
+ *
+ * **不能带前导 `-`**：调用方喂进来的是已 `slice(dash + 1)` 去掉 `-` 的串，
+ * 带 `-` 会恒不匹配（旧实现正是如此，见 `trainOf` 内的注释）。
+ * 语义与后端 `parse_type_segment` 对齐：类型名后必须为空或紧跟数字，
+ * 因此 `beta-x` 之类同样判为 unknown。
+ */
+const TYPE_SEGMENT_RE = /^(alpha|beta|release)(\d*)$/
 
 /**
  * 版本号 → 所属列车。
@@ -30,7 +40,15 @@ export function trainOf(version: string): UpdateTrain {
   const v = (version || '').trim().replace(/^v/i, '')
   const dash = v.indexOf('-')
   if (dash === -1) return 'dev'
-  const m = v.slice(dash + 1).match(TRAIN_RE)
+  // 回归防护：旧代码是 `/-(alpha|beta|release)(\d+)/i` 匹配 `v.slice(dash + 1)`，
+  // 而 slice 已把 `-` 剥掉 → 正则永远匹配不上 → release/beta/alpha 全部落入
+  // 'unknown'。症状：设置页徽章显示"未知构建"；`resolveChannel` 返回 undefined，
+  // 使 App.tsx 后台检查与 Settings.tsx 手动检查都静默返回"已是最新"；
+  // announcements.ts 的通道过滤同样失效（不带 channel 请求 → 拿到全部公告）。
+  const m = v
+    .slice(dash + 1)
+    .split('.')[0]
+    .match(TYPE_SEGMENT_RE)
   if (!m) return 'unknown'
   const t = m[1].toLowerCase()
   return t === 'alpha' || t === 'beta' || t === 'release' ? t : 'unknown'
