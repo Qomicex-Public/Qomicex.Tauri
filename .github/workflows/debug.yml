@@ -239,7 +239,9 @@ jobs:
           Copy-Item -Force Qomicex.Updater/target/x86_64-pc-windows-msvc/release/qomicex-updater.exe src-tauri/binaries/updater.exe
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
-      - run: pnpm run tauri -- build --bundles nsis
+      # tauri 用 `pnpm exec` 调起，不要写回 `pnpm run tauri -- build`：pnpm 对 `--` 的
+      # 剥离行为随版本而变，透传给 CLI 时 clap 报 "unexpected argument 'build' found"。
+      - run: pnpm exec tauri build --bundles nsis
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -298,6 +300,10 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-pc-windows-msvc }
+      # rust-toolchain.toml 钉住 1.95.0，dtolnay 动作只把 target 装进 `stable`；cargo 在
+      # 仓库目录内解析到被钉住的 1.95.0，交叉 target 缺失 → E0463 can't find crate for `core`
+      - name: Install cross target for pinned toolchain
+        run: rustup target add aarch64-pc-windows-msvc
       - uses: swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
@@ -334,7 +340,7 @@ jobs:
           Copy-Item -Force Qomicex.Updater/target/aarch64-pc-windows-msvc/release/qomicex-updater.exe src-tauri/binaries/updater.exe
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
-      - run: pnpm run tauri -- build --bundles nsis --target aarch64-pc-windows-msvc
+      - run: pnpm exec tauri build --bundles nsis --target aarch64-pc-windows-msvc
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -427,7 +433,7 @@ jobs:
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          pnpm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+          pnpm exec tauri build --bundles "${BUNDLES:-appimage,deb,rpm}"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -521,7 +527,7 @@ jobs:
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
           BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          pnpm run tauri -- build --bundles "${BUNDLES:-appimage,deb,rpm}"
+          pnpm exec tauri build --bundles "${BUNDLES:-appimage,deb,rpm}"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -621,7 +627,7 @@ jobs:
             pnpm install --no-frozen-lockfile \
               --fetch-timeout=600000 --fetch-retries=5
             pnpm --filter @qomicex/plugin-ui build
-            pnpm run tauri -- build --bundles deb,rpm
+            pnpm exec tauri build --bundles deb,rpm
           EOF
       - name: Generate update manifest fragment
         run: |
@@ -707,7 +713,7 @@ jobs:
           cp Qomicex.Updater/target/aarch64-apple-darwin/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
-      - run: pnpm run tauri -- build --bundles app
+      - run: pnpm exec tauri build --bundles app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -791,6 +797,9 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-apple-darwin }
+      # 同 windows-arm64：rust-toolchain.toml 钉住 1.95.0，交叉 target 必须装进被钉住的链
+      - name: Install cross target for pinned toolchain
+        run: rustup target add x86_64-apple-darwin
       - uses: swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
@@ -820,7 +829,7 @@ jobs:
           cp Qomicex.Updater/target/x86_64-apple-darwin/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
-      - run: pnpm run tauri -- build --bundles app --target x86_64-apple-darwin
+      - run: pnpm exec tauri build --bundles app --target x86_64-apple-darwin
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

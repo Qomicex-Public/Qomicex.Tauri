@@ -144,6 +144,10 @@ requires `QOMICEX_PAT` secret for submodule checkout. Builds cargo backend per t
 
 CI 使用 **pnpm**（非 npm）：`pnpm install --frozen-lockfile` 后必须 `pnpm --filter @qomicex/plugin-ui build`（workspace 包需先构建 `dist/`）。`actions/setup-node` 配 `cache: pnpm`，之前需 `pnpm/action-setup@v4`。
 
+**工作流里调 tauri CLI 必须写 `pnpm exec tauri build ...`，不要写 `pnpm run tauri -- build ...`**：pnpm 对 `run` 后 `--` 的剥离行为随版本而变（实测 11.11 剥离、11.19 原样透传给 CLI），透传时 clap 报 `unexpected argument 'build' found`，run 36157803787 六个平台作业即因此全挂（#109 把 `npm run tauri -- build` 改成 pnpm 时引入；npm 一直会剥离 `--`）。`pnpm exec` 直接把参数转发给 CLI，无此歧义。
+
+**交叉编译作业必须额外 `rustup target add <triple>`**：`rust-toolchain.toml` 把工具链钉在 1.95.0，而 `dtolnay/rust-toolchain@stable` 只把 `targets:` 装进 `stable`（1.98.1）；cargo 在仓库目录内解析到被钉住的 1.95.0，交叉 target 缺失 → `error[E0463]: can't find crate for 'core'`。受影响作业：windows-arm64（aarch64-pc-windows-msvc，x64 runner）、macos-x64（x86_64-apple-darwin，arm64 runner）。
+
 Mac 的 Create DMG 步骤必须给 `hdiutil create` 传显式 `-size`（按 `du -sm "$STAGING"` ×1.3 + 64MiB 计算）：`-srcfolder` 自动估算会偏小，嵌入 Rust 后端后镜像内复制到一半报 `No space left on device`（宿主盘其实有空间）。UDZO 压缩会回收多余空间，不影响最终 DMG 大小。
 
 `.github/workflows/mirror.yml` — 将仓库（含子模块）镜像同步到 CNB（cnb.cool）。纯 git 操作（`git remote add cnb` + `push --mirror`，子模块逐个镜像并改写 `.gitmodules`），不依赖任何 CNB CLI。需要 `QOMICEX_PAT`、`CNB_ACCESS_TOKEN` secret 和 `CNB_REPO` variable。
