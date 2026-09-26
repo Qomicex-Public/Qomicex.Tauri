@@ -22,10 +22,15 @@ export const UPDATE_CHANNEL_KEY = 'update-channel'
  *
  * **不能带前导 `-`**：调用方喂进来的是已 `slice(dash + 1)` 去掉 `-` 的串，
  * 带 `-` 会恒不匹配（旧实现正是如此，见 `trainOf` 内的注释）。
- * 语义与后端 `parse_type_segment` 对齐：类型名后必须为空或紧跟数字，
- * 因此 `beta-x` 之类同样判为 unknown。
+ * 与后端 `services/update_channel.rs::parse_type_segment` 逐条对齐：
+ * - `/i`：后端先 `to_ascii_lowercase`，因此 `Beta1` / `ALPHA1` 同样识别
+ *   （`m[1].toLowerCase()` 依赖这个 flag，不能去掉）；
+ * - 类型名后**为空或紧跟数字**即可，不要求数字延续到段尾：后端
+ *   `first_number_run` 吃得下的 `beta32foo` / `beta1-hotfix` /
+ *   git-describe 形态 `beta12-3-gabcdef` 在这里同样是 beta；
+ * - 类型名后是其它字符（`beta-x` / `betamax` / `rc1`）→ unknown，与后端一致。
  */
-const TYPE_SEGMENT_RE = /^(alpha|beta|release)(\d*)$/
+const TYPE_SEGMENT_RE = /^(alpha|beta|release)(?:\d|$)/i
 
 /**
  * 版本号 → 所属列车。
