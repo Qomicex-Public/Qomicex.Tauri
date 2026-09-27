@@ -137,7 +137,7 @@ jobs:
           script: |
             const TYPE_PREFIX = 'type: ';
             const NEEDS_TRIAGE = 'status: needs-triage';
-            const empty = { result: { kind: 'none', type: '', added: [], removed: [] } };
+            const empty = { kind: 'none', type: '', added: [], removed: [] };
 
             // 判据来自 .github/ISSUE_TEMPLATE/*.yml 的 title: 与 body 字段渲染标题，
             // 改模板字段名必须同步这里（详见 docs/junsi-dev-docs/8-部署运维/GitHub-Issue-模板与自动分类.md）。
@@ -173,14 +173,24 @@ jobs:
             const owner = context.repo.owner, repo = context.repo.repo;
             const number = Number(process.env.TARGET_NUMBER || 0);
             const isPR = process.env.TARGET_IS_PR === 'true';
-            if (!number) return empty;
+            if (!number) {
+              core.setOutput('kind', 'none');
+              core.setOutput('type', '');
+              core.setOutput('action', 'no-target');
+              return empty;
+            }
 
             const { data } = await github.rest.issues.get({ owner, repo, issue_number: number });
             const kind = isPR ? 'pr' : 'issue';
             const detected = detectType(kind, data.title || '', data.body || '');
             if (!detected) {
               core.info(`#${number} (${kind}) no deterministic type`);
-              return { result: { kind, type: '', added: [], removed: [] } };
+              // 显式 setOutput：不要依赖脚本返回值——github-script 会把整个返回值
+              // 塞进 steps.<id>.outputs.result，再 fromJSON 取字段会因多套一层而失灵。
+              core.setOutput('kind', kind);
+              core.setOutput('type', '');
+              core.setOutput('action', 'none');
+              return { kind: kind, type: '', added: [], removed: [] };
             }
 
             const repoLabels = (await github.paginate(github.rest.issues.listLabelsForRepo, { owner, repo, per_page: 100 })).map(l => l.name);
@@ -197,8 +207,10 @@ jobs:
             for (const name of drop) {
               await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name });
             }
-            core.info(`#${number} (${kind}) add=[${add.concat(addStatus).join(',')}] remove=[${drop.join(',')}]`);
-            return { result: { kind, type: detected, added: add.concat(addStatus), removed: drop } };
+            core.setOutput('kind', kind);
+            core.setOutput('type', detected);
+            core.setOutput('action', `add=[${add.concat(addStatus).join(',')}] remove=[${drop.join(',')}]`);
+            return { kind: kind, type: detected, added: add.concat(addStatus), removed: drop };
 
       # ---------- Step 2: opencode 兜底分类（仅 issue、非机器人、上一步判不出类型时）----------
       # anomalyco/opencode/github 只能在 issue_comment / pull_request_review_comment 事件跑，
@@ -210,8 +222,7 @@ jobs:
           && steps.resolve.outputs.is_bot != 'true'
           && steps.resolve.outputs.is_pr != 'true'
           && steps.resolve.outputs.has_type != 'true'
-          && steps.label.outputs.result != ''
-          && fromJSON(steps.label.outputs.result).type == ''
+          && steps.label.outputs.type == ''
           && vars.ISSUE_TRIAGE_ENABLED != 'off'
         continue-on-error: true
         env:
