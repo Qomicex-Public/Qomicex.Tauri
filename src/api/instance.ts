@@ -208,8 +208,17 @@ export async function startModpackInstall(data: ModpackInstallRequest): Promise<
   return { message: res.message, instanceId: res.versionId }
 }
 
-export async function installModpackDirect(data: ModpackInstallDirectRequest): Promise<ModpackInstallDirectResult> {
-  return post<ModpackInstallDirectResult>('/modpack/install-direct', data)
+/**
+ * 一键导入整合包（拖拽导入链路）。
+ *
+ * `timeoutMs` 默认 60s：该请求要先解析本地 zip（索引探测），大包上超过全局 15s 会误报
+ * 「请求超时」并丢掉下载中心任务（issue #119）；超大包由调用方按文件大小进一步放宽。
+ */
+export async function installModpackDirect(
+  data: ModpackInstallDirectRequest,
+  timeoutMs = 60_000,
+): Promise<ModpackInstallDirectResult> {
+  return post<ModpackInstallDirectResult>('/modpack/install-direct', data, { timeoutMs })
 }
 
 /** 解析 MultiMC 实例文件夹（Tauri 目录选择器选中）。 */
@@ -217,9 +226,14 @@ export async function parseMultiMcFolder(path: string): Promise<MultiMcParseResu
   return post<MultiMcParseResult>('/modpack/multimc/parse-folder', { path })
 }
 
-/** 开始 MultiMC 导入（后台任务，进度走 /modpack/progress/{instanceId}）。 */
+/**
+ * 开始 MultiMC 导入（后台任务，进度走 /modpack/progress/{instanceId}）。
+ *
+ * sourcePath 指向 zip 时同样要先解析 zip 索引：与 parse-path 一致放宽到 60s，
+ * 避免大型 MultiMC 包在导入对话框里触发 15s 超时（issue #119）。
+ */
 export async function startMultiMcImport(data: MultiMcImportRequest): Promise<{ instanceId: string }> {
-  return post<{ instanceId: string }>('/modpack/multimc/import', data)
+  return post<{ instanceId: string }>('/modpack/multimc/import', data, { timeoutMs: 60_000 })
 }
 
 /** 读取实例可导出文件树（HMCL 风格勾选列表）。 */

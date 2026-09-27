@@ -13,7 +13,7 @@ import { useMessageBox } from './ui'
 import { getInstances } from '../api/instance.ts'
 import { installModpackDirect } from '../api/instance.ts'
 import { loadSettings } from '../api/settings.ts'
-import { importLocalFile } from '../api/drop-install.ts'
+import { importLocalFile, modpackRequestTimeout } from '../api/drop-install.ts'
 import type { ClassifyFileResult } from '../api/drop-install.ts'
 import type { GameInstance } from '../types/index.ts'
 import { addTask } from '../stores/downloadStore.ts'
@@ -142,12 +142,15 @@ export default function DropInstallDialog({ group, onClose }: Props) {
     setInstalling(true)
     setError('')
     try {
-      const { instanceId } = await installModpackDirect({
-        id: instanceName.trim(),
-        path: modpackFile.path,
-        gameDir,
-        versionIsolation,
-      })
+      const { instanceId } = await installModpackDirect(
+        {
+          id: instanceName.trim(),
+          path: modpackFile.path,
+          gameDir,
+          versionIsolation,
+        },
+        modpackRequestTimeout(modpackFile.fileSize),
+      )
       addTask({
         id: instanceId,
         name: instanceName.trim(),

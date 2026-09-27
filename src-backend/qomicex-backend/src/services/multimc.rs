@@ -246,6 +246,10 @@ pub fn parse_metadata(root: &Path) -> Result<MultiMcMetadata, String> {
 /// 从 zip 整合包直接解析元数据（不落盘，类似 C# ZipArchive 只读条目）。
 /// 定位实例根前缀（含 mmc-pack.json / instance.cfg 的目录），只读这三个条目：
 /// `mmc-pack.json`（components）、`instance.cfg`（name/Java/内存/iconKey）、图标 PNG。
+///
+/// 前缀探测同样只读中央目录（`file_names()`）：`by_index()` 会为每个条目 seek 并读本地
+/// 文件头，GTNH（1.6 万条目）下这轮全表扫描就是「解析请求超时」的主要耗时（issue #119）；
+/// 后续只对 mmc-pack.json / instance.cfg / 图标这几个具体条目做 `by_name` 随机读。
 pub fn parse_metadata_from_zip(zip_path: &Path) -> Result<MultiMcMetadata, String> {
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
@@ -254,11 +258,7 @@ pub fn parse_metadata_from_zip(zip_path: &Path) -> Result<MultiMcMetadata, Strin
     //    优先选同时含 instance.cfg 的统一前缀，避免 mmc-pack.json 与 instance.cfg
     //    来自不同目录（如包内含多个实例或嵌套条目）导致名称/组件错配。
     let mut mc_prefixes: Vec<String> = Vec::new();
-    for i in 0..archive.len() {
-        let Ok(entry) = archive.by_index(i) else {
-            continue;
-        };
-        let name = entry.name();
+    for name in archive.file_names() {
         if name.ends_with("mmc-pack.json") {
             let dir = name
                 .rsplit_once('/')
@@ -1650,14 +1650,21 @@ mod tests {
     #[test]
     fn parse_metadata_from_zip_real_gtnh() {
         // 用户提供的真实 GTNH 压缩包（仅存在时运行）。
-        let zip = std::path::Path::new(
-            r"C:\Project\tmp\modpacks\muilti-mc\GT_New_Horizons_2.8.4_Java_17-25.zip",
-        );
+        // 路径可用 `QOMICEX_TEST_GTNH_ZIP` 覆盖，便于拿 issue #119 的
+        // 2.9.0-RC-1 整合包本地复验；缺省沿用历史路径。
+        let zip = std::env::var_os("QOMICEX_TEST_GTNH_ZIP")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::Path::new(
+                    r"C:\Project\tmp\modpacks\muilti-mc\GT_New_Horizons_2.8.4_Java_17-25.zip",
+                )
+                .to_path_buf()
+            });
         if !zip.is_file() {
             eprintln!("skip: GTNH zip not found");
             return;
         }
-        let meta = parse_metadata_from_zip(zip).unwrap();
+        let meta = parse_metadata_from_zip(&zip).unwrap();
         assert_eq!(meta.game_version, "1.7.10");
         assert_eq!(meta.loader_uid, "net.minecraftforge");
         assert!(!meta.components.is_empty());

@@ -56,7 +56,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+/** 请求可选项：`timeoutMs` 覆盖全局 15s 超时（大文件/整合包导入等长耗时请求）。 */
+export interface RequestOptions extends RequestInit {
+  timeoutMs?: number
+}
+
+
+async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   const debug = window.__DEBUG__
   const start = performance.now()
   const method = options?.method ?? 'GET'
@@ -77,21 +83,45 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ? `${API_BASE}${path}${path.includes('?') ? '&' : '?'}_t=${Date.now()}`
     : `${API_BASE}${path}`
 
+  const callerSignal = options?.signal
+  // 超时优先级：显式 timeoutMs > 调用方自带 signal（视为调用方全权管理取消，
+  // 不再叠全局 15s——否则 parse-modpack-by-path 这类自带 60s 窗口的请求会被
+  // 砍到 15s）> 全局 15s。signal 与超时都桥接到同一个 controller，避免
+  // fetch 只认一个 signal 导致另一方被静默忽略。
+  // 手动桥接而不用 AbortSignal.any()：后者在旧版 WKWebView / WebView 上不一定可用。
+  const timeoutMs = options?.timeoutMs ?? (callerSignal ? undefined : REQUEST_TIMEOUT_MS)
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  let detachCaller: (() => void) | undefined
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort()
+    else {
+      const onCallerAbort = () => controller.abort()
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true })
+      detachCaller = () => callerSignal.removeEventListener('abort', onCallerAbort)
+    }
+  }
+  const timeoutId =
+    timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(), timeoutMs)
+  // timeoutMs / signal 只是客户侧控制参数，不属于 fetch RequestInit：剥掉后统一用
+  // 上面合成的 controller.signal，避免调用方的 signal 把内部超时信号覆盖掉。
+  const init: RequestInit = { ...options }
+  delete (init as { timeoutMs?: number }).timeoutMs
+  delete init.signal
   let res: Response
   try {
     res = await fetch(url, {
       headers: { 'Content-Type': 'application/json', ...options?.headers },
-      signal: options?.signal ?? controller.signal,
-      ...options,
+      signal: controller.signal,
+      ...init,
     })
   } catch (e) {
+    // 调用方主动 abort：保持既有语义原样抛出，不能误报成请求超时。
+    if (callerSignal?.aborted) throw e
     if (controller.signal.aborted) {
-      console.error(`[API] ${method} ${path} => 请求超时 (${REQUEST_TIMEOUT_MS}ms)`)
+      console.error(`[API] ${method} ${path} => 请求超时 (${timeoutMs ?? REQUEST_TIMEOUT_MS}ms)`)
       throw new ApiError({
         code: 'REQUEST_TIMEOUT',
-        message: `请求超时（${REQUEST_TIMEOUT_MS / 1000}s）`,
+        message: `请求超时（${timeoutMs ? timeoutMs / 1000 : '?'}s）`,
         detail: path,
         traceId: '',
         timestamp: new Date().toISOString(),
@@ -100,7 +130,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     }
     throw e
   } finally {
-    clearTimeout(timeoutId)
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+    detachCaller?.()
   }
   const duration = Math.round(performance.now() - start)
 
@@ -139,7 +170,7 @@ export function get<T>(path: string, options?: RequestInit): Promise<T> {
   return request<T>(path, options)
 }
 
-export function post<T>(path: string, body?: unknown, options?: RequestInit): Promise<T> {
+export function post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
   return request<T>(path, {
     method: 'POST',
     body: body ? JSON.stringify(body) : undefined,

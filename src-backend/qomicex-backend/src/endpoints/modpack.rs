@@ -844,18 +844,19 @@ fn write_pack_icon(
 /// 只认 `mmc-pack.json`（MultiMC 实例的强标识，且 parse_metadata_from_zip 也以此为准）。
 /// 单独的 `instance.cfg` 不作为信号：普通 Modrinth/CurseForge 包可能恰好含同名文件，
 /// 误判后会被交给 parse_metadata_from_zip 并因缺 mmc-pack.json 而拒绝本应有效的整合包。
+///
+/// 只读中央目录（`file_names()`）而不 `by_index()`：`by_index()` 会为每个条目 seek 并读
+/// 本地文件头，GTNH 这类 1.6 万条目 / 700MB 的包会退化成上万次随机读，探测本身就要数秒
+/// 到十几秒（issue #119 的「解析请求超时」根因之一）。名字信息在中央目录里已有，
+/// 逐条目读本地头纯属浪费。
 fn is_multimc_zip(zip_path: &std::path::Path) -> bool {
     let Ok(file) = std::fs::File::open(zip_path) else {
         return false;
     };
-    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+    let Ok(archive) = zip::ZipArchive::new(file) else {
         return false;
     };
-    for i in 0..archive.len() {
-        let Ok(entry) = archive.by_index(i) else {
-            continue;
-        };
-        let name = entry.name();
+    for name in archive.file_names() {
         if name == "mmc-pack.json" || name.ends_with("/mmc-pack.json") {
             return true;
         }
@@ -2613,17 +2614,15 @@ impl LocalPackParse {
 /// meta（名称/版本/作者/简介）与管道用 ParsedModpack。
 fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("打开整合包文件失败: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
+    let archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
+    // 条目探测只读中央目录：by_index() 会逐条目 seek+读本地文件头，大包（GTNH
+    // 1.6 万条目）下这次全表扫描就是「解析请求超时」的主要耗时（issue #119）。
     let mut has_mr = false;
     let mut has_cf = false;
     let mut has_qml = false;
     let mut has_mr_overrides = false;
     let mut has_cf_overrides = false;
-    for i in 0..archive.len() {
-        let Ok(entry) = archive.by_index(i) else {
-            continue;
-        };
-        let name = entry.name();
+    for name in archive.file_names() {
         match name {
             "modrinth.index.json" => has_mr = true,
             "manifest.json" => has_cf = true,
@@ -3014,7 +3013,9 @@ mod tests {
     use std::io::Write;
     use std::path::PathBuf;
 
-    use super::{modpack_target_path, release_qml_overrides};
+    use super::{
+        is_multimc_zip, modpack_target_path, parse_local_pack_file, release_qml_overrides,
+    };
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -3100,5 +3101,46 @@ mod tests {
         );
         let plain = modpack_target_path("G", "v", false, "config/x.toml");
         assert_eq!(plain, PathBuf::from("G/config/x.toml"));
+    }
+
+    /// 大包回归（issue #119）：1.6 万条目的 zip 里格式探测 / overrides 判定仍须正确。
+    /// 这条用例同时锁住「探测只读中央目录」的实现——改用 by_index() 逐条目读本地头，
+    /// 这种规模下 classify / install-direct 的解析耗时会越过前端 15s 请求超时。
+    #[test]
+    fn zip_probing_handles_many_entries() {
+        let root = temp_dir("many-entries");
+        let zip_path = root.join("pack.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        // 模拟 GTNH 的 `.minecraft/` 内容：上万个小条目。
+        for i in 0..16_000 {
+            zip.start_file(
+                format!("GT New Horizons 2.9.0-RC-1/.minecraft/config/file{i}.cfg"),
+                opts,
+            )
+            .unwrap();
+            zip.write_all(b"key=value\n").unwrap();
+        }
+        zip.start_file("overrides/mods/keep.jar", opts).unwrap();
+        zip.write_all(b"jar").unwrap();
+        // 索引埋在大量条目之后：探测必须覆盖全表而不是只看前几个条目。
+        let index = br#"{"game":"minecraft","name":"BigPack","versionId":"1.0","dependencies":{"minecraft":"1.20.1","fabric-loader":"0.15.0"},"files":[{"path":"mods/a.jar","downloads":["https://example.invalid/a.jar"]}]}"#;
+        zip.start_file("modrinth.index.json", opts).unwrap();
+        zip.write_all(index).unwrap();
+        zip.finish().unwrap();
+
+        // 无 mmc-pack.json → 不是 MultiMC 包（不能因条目多而误判/漏判）。
+        assert!(!is_multimc_zip(&zip_path));
+
+        let parsed = parse_local_pack_file(&zip_path).unwrap();
+        assert_eq!(parsed.source, "modrinth");
+        assert_eq!(parsed.pack.game_version, "1.20.1");
+        assert_eq!(parsed.pack.loader, "fabric");
+        assert_eq!(parsed.pack.loader_version, "0.15.0");
+        assert_eq!(parsed.pack.files.len(), 1);
+        assert_eq!(parsed.pack.files[0].path, "mods/a.jar");
+        assert!(parsed.has_overrides);
     }
 }
