@@ -16,19 +16,28 @@ export interface ClassifyFileResult {
 const MB = 1024 * 1024
 
 /**
- * 整合包导入请求的超时分级（issue #119）。
+ * 整合包导入相关请求的超时宽限期（issue #119）。
  *
  * 全局 15s 上限对大型整合包不够：解析 zip 索引 + 触发后台安装管的耗时随包体积 /
  * 条目数增长，越过 15s 会让前端误报「请求超时」并丢掉下载中心任务（后端其实仍在装，
- * 于是出现「实例装好了但下载中心查不到」）。按文件大小分级放宽，>512MB 给 2 分钟兜底。
+ * 于是出现「实例装好了但下载中心查不到」）。这些常量是同一套宽限期的唯一事实来源，
+ * classify / install-direct / parse-path 共用，调值只改这里。
  */
+export const MODPACK_REQUEST_TIMEOUT_MS = 60_000
+/** >512MB 的大型整合包：2 分钟兜底。 */
+export const LARGE_MODPACK_REQUEST_TIMEOUT_MS = 120_000
+
+/** 按文件大小分级：≤512MB 用基础宽限期，>512MB 用 2 分钟兜底。 */
 export function modpackRequestTimeout(fileSize?: number): number {
-  if (fileSize && fileSize > 512 * MB) return 120_000
-  return 60_000
+  if (fileSize && fileSize > 512 * MB) return LARGE_MODPACK_REQUEST_TIMEOUT_MS
+  return MODPACK_REQUEST_TIMEOUT_MS
 }
 
 /** POST /resource/classify-file — 探测拖入文件的安装类型与整合包元数据 */
-export async function classifyFile(path: string, timeoutMs = 60_000): Promise<ClassifyFileResult> {
+export async function classifyFile(
+  path: string,
+  timeoutMs: number = MODPACK_REQUEST_TIMEOUT_MS,
+): Promise<ClassifyFileResult> {
   // 大整合包的 zip 索引解析可能超过全局 15s：这里默认就放宽到 60s。
   return await post<ClassifyFileResult>('/resource/classify-file', { path }, { timeoutMs })
 }

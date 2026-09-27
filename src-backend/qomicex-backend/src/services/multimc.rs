@@ -247,9 +247,10 @@ pub fn parse_metadata(root: &Path) -> Result<MultiMcMetadata, String> {
 /// 定位实例根前缀（含 mmc-pack.json / instance.cfg 的目录），只读这三个条目：
 /// `mmc-pack.json`（components）、`instance.cfg`（name/Java/内存/iconKey）、图标 PNG。
 ///
-/// 前缀探测同样只读中央目录（`file_names()`）：`by_index()` 会为每个条目 seek 并读本地
+/// 前缀探测按索引走中央目录（`name_for_index`）：`by_index()` 会为每个条目 seek 并读本地
 /// 文件头，GTNH（1.6 万条目）下这轮全表扫描就是「解析请求超时」的主要耗时（issue #119）；
-/// 后续只对 mmc-pack.json / instance.cfg / 图标这几个具体条目做 `by_name` 随机读。
+/// 但仍保持原来的**中央目录顺序**——`file_names()` 迭代的是内部 name→index map，顺序无保证，
+/// 而没有 instance.cfg 兜底时 `mc_prefixes.first()` 选中的前缀会随运行变化。
 pub fn parse_metadata_from_zip(zip_path: &Path) -> Result<MultiMcMetadata, String> {
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
@@ -258,7 +259,10 @@ pub fn parse_metadata_from_zip(zip_path: &Path) -> Result<MultiMcMetadata, Strin
     //    优先选同时含 instance.cfg 的统一前缀，避免 mmc-pack.json 与 instance.cfg
     //    来自不同目录（如包内含多个实例或嵌套条目）导致名称/组件错配。
     let mut mc_prefixes: Vec<String> = Vec::new();
-    for name in archive.file_names() {
+    for i in 0..archive.len() {
+        let Some(name) = archive.name_for_index(i) else {
+            continue;
+        };
         if name.ends_with("mmc-pack.json") {
             let dir = name
                 .rsplit_once('/')
