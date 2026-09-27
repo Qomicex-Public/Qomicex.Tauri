@@ -1060,7 +1060,35 @@ fn normalize_sep(dest: PathBuf) -> PathBuf {
 /// 批量下载的单条目标：（下载 URL, 归一化后的目标路径, 任务级请求头）。
 type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
 
-/// 按目标路径去重（保留首次出现），返回 `(去重后列表, 被丢弃的重复目标名)`。
+/// 判重键：先归一化分隔符，再在大小写不敏感的平台（Windows、默认 APFS/HFS+ 的
+/// macOS）折叠大小写——`Foo.jar` 与 `foo.jar` 会落在同一个文件上，也就共用同一个
+/// `.part`。键只用于判重，返回的目标路径保留原始大小写。
+fn dedup_key(dest: &Path) -> String {
+    let normalized = normalize_sep(dest.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        normalized.to_lowercase()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        normalized
+    }
+}
+
+/// 被合并掉的重复目标。同 dest 的 URL 不一定是纯冗余（镜像/下载源差异、官方源在部分
+/// 地区不可达），调用方应把 `url` 挂成保留条目的镜像备选，`name` 用于日志。
+pub(crate) struct DroppedTarget {
+    /// 归一化后的目标路径（与保留条目一致，便于调用方按 dest 归并镜像）。
+    pub dest: PathBuf,
+    /// 展示名（文件名），仅用于日志。
+    pub name: String,
+    /// 被丢弃条目的 URL。
+    pub url: String,
+}
+
+/// 按目标路径去重（保留首次出现），返回 `(去重后列表, 被合并的重复目标)`。
 ///
 /// 为什么必须去重：同一 `dest` 的两个下载任务会共用同一个 `.part` 中间文件
 /// （`DownloadTask::part_path()` = dest 同名 + `.part`）。两个任务交错执行时，先完成者把
@@ -1076,22 +1104,22 @@ type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
 /// - 同坐标的「普通 jar 条目」与「natives 条目」：`check_libs_ver` 分组键给 natives 加
 ///   角色后缀，两者分到不同组而都保留，`downloads.artifact` 又是同一个 jar。
 ///
-/// 重复条目内容一致（同路径同 URL），保留任一条即可；判定必须发生在分隔符归一化
-/// （`normalize_sep`）之后，否则 `libraries\org/ow2/...` 与 `libraries\org\ow2\...`
-/// 会被当成两个目标。
+/// 归一化与判重都在本函数内完成（幂等）：调用方无需先 `normalize_sep`，避免将来新调用方
+/// 忘记预归一化而重新引入 `.part` 竞态。返回的目标路径即归一化后的路径。
 pub(crate) fn dedup_download_targets(
     files: Vec<DownloadTarget>,
-) -> (Vec<DownloadTarget>, Vec<String>) {
-    let mut seen: HashSet<PathBuf> = HashSet::new();
+) -> (Vec<DownloadTarget>, Vec<DroppedTarget>) {
+    let mut seen: HashSet<String> = HashSet::new();
     let mut kept: Vec<DownloadTarget> = Vec::with_capacity(files.len());
-    let mut dropped: Vec<String> = Vec::new();
+    let mut dropped: Vec<DroppedTarget> = Vec::new();
     for (url, dest, headers) in files {
-        if !seen.insert(dest.clone()) {
-            dropped.push(
-                dest.file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| dest.to_string_lossy().into_owned()),
-            );
+        let dest = normalize_sep(dest);
+        let name = dest
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| dest.to_string_lossy().into_owned());
+        if !seen.insert(dedup_key(&dest)) {
+            dropped.push(DroppedTarget { dest, name, url });
             continue;
         }
         kept.push((url, dest, headers));
@@ -1099,21 +1127,21 @@ pub(crate) fn dedup_download_targets(
     (kept, dropped)
 }
 
-/// 按 `path` 去重 `MissFileInfo`（保留首次出现），返回 `(去重后列表, 被丢弃的记录名)`。
+/// 按 `path` 去重 `MissFileInfo`（保留首次出现），返回 `(去重后列表, 被合并的记录)`。
 /// 语义与理由同 [`dedup_download_targets`]：同一 dest 的两个下载任务会共用 `.part`
 /// 并互相删除，issue #122。用于直接消费 `get_miss_files_*` 结果的调用方
-/// （如实例资源补全），保留原始记录以便 UI 展示真实名称。
+/// （如实例资源补全）：保留的记录原样返回（UI 展示的名称不变），被合并的记录整体
+/// 返回，调用方可取其中的 URL 挂镜像备选、取 name 记日志。
 ///
-/// 判重键必须与下载目标一致地做分隔符归一化（`normalize_sep`）：core 拼出的 maven 路径
-/// 可能带 `/`，而调用方 `game_root.join(&f.path)` 在 Windows 上把它解析成同一个文件，
-/// 只比原始字符串会漏判，`.part` 互相删除的竞态依旧会发生。
-pub(crate) fn dedup_miss_files(files: Vec<MissFileInfo>) -> (Vec<MissFileInfo>, Vec<String>) {
-    let mut seen: HashSet<PathBuf> = HashSet::new();
+/// 判重键同样在函数内归一化（`normalize_sep` + 大小写折叠），core 拼出的 maven 路径带
+/// `/`、不同安装器/下载源还可能给出大小写不同的路径，它们都指向同一个文件。
+pub(crate) fn dedup_miss_files(files: Vec<MissFileInfo>) -> (Vec<MissFileInfo>, Vec<MissFileInfo>) {
+    let mut seen: HashSet<String> = HashSet::new();
     let mut kept: Vec<MissFileInfo> = Vec::with_capacity(files.len());
-    let mut dropped: Vec<String> = Vec::new();
+    let mut dropped: Vec<MissFileInfo> = Vec::new();
     for f in files {
-        if !seen.insert(normalize_sep(PathBuf::from(&f.path))) {
-            dropped.push(f.name.clone());
+        if !seen.insert(dedup_key(Path::new(&f.path))) {
+            dropped.push(f);
             continue;
         }
         kept.push(f);
@@ -1146,25 +1174,35 @@ pub(crate) async fn download_batch(
         return Ok(());
     }
 
-    // Windows：`canonicalize` 产生的 `\\?\` verbatim 路径不允许 `/` 分隔符。
-    // core 安装器（NeoForge 等）经 `path_combine` 字符串拼接会保留 maven 路径的 `/`
-    // （如 `libraries\org/ow2/asm/asm/9.10.1/asm-9.10.1.jar`），此处统一钳位为平台
-    // 分隔符，否则 create_dir_all/rename 报 ERROR_INVALID_NAME (os error 123)。
-    let files: Vec<DownloadTarget> = files
-        .into_iter()
-        .map(|(url, dest, headers)| (url, normalize_sep(dest), headers))
-        .collect();
-
     // 同一 dest 的两个任务会共用 `{dest}.part`：交错执行时先完成者 rename 掉 .part，
-    // 后完成者 finalize 直接 os error 2（issue #122）。整合包/版本安装的 miss 列表
-    // 里「普通 jar 条目 + 同坐标 natives 条目」就是同一路径两条，必须先合并且必须
-    // 在 normalize_sep 之后判重（maven 路径的 `/` 与 `\` 是同一目标）。
+    // 后完成者 finalize 直接 os error 2（issue #122）。整合包/版本安装的 miss 列表里
+    // 「普通 jar 条目 + 同坐标 natives 条目」就是同一路径两条，必须先合并。
+    // 归一化 + 判重都在 dedup 内部完成（幂等），返回的 dest 即归一化后的路径：
+    // create_dir_all/rename 需要一个平台分隔符形式（Windows 的 verbatim 路径不允许 `/`，
+    // core 拼出的 maven 路径却带 `/`，混用时报 ERROR_INVALID_NAME）。
+    //
+    // 注意：去重只覆盖**本批次**。并发批次（`run_install_pipeline` 的
+    // installer/base/addons 三分支、`run_modpack_pipeline` 的 game/files/overrides
+    // 三分支）各自调 download_batch，当前扫描的目录互不相交（libraries/ vs
+    // assets/+versions/ vs mods/overrides 内容），因此不会出现同一 dest；若将来某个
+    // 合并后的版本 JSON 让两个分支扫描到同一路径，需要在 DownloadManager 层按 dest
+    // 串行化/登记（子模块级改动），此处注释即该前提。
     let (files, duplicate_targets) = dedup_download_targets(files);
-    if !duplicate_targets.is_empty() {
+    // 被合并掉的 URL 不是纯冗余：同 dest 不同源时它可能是唯一可达的源，挂成保留条目的
+    // 镜像备选（与 mirror_fallback_urls 同一套故障转移），避免主 URL 不可达即整批失败。
+    let mut extra_mirrors: HashMap<PathBuf, Vec<String>> = HashMap::new();
+    let mut dropped_names: Vec<String> = Vec::with_capacity(duplicate_targets.len());
+    for d in duplicate_targets {
+        extra_mirrors.entry(d.dest).or_default().push(d.url);
+        dropped_names.push(d.name);
+    }
+    if !dropped_names.is_empty() {
+        let mirror_urls: usize = extra_mirrors.values().map(Vec::len).sum();
         tracing::warn!(
-            dropped = duplicate_targets.len(),
-            first = %duplicate_targets[0],
-            "download_batch: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122）"
+            dropped = dropped_names.len(),
+            mirror_urls,
+            first = %dropped_names[0],
+            "download_batch: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122），不同源 URL 已并入镜像备选"
         );
     }
 
@@ -1189,7 +1227,11 @@ pub(crate) async fn download_batch(
         if let Some(parent) = dest.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let mirrors = crate::services::file_mirror::mirror_fallback_urls(&url);
+        let mut mirrors = crate::services::file_mirror::mirror_fallback_urls(&url);
+        // 被合并掉的重复条目可能来自另一个下载源：把它挂成镜像，主 URL 挂掉时兜底。
+        if let Some(extra) = extra_mirrors.remove(&dest) {
+            mirrors.extend(extra);
+        }
         let mut task = DownloadTask::new(url, dest);
         task.headers = headers;
         if !mirrors.is_empty() {
@@ -1562,39 +1604,69 @@ mod tests {
             2,
             "普通 jar 与 natives jar 都应保留，重复的普通 jar 合并"
         );
-        assert_eq!(dropped, vec!["lwjgl-3.3.3.jar".to_string()]);
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].name, "lwjgl-3.3.3.jar");
         assert_eq!(kept[0].1, PathBuf::from(jar));
         assert_eq!(kept[1].1, PathBuf::from(natives));
-        // URL 不同的同 dest 同样要合并（镜像/下载源差异导致的同路径两条）。
-        let (kept2, dropped2) = dedup_download_targets(vec![
+    }
+
+    /// 同 dest 不同 URL 时，被合并的 URL 必须回传给调用方挂镜像备选——它可能是唯一可达
+    /// 的源（镜像/下载源差异、官方源局部不可达），直接丢弃会让主 URL 挂掉即整批失败。
+    #[test]
+    fn dedup_download_targets_rescues_duplicate_source_url() {
+        let (kept, dropped) = dedup_download_targets(vec![
             target("https://official/a.jar", "g/a.jar"),
             target("https://mirror/a.jar", "g/a.jar"),
         ]);
-        assert_eq!(kept2.len(), 1);
-        assert_eq!(dropped2.len(), 1);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, "https://official/a.jar", "保留首次出现的条目");
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].url, "https://mirror/a.jar");
+        assert_eq!(dropped[0].dest, PathBuf::from("g/a.jar"));
     }
 
-    /// 判重必须发生在分隔符归一化之后：core 拼出的 maven 路径带 `/`，
-    /// 与 `\` 形态是同一个目标。
+    /// 归一化必须在判重之前，且由去重函数自己完成（调用方无需先 normalize_sep）：
+    /// core 拼出的 maven 路径带 `/`，与 `\` 形态是同一个目标。这里刻意**不**预归一化，
+    /// 直接喂原始字符串，才能锁住顺序（ubuntu 上该用例不编译也不运行，靠 Windows 覆盖）。
     #[cfg(windows)]
     #[test]
     fn dedup_download_targets_compares_after_separator_normalization() {
-        let slash = normalize_sep(PathBuf::from(
-            r"C:\g\libraries\org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
-        ));
-        let backslash = normalize_sep(PathBuf::from(
-            r"C:\g\libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar",
-        ));
         let (kept, dropped) = dedup_download_targets(vec![
-            target("https://cdn/asm.jar", &slash.to_string_lossy()),
-            target("https://cdn/asm.jar", &backslash.to_string_lossy()),
+            target(
+                "https://cdn/asm.jar",
+                r"C:\g\libraries\org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+            ),
+            target(
+                "https://cdn/asm.jar",
+                r"C:\g\libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar",
+            ),
         ]);
         assert_eq!(kept.len(), 1, "归一化后同一路径只应保留一条");
         assert_eq!(dropped.len(), 1);
+        // 返回的 dest 已归一化为平台分隔符（Windows 上不带 `/`），可直接 create/rename。
+        assert_eq!(
+            kept[0].1,
+            PathBuf::from(r"C:\g\libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar")
+        );
     }
 
-    /// `dedup_miss_files`：同一 `path` 的多条 miss 记录按路径合并，保留首次出现的
-    /// 记录（UI 展示的 name 不变），被丢弃的记录名回传给调用方记日志。
+    /// 大小写不敏感的平台（Windows、默认 APFS/HFS+ 的 macOS）上 `Foo.jar` 与 `foo.jar`
+    /// 是同一个文件，也会共用同一个 `.part`，判重键必须折叠大小写。
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn dedup_download_targets_folds_case_on_case_insensitive_fs() {
+        let (kept, dropped) = dedup_download_targets(vec![
+            target("https://cdn/Foo.jar", "g/Foo.jar"),
+            target("https://cdn/foo.jar", "g/foo.jar"),
+        ]);
+        assert_eq!(kept.len(), 1, "大小写折叠后只应保留一条");
+        assert_eq!(dropped.len(), 1);
+        // 键折叠但保留的路径维持原始大小写。
+        assert_eq!(kept[0].1, PathBuf::from("g/Foo.jar"));
+    }
+
+    /// `dedup_miss_files`：同一 `path` 的多条 miss 记录按路径合并，保留首次出现的记录
+    /// （UI 展示的 name 不变），被合并的记录整体回传（调用方取其 URL 挂镜像备选）。
     #[test]
     fn dedup_miss_files_merges_same_path() {
         let mk = |name: &str, path: &str| qomicex_core::models::installer::MissFileInfo {
@@ -1620,10 +1692,11 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].name, "org.lwjgl3:lwjgl:3.3.3");
         assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].name, "org.lwjgl3:lwjgl:3.3.3");
     }
 
-    /// 判重键必须经 `normalize_sep`：`/` 与 `\` 形态是同一个目标（core 的 maven 路径带
-    /// `/`），只比原始字符串会漏判，`.part` 互相删除的竞态依旧会发生。
+    /// 判重键由去重函数内部归一化：`/` 与 `\` 形态是同一个目标（core 的 maven 路径带
+    /// `/`），不预归一化直接喂原始字符串，锁住"归一化先于判重"的顺序。
     #[cfg(windows)]
     #[test]
     fn dedup_miss_files_normalizes_separators_before_comparing() {
