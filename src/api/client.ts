@@ -61,7 +61,6 @@ export interface RequestOptions extends RequestInit {
   timeoutMs?: number
 }
 
-
 async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   const debug = window.__DEBUG__
   const start = performance.now()
@@ -89,7 +88,17 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   // 砍到 15s）> 全局 15s。signal 与超时都桥接到同一个 controller，避免
   // fetch 只认一个 signal 导致另一方被静默忽略。
   // 手动桥接而不用 AbortSignal.any()：后者在旧版 WKWebView / WebView 上不一定可用。
-  const timeoutMs = options?.timeoutMs ?? (callerSignal ? undefined : REQUEST_TIMEOUT_MS)
+  // 非有限/非正数 timeoutMs 直接忽略：setTimeout(..., 0) 会立即 abort（请求必然失败），
+  // 而 Infinity 会被浏览器钳成立即或近似立即触发的计时器（本想不限时的请求会被瞬间掐断），
+  // 这两种都回落既有优先级更安全。
+  const requestedTimeout = options?.timeoutMs
+  const validTimeout =
+    requestedTimeout !== undefined &&
+    Number.isFinite(requestedTimeout) &&
+    requestedTimeout > 0
+      ? requestedTimeout
+      : undefined
+  const timeoutMs = validTimeout ?? (callerSignal ? undefined : REQUEST_TIMEOUT_MS)
   const controller = new AbortController()
   let detachCaller: (() => void) | undefined
   if (callerSignal) {
@@ -102,11 +111,13 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   }
   const timeoutId =
     timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(), timeoutMs)
-  // timeoutMs / signal 只是客户侧控制参数，不属于 fetch RequestInit：剥掉后统一用
-  // 上面合成的 controller.signal，避免调用方的 signal 把内部超时信号覆盖掉。
+  // timeoutMs / signal / headers 只是客户侧控制参数，不属于 fetch RequestInit：
+  // 剥掉后统一用上面合成的 controller.signal 与合并过的 headers，避免调用方的
+  // signal / headers 把内部超时信号与 JSON Content-Type 覆盖掉。
   const init: RequestInit = { ...options }
   delete (init as { timeoutMs?: number }).timeoutMs
   delete init.signal
+  delete init.headers
   let res: Response
   try {
     res = await fetch(url, {
@@ -117,11 +128,13 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   } catch (e) {
     // 调用方主动 abort：保持既有语义原样抛出，不能误报成请求超时。
     if (callerSignal?.aborted) throw e
-    if (controller.signal.aborted) {
-      console.error(`[API] ${method} ${path} => 请求超时 (${timeoutMs ?? REQUEST_TIMEOUT_MS}ms)`)
+    // 只有内部超时看门狗触发的 abort 才算请求超时；timeoutMs 为 undefined 时
+    // （调用方全权管理取消）不可能走到这里，因此消息里的秒数一定有值。
+    if (controller.signal.aborted && timeoutMs !== undefined) {
+      console.error(`[API] ${method} ${path} => 请求超时 (${timeoutMs}ms)`)
       throw new ApiError({
         code: 'REQUEST_TIMEOUT',
-        message: `请求超时（${timeoutMs ? timeoutMs / 1000 : '?'}s）`,
+        message: `请求超时（${timeoutMs / 1000}s）`,
         detail: path,
         traceId: '',
         timestamp: new Date().toISOString(),
@@ -166,7 +179,7 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   return JSON.parse(text) as T
 }
 
-export function get<T>(path: string, options?: RequestInit): Promise<T> {
+export function get<T>(path: string, options?: RequestOptions): Promise<T> {
   return request<T>(path, options)
 }
 

@@ -3106,34 +3106,44 @@ mod tests {
     /// 大包回归（issue #119）：1.6 万条目的 zip 里格式探测 / overrides 判定仍须正确。
     /// 这条用例同时锁住「探测只读中央目录」的实现——改用 by_index() 逐条目读本地头，
     /// 这种规模下 classify / install-direct 的解析耗时会越过前端 15s 请求超时。
+    ///
+    /// filler 条目用 `Stored` 而非 `Deflated`：被测性质是「中央目录里有 1.6 万个条目」，
+    /// 与压缩方式无关；deflate 上万个小条目会把用例本身拖到秒级（CI 更慢）。
+    /// MultiMC 标识放在嵌套目录里，顺带覆盖 `is_multimc_zip` 的**正向**分支。
     #[test]
     fn zip_probing_handles_many_entries() {
         let root = temp_dir("many-entries");
         let zip_path = root.join("pack.zip");
         let file = std::fs::File::create(&zip_path).unwrap();
         let mut zip = zip::ZipWriter::new(file);
-        let opts = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let filler = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         // 模拟 GTNH 的 `.minecraft/` 内容：上万个小条目。
         for i in 0..16_000 {
             zip.start_file(
                 format!("GT New Horizons 2.9.0-RC-1/.minecraft/config/file{i}.cfg"),
-                opts,
+                filler,
             )
             .unwrap();
             zip.write_all(b"key=value\n").unwrap();
         }
-        zip.start_file("overrides/mods/keep.jar", opts).unwrap();
+        zip.start_file("overrides/mods/keep.jar", filler).unwrap();
         zip.write_all(b"jar").unwrap();
         // 索引埋在大量条目之后：探测必须覆盖全表而不是只看前几个条目。
         let index = br#"{"game":"minecraft","name":"BigPack","versionId":"1.0","dependencies":{"minecraft":"1.20.1","fabric-loader":"0.15.0"},"files":[{"path":"mods/a.jar","downloads":["https://example.invalid/a.jar"]}]}"#;
-        zip.start_file("modrinth.index.json", opts).unwrap();
+        zip.start_file("modrinth.index.json", filler).unwrap();
         zip.write_all(index).unwrap();
+        // MultiMC 标识嵌套在前导目录里（MultiMC 导出的常见形态），且排在 1.6 万条目之后。
+        zip.start_file("GT New Horizons 2.9.0-RC-1/mmc-pack.json", filler)
+            .unwrap();
+        zip.write_all(br#"{"components":[{"uid":"net.minecraft","version":"1.7.10"}]}"#)
+            .unwrap();
         zip.finish().unwrap();
 
-        // 无 mmc-pack.json → 不是 MultiMC 包（不能因条目多而误判/漏判）。
-        assert!(!is_multimc_zip(&zip_path));
+        // 嵌套的 mmc-pack.json 也必须被识别为 MultiMC 包（正向分支）。
+        assert!(is_multimc_zip(&zip_path));
 
+        // 同时存在 modrinth 索引时按 Modrinth 解析（manifest 优先于 mmc 标识）。
         let parsed = parse_local_pack_file(&zip_path).unwrap();
         assert_eq!(parsed.source, "modrinth");
         assert_eq!(parsed.pack.game_version, "1.20.1");
@@ -3142,5 +3152,30 @@ mod tests {
         assert_eq!(parsed.pack.files.len(), 1);
         assert_eq!(parsed.pack.files[0].path, "mods/a.jar");
         assert!(parsed.has_overrides);
+    }
+
+    /// `is_multimc_zip` 的反向分支：没有 mmc-pack.json 就不是 MultiMC 包
+    /// （普通的 Modrinth / CurseForge 包可能恰好含 instance.cfg 之类的同名文件）。
+    #[test]
+    fn is_multimc_zip_rejects_pack_without_marker() {
+        let root = temp_dir("no-mmc-marker");
+        let zip_path = root.join("pack.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file(
+            "modrinth.index.json",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(
+            br#"{"game":"minecraft","name":"P","versionId":"1","dependencies":{},"files":[]}"#,
+        )
+        .unwrap();
+        zip.start_file("instance.cfg", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"name=P\n").unwrap();
+        zip.finish().unwrap();
+
+        assert!(!is_multimc_zip(&zip_path));
     }
 }
