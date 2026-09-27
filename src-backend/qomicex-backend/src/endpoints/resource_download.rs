@@ -575,8 +575,9 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
     let mut mmc_entry: Option<String> = None;
     // 条目探测只读中央目录（file_names 不触发逐条目本地头读取）：GTNH 这类 1.6 万
     // 条目的包，by_index() 逐条目 seek 会让 classify 退化成上万次随机读（issue #119）。
-    // 代价是「探测」与「可读性」解耦：本地头损坏的条目以前会被 skip、落到别的分类或
-    // unknown，现在能被探测到、随后由具体读取处以明确错误失败——比误分类更好排查。
+    // 代价是「探测」与「可读性」解耦：本地头损坏的条目以前会被 by_index() skip、整个包落到
+    // 别的分类或 unknown；现在它仍会被探测到并归类（例如 modpack），classify 带着缺失的元数据
+    // 成功返回，真正的失败由随后的解析/安装处以明确错误报告——比误分类成 unknown 更好排查。
     for name in archive.file_names() {
         match name {
             "modrinth.index.json" => has_mr = true,

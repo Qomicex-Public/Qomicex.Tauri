@@ -88,11 +88,16 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   // 砍到 15s）> 全局 15s。signal 与超时都桥接到同一个 controller，避免
   // fetch 只认一个 signal 导致另一方被静默忽略。
   // 手动桥接而不用 AbortSignal.any()：后者在旧版 WKWebView / WebView 上不一定可用。
-  // 非正数 timeoutMs（误把单位搞错、size 计算退化成 0）直接忽略：setTimeout(..., 0)
-  // 会立即 abort，请求必然失败，此时回落既有优先级更安全。
+  // 非有限/非正数 timeoutMs 直接忽略：setTimeout(..., 0) 会立即 abort（请求必然失败），
+  // 而 Infinity 会被浏览器钳成立即或近似立即触发的计时器（本想不限时的请求会被瞬间掐断），
+  // 这两种都回落既有优先级更安全。
   const requestedTimeout = options?.timeoutMs
   const validTimeout =
-    requestedTimeout !== undefined && requestedTimeout > 0 ? requestedTimeout : undefined
+    requestedTimeout !== undefined &&
+    Number.isFinite(requestedTimeout) &&
+    requestedTimeout > 0
+      ? requestedTimeout
+      : undefined
   const timeoutMs = validTimeout ?? (callerSignal ? undefined : REQUEST_TIMEOUT_MS)
   const controller = new AbortController()
   let detachCaller: (() => void) | undefined
