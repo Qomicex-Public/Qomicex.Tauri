@@ -1103,12 +1103,16 @@ pub(crate) fn dedup_download_targets(
 /// 语义与理由同 [`dedup_download_targets`]：同一 dest 的两个下载任务会共用 `.part`
 /// 并互相删除，issue #122。用于直接消费 `get_miss_files_*` 结果的调用方
 /// （如实例资源补全），保留原始记录以便 UI 展示真实名称。
+///
+/// 判重键必须与下载目标一致地做分隔符归一化（`normalize_sep`）：core 拼出的 maven 路径
+/// 可能带 `/`，而调用方 `game_root.join(&f.path)` 在 Windows 上把它解析成同一个文件，
+/// 只比原始字符串会漏判，`.part` 互相删除的竞态依旧会发生。
 pub(crate) fn dedup_miss_files(files: Vec<MissFileInfo>) -> (Vec<MissFileInfo>, Vec<String>) {
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut kept: Vec<MissFileInfo> = Vec::with_capacity(files.len());
     let mut dropped: Vec<String> = Vec::new();
     for f in files {
-        if !seen.insert(PathBuf::from(&f.path)) {
+        if !seen.insert(normalize_sep(PathBuf::from(&f.path))) {
             dropped.push(f.name.clone());
             continue;
         }
@@ -1613,5 +1617,32 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].name, "org.lwjgl3:lwjgl:3.3.3");
         assert_eq!(dropped.len(), 1);
+    }
+
+    /// 判重键必须经 `normalize_sep`：`/` 与 `\` 形态是同一个目标（core 的 maven 路径带
+    /// `/`），只比原始字符串会漏判，`.part` 互相删除的竞态依旧会发生。
+    #[cfg(windows)]
+    #[test]
+    fn dedup_miss_files_normalizes_separators_before_comparing() {
+        let mk = |name: &str, path: &str| qomicex_core::models::installer::MissFileInfo {
+            name: name.to_string(),
+            url: "https://cdn/asm.jar".to_string(),
+            sha1: String::new(),
+            path: path.to_string(),
+        };
+        let (kept, dropped) = dedup_miss_files(vec![
+            mk(
+                "org.ow2.asm:asm:9.10.1",
+                r"libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar",
+            ),
+            mk(
+                "org.ow2.asm:asm:9.10.1",
+                "libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+            ),
+        ]);
+        assert_eq!(kept.len(), 1, "归一化后同一路径只应保留一条");
+        assert_eq!(dropped.len(), 1);
+        // 保留的是首次出现的原始记录（含原始分隔符），UI 名称不受影响。
+        assert_eq!(kept[0].name, "org.ow2.asm:asm:9.10.1");
     }
 }
