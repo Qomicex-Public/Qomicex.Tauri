@@ -1,5 +1,6 @@
 import { get, post, put, del, API_BASE, ApiError } from './client.ts'
 import { uploadFile } from './ipc.ts'
+import { MODPACK_REQUEST_TIMEOUT_MS } from './drop-install.ts'
 import { hookable } from '../plugins/hookable.ts'
 import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode, ScannedVersion, MultiMcParseResult, MultiMcImportRequest } from '../types/index.ts'
 
@@ -187,10 +188,10 @@ export async function parseModpackFile(file: File): Promise<ModpackParseResult> 
   }
 }
 
-/** 按本地路径解析整合包（Tauri file-drop 场景）。大文件解析耗时长，给 60s 超时。 */
+/** 按本地路径解析整合包（Tauri file-drop 场景）。大文件解析耗时长，用整合包宽限期。 */
 export async function parseModpackFileByPath(path: string): Promise<ModpackParseResult> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 60_000)
+  const timer = setTimeout(() => controller.abort(), MODPACK_REQUEST_TIMEOUT_MS)
   try {
     const res = await post<ModpackParseResult>('/modpack/parse-path', { path }, { signal: controller.signal })
     return res
@@ -216,7 +217,7 @@ export async function startModpackInstall(data: ModpackInstallRequest): Promise<
  */
 export async function installModpackDirect(
   data: ModpackInstallDirectRequest,
-  timeoutMs = 60_000,
+  timeoutMs = MODPACK_REQUEST_TIMEOUT_MS,
 ): Promise<ModpackInstallDirectResult> {
   return post<ModpackInstallDirectResult>('/modpack/install-direct', data, { timeoutMs })
 }
@@ -233,7 +234,7 @@ export async function parseMultiMcFolder(path: string): Promise<MultiMcParseResu
  * 避免大型 MultiMC 包在导入对话框里触发 15s 超时（issue #119）。
  */
 export async function startMultiMcImport(data: MultiMcImportRequest): Promise<{ instanceId: string }> {
-  return post<{ instanceId: string }>('/modpack/multimc/import', data, { timeoutMs: 60_000 })
+  return post<{ instanceId: string }>('/modpack/multimc/import', data, { timeoutMs: MODPACK_REQUEST_TIMEOUT_MS })
 }
 
 /** 读取实例可导出文件树（HMCL 风格勾选列表）。 */

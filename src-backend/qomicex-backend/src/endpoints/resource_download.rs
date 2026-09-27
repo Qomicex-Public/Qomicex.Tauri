@@ -517,9 +517,14 @@ async fn classify_file(
         .map(|s| s.to_string_lossy().into_owned())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| ApiError::bad_request("CLASSIFY_PATH_INVALID", "Invalid file path"))?;
-    if !path.is_file() {
-        return Err(ApiError::not_found("FILE_NOT_FOUND", "File does not exist"));
-    }
+    // 存在性与大小用同一次 stat：is_file() 与 metadata() 分成两次系统调用会多一次
+    // 磁盘查找，还多一个「检查后文件被移走」的窗口。
+    let file_size = match std::fs::metadata(&path) {
+        Ok(m) if m.is_file() => Some(m.len()),
+        _ => {
+            return Err(ApiError::not_found("FILE_NOT_FOUND", "File does not exist"));
+        }
+    };
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -531,7 +536,7 @@ async fn classify_file(
         _ => ("unknown", None),
     };
     let meta = meta.unwrap_or_default();
-    let file_size = std::fs::metadata(&path).ok().map(|m| m.len());
+
     Ok(Json(ClassifyFileResponse {
         file_type: file_type.to_string(),
         file_name,
@@ -565,15 +570,23 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
     let mut has_mmc = false;
     let mut has_shaders = false;
     let mut has_mcmeta = false;
+    // mmc-pack.json 的完整条目名（可能是 `xxx/mmc-pack.json`）：探测时顺手记下，
+    // 免得 multimc_pack_meta 再走一遍全表、重复一份匹配规则。
+    let mut mmc_entry: Option<String> = None;
     // 条目探测只读中央目录（file_names 不触发逐条目本地头读取）：GTNH 这类 1.6 万
     // 条目的包，by_index() 逐条目 seek 会让 classify 退化成上万次随机读（issue #119）。
+    // 代价是「探测」与「可读性」解耦：本地头损坏的条目以前会被 skip、落到别的分类或
+    // unknown，现在能被探测到、随后由具体读取处以明确错误失败——比误分类更好排查。
     for name in archive.file_names() {
         match name {
             "modrinth.index.json" => has_mr = true,
             "qmodpack.index.json" => has_qml = true,
             "manifest.json" => has_cf_manifest = true,
             "pack.mcmeta" => has_mcmeta = true,
-            n if n == "mmc-pack.json" || n.ends_with("/mmc-pack.json") => has_mmc = true,
+            n if n == "mmc-pack.json" || n.ends_with("/mmc-pack.json") => {
+                has_mmc = true;
+                mmc_entry.get_or_insert_with(|| n.to_string());
+            }
             _ => {}
         }
         if name.starts_with("shaders/") {
@@ -610,7 +623,10 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
         );
     }
     if has_mmc {
-        return ("modpack", multimc_pack_meta(&mut archive));
+        return (
+            "modpack",
+            multimc_pack_meta(&mut archive, mmc_entry.as_deref()),
+        );
     }
 
     if has_shaders {
@@ -636,12 +652,20 @@ fn is_cf_modpack_manifest(archive: &mut zip::ZipArchive<std::fs::File>) -> bool 
 /// MultiMC 整合包预览元数据：name 取自 instance.cfg 的 `name=`，
 /// game_version/loader 取自 mmc-pack.json 的 components。
 /// 实例根以 mmc-pack.json 所在目录为准（根级或嵌套顶层实例目录，如 MultiMC 导出）。
-fn multimc_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<PackMeta> {
-    // 同样只读中央目录：避免为找 mmc-pack.json 而逐条目 seek（issue #119）。
-    let mmc_path = archive
-        .file_names()
-        .find(|n| *n == "mmc-pack.json" || n.ends_with("/mmc-pack.json"))?
-        .to_string();
+fn multimc_pack_meta(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    mmc_entry: Option<&str>,
+) -> Option<PackMeta> {
+    // classify_zip 已把 mmc-pack.json 的条目名带过来；没带（直接调用）时只读中央目录
+    // 找一遍，避免 by_index() 逐条目 seek（issue #119）。
+    let mmc_path = match mmc_entry {
+        Some(p) => p.to_string(),
+        None => archive
+            .file_names()
+            .find(|n| *n == "mmc-pack.json" || n.ends_with("/mmc-pack.json"))?
+            .to_string(),
+    };
+
     let prefix = mmc_path.strip_suffix("mmc-pack.json").unwrap_or_default();
     let cfg_path = format!("{prefix}instance.cfg");
 
@@ -750,4 +774,87 @@ fn read_entry_json(
 ) -> Option<serde_json::Value> {
     let mut f = archive.by_name(entry_name).ok()?;
     serde_json::from_reader(&mut f).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_zip(tag: &str, entries: &[(&str, &str)]) -> PathBuf {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("qomicex-classify-test-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pack.zip");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        for (name, content) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(content.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    /// 只读中央目录的探测必须仍然认出 MultiMC 包，且 `multimc_pack_meta` 能从嵌套目录
+    /// 取到 instance.cfg 的 name 与 mmc-pack.json 的 components（by_index → file_names 的
+    /// 替换没有行为回归，issue #119）。
+    #[test]
+    fn classify_zip_detects_multimc_pack_metadata() {
+        let path = write_zip(
+            "multimc",
+            &[
+                (
+                    "GT New Horizons 2.9.0-RC-1/mmc-pack.json",
+                    r#"{"components":[{"uid":"net.minecraft","version":"1.7.10"},{"uid":"net.minecraftforge","version":"10.13.4.1614"}]}"#,
+                ),
+                (
+                    "GT New Horizons 2.9.0-RC-1/instance.cfg",
+                    "name=GTNH 2.9.0-RC-1\n",
+                ),
+                ("GT New Horizons 2.9.0-RC-1/.minecraft/mods/a.jar", "x"),
+            ],
+        );
+        let (kind, meta) = classify_zip(&path, false);
+        assert_eq!(kind, "modpack");
+        let meta = meta.expect("MultiMC 预览元数据");
+        assert_eq!(meta.name.as_deref(), Some("GTNH 2.9.0-RC-1"));
+        assert_eq!(meta.game_version.as_deref(), Some("1.7.10"));
+        assert_eq!(meta.loader.as_deref(), Some("forge"));
+    }
+
+    /// 各 flavor 的标识都要认出来：Modrinth / CurseForge / shaderpack / resourcepack，
+    /// 以及没有任何标识时回落 unknown。
+    #[test]
+    fn classify_zip_detects_all_markers() {
+        let mrpack = write_zip(
+            "mrpack",
+            &[(
+                "modrinth.index.json",
+                r#"{"game":"minecraft","name":"MR","versionId":"1","dependencies":{"minecraft":"1.20.1","fabric-loader":"0.15.0"},"files":[]}"#,
+            )],
+        );
+        let (kind, meta) = classify_zip(&mrpack, false);
+        assert_eq!(kind, "modpack");
+        assert_eq!(meta.and_then(|m| m.game_version).as_deref(), Some("1.20.1"));
+
+        let cf = write_zip(
+            "cf",
+            &[(
+                "manifest.json",
+                r#"{"manifestType":"minecraftModpack","name":"CF","minecraft":{"version":"1.19.2","modLoaders":[{"id":"forge-43.2.0"}]}}"#,
+            )],
+        );
+        assert_eq!(classify_zip(&cf, false).0, "modpack");
+
+        let shader = write_zip("shader", &[("shaders/shadoc.json", "{}")]);
+        assert_eq!(classify_zip(&shader, false).0, "shaderpack");
+
+        let rp = write_zip("rp", &[("pack.mcmeta", "{}")]);
+        assert_eq!(classify_zip(&rp, false).0, "resourcepack");
+
+        let none = write_zip("none", &[("readme.txt", "hi")]);
+        assert_eq!(classify_zip(&none, false).0, "unknown");
+    }
 }
