@@ -699,6 +699,19 @@ async fn launch_instance(
                     .collect();
 
                 if !miss_files.is_empty() {
+                    // 同 dest 的多条 miss 记录必须合并：「普通 jar 条目」与同坐标的
+                    // 「natives 条目」共享同一个 artifact 路径（`check_libs_ver` 的分组键
+                    // 给 natives 加角色后缀，两者都会保留）。两个下载任务会共用
+                    // `{dest}.part`，交错执行时后完成者 finalize 直接 os error 2（issue #122）。
+                    let (miss_files, duplicate_targets) =
+                        crate::services::install_service::dedup_miss_files(miss_files);
+                    if !duplicate_targets.is_empty() {
+                        tracing::warn!(
+                            dropped = duplicate_targets.len(),
+                            first = %duplicate_targets[0],
+                            "instance repair: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122）"
+                        );
+                    }
                     let missing_names: Vec<String> =
                         miss_files.iter().map(|f| f.name.clone()).collect();
                     progress.stage = "repairing".to_string();

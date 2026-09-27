@@ -1057,6 +1057,66 @@ fn normalize_sep(dest: PathBuf) -> PathBuf {
     }
 }
 
+/// 批量下载的单条目标：（下载 URL, 归一化后的目标路径, 任务级请求头）。
+type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
+
+/// 按目标路径去重（保留首次出现），返回 `(去重后列表, 被丢弃的重复目标名)`。
+///
+/// 为什么必须去重：同一 `dest` 的两个下载任务会共用同一个 `.part` 中间文件
+/// （`DownloadTask::part_path()` = dest 同名 + `.part`）。两个任务交错执行时，先完成者把
+/// `.part` rename 成 dest，后完成者的 `finalize_part` 再打开 `.part` 就是 `os error 2`，
+/// 整个安装以「下载阶段失败」告终（issue #122）。
+///
+/// 重复来源已实证（GTNH 2.9.0-RC-1 单次安装实测 dropped=12，首个就是 #122 报错的那个
+/// `.part`）：
+///
+/// - 资源索引里同一 hash 的多个条目：`get_miss_assets` 按 `objects.values()` 展开，不同
+///   资源名（语言文件/音效等）内容相同 → hash 相同 → 本地路径
+///   `assets/objects/{hash[..2]}/{hash}` 也相同；
+/// - 同坐标的「普通 jar 条目」与「natives 条目」：`check_libs_ver` 分组键给 natives 加
+///   角色后缀，两者分到不同组而都保留，`downloads.artifact` 又是同一个 jar。
+///
+/// 重复条目内容一致（同路径同 URL），保留任一条即可；判定必须发生在分隔符归一化
+/// （`normalize_sep`）之后，否则 `libraries\org/ow2/...` 与 `libraries\org\ow2\...`
+/// 会被当成两个目标。
+pub(crate) fn dedup_download_targets(
+    files: Vec<DownloadTarget>,
+) -> (Vec<DownloadTarget>, Vec<String>) {
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut kept: Vec<DownloadTarget> = Vec::with_capacity(files.len());
+    let mut dropped: Vec<String> = Vec::new();
+    for (url, dest, headers) in files {
+        if !seen.insert(dest.clone()) {
+            dropped.push(
+                dest.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| dest.to_string_lossy().into_owned()),
+            );
+            continue;
+        }
+        kept.push((url, dest, headers));
+    }
+    (kept, dropped)
+}
+
+/// 按 `path` 去重 `MissFileInfo`（保留首次出现），返回 `(去重后列表, 被丢弃的记录名)`。
+/// 语义与理由同 [`dedup_download_targets`]：同一 dest 的两个下载任务会共用 `.part`
+/// 并互相删除，issue #122。用于直接消费 `get_miss_files_*` 结果的调用方
+/// （如实例资源补全），保留原始记录以便 UI 展示真实名称。
+pub(crate) fn dedup_miss_files(files: Vec<MissFileInfo>) -> (Vec<MissFileInfo>, Vec<String>) {
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut kept: Vec<MissFileInfo> = Vec::with_capacity(files.len());
+    let mut dropped: Vec<String> = Vec::new();
+    for f in files {
+        if !seen.insert(PathBuf::from(&f.path)) {
+            dropped.push(f.name.clone());
+            continue;
+        }
+        kept.push(f);
+    }
+    (kept, dropped)
+}
+
 /// 批量下载。进度按已下载字节比例写入 `step_id` 指定步骤的 percent，
 /// 并由 tracker 重算合成总进度（并行管线中多个批次各自驱动自己的步骤）。
 /// pause/cancel 由事件循环协作转发给 `DownloadManager`。
@@ -1072,7 +1132,7 @@ const COLD_START_TIMEOUT: Duration = Duration::from_secs(180);
 pub(crate) async fn download_batch(
     handle: &InstallHandle,
     mgr: &DownloadManager,
-    files: Vec<(String, PathBuf, Vec<(String, String)>)>,
+    files: Vec<DownloadTarget>,
     step_id: Option<&str>,
 ) -> Result<(), String> {
     if files.is_empty() {
@@ -1086,10 +1146,23 @@ pub(crate) async fn download_batch(
     // core 安装器（NeoForge 等）经 `path_combine` 字符串拼接会保留 maven 路径的 `/`
     // （如 `libraries\org/ow2/asm/asm/9.10.1/asm-9.10.1.jar`），此处统一钳位为平台
     // 分隔符，否则 create_dir_all/rename 报 ERROR_INVALID_NAME (os error 123)。
-    let files: Vec<(String, PathBuf, Vec<(String, String)>)> = files
+    let files: Vec<DownloadTarget> = files
         .into_iter()
         .map(|(url, dest, headers)| (url, normalize_sep(dest), headers))
         .collect();
+
+    // 同一 dest 的两个任务会共用 `{dest}.part`：交错执行时先完成者 rename 掉 .part，
+    // 后完成者 finalize 直接 os error 2（issue #122）。整合包/版本安装的 miss 列表
+    // 里「普通 jar 条目 + 同坐标 natives 条目」就是同一路径两条，必须先合并且必须
+    // 在 normalize_sep 之后判重（maven 路径的 `/` 与 `\` 是同一目标）。
+    let (files, duplicate_targets) = dedup_download_targets(files);
+    if !duplicate_targets.is_empty() {
+        tracing::warn!(
+            dropped = duplicate_targets.len(),
+            first = %duplicate_targets[0],
+            "download_batch: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122）"
+        );
+    }
 
     // Pre-compute display names before consuming `files` in the loop below.
     let file_names: Vec<String> = files
@@ -1457,5 +1530,88 @@ mod tests {
         // 非法 / 空 JSON → 默认 8
         assert_eq!(required_java_from_json("not json"), 8);
         assert_eq!(required_java_from_json(""), 8);
+    }
+
+    fn target(url: &str, dest: &str) -> (String, PathBuf, Vec<(String, String)>) {
+        (url.to_string(), PathBuf::from(dest), Vec::new())
+    }
+
+    /// issue #122：同一 dest 的两条（普通 jar 条目 + 同坐标 natives 条目共享
+    /// `downloads.artifact`）必须合并成一条。否则两个任务共用 `{dest}.part`，
+    /// 交错执行时后完成者的 finalize 打开 `.part` 报 os error 2，整个安装失败。
+    #[test]
+    fn dedup_download_targets_merges_same_dest() {
+        let jar = r"C:\g\libraries\org\lwjgl3\lwjgl\3.3.3\lwjgl-3.3.3.jar";
+        let natives = r"C:\g\libraries\org\lwjgl3\lwjgl\3.3.3\lwjgl-3.3.3-natives-windows.jar";
+        let (kept, dropped) = dedup_download_targets(vec![
+            target("https://cdn/lwjgl-3.3.3.jar", jar),
+            // 同一坐标的 natives 条目：check_libs_ver 分组键带角色后缀 → 与普通条目
+            // 分到不同组而都保留，artifact 却是同一个 jar。
+            target("https://cdn/lwjgl-3.3.3.jar", jar),
+            target("https://cdn/lwjgl-3.3.3-natives-windows.jar", natives),
+        ]);
+        assert_eq!(
+            kept.len(),
+            2,
+            "普通 jar 与 natives jar 都应保留，重复的普通 jar 合并"
+        );
+        assert_eq!(dropped, vec!["lwjgl-3.3.3.jar".to_string()]);
+        assert_eq!(kept[0].1, PathBuf::from(jar));
+        assert_eq!(kept[1].1, PathBuf::from(natives));
+        // URL 不同的同 dest 同样要合并（镜像/下载源差异导致的同路径两条）。
+        let (kept2, dropped2) = dedup_download_targets(vec![
+            target("https://official/a.jar", r"C:\g\a.jar"),
+            target("https://mirror/a.jar", r"C:\g\a.jar"),
+        ]);
+        assert_eq!(kept2.len(), 1);
+        assert_eq!(dropped2.len(), 1);
+    }
+
+    /// 判重必须发生在分隔符归一化之后：core 拼出的 maven 路径带 `/`，
+    /// 与 `\` 形态是同一个目标。
+    #[cfg(windows)]
+    #[test]
+    fn dedup_download_targets_compares_after_separator_normalization() {
+        let slash = normalize_sep(PathBuf::from(
+            r"C:\g\libraries\org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+        ));
+        let backslash = normalize_sep(PathBuf::from(
+            r"C:\g\libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar",
+        ));
+        let (kept, dropped) = dedup_download_targets(vec![
+            target("https://cdn/asm.jar", &slash.to_string_lossy()),
+            target("https://cdn/asm.jar", &backslash.to_string_lossy()),
+        ]);
+        assert_eq!(kept.len(), 1, "归一化后同一路径只应保留一条");
+        assert_eq!(dropped.len(), 1);
+    }
+
+    /// `dedup_miss_files`：同一 `path` 的多条 miss 记录按路径合并，保留首次出现的
+    /// 记录（UI 展示的 name 不变），被丢弃的记录名回传给调用方记日志。
+    #[test]
+    fn dedup_miss_files_merges_same_path() {
+        let mk = |name: &str, path: &str| qomicex_core::models::installer::MissFileInfo {
+            name: name.to_string(),
+            url: "https://cdn/x.jar".to_string(),
+            sha1: String::new(),
+            path: path.to_string(),
+        };
+        let (kept, dropped) = dedup_miss_files(vec![
+            mk(
+                "org.lwjgl3:lwjgl:3.3.3",
+                "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar",
+            ),
+            mk(
+                "org.lwjgl3:lwjgl:3.3.3",
+                "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar",
+            ),
+            mk(
+                "org.lwjgl3:lwjgl:3.3.3:natives-windows",
+                "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3-natives-windows.jar",
+            ),
+        ]);
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].name, "org.lwjgl3:lwjgl:3.3.3");
+        assert_eq!(dropped.len(), 1);
     }
 }
