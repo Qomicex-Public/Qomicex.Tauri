@@ -332,7 +332,7 @@ impl JavaDownloadService {
                     name: "Temurin".into(),
                     platforms: vec![host.clone()],
                     architectures: vec!["x64".into(), "arm64".into(), "x86".into()],
-                    versions: vec![8, 11, 17, 21, 25],
+                    versions: vec![8, 11, 17, 21, 25, 26],
                     is_recommended: Some(true),
                 },
                 JavaDownloadVendorInfo {
@@ -340,7 +340,7 @@ impl JavaDownloadService {
                     name: "Zulu".into(),
                     platforms: vec![host],
                     architectures: vec!["x64".into(), "arm64".into(), "x86".into()],
-                    versions: vec![8, 11, 17, 21, 25],
+                    versions: vec![8, 11, 17, 21, 25, 26],
                     is_recommended: None,
                 },
             ],
