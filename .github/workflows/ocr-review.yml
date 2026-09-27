@@ -92,6 +92,12 @@ jobs:
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ vars.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}
+          # 中文输出审查评论
+          language: 中文
+          # 降噪：style/documentation/other 类别与 low 及以下严重度的发现
+          # 从行内评论挪到 sticky 汇总评论，保持 PR 页干净（fail-open，不丢弃）
+          route_categories: style,documentation,other
+          route_severity_below: low
           # pull_request_target 时 action 自行解析，issue_comment 用上面拿到的 refs
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}

@@ -1,0 +1,23 @@
+{
+  "exclude": [
+    "qomicex-core-rust",
+    "qomicex-core-rust/**",
+    "qomicex-downloader-rust",
+    "qomicex-downloader-rust/**",
+    "qomicex-connector-rust",
+    "qomicex-connector-rust/**",
+    "qomicex-tauri-i18n",
+    "qomicex-tauri-i18n/**",
+    "Qomicex.Updater",
+    "Qomicex.Updater/**",
+    "pnpm-lock.yaml",
+    "package-lock.json"
+  ],
+  "rules": [
+    {
+      "path": "**/*",
+      "merge_system_rule": true,
+      "rule": "本项目（Qomicex 启动器）是本地桌面应用：Tauri 桌面壳 + Rust 后端 + React 前端，所有进程只运行在用户自己的电脑上，不存在服务端攻击面。\n\n【禁止发现的类别】以下对本项目无意义，不要提：\n- 仅对 Web 服务成立的安全问题：越权/认证绕过、SQL 注入、CSRF、SSRF、XSS 载荷投递、爆破/限速防护\n- 路径穿越/任意文件读写：操作用户指定的 .minecraft 游戏目录、下载安装文件正是本程序的核心功能，不是漏洞\n- 理论性 DoS/资源耗尽，除非会造成用户数据丢失或损坏\n\n【发现格式】每条必须包含四部分，缺一不可：\n1. 触发场景：什么输入/什么操作序列/什么数据形态会触发，具体到函数或接口，禁止只写\"可能\"\n2. 实际影响：触发后真实发生什么\n3. 必要性：[必须修复]（影响用户数据/崩溃/跨平台行为不一致）、[建议修复]（明确缺陷但影响有限）、[可选]（理论性或低影响）\n4. 修复方向：一句话\n\n【其他】\n- gitlink / 子模块指针变化不是代码变更，不要对此发表任何评论\n- lock 文件、生成代码、纯翻译/纯格式更新，直接跳过不评论\n- Rust 聚焦：unwrap/expect 展开、并发与锁、错误传播丢失、句柄泄漏、Windows/macOS 文件系统语义差异（路径分隔符、大小写敏感）\n- TS/TSX 聚焦：any 类型逃逸、effect 清理缺失、竞态与过期回调、闭包内存泄漏"
+    }
+  ]
+}
