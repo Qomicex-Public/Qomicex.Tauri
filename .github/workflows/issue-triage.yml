@@ -128,6 +128,11 @@ jobs:
       - name: Deterministic type label
         id: label
         uses: actions/github-script@v9
+        # actions/github-script 的脚本上下文只注入 github / context / core / require 等，
+        # **不注入 steps**——跨 step 取值必须走 env: 传进来，再用 process.env 读。
+        env:
+          TARGET_NUMBER: ${{ steps.resolve.outputs.number }}
+          TARGET_IS_PR: ${{ steps.resolve.outputs.is_pr }}
         with:
           script: |
             const TYPE_PREFIX = 'type: ';
@@ -166,8 +171,8 @@ jobs:
             }
 
             const owner = context.repo.owner, repo = context.repo.repo;
-            const number = Number(steps.resolve.outputs.number);
-            const isPR = steps.resolve.outputs.is_pr === 'true';
+            const number = Number(process.env.TARGET_NUMBER || 0);
+            const isPR = process.env.TARGET_IS_PR === 'true';
             if (!number) return empty;
 
             const { data } = await github.rest.issues.get({ owner, repo, issue_number: number });
@@ -205,6 +210,7 @@ jobs:
           && steps.resolve.outputs.is_bot != 'true'
           && steps.resolve.outputs.is_pr != 'true'
           && steps.resolve.outputs.has_type != 'true'
+          && steps.label.outputs.result != ''
           && fromJSON(steps.label.outputs.result).type == ''
           && vars.ISSUE_TRIAGE_ENABLED != 'off'
         continue-on-error: true
@@ -254,6 +260,8 @@ jobs:
       - name: Apply opencode classification
         if: steps.classify.outputs.parsed == 'yes'
         uses: actions/github-script@v9
+        env:
+          TARGET_NUMBER: ${{ steps.resolve.outputs.number }}
         with:
           script: |
             const fs = require('fs');
@@ -263,7 +271,8 @@ jobs:
             const ALLOWED_AREA = ['area: frontend', 'area: backend', 'area: connector', 'area: updater', 'area: plugin', 'area: ci', 'area: docs', 'area: i18n'];
 
             const owner = context.repo.owner, repo = context.repo.repo;
-            const number = Number(steps.resolve.outputs.number);
+            const number = Number(process.env.TARGET_NUMBER || 0);
+            if (!number) return;
             const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: number });
             const existing = issue.labels.map(l => l.name);
             const repoLabels = (await github.paginate(github.rest.issues.listLabelsForRepo, { owner, repo, per_page: 100 })).map(l => l.name);
