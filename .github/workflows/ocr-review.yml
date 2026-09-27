@@ -98,6 +98,13 @@ jobs:
           # 从行内评论挪到 sticky 汇总评论，保持 PR 页干净（fail-open，不丢弃）
           route_categories: style,documentation,other
           route_severity_below: low
+          # 实时 [ocr] 进度行流入 workflow log，避免长任务"看起来死了"
+          # （composite 输入为字符串语义，必须引号；需 OCR >= v1.9.8）
+          stream_progress: 'true'
+          # 增量审查：同一 PR 再次触发时只审上次 checkpoint 以来的新 diff，
+          # 长 PR 增量 push 从全量 ~14 分钟降到分钟级。
+          # 依赖 sticky_summary（默认 true）；任何不确定因素 fail-closed 回全量。
+          checkpoint_range: 'true'
           # pull_request_target 时 action 自行解析，issue_comment 用上面拿到的 refs
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
