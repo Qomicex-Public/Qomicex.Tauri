@@ -1543,10 +1543,13 @@ mod tests {
     /// issue #122：同一 dest 的两条（普通 jar 条目 + 同坐标 natives 条目共享
     /// `downloads.artifact`）必须合并成一条。否则两个任务共用 `{dest}.part`，
     /// 交错执行时后完成者的 finalize 打开 `.part` 报 os error 2，整个安装失败。
+    ///
+    /// 路径统一用 `/`：CI 的 backend-check 跑在 ubuntu 上，`\` 在 Unix 不是分隔符，
+    /// `Path::file_name()` 会退化成整条字符串（与 Windows 行为不同）。
     #[test]
     fn dedup_download_targets_merges_same_dest() {
-        let jar = r"C:\g\libraries\org\lwjgl3\lwjgl\3.3.3\lwjgl-3.3.3.jar";
-        let natives = r"C:\g\libraries\org\lwjgl3\lwjgl\3.3.3\lwjgl-3.3.3-natives-windows.jar";
+        let jar = "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar";
+        let natives = "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3-natives-windows.jar";
         let (kept, dropped) = dedup_download_targets(vec![
             target("https://cdn/lwjgl-3.3.3.jar", jar),
             // 同一坐标的 natives 条目：check_libs_ver 分组键带角色后缀 → 与普通条目
@@ -1564,8 +1567,8 @@ mod tests {
         assert_eq!(kept[1].1, PathBuf::from(natives));
         // URL 不同的同 dest 同样要合并（镜像/下载源差异导致的同路径两条）。
         let (kept2, dropped2) = dedup_download_targets(vec![
-            target("https://official/a.jar", r"C:\g\a.jar"),
-            target("https://mirror/a.jar", r"C:\g\a.jar"),
+            target("https://official/a.jar", "g/a.jar"),
+            target("https://mirror/a.jar", "g/a.jar"),
         ]);
         assert_eq!(kept2.len(), 1);
         assert_eq!(dropped2.len(), 1);
