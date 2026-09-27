@@ -56,7 +56,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+/** 请求可选项：`timeoutMs` 覆盖全局 15s 超时（大文件/整合包导入等长耗时请求）。 */
+export interface RequestOptions extends RequestInit {
+  timeoutMs?: number
+}
+
+
+async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   const debug = window.__DEBUG__
   const start = performance.now()
   const method = options?.method ?? 'GET'
@@ -77,21 +83,26 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ? `${API_BASE}${path}${path.includes('?') ? '&' : '?'}_t=${Date.now()}`
     : `${API_BASE}${path}`
 
+  // 每请求超时：默认全局 15s；调用方可用 options.timeoutMs 放宽（整合包导入等长耗时请求）。
+  const timeoutMs = options?.timeoutMs ?? REQUEST_TIMEOUT_MS
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  // timeoutMs 只是客户侧参数，不属于 fetch RequestInit，剥掉再传给 fetch。
+  const init: RequestInit = { ...options }
+  delete (init as { timeoutMs?: number }).timeoutMs
   let res: Response
   try {
     res = await fetch(url, {
       headers: { 'Content-Type': 'application/json', ...options?.headers },
       signal: options?.signal ?? controller.signal,
-      ...options,
+      ...init,
     })
   } catch (e) {
     if (controller.signal.aborted) {
-      console.error(`[API] ${method} ${path} => 请求超时 (${REQUEST_TIMEOUT_MS}ms)`)
+      console.error(`[API] ${method} ${path} => 请求超时 (${timeoutMs}ms)`)
       throw new ApiError({
         code: 'REQUEST_TIMEOUT',
-        message: `请求超时（${REQUEST_TIMEOUT_MS / 1000}s）`,
+        message: `请求超时（${timeoutMs / 1000}s）`,
         detail: path,
         traceId: '',
         timestamp: new Date().toISOString(),
@@ -139,7 +150,7 @@ export function get<T>(path: string, options?: RequestInit): Promise<T> {
   return request<T>(path, options)
 }
 
-export function post<T>(path: string, body?: unknown, options?: RequestInit): Promise<T> {
+export function post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
   return request<T>(path, {
     method: 'POST',
     body: body ? JSON.stringify(body) : undefined,

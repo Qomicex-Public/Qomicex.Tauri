@@ -495,6 +495,9 @@ struct ClassifyFileResponse {
     loader: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     summary: Option<String>,
+    /// 文件字节数：前端据此给大型整合包的导入请求分级放宽超时（issue #119）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_size: Option<u64>,
 }
 
 /// POST /api/resource/classify-file — sniff a local file dropped onto the
@@ -528,6 +531,7 @@ async fn classify_file(
         _ => ("unknown", None),
     };
     let meta = meta.unwrap_or_default();
+    let file_size = std::fs::metadata(&path).ok().map(|m| m.len());
     Ok(Json(ClassifyFileResponse {
         file_type: file_type.to_string(),
         file_name,
@@ -535,6 +539,7 @@ async fn classify_file(
         game_version: meta.game_version,
         loader: meta.loader,
         summary: meta.summary,
+        file_size,
     }))
 }
 
@@ -560,11 +565,10 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
     let mut has_mmc = false;
     let mut has_shaders = false;
     let mut has_mcmeta = false;
-    for i in 0..archive.len() {
-        let Ok(entry) = archive.by_index(i) else {
-            continue;
-        };
-        match entry.name() {
+    // 条目探测只读中央目录（file_names 不触发逐条目本地头读取）：GTNH 这类 1.6 万
+    // 条目的包，by_index() 逐条目 seek 会让 classify 退化成上万次随机读（issue #119）。
+    for name in archive.file_names() {
+        match name {
             "modrinth.index.json" => has_mr = true,
             "qmodpack.index.json" => has_qml = true,
             "manifest.json" => has_cf_manifest = true,
@@ -572,7 +576,7 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
             n if n == "mmc-pack.json" || n.ends_with("/mmc-pack.json") => has_mmc = true,
             _ => {}
         }
-        if entry.name().starts_with("shaders/") {
+        if name.starts_with("shaders/") {
             has_shaders = true;
         }
     }
@@ -633,18 +637,11 @@ fn is_cf_modpack_manifest(archive: &mut zip::ZipArchive<std::fs::File>) -> bool 
 /// game_version/loader 取自 mmc-pack.json 的 components。
 /// 实例根以 mmc-pack.json 所在目录为准（根级或嵌套顶层实例目录，如 MultiMC 导出）。
 fn multimc_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<PackMeta> {
-    let mut mmc_path = None;
-    for i in 0..archive.len() {
-        let Ok(entry) = archive.by_index(i) else {
-            continue;
-        };
-        let n = entry.name();
-        if n == "mmc-pack.json" || n.ends_with("/mmc-pack.json") {
-            mmc_path = Some(n.to_string());
-            break;
-        }
-    }
-    let mmc_path = mmc_path?;
+    // 同样只读中央目录：避免为找 mmc-pack.json 而逐条目 seek（issue #119）。
+    let mmc_path = archive
+        .file_names()
+        .find(|n| *n == "mmc-pack.json" || n.ends_with("/mmc-pack.json"))?
+        .to_string();
     let prefix = mmc_path.strip_suffix("mmc-pack.json").unwrap_or_default();
     let cfg_path = format!("{prefix}instance.cfg");
 
