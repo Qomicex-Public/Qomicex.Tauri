@@ -1061,7 +1061,13 @@ fn normalize_sep(dest: PathBuf) -> PathBuf {
 type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
 
 /// 判重键：先归一化分隔符，再在大小写不敏感的平台（Windows、默认 APFS/HFS+ 的
-/// macOS）折叠大小写——`Foo.jar` 与 `foo.jar` 会落在同一个文件上，也就共用同一个
+/// macOS）折叠大小写
+///
+/// 已接受的例外（issue #124 评审确认）：Windows 支持按目录开启的大小写敏感 NTFS 目录、
+/// macOS 支持大小写敏感的 APFS/HFS+ 卷，在那些卷上 `Foo.jar` 与 `foo.jar` 是两个不同文件。
+/// 因此大小写折叠**不构成**"这两个必然是同一文件"的证明——它只保证"不会有两个任务抢同一个
+/// `.part`"。要按目标卷的实际大小写敏感性判定，需要下载器层探测（Windows
+/// `GetVolumeInformationByHandleW` / macOS `pathconf(_PC_CASE_SENSITIVE)`），超出本次范围。——`Foo.jar` 与 `foo.jar` 会落在同一个文件上，也就共用同一个
 /// `.part`。键只用于判重，返回的目标路径保留原始大小写。
 fn dedup_key(dest: &Path) -> String {
     let normalized = normalize_sep(dest.to_path_buf())
@@ -1080,12 +1086,47 @@ fn dedup_key(dest: &Path) -> String {
 /// 被合并掉的重复目标。同 dest 的 URL 不一定是纯冗余（镜像/下载源差异、官方源在部分
 /// 地区不可达），调用方应把 `url` 挂成保留条目的镜像备选，`name` 用于日志。
 pub(crate) struct DroppedTarget {
-    /// 归一化后的目标路径（与保留条目一致，便于调用方按 dest 归并镜像）。
-    pub dest: PathBuf,
+    /// 判重键（`dedup_key`）——调用方按它归并/查找镜像表。用 `PathBuf` 做键会在大小写折叠
+    /// 平台上与保留条目失配（`Foo.jar`/`foo.jar` 键相同、路径不同），导致镜像被静默丢弃。
+    pub key: String,
     /// 展示名（文件名），仅用于日志。
     pub name: String,
     /// 被丢弃条目的 URL。
     pub url: String,
+    /// 被丢弃条目的任务级请求头（同 dest 不同源时可能需要各自的鉴权头，如 CF `x-api-key`）。
+    pub headers: Vec<(String, String)>,
+}
+
+/// miss 记录（`MissFileInfo`）的判重键。与 [`dedup_miss_files`] 内部使用的键一致，供调用方
+/// 按同一键空间归并镜像表（如实例资源补全）。
+pub(crate) fn miss_file_key(path: &str) -> String {
+    dedup_key(Path::new(path))
+}
+
+/// 被合并目标 → 按判重键归并的镜像备选表（URL 去重、保持首次出现顺序）。
+/// 抽成纯函数以便跨平台单测：insert 与 lookup 必须共用同一键空间，否则镜像会被静默丢弃。
+pub(crate) fn merge_dropped_mirrors(dropped: Vec<DroppedTarget>) -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::with_capacity(dropped.len());
+    for d in dropped {
+        let e = map.entry(d.key).or_default();
+        // 同一 dest 的多个重复条目常给出字节相同的 URL（同 hash 资源），去重可避免主 URL
+        // 重试耗尽后白跑一轮一模一样的请求。
+        if !e.contains(&d.url) {
+            e.push(d.url);
+        }
+    }
+    map
+}
+
+/// 把被合并条目抢救出来的 URL 并入保留条目的镜像表：跳过与主 URL 相同的纯冗余项，并避免与
+/// 既有镜像（如 `mirror_fallback_urls` 的同组节点）重复。
+pub(crate) fn attach_mirrors(mirrors: &mut Vec<String>, url: &str, extra: Option<Vec<String>>) {
+    for m in extra.unwrap_or_default() {
+        if m == url || mirrors.contains(&m) {
+            continue;
+        }
+        mirrors.push(m);
+    }
 }
 
 /// 按目标路径去重（保留首次出现），返回 `(去重后列表, 被合并的重复目标)`。
@@ -1114,12 +1155,20 @@ pub(crate) fn dedup_download_targets(
     let mut dropped: Vec<DroppedTarget> = Vec::new();
     for (url, dest, headers) in files {
         let dest = normalize_sep(dest);
-        let name = dest
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| dest.to_string_lossy().into_owned());
-        if !seen.insert(dedup_key(&dest)) {
-            dropped.push(DroppedTarget { dest, name, url });
+        let key = dedup_key(&dest);
+        if !seen.insert(key.clone()) {
+            // name 只在重复分支里算：kept 条目的展示名由 download_batch 的 file_names 统一
+            // 算一次，这里对上千条 miss 每条都算一遍纯属浪费。
+            let name = dest
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| dest.to_string_lossy().into_owned());
+            dropped.push(DroppedTarget {
+                key,
+                name,
+                url,
+                headers,
+            });
             continue;
         }
         kept.push((url, dest, headers));
@@ -1135,13 +1184,23 @@ pub(crate) fn dedup_download_targets(
 ///
 /// 判重键同样在函数内归一化（`normalize_sep` + 大小写折叠），core 拼出的 maven 路径带
 /// `/`、不同安装器/下载源还可能给出大小写不同的路径，它们都指向同一个文件。
-pub(crate) fn dedup_miss_files(files: Vec<MissFileInfo>) -> (Vec<MissFileInfo>, Vec<MissFileInfo>) {
+pub(crate) fn dedup_miss_files(
+    files: Vec<MissFileInfo>,
+) -> (Vec<MissFileInfo>, Vec<DroppedTarget>) {
     let mut seen: HashSet<String> = HashSet::new();
     let mut kept: Vec<MissFileInfo> = Vec::with_capacity(files.len());
-    let mut dropped: Vec<MissFileInfo> = Vec::new();
+    let mut dropped: Vec<DroppedTarget> = Vec::new();
     for f in files {
-        if !seen.insert(dedup_key(Path::new(&f.path))) {
-            dropped.push(f);
+        let key = dedup_key(Path::new(&f.path));
+        if !seen.insert(key.clone()) {
+            // MissFileInfo 不带任务级请求头，补全路径的 URL 与保留条目同源（同一份 miss
+            // 列表），沿用保留条目的头即可。
+            dropped.push(DroppedTarget {
+                key,
+                name: f.name,
+                url: f.url,
+                headers: Vec::new(),
+            });
             continue;
         }
         kept.push(f);
@@ -1188,23 +1247,24 @@ pub(crate) async fn download_batch(
     // 合并后的版本 JSON 让两个分支扫描到同一路径，需要在 DownloadManager 层按 dest
     // 串行化/登记（子模块级改动），此处注释即该前提。
     let (files, duplicate_targets) = dedup_download_targets(files);
-    // 被合并掉的 URL 不是纯冗余：同 dest 不同源时它可能是唯一可达的源，挂成保留条目的
-    // 镜像备选（与 mirror_fallback_urls 同一套故障转移），避免主 URL 不可达即整批失败。
-    let mut extra_mirrors: HashMap<PathBuf, Vec<String>> = HashMap::new();
-    let mut dropped_names: Vec<String> = Vec::with_capacity(duplicate_targets.len());
-    for d in duplicate_targets {
-        extra_mirrors.entry(d.dest).or_default().push(d.url);
-        dropped_names.push(d.name);
+    let duplicates_len = duplicate_targets.len();
+    // 被合并条目的鉴权头：保留条目没有头而它有头时补上（同 dest 不同源的典型场景）。
+    let mut dropped_headers: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for d in &duplicate_targets {
+        if !d.headers.is_empty() {
+            dropped_headers
+                .entry(d.key.clone())
+                .or_default()
+                .extend(d.headers.iter().cloned());
+        }
     }
-    if !dropped_names.is_empty() {
-        let mirror_urls: usize = extra_mirrors.values().map(Vec::len).sum();
-        tracing::warn!(
-            dropped = dropped_names.len(),
-            mirror_urls,
-            first = %dropped_names[0],
-            "download_batch: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122），不同源 URL 已并入镜像备选"
-        );
-    }
+    // 被合并掉的 URL 不是纯冗余：同 dest 不同源时它可能是唯一可达的源，挂成保留条目的镜像
+    // 备选（与 mirror_fallback_urls 同一套故障转移），避免主 URL 不可达即整批失败。
+    // 键与判重完全一致（dedup_key）：Windows/macOS 上大小写折叠会让 Foo.jar/foo.jar 的
+    // 去重键相同而 PathBuf 不同，用 PathBuf 做键会 remove 落空、镜像被静默丢弃。
+    let mut extra_mirrors = merge_dropped_mirrors(duplicate_targets);
+    let rescue_urls: usize = extra_mirrors.values().map(Vec::len).sum();
+    let mut attached_urls = 0usize;
 
     // Pre-compute display names before consuming `files` in the loop below.
     let file_names: Vec<String> = files
@@ -1228,16 +1288,39 @@ pub(crate) async fn download_batch(
             let _ = std::fs::create_dir_all(parent);
         }
         let mut mirrors = crate::services::file_mirror::mirror_fallback_urls(&url);
-        // 被合并掉的重复条目可能来自另一个下载源：把它挂成镜像，主 URL 挂掉时兜底。
-        if let Some(extra) = extra_mirrors.remove(&dest) {
-            mirrors.extend(extra);
-        }
+        // 查表键与判重键一致；attach_mirrors 会跳过与主 URL 相同的纯冗余项与既有镜像。
+        let key = dedup_key(&dest);
+        let before = mirrors.len();
+        attach_mirrors(&mut mirrors, &url, extra_mirrors.remove(&key));
+        attached_urls += mirrors.len() - before;
+        // 补上被合并条目自带的鉴权头（保留条目没有头时）。
+        let headers = if headers.is_empty() {
+            dropped_headers.remove(&key).unwrap_or(headers)
+        } else {
+            headers
+        };
         let mut task = DownloadTask::new(url, dest);
         task.headers = headers;
         if !mirrors.is_empty() {
             task = task.with_mirrors(mirrors);
         }
         ids.push(mgr.add(task));
+    }
+    // 兜底告警：未被消费的镜像说明键空间又漂移了（曾因 PathBuf vs dedup_key 失配静默丢过
+    // 一次），宁可吵出来也不要静默。
+    if !extra_mirrors.is_empty() {
+        tracing::warn!(
+            leftover = extra_mirrors.len(),
+            "download_batch: 有重复条目的镜像备选未能挂到保留任务上（键失配），已丢弃"
+        );
+    }
+    if rescue_urls > 0 {
+        tracing::info!(
+            dropped = duplicates_len,
+            rescue_urls,
+            attached_urls,
+            "download_batch: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122），不同源 URL 已并入镜像备选"
+        );
     }
 
     let total = ids.len() as u64;
@@ -1622,7 +1705,8 @@ mod tests {
         assert_eq!(kept[0].0, "https://official/a.jar", "保留首次出现的条目");
         assert_eq!(dropped.len(), 1);
         assert_eq!(dropped[0].url, "https://mirror/a.jar");
-        assert_eq!(dropped[0].dest, PathBuf::from("g/a.jar"));
+        // 键即判重键：调用方按它就能把保留条目与抢救 URL 对上。
+        assert_eq!(dropped[0].key, dedup_key(Path::new("g/a.jar")));
     }
 
     /// 归一化必须在判重之前，且由去重函数自己完成（调用方无需先 normalize_sep）：
@@ -1720,5 +1804,97 @@ mod tests {
         assert_eq!(dropped.len(), 1);
         // 保留的是首次出现的原始记录（含原始分隔符），UI 名称不受影响。
         assert_eq!(kept[0].name, "org.ow2.asm:asm:9.10.1");
+    }
+
+    // --- merge_dropped_mirrors / attach_mirrors（跨平台可测，不依赖 cfg(windows)） ---
+
+    fn dropped(key: &str, url: &str) -> DroppedTarget {
+        DroppedTarget {
+            key: key.to_string(),
+            name: "x.jar".to_string(),
+            url: url.to_string(),
+            headers: Vec::new(),
+        }
+    }
+
+    fn miss(name: &str, path: &str, url: &str) -> qomicex_core::models::installer::MissFileInfo {
+        qomicex_core::models::installer::MissFileInfo {
+            name: name.to_string(),
+            url: url.to_string(),
+            sha1: String::new(),
+            path: path.to_string(),
+        }
+    }
+
+    /// 抢救出来的镜像必须能用**保留条目的键**取回：insert 与 lookup 共用 dedup_key，
+    /// 这正是 Windows/macOS 上大小写折叠导致 PathBuf 键失配、镜像被静默丢弃的那个坑
+    /// （issue #124 评审）。
+    #[test]
+    fn merge_dropped_mirrors_keyed_by_dedup_key() {
+        let map = merge_dropped_mirrors(vec![dropped("k1", "https://mirror/a.jar")]);
+        assert_eq!(
+            map.get("k1").map(Vec::as_slice),
+            Some(&["https://mirror/a.jar".to_string()][..])
+        );
+        // lookup 端用同一函数算键（模拟 download_batch 的 remove）
+        assert!(merge_dropped_mirrors(vec![dropped(
+            &dedup_key(Path::new("g/a.jar")),
+            "https://mirror/a.jar"
+        )])
+        .contains_key(&dedup_key(Path::new("g/a.jar"))));
+    }
+
+    /// 同一个 dest 的多个重复条目常给出字节相同的 URL，归并表必须去重。
+    #[test]
+    fn merge_dropped_mirrors_dedups_repeated_urls() {
+        let map = merge_dropped_mirrors(vec![
+            dropped("k1", "https://cdn/x.jar"),
+            dropped("k1", "https://cdn/x.jar"),
+            dropped("k1", "https://mirror/x.jar"),
+        ]);
+        assert_eq!(map.get("k1").map(Vec::len), Some(2), "同一 URL 只保留一条");
+        assert_eq!(
+            map.get("k1").map(|v| v[0].as_str()),
+            Some("https://cdn/x.jar"),
+            "保持首次出现顺序"
+        );
+    }
+
+    /// attach 时跳过与主 URL 相同的纯冗余项，并避免与既有镜像重复。
+    #[test]
+    fn attach_mirrors_skips_duplicates_and_primary() {
+        let mut mirrors = vec!["https://mirror/a.jar".to_string()];
+        attach_mirrors(
+            &mut mirrors,
+            "https://official/a.jar",
+            Some(vec![
+                "https://official/a.jar".to_string(), // 与主 URL 相同 → 跳过
+                "https://mirror/a.jar".to_string(),   // 已存在 → 跳过
+                "https://cdn-b/a.jar".to_string(),    // 新源 → 追加
+            ]),
+        );
+        assert_eq!(
+            mirrors,
+            vec![
+                "https://mirror/a.jar".to_string(),
+                "https://cdn-b/a.jar".to_string()
+            ]
+        );
+
+        let mut empty: Vec<String> = Vec::new();
+        attach_mirrors(&mut empty, "https://official/a.jar", None);
+        assert!(empty.is_empty());
+    }
+
+    /// miss 记录的判重键与 `miss_file_key` 一致，调用方才能按同一键空间查到镜像。
+    #[test]
+    fn miss_file_key_matches_dedup_miss_files_keying() {
+        let (kept, dropped) = dedup_miss_files(vec![
+            miss("a", "libraries/g/a.jar", "https://cdn/a.jar"),
+            miss("a", "libraries/g/a.jar", "https://mirror/a.jar"),
+        ]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(miss_file_key(&kept[0].path), dropped[0].key);
     }
 }

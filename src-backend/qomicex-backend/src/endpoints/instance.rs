@@ -703,23 +703,22 @@ async fn launch_instance(
                     // 「natives 条目」共享同一个 artifact 路径（`check_libs_ver` 的分组键
                     // 给 natives 加角色后缀，两者都会保留）。两个下载任务会共用
                     // `{dest}.part`，交错执行时后完成者 finalize 直接 os error 2（issue #122）。
-                    let (miss_files, duplicates) =
+                    let (miss_files, dropped) =
                         crate::services::install_service::dedup_miss_files(miss_files);
-                    // 被合并记录的 URL 可能来自另一个下载源：按 dest 归并后挂成镜像备选。
+                    // 被合并记录的 URL 可能来自另一个下载源：按判重键归并后挂成镜像备选。
+                    // 键必须与 dedup_miss_files 内部一致（分隔符归一化 + Windows/macOS 大小写
+                    // 折叠）：直接用 game_root.join(raw path) 做键会在大小写/分隔符不一致时
+                    // remove 落空、镜像被静默丢弃。
                     let game_root = std::path::PathBuf::from(&game_dir);
-                    let mut extra_mirrors: std::collections::HashMap<std::path::PathBuf, Vec<String>> =
-                        std::collections::HashMap::new();
-                    for d in &duplicates {
-                        extra_mirrors
-                            .entry(game_root.join(&d.path))
-                            .or_default()
-                            .push(d.url.clone());
-                    }
-                    if !duplicates.is_empty() {
+                    let mut extra_mirrors =
+                        crate::services::install_service::merge_dropped_mirrors(dropped);
+                    let rescue_urls: usize = extra_mirrors.values().map(Vec::len).sum();
+                    let mut attached_urls = 0usize;
+                    if rescue_urls > 0 {
                         tracing::warn!(
-                            dropped = duplicates.len(),
-                            first = %duplicates[0].name,
-                            "instance repair: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122），不同源 URL 已并入镜像备选"
+                            dropped = miss_files.len(),
+                            rescue_urls,
+                            "instance repair: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122），不同源 URL 将并入镜像备选"
                         );
                     }
                     let missing_names: Vec<String> =
@@ -738,13 +737,35 @@ async fn launch_instance(
                             if let Some(parent) = dest.parent() {
                                 let _ = std::fs::create_dir_all(parent);
                             }
-                            let mut task = DownloadTask::new(f.url.clone(), dest.clone());
-                            if let Some(extra) = extra_mirrors.remove(&dest) {
-                                task = task.with_mirrors(extra);
+                            // 与 download_batch 对齐：镜像表含下载源自带备选 + 抢救 URL，
+                            // 由 attach_mirrors 统一去重、跳过与主 URL 相同的冗余项。
+                            let mut mirrors = crate::services::file_mirror::mirror_fallback_urls(
+                                &f.url,
+                            );
+                            let before = mirrors.len();
+                            crate::services::install_service::attach_mirrors(
+                                &mut mirrors,
+                                &f.url,
+                                extra_mirrors.remove(&crate::services::install_service::miss_file_key(
+                                    &f.path,
+                                )),
+                            );
+                            attached_urls += mirrors.len() - before;
+                            let mut task = DownloadTask::new(f.url.clone(), dest);
+                            if !mirrors.is_empty() {
+                                task = task.with_mirrors(mirrors);
                             }
                             download_manager.add(task)
                         })
                         .collect();
+                    if rescue_urls > 0 {
+                        tracing::info!(
+                            dropped = miss_files.len(),
+                            rescue_urls,
+                            attached_urls,
+                            "instance repair: 重复下载目标已合并，不同源 URL 已并入镜像备选"
+                        );
+                    }
                     let total = ids.len() as u64;
                     let id_set: std::collections::HashSet<u64> = ids.iter().copied().collect();
                     let mut done_ids: std::collections::HashSet<u64> =
