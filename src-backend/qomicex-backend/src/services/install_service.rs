@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use qomicex_core::api::installer::InstallerFactory;
@@ -1060,25 +1060,86 @@ fn normalize_sep(dest: PathBuf) -> PathBuf {
 /// 批量下载的单条目标：（下载 URL, 归一化后的目标路径, 任务级请求头）。
 type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
 
-/// 判重键：先归一化分隔符，再在大小写不敏感的平台（Windows、默认 APFS/HFS+ 的
-/// macOS）折叠大小写
+/// 目标目录所在文件系统是否大小写不敏感（`Foo.jar` 与 `foo.jar` 会落到同一个文件）。
 ///
-/// 已接受的例外（issue #124 评审确认）：Windows 支持按目录开启的大小写敏感 NTFS 目录、
-/// macOS 支持大小写敏感的 APFS/HFS+ 卷，在那些卷上 `Foo.jar` 与 `foo.jar` 是两个不同文件。
-/// 因此大小写折叠**不构成**"这两个必然是同一文件"的证明——它只保证"不会有两个任务抢同一个
-/// `.part`"。要按目标卷的实际大小写敏感性判定，需要下载器层探测（Windows
-/// `GetVolumeInformationByHandleW` / macOS `pathconf(_PC_CASE_SENSITIVE)`），超出本次范围。——`Foo.jar` 与 `foo.jar` 会落在同一个文件上，也就共用同一个
-/// `.part`。键只用于判重，返回的目标路径保留原始大小写。
+/// 平台差异比"Windows 不敏感 / Linux 敏感"更细：Windows 支持按目录开启的大小写敏感 NTFS
+/// 目录（WSL 子树 / `fsutil file setCaseSensitiveInfo`），macOS 也支持大小写敏感的
+/// APFS/HFS+ 卷。因此不按平台猜，而是实测：在目标目录里建一个探针文件，再用仅大小写不同的
+/// 名字去访问——能访问到就说明文件系统不敏感。
+///
+/// 判定为"敏感"是安全侧：漏合并只会在目标真同名时多下一个同样的文件，而误合并会静默丢掉
+/// 第二个文件（#124 评审指出的问题）。
+///
+/// 只缓存成功的探测：目录不存在 / 创建失败（权限、只读）时返回 `false`（保守：不折叠），
+/// 避免把瞬时失败当成"敏感"缓存下来。
+#[cfg(any(windows, target_os = "macos"))]
+fn dir_is_case_insensitive(dir: &Path) -> bool {
+    static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, bool>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let key = normalize_sep(dir.to_path_buf());
+    if let Some(v) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
+        return *v;
+    }
+    let verdict = probe_case_insensitive(&key);
+    cache
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(key, verdict);
+    verdict
+}
+
+/// 实测大小写敏感性：探针文件 + 仅大小写不同的别名。
+#[cfg(any(windows, target_os = "macos"))]
+fn probe_case_insensitive(dir: &Path) -> bool {
+    use std::io::Write;
+    // 目录不存在（父目录尚未 create_dir_all）：问不出结果，保守判定为敏感（不折叠）。
+    if !dir.is_dir() {
+        return false;
+    }
+    let probe = dir.join(".__qmx_case_probe__");
+    if probe.exists() {
+        // 撞上同名残留：保守判定为敏感，宁可漏合并。
+        return false;
+    }
+    let created = std::fs::File::create(&probe)
+        .and_then(|mut f| f.write_all(b"1"))
+        .is_ok();
+    if !created {
+        return false;
+    }
+    // 仅大小写不同的别名能否访问到同一文件 → 文件系统不敏感。
+    let probe_other = probe.with_file_name(".__QMX_CASE_PROBE__");
+    let verdict = probe_other.exists() && std::fs::read(&probe_other).is_ok_and(|b| b == b"1");
+    let _ = std::fs::remove_file(&probe);
+    verdict
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn dir_is_case_insensitive(_dir: &Path) -> bool {
+    false
+}
+
+/// 判重键：归一化分隔符；若目标**父目录**所在文件系统大小写不敏感，再折叠大小写
+/// （`Foo.jar` 与 `foo.jar` 会落在同一个文件上，也就共用同一个 `.part`）。
+/// 键只用于判重，返回的目标路径保留原始大小写。
+///
+/// 大小写敏感卷上不折叠是安全侧的选择：漏合并只是多下一个同样的文件（能被 #122 的主修复
+/// 覆盖：同路径字节相同的重复仍会被合并），而误合并会静默丢文件。
 fn dedup_key(dest: &Path) -> String {
     let normalized = normalize_sep(dest.to_path_buf())
         .to_string_lossy()
         .into_owned();
-    #[cfg(any(windows, target_os = "macos"))]
-    {
+    let insensitive = dest
+        .parent()
+        .map(|p| {
+            let p = normalize_sep(p.to_path_buf());
+            dir_is_case_insensitive(&p)
+        })
+        .unwrap_or(true);
+    if insensitive {
         normalized.to_lowercase()
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
+    } else {
         normalized
     }
 }
@@ -1086,8 +1147,8 @@ fn dedup_key(dest: &Path) -> String {
 /// 被合并掉的重复目标。同 dest 的 URL 不一定是纯冗余（镜像/下载源差异、官方源在部分
 /// 地区不可达），调用方应把 `url` 挂成保留条目的镜像备选，`name` 用于日志。
 pub(crate) struct DroppedTarget {
-    /// 判重键（`dedup_key`）——调用方按它归并/查找镜像表。用 `PathBuf` 做键会在大小写折叠
-    /// 平台上与保留条目失配（`Foo.jar`/`foo.jar` 键相同、路径不同），导致镜像被静默丢弃。
+    /// 判重键（`dedup_key`）——调用方按它归并/查找镜像表。用 `PathBuf` 做键会在大小写
+    /// 折叠生效时与保留条目失配（`Foo.jar`/`foo.jar` 键相同、路径不同），导致镜像丢失。
     pub key: String,
     /// 展示名（文件名），仅用于日志。
     pub name: String,
@@ -1147,6 +1208,9 @@ pub(crate) fn attach_mirrors(mirrors: &mut Vec<String>, url: &str, extra: Option
 ///
 /// 归一化与判重都在本函数内完成（幂等）：调用方无需先 `normalize_sep`，避免将来新调用方
 /// 忘记预归一化而重新引入 `.part` 竞态。返回的目标路径即归一化后的路径。
+///
+/// 大小写折叠只在目标父目录**确实**大小写不敏感时发生（`dedup_key` 会实测）：大小写敏感卷
+/// 上 `Foo.jar` 与 `foo.jar` 是两个文件，折叠会静默丢掉第二个。
 pub(crate) fn dedup_download_targets(
     files: Vec<DownloadTarget>,
 ) -> (Vec<DownloadTarget>, Vec<DroppedTarget>) {
@@ -1182,8 +1246,9 @@ pub(crate) fn dedup_download_targets(
 /// （如实例资源补全）：保留的记录原样返回（UI 展示的名称不变），被合并的记录整体
 /// 返回，调用方可取其中的 URL 挂镜像备选、取 name 记日志。
 ///
-/// 判重键同样在函数内归一化（`normalize_sep` + 大小写折叠），core 拼出的 maven 路径带
-/// `/`、不同安装器/下载源还可能给出大小写不同的路径，它们都指向同一个文件。
+/// 判重键同样在函数内归一化（`normalize_sep`，并按目标父目录实测的大小写敏感性决定是否
+/// 折叠——见 `dedup_key`），core 拼出的 maven 路径带 `/`、不同安装器/下载源还可能给出
+/// 大小写不同的路径，在不区分大小写的文件系统上它们指向同一个文件。
 pub(crate) fn dedup_miss_files(
     files: Vec<MissFileInfo>,
 ) -> (Vec<MissFileInfo>, Vec<DroppedTarget>) {
@@ -1260,8 +1325,8 @@ pub(crate) async fn download_batch(
     }
     // 被合并掉的 URL 不是纯冗余：同 dest 不同源时它可能是唯一可达的源，挂成保留条目的镜像
     // 备选（与 mirror_fallback_urls 同一套故障转移），避免主 URL 不可达即整批失败。
-    // 键与判重完全一致（dedup_key）：Windows/macOS 上大小写折叠会让 Foo.jar/foo.jar 的
-    // 去重键相同而 PathBuf 不同，用 PathBuf 做键会 remove 落空、镜像被静默丢弃。
+    // 键与判重完全一致（dedup_key）：大小写不敏感的目录上 Foo.jar/foo.jar 去重键相同而
+    // PathBuf 不同，用 PathBuf 做键会 remove 落空、镜像被静默丢弃。
     let mut extra_mirrors = merge_dropped_mirrors(duplicate_targets);
     let rescue_urls: usize = extra_mirrors.values().map(Vec::len).sum();
     let mut attached_urls = 0usize;
@@ -1734,19 +1799,49 @@ mod tests {
         );
     }
 
-    /// 大小写不敏感的平台（Windows、默认 APFS/HFS+ 的 macOS）上 `Foo.jar` 与 `foo.jar`
-    /// 是同一个文件，也会共用同一个 `.part`，判重键必须折叠大小写。
+    /// 目标**父目录真实存在**时，`Foo.jar` 与 `foo.jar` 在大小写不敏感的文件系统上是同一个
+    /// 文件（也共用同一个 `.part`），判重键必须折叠大小写；键折叠但保留条目的路径维持原始
+    /// 大小写。
+    ///
+    /// 目录必须真的创建出来：`dedup_key` 会探测父目录实际的大小写敏感性（见
+    /// `dir_is_case_insensitive`），用不存在的路径只会得到保守的"敏感"结论。
     #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn dedup_download_targets_folds_case_on_case_insensitive_fs() {
+        let dir = std::env::temp_dir().join(format!("qomicex-dedup-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let foo = dir.join("Foo.jar");
+        let bar = dir.join("foo.jar");
         let (kept, dropped) = dedup_download_targets(vec![
-            target("https://cdn/Foo.jar", "g/Foo.jar"),
-            target("https://cdn/foo.jar", "g/foo.jar"),
+            target("https://cdn/Foo.jar", &foo.to_string_lossy()),
+            target("https://cdn/foo.jar", &bar.to_string_lossy()),
         ]);
-        assert_eq!(kept.len(), 1, "大小写折叠后只应保留一条");
-        assert_eq!(dropped.len(), 1);
-        // 键折叠但保留的路径维持原始大小写。
-        assert_eq!(kept[0].1, PathBuf::from("g/Foo.jar"));
+        if dir_is_case_insensitive(&dir) {
+            assert_eq!(kept.len(), 1, "该文件系统大小写不敏感 → 只保留一条");
+            assert_eq!(dropped.len(), 1);
+            assert_eq!(kept[0].1, foo, "保留条目的路径维持原始大小写");
+        } else {
+            // 开发机恰好是大小写敏感卷：两个目标都应保留（这条路径由下面那条用例覆盖）。
+            assert_eq!(kept.len(), 2, "该文件系统大小写敏感 → 两条都保留");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 大小写敏感的目标目录上 `Foo.jar` 与 `foo.jar` 是两个不同文件，**不能**折叠——
+    /// 否则第二个永远不会被下载（#124 评审）。
+    ///
+    /// 用不存在的父目录构造"探测不到 → 保守判定为敏感"，在任何开发机上都能跑。
+    #[test]
+    fn dedup_key_keeps_case_when_sensitivity_unknown() {
+        let missing = std::env::temp_dir().join("qomicex-dedup-missing-dir-xyz");
+        let _ = std::fs::remove_dir_all(&missing);
+        let foo = missing.join("Foo.jar");
+        let bar = missing.join("foo.jar");
+        assert!(
+            dedup_key(&foo) != dedup_key(&bar),
+            "探测不到大小写敏感性时必须保持大小写区分，否则会静默丢文件"
+        );
     }
 
     /// `dedup_miss_files`：同一 `path` 的多条 miss 记录按路径合并，保留首次出现的记录
@@ -1827,8 +1922,7 @@ mod tests {
     }
 
     /// 抢救出来的镜像必须能用**保留条目的键**取回：insert 与 lookup 共用 dedup_key，
-    /// 这正是 Windows/macOS 上大小写折叠导致 PathBuf 键失配、镜像被静默丢弃的那个坑
-    /// （issue #124 评审）。
+    /// 这正是大小写折叠生效时 PathBuf 键失配、镜像被静默丢弃的那个坑（issue #124 评审）。
     #[test]
     fn merge_dropped_mirrors_keyed_by_dedup_key() {
         let map = merge_dropped_mirrors(vec![dropped("k1", "https://mirror/a.jar")]);

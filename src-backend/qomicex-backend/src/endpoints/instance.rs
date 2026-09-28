@@ -703,31 +703,35 @@ async fn launch_instance(
                     // 「natives 条目」共享同一个 artifact 路径（`check_libs_ver` 的分组键
                     // 给 natives 加角色后缀，两者都会保留）。两个下载任务会共用
                     // `{dest}.part`，交错执行时后完成者 finalize 直接 os error 2（issue #122）。
+                    // UI 的名称列表与文件总数用**原始** miss 列表：去重只是下载层的优化，
+                    // 不该让重复记录从"正在补全哪些文件"里消失、总数也缩水（#124 评审）。
+                    let missing_names: Vec<String> =
+                        miss_files.iter().map(|f| f.name.clone()).collect();
+                    let total_missing = miss_files.len();
                     let (miss_files, dropped) =
                         crate::services::install_service::dedup_miss_files(miss_files);
                     // 被合并记录的 URL 可能来自另一个下载源：按判重键归并后挂成镜像备选。
-                    // 键必须与 dedup_miss_files 内部一致（分隔符归一化 + Windows/macOS 大小写
-                    // 折叠）：直接用 game_root.join(raw path) 做键会在大小写/分隔符不一致时
+                    // 键必须与 dedup_miss_files 内部一致（分隔符归一化 + 目标目录实际大小写
+                    // 敏感性）：直接用 game_root.join(raw path) 做键会在大小写/分隔符不一致时
                     // remove 落空、镜像被静默丢弃。
                     let game_root = std::path::PathBuf::from(&game_dir);
+                    let dropped_count = dropped.len();
                     let mut extra_mirrors =
                         crate::services::install_service::merge_dropped_mirrors(dropped);
                     let rescue_urls: usize = extra_mirrors.values().map(Vec::len).sum();
                     let mut attached_urls = 0usize;
                     if rescue_urls > 0 {
                         tracing::warn!(
-                            dropped = miss_files.len(),
+                            dropped = dropped_count,
                             rescue_urls,
                             "instance repair: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122），不同源 URL 将并入镜像备选"
                         );
                     }
-                    let missing_names: Vec<String> =
-                        miss_files.iter().map(|f| f.name.clone()).collect();
                     progress.stage = "repairing".to_string();
-                    progress.message = format!("正在补全 {} 个缺失文件...", miss_files.len());
+                    progress.message = format!("正在补全 {} 个缺失文件...", total_missing);
                     progress.progress = 10.0;
                     progress.missing_files = Some(missing_names);
-                    progress.total_files = miss_files.len() as i32;
+                    progress.total_files = total_missing as i32;
                     tracker.set_progress(&instance_id, progress.clone());
 
                     let ids: Vec<TaskId> = miss_files
@@ -760,7 +764,7 @@ async fn launch_instance(
                         .collect();
                     if rescue_urls > 0 {
                         tracing::info!(
-                            dropped = miss_files.len(),
+                            dropped = dropped_count,
                             rescue_urls,
                             attached_urls,
                             "instance repair: 重复下载目标已合并，不同源 URL 已并入镜像备选"
