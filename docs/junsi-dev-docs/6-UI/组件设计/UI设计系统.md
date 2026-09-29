@@ -129,7 +129,7 @@ Uses CVA with the following variants:
 <div class="fixed left-[50%] top-[50%] z-50 translate-x-[-50%] translate-y-[-50%]
             w-full max-w-lg rounded-xl border bg-popover/90 backdrop-blur-lg
             shadow-2xl animate-in zoom-in-95">
-  <div class="border-b border-border px-6 py-4" data-tauri-drag-region>  <!-- Header -->
+  <div class="border-b border-border px-6 py-4" data-qomicex-drag-region>  <!-- Header（拖动条：见 ADR-086，位移超阈值才拖窗，避免触控板误拖） -->
     <button class="h-7 w-7 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" />
   </div>
   <div class="px-6 py-4">  <!-- Body -->

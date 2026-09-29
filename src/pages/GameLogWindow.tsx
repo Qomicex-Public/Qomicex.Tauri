@@ -143,18 +143,18 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {isWindows && (
-        <div data-tauri-drag-region className="flex h-9 shrink-0 items-center justify-between bg-background/50 pl-3 pr-0">
+        <div data-qomicex-drag-region className="flex h-9 shrink-0 items-center justify-between bg-background/50 pl-3 pr-0">
           <span className="select-none text-xs text-muted-foreground">{t('gameLog.title')}</span>
           <div className="flex">
-            <button onClick={() => win?.minimize()} data-tauri-drag-region={false}
+            <button onClick={() => win?.minimize()} data-qomicex-drag-region={false}
               className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20">
               <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="5.5" width="9" height="1" fill="currentColor" /></svg>
             </button>
-            <button onClick={() => win?.toggleMaximize()} data-tauri-drag-region={false}
+            <button onClick={() => win?.toggleMaximize()} data-qomicex-drag-region={false}
               className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20">
               <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" rx="1" stroke="currentColor" strokeWidth="1.15" fill="none" /></svg>
             </button>
-            <button onClick={onClose} data-tauri-drag-region={false}
+            <button onClick={onClose} data-qomicex-drag-region={false}
               className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-destructive/80 hover:text-destructive-foreground active:bg-destructive">
               <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
             </button>
