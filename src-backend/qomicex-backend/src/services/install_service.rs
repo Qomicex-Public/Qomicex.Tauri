@@ -1067,39 +1067,49 @@ type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
 /// APFS/HFS+ 卷。因此不按平台猜，而是实测：在目标目录里建一个探针文件，再用仅大小写不同的
 /// 名字去访问——能访问到就说明文件系统不敏感。
 ///
-/// 判定为"敏感"是安全侧：漏合并只会在目标真同名时多下一个同样的文件，而误合并会静默丢掉
-/// 第二个文件（#124 评审指出的问题）。
+/// 目标目录本身可能还不存在（下载任务的父目录要到 `download_batch` 里才
+/// `create_dir_all`），所以探测会**沿路径向上找第一个已存在的祖先目录**：卷的大小写敏感性
+/// 对整棵树一致（WSL 的 per-dir 标志虽可按目录设，但只在已存在的目录上有意义，向上取到
+/// 已存在层即够用），这保证全新游戏目录也能得到正确结论。
 ///
-/// 只缓存成功的探测：目录不存在 / 创建失败（权限、只读）时返回 `false`（保守：不折叠），
-/// 避免把瞬时失败当成"敏感"缓存下来。
+/// 只缓存**确定**的结果（成功探测出敏感/不敏感）。以下情况返回 `false`（保守：不折叠）
+/// 且不写缓存，下次调用会重新探测：
+///
+/// - 连已存在祖先都找不到（空路径/纯盘符）；
+/// - 创建探针失败（权限、只读、磁盘满）；
+/// - 撞上同名残留（可能是别的进程/上次崩溃留下的）；
+/// - 读回内容不符。
+///
+/// 把 `false` 缓存下来会让"目录刚建好"的后续调用永远拿不到正确结论，重新引入 `.part` 争用
+/// （#124 评审）；而缓存 `true` 是安全的——文件系统不会在进程生命期内从敏感变成不敏感。
+///
+/// 探测串行化（持锁做 I/O）：避免两个并发导入同时在同一目录建/删探针，把彼此的临时文件当成
+/// "撞名残留"而误判为敏感。探测本身是几次小文件 I/O，锁只在高并发安装的首个文件上才有代价。
 #[cfg(any(windows, target_os = "macos"))]
 fn dir_is_case_insensitive(dir: &Path) -> bool {
     static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, bool>>> =
         std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     let key = normalize_sep(dir.to_path_buf());
-    if let Some(v) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
+    let mut cache = cache.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(v) = cache.get(&key) {
         return *v;
     }
     let verdict = probe_case_insensitive(&key);
-    cache
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(key, verdict);
+    if verdict {
+        cache.insert(key, verdict);
+    }
     verdict
 }
 
-/// 实测大小写敏感性：探针文件 + 仅大小写不同的别名。
+/// 实测大小写敏感性：探针文件 + 仅大小写不同的别名。`dir` 必须已存在（调用方负责向上找
+/// 已存在祖先）。返回 `true` 表示"确认不敏感"，`false` 表示"确认敏感"或"测不出"。
 #[cfg(any(windows, target_os = "macos"))]
 fn probe_case_insensitive(dir: &Path) -> bool {
     use std::io::Write;
-    // 目录不存在（父目录尚未 create_dir_all）：问不出结果，保守判定为敏感（不折叠）。
-    if !dir.is_dir() {
-        return false;
-    }
     let probe = dir.join(".__qmx_case_probe__");
     if probe.exists() {
-        // 撞上同名残留：保守判定为敏感，宁可漏合并。
+        // 撞上同名残留：测不出，保守判定为敏感、不缓存（下次重新探测）。
         return false;
     }
     let created = std::fs::File::create(&probe)
@@ -1113,6 +1123,20 @@ fn probe_case_insensitive(dir: &Path) -> bool {
     let verdict = probe_other.exists() && std::fs::read(&probe_other).is_ok_and(|b| b == b"1");
     let _ = std::fs::remove_file(&probe);
     verdict
+}
+
+/// 从 `dir` 开始沿路径向上找第一个**已存在**的目录，对它做大小写探测。
+/// 全部祖先都不存在时返回 `false`（保守：不折叠），交由上层决定是否重新探测。
+#[cfg(any(windows, target_os = "macos"))]
+fn probe_case_insensitive_walk_up(dir: &Path) -> bool {
+    let mut current = Some(dir);
+    while let Some(d) = current {
+        if d.is_dir() {
+            return probe_case_insensitive(d);
+        }
+        current = d.parent();
+    }
+    false
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -1134,9 +1158,21 @@ fn dedup_key(dest: &Path) -> String {
         .parent()
         .map(|p| {
             let p = normalize_sep(p.to_path_buf());
-            dir_is_case_insensitive(&p)
+            // 目录不存在时沿祖先向上探测，全新游戏目录也能得到正确结论（#124 评审）。
+            #[cfg(any(windows, target_os = "macos"))]
+            {
+                if p.is_dir() {
+                    dir_is_case_insensitive(&p)
+                } else {
+                    probe_case_insensitive_walk_up(&p)
+                }
+            }
+            #[cfg(not(any(windows, target_os = "macos")))]
+            {
+                dir_is_case_insensitive(&p)
+            }
         })
-        .unwrap_or(true);
+        .unwrap_or(false);
     if insensitive {
         normalized.to_lowercase()
     } else {
@@ -1158,10 +1194,11 @@ pub(crate) struct DroppedTarget {
     pub headers: Vec<(String, String)>,
 }
 
-/// miss 记录（`MissFileInfo`）的判重键。与 [`dedup_miss_files`] 内部使用的键一致，供调用方
-/// 按同一键空间归并镜像表（如实例资源补全）。
-pub(crate) fn miss_file_key(path: &str) -> String {
-    dedup_key(Path::new(path))
+/// miss 记录的判重键。与 [`dedup_miss_files`] 内部使用的键一致，供调用方按同一键空间归并
+/// 镜像表（如实例资源补全）。`root` 是该记录的下载根，语义同 [`dedup_miss_files`]。
+pub(crate) fn miss_file_key(path: &str, root: &Path) -> String {
+    let root = normalize_sep(root.to_path_buf());
+    dedup_key(&root.join(path))
 }
 
 /// 被合并目标 → 按判重键归并的镜像备选表（URL 去重、保持首次出现顺序）。
@@ -1249,14 +1286,20 @@ pub(crate) fn dedup_download_targets(
 /// 判重键同样在函数内归一化（`normalize_sep`，并按目标父目录实测的大小写敏感性决定是否
 /// 折叠——见 `dedup_key`），core 拼出的 maven 路径带 `/`、不同安装器/下载源还可能给出
 /// 大小写不同的路径，在不区分大小写的文件系统上它们指向同一个文件。
+///
+/// `root` 是这些 miss 记录真正的下载根（如游戏的 `.minecraft`），必须传：`MissFileInfo.path`
+/// 是**相对**路径，直接拿它做键会让大小写探测去问"后端进程工作目录下的相对目录"——那不是
+/// 文件实际落盘的位置，结论可能与实际目标卷相反（#124 评审）。
 pub(crate) fn dedup_miss_files(
     files: Vec<MissFileInfo>,
+    root: &Path,
 ) -> (Vec<MissFileInfo>, Vec<DroppedTarget>) {
     let mut seen: HashSet<String> = HashSet::new();
     let mut kept: Vec<MissFileInfo> = Vec::with_capacity(files.len());
     let mut dropped: Vec<DroppedTarget> = Vec::new();
+    let root = normalize_sep(root.to_path_buf());
     for f in files {
-        let key = dedup_key(Path::new(&f.path));
+        let key = dedup_key(&root.join(&f.path));
         if !seen.insert(key.clone()) {
             // MissFileInfo 不带任务级请求头，补全路径的 URL 与保留条目同源（同一份 miss
             // 列表），沿用保留条目的头即可。
@@ -1311,6 +1354,16 @@ pub(crate) async fn download_batch(
     // assets/+versions/ vs mods/overrides 内容），因此不会出现同一 dest；若将来某个
     // 合并后的版本 JSON 让两个分支扫描到同一路径，需要在 DownloadManager 层按 dest
     // 串行化/登记（子模块级改动），此处注释即该前提。
+    // 判重（含大小写敏感性探测）依赖目标父目录存在，而父目录平时要到下面的任务构建循环里
+    // 才 create_dir_all。先统一建好，探测才不会落到"目录不存在"的保守分支——在不区分大小写
+    // 的游戏目录上，两个仅大小写不同的目标若探测不到就会被判为敏感而漏合并，重新争用同一个
+    // `.part`（#124 评审）。
+    for (_, dest, _) in &files {
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+
     let (files, duplicate_targets) = dedup_download_targets(files);
     let duplicates_len = duplicate_targets.len();
     // 被合并条目的鉴权头：保留条目没有头而它有头时补上（同 dest 不同源的典型场景）。
@@ -1349,9 +1402,7 @@ pub(crate) async fn download_batch(
 
     let mut ids = Vec::new();
     for (url, dest, headers) in files {
-        if let Some(parent) = dest.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+        // 父目录已在判重前统一创建，这里只兜底极端情况（判重后父目录被删）。
         let mut mirrors = crate::services::file_mirror::mirror_fallback_urls(&url);
         // 查表键与判重键一致；attach_mirrors 会跳过与主 URL 相同的纯冗余项与既有镜像。
         let key = dedup_key(&dest);
@@ -1831,17 +1882,47 @@ mod tests {
     /// 大小写敏感的目标目录上 `Foo.jar` 与 `foo.jar` 是两个不同文件，**不能**折叠——
     /// 否则第二个永远不会被下载（#124 评审）。
     ///
-    /// 用不存在的父目录构造"探测不到 → 保守判定为敏感"，在任何开发机上都能跑。
+    /// 用**空父目录名**构造"连已存在祖先都找不到"的兜底路径，在任何开发机上都能跑。
     #[test]
     fn dedup_key_keeps_case_when_sensitivity_unknown() {
-        let missing = std::env::temp_dir().join("qomicex-dedup-missing-dir-xyz");
-        let _ = std::fs::remove_dir_all(&missing);
-        let foo = missing.join("Foo.jar");
-        let bar = missing.join("foo.jar");
+        let foo = Path::new("Foo.jar");
+        let bar = Path::new("foo.jar");
         assert!(
-            dedup_key(&foo) != dedup_key(&bar),
+            dedup_key(foo) != dedup_key(bar),
             "探测不到大小写敏感性时必须保持大小写区分，否则会静默丢文件"
         );
+    }
+
+    /// 探测不到时**不得缓存 `false`**：目录后建起来，再问一次必须拿到真实结论。
+    ///
+    /// 这正是 #124 评审的回归点——把 `false`（目录不存在）缓存下来后，即使随后
+    /// `download_batch` 建好了父目录，判重仍判"敏感"而漏合并，两个仅大小写不同的目标重新
+    /// 争用同一个 `.part`。
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn dir_is_case_insensitive_does_not_cache_negative_results() {
+        let dir = std::env::temp_dir().join(format!(
+            "qomicex-case-cache-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        // 目录还不存在 → 单纯目录名（无已存在祖先可问），得到 false。
+        assert!(
+            !dir_is_case_insensitive(&dir),
+            "空目录名得不到结论时应为 false"
+        );
+        // 建好目录：现在能问到真实结论，且必须与"整卷是否敏感"一致。
+        std::fs::create_dir_all(&dir).unwrap();
+        let verdict = dir_is_case_insensitive(&dir);
+        assert_eq!(
+            verdict,
+            probe_case_insensitive(&dir),
+            "目录已存在时必须重新探测，不能沿用之前缓存的 false"
+        );
+        // 确认后的 true 会被缓存：第二次调用走缓存仍得同一答案。
+        assert_eq!(dir_is_case_insensitive(&dir), verdict);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `dedup_miss_files`：同一 `path` 的多条 miss 记录按路径合并，保留首次出现的记录
@@ -1854,20 +1935,24 @@ mod tests {
             sha1: String::new(),
             path: path.to_string(),
         };
-        let (kept, dropped) = dedup_miss_files(vec![
-            mk(
-                "org.lwjgl3:lwjgl:3.3.3",
-                "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar",
-            ),
-            mk(
-                "org.lwjgl3:lwjgl:3.3.3",
-                "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar",
-            ),
-            mk(
-                "org.lwjgl3:lwjgl:3.3.3:natives-windows",
-                "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3-natives-windows.jar",
-            ),
-        ]);
+        let root = std::env::temp_dir().join("qomicex-miss-root");
+        let (kept, dropped) = dedup_miss_files(
+            vec![
+                mk(
+                    "org.lwjgl3:lwjgl:3.3.3",
+                    "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar",
+                ),
+                mk(
+                    "org.lwjgl3:lwjgl:3.3.3",
+                    "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar",
+                ),
+                mk(
+                    "org.lwjgl3:lwjgl:3.3.3:natives-windows",
+                    "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3-natives-windows.jar",
+                ),
+            ],
+            &root,
+        );
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].name, "org.lwjgl3:lwjgl:3.3.3");
         assert_eq!(dropped.len(), 1);
@@ -1885,16 +1970,20 @@ mod tests {
             sha1: String::new(),
             path: path.to_string(),
         };
-        let (kept, dropped) = dedup_miss_files(vec![
-            mk(
-                "org.ow2.asm:asm:9.10.1",
-                r"libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar",
-            ),
-            mk(
-                "org.ow2.asm:asm:9.10.1",
-                "libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
-            ),
-        ]);
+        let root = std::env::temp_dir().join("qomicex-miss-root-sep");
+        let (kept, dropped) = dedup_miss_files(
+            vec![
+                mk(
+                    "org.ow2.asm:asm:9.10.1",
+                    r"libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar",
+                ),
+                mk(
+                    "org.ow2.asm:asm:9.10.1",
+                    "libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+                ),
+            ],
+            &root,
+        );
         assert_eq!(kept.len(), 1, "归一化后同一路径只应保留一条");
         assert_eq!(dropped.len(), 1);
         // 保留的是首次出现的原始记录（含原始分隔符），UI 名称不受影响。
@@ -1983,12 +2072,20 @@ mod tests {
     /// miss 记录的判重键与 `miss_file_key` 一致，调用方才能按同一键空间查到镜像。
     #[test]
     fn miss_file_key_matches_dedup_miss_files_keying() {
-        let (kept, dropped) = dedup_miss_files(vec![
-            miss("a", "libraries/g/a.jar", "https://cdn/a.jar"),
-            miss("a", "libraries/g/a.jar", "https://mirror/a.jar"),
-        ]);
+        let root =
+            std::env::temp_dir().join(format!("qomicex-miss-root-key-{}", std::process::id()));
+        // 必须真的存在：大小写探测只对已存在目录给出确定结论，否则两侧可能分别得到
+        // “无结论→不折叠”和“探测成功→折叠”而大小写不一致。
+        std::fs::create_dir_all(&root).unwrap();
+        let (kept, dropped) = dedup_miss_files(
+            vec![
+                miss("a", "libraries/g/a.jar", "https://cdn/a.jar"),
+                miss("a", "libraries/g/a.jar", "https://mirror/a.jar"),
+            ],
+            &root,
+        );
         assert_eq!(kept.len(), 1);
         assert_eq!(dropped.len(), 1);
-        assert_eq!(miss_file_key(&kept[0].path), dropped[0].key);
+        assert_eq!(miss_file_key(&kept[0].path, &root), dropped[0].key);
     }
 }

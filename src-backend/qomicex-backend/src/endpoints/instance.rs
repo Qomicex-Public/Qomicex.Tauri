@@ -708,13 +708,15 @@ async fn launch_instance(
                     let missing_names: Vec<String> =
                         miss_files.iter().map(|f| f.name.clone()).collect();
                     let total_missing = miss_files.len();
+                    // 传真实下载根：MissFileInfo.path 是相对路径，大小写探测必须问 game_root
+                    // 而不是后端进程工作目录（#124 评审）。
+                    let game_root = std::path::PathBuf::from(&game_dir);
                     let (miss_files, dropped) =
-                        crate::services::install_service::dedup_miss_files(miss_files);
+                        crate::services::install_service::dedup_miss_files(miss_files, &game_root);
                     // 被合并记录的 URL 可能来自另一个下载源：按判重键归并后挂成镜像备选。
                     // 键必须与 dedup_miss_files 内部一致（分隔符归一化 + 目标目录实际大小写
-                    // 敏感性）：直接用 game_root.join(raw path) 做键会在大小写/分隔符不一致时
-                    // remove 落空、镜像被静默丢弃。
-                    let game_root = std::path::PathBuf::from(&game_dir);
+                    // 敏感性）：用 miss_file_key(path, root) 取同一个键，避免大小写/分隔符
+                    // 不一致时 remove 落空、镜像被静默丢弃。
                     let dropped_count = dropped.len();
                     let mut extra_mirrors =
                         crate::services::install_service::merge_dropped_mirrors(dropped);
@@ -752,6 +754,7 @@ async fn launch_instance(
                                 &f.url,
                                 extra_mirrors.remove(&crate::services::install_service::miss_file_key(
                                     &f.path,
+                                    &game_root,
                                 )),
                             );
                             attached_urls += mirrors.len() - before;
