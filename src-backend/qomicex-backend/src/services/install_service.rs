@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use qomicex_core::api::installer::InstallerFactory;
@@ -1057,6 +1057,265 @@ fn normalize_sep(dest: PathBuf) -> PathBuf {
     }
 }
 
+/// 批量下载的单条目标：（下载 URL, 归一化后的目标路径, 任务级请求头）。
+type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
+
+/// 目标目录所在文件系统是否大小写不敏感（`Foo.jar` 与 `foo.jar` 会落到同一个文件）。
+///
+/// 平台差异比"Windows 不敏感 / Linux 敏感"更细：Windows 支持按目录开启的大小写敏感 NTFS
+/// 目录（WSL 子树 / `fsutil file setCaseSensitiveInfo`），macOS 也支持大小写敏感的
+/// APFS/HFS+ 卷。因此不按平台猜，而是实测：在目标目录里建一个探针文件，再用仅大小写不同的
+/// 名字去访问——能访问到就说明文件系统不敏感。
+///
+/// 目标目录本身可能还不存在（下载任务的父目录要到 `download_batch` 里才
+/// `create_dir_all`），所以探测会**沿路径向上找第一个已存在的祖先目录**：卷的大小写敏感性
+/// 对整棵树一致（WSL 的 per-dir 标志虽可按目录设，但只在已存在的目录上有意义，向上取到
+/// 已存在层即够用），这保证全新游戏目录也能得到正确结论。
+///
+/// 只缓存**确定**的结果（成功探测出敏感/不敏感）。以下情况返回 `false`（保守：不折叠）
+/// 且不写缓存，下次调用会重新探测：
+///
+/// - 连已存在祖先都找不到（空路径/纯盘符）；
+/// - 创建探针失败（权限、只读、磁盘满）；
+/// - 撞上同名残留（可能是别的进程/上次崩溃留下的）；
+/// - 读回内容不符。
+///
+/// 把 `false` 缓存下来会让"目录刚建好"的后续调用永远拿不到正确结论，重新引入 `.part` 争用
+/// （#124 评审）；而缓存 `true` 是安全的——文件系统不会在进程生命期内从敏感变成不敏感。
+///
+/// 探测串行化（持锁做 I/O）：避免两个并发导入同时在同一目录建/删探针，把彼此的临时文件当成
+/// "撞名残留"而误判为敏感。探测本身是几次小文件 I/O，锁只在高并发安装的首个文件上才有代价。
+#[cfg(any(windows, target_os = "macos"))]
+fn dir_is_case_insensitive(dir: &Path) -> bool {
+    static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, bool>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let key = normalize_sep(dir.to_path_buf());
+    let mut cache = cache.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(v) = cache.get(&key) {
+        return *v;
+    }
+    let verdict = probe_case_insensitive(&key);
+    if verdict {
+        cache.insert(key, verdict);
+    }
+    verdict
+}
+
+/// 实测大小写敏感性：探针文件 + 仅大小写不同的别名。`dir` 必须已存在（调用方负责向上找
+/// 已存在祖先）。返回 `true` 表示"确认不敏感"，`false` 表示"确认敏感"或"测不出"。
+#[cfg(any(windows, target_os = "macos"))]
+fn probe_case_insensitive(dir: &Path) -> bool {
+    use std::io::Write;
+    let probe = dir.join(".__qmx_case_probe__");
+    if probe.exists() {
+        // 撞上同名残留：测不出，保守判定为敏感、不缓存（下次重新探测）。
+        return false;
+    }
+    let created = std::fs::File::create(&probe)
+        .and_then(|mut f| f.write_all(b"1"))
+        .is_ok();
+    if !created {
+        return false;
+    }
+    // 仅大小写不同的别名能否访问到同一文件 → 文件系统不敏感。
+    let probe_other = probe.with_file_name(".__QMX_CASE_PROBE__");
+    let verdict = probe_other.exists() && std::fs::read(&probe_other).is_ok_and(|b| b == b"1");
+    let _ = std::fs::remove_file(&probe);
+    verdict
+}
+
+/// 从 `dir` 开始沿路径向上找第一个**已存在**的目录，对它做大小写探测。
+/// 全部祖先都不存在时返回 `false`（保守：不折叠），交由上层决定是否重新探测。
+#[cfg(any(windows, target_os = "macos"))]
+fn probe_case_insensitive_walk_up(dir: &Path) -> bool {
+    let mut current = Some(dir);
+    while let Some(d) = current {
+        if d.is_dir() {
+            return probe_case_insensitive(d);
+        }
+        current = d.parent();
+    }
+    false
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn dir_is_case_insensitive(_dir: &Path) -> bool {
+    false
+}
+
+/// 判重键：归一化分隔符；若目标**父目录**所在文件系统大小写不敏感，再折叠大小写
+/// （`Foo.jar` 与 `foo.jar` 会落在同一个文件上，也就共用同一个 `.part`）。
+/// 键只用于判重，返回的目标路径保留原始大小写。
+///
+/// 大小写敏感卷上不折叠是安全侧的选择：漏合并只是多下一个同样的文件（能被 #122 的主修复
+/// 覆盖：同路径字节相同的重复仍会被合并），而误合并会静默丢文件。
+fn dedup_key(dest: &Path) -> String {
+    let normalized = normalize_sep(dest.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    let insensitive = dest
+        .parent()
+        .map(|p| {
+            let p = normalize_sep(p.to_path_buf());
+            // 目录不存在时沿祖先向上探测，全新游戏目录也能得到正确结论（#124 评审）。
+            #[cfg(any(windows, target_os = "macos"))]
+            {
+                if p.is_dir() {
+                    dir_is_case_insensitive(&p)
+                } else {
+                    probe_case_insensitive_walk_up(&p)
+                }
+            }
+            #[cfg(not(any(windows, target_os = "macos")))]
+            {
+                dir_is_case_insensitive(&p)
+            }
+        })
+        .unwrap_or(false);
+    if insensitive {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    }
+}
+
+/// 被合并掉的重复目标。同 dest 的 URL 不一定是纯冗余（镜像/下载源差异、官方源在部分
+/// 地区不可达），调用方应把 `url` 挂成保留条目的镜像备选，`name` 用于日志。
+pub(crate) struct DroppedTarget {
+    /// 判重键（`dedup_key`）——调用方按它归并/查找镜像表。用 `PathBuf` 做键会在大小写
+    /// 折叠生效时与保留条目失配（`Foo.jar`/`foo.jar` 键相同、路径不同），导致镜像丢失。
+    pub key: String,
+    /// 展示名（文件名），仅用于日志。
+    pub name: String,
+    /// 被丢弃条目的 URL。
+    pub url: String,
+    /// 被丢弃条目的任务级请求头（同 dest 不同源时可能需要各自的鉴权头，如 CF `x-api-key`）。
+    pub headers: Vec<(String, String)>,
+}
+
+/// miss 记录的判重键。与 [`dedup_miss_files`] 内部使用的键一致，供调用方按同一键空间归并
+/// 镜像表（如实例资源补全）。`root` 是该记录的下载根，语义同 [`dedup_miss_files`]。
+pub(crate) fn miss_file_key(path: &str, root: &Path) -> String {
+    let root = normalize_sep(root.to_path_buf());
+    dedup_key(&root.join(path))
+}
+
+/// 被合并目标 → 按判重键归并的镜像备选表（URL 去重、保持首次出现顺序）。
+/// 抽成纯函数以便跨平台单测：insert 与 lookup 必须共用同一键空间，否则镜像会被静默丢弃。
+pub(crate) fn merge_dropped_mirrors(dropped: Vec<DroppedTarget>) -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::with_capacity(dropped.len());
+    for d in dropped {
+        let e = map.entry(d.key).or_default();
+        // 同一 dest 的多个重复条目常给出字节相同的 URL（同 hash 资源），去重可避免主 URL
+        // 重试耗尽后白跑一轮一模一样的请求。
+        if !e.contains(&d.url) {
+            e.push(d.url);
+        }
+    }
+    map
+}
+
+/// 把被合并条目抢救出来的 URL 并入保留条目的镜像表：跳过与主 URL 相同的纯冗余项，并避免与
+/// 既有镜像（如 `mirror_fallback_urls` 的同组节点）重复。
+pub(crate) fn attach_mirrors(mirrors: &mut Vec<String>, url: &str, extra: Option<Vec<String>>) {
+    for m in extra.unwrap_or_default() {
+        if m == url || mirrors.contains(&m) {
+            continue;
+        }
+        mirrors.push(m);
+    }
+}
+
+/// 按目标路径去重（保留首次出现），返回 `(去重后列表, 被合并的重复目标)`。
+///
+/// 为什么必须去重：同一 `dest` 的两个下载任务会共用同一个 `.part` 中间文件
+/// （`DownloadTask::part_path()` = dest 同名 + `.part`）。两个任务交错执行时，先完成者把
+/// `.part` rename 成 dest，后完成者的 `finalize_part` 再打开 `.part` 就是 `os error 2`，
+/// 整个安装以「下载阶段失败」告终（issue #122）。
+///
+/// 重复来源已实证（GTNH 2.9.0-RC-1 单次安装实测 dropped=12，首个就是 #122 报错的那个
+/// `.part`）：
+///
+/// - 资源索引里同一 hash 的多个条目：`get_miss_assets` 按 `objects.values()` 展开，不同
+///   资源名（语言文件/音效等）内容相同 → hash 相同 → 本地路径
+///   `assets/objects/{hash[..2]}/{hash}` 也相同；
+/// - 同坐标的「普通 jar 条目」与「natives 条目」：`check_libs_ver` 分组键给 natives 加
+///   角色后缀，两者分到不同组而都保留，`downloads.artifact` 又是同一个 jar。
+///
+/// 归一化与判重都在本函数内完成（幂等）：调用方无需先 `normalize_sep`，避免将来新调用方
+/// 忘记预归一化而重新引入 `.part` 竞态。返回的目标路径即归一化后的路径。
+///
+/// 大小写折叠只在目标父目录**确实**大小写不敏感时发生（`dedup_key` 会实测）：大小写敏感卷
+/// 上 `Foo.jar` 与 `foo.jar` 是两个文件，折叠会静默丢掉第二个。
+pub(crate) fn dedup_download_targets(
+    files: Vec<DownloadTarget>,
+) -> (Vec<DownloadTarget>, Vec<DroppedTarget>) {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut kept: Vec<DownloadTarget> = Vec::with_capacity(files.len());
+    let mut dropped: Vec<DroppedTarget> = Vec::new();
+    for (url, dest, headers) in files {
+        let dest = normalize_sep(dest);
+        let key = dedup_key(&dest);
+        if !seen.insert(key.clone()) {
+            // name 只在重复分支里算：kept 条目的展示名由 download_batch 的 file_names 统一
+            // 算一次，这里对上千条 miss 每条都算一遍纯属浪费。
+            let name = dest
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| dest.to_string_lossy().into_owned());
+            dropped.push(DroppedTarget {
+                key,
+                name,
+                url,
+                headers,
+            });
+            continue;
+        }
+        kept.push((url, dest, headers));
+    }
+    (kept, dropped)
+}
+
+/// 按 `path` 去重 `MissFileInfo`（保留首次出现），返回 `(去重后列表, 被合并的记录)`。
+/// 语义与理由同 [`dedup_download_targets`]：同一 dest 的两个下载任务会共用 `.part`
+/// 并互相删除，issue #122。用于直接消费 `get_miss_files_*` 结果的调用方
+/// （如实例资源补全）：保留的记录原样返回（UI 展示的名称不变），被合并的记录整体
+/// 返回，调用方可取其中的 URL 挂镜像备选、取 name 记日志。
+///
+/// 判重键同样在函数内归一化（`normalize_sep`，并按目标父目录实测的大小写敏感性决定是否
+/// 折叠——见 `dedup_key`），core 拼出的 maven 路径带 `/`、不同安装器/下载源还可能给出
+/// 大小写不同的路径，在不区分大小写的文件系统上它们指向同一个文件。
+///
+/// `root` 是这些 miss 记录真正的下载根（如游戏的 `.minecraft`），必须传：`MissFileInfo.path`
+/// 是**相对**路径，直接拿它做键会让大小写探测去问"后端进程工作目录下的相对目录"——那不是
+/// 文件实际落盘的位置，结论可能与实际目标卷相反（#124 评审）。
+pub(crate) fn dedup_miss_files(
+    files: Vec<MissFileInfo>,
+    root: &Path,
+) -> (Vec<MissFileInfo>, Vec<DroppedTarget>) {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut kept: Vec<MissFileInfo> = Vec::with_capacity(files.len());
+    let mut dropped: Vec<DroppedTarget> = Vec::new();
+    let root = normalize_sep(root.to_path_buf());
+    for f in files {
+        let key = dedup_key(&root.join(&f.path));
+        if !seen.insert(key.clone()) {
+            // MissFileInfo 不带任务级请求头，补全路径的 URL 与保留条目同源（同一份 miss
+            // 列表），沿用保留条目的头即可。
+            dropped.push(DroppedTarget {
+                key,
+                name: f.name,
+                url: f.url,
+                headers: Vec::new(),
+            });
+            continue;
+        }
+        kept.push(f);
+    }
+    (kept, dropped)
+}
+
 /// 批量下载。进度按已下载字节比例写入 `step_id` 指定步骤的 percent，
 /// 并由 tracker 重算合成总进度（并行管线中多个批次各自驱动自己的步骤）。
 /// pause/cancel 由事件循环协作转发给 `DownloadManager`。
@@ -1072,7 +1331,7 @@ const COLD_START_TIMEOUT: Duration = Duration::from_secs(180);
 pub(crate) async fn download_batch(
     handle: &InstallHandle,
     mgr: &DownloadManager,
-    files: Vec<(String, PathBuf, Vec<(String, String)>)>,
+    files: Vec<DownloadTarget>,
     step_id: Option<&str>,
 ) -> Result<(), String> {
     if files.is_empty() {
@@ -1082,14 +1341,48 @@ pub(crate) async fn download_batch(
         return Ok(());
     }
 
-    // Windows：`canonicalize` 产生的 `\\?\` verbatim 路径不允许 `/` 分隔符。
-    // core 安装器（NeoForge 等）经 `path_combine` 字符串拼接会保留 maven 路径的 `/`
-    // （如 `libraries\org/ow2/asm/asm/9.10.1/asm-9.10.1.jar`），此处统一钳位为平台
-    // 分隔符，否则 create_dir_all/rename 报 ERROR_INVALID_NAME (os error 123)。
-    let files: Vec<(String, PathBuf, Vec<(String, String)>)> = files
-        .into_iter()
-        .map(|(url, dest, headers)| (url, normalize_sep(dest), headers))
-        .collect();
+    // 同一 dest 的两个任务会共用 `{dest}.part`：交错执行时先完成者 rename 掉 .part，
+    // 后完成者 finalize 直接 os error 2（issue #122）。整合包/版本安装的 miss 列表里
+    // 「普通 jar 条目 + 同坐标 natives 条目」就是同一路径两条，必须先合并。
+    // 归一化 + 判重都在 dedup 内部完成（幂等），返回的 dest 即归一化后的路径：
+    // create_dir_all/rename 需要一个平台分隔符形式（Windows 的 verbatim 路径不允许 `/`，
+    // core 拼出的 maven 路径却带 `/`，混用时报 ERROR_INVALID_NAME）。
+    //
+    // 注意：去重只覆盖**本批次**。并发批次（`run_install_pipeline` 的
+    // installer/base/addons 三分支、`run_modpack_pipeline` 的 game/files/overrides
+    // 三分支）各自调 download_batch，当前扫描的目录互不相交（libraries/ vs
+    // assets/+versions/ vs mods/overrides 内容），因此不会出现同一 dest；若将来某个
+    // 合并后的版本 JSON 让两个分支扫描到同一路径，需要在 DownloadManager 层按 dest
+    // 串行化/登记（子模块级改动），此处注释即该前提。
+    // 判重（含大小写敏感性探测）依赖目标父目录存在，而父目录平时要到下面的任务构建循环里
+    // 才 create_dir_all。先统一建好，探测才不会落到"目录不存在"的保守分支——在不区分大小写
+    // 的游戏目录上，两个仅大小写不同的目标若探测不到就会被判为敏感而漏合并，重新争用同一个
+    // `.part`（#124 评审）。
+    for (_, dest, _) in &files {
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+
+    let (files, duplicate_targets) = dedup_download_targets(files);
+    let duplicates_len = duplicate_targets.len();
+    // 被合并条目的鉴权头：保留条目没有头而它有头时补上（同 dest 不同源的典型场景）。
+    let mut dropped_headers: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for d in &duplicate_targets {
+        if !d.headers.is_empty() {
+            dropped_headers
+                .entry(d.key.clone())
+                .or_default()
+                .extend(d.headers.iter().cloned());
+        }
+    }
+    // 被合并掉的 URL 不是纯冗余：同 dest 不同源时它可能是唯一可达的源，挂成保留条目的镜像
+    // 备选（与 mirror_fallback_urls 同一套故障转移），避免主 URL 不可达即整批失败。
+    // 键与判重完全一致（dedup_key）：大小写不敏感的目录上 Foo.jar/foo.jar 去重键相同而
+    // PathBuf 不同，用 PathBuf 做键会 remove 落空、镜像被静默丢弃。
+    let mut extra_mirrors = merge_dropped_mirrors(duplicate_targets);
+    let rescue_urls: usize = extra_mirrors.values().map(Vec::len).sum();
+    let mut attached_urls = 0usize;
 
     // Pre-compute display names before consuming `files` in the loop below.
     let file_names: Vec<String> = files
@@ -1109,16 +1402,41 @@ pub(crate) async fn download_batch(
 
     let mut ids = Vec::new();
     for (url, dest, headers) in files {
-        if let Some(parent) = dest.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let mirrors = crate::services::file_mirror::mirror_fallback_urls(&url);
+        // 父目录已在判重前统一创建，这里只兜底极端情况（判重后父目录被删）。
+        let mut mirrors = crate::services::file_mirror::mirror_fallback_urls(&url);
+        // 查表键与判重键一致；attach_mirrors 会跳过与主 URL 相同的纯冗余项与既有镜像。
+        let key = dedup_key(&dest);
+        let before = mirrors.len();
+        attach_mirrors(&mut mirrors, &url, extra_mirrors.remove(&key));
+        attached_urls += mirrors.len() - before;
+        // 补上被合并条目自带的鉴权头（保留条目没有头时）。
+        let headers = if headers.is_empty() {
+            dropped_headers.remove(&key).unwrap_or(headers)
+        } else {
+            headers
+        };
         let mut task = DownloadTask::new(url, dest);
         task.headers = headers;
         if !mirrors.is_empty() {
             task = task.with_mirrors(mirrors);
         }
         ids.push(mgr.add(task));
+    }
+    // 兜底告警：未被消费的镜像说明键空间又漂移了（曾因 PathBuf vs dedup_key 失配静默丢过
+    // 一次），宁可吵出来也不要静默。
+    if !extra_mirrors.is_empty() {
+        tracing::warn!(
+            leftover = extra_mirrors.len(),
+            "download_batch: 有重复条目的镜像备选未能挂到保留任务上（键失配），已丢弃"
+        );
+    }
+    if rescue_urls > 0 {
+        tracing::info!(
+            dropped = duplicates_len,
+            rescue_urls,
+            attached_urls,
+            "download_batch: 合并重复下载目标（同 dest 多任务会互相删 .part，issue #122），不同源 URL 已并入镜像备选"
+        );
     }
 
     let total = ids.len() as u64;
@@ -1457,5 +1775,317 @@ mod tests {
         // 非法 / 空 JSON → 默认 8
         assert_eq!(required_java_from_json("not json"), 8);
         assert_eq!(required_java_from_json(""), 8);
+    }
+
+    fn target(url: &str, dest: &str) -> (String, PathBuf, Vec<(String, String)>) {
+        (url.to_string(), PathBuf::from(dest), Vec::new())
+    }
+
+    /// issue #122：同一 dest 的两条（普通 jar 条目 + 同坐标 natives 条目共享
+    /// `downloads.artifact`）必须合并成一条。否则两个任务共用 `{dest}.part`，
+    /// 交错执行时后完成者的 finalize 打开 `.part` 报 os error 2，整个安装失败。
+    ///
+    /// 路径统一用 `/`：CI 的 backend-check 跑在 ubuntu 上，`\` 在 Unix 不是分隔符，
+    /// `Path::file_name()` 会退化成整条字符串（与 Windows 行为不同）。
+    #[test]
+    fn dedup_download_targets_merges_same_dest() {
+        let jar = "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar";
+        let natives = "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3-natives-windows.jar";
+        let (kept, dropped) = dedup_download_targets(vec![
+            target("https://cdn/lwjgl-3.3.3.jar", jar),
+            // 同一坐标的 natives 条目：check_libs_ver 分组键带角色后缀 → 与普通条目
+            // 分到不同组而都保留，artifact 却是同一个 jar。
+            target("https://cdn/lwjgl-3.3.3.jar", jar),
+            target("https://cdn/lwjgl-3.3.3-natives-windows.jar", natives),
+        ]);
+        assert_eq!(
+            kept.len(),
+            2,
+            "普通 jar 与 natives jar 都应保留，重复的普通 jar 合并"
+        );
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].name, "lwjgl-3.3.3.jar");
+        assert_eq!(kept[0].1, PathBuf::from(jar));
+        assert_eq!(kept[1].1, PathBuf::from(natives));
+    }
+
+    /// 同 dest 不同 URL 时，被合并的 URL 必须回传给调用方挂镜像备选——它可能是唯一可达
+    /// 的源（镜像/下载源差异、官方源局部不可达），直接丢弃会让主 URL 挂掉即整批失败。
+    #[test]
+    fn dedup_download_targets_rescues_duplicate_source_url() {
+        let (kept, dropped) = dedup_download_targets(vec![
+            target("https://official/a.jar", "g/a.jar"),
+            target("https://mirror/a.jar", "g/a.jar"),
+        ]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, "https://official/a.jar", "保留首次出现的条目");
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].url, "https://mirror/a.jar");
+        // 键即判重键：调用方按它就能把保留条目与抢救 URL 对上。
+        assert_eq!(dropped[0].key, dedup_key(Path::new("g/a.jar")));
+    }
+
+    /// 归一化必须在判重之前，且由去重函数自己完成（调用方无需先 normalize_sep）：
+    /// core 拼出的 maven 路径带 `/`，与 `\` 形态是同一个目标。这里刻意**不**预归一化，
+    /// 直接喂原始字符串，才能锁住顺序（ubuntu 上该用例不编译也不运行，靠 Windows 覆盖）。
+    #[cfg(windows)]
+    #[test]
+    fn dedup_download_targets_compares_after_separator_normalization() {
+        let (kept, dropped) = dedup_download_targets(vec![
+            target(
+                "https://cdn/asm.jar",
+                r"C:\g\libraries\org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+            ),
+            target(
+                "https://cdn/asm.jar",
+                r"C:\g\libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar",
+            ),
+        ]);
+        assert_eq!(kept.len(), 1, "归一化后同一路径只应保留一条");
+        assert_eq!(dropped.len(), 1);
+        // 返回的 dest 已归一化为平台分隔符（Windows 上不带 `/`），可直接 create/rename。
+        assert_eq!(
+            kept[0].1,
+            PathBuf::from(r"C:\g\libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar")
+        );
+    }
+
+    /// 目标**父目录真实存在**时，`Foo.jar` 与 `foo.jar` 在大小写不敏感的文件系统上是同一个
+    /// 文件（也共用同一个 `.part`），判重键必须折叠大小写；键折叠但保留条目的路径维持原始
+    /// 大小写。
+    ///
+    /// 目录必须真的创建出来：`dedup_key` 会探测父目录实际的大小写敏感性（见
+    /// `dir_is_case_insensitive`），用不存在的路径只会得到保守的"敏感"结论。
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn dedup_download_targets_folds_case_on_case_insensitive_fs() {
+        let dir = std::env::temp_dir().join(format!("qomicex-dedup-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let foo = dir.join("Foo.jar");
+        let bar = dir.join("foo.jar");
+        let (kept, dropped) = dedup_download_targets(vec![
+            target("https://cdn/Foo.jar", &foo.to_string_lossy()),
+            target("https://cdn/foo.jar", &bar.to_string_lossy()),
+        ]);
+        if dir_is_case_insensitive(&dir) {
+            assert_eq!(kept.len(), 1, "该文件系统大小写不敏感 → 只保留一条");
+            assert_eq!(dropped.len(), 1);
+            assert_eq!(kept[0].1, foo, "保留条目的路径维持原始大小写");
+        } else {
+            // 开发机恰好是大小写敏感卷：两个目标都应保留（这条路径由下面那条用例覆盖）。
+            assert_eq!(kept.len(), 2, "该文件系统大小写敏感 → 两条都保留");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 大小写敏感的目标目录上 `Foo.jar` 与 `foo.jar` 是两个不同文件，**不能**折叠——
+    /// 否则第二个永远不会被下载（#124 评审）。
+    ///
+    /// 用**空父目录名**构造"连已存在祖先都找不到"的兜底路径，在任何开发机上都能跑。
+    #[test]
+    fn dedup_key_keeps_case_when_sensitivity_unknown() {
+        let foo = Path::new("Foo.jar");
+        let bar = Path::new("foo.jar");
+        assert!(
+            dedup_key(foo) != dedup_key(bar),
+            "探测不到大小写敏感性时必须保持大小写区分，否则会静默丢文件"
+        );
+    }
+
+    /// 探测不到时**不得缓存 `false`**：目录后建起来，再问一次必须拿到真实结论。
+    ///
+    /// 这正是 #124 评审的回归点——把 `false`（目录不存在）缓存下来后，即使随后
+    /// `download_batch` 建好了父目录，判重仍判"敏感"而漏合并，两个仅大小写不同的目标重新
+    /// 争用同一个 `.part`。
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn dir_is_case_insensitive_does_not_cache_negative_results() {
+        let dir = std::env::temp_dir().join(format!(
+            "qomicex-case-cache-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        // 目录还不存在 → 单纯目录名（无已存在祖先可问），得到 false。
+        assert!(
+            !dir_is_case_insensitive(&dir),
+            "空目录名得不到结论时应为 false"
+        );
+        // 建好目录：现在能问到真实结论，且必须与"整卷是否敏感"一致。
+        std::fs::create_dir_all(&dir).unwrap();
+        let verdict = dir_is_case_insensitive(&dir);
+        assert_eq!(
+            verdict,
+            probe_case_insensitive(&dir),
+            "目录已存在时必须重新探测，不能沿用之前缓存的 false"
+        );
+        // 确认后的 true 会被缓存：第二次调用走缓存仍得同一答案。
+        assert_eq!(dir_is_case_insensitive(&dir), verdict);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `dedup_miss_files`：同一 `path` 的多条 miss 记录按路径合并，保留首次出现的记录
+    /// （UI 展示的 name 不变），被合并的记录整体回传（调用方取其 URL 挂镜像备选）。
+    #[test]
+    fn dedup_miss_files_merges_same_path() {
+        let mk = |name: &str, path: &str| qomicex_core::models::installer::MissFileInfo {
+            name: name.to_string(),
+            url: "https://cdn/x.jar".to_string(),
+            sha1: String::new(),
+            path: path.to_string(),
+        };
+        let root = std::env::temp_dir().join("qomicex-miss-root");
+        let (kept, dropped) = dedup_miss_files(
+            vec![
+                mk(
+                    "org.lwjgl3:lwjgl:3.3.3",
+                    "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar",
+                ),
+                mk(
+                    "org.lwjgl3:lwjgl:3.3.3",
+                    "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3.jar",
+                ),
+                mk(
+                    "org.lwjgl3:lwjgl:3.3.3:natives-windows",
+                    "libraries/org/lwjgl3/lwjgl/3.3.3/lwjgl-3.3.3-natives-windows.jar",
+                ),
+            ],
+            &root,
+        );
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].name, "org.lwjgl3:lwjgl:3.3.3");
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].name, "org.lwjgl3:lwjgl:3.3.3");
+    }
+
+    /// 判重键由去重函数内部归一化：`/` 与 `\` 形态是同一个目标（core 的 maven 路径带
+    /// `/`），不预归一化直接喂原始字符串，锁住"归一化先于判重"的顺序。
+    #[cfg(windows)]
+    #[test]
+    fn dedup_miss_files_normalizes_separators_before_comparing() {
+        let mk = |name: &str, path: &str| qomicex_core::models::installer::MissFileInfo {
+            name: name.to_string(),
+            url: "https://cdn/asm.jar".to_string(),
+            sha1: String::new(),
+            path: path.to_string(),
+        };
+        let root = std::env::temp_dir().join("qomicex-miss-root-sep");
+        let (kept, dropped) = dedup_miss_files(
+            vec![
+                mk(
+                    "org.ow2.asm:asm:9.10.1",
+                    r"libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar",
+                ),
+                mk(
+                    "org.ow2.asm:asm:9.10.1",
+                    "libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+                ),
+            ],
+            &root,
+        );
+        assert_eq!(kept.len(), 1, "归一化后同一路径只应保留一条");
+        assert_eq!(dropped.len(), 1);
+        // 保留的是首次出现的原始记录（含原始分隔符），UI 名称不受影响。
+        assert_eq!(kept[0].name, "org.ow2.asm:asm:9.10.1");
+    }
+
+    // --- merge_dropped_mirrors / attach_mirrors（跨平台可测，不依赖 cfg(windows)） ---
+
+    fn dropped(key: &str, url: &str) -> DroppedTarget {
+        DroppedTarget {
+            key: key.to_string(),
+            name: "x.jar".to_string(),
+            url: url.to_string(),
+            headers: Vec::new(),
+        }
+    }
+
+    fn miss(name: &str, path: &str, url: &str) -> qomicex_core::models::installer::MissFileInfo {
+        qomicex_core::models::installer::MissFileInfo {
+            name: name.to_string(),
+            url: url.to_string(),
+            sha1: String::new(),
+            path: path.to_string(),
+        }
+    }
+
+    /// 抢救出来的镜像必须能用**保留条目的键**取回：insert 与 lookup 共用 dedup_key，
+    /// 这正是大小写折叠生效时 PathBuf 键失配、镜像被静默丢弃的那个坑（issue #124 评审）。
+    #[test]
+    fn merge_dropped_mirrors_keyed_by_dedup_key() {
+        let map = merge_dropped_mirrors(vec![dropped("k1", "https://mirror/a.jar")]);
+        assert_eq!(
+            map.get("k1").map(Vec::as_slice),
+            Some(&["https://mirror/a.jar".to_string()][..])
+        );
+        // lookup 端用同一函数算键（模拟 download_batch 的 remove）
+        assert!(merge_dropped_mirrors(vec![dropped(
+            &dedup_key(Path::new("g/a.jar")),
+            "https://mirror/a.jar"
+        )])
+        .contains_key(&dedup_key(Path::new("g/a.jar"))));
+    }
+
+    /// 同一个 dest 的多个重复条目常给出字节相同的 URL，归并表必须去重。
+    #[test]
+    fn merge_dropped_mirrors_dedups_repeated_urls() {
+        let map = merge_dropped_mirrors(vec![
+            dropped("k1", "https://cdn/x.jar"),
+            dropped("k1", "https://cdn/x.jar"),
+            dropped("k1", "https://mirror/x.jar"),
+        ]);
+        assert_eq!(map.get("k1").map(Vec::len), Some(2), "同一 URL 只保留一条");
+        assert_eq!(
+            map.get("k1").map(|v| v[0].as_str()),
+            Some("https://cdn/x.jar"),
+            "保持首次出现顺序"
+        );
+    }
+
+    /// attach 时跳过与主 URL 相同的纯冗余项，并避免与既有镜像重复。
+    #[test]
+    fn attach_mirrors_skips_duplicates_and_primary() {
+        let mut mirrors = vec!["https://mirror/a.jar".to_string()];
+        attach_mirrors(
+            &mut mirrors,
+            "https://official/a.jar",
+            Some(vec![
+                "https://official/a.jar".to_string(), // 与主 URL 相同 → 跳过
+                "https://mirror/a.jar".to_string(),   // 已存在 → 跳过
+                "https://cdn-b/a.jar".to_string(),    // 新源 → 追加
+            ]),
+        );
+        assert_eq!(
+            mirrors,
+            vec![
+                "https://mirror/a.jar".to_string(),
+                "https://cdn-b/a.jar".to_string()
+            ]
+        );
+
+        let mut empty: Vec<String> = Vec::new();
+        attach_mirrors(&mut empty, "https://official/a.jar", None);
+        assert!(empty.is_empty());
+    }
+
+    /// miss 记录的判重键与 `miss_file_key` 一致，调用方才能按同一键空间查到镜像。
+    #[test]
+    fn miss_file_key_matches_dedup_miss_files_keying() {
+        let root =
+            std::env::temp_dir().join(format!("qomicex-miss-root-key-{}", std::process::id()));
+        // 必须真的存在：大小写探测只对已存在目录给出确定结论，否则两侧可能分别得到
+        // “无结论→不折叠”和“探测成功→折叠”而大小写不一致。
+        std::fs::create_dir_all(&root).unwrap();
+        let (kept, dropped) = dedup_miss_files(
+            vec![
+                miss("a", "libraries/g/a.jar", "https://cdn/a.jar"),
+                miss("a", "libraries/g/a.jar", "https://mirror/a.jar"),
+            ],
+            &root,
+        );
+        assert_eq!(kept.len(), 1);
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(miss_file_key(&kept[0].path, &root), dropped[0].key);
     }
 }
