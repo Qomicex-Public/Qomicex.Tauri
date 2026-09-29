@@ -30,9 +30,10 @@ import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
+import UpdateCompleteDialog from './components/UpdateCompleteDialog.tsx'
 import { get } from './api/client.ts'
 import { initApiTransport, isIpcMode } from './api/ipc.ts'
-import { fetchUpdatePlan, type UpdatePlan } from './api/update.ts'
+import { fetchUpdatePlan, takeUpdateNotice, type UpdatePlan, type UpdateNotice } from './api/update.ts'
 import { resolveChannel } from './lib/updateChannel.ts'
 import { APP_INFO } from './constants/credits.ts'
 import { applyThemeColor } from './lib/themeColor.ts'
@@ -89,6 +90,9 @@ function AppContent() {
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<UpdatePlan | null>(null)
   const [pendingUpdateRequired, setPendingUpdateRequired] = useState(false)
+  const updateNoticeChecked = useRef(false)
+  /** 「更新完成」交接提示（自更新重启后的首次启动，只弹一次，见 UpdateCompleteDialog） */
+  const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null)
   const autoCheckDone = useRef(false)
   /** 插件更新静默轮询只做一次（与 autoCheckDone/javaChecked 同模式） */
   const pluginUpdatesChecked = useRef(false)
@@ -202,6 +206,30 @@ function AppContent() {
     return () => clearTimeout(timer)
   }, [backendState])
 
+  // 更新完成交接（#108）：自更新重启后的首次启动读取旧进程留下的交接文件，
+  // 弹「更新完成」对话框展示新版本与 changelog。读后即删，只提示一次；
+  // 版本不一致（updater 装失败、用户手动开旧版）时静默丢弃，不误报。
+  useEffect(() => {
+    if (backendState !== 'ready' || !settingsReady || updateNoticeChecked.current) return
+    // 守卫标志放在 timer 回调里置位，而不是 effect body：main.tsx 包了
+    // StrictMode，effect body 置位 + cleanup 清 timer 会让第二次挂载因标志
+    // 已 true 而不再排 timer，导致交接永远读不到（StrictMode 双调用独有的坑）。
+    // 放回调里后，StrictMode 的清理只取消未触发的 timer，重挂载会重新排一个。
+    const timer = setTimeout(async () => {
+      updateNoticeChecked.current = true
+      const dataDir = (getSettings().dataDir || '').replace(/[\\/]+$/, '')
+      const notice = await takeUpdateNotice(dataDir)
+      if (!notice) return
+      // 版本守卫：交接文件里的目标版本必须与当前运行版本一致（忽略 v 前缀与
+      // 首尾空白）。不一致说明更新实际没落地（updater 失败/手动开旧构建），
+      // 此时弹「更新完成」是错误信息，直接丢弃（文件已在 Rust 侧消费）。
+      const norm = (v: string) => (v || '').trim().replace(/^v+/i, '')
+      if (norm(notice.version) !== norm(APP_INFO.version)) return
+      setUpdateNotice(notice)
+    }, 1500)
+    return () => clearTimeout(timer)
+  }, [backendState, settingsReady])
+
   useEffect(() => {
     if (backendState !== 'ready') return
     loadPlugins().then(() => {
@@ -309,6 +337,11 @@ function AppContent() {
           setPendingUpdate(null)
           setPendingUpdateRequired(false)
         }}
+      />
+      <UpdateCompleteDialog
+        open={updateNotice !== null}
+        notice={updateNotice}
+        onClose={() => setUpdateNotice(null)}
       />
     </Provider>
   )

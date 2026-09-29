@@ -291,7 +291,8 @@ pub fn run() {
             ipc::ipc_ping,
             ipc::ipc_stream,
             ipc::ipc_stream_abort,
-            updater::run_updater
+            updater::run_updater,
+            updater::take_pending_update_notice
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

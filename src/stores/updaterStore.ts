@@ -24,9 +24,9 @@ function stopPolling() {
   }
 }
 
-async function runUpdater(packagePath: string, signature: string, version: string) {
-  const { invoke } = await import('@tauri-apps/api/core')
-  await invoke('run_updater', { packagePath, signature, version })
+async function runUpdater(packagePath: string, signature: string, version: string, changelog: string | undefined) {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('run_updater', { packagePath, signature, version, changelog })
 }
 
 export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
@@ -55,7 +55,7 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
           )
           if (p.status === 'completed') {
             set({ phase: 'installing', progress: 100 })
-            await runUpdater(res.targetPath, plan.signature!, plan.version!)
+            await runUpdater(res.targetPath, plan.signature!, plan.version!, plan.changelog)
             // 成功路径应用已退出；若仍在运行说明 updater 未生效
             set({ phase: 'error', error: 'UPDATER_NOT_CONFIRMED' })
             return
