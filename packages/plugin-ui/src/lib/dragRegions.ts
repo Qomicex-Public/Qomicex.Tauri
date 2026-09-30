@@ -27,7 +27,9 @@ function tauriInternals(): TauriInternals | null {
  *      ② `scroll`      可滚动容器（overflow 可滚）
  *      ③ `frame`       框架拖动带（贴顶 FRAME_TOP_PX 内）
  *      ④ `content`     其余一律不可拖
- * B. 双指 / 滚轮手势判定（G1–G5）——任何一条命中即作废本次窗口拖动手势：
+ * B. 双指 / 滚轮手势判定（G1–G5）——任何一条命中即作废本次窗口拖动手势。
+ *    拖动有两条并行路径：鼠标走 mousedown/mousemove（保持既有行为），
+ *    触摸 / 笔走 pointerdown/pointermove（不依赖可选的兼容鼠标事件）。
  *      G1 wheel 到达且有未决手势 → 立即作废（滚动与拖动互斥）
  *      G2 mousedown 距上次 wheel < WHEEL_BURST_GAP_MS → 拒绝建手势
  *      G3 活动指针 ≥ 2（两指）→ 拒绝 / 作废
@@ -258,6 +260,14 @@ interface PendingGesture {
 
 let pending: PendingGesture | null = null
 
+/**
+ * 触摸 / 笔的待定手势（pointerId → 起点）。
+ * 独立的指针拖动路径：**不依赖** "compatibility mouse events"——W3C Pointer Events
+ * 规范规定 mousedown/mousemove 对触摸是可选的，webview 可能延迟或省略，届时
+ * 纯鼠标路径会让触摸拖动完全失效（CodeRabbit 在 PR #134 复审中指出）。
+ */
+let pointerGesture: { pointerId: number; x: number; y: number } | null = null
+
 /** 最近一次 wheel 的时间戳（ms，`performance.now()`），用于 G2。 */
 let lastWheelAt = Number.NEGATIVE_INFINITY
 
@@ -268,9 +278,10 @@ function clearPending(): void {
   pending = null
 }
 
-/** 完整清空一次手势周期（pending + 指针表）。 */
+/** 完整清空一次手势周期（pending + 指针表 + 指针手势）。 */
 function resetGestureState(): void {
   pending = null
+  pointerGesture = null
   activePointers.clear()
 }
 
@@ -288,12 +299,37 @@ function windowCommand(cmd: 'start_dragging' | 'toggle_maximize'): void {
 
 function onPointerDown(e: PointerEvent): void {
   activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType })
+  // 鼠标路径完全走 mousedown/mousemove（保持既有行为），这里不介入
+  if (e.pointerType === 'mouse') return
+  // G3：第二个手指落下 → 作废任何未决手势（双指滑动不可能拖窗）
+  if (activePointers.size >= 2) {
+    pointerGesture = null
+    return
+  }
+  // G2：按下发生在滚轮突发窗口内 → 属于同一串双指滚动
+  if (now() - lastWheelAt < WHEEL_BURST_GAP_MS) return
+  // G5（指针版）：只有命中窗口框架带才允许触摸 / 笔拖动窗口
+  if (classifyTarget(e.target, e.clientX, e.clientY) !== 'frame') return
+  pointerGesture = { pointerId: e.pointerId, x: e.clientX, y: e.clientY }
 }
+
 function onPointerMove(e: PointerEvent): void {
   const cur = activePointers.get(e.pointerId)
   if (cur) {
     activePointers.set(e.pointerId, { ...cur, x: e.clientX, y: e.clientY })
   }
+  const gesture = pointerGesture
+  if (!gesture || gesture.pointerId !== e.pointerId) return
+  // G3 兜底：手势中途出现第二个指针 → 立即作废
+  if (activePointers.size >= 2) {
+    pointerGesture = null
+    return
+  }
+  const dx = e.clientX - gesture.x
+  const dy = e.clientY - gesture.y
+  if (dx * dx + dy * dy < DRAG_THRESHOLD_SQ) return
+  pointerGesture = null
+  windowCommand('start_dragging')
 }
 
 /**
@@ -308,8 +344,13 @@ function touchPointerNear(x: number, y: number): boolean {
   }
   return false
 }
+
+/** 指针抬起 / 被取消（触摸中断、系统抢走手势等）→ 移出活动表并作废指针手势。 */
 function onPointerEnd(e: PointerEvent): void {
   activePointers.delete(e.pointerId)
+  if (pointerGesture && pointerGesture.pointerId === e.pointerId) {
+    pointerGesture = null
+  }
 }
 
 /**
@@ -341,8 +382,13 @@ function onMouseDown(e: MouseEvent): void {
   if (e.button !== 0) return
   if (e.detail !== 1 && e.detail !== 2) return
 
-  // G3：两指（或多指）同时触摸 → 手势作废，双指滑动不可能拖动窗口
-  if (activePointers.size >= 2) return
+  // G3：两指（或多指）同时触摸 → 手势作废，双指滑动不可能拖动窗口。
+  // 指针手势另由 onPointerDown 独立建立（见下），这里同步作废，避免鼠标路径
+  // 与指针路径同时生效。
+  if (activePointers.size >= 2) {
+    pointerGesture = null
+    return
+  }
 
   const category = classifyTarget(e.target, e.clientX, e.clientY)
 
@@ -368,9 +414,10 @@ function onMouseMove(e: MouseEvent): void {
     return
   }
   // G3 兜底：手势进行中若出现第二个指针（极少见，但两指同时初始触摸可能
-  // pointerdown 顺序晚于 mousedown），立即作废
+  // pointerdown 顺序晚于 mousedown），鼠标与指针两条路径一起作废
   if (activePointers.size >= 2) {
     pending = null
+    pointerGesture = null
     return
   }
   const dx = e.clientX - gesture.x
