@@ -113,9 +113,17 @@ function isClickableElement(el: HTMLElement): boolean {
   return (
     CLICKABLE_TAGS.has(el.tagName) ||
     (el.hasAttribute('contenteditable') && el.getAttribute('contenteditable') !== 'false') ||
-    (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1') ||
+    (el.hasAttribute('tabindex') && tabIndexOf(el) >= 0) ||
     INTERACTIVE_ROLES.has(el.getAttribute('role') ?? '')
   )
+}
+
+/** 解析 `tabindex`；非法值返回 `Number.NaN`（视同"不参与"）。 */
+function tabIndexOf(el: HTMLElement): number {
+  const v = el.getAttribute('tabindex')
+  if (v === null) return Number.NaN
+  const n = Number.parseInt(v, 10)
+  return Number.isNaN(n) ? Number.NaN : n
 }
 
 /** 元素自身是否带 `data-qomicex-drag-region="false"`（或其祖先带 NO_DRAG_ATTR）。 */
@@ -197,9 +205,8 @@ export function classifyTarget(
     // 取值语义："deep" 子树命中即可；空 / "true" 只认元素自身被直接命中
     const selfHit = attr === 'deep' || el === direct
     if (!selfHit) continue
-    // 几何边界：横向拖动带要求命中点距视口顶 ≤ FRAME_TOP_PX；
-    // 左右 / 下边框常量当前为 0（见常量注释），因此不构成拖动面。
-    if (!isPointInFrameBand(el, clientX, clientY)) continue
+    // 几何边界：窗口视口框架带（详见 isPointInWindowFrameBand）
+    if (!isPointInWindowFrameBand(clientX, clientY)) continue
     return 'frame'
   }
 
@@ -214,17 +221,18 @@ function ancestorChain(target: Element): Element[] {
   return chain
 }
 
-/** 命中点是否落在该元素的框架带内。 */
-function isPointInFrameBand(el: HTMLElement, clientX: number, clientY: number): boolean {
-  const r = el.getBoundingClientRect()
-  const offsetTop = clientY - r.top
-  if (offsetTop >= 0 && offsetTop <= FRAME_TOP_PX) return true
-  const offsetBottom = r.bottom - clientY
-  if (offsetBottom >= 0 && offsetBottom <= FRAME_BOTTOM_PX) return true
-  const offsetLeft = clientX - r.left
-  if (offsetLeft >= 0 && offsetLeft <= FRAME_LEFT_PX) return true
-  const offsetRight = r.right - clientX
-  if (offsetRight >= 0 && offsetRight <= FRAME_RIGHT_PX) return true
+/**
+ * 命中点是否落在窗口框架带内。基准是**窗口视口**的 client 坐标，
+ * 与带 `data-qomicex-drag-region` 的元素位置无关——后者只提供"这是可拖区"的意图，
+ * 是否属于窗口框架带由视口边界唯一决定。
+ */
+function isPointInWindowFrameBand(clientX: number, clientY: number): boolean {
+  const vh = window.innerHeight || 0
+  const vw = window.innerWidth || 0
+  if (clientY >= 0 && clientY <= FRAME_TOP_PX) return true
+  if (FRAME_BOTTOM_PX > 0 && clientY <= vh && vh - clientY <= FRAME_BOTTOM_PX) return true
+  if (clientX >= 0 && clientX <= FRAME_LEFT_PX) return true
+  if (FRAME_RIGHT_PX > 0 && clientX <= vw && vw - clientX <= FRAME_RIGHT_PX) return true
   return false
 }
 
@@ -241,8 +249,8 @@ let pending: PendingGesture | null = null
 /** 最近一次 wheel 的时间戳（ms，`performance.now()`），用于 G2。 */
 let lastWheelAt = Number.NEGATIVE_INFINITY
 
-/** 活动指针表：pointerId → 最近坐标。用于 G3（≥2 指）判定。 */
-const activePointers = new Map<number, { x: number; y: number }>()
+/** 活动指针表：pointerId → 最近坐标与类型。用于 G3（≥2 指）与 G4（touch/pen 区分）。 */
+const activePointers = new Map<number, { x: number; y: number; type: string }>()
 
 function clearPending(): void {
   pending = null
@@ -267,17 +275,29 @@ function dragWindow(action: (win: Window) => Promise<unknown>): void {
 // B. 手势判定 G1–G5
 // ---------------------------------------------------------------------------
 
-function onPointerDown(e: PointerEvent): void {
-  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
-}
 
+function onPointerDown(e: PointerEvent): void {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType })
+}
 function onPointerMove(e: PointerEvent): void {
-  if (activePointers.has(e.pointerId)) {
-    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  const cur = activePointers.get(e.pointerId)
+  if (cur) {
+    activePointers.set(e.pointerId, { ...cur, x: e.clientX, y: e.clientY })
   }
 }
 
-/** 指针抬起 / 被取消（触摸中断、系统抢走手势等）→ 移出活动表。 */
+/**
+ * 是否存在与本次鼠标按下位置邻近（±1px）的 touch / pen 指针。
+ * 鼠标按压同样会产生 pointerdown，故必须按 `pointerType` 区分，否则普通
+ * 鼠标拖动会被当成"触摸"而误伤。
+ */
+function touchPointerNear(x: number, y: number): boolean {
+  for (const p of activePointers.values()) {
+    if (p.type !== 'touch' && p.type !== 'pen') continue
+    if (Math.abs(p.x - x) <= 1 && Math.abs(p.y - y) <= 1) return true
+  }
+  return false
+}
 function onPointerEnd(e: PointerEvent): void {
   activePointers.delete(e.pointerId)
 }
@@ -314,17 +334,13 @@ function onMouseDown(e: MouseEvent): void {
   // G3：两指（或多指）同时触摸 → 手势作废，双指滑动不可能拖动窗口
   if (activePointers.size >= 2) return
 
-  // G4：非鼠标指针（touch/pen）需要落在框架带上才允许拖动
-  //     触摸场景多见于单指平板操作；两指已被 G3 拦掉
   const category = classifyTarget(e.target, e.clientX, e.clientY)
-  if (activePointers.size === 1 && category !== 'frame') return
-  if (activePointers.size === 1) {
-    const first = activePointers.values().next().value as { x: number; y: number } | undefined
-    if (!first) return
-    // 单指针必须就是本次按下的位置附近（±1px）才算"刚发生的触摸"
-    if (Math.abs(first.x - e.clientX) > 1 || Math.abs(first.y - e.clientY) > 1) return
-  }
 
+  // G4：仅当本次按下伴随 touch/pen 指针时，才要求它落在框架带上
+  //     （单指平板拖标题栏可用；两指已被 G3 拦掉）。鼠标按压同样会触发
+  //     pointerdown(pointerType='mouse')，故必须按类型区分，否则普通鼠标
+  //     拖动会被这条误伤。
+  if (touchPointerNear(e.clientX, e.clientY) && category !== 'frame') return
   // G2：按下发生在滚轮突发窗口内 → 本次按压属于同一串双指滚动，不建手势
   if (now() - lastWheelAt < WHEEL_BURST_GAP_MS) return
 
