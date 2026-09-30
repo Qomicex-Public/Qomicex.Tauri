@@ -1,4 +1,16 @@
-import { getCurrentWindow, type Window } from '@tauri-apps/api/window'
+/**
+ * Tauri 的 window 插件 IPC 入口（与 tauri/src/window/scripts/drag.js 同一条通道）。
+ * 刻意不 import `@tauri-apps/api/window`：plugin-ui 是对外发布的共享包，不能为此
+ * 给所有插件消费者新增 Tauri 依赖；直接走 internals 即可，行为与内置 drag.js 一致。
+ */
+interface TauriInternals {
+  invoke: (cmd: string, payload?: Record<string, unknown>) => Promise<unknown>
+}
+
+function tauriInternals(): TauriInternals | null {
+  const w = globalThis as unknown as { __TAURI_INTERNALS__?: TauriInternals }
+  return w.__TAURI_INTERNALS__ ?? null
+}
 
 /**
  * 触控板 / 触摸交互与窗口拖动区（drag region）策略。
@@ -262,13 +274,11 @@ function resetGestureState(): void {
   activePointers.clear()
 }
 
-/** 对当前窗口执行一次动作；同步取窗口失败 / 动作 reject 都静默吞掉。 */
-function dragWindow(action: (win: Window) => Promise<unknown>): void {
-  try {
-    action(getCurrentWindow()).catch(() => {})
-  } catch {
-    /* 非 Tauri 环境或 internals 尚未就绪：忽略 */
-  }
+/** 对当前窗口执行一次 window 插件命令；任何失败都静默吞掉（非 Tauri 环境等）。 */
+function windowCommand(cmd: 'start_dragging' | 'toggle_maximize'): void {
+  const internals = tauriInternals()
+  if (!internals) return
+  Promise.resolve(internals.invoke(`plugin:window|${cmd}`)).catch(() => {})
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +379,7 @@ function onMouseMove(e: MouseEvent): void {
   pending = null
   // 位移够了，才把窗口拖动交给原生消息循环（Windows WM_NCLBUTTONDOWN(HTCAPTION) /
   // macOS performWindowDragWithEvent / GTK begin_move_drag）
-  dragWindow(w => w.startDragging())
+  windowCommand('start_dragging')
 }
 
 function onMouseUp(e: MouseEvent): void {
@@ -385,7 +395,7 @@ function onMouseUp(e: MouseEvent): void {
   ) {
     return
   }
-  dragWindow(w => w.toggleMaximize())
+  windowCommand('toggle_maximize')
 }
 
 /** 手势周期结束：清空 pending 与指针表。 */
@@ -444,7 +454,19 @@ function scheduleContainmentRescan(): void {
 // 安装
 // ---------------------------------------------------------------------------
 
+/** 已安装标记（挂 globalThis，便于共享组件判断是否回退到 Tauri 原生属性）。 */
 const INSTALLED_FLAG = '__qomicexDragRegionsInstalled'
+
+/**
+ * 本运行时是否已安装拖动区处理器（`installDragRegions()` 已调用）。
+ * `@qomicex/plugin-ui` 的共享组件据此决定：
+ *  - 已安装 → 只用 `data-qomicex-drag-region`（阈值 + 滚动手势守卫）；
+ *  - 未安装 → 回退 Tauri 原生 `data-tauri-drag-region`，保证插件自建窗口与
+ *    未接入本处理器的独立构建仍能拖动窗口（ADR-087 修订）。
+ */
+export function isDragRegionsInstalled(): boolean {
+  return (globalThis as unknown as Record<string, unknown>)[INSTALLED_FLAG] === true
+}
 
 /**
  * 安装拖动区 / 滚动手势 / 滚动抑制。在 `src/main.tsx` 调用一次即可覆盖所有

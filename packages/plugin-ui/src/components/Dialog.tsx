@@ -3,6 +3,7 @@ import { createPortal } from "react-dom"
 import { cn } from "../lib/cn.js"
 import gsap from "gsap"
 import { readAnimConfig, EASE_IN, EASE_OUT, withGpu } from "../lib/anim.js"
+import { DRAG_REGION_ATTR, isDragRegionsInstalled } from "../lib/dragRegions.js"
 
 interface DialogProps {
   open: boolean
@@ -134,9 +135,31 @@ interface DialogHeaderProps {
   onClose?: () => void
 }
 
+/**
+ * 对话框标题栏（同时是窗口拖动面）。
+ *
+ * 拖动区属性分两种运行时：
+ *  - 宿主已调用 `installDragRegions()`（如启动器主窗口 / game-log / plugin-webview）
+ *    → 用 `data-qomicex-drag-region`，由阈值 + 滚动手势守卫接管，双指滑动只会滚动；
+ *  - 未安装（插件自建窗口、独立构建、旧的宿主）→ 额外输出 Tauri 原生
+ *    `data-tauri-drag-region`，保证拖动能力不回退（ADR-087 修订）。
+ *
+ * 不能无条件同时输出两个属性：那会让启动器内的对话框标题重新变成"按下即拖窗"
+ * （Tauri 内置 drag.js 没有任何位移阈值，且对话框位于窗口中部，一按窗口就跳）。
+ */
 function DialogHeader({ children, className, onClose }: DialogHeaderProps) {
+  // 挂载后同步一次：覆盖"先渲染 Dialog、后调用 installDragRegions()"的顺序
+  const [tauriFallback, setTauriFallback] = React.useState(() => !isDragRegionsInstalled())
+  React.useEffect(() => {
+    setTauriFallback(!isDragRegionsInstalled())
+  }, [])
+
+  const dragProps = tauriFallback
+    ? { [DRAG_REGION_ATTR]: true, "data-tauri-drag-region": true }
+    : { [DRAG_REGION_ATTR]: true }
+
   return (
-    <div data-qomicex-drag-region className={cn("flex items-center justify-between border-b border-border px-6 py-4", className)}>
+    <div {...dragProps} className={cn("flex items-center justify-between border-b border-border px-6 py-4", className)}>
       <div className="flex-1">{children}</div>
       {onClose && (
         <button onClick={onClose} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
