@@ -466,7 +466,10 @@ async fn cancel_batch(
 /// The C# original stamps lowest-case host matches against forgecdn.net /
 /// curseforge.com. A plain case-insensitive substring check reproduces that
 /// behaviour without pulling in the `url` crate (keeps zero-new-deps).
-fn is_cf_url(url: &str) -> bool {
+///
+/// `pub(crate)`：`instance_files` 的 mod 下载（install / change-version）复用
+/// 同一判定，避免两处各维护一份域名列表而漂移。
+pub(crate) fn is_cf_url(url: &str) -> bool {
     let lower = url.to_lowercase();
     lower.contains("forgecdn.net") || lower.contains("curseforge.com")
 }

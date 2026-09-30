@@ -88,6 +88,28 @@ struct ModMetadataDto {
     last_modified: String,
 }
 
+/// POST /instance/{id}/files/mods/change-version body (source:
+/// ChangeModVersionRequest). Ported late: the Rust rewrite shipped without this
+/// route, so the frontend's 更换版本 action hit a router-level 404 and silently
+/// did nothing (issue #117).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangeModVersionRequest {
+    /// 现有 mod 文件名（旧版本，下载前先删除；含 .disabled 变体）。
+    file_name: String,
+    download_url: String,
+    /// 新版本文件名（与 file_name 同名时视为原地重下）。
+    new_file_name: String,
+}
+
+/// POST /instance/{id}/files/mods/install body (source: InstallModRequest).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallModRequest {
+    download_url: String,
+    file_name: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ResourcePackMetadataDto {
@@ -512,6 +534,11 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/files/mods/enrich", post(mods_enrich))
         .route("/instance/{id}/files/mods/enable", post(enable_mod))
         .route("/instance/{id}/files/mods/disable", post(disable_mod))
+        .route("/instance/{id}/files/mods/install", post(install_mod))
+        .route(
+            "/instance/{id}/files/mods/change-version",
+            post(change_mod_version),
+        )
         .route(
             "/instance/{id}/files/mods/batch-enable",
             post(batch_enable_mods),
@@ -1588,6 +1615,134 @@ async fn batch_disable_mods(
         mods.disable_mod(&path);
     }
     Ok(StatusCode::OK)
+}
+
+/// 下载一个 mod 文件到 `dir`，落盘用 `.part` 临时文件 + 原子 rename，避免半截文件
+/// 被扫描成可用 mod。返回最终文件名。
+///
+/// 单个 mod 体积可达数百 MB，`resp.bytes()` 会把整包读进内存，故改为`chunk()`
+/// 流式落盘。`expected_name` 只用于取扩展名与日志，不参与路径拼接以外的语义。
+async fn download_mod_to_file(
+    state: &crate::state::AppState,
+    url: &str,
+    dir: &Path,
+    file_name: &str,
+) -> ApiResult<()> {
+    if url.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "MISSING_DOWNLOAD_URL",
+            "downloadUrl is required",
+        ));
+    }
+    // 文件名必须是不含路径分隔符的纯文件名：否则 `dir.join(name)` 可被
+    // `../` 穿越出 mods 目录（原 C# 版本同样未校验，此处收紧）。
+    if file_name.trim().is_empty()
+        || file_name.contains(['/', '\\'])
+        || Path::new(file_name).components().count() != 1
+    {
+        return Err(ApiError::bad_request(
+            "INVALID_FILE_NAME",
+            "fileName must be a plain file name",
+        ));
+    }
+
+    std::fs::create_dir_all(dir).map_err(ApiError::from)?;
+    let dest = dir.join(file_name);
+    // 临时名与目标同目录（rename 才能原子），进程/任务 id 无需唯一化：
+    // 同一 mod 的换版本操作在前端已被按钮禁用串行化。
+    let tmp = dir.join(format!("{file_name}.part"));
+
+    let mut req = state.http_client.get(url);
+    // CurseForge 文件下载需要 x-api-key（与 resource-download 同规则；
+    // is_cf_url 由 resource_download 单一持有，避免多处各写一份判定）。
+    if crate::endpoints::resource_download::is_cf_url(url) && !state.curse_forge_api_key.is_empty()
+    {
+        req = req.header("x-api-key", state.curse_forge_api_key.as_str());
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| ApiError::upstream(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(ApiError::upstream(format!(
+            "下载失败：上游返回 {}",
+            resp.status()
+        )));
+    }
+
+    let write_result = async {
+        let mut file = tokio::fs::File::create(&tmp).await?;
+        let mut resp = resp;
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?
+        {
+            tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+                .await
+                .map_err(ApiError::from)?;
+        }
+        tokio::io::AsyncWriteExt::flush(&mut file)
+            .await
+            .map_err(ApiError::from)?;
+        // 落盘后再 rename：进程中断只会留下 .part，不会污染 mods 扫描。
+        tokio::fs::rename(&tmp, &dest).await.map_err(ApiError::from)
+    }
+    .await;
+
+    if let Err(e) = write_result {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// POST /instance/{id}/files/mods/change-version — 换版本：下载新 jar 后替换旧文件。
+///
+/// 顺序刻意是「先下载成功、再删旧文件」：先删会让下载失败直接损失原 mod。
+/// 若新旧文件名相同（原地重下），下载写入的就是同一路径。
+async fn change_mod_version(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Json(req): Json<ChangeModVersionRequest>,
+) -> ApiResult<StatusCode> {
+    let r = resolve(&id, &state)?;
+    let dir = category_dir(&r, "mods");
+    let old_name = required_name(Some(req.file_name.clone()))?;
+    let new_name = required_name(Some(req.new_file_name.clone()))?;
+
+    // 下载前不动任何现有文件（失败要能回退）。
+    download_mod_to_file(&state, &req.download_url, &dir, &new_name).await?;
+
+    // 新文件已就位，此时才移除旧版本（含 .disabled 变体）。
+    if old_name != new_name {
+        delete_mod_file(&dir.join(&old_name));
+    }
+    // 无需手动失效 mods 缓存：缓存命中要求目录指纹一致，而文件名/大小/mtime
+    // 任一变化都会让指纹改变（mods_dir_signature），下次读取自然重扫。
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /instance/{id}/files/mods/install — 下载一个 mod 并放入 mods 目录。
+///
+/// 同日未移植（issue #117 排查时发现的同类缺失）。同名已存在时报 409，避免
+/// 静默覆盖用户已装好的文件；调用方需自行处理重名。
+async fn install_mod(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+    Json(req): Json<InstallModRequest>,
+) -> ApiResult<StatusCode> {
+    let r = resolve(&id, &state)?;
+    let dir = category_dir(&r, "mods");
+    let name = required_name(Some(req.file_name.clone()))?;
+    if dir.join(&name).is_file() {
+        return Err(ApiError::bad_request(
+            "MOD_ALREADY_EXISTS",
+            "同名 mod 已存在，请先删除或改名",
+        ));
+    }
+    download_mod_to_file(&state, &req.download_url, &dir, &name).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn batch_delete_mods(
