@@ -143,7 +143,7 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {isWindows && (
-        <div data-qomicex-drag-region className="flex h-9 shrink-0 items-center justify-between bg-background/50 pl-3 pr-0">
+        <div data-qomicex-drag-region className="flex h-9 shrink-0 touch-none select-none items-center justify-between bg-background/50 pl-3 pr-0">
           <span className="select-none text-xs text-muted-foreground">{t('gameLog.title')}</span>
           <div className="flex">
             <button onClick={() => win?.minimize()} data-qomicex-drag-region={false}

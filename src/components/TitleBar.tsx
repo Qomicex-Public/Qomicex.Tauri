@@ -35,16 +35,42 @@ export function TitleBar() {
   }, [])
 
   return (
-    <div data-qomicex-drag-region className="flex h-9 shrink-0 items-center justify-end bg-background/50 backdrop-blur-sm select-none">
-      <SlotHost slotId="header:right" className="flex h-full items-center" trailingSeparator />
+    <div data-qomicex-drag-region className="flex h-9 shrink-0 touch-none select-none items-center justify-end bg-background/50 backdrop-blur-sm">
+      {/* header:right 插件槽（dashboard widgets 等）整槽禁拖，内部交互自理；
+          SlotHost 不透传额外属性，故外包一层挂 data-qomicex-drag-region={false} */}
+      <div data-qomicex-drag-region={false} className="flex h-full items-center">
+        <SlotHost slotId="header:right" className="flex h-full items-center" trailingSeparator />
+      </div>
+      {/* 窗口控制按钮：显式禁用拖动（§A① interactive），
+          避免"按在按钮上滑动"误触发窗口拖动 */}
       <div className="flex">
-        <button onClick={() => win.minimize()} className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20">
+        <button
+          onClick={() => win.minimize()}
+          data-qomicex-drag-region={false}
+          className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20"
+        >
           <MinIcon />
         </button>
-        <button onClick={() => win.toggleMaximize()} className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20">
-          <MorphIcon icon={maximized ? RESTORE_ICON : MAXIMIZE_ICON} size={12} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
+        <button
+          onClick={() => win.toggleMaximize()}
+          data-qomicex-drag-region={false}
+          className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20"
+        >
+          <MorphIcon
+            icon={maximized ? RESTORE_ICON : MAXIMIZE_ICON}
+            size={12}
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            spring="snappy"
+            reducedMotion="user"
+          />
         </button>
-        <button onClick={safeClose} className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-destructive/80 hover:text-destructive-foreground active:bg-destructive">
+        <button
+          onClick={safeClose}
+          data-qomicex-drag-region={false}
+          className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-destructive/80 hover:text-destructive-foreground active:bg-destructive"
+        >
           <CloseIcon />
         </button>
       </div>
