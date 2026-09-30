@@ -110,6 +110,9 @@ function dragWindow(action: (win: Window) => Promise<unknown>): void {
 }
 
 function onMouseDown(e: MouseEvent): void {
+  // 无论本次是否命中拖动区，先丢掉上一次未决手势：mouseup 有可能在窗口外发生
+  // （页面收不到），残留的 pending 会让下一次"按住 + 移动"误触发拖窗
+  clearPending()
   // 与 Tauri 内置脚本一致：只处理主键的单击/双击，忽略其它按键与三连击
   if (e.button !== 0) return
   if (e.detail !== 1 && e.detail !== 2) return
