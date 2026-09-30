@@ -310,6 +310,10 @@ function onPointerDown(e: PointerEvent): void {
   if (now() - lastWheelAt < WHEEL_BURST_GAP_MS) return
   // G5（指针版）：只有命中窗口框架带才允许触摸 / 笔拖动窗口
   if (classifyTarget(e.target, e.clientX, e.clientY) !== 'frame') return
+  // 指针路径接管手势：同时清掉鼠标路径可能残留的 pending（浏览器随后若补发
+  // compatibility mousedown，onMouseDown 会因 touchPointerNear 而早退，
+  // 双保险避免同一手势触发两次 start_dragging）
+  clearPending()
   pointerGesture = { pointerId: e.pointerId, x: e.clientX, y: e.clientY }
 }
 
@@ -360,10 +364,11 @@ function onPointerEnd(e: PointerEvent): void {
  */
 function onWheel(): void {
   lastWheelAt = now()
-  if (pending) {
-    pending = null
-    // 双指滑动常伴随一次鼠标按下；滚动意图已明确，作废即可
-  }
+  // 鼠标路径的未决手势
+  if (pending) pending = null
+  // 指针路径的未决手势：wheel 常伴随双指滑动，若只作废 pending，
+  // 手势建立后到达的 wheel 无法阻止后续 pointermove 起拖（CodeRabbit 评论 2）
+  if (pointerGesture) pointerGesture = null
 }
 
 /** `performance.now()` 的包装，便于测试注入。 */
@@ -389,19 +394,19 @@ function onMouseDown(e: MouseEvent): void {
     pointerGesture = null
     return
   }
-
   const category = classifyTarget(e.target, e.clientX, e.clientY)
 
-  // G4：仅当本次按下伴随 touch/pen 指针时，才要求它落在框架带上
-  //     （单指平板拖标题栏可用；两指已被 G3 拦掉）。鼠标按压同样会触发
-  //     pointerdown(pointerType='mouse')，故必须按类型区分，否则普通鼠标
-  //     拖动会被这条误伤。
-  if (touchPointerNear(e.clientX, e.clientY) && category !== 'frame') return
+  // G4：同一位置有 touch/pen 指针 → 本次鼠标事件是浏览器为触摸补发的
+  //     compatibility mouse event，手势归指针路径所有，鼠标路径直接退出，
+  //     否则两条路径会各触发一次 start_dragging（CodeRabbit 评论 1）。
+  if (touchPointerNear(e.clientX, e.clientY)) return
+  // G4b：命中框架带之外 → 不可拖（鼠标路径原本就只有这条约束）
+  if (category !== 'frame') return
+  // G2：按下发生在滚轮突发窗口内 → 本次按压属于同一串双指滚动，不建手势
   // G2：按下发生在滚轮突发窗口内 → 本次按压属于同一串双指滚动，不建手势
   if (now() - lastWheelAt < WHEEL_BURST_GAP_MS) return
 
-  // G5：只有命中框架带才建立待定手势；仅记账、不动窗口、不阻止传播
-  if (category !== 'frame') return
+  pending = { x: e.clientX, y: e.clientY, double: e.detail === 2 }
   pending = { x: e.clientX, y: e.clientY, double: e.detail === 2 }
 }
 
