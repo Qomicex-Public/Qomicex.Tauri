@@ -1,4 +1,4 @@
-import { get, put, post } from './client.ts'
+import { get, put, post, setDefaultRequestTimeout } from './client.ts'
 
 interface CustomJavaEntry {
   name: string
@@ -116,7 +116,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSelectModMirror: false,
   fileDownloadSource: 0,
   autoSelectFileDownloadSource: false,
-  downloadTimeout: 15,
+  downloadTimeout: 60,
   theme: 'dark',
   themePreset: 'default',
   animationsEnabled: true,
@@ -161,6 +161,18 @@ let cached: AppSettings = { ...DEFAULT_SETTINGS }
 let loaded = false
 const listeners = new Set<(s: AppSettings) => void>()
 
+/**
+ * 把 `downloadTimeout`（秒，0 = 不限）应用到前端全局请求超时。
+ *
+ * 唯一咽喉点：loadSettings / saveSettings 都经过这里，用户在设置页改动即时生效。
+ * 超时语义与 UI 文案一致（0 = 不超时），故 0 转成 0 传给 client（= 不设总超时）。
+ */
+function applyDownloadTimeoutSetting(s: AppSettings) {
+  const secs = Number(s.downloadTimeout)
+  const ms = Number.isFinite(secs) && secs > 0 ? Math.round(secs * 1000) : 0
+  setDefaultRequestTimeout(ms)
+}
+
 export async function loadSettings(): Promise<AppSettings> {
   // 失败时不更新 cached、不置 loaded：backend 未就绪时若把 DEFAULT_SETTINGS
   // （initialized:false）当成已加载的真实设置，会让 App 误判"未初始化"而弹向导。
@@ -184,6 +196,7 @@ export async function loadSettings(): Promise<AppSettings> {
         gpuAcceleration: data.gpuAcceleration ?? cached.gpuAcceleration ?? DEFAULT_SETTINGS.gpuAcceleration,
       }
       loaded = true
+      applyDownloadTimeoutSetting(cached)
       listeners.forEach(fn => fn(cached))
       break
     } catch (e) {
@@ -204,6 +217,7 @@ export function isSettingsLoaded(): boolean {
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
   cached = settings
+  applyDownloadTimeoutSetting(cached)
   try {
     await put('/settings', settings as unknown as Record<string, unknown>)
   } catch {

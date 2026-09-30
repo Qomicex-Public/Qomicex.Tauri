@@ -155,6 +155,11 @@ pub struct SettingsResponse {
     /// 老配置文件缺失该字段时在 [`load_settings`] 中视为已初始化（`Some(true)`），
     /// 避免老用户升级后被迫重走向导。
     pub initialized: Option<bool>,
+    /// issue #133 一次性迁移标记：`download_timeout` 的旧值 15 从未生效过，
+    /// 首次读到 `15` 时提升为新默认值并置 true；此后用户若**主动**再选 15，
+    /// 因标记已为 true 而保留用户选择（不会被每次启动反复改回）。
+    #[serde(default)]
+    pub download_timeout_migrated: Option<bool>,
     /// 自动上报严重错误日志（崩溃类恶性 bug）。`None` 视为开启（默认开）；
     /// 关闭时前后端都不上报。
     pub auto_report_errors: Option<bool>,
@@ -240,7 +245,7 @@ impl Default for SettingsResponse {
             auto_select_mod_mirror: None,
             file_download_source: 0,
             auto_select_file_download_source: None,
-            download_timeout: 15,
+            download_timeout: 60,
             animations_enabled: None,
             animation_speed: None,
             gpu_acceleration: None,
@@ -274,6 +279,8 @@ impl Default for SettingsResponse {
             card_border_width: None,
             dialog_opacity: None,
             initialized: Some(false),
+            // 全新安装直接落地新默认值，标记为已迁移：这样用户之后主动选 15 会被尊重。
+            download_timeout_migrated: Some(true),
             auto_report_errors: Some(true),
             telemetry_enabled: None,
             enable_http3: None,
@@ -293,6 +300,10 @@ fn settings_path() -> PathBuf {
 /// CurseForge 版本拉取相关的取值范围。与前端 Settings 页面的 min/max 保持一致。
 pub const CF_FETCH_CONCURRENCY_RANGE: (i32, i32) = (1, 20);
 pub const CF_CACHE_TTL_SECONDS_RANGE: (i32, i32) = (0, 3600);
+/// 「下载超时」（秒）的取值范围：0 = 不设总超时；与前端 Settings 页面 min/max 一致。
+pub const DOWNLOAD_TIMEOUT_RANGE: (i32, i32) = (0, 120);
+/// issue #133 之前的默认值。该值从未影响任何行为，仅用于识别「用户没动过这一项」。
+const LEGACY_DEFAULT_DOWNLOAD_TIMEOUT: i32 = 15;
 
 impl SettingsResponse {
     /// 把数值型设置钳到合法区间。
@@ -307,6 +318,10 @@ impl SettingsResponse {
         let (lo, hi) = CF_CACHE_TTL_SECONDS_RANGE;
         self.curseforge_version_cache_ttl_seconds =
             self.curseforge_version_cache_ttl_seconds.clamp(lo, hi);
+        // settings.json 可手改、本地 API 也可被插件调用：越界值必须读入即钳，
+        // 否则会以负时长形式传入前端超时计算（issue #133）。
+        let (lo, hi) = DOWNLOAD_TIMEOUT_RANGE;
+        self.download_timeout = self.download_timeout.clamp(lo, hi);
     }
 
     /// 导出 CurseForge 拉取服务的配置。取值已按 [`Self::clamp_numeric_ranges`] 的
@@ -335,6 +350,17 @@ pub fn load_settings() -> SettingsResponse {
                 // 避免升级后被迫重走首次启动向导。仅全新安装（文件不存在 → Default）为 false。
                 if parsed.initialized.is_none() {
                     parsed.initialized = Some(true);
+                }
+                // issue #133 一次性迁移：download_timeout 在旧版本里**从未被任何代码消费**
+                // （既没驱动前端请求超时，也没传给下载器），磁盘上的 15 只是当年那个同样
+                // 没生效的默认值，不是用户的有效选择。提升为新默认值，否则老用户升级后
+                // 仍然踩着「15s 就报请求超时」的老问题。
+                // 用显式标记而不是「值 == 15 就改」，否则用户日后主动选 15 会被每次启动改回。
+                if parsed.download_timeout_migrated != Some(true) {
+                    if parsed.download_timeout == LEGACY_DEFAULT_DOWNLOAD_TIMEOUT {
+                        parsed.download_timeout = SettingsResponse::default().download_timeout;
+                    }
+                    parsed.download_timeout_migrated = Some(true);
                 }
                 return parsed;
             }

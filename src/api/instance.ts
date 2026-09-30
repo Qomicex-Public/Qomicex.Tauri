@@ -137,16 +137,22 @@ export async function cancelInstall(id: string): Promise<void> {
   await post(`/instance/${id}/install/cancel`)
 }
 
+/** 维护类长任务（修复/校验）的超时宽限：会遍历并下载大量游戏文件，全局默认远不够。 */
+const LONG_MAINTENANCE_TIMEOUT_MS = 30 * 60_000
+
 export async function repairInstance(id: string, threads?: number): Promise<void> {
-  await post(`/instance/${id}/repair${threads ? `?threads=${threads}` : ''}`)
+  // 修复会真实下载缺失文件（可能有几百 MB），全局默认超时远不够；用长超时信号。
+  await post(`/instance/${id}/repair${threads ? `?threads=${threads}` : ''}`, undefined, { timeoutMs: LONG_MAINTENANCE_TIMEOUT_MS })
 }
 
 export async function verifyResources(id: string): Promise<VerifyResourcesResult> {
-  return get<VerifyResourcesResult>(`/instance/${id}/verify-resources`)
+  // 完整性校验要遍历+哈希全部游戏文件，冷盘上远超默认超时。
+  return get<VerifyResourcesResult>(`/instance/${id}/verify-resources`, { timeoutMs: LONG_MAINTENANCE_TIMEOUT_MS })
 }
 
 export async function repairResources(id: string): Promise<RepairResourcesResult> {
-  return post<RepairResourcesResult>(`/instance/${id}/repair-resources`)
+  // 同 repairInstance：后台任务会在下载，这里放宽以免前端误报「请求超时」。
+  return post<RepairResourcesResult>(`/instance/${id}/repair-resources`, undefined, { timeoutMs: LONG_MAINTENANCE_TIMEOUT_MS })
 }
 
 export async function getGameSettings(id: string): Promise<GameSettingDto[]> {
