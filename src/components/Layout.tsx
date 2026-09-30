@@ -15,6 +15,7 @@ import { PluginEventBridge } from './PluginEventBridge.tsx'
 import GlobalDropInstaller from './GlobalDropInstaller.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { setThemeBackground } from '../lib/themeColor.ts'
+import { applyScrollContainment } from '@qomicex/plugin-ui'
 
 /** 动图关闭时用 canvas 截取首帧静态渲染（GIF/APNG/WebP 无原生停帧能力）。
     跨源图片 drawImage 合法（仅读取像素受限），故无需 crossOrigin。 */
@@ -145,6 +146,10 @@ export default function Layout() {
 
   // 页面切换动画
   useEffect(() => {
+    // 换页后重扫滚动容器（ADR-087：双指滑动 = 滚轮滚动，内层滚动不外溢）。
+    // MutationObserver 也会兜底后挂载内容，这里保证切页即时生效。
+    applyScrollContainment()
+
     if (location.pathname === prevPathRef.current) return
     prevPathRef.current = location.pathname
 

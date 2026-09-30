@@ -331,11 +331,12 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
 
   return (
     <div
-      data-tauri-drag-region
       className="fixed inset-0 z-40 flex flex-col bg-background cursor-default select-none overflow-hidden"
     >
-      {/* 顶部品牌栏（拖动条） */}
-      <div data-tauri-drag-region className="flex items-center gap-3 px-8 pt-6 select-none">
+      {/* 顶部品牌栏（拖动条，唯一可拖区）
+          根容器不再挂拖动属性：整屏可拖会让触控板在引导页任意位置"按住带位移"
+          就拖动整个窗口（ADR-044 已记录该属性被子容器全覆盖、实际并不生效） */}
+      <div data-qomicex-drag-region className="flex items-center gap-3 px-8 pt-6 select-none">
         <img src="/logo.svg" alt="Qomicex" className="pointer-events-none h-10 w-10" />
         <div className="pointer-events-none flex flex-col">
           <span className="text-base font-semibold">{t('wizard.title')}</span>

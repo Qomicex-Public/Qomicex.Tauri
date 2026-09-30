@@ -126,6 +126,14 @@
     -webkit-font-smoothing: antialiased;
   }
 
+  /* 触控板双指滑动 = 滚轮滚动（ADR-087）：根层绝不做链式滚动/回弹，
+     内层滚动容器由 applyScrollContainment() 统一设为 `contain`。
+     否则内层滚到边界后继续把滚动冒泡到根，视觉上像"整块内容被推动"。 */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+
   ::-webkit-scrollbar {
     width: 6px;
   }

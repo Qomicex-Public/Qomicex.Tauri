@@ -38,12 +38,14 @@ export function SplashScreen({ state, onRetry }: SplashScreenProps) {
 
   return (
     <div
-      data-tauri-drag-region
       className={cn(
         'fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-8 bg-background cursor-default select-none',
         exiting && 'opacity-0 transition-opacity duration-500'
       )}
     >
+      {/* 顶部 36px 拖动条（与主窗口 TitleBar 等高）：启动阶段只保留这一条可拖，
+          不再整屏可拖——否则触控板在启屏背景上"按住带位移"就会拖动整个窗口 */}
+      <div data-qomicex-drag-region className="absolute inset-x-0 top-0 h-9" />
       <img src="/logo.svg" alt="Qomicex" className="h-24 w-24" />
       <div className="flex w-72 flex-col items-center gap-3">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">

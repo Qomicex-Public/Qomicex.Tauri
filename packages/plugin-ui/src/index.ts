@@ -1,3 +1,23 @@
+// 拖动区 / 触控板手势 / 滚动抑制（ADR-086 / ADR-087）。
+// 供启动器与所有插件运行时复用：宿主入口调用一次 installDragRegions() 即可。
+export {
+  DRAG_REGION_ATTR,
+  NO_DRAG_ATTR,
+  SCROLL_ATTR,
+  DRAG_THRESHOLD_PX,
+  DRAG_CLICK_SLOP_PX,
+  FRAME_TOP_PX,
+  FRAME_LEFT_PX,
+  FRAME_RIGHT_PX,
+  FRAME_BOTTOM_PX,
+  WHEEL_BURST_GAP_MS,
+  ENABLE_SCROLL_CONTAINMENT,
+  installDragRegions,
+  isDragRegionsInstalled,
+  applyScrollContainment,
+  classifyTarget,
+} from './lib/dragRegions.js'
+export type { HitCategory } from './lib/dragRegions.js'
 export { cn } from './lib/cn.js'
 export { Badge, badgeVariants } from './components/Badge.js'
 export { BatchToolbar } from './components/BatchToolbar.js'
