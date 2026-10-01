@@ -1619,16 +1619,33 @@ async fn batch_disable_mods(
 
 /// 校验「纯文件名」：必须是单个普通路径分量，且是相对路径。
 ///
-/// 拒绝 `/`、`\`、`..`、绝对路径与盘符前缀。**所有会与 mods 目录拼路径的用户输入
-/// 都必须先过这里**——包括下载目标名，也包括被删除的旧文件名：早期版本只校验了
-/// 前者，导致 `change-version` 的 `fileName` 可传 `../../x` 删除 mods 目录外的文件。
+/// 拒绝 `/`、`\`、`..`、绝对路径、盘符前缀与冒号（Windows ADS）。
+/// **所有会与 mods 目录拼路径的用户输入都必须先过这里**——包括下载目标名，也包括被
+/// 删除的旧文件名：早期版本只校验了前者，导致 `change-version` 的 `fileName` 可传
+/// `../../x` 删除 mods 目录外的文件。
+///
+/// **不能只依赖 `Path::components()`**：它按**当前平台**解析，而 `..\..\evil.jar`
+/// 在 Linux 上是一个普通分量（反斜杠不是分隔符）、在 Windows 上却是穿越路径。校验
+/// 必须跨平台一致，否则 CI（Ubuntu）与本地（常在 Windows）结论不同 —— 曾因此在
+/// Ubuntu 上放过 `..\..\evil.jar`。故先显式判分隔符，再用 components 兜平台原生情形
+/// （如 Windows 的 `C:` 前缀 / 盘符相对路径）。
 fn validate_plain_file_name(file_name: &str) -> ApiResult<()> {
-    let p = Path::new(file_name);
+    let trimmed = file_name.trim();
+    // 两个平台的路径分隔符一律拒绝（mod 文件名不含它们）。
+    let has_separator = file_name.contains(['/', '\\']);
+    // 冒号：Windows 盘符相对路径（`C:evil.jar`）与备用数据流（`a.jar:ads`）都要挡。
+    let has_colon = file_name.contains(':');
+    // 单点/双点：components() 会把 `.` 规范化掉，必须单独判。
+    let is_dot = trimmed == "." || trimmed == "..";
+    // 兜一层平台原生判定（Windows 前缀等）。
     let single_normal_component = matches!(
-        (p.components().count(), p.components().next()),
+        (
+            Path::new(file_name).components().count(),
+            Path::new(file_name).components().next()
+        ),
         (1, Some(std::path::Component::Normal(_)))
     );
-    if file_name.trim().is_empty() || !single_normal_component {
+    if trimmed.is_empty() || has_separator || has_colon || is_dot || !single_normal_component {
         return Err(ApiError::bad_request(
             "INVALID_FILE_NAME",
             "fileName must be a plain file name",
@@ -2869,6 +2886,9 @@ mod mod_download_tests {
     /// 交给 `delete_mod_file`。只校验新文件名是不够的 —— 早期实现下
     /// `fileName: "../../x"` 能删掉 mods 目录之外的任意文件。所有用户提供的文件名
     /// 都必须先过同一道校验。
+    ///
+    /// **必须跨平台一致**：这条断言在 Ubuntu CI 上曾经失败 —— 当时只依赖
+    /// `Path::components()`，而 `..\..\evil.jar` 在 Linux 上被当成单个普通分量放行。
     #[test]
     fn rejects_path_traversal_and_absolute_names() {
         let evil = [
@@ -2880,6 +2900,9 @@ mod mod_download_tests {
             "/etc/passwd",
             "C:\\Windows\\System32\\evil.dll",
             "\\\\server\\share\\evil.jar",
+            // 冒号：Windows 盘符相对路径与备用数据流
+            "C:evil.jar",
+            "a.jar:ads",
             "",
             "   ",
             ".",
