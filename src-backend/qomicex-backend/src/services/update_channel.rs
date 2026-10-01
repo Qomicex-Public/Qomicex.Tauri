@@ -255,6 +255,12 @@ mod tests {
         assert_eq!(train_of("0.1.0-rc1"), Train::Unknown);
         assert_eq!(train_of(""), Train::Unknown);
         assert_eq!(train_of("1.0.x"), Train::Unknown);
+        // 大小写契约：`strip_v` 只剥**小写** `v`，连续小写前缀全剥，但大写 `V` 开头
+        // 一律解析失败。前端 `trainOf` 必须给出同结论（曾因替换正则带 `/i` 而分歧：
+        // 前端判 beta、后端判 Unknown，见 Qomicex.Tauri#144）。
+        assert_eq!(train_of("V1.0.0-beta1.0"), Train::Unknown);
+        assert_eq!(train_of("Vv0.1.0-beta1.0"), Train::Unknown);
+        assert_eq!(train_of("vv0.1.0-beta1.0"), Train::Beta);
     }
 
     #[test]

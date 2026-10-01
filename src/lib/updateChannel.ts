@@ -43,10 +43,17 @@ const TYPE_SEGMENT_RE = /^(alpha|beta|release)(?:\d|$)/i
  *   后端 `parse_train_version` 同样解析失败，前端不能把它们当 dev（否则会把
  *   "未知构建"降级显示成"开发构建"）
  * - 其它 pre-release 后缀（如 `0.1.0-rc2`）→ `unknown`
+ * - 大写前缀 `V1.0.0-beta1.0` → `unknown`：后端 `strip_v` 只剥小写 `v`，核心段
+ *   `V1.0.0` 非数字而解析失败（前端必须与后端同结论，见下）
  */
 export function trainOf(version: string): UpdateTrain {
-  // `v+`：后端 `strip_v` 是 `trim_start_matches('v')`，连续前缀全部剥掉。
-  const v = (version || '').trim().replace(/^v+/i, '')
+  // `v+`：与后端 `strip_v`（`trim_start_matches('v')`）逐条对齐 —— 连续前缀全剥，
+  // 但**只剥小写 `v`**，所以这里不能带 `/i`。带 `/i` 会把 `V1.0.0-beta1.0` 剥成
+  // `1.0.0-beta1.0` 判成 beta，而后端因核心段 `V1.0.0` 非数字判成 Unknown —— 同一个
+  // 版本两侧通道不一致，更新检查与徽章会显示互相矛盾的结论。
+  // （注意与 `TYPE_SEGMENT_RE` 的 `/i` 区分：那个对应后端 `parse_type_segment` 会先
+  //  `to_ascii_lowercase`，所以必须保留。）
+  const v = (version || '').trim().replace(/^v+/, '')
   if (v === '') return 'unknown'
   const dash = v.indexOf('-')
   const core = dash === -1 ? v : v.slice(0, dash)
