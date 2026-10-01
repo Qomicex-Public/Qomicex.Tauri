@@ -150,6 +150,9 @@ jobs:
       - run: pnpm --filter @qomicex/plugin-ui build
       # typecheck 是硬门禁：tsc 全绿（含 noUnusedLocals/noUnusedParameters）。
       - run: pnpm run typecheck
+      # updateChannel 的回归（版本前缀大小写须与后端 strip_v 一致，见 ADR-085 v1.2）。
+      # 零依赖脚本：用仓库自带 tsc 编译真实源码后断言，不是测试框架。
+      - run: pnpm run test:update-channel
       # lint 尚未进阻断：存量见 AGENTS.md「Lint 现状」，清零后再去掉 continue-on-error。
       - name: ESLint
         continue-on-error: true

@@ -15,7 +15,8 @@
     "format:check": "prettier --check .",
     "bump-version": "node scripts/bump-version.mjs",
     "dev:backend": "cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml",
-    "harness": "node scripts/harness/run.mjs"
+    "harness": "node scripts/harness/run.mjs",
+    "test:update-channel": "node scripts/test-update-channel.mjs"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.3.1",
