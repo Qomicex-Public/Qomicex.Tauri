@@ -65,6 +65,17 @@ impl ResourceFavorite {
     fn matches(&self, source: &str, id: &str, category: &str) -> bool {
         self.source == source && self.id == id && self.category == category
     }
+
+    /// 裁剪三个键段的首尾空白。
+    ///
+    /// `DELETE` 的查询参数（`FavoriteKeyQuery::validated`）会裁剪后再做精确匹配，
+    /// 所以写入侧必须用同一口径，否则 `" modrinth "` 这类键写进去就删不掉了。
+    /// `pub`：端点校验也复用这一处实现，避免两侧裁剪逻辑漂移。
+    pub fn normalize_key(&mut self) {
+        self.source = self.source.trim().to_string();
+        self.id = self.id.trim().to_string();
+        self.category = self.category.trim().to_string();
+    }
 }
 
 /// 资源收藏服务（独立 resource_favorites.json）。
@@ -111,9 +122,18 @@ impl ResourceFavoriteService {
     ///
     /// 已存在时只刷新资源快照与 P2 字段，**保留原 `createdAt`**（收藏时间不因
     /// 重复收藏被刷新）；`createdAt` 一律由服务端生成。
+    ///
+    /// 语义要点：
+    /// - 键段先 `trim` 再匹配/存储。`DELETE` 侧会对查询参数做同样裁剪，若这里存
+    ///   原值，形如 `" modrinth "` 的键写入后将**永远无法删除**。
+    /// - 先在**副本**上改、落盘成功后才提交到内存。否则保存失败（磁盘满/权限）
+    ///   会让内存保留一条未持久化的改动：前端已回滚、`GET` 却仍能读到它，
+    ///   重启后又消失，三处状态互相矛盾。
     pub fn upsert(&self, mut item: ResourceFavorite) -> Result<ResourceFavorite, String> {
+        item.normalize_key();
         let mut guard = self.lock();
-        match guard
+        let mut next = guard.clone();
+        match next
             .iter_mut()
             .find(|x| x.matches(&item.source, &item.id, &item.category))
         {
@@ -123,23 +143,28 @@ impl ResourceFavoriteService {
             }
             None => {
                 item.created_at = chrono::Utc::now().to_rfc3339();
-                guard.push(item.clone());
+                next.push(item.clone());
             }
         }
-        self.save_locked(&guard)?;
+        self.save_locked(&next)?;
+        *guard = next;
         Ok(item)
     }
 
-    /// 按唯一键删除；命中返回被删除条目。
+    /// 按唯一键删除；命中返回 `true`。
+    ///
+    /// 与 `upsert` 同样是「先落盘、后提交内存」，且未命中时不触碰磁盘。
     pub fn remove(&self, source: &str, id: &str, category: &str) -> Result<bool, String> {
+        let (source, id, category) = (source.trim(), id.trim(), category.trim());
         let mut guard = self.lock();
-        let before = guard.len();
-        guard.retain(|x| !x.matches(source, id, category));
-        let removed = guard.len() != before;
-        if removed {
-            self.save_locked(&guard)?;
+        if !guard.iter().any(|x| x.matches(source, id, category)) {
+            return Ok(false);
         }
-        Ok(removed)
+        let mut next = guard.clone();
+        next.retain(|x| !x.matches(source, id, category));
+        self.save_locked(&next)?;
+        *guard = next;
+        Ok(true)
     }
 }
 
@@ -322,6 +347,80 @@ mod tests {
         assert_eq!(got[0].folder_id.as_deref(), Some("fav-1"));
         assert_eq!(got[0].note.as_deref(), Some("常用"));
         assert_eq!(got[0].tags, vec!["优化".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 键段在写入侧裁剪：`DELETE` 的查询参数会 trim 后精确匹配，因此写入也必须
+    /// 用同一口径，否则 `" modrinth "` 这类键存进去就再也删不掉。
+    #[test]
+    fn keys_are_trimmed_on_write_and_match_on_delete() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let svc = ResourceFavoriteService {
+            file_path: dir.join("resource_favorites.json"),
+            items: Mutex::new(Vec::new()),
+        };
+
+        let mut padded = item("AANobbMI", "mod", "Sodium");
+        padded.source = "  modrinth \t".into();
+        padded.id = " AANobbMI\n".into();
+        padded.category = "mod ".into();
+        let saved = svc.upsert(padded).unwrap();
+        assert_eq!(saved.source, "modrinth");
+        assert_eq!(saved.id, "AANobbMI");
+        assert_eq!(saved.category, "mod");
+
+        // 落盘内容也必须是裁剪后的键。
+        let on_disk = load_from_file(&dir.join("resource_favorites.json"));
+        assert_eq!(on_disk.len(), 1);
+        assert_eq!(on_disk[0].source, "modrinth");
+
+        // DELETE 侧（此处模拟其已裁剪的入参）必须能命中；带空白的入参同样命中。
+        assert!(svc.remove("modrinth", "AANobbMI", "mod").unwrap());
+        svc.upsert(item("AANobbMI", "mod", "Sodium")).unwrap();
+        assert!(svc.remove(" modrinth ", " AANobbMI ", " mod ").unwrap());
+        assert!(svc.get_all().is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 落盘失败时**不得**改动内存：否则前端已回滚、`GET` 却仍能读到未持久化的
+    /// 条目，重启后又消失（UI / 内存 / 磁盘三处状态互相矛盾）。
+    #[test]
+    fn save_failure_leaves_memory_untouched() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 父目录不存在 → 临时文件写入必然失败（模拟磁盘满/权限不足）。
+        let broken_path = dir.join("missing-subdir").join("resource_favorites.json");
+
+        let svc = ResourceFavoriteService {
+            file_path: broken_path.clone(),
+            items: Mutex::new(Vec::new()),
+        };
+        let err = svc
+            .upsert(item("AANobbMI", "mod", "Sodium"))
+            .expect_err("落盘失败必须返回 Err");
+        assert!(err.contains("写入临时文件失败"), "实际错误: {err}");
+        assert!(
+            svc.get_all().is_empty(),
+            "upsert 落盘失败后内存必须保持为空"
+        );
+
+        // remove：内存里有条目、落盘失败 → 同样不能把条目从内存里删掉。
+        let svc2 = ResourceFavoriteService {
+            file_path: broken_path,
+            items: Mutex::new(vec![item("JEI", "mod", "JEI")]),
+        };
+        assert!(svc2
+            .remove("modrinth", "JEI", "mod")
+            .expect_err("落盘失败必须返回 Err")
+            .contains("写入临时文件失败"));
+        assert_eq!(
+            svc2.get_all().len(),
+            1,
+            "remove 落盘失败后内存必须保留原条目"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -18,6 +18,19 @@ function sortByCreatedAtDesc(items: ResourceFavorite[]): ResourceFavorite[] {
   return [...items].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
 }
 
+/**
+ * mutation 世代号：每次 `toggleFavorite` 开始与结束都自增。
+ *
+ * `load()` 在发出请求前记下世代号，响应回来时若已变化就**丢弃这份列表**——
+ * 它可能是「新增/删除之前」的快照（客户端没有请求队列，`GET /resource-favorites`
+ * 与 POST/DELETE 是彼此独立的请求）。丢弃后不置 `loaded`，下次挂载会重新拉取，
+ * 从而自愈；若直接接受，过期列表会覆盖已成功的乐观更新，而 `loaded: true`
+ * 又会让后续 `load()` 直接返回，状态再也修不回来。
+ *
+ * 放在模块作用域而非 store state：它不是渲染依赖，不该触发重渲染。
+ */
+let mutationEpoch = 0
+
 interface FavoritesState {
   favorites: ResourceFavorite[]
   /** 是否成功加载过一次（`load()` 默认只在首次真正请求）。 */
@@ -41,9 +54,16 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
     const { loaded, loading } = get()
     if (loading) return
     if (loaded && !force) return
+    const epochAtStart = mutationEpoch
     set({ loading: true })
     try {
       const favorites = await listResourceFavorites()
+      if (mutationEpoch !== epochAtStart) {
+        // 期间有 mutation 开始/完成：这份列表可能不含它，丢弃且不置 loaded，
+        // 交给下一次 load() 收敛（当前内存状态已是乐观/服务端确认后的结果）。
+        set({ loading: false })
+        return
+      }
       set({ favorites: sortByCreatedAtDesc(favorites ?? []), loaded: true, loading: false, error: null })
     } catch (e) {
       set({ loading: false, error: e instanceof Error ? e.message : String(e) })
@@ -57,11 +77,12 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
 
   toggleFavorite: async (item, category) => {
     const key = favoriteKey(item.source, item.id, category)
-    // 快照：任一环节失败都按这份回滚，避免把服务端状态与本地状态弄错位。
+    // 快照：只用于回滚**本次这个键**，见下方 catch。
     const before = get().favorites
     const exists = before.some((f) => favoriteKey(f.source, f.id, f.category) === key)
     const optimistic = toResourceFavorite(item, category)
 
+    mutationEpoch += 1
     if (exists) {
       set({ favorites: before.filter((f) => favoriteKey(f.source, f.id, f.category) !== key) })
     } else {
@@ -71,6 +92,7 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
     try {
       if (exists) {
         await removeResourceFavorite(item.source, item.id, category)
+        mutationEpoch += 1
         return false
       }
       const saved = await addResourceFavorite(optimistic)
@@ -80,9 +102,15 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
           get().favorites.map((f) => (favoriteKey(f.source, f.id, f.category) === key ? saved : f)),
         ),
       })
+      mutationEpoch += 1
       return true
     } catch (e) {
-      set({ favorites: before })
+      // 只回滚当前键：期间可能有别的键已成功（`favBusyKey` 只挡同键重复点击），
+      // 整份 `before` 回滚会把那些成功的改动一起清掉，造成 UI 与服务端不一致。
+      const prev = before.find((f) => favoriteKey(f.source, f.id, f.category) === key)
+      const rest = get().favorites.filter((f) => favoriteKey(f.source, f.id, f.category) !== key)
+      set({ favorites: sortByCreatedAtDesc(prev ? [prev, ...rest] : rest) })
+      mutationEpoch += 1
       throw e
     }
   },

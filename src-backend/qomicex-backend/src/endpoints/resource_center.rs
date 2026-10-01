@@ -2349,9 +2349,12 @@ async fn add_resource_favorite(
     State(state): State<SharedState>,
     req: Json<ResourceFavorite>,
 ) -> ApiResult<Json<ResourceFavorite>> {
-    let item = req.0;
-    if item.source.trim().is_empty() || item.id.trim().is_empty() || item.category.trim().is_empty()
-    {
+    // 先裁剪再校验/落库：DELETE 侧对查询参数同样裁剪后才精确匹配，写入侧若存原值，
+    // 带首尾空白的收藏将永远删不掉（`" Sodium "` 存进去、`"Sodium"` 删不掉）。
+    // 裁剪实现与落库侧共用 `ResourceFavorite::normalize_key`，避免两处口径漂移。
+    let mut item = req.0;
+    item.normalize_key();
+    if item.source.is_empty() || item.id.is_empty() || item.category.is_empty() {
         return Err(ApiError::bad_request(
             "INVALID_FAVORITE_KEY",
             "source / id / category 不能为空",

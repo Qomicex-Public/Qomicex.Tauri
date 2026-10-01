@@ -377,8 +377,9 @@ export default function ResourceCenter() {
   const loadFavorites = useFavoritesStore((s) => s.load)
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite)
   const favoriteKeys = useFavoriteKeys()
-  // 正在切换的键（防连点；只影响被点的那张卡）。
-  const [favBusyKey, setFavBusyKey] = useState<string | null>(null)
+  // 正在切换的键集合（防同键连点）。用 Set 而非单值：单值时请求 A 完成会把状态
+  // 置空，从而提前解除并发请求 B 的忙碌态。
+  const [favBusyKeys, setFavBusyKeys] = useState<Set<string>>(() => new Set())
 
   useEffect(() => { void loadFavorites() }, [loadFavorites])
 
@@ -563,15 +564,20 @@ export default function ResourceCenter() {
   /** 收藏/取消收藏；失败时 store 已回滚，这里只负责提示。 */
   const handleToggleFavorite = async (item: ResourceItem) => {
     const key = favoriteKey(item.source, item.id, category)
-    if (favBusyKey === key) return
-    setFavBusyKey(key)
+    if (favBusyKeys.has(key)) return
+    setFavBusyKeys((prev) => new Set(prev).add(key))
     try {
       const nowFavorite = await toggleFavorite(item, category)
       notify(t(nowFavorite ? 'resource.favorites.added' : 'resource.favorites.removed'), 'success')
     } catch (e) {
       notify(e instanceof Error ? e.message : t('resource.favorites.failed'), 'error')
+    } finally {
+      setFavBusyKeys((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
     }
-    setFavBusyKey(null)
   }
 
   const loadMore = () => {
@@ -829,7 +835,7 @@ export default function ResourceCenter() {
                     onInstall={handleInstall}
                     cnName={cnNames[item.title]}
                     isFavorite={favoriteKeys.has(itemKey)}
-                    favoriteBusy={favBusyKey === itemKey}
+                    favoriteBusy={favBusyKeys.has(itemKey)}
                     onToggleFavorite={() => { void handleToggleFavorite(item) }}
                   />
                 </div>
