@@ -566,16 +566,25 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
    * 若无此保护会把已删除的行、甚至旧实例的列表重新写回来。
    */
   const loadModsSeqRef = useRef(0)
+  /**
+   * enrichment 所有权序号：每轮 `applyEnrich` 递增。仅「最新一轮」允许复位
+   * `enriching`，否则被取代的旧轮次收尾时会把新轮的「远程信息加载中」提前清掉。
+   */
+  const enrichSeqRef = useRef(0)
 
   const loadMods = useCallback(async () => {
     const seq = ++loadModsSeqRef.current
     const isStale = () => seq !== loadModsSeqRef.current
     setSelected(new Set())
     setLoadError(null)
+    // 新的加载立即接管 enriching 指示器：本次若在 getModsMetadata 阶段就失败
+    // （根本不会走到 applyEnrich），也不会让上一轮残留的提示永久挂在界面上。
+    setEnriching(false)
     const cacheKey = `api-instance-${instanceId}-mods`
     // enrich 合并（两段式第二步）：异步反查远程 id/图标，合并后回写缓存，
     // 使缓存命中场景（30s 内重复打开）也能拿到远程信息。
     const applyEnrich = async () => {
+      const enrichSeq = ++enrichSeqRef.current
       setEnriching(true)
       try {
         const entries = await enrichMods(instanceId)
@@ -604,7 +613,10 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
           return next
         })
       } catch { /* 反查失败不影响列表 */ }
-      finally { if (!isStale()) setEnriching(false) }
+      finally {
+        // 仅当本次 enrichment 仍是最新一轮时才复位：过期轮次不得清掉新轮的指示器。
+        if (enrichSeq === enrichSeqRef.current) setEnriching(false)
+      }
     }
     const fresh = cacheFresh<ModMetadata[]>(cacheKey)
     if (fresh) { setMods(fresh); setLoading(false); void applyEnrich(); return }
@@ -616,10 +628,16 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     // 否则本函数的 finally 之前 return 会让 300ms 轮询永久泄漏。
     let pollId: ReturnType<typeof setInterval> | undefined
     try {
-      getModsCount(instanceId).then(count => setLoadProgress({ current: 0, total: count })).catch(() => {})
+      // 两条进度通道同样要受序号保护：否则过期请求会用旧实例/旧一轮的进度
+      // 覆盖当前显示的进度。
+      getModsCount(instanceId).then(count => {
+        if (isStale()) return
+        setLoadProgress({ current: 0, total: count })
+      }).catch(() => {})
       pollId = setInterval(async () => {
         try {
           const p = await getModsProgress(instanceId)
+          if (isStale()) return
           if (p) setLoadProgress(p)
         } catch {
           // 300ms 轮询：单个周期失败就保留上一次的进度，下一周期还会重试，

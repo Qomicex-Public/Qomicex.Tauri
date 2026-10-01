@@ -1657,14 +1657,24 @@ fn delete_mod_file(path: &Path) -> std::io::Result<()> {
     candidates.push(legacy);
 
     for candidate in &candidates {
-        if candidate.is_file() {
-            // 错误向上传播：占用（PermissionDenied）与其它 IO 失败不再被 `let _ =` 吞掉
-            return std::fs::remove_file(candidate);
+        // 用 metadata 而非 `is_file()`：后者在无权限访问时同样返回 false，
+        // 会把权限故障误报成「文件不存在」（NotFound）。此处只让 NotFound 继续
+        // 尝试下一个候选，其它错误（如 PermissionDenied）立即向上传播。
+        match std::fs::metadata(candidate) {
+            Ok(meta) if meta.is_file() => {
+                // 错误向上传播：占用（PermissionDenied）与其它 IO 失败不再被 `let _ =` 吞掉
+                return std::fs::remove_file(candidate);
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
     }
+    // 刻意不回传解析后的文件系统路径：该消息会经 ApiError 进入 HTTP 响应体，
+    // 对外只表达「目标不存在」，路径细节留在服务端侧即可。
     Err(std::io::Error::new(
         std::io::ErrorKind::NotFound,
-        format!("mod file not found: {}", path.display()),
+        "mod file not found",
     ))
 }
 
@@ -2752,6 +2762,38 @@ mod tests {
 
         let err = delete_mod_file(&missing).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同名目录不是文件：必须跳过候选（`Ok(_) => {}` 分支）而不是去删它，
+    /// 最终报 NotFound。这同时守护「用 metadata 替代 is_file()」的改动。
+    #[test]
+    fn delete_mod_file_skips_non_file_candidate() {
+        let dir = temp_dir("dir-candidate");
+        let as_dir = dir.join("foo.jar");
+        std::fs::create_dir_all(&as_dir).unwrap();
+
+        let err = delete_mod_file(&as_dir).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(as_dir.is_dir(), "同名目录不应被删除");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 该错误会经 ApiError 进入 HTTP 响应体，因此不得回传解析后的文件系统路径。
+    #[test]
+    fn delete_mod_file_not_found_message_omits_path() {
+        let dir = temp_dir("no-path-leak");
+        let missing = dir.join("secret-dir").join("nope.jar");
+
+        let err = delete_mod_file(&missing).unwrap_err();
+        let msg = err.to_string();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(
+            !msg.contains("secret-dir") && !msg.contains(&dir.display().to_string()),
+            "错误消息不应包含文件系统路径，实际为: {msg}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
