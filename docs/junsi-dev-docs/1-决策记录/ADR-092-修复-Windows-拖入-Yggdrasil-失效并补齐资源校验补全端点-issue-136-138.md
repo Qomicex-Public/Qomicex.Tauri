@@ -1,4 +1,4 @@
-# ADR-091：修复 Windows 拖入 Yggdrasil 卡片失效（Rust 侧解析 .url）+ 补齐资源校验/补全三端点（issue #136 + #138）
+# ADR-092：修复 Windows 拖入 Yggdrasil 卡片失效（Rust 侧解析 .url）+ 补齐资源校验/补全三端点（issue #136 + #138）
 
 | 属性 | 内容 |
 |---|---|

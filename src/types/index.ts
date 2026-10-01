@@ -490,6 +490,33 @@ export interface ResourceDetail extends ResourceItem {
   body: string
 }
 
+/**
+ * 资源收藏条目（`GET/POST /api/resource-favorites`）。
+ *
+ * 唯一键 `source + id + category`；同时携带卡片渲染所需的资源快照，使收藏视图
+ * 无需再请求详情即可复用 `ResourceCard` 渲染与安装。
+ * `folderId` / `note` / `tags` 为 P2（收藏夹分组 / 备注 / 自定义标签）预留字段，
+ * P1 恒为 `null` / `[]`。
+ */
+export interface ResourceFavorite {
+  source: string
+  id: string
+  category: string
+  title: string
+  description: string
+  author: string
+  iconUrl: string
+  downloadCount: number
+  categories: string[]
+  projectUrl: string
+  slug: string
+  latestVersion: string
+  folderId: string | null
+  note: string | null
+  tags: string[]
+  createdAt: string
+}
+
 export interface ResourceSearchResponse {
   items: ResourceItem[]
   total: number

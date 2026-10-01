@@ -9,6 +9,7 @@ import { useI18n } from '../i18n/index.tsx'
 import { REPOSITORY_URL } from '../constants/credits.ts'
 import { useUpdaterStore } from '../stores/updaterStore.ts'
 import { APP_INFO } from '../constants/credits.ts'
+import { channelLabelKey } from '../lib/updateChannel.ts'
 
 interface Props {
   open: boolean
@@ -37,6 +38,10 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
   const locked = required || downloading || done
   const versionTag = `v${plan.version?.replace(/^v/, '') ?? ''}`
   const releaseUrl = `${REPOSITORY_URL}/releases/tag/${versionTag}`
+  // 通道名走本地化标签（测试版/稳定版/开发版），与设置页「关于」徽章同口径；
+  // 后端给了认不出的 channel 时回落原始字符串，不猜。
+  const channelKey = channelLabelKey(plan.channel)
+  const channelLabel = channelKey ? t(channelKey) : (plan.channel ?? '')
 
   return (
     <Dialog open={open} onClose={locked ? () => {} : onClose} closeOnBackdrop={!locked} closeOnEsc={!locked}>
@@ -57,7 +62,7 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
               只在别无断点时才词中截断；leading-snug 兜底换行后的行距 */}
           <span className="min-w-0 leading-snug [overflow-wrap:anywhere]">
             {plan.channelSwitch
-              ? t('dialogs.update.channelSwitchTitle', { channel: plan.channel ?? '' })
+              ? t('dialogs.update.channelSwitchTitle', { channel: channelLabel })
               : t('dialogs.update.foundNew', { version: plan.version ?? '' })}
           </span>
         </DialogTitle>
@@ -83,7 +88,7 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
         {plan.channelSwitch && (
           <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
             <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" />
-            {t('dialogs.update.channelSwitchNotice', { channel: plan.channel ?? '' })}
+            {t('dialogs.update.channelSwitchNotice', { channel: channelLabel })}
           </div>
         )}
 
