@@ -25,6 +25,7 @@ import { Tooltip } from '../components/ui'
 import * as accountApi from '../api/account.ts'
 import type { MicrosoftOAuthResponse, Account, YggdrasilProfileInfo } from '../types/index.ts'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { listen } from '@tauri-apps/api/event'
 import { useI18n } from '../i18n/index.tsx'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 
@@ -380,15 +381,39 @@ export default function Accounts() {
     e.dataTransfer.dropEffect = 'copy'
   }
 
-  async function onYggDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault()
-    const url = parseYggDndUri(e.dataTransfer.getData('text/plain'))
+  /** 把 authlib 拖拽 URI 落成「确认 → 填入并解析」。DOM 拖放与 Tauri 事件两条通道共用。 */
+  const applyYggDroppedUri = useCallback(async (uri: string) => {
+    const url = parseYggDndUri(uri)
+    // 不是 authlib 拖拽数据就静默忽略（该事件也可能被其它来源触发）。
     if (!url) return
+    setAddTab('yggdrasil')
+    setAddOpen(true)
     const ok = await msgConfirm(t('accounts.ygg.dndConfirm', { url }), t('accounts.ygg.dndTitle'))
     if (!ok) return
     setYggServer(url)
     clearYggResolved()
     void ensureYggResolved(url)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t, msgConfirm])
+
+  // Windows 上 Tauri 接管了 WebView2 的拖放，DOM 的 drop 事件不会派发
+  // （tauri-utils 的 `drag_drop_enabled` 文档：「Disabling it is required to use HTML5
+  // drag and drop on the frontend on Windows」）。因此拖链接进来时，由 Rust 侧读
+  // `.url` 快捷方式并转成 `ygg-server-drop` 事件——这条通道在 Windows 上才有效。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    listen<string>('ygg-server-drop', e => {
+      if (typeof e.payload === 'string') void applyYggDroppedUri(e.payload)
+    })
+      .then(fn => { unlisten = fn })
+      .catch(() => {})
+    return () => unlisten?.()
+  }, [applyYggDroppedUri])
+
+  async function onYggDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    const uri = e.dataTransfer.getData('text/plain')
+    await applyYggDroppedUri(uri)
   }
 
   async function handleYggdrasilLogin() {
