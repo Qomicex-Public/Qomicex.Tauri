@@ -100,6 +100,7 @@ export async function updateModsViaDownloadCenter(
         currentFile: u.newFileName,
         icon: u.iconUrl,
         createdAt: new Date().toISOString(),
+        resourceKind: 'mod',
       })
       return { taskId, u }
     } catch (e) {
@@ -118,6 +119,7 @@ export async function updateModsViaDownloadCenter(
         icon: u.iconUrl,
         createdAt: new Date().toISOString(),
         error: e instanceof Error ? `${tf('dialogs.common.startFailed')}：${e.message}` : tf('dialogs.common.startFailed'),
+        resourceKind: 'mod',
       })
       return { taskId: failedTaskId, u, startError: e instanceof Error ? e.message : String(e) }
     }

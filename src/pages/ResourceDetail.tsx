@@ -19,6 +19,7 @@ import { get, post, API_BASE } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, getResourceDependencies, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
 import { lookupChineseName } from '../api/mcmod.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
+import { normalizeResourceKind } from '../lib/downloadGroups.ts'
 import { downloadTo } from '../api/resource-download.ts'
 import { getInstance, getDefaultInstance } from '../api/instance.ts'
 import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance, ResolvedDependency } from '../types/index.ts'
@@ -229,6 +230,7 @@ export default function ResourceDetailPage() {
         currentFile: targetName,
         icon: detail?.iconUrl,
         createdAt: new Date().toISOString(),
+        resourceKind: normalizeResourceKind(category),
       })
       notify(t('resourceDetail.addedToDownload'), 'success')
     } catch {
@@ -254,6 +256,8 @@ export default function ResourceDetailPage() {
         currentFile: fileName,
         icon: detail?.iconUrl,
         createdAt: new Date().toISOString(),
+        // FTB 导出的 JSON 描述的是整合包内容，归入整合包组。
+        resourceKind: 'modpack',
       })
       notify(t('resourceDetail.addedToDownload'), 'success')
     } catch {

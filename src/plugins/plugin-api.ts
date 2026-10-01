@@ -1,6 +1,7 @@
 import { API_BASE } from '../api/client.ts'
 import { openStream, createSseParser, uploadFile } from '../api/ipc.ts'
 import { addTask } from '../stores/downloadStore.ts'
+import { normalizeResourceKind } from '../lib/downloadGroups.ts'
 import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
 import { resolveLang } from '../i18n/lang.ts'
 import { getHookRegistry } from './hook-registry.ts'
@@ -376,6 +377,10 @@ export function createPluginBridge(pluginId: string): PluginBridge {
           status: 'queued',
           progress: 0,
           createdAt: new Date().toISOString(),
+          // 分类只写进前端任务，**不能**塞进 `opts`：插件桥会用
+          // `JSON.stringify(opts)` 把整个对象发给后端。认不出的值就不写，
+          // 让下载中心把它归入「其他」而不是猜成模组。
+          resourceKind: normalizeResourceKind(opts.category),
         })
         return result
       },
