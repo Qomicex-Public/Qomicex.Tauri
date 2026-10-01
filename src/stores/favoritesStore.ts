@@ -47,6 +47,38 @@ function maybeReload(): void {
   void useFavoritesStore.getState().load(true)
 }
 
+/**
+ * 每个收藏键一条 mutation 队列（值为「队尾」，即最后一个操作的完成信号）。
+ *
+ * **为什么必须按 key 串行化**：页面级 busy 状态只在各自页面内生效 ——
+ * `ResourceCenter` 的 `favBusyKeys` 与 `ResourceDetail` 的 `favBusy` 互不共享。
+ * 列表页的 POST 尚未返回时用户跳到详情页，详情页看到的是**乐观收藏**，于是可以立刻
+ * 发起同键 DELETE。两个请求并发时返回顺序无法保证：
+ * - 若 POST 响应晚于「已成功的 DELETE」到达，POST 成功分支会把 `saved` 重新插回列表
+ *   —— 而此刻没有在飞的 GET，`reloadPending` 为 false，不会触发重拉；
+ * - 结果是 UI 显示已收藏，服务端其实已删除，且不会自愈。
+ *
+ * 串行化后第二个操作在第一个**完全结束**（成功或失败）后才发出，并按当时的真实状态
+ * 决策（例如「先加后删」会正确变成一次 add + 一次 remove）。不同键互不阻塞。
+ */
+const favoriteMutationTails = new Map<string, Promise<void>>()
+
+function serializeByKey<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const previous = favoriteMutationTails.get(key) ?? Promise.resolve()
+  // 前一个无论成功失败都要放行本次（失败已经由各自调用方回滚，不该卡住队列）。
+  const run = previous.then(operation, operation)
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  favoriteMutationTails.set(key, tail)
+  void tail.then(() => {
+    // 队列排空后清理，避免 Map 随收藏数无界增长（只在仍是队尾时删）。
+    if (favoriteMutationTails.get(key) === tail) favoriteMutationTails.delete(key)
+  })
+  return run
+}
+
 interface FavoritesState {
   favorites: ResourceFavorite[]
   /** 是否成功加载过一次（`load()` 默认只在首次真正请求）。 */
@@ -93,46 +125,51 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
     return get().favorites.some((f) => favoriteKey(f.source, f.id, f.category) === key)
   },
 
-  toggleFavorite: async (item, category) => {
+  toggleFavorite: (item, category) => {
     const key = favoriteKey(item.source, item.id, category)
-    // 快照：只用于回滚**本次这个键**，见下方 catch。
-    const before = get().favorites
-    const exists = before.some((f) => favoriteKey(f.source, f.id, f.category) === key)
-    const optimistic = toResourceFavorite(item, category)
+    // 整个 mutation（含乐观更新与回滚）都排在该键的队列里执行：
+    // 队列中的第二个操作要按第一个**结束之后**的真实状态决策，所以 `before`/`exists`
+    // 必须在队列内计算，不能在外面先算好。
+    return serializeByKey(key, async () => {
+      // 快照：只用于回滚**本次这个键**，见下方 catch。
+      const before = get().favorites
+      const exists = before.some((f) => favoriteKey(f.source, f.id, f.category) === key)
+      const optimistic = toResourceFavorite(item, category)
 
-    // 立刻让在飞的 load() 作废，并登记一个进行中的 mutation（load() 会据此拒绝提交）。
-    mutationEpoch += 1
-    inFlightMutations += 1
-
-    if (exists) {
-      set({ favorites: before.filter((f) => favoriteKey(f.source, f.id, f.category) !== key) })
-    } else {
-      set({ favorites: sortByCreatedAtDesc([optimistic, ...before]) })
-    }
-
-    try {
-      if (exists) {
-        await removeResourceFavorite(item.source, item.id, category)
-        return false
-      }
-      const saved = await addResourceFavorite(optimistic)
-      // 「插入或替换」而不是纯替换：即便该键因任何原因不在当前列表里，服务端已确认的
-      // 条目也必须出现在列表中（纯替换会静默丢掉它）。
-      const rest = get().favorites.filter((f) => favoriteKey(f.source, f.id, f.category) !== key)
-      set({ favorites: sortByCreatedAtDesc([saved, ...rest]) })
-      return true
-    } catch (e) {
-      // 只回滚当前键：期间可能有别的键已成功（`favBusyKeys` 只挡同键重复点击），
-      // 整份 `before` 回滚会把那些成功的改动一起清掉，造成 UI 与服务端不一致。
-      const prev = before.find((f) => favoriteKey(f.source, f.id, f.category) === key)
-      const rest = get().favorites.filter((f) => favoriteKey(f.source, f.id, f.category) !== key)
-      set({ favorites: sortByCreatedAtDesc(prev ? [prev, ...rest] : rest) })
-      throw e
-    } finally {
-      inFlightMutations -= 1
+      // 立刻让在飞的 load() 作废，并登记一个进行中的 mutation（load() 会据此拒绝提交）。
       mutationEpoch += 1
-      maybeReload()
-    }
+      inFlightMutations += 1
+
+      if (exists) {
+        set({ favorites: before.filter((f) => favoriteKey(f.source, f.id, f.category) !== key) })
+      } else {
+        set({ favorites: sortByCreatedAtDesc([optimistic, ...before]) })
+      }
+
+      try {
+        if (exists) {
+          await removeResourceFavorite(item.source, item.id, category)
+          return false
+        }
+        const saved = await addResourceFavorite(optimistic)
+        // 「插入或替换」而不是纯替换：即便该键因任何原因不在当前列表里，服务端已确认的
+        // 条目也必须出现在列表中（纯替换会静默丢掉它）。
+        const rest = get().favorites.filter((f) => favoriteKey(f.source, f.id, f.category) !== key)
+        set({ favorites: sortByCreatedAtDesc([saved, ...rest]) })
+        return true
+      } catch (e) {
+        // 只回滚当前键：期间可能有别的键已成功（`favBusyKeys` 只挡同键重复点击），
+        // 整份 `before` 回滚会把那些成功的改动一起清掉，造成 UI 与服务端不一致。
+        const prev = before.find((f) => favoriteKey(f.source, f.id, f.category) === key)
+        const rest = get().favorites.filter((f) => favoriteKey(f.source, f.id, f.category) !== key)
+        set({ favorites: sortByCreatedAtDesc(prev ? [prev, ...rest] : rest) })
+        throw e
+      } finally {
+        inFlightMutations -= 1
+        mutationEpoch += 1
+        maybeReload()
+      }
+    })
   },
 }))
 
