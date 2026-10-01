@@ -191,3 +191,51 @@ v1.1 只用 `mutationEpoch`（世代号）判断「列表响应是否过期」�
 A 覆盖「响应早于 mutation」，B 覆盖「并发 mutation 的失败回滚」，C 覆盖「响应发出于
 mutation 之后但落库之前」+ 强制重拉。
 
+
+
+### 2026-10-01 更新
+## 2026-10-01 补充（v1.3）：按收藏键在 store 内串行化 mutation
+
+v1.1/v1.2 修的是「列表响应与 mutation」的交错。评审又指出另一类：**同键的 POST/DELETE
+本身可以并发**。核对后成立 —— 页面级 busy 状态互不共享：
+
+- `ResourceCenter` 的 `favBusyKeys` 与 `ResourceDetail` 的 `favBusy` 只在各自页面内生效；
+- 列表页 POST 未返回时跳到详情页，详情页看到的是共享 store 里的**乐观收藏**，于是可以
+  立刻发起同键 DELETE；
+- 若 POST 已在服务端持久化、但其**响应**晚于「已成功的 DELETE」返回，POST 成功分支会把
+  `saved` 重新插回列表；此刻没有在飞的 GET、`reloadPending` 为 `false`，不会触发重拉 ——
+  **UI 显示已收藏而服务端已删除，且不会自愈**。
+
+### 修法：`serializeByKey`
+
+`favoriteMutationTails: Map<key, Promise>` 为每个 `source + id + category` 维护一条队列：
+
+- 本次操作在上一个操作**完全结束**（成功或失败）后才执行；不同键互不阻塞；
+- 队列排空后删除表项，避免 Map 随收藏数无界增长；
+- 失败不阻断队列（前一个失败已由各自调用方回滚，用 `previous.then(op, op)` 放行）；
+- **整个 mutation 体移入队列内执行** —— `before` / `exists` 必须按前一个操作结束后的
+  真实状态计算，否则「先加后删」会被误判成两次 add。
+
+### 回归：场景 D（请求时序直证）
+
+| 步骤 | 观测 |
+|---|---|
+| 列表页点收藏（POST 在服务端立即落库，响应延迟 1.2s） | `listPressed = true` |
+| 跳到详情页 | `chipOnDetailBeforeClick = true`（跨页面共享同一份乐观状态） |
+| 点详情页的收藏 chip（同键 DELETE） | 事件序列 **`POST recv → POST resp → DELETE recv → DELETE resp`**（`serialized = true`）—— DELETE 只在 POST **完整返回后**才发出 |
+| 最终 | `chipFinal = false`、服务端 `[]`、UI 与服务端一致 |
+
+> 修复前该序列会是 `POST recv → DELETE recv → DELETE resp → POST resp`，POST 晚到的成功
+> 分支会把已删条目插回。
+
+场景 A / B / C 复跑未回归。
+
+### 回归清单（改 store 时必须一并复跑）
+
+| 场景 | 覆盖 |
+|---|---|
+| A | 列表响应早于 mutation 开始 |
+| B | 并发 mutation 的失败回滚（只回滚当前键） |
+| C | 列表响应发出于 mutation 之后但落库之前 + 强制重拉 |
+| D | 同键跨页面的 POST/DELETE 并发（串行化） |
+
