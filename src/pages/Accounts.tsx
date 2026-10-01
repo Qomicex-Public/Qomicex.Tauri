@@ -39,15 +39,32 @@ function fmtErr(e: unknown): string {
  *  内容形如 `authlib-injector:yggdrasil-server:{URI 编码的 API 地址}`。 */
 const YGG_DND_PREFIX = 'authlib-injector:yggdrasil-server:'
 
+/**
+ * 从拖拽数据里取出验证服务器地址。
+ *
+ * 两种来源都要认：
+ * - **规范形式**（DOM 拖放路径）：带 `authlib-injector:yggdrasil-server:` 前缀、
+ *   地址经过 `encodeURIComponent`。
+ * - **裸地址**（Windows 原生路径）：`src-tauri/src/dnd.rs` 已在 Rust 侧解析并去掉前缀
+ *   （顺便拒绝了无关文本），因此这里直接收到 `https://...`。站点不一定遵守前缀规范
+ *   （issue #136 的卡片就把地址放在 `data-clipboard-text`），所以不能只认前缀。
+ */
 function parseYggDndUri(text: string): string | null {
-  if (!text.startsWith(YGG_DND_PREFIX)) return null
-  const encoded = text.slice(YGG_DND_PREFIX.length)
-  try {
-    const url = decodeURIComponent(encoded).trim()
-    return url || null
-  } catch {
-    return null
+  const raw = text.trim()
+  if (!raw) return null
+  if (raw.startsWith(YGG_DND_PREFIX)) {
+    const encoded = raw.slice(YGG_DND_PREFIX.length)
+    try {
+      const url = decodeURIComponent(encoded).trim()
+      return url || null
+    } catch {
+      // 部分站点不编码：按原样试一次，交给后端 ALI 解析校验。
+      const url = encoded.trim()
+      return url || null
+    }
   }
+  if (/^https?:\/\//i.test(raw)) return raw
+  return null
 }
 
 interface YggResolvedInfo {
@@ -396,10 +413,10 @@ export default function Accounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, msgConfirm])
 
-  // Windows 上 Tauri 接管了 WebView2 的拖放，DOM 的 drop 事件不会派发
-  // （tauri-utils 的 `drag_drop_enabled` 文档：「Disabling it is required to use HTML5
-  // drag and drop on the frontend on Windows」）。因此拖链接进来时，由 Rust 侧读
-  // `.url` 快捷方式并转成 `ygg-server-drop` 事件——这条通道在 Windows 上才有效。
+  // Windows 上拖放由 `src-tauri/src/dnd.rs` 的自定义 IDropTarget 接管：tauri/wry 自带的
+  // 处理器只认 CF_HDROP（文件），拖文本时直接丢弃且不发事件；而 DOM 的 HTML5 drop 又被
+  // wry 的 SetAllowExternalDrop(false) 一并禁掉。因此 dnd.rs 同时读 CF_HDROP 与
+  // CF_UNICODETEXT，文本拖拽经 `ygg-server-drop` 送到这里（其余平台仍走 DOM 的 onDrop）。
   useEffect(() => {
     let unlisten: (() => void) | undefined
     listen<string>('ygg-server-drop', e => {

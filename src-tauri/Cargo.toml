@@ -33,6 +33,22 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 semver = "1"
 
+# 自实现 IDropTarget 读取文本拖拽（authlib-injector 的 DnD 走 text/plain，
+# 而 tauri/wry 的拖放处理器只认 CF_HDROP 文件，非文件直接丢弃不发事件）。
+# 版本对齐 tauri 2.x 自身所用的 windows 0.61，避免同进程两套 windows 类型。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# `#[implement(IDropTarget)]` 宏生成的代码引用 `::windows_core`，必须以直接依赖的形式
+# 存在（wry/tao 同样这么做）。版本与上面的 windows 0.61 对齐。
+windows-core = "0.61"
+
 [dev-dependencies]
 semver = "1"
 
