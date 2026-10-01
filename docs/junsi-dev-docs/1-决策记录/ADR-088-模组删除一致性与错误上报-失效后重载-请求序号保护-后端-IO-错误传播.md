@@ -38,13 +38,37 @@ Issue #140：右键删除单个模组「无效」或删除后列表仍残留该�
 
 ## 影响
 - src/pages/InstanceDetail.tsx — ModsTab：新增 loadModsSeqRef / refreshMods，loadMods 加序号保护与轮询清理修复，handleBatchAction 改用 refreshMods，ModCard 传 onRefresh={refreshMods}
-- src/components/ModCard.tsx — onRefresh 类型放宽，handleDelete 加成功/失败通知并 await 刷新
-- src-backend/qomicex-backend/src/endpoints/instance_files.rs — delete_mod_file 返回 io::Result 并补 .disabled 追回退；delete_mod 传播错误；batch_delete_mods / batch_update_mods 记 warn；新增 4 个 #[cfg(test)] 用例
-- API 行为变更：DELETE /api/instance/{id}/files/mods 由「恒 204」改为可返回 404（文件不存在）/ 403（被占用或无权限）/ 500；batch-delete 与 batch-update 契约不变
+- src/components/ModCard.tsx — onRefresh 类型放宽，handleDelete 加成功/失败通知；仅在成功或 404 时刷新（失败刷新会清空多选且属无谓全量重载）
+- src-backend/qomicex-backend/src/endpoints/instance_files.rs — delete_mod_file 返回 io::Result 并补 .disabled 追回退；新增 is_file_in_use / map_delete_mod_error；delete_mod 传播错误（占用→409）；batch_delete_mods 返回失败列表；batch_update_mods 记 warn；新增 7 个 #[cfg(test)] 用例
+- src-backend/qomicex-backend/src/error.rs — 新增 ApiError::conflict（409）
+- src/api/instance-files.ts — batchDeleteMods 返回 Promise<BatchDeleteResult>
+- src/i18n/errors.ts — MOD_FILE_IN_USE → errors.modFileInUse；导出 errorCodeToKey 复用单一错误码映射源
 - 已知低风险边界：src/lib/updateMods.ts 在下载完成后调用 deleteMod 删旧文件，若旧文件已不存在，该更新项由「计入成功」变为「计入失败」（旧行为依赖 deleteMod 静默成功）
-- 未改动：ContextMenu.tsx、选择逻辑、隐藏选中项策略、useListSelection 迁移、mods 更新缓存、路径穿越校验、i18n submodule
+- 未改动：ContextMenu.tsx、选择逻辑、隐藏选中项策略、useListSelection 迁移、mods 更新缓存、路径穿越校验
+- i18n submodule（qomicex-tauri-i18n）：7 locale 新增 `errors.modFileInUse` 与 `instanceDetail.mods.batchDeleteFailed`；launcher 的 gitlink 指向 i18n 分支 `fix/140-mod-file-in-use`，**i18n PR 需先合并**，否则 launcher 合并后 main 会 pin 一个未进入 i18n main 的提交
+
+## API 契约变更
+- `DELETE /api/instance/{id}/files/mods`：由「恒 204」改为
+  - 204 成功 / 404 `NOT_FOUND` 文件不存在 / **409 `MOD_FILE_IN_USE` 被其它进程占用** / 403 无权限 / 500 其它 IO 失败
+- `POST .../mods/batch-delete`：由「200 + 空体」改为
+  `200 {"deleted":[...],"failed":[{"name","code","message"}]}`（尽力而为语义不变）
+
+### 关键实测事实（决定了实现方式）
+- Windows 文件被占用：`remove_file` 返回 `ErrorKind::Uncategorized` + `raw_os_error=32`（`ERROR_SHARING_VIOLATION`），**既非 `PermissionDenied` 也非 `NotFound`**，故原 `error.rs` 通用 io 映射落到 `_ => internal` → 500，前端再映射成「服务器内部错误」，系统原文「另一个程序正在使用此文件」被丢弃。
+- 占用判定必须 `#[cfg(windows)]` 限定：errno 32 在 Linux 是 `EPIPE`，按数字裸匹配会把无关错误误报成占用。
+- 测试复现必须用 `OpenOptionsExt::share_mode(0)`：Rust `File::open` 默认带 `FILE_SHARE_DELETE`，删除会成功，无法复现占用。
+
+### 端到端实测（真实后端 + 独占句柄，QOMICEX_HOME 隔离）
+- 正常删除 → 204，文件消失
+- 文件不存在 → 404 `NOT_FOUND` / `mod file not found`
+- 文件被占用 → 409 `{"code":"MOD_FILE_IN_USE","detail":"另一个程序正在使用此文件…(os error 32)"}`
+- `foo.jar.disabled` 经 `foo.jar` 删除 → 204
+- 批删混合 → 200 `{"deleted":["good.jar"],"failed":[{"name":"buzy.jar","code":"MOD_FILE_IN_USE"},{"name":"ghost.jar","code":"NOT_FOUND"}]}`
+- 批删全成功 → 200 `{"deleted":["a.jar","b.jar"],"failed":[]}`
+
 
 ## 修订记录
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-10-01 | v1.0 | 初版创建 | AI Agent |
+| 2026-10-01 | v1.1 | 补充被占用识别：新增 409 MOD_FILE_IN_USE 与批删失败列表契约、7 locale 文案、端到端实测结果；纠正 v1.0 中「403 被占用」「batch-delete 契约不变」「未改动 i18n submodule」三处错误表述 | AI Agent |
