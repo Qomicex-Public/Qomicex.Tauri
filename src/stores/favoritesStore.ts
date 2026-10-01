@@ -21,15 +21,31 @@ function sortByCreatedAtDesc(items: ResourceFavorite[]): ResourceFavorite[] {
 /**
  * mutation 世代号：每次 `toggleFavorite` 开始与结束都自增。
  *
- * `load()` 在发出请求前记下世代号，响应回来时若已变化就**丢弃这份列表**——
- * 它可能是「新增/删除之前」的快照（客户端没有请求队列，`GET /resource-favorites`
- * 与 POST/DELETE 是彼此独立的请求）。丢弃后不置 `loaded`，下次挂载会重新拉取，
- * 从而自愈；若直接接受，过期列表会覆盖已成功的乐观更新，而 `loaded: true`
- * 又会让后续 `load()` 直接返回，状态再也修不回来。
- *
- * 放在模块作用域而非 store state：它不是渲染依赖，不该触发重渲染。
+ * `load()` 在发出请求前记下世代号，响应回来时若已变化就**不能提交这份列表**——
+ * 客户端没有请求队列，`GET /resource-favorites` 与 POST/DELETE 是彼此独立的请求，
+ * 列表响应可能是「mutation 之前」的快照。
  */
 let mutationEpoch = 0
+
+/**
+ * 进行中的 mutation 数量。
+ *
+ * 单看世代号不够：`load()` 可能在 mutation **已经发起之后**才发出 GET，此时它取到的
+ * 世代号是最新的，但服务端可能还没落库 → 响应仍是旧列表。若在这个瞬间提交，乐观条目
+ * 会被抹掉；而 POST 成功后的「替换」也找不到该键，收藏会在 UI 上凭空消失。
+ * 因此有 mutation 在飞时一律不提交列表。
+ */
+let inFlightMutations = 0
+
+/** 有列表响应被丢弃，需要在其后强制重拉一次以与服务端收敛。 */
+let reloadPending = false
+
+/** 所有 mutation 收尾后（无 mutation 在飞）执行挂起的强制重拉，最多一次。 */
+function maybeReload(): void {
+  if (!reloadPending || inFlightMutations > 0) return
+  reloadPending = false
+  void useFavoritesStore.getState().load(true)
+}
 
 interface FavoritesState {
   favorites: ResourceFavorite[]
@@ -58,10 +74,12 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
     set({ loading: true })
     try {
       const favorites = await listResourceFavorites()
-      if (mutationEpoch !== epochAtStart) {
-        // 期间有 mutation 开始/完成：这份列表可能不含它，丢弃且不置 loaded，
-        // 交给下一次 load() 收敛（当前内存状态已是乐观/服务端确认后的结果）。
+      // 有 mutation 在飞、或期间发生过 mutation：这份列表可能是旧快照。不提交，
+      // 也不置 `loaded`，改为登记一次强制重拉，等 mutation 收尾后收敛到服务端真值。
+      if (inFlightMutations > 0 || mutationEpoch !== epochAtStart) {
         set({ loading: false })
+        reloadPending = true
+        maybeReload()
         return
       }
       set({ favorites: sortByCreatedAtDesc(favorites ?? []), loaded: true, loading: false, error: null })
@@ -82,7 +100,10 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
     const exists = before.some((f) => favoriteKey(f.source, f.id, f.category) === key)
     const optimistic = toResourceFavorite(item, category)
 
+    // 立刻让在飞的 load() 作废，并登记一个进行中的 mutation（load() 会据此拒绝提交）。
     mutationEpoch += 1
+    inFlightMutations += 1
+
     if (exists) {
       set({ favorites: before.filter((f) => favoriteKey(f.source, f.id, f.category) !== key) })
     } else {
@@ -92,26 +113,25 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
     try {
       if (exists) {
         await removeResourceFavorite(item.source, item.id, category)
-        mutationEpoch += 1
         return false
       }
       const saved = await addResourceFavorite(optimistic)
-      // 用服务端条目替换乐观条目，取回服务端生成的 createdAt。
-      set({
-        favorites: sortByCreatedAtDesc(
-          get().favorites.map((f) => (favoriteKey(f.source, f.id, f.category) === key ? saved : f)),
-        ),
-      })
-      mutationEpoch += 1
+      // 「插入或替换」而不是纯替换：即便该键因任何原因不在当前列表里，服务端已确认的
+      // 条目也必须出现在列表中（纯替换会静默丢掉它）。
+      const rest = get().favorites.filter((f) => favoriteKey(f.source, f.id, f.category) !== key)
+      set({ favorites: sortByCreatedAtDesc([saved, ...rest]) })
       return true
     } catch (e) {
-      // 只回滚当前键：期间可能有别的键已成功（`favBusyKey` 只挡同键重复点击），
+      // 只回滚当前键：期间可能有别的键已成功（`favBusyKeys` 只挡同键重复点击），
       // 整份 `before` 回滚会把那些成功的改动一起清掉，造成 UI 与服务端不一致。
       const prev = before.find((f) => favoriteKey(f.source, f.id, f.category) === key)
       const rest = get().favorites.filter((f) => favoriteKey(f.source, f.id, f.category) !== key)
       set({ favorites: sortByCreatedAtDesc(prev ? [prev, ...rest] : rest) })
-      mutationEpoch += 1
       throw e
+    } finally {
+      inFlightMutations -= 1
+      mutationEpoch += 1
+      maybeReload()
     }
   },
 }))
