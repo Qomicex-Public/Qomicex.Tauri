@@ -5,8 +5,33 @@ export function setApiBase(base: string) {
   API_BASE = base
 }
 
-/** 全局请求超时：任何请求 15s 无响应即中断，避免"一直加载"（如慢速外部 ping）。 */
-const REQUEST_TIMEOUT_MS = 15_000
+/**
+ * 全局请求超时兜底：任何请求在未显式放宽时，超过此时长无响应即中断，
+ * 避免"一直加载"（如慢速外部 ping）。
+ *
+ * 此前是硬编码 15s，且与设置项 `downloadTimeout` **无关**（后者只被塞进
+ * /instance/{id}/install 请求体且被后端丢弃）——用户改了设置也无效（issue #133）。
+ * 现在由 `setDefaultRequestTimeout` 接入设置，成为可配置项。
+ */
+const FALLBACK_REQUEST_TIMEOUT_MS = 15_000
+
+let defaultRequestTimeoutMs = FALLBACK_REQUEST_TIMEOUT_MS
+
+/**
+ * 设置全局默认请求超时（毫秒）。`0` / 负数 / 非有限值 = 不设总超时
+ * （只留调用方 signal 与底层连接超时兜底）。
+ *
+ * 由 i18n 同级的启动流程在加载设置后调用（见 `applyDownloadTimeoutSetting`）。
+ */
+export function setDefaultRequestTimeout(ms: number) {
+  defaultRequestTimeoutMs =
+    Number.isFinite(ms) && ms > 0 ? ms : 0
+}
+
+/** 当前生效的全局默认请求超时（毫秒，0 = 不限）。 */
+export function getDefaultRequestTimeout(): number {
+  return defaultRequestTimeoutMs
+}
 
 /** 后端统一错误响应结构 */
 export interface ApiErrorResponse {
@@ -98,7 +123,8 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
     requestedTimeout > 0
       ? requestedTimeout
       : undefined
-  const timeoutMs = validTimeout ?? (callerSignal ? undefined : REQUEST_TIMEOUT_MS)
+  const timeoutMs =
+    validTimeout ?? (callerSignal ? undefined : (defaultRequestTimeoutMs > 0 ? defaultRequestTimeoutMs : undefined))
   const controller = new AbortController()
   let detachCaller: (() => void) | undefined
   if (callerSignal) {

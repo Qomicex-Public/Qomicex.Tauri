@@ -48,9 +48,9 @@ const MAIN_STEP = 'download-main'
 export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): Promise<string> {
   const { instanceId, gameVersion, deps, main, toDelete = [], taskName, t } = opts
 
-  for (const d of toDelete) {
-    deleteMod(instanceId, d.fileName).catch(() => {})
-  }
+  // 旧文件**不在这里删**：换版本场景下立刻删除会让「下载失败」直接损失原文件。
+  // 改为全部下载成功后由 aggregate 删除（见其 toDelete 处理），与后端
+  // change_mod_version 的「先下成功、再替旧」语义一致。
 
   // 资源文件命名格式（ENH-10）：读取设置，按模板生成新文件名。
   // 已存在的目标文件名（下载中/已安装）做序号去重，避免覆盖。
@@ -98,13 +98,15 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
     batchTaskIds: [],
   })
 
+  const started: string[] = []
+  /** 本次真正落盘的新文件名 —— toDelete 与它同名时绝不能删（原地重下同一版本）。 */
+  const newFileNames = new Set<string>()
   const startOne = async (item: QuickInstallItem): Promise<string> => {
     const named = applyNaming(item)
     const { taskId } = await startResourceDownload(instanceId, named.url, named.fileName, named.category)
+    newFileNames.add(named.fileName)
     return taskId
   }
-
-  const started: string[] = []
   const cancelStarted = async () => {
     if (started.length > 0) await cancelBatch(started).catch(() => {})
     updateTask(batchId, { status: 'failed' })
@@ -126,7 +128,7 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
     const mainTaskId = await startOne(main)
     started.push(mainTaskId)
     updateTask(batchId, { batchTaskIds: [...started] })
-    void aggregate(batchId, instanceId, hasDeps, started, steps, t)
+    void aggregate(batchId, instanceId, hasDeps, started, steps, t, toDelete, newFileNames)
     return batchId
   } catch (e) {
     return failStart(e)
@@ -140,6 +142,8 @@ async function aggregate(
   taskIds: string[],
   steps: InstallStepInfo[],
   t: TFunc,
+  toDelete: { fileName: string; category: string }[] = [],
+  newFileNames: Set<string> = new Set(),
 ): Promise<void> {
   const prog = new Map<string, number>()
   const speedMap = new Map<string, number>()
@@ -176,8 +180,30 @@ async function aggregate(
   const all = [...depsStatuses, mainStatus[0]]
   const failedCount = all.filter(s => s !== 'completed').length
   if (failedCount === 0) {
-    updateTask(batchId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+    // 全部下载成功后才清理旧版本文件（失败时保留原件，用户不会丢数据）。
+    // 同名（原地重下同一版本）时跳过：那个文件正是刚下好的新文件。
+    //
+    // 必须 **await 并检查** 删除结果：旧文件删不掉（文件被占用 / 权限拒绝 / 后端抖动）时
+    // 新旧两个版本会同时留在 mods 里 —— 那不是「换版本成功」，静默忽略会误导用户。
+    const pending = toDelete.filter(d => !newFileNames.has(d.fileName))
+    const cleanup = await Promise.allSettled(
+      pending.map(d => deleteMod(instanceId, d.fileName)),
+    )
+    const failedCleanup = cleanup
+      .map((r, i) => (r.status === 'rejected' ? pending[i].fileName : null))
+      .filter((n): n is string => n !== null)
+
+    // 缓存必须在删除完成之后失效：否则刷新的列表可能仍含刚删掉的旧文件。
     cacheInvalidate(`api-instance-${instanceId}-mods`)
+
+    if (failedCleanup.length > 0) {
+      updateTask(batchId, {
+        status: 'failed',
+        error: t('dialogs.common.cleanupFailed', { files: failedCleanup.join('、') }),
+      })
+    } else {
+      updateTask(batchId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+    }
   } else {
     updateTask(batchId, { status: 'failed', error: t('dialogs.common.downloadFailed') })
   }

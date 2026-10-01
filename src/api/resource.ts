@@ -42,13 +42,17 @@ export function getResourceDetail(id: string, source?: string, category?: string
   return get<ResourceDetail>(`/resources/${encodeURIComponent(id)}${qs ? `?${qs}` : ''}`)
 }
 
+/** 远程版本列表 / 依赖解析：CurseForge 侧可达数十秒（分页 + 逐项查询），
+ * 用长超时避免全局默认超时在慢网络上误报「请求超时」（issue #133）。 */
+const REMOTE_LOOKUP_TIMEOUT_MS = 90_000
+
 export function getResourceVersions(id: string, source?: string, gameVersion?: string, loader?: string): Promise<ResourceVersion[]> {
   const q = new URLSearchParams()
   if (source) q.set('source', source)
   if (gameVersion) q.set('gameVersion', gameVersion)
   if (loader) q.set('loader', loader)
   const qs = q.toString()
-  return get<ResourceVersion[]>(`/resources/${encodeURIComponent(id)}/versions${qs ? `?${qs}` : ''}`)
+  return get<ResourceVersion[]>(`/resources/${encodeURIComponent(id)}/versions${qs ? `?${qs}` : ''}`, { timeoutMs: REMOTE_LOOKUP_TIMEOUT_MS })
 }
 
 export function startCurseForgeVersionFetch(id: string, gameVersion?: string, loader?: string): Promise<{ taskId: string; totalVersionCount: number; loadedVersionCount: number }> {
@@ -91,5 +95,5 @@ export function getResourceDependencies(id: string, source: string, versionId: s
   if (versionId) q.set('versionId', versionId)
   if (gameVersion) q.set('gameVersion', gameVersion)
   if (loader) q.set('loader', loader)
-  return get<ResolvedDependency[]>(`/resources/${encodeURIComponent(id)}/dependencies?${q}`)
+  return get<ResolvedDependency[]>(`/resources/${encodeURIComponent(id)}/dependencies?${q}`, { timeoutMs: REMOTE_LOOKUP_TIMEOUT_MS })
 }

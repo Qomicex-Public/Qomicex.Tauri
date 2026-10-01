@@ -1330,7 +1330,12 @@ export default function Settings() {
                       min={0}
                       max={120}
                       value={settings.downloadTimeout}
-                      onChange={(e) => update('downloadTimeout', Math.max(0, Math.min(120, parseInt(e.target.value) || 15)))}
+                      onChange={(e) => {
+                        // 注意不能用 `parseInt(v) || 15`：0 是文档里的「不超时」，
+                        // `0 || 15` 会把它吃掉，导致 0 永远输不进去（issue #133）。
+                        const parsed = parseInt(e.target.value, 10)
+                        update('downloadTimeout', Number.isNaN(parsed) ? settings.downloadTimeout : Math.max(0, Math.min(120, parsed)))
+                      }}
                       className="w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => update('downloadTimeout', Math.min(120, settings.downloadTimeout + 5))} disabled={settings.downloadTimeout >= 120}>
