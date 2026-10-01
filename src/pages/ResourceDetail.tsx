@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, Download, ExternalLink, Languages, Layers, RotateCw, Save, Tag, User } from 'lucide-react'
+import { ArrowLeft, ChevronDown, Download, ExternalLink, Heart, Languages, Layers, RotateCw, Save, Tag, User } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import ReactMarkdown from 'react-markdown'
@@ -24,6 +24,7 @@ import { downloadTo } from '../api/resource-download.ts'
 import { getInstance, getDefaultInstance } from '../api/instance.ts'
 import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance, ResolvedDependency } from '../types/index.ts'
 import { addTask } from '../stores/downloadStore.ts'
+import { useFavoritesStore, useFavoriteKeys, favoriteKey } from '../stores/favoritesStore.ts'
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -185,6 +186,27 @@ export default function ResourceDetailPage() {
   const [visibleCount, setVisibleCount] = useState(0)
   const [detailRefreshKey, setDetailRefreshKey] = useState(0)
   const PAGE_SIZE = 30
+
+  // 收藏（#132）：与资源中心共享同一份 store，唯一键 source + id + category。
+  const favoriteKeys = useFavoriteKeys()
+  const loadFavorites = useFavoritesStore((s) => s.load)
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite)
+  const [favBusy, setFavBusy] = useState(false)
+  const isFavorited = favoriteKeys.has(favoriteKey(source, resourceId ?? '', category))
+
+  useEffect(() => { void loadFavorites() }, [loadFavorites])
+
+  const handleToggleFavorite = useCallback(async () => {
+    if (!detail || favBusy) return
+    setFavBusy(true)
+    try {
+      const nowFavorite = await toggleFavorite(detail, category)
+      notify(t(nowFavorite ? 'resource.favorites.added' : 'resource.favorites.removed'), 'success')
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t('resource.favorites.failed'), 'error')
+    }
+    setFavBusy(false)
+  }, [detail, favBusy, toggleFavorite, category, notify, t])
 
   const refreshDetail = useCallback(() => {
     cacheInvalidate('api-resource-detail')
@@ -608,6 +630,22 @@ export default function ResourceDetailPage() {
                       <Download className="h-3 w-3" />
                       {formatDownloads(detail.downloadCount)}
                     </span>
+                    <button
+                      type="button"
+                      onClick={handleToggleFavorite}
+                      disabled={favBusy}
+                      aria-pressed={isFavorited}
+                      aria-label={t(isFavorited ? 'resource.favorites.remove' : 'resource.favorites.add')}
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50',
+                        isFavorited
+                          ? 'bg-primary/10 text-primary hover:bg-primary/15'
+                          : 'bg-muted hover:bg-accent hover:text-foreground',
+                      )}
+                    >
+                      <Heart className={cn('h-3 w-3', isFavorited && 'fill-current')} />
+                      {t(isFavorited ? 'resource.favorites.remove' : 'resource.favorites.add')}
+                    </button>
                   </div>
 
                   {detail.categories.length > 0 && (

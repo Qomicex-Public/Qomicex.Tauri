@@ -1,5 +1,5 @@
-import { get, post } from './client.ts'
-import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion, ResolvedDependency } from '../types/index.ts'
+import { get, post, del } from './client.ts'
+import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion, ResolvedDependency, ResourceItem, ResourceFavorite } from '../types/index.ts'
 
 export function searchResources(params: {
   category?: string
@@ -96,4 +96,65 @@ export function getResourceDependencies(id: string, source: string, versionId: s
   if (gameVersion) q.set('gameVersion', gameVersion)
   if (loader) q.set('loader', loader)
   return get<ResolvedDependency[]>(`/resources/${encodeURIComponent(id)}/dependencies?${q}`, { timeoutMs: REMOTE_LOOKUP_TIMEOUT_MS })
+}
+
+// =====================================================================
+// 收藏（favorites）：服务端按 `source + id + category` 唯一键持久化
+// =====================================================================
+
+export function listResourceFavorites(): Promise<ResourceFavorite[]> {
+  return get<ResourceFavorite[]>('/resource-favorites')
+}
+
+export function addResourceFavorite(favorite: ResourceFavorite): Promise<ResourceFavorite> {
+  return post<ResourceFavorite>('/resource-favorites', favorite)
+}
+
+export function removeResourceFavorite(source: string, id: string, category: string): Promise<{ removed: boolean }> {
+  const q = new URLSearchParams({ source, id, category })
+  return del<{ removed: boolean }>(`/resource-favorites?${q}`)
+}
+
+/**
+ * `ResourceItem` + 当前页面分类 → 收藏条目（资源快照）。
+ *
+ * 资源本身没有 `type` 字段，分类只在页面状态/URL 中，所以必须由调用方传入。
+ * `createdAt` 由服务端生成；这里给乐观更新一个本地时间戳，服务端返回后会被替换。
+ */
+export function toResourceFavorite(item: ResourceItem, category: string): ResourceFavorite {
+  return {
+    source: item.source,
+    id: item.id,
+    category,
+    title: item.title,
+    description: item.description,
+    author: item.author,
+    iconUrl: item.iconUrl,
+    downloadCount: item.downloadCount,
+    categories: item.categories,
+    projectUrl: item.projectUrl,
+    slug: item.slug,
+    latestVersion: item.latestVersion ?? '',
+    folderId: null,
+    note: null,
+    tags: [],
+    createdAt: new Date().toISOString(),
+  }
+}
+
+/** 收藏条目 → `ResourceItem`，让收藏视图复用 `ResourceCard`（缺字段安全降级）。 */
+export function toResourceItem(favorite: ResourceFavorite): ResourceItem {
+  return {
+    id: favorite.id,
+    title: favorite.title,
+    description: favorite.description,
+    author: favorite.author,
+    iconUrl: favorite.iconUrl,
+    downloadCount: favorite.downloadCount,
+    source: favorite.source,
+    categories: favorite.categories ?? [],
+    projectUrl: favorite.projectUrl,
+    slug: favorite.slug,
+    latestVersion: favorite.latestVersion ?? '',
+  }
 }
