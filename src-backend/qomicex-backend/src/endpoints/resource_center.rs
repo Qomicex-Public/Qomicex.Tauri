@@ -11,7 +11,7 @@
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::{ApiError, ApiResult};
 use crate::services::resource_favorite::ResourceFavorite;
+use crate::services::resource_favorite_folder::{FavoriteFolder, FolderError};
 use crate::state::SharedState;
 
 // =====================================================================
@@ -276,6 +277,14 @@ pub fn router() -> Router<SharedState> {
             get(list_resource_favorites)
                 .post(add_resource_favorite)
                 .delete(remove_resource_favorite),
+        )
+        .route(
+            "/resource-favorite-folders",
+            get(list_favorite_folders).post(create_favorite_folder),
+        )
+        .route(
+            "/resource-favorite-folders/{id}",
+            put(rename_favorite_folder).delete(delete_favorite_folder),
         )
 }
 
@@ -2379,6 +2388,88 @@ async fn remove_resource_favorite(
     Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
+// =====================================================================
+// Handlers: resource favorite folders（收藏夹，P2）
+//
+// 收藏夹实体单独存 resource_favorite_folders.json（P1 的扁平数组格式不变）；
+// 条目的 folderId / note / tags 仍由上面的 POST /resource-favorites（upsert）写入。
+// =====================================================================
+
+/// `POST` / `PUT /resource-favorite-folders` 的请求体。
+#[derive(Deserialize)]
+struct FolderUpsertRequest {
+    #[serde(default)]
+    name: String,
+}
+
+/// 服务层错误 → HTTP：落盘失败 500，不存在 404，其余（名称非法/重名）400。
+fn map_folder_error(e: FolderError) -> ApiError {
+    if e.is_save_failure() {
+        ApiError::internal(e.message())
+    } else if e == FolderError::NotFound {
+        ApiError::not_found(e.code(), e.message())
+    } else {
+        ApiError::bad_request(e.code(), e.message())
+    }
+}
+
+async fn list_favorite_folders(
+    State(state): State<SharedState>,
+) -> ApiResult<Json<Vec<FavoriteFolder>>> {
+    Ok(Json(state.resource_favorite_folders.get_all()))
+}
+
+async fn create_favorite_folder(
+    State(state): State<SharedState>,
+    req: Json<FolderUpsertRequest>,
+) -> ApiResult<Json<FavoriteFolder>> {
+    state
+        .resource_favorite_folders
+        .create(&req.name)
+        .map(Json)
+        .map_err(map_folder_error)
+}
+
+async fn rename_favorite_folder(
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+    req: Json<FolderUpsertRequest>,
+) -> ApiResult<Json<FavoriteFolder>> {
+    state
+        .resource_favorite_folders
+        .rename(&id, &req.name)
+        .map(Json)
+        .map_err(map_folder_error)
+}
+
+async fn delete_favorite_folder(
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // 先确认存在，避免对不存在的 id 做破坏性级联（404 语义要干净）。
+    if !state.resource_favorite_folders.exists(&id) {
+        return Err(ApiError::not_found(
+            "FAVORITE_FOLDER_NOT_FOUND",
+            "收藏夹不存在",
+        ));
+    }
+    // 级联顺序：**先删夹内收藏（写 items）→ 再删夹子实体（写 folders）**。
+    // 第二步失败时最坏是「收藏已删、夹子空着」这种无害残留；反序会留下指向已删夹子的
+    // 悬空 folderId（详见 services/resource_favorite_folder.rs 模块注释）。
+    let removed_favorites = state
+        .resource_favorites
+        .remove_by_folder(&id)
+        .map_err(|e| ApiError::internal(format!("删除夹内收藏失败: {e}")))?;
+    state
+        .resource_favorite_folders
+        .delete(&id)
+        .map_err(map_folder_error)?;
+    Ok(Json(serde_json::json!({
+        "removed": true,
+        "removedFavorites": removed_favorites,
+    })))
+}
+
 #[cfg(test)]
 mod favorites_tests {
     use super::*;
@@ -2445,5 +2536,65 @@ mod favorites_tests {
             serde_json::from_str(r#"{"source":"a","id":"b","category":"c","extra":"ignored"}"#)
                 .unwrap();
         assert_eq!(extra.validated().unwrap().0, "a");
+    }
+
+    /// 收藏夹错误 → HTTP 状态映射：名称非法 / 重名 → 400，不存在 → 404，
+    /// 落盘失败 → 500。错误码沿用实例分组 `GROUP_*` 的命名风格。
+    #[test]
+    fn folder_error_maps_to_expected_status() {
+        for (err, status, code) in [
+            (FolderError::EmptyName, 400, "FAVORITE_FOLDER_NAME_EMPTY"),
+            (
+                FolderError::NameTooLong,
+                400,
+                "FAVORITE_FOLDER_NAME_TOO_LONG",
+            ),
+            (FolderError::NameTaken, 400, "FAVORITE_FOLDER_NAME_EXISTS"),
+            (FolderError::NotFound, 404, "FAVORITE_FOLDER_NOT_FOUND"),
+            // 落盘失败刻意走 `ApiError::internal`（code `INTERNAL_ERROR`），与 P1 收藏
+            // 端点、以及仓库「意外故障用 internal」的口径一致；具体原因放 message。
+            (FolderError::Save("disk full".into()), 500, "INTERNAL_ERROR"),
+        ] {
+            let mapped = map_folder_error(err);
+            assert_eq!(mapped.status, status);
+            assert_eq!(mapped.code, code);
+        }
+        // 500 的 message 必须带上原因与上下文，否则无从排查。
+        let save_err = map_folder_error(FolderError::Save("disk full".into()));
+        assert!(save_err.message.contains("收藏夹"));
+        assert!(save_err.message.contains("disk full"));
+    }
+
+    /// 请求体契约：`name` 缺省为空串（由服务层判 `EmptyName` → 400，端点不重复裁剪），
+    /// 未知字段忽略（前端后续加 color 等不会把请求打挂）。
+    #[test]
+    fn folder_upsert_request_deserializes() {
+        let with_name: FolderUpsertRequest =
+            serde_json::from_str(r#"{"name":"  优化  "}"#).unwrap();
+        assert_eq!(with_name.name, "  优化  ", "裁剪由服务层统一做");
+        let empty: FolderUpsertRequest = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(empty.name.is_empty());
+        let extra: FolderUpsertRequest =
+            serde_json::from_str(r##"{"name":"a","color":"#fff"}"##).unwrap();
+        assert_eq!(extra.name, "a");
+    }
+
+    /// 收藏夹的 JSON 契约：键名 camelCase（`createdAt`），且只发 `id`/`name`
+    /// 也能反序列化（`createdAt` 走 serde default）。
+    #[test]
+    fn favorite_folder_json_contract_is_camel_case() {
+        let folder = FavoriteFolder {
+            id: "f1".into(),
+            name: "优化".into(),
+            created_at: "2026-10-01T00:00:00+00:00".into(),
+        };
+        let v = serde_json::to_value(&folder).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("createdAt"), "键名必须 camelCase");
+        assert!(!obj.contains_key("created_at"));
+        assert_eq!(obj.len(), 3, "字段数变化说明契约已漂移");
+
+        let minimal: FavoriteFolder = serde_json::from_str(r#"{"id":"x","name":"y"}"#).unwrap();
+        assert_eq!(minimal.created_at, "");
     }
 }

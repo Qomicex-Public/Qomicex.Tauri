@@ -19,6 +19,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::settings;
 
+/// 单条备注的字符上限（P2）。本地 JSON 也做防御性上限。
+const MAX_NOTE_CHARS: usize = 2000;
+/// 单条收藏的标签数上限（P2）。
+const MAX_TAGS: usize = 20;
+/// 单个标签的字符上限（P2）。
+const MAX_TAG_CHARS: usize = 32;
+
 /// 收藏条目（全部 camelCase）。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,6 +83,47 @@ impl ResourceFavorite {
         self.id = self.id.trim().to_string();
         self.category = self.category.trim().to_string();
     }
+
+    /// 规范化 P2 元数据（`folderId` / `note` / `tags`），在落库边界统一执行。
+    ///
+    /// - `folderId`：裁剪；空串视为 `None`（前端清空选择时可能传来 `""`）。
+    /// - `note`：裁剪；空串视为 `None`；超长按字符截断到 `MAX_NOTE_CHARS`。
+    /// - `tags`：逐个裁剪、丢空、**大小写不敏感去重**（保留首次出现的写法）、
+    ///   单标签截断到 `MAX_TAG_CHARS`、整体上限 `MAX_TAGS`（防本地 JSON 无界增长）。
+    pub fn normalize_meta(&mut self) {
+        self.folder_id = self
+            .folder_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
+        self.note = self
+            .note
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.chars().take(MAX_NOTE_CHARS).collect::<String>());
+
+        let mut seen: Vec<String> = Vec::new();
+        let mut tags: Vec<String> = Vec::new();
+        for raw in std::mem::take(&mut self.tags) {
+            let tag: String = raw.trim().chars().take(MAX_TAG_CHARS).collect();
+            if tag.is_empty() {
+                continue;
+            }
+            let lowered = tag.to_lowercase();
+            if seen.contains(&lowered) {
+                continue;
+            }
+            seen.push(lowered);
+            tags.push(tag);
+            if tags.len() >= MAX_TAGS {
+                break;
+            }
+        }
+        self.tags = tags;
+    }
 }
 
 /// 资源收藏服务（独立 resource_favorites.json）。
@@ -131,6 +179,7 @@ impl ResourceFavoriteService {
     ///   重启后又消失，三处状态互相矛盾。
     pub fn upsert(&self, mut item: ResourceFavorite) -> Result<ResourceFavorite, String> {
         item.normalize_key();
+        item.normalize_meta();
         let mut guard = self.lock();
         let mut next = guard.clone();
         match next
@@ -165,6 +214,28 @@ impl ResourceFavoriteService {
         self.save_locked(&next)?;
         *guard = next;
         Ok(true)
+    }
+
+    /// 删除指定收藏夹内的**全部**收藏，返回删除条数（P2 删夹子的级联步骤）。
+    ///
+    /// 与 `remove` 同一口径：先在副本上改、落盘成功才提交内存；空夹子不触碰磁盘。
+    /// 端点负责先调本方法、再删收藏夹实体 —— 顺序理由见
+    /// `resource_favorite_folder.rs` 的模块注释（避免悬空 `folderId`）。
+    pub fn remove_by_folder(&self, folder_id: &str) -> Result<usize, String> {
+        let folder_id = folder_id.trim();
+        let mut guard = self.lock();
+        let hits = guard
+            .iter()
+            .filter(|x| x.folder_id.as_deref() == Some(folder_id))
+            .count();
+        if hits == 0 {
+            return Ok(0);
+        }
+        let mut next = guard.clone();
+        next.retain(|x| x.folder_id.as_deref() != Some(folder_id));
+        self.save_locked(&next)?;
+        *guard = next;
+        Ok(hits)
     }
 }
 
@@ -421,6 +492,109 @@ mod tests {
             1,
             "remove 落盘失败后内存必须保留原条目"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P2 元数据在落库边界统一规范化：夹子 id 与备注裁剪、空串转 `None`、
+    /// 标签去空 + 大小写不敏感去重（保留首次写法）+ 上限。
+    #[test]
+    fn p2_meta_is_normalized_on_write() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let svc = ResourceFavoriteService {
+            file_path: dir.join("resource_favorites.json"),
+            items: Mutex::new(Vec::new()),
+        };
+
+        let mut with_meta = item("AANobbMI", "mod", "Sodium");
+        with_meta.folder_id = Some("  f-1  ".into());
+        with_meta.note = Some("  常用性能模组  ".into());
+        with_meta.tags = vec![
+            " 优化 ".into(),
+            "".into(),
+            "   ".into(),
+            "优化".into(), // 与第一条重复（去空白后同名）→ 丢弃
+            "Performance".into(),
+            "performance".into(),           // 大小写不敏感去重 → 丢弃
+            "字".repeat(MAX_TAG_CHARS + 5), // 超长 → 截断
+        ];
+        let saved = svc.upsert(with_meta).unwrap();
+        assert_eq!(saved.folder_id.as_deref(), Some("f-1"));
+        assert_eq!(saved.note.as_deref(), Some("常用性能模组"));
+        assert_eq!(
+            saved.tags,
+            vec![
+                "优化".to_string(),
+                "Performance".to_string(),
+                "字".repeat(MAX_TAG_CHARS),
+            ]
+        );
+
+        // 空串一律转 None（前端清空选择/清空备注时可能传 ""）。
+        let mut cleared = item("238222", "mod", "JEI");
+        cleared.folder_id = Some("   ".into());
+        cleared.note = Some("".into());
+        let saved2 = svc.upsert(cleared).unwrap();
+        assert!(saved2.folder_id.is_none());
+        assert!(saved2.note.is_none());
+
+        // 标签数量上限。
+        let mut many = item("X", "mod", "X");
+        many.tags = (0..(MAX_TAGS + 8)).map(|i| format!("t{i}")).collect();
+        let saved3 = svc.upsert(many).unwrap();
+        assert_eq!(saved3.tags.len(), MAX_TAGS);
+
+        // 备注长度按字符截断。
+        let mut long_note = item("Y", "mod", "Y");
+        long_note.note = Some("字".repeat(MAX_NOTE_CHARS + 50));
+        let saved4 = svc.upsert(long_note).unwrap();
+        assert_eq!(
+            saved4.note.as_deref().map(|n| n.chars().count()),
+            Some(MAX_NOTE_CHARS)
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 删夹子的级联步骤：按 `folderId` 删除全部条目；空夹子不触碰磁盘。
+    #[test]
+    fn remove_by_folder_cascades_and_is_noop_when_empty() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("resource_favorites.json");
+        let svc = ResourceFavoriteService {
+            file_path: path.clone(),
+            items: Mutex::new(Vec::new()),
+        };
+
+        let mut in_f1_a = item("A", "mod", "A");
+        in_f1_a.folder_id = Some("f1".into());
+        let mut in_f1_b = item("B", "mod", "B");
+        in_f1_b.folder_id = Some("f1".into());
+        let mut in_f2 = item("C", "mod", "C");
+        in_f2.folder_id = Some("f2".into());
+        let unfiled = item("D", "mod", "D");
+        for it in [in_f1_a, in_f1_b, in_f2, unfiled] {
+            svc.upsert(it).unwrap();
+        }
+        assert_eq!(svc.get_all().len(), 4);
+
+        assert_eq!(svc.remove_by_folder("f1").unwrap(), 2);
+        let left: Vec<_> = svc.get_all().into_iter().map(|f| f.id).collect();
+        assert_eq!(left.len(), 2);
+        assert!(left.contains(&"C".to_string()) && left.contains(&"D".to_string()));
+
+        // 落盘内容也应同步（重新加载验证）。
+        let reloaded = ResourceFavoriteService {
+            file_path: path,
+            items: Mutex::new(load_from_file(&dir.join("resource_favorites.json"))),
+        };
+        assert_eq!(reloaded.get_all().len(), 2);
+
+        // 再删同一个空夹子：0 条，且不触碰磁盘。
+        assert_eq!(svc.remove_by_folder("f1").unwrap(), 0);
+        assert_eq!(svc.remove_by_folder("nope").unwrap(), 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
