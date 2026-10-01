@@ -5,6 +5,7 @@ import { waitForCompletion } from './updateMods.ts'
 import { cacheInvalidate } from './simple-cache.ts'
 import { getSettings } from '../api/settings.ts'
 import { formatDownloadFileName, dedupFileName } from './download-naming.ts'
+import { normalizeResourceKind } from './downloadGroups.ts'
 import type { InstallStepInfo } from '../types/index.ts'
 
 type TFunc = (key: string, params?: Record<string, string | number>) => string
@@ -90,6 +91,9 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
     createdAt: new Date().toISOString(),
     instanceId,
     icon: opts.icon,
+    // 下载中心分组按**主资源**归类：一个 batch 可能「本体是模组、依赖里有光影」，
+    // 用户在界面上看到的是本体，按依赖分类会与直觉相反。依赖项分类不参与。
+    resourceKind: normalizeResourceKind(main.category),
     steps,
     batchTaskIds: [],
   })

@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo, useRef } from 'react'
-import { ArrowRight, Box, CheckCircle2, Coffee, Download, Hammer, ListChecks, Package, RotateCw, Square, Trash2 } from 'lucide-react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
+import { ArrowRight, Box, CheckCircle2, Coffee, Download, Hammer, ListChecks, Package, RotateCw, Square, Trash2, ChevronDown } from 'lucide-react'
 import { RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
 import { MorphIcon } from 'morphicons/react'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
@@ -17,6 +17,8 @@ import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownl
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { formatBytes } from '../lib/download-format.ts'
+import { groupTasks, readCollapsedGroups, writeCollapsedGroups } from '../lib/downloadGroups.ts'
+import type { DownloadGroup, DownloadGroupKey } from '../lib/downloadGroups.ts'
 import InstallStepsList from '../components/InstallStepsList.tsx'
 import DownloadSpeedGraph from '../components/DownloadSpeedGraph.tsx'
 
@@ -34,10 +36,12 @@ function getSafeIconSrc(icon?: string): string | null {
   return /^https?:\/\//i.test(trimmed) ? trimmed : null
 }
 
+/** 拼接非空 class（本地实现，避免为页面单独引入 plugin-ui 的 cn）。 */
 function cn(...classes: (string | boolean | undefined | null)[]): string {
   return classes.filter(Boolean).join(' ')
 }
 
+/** 把状态字符串格式化为 `YYYY-MM-DD HH:mm`，供卡片时间行展示。 */
 function formatDate(dateStr: string): string {
   try {
     const d = new Date(dateStr)
@@ -65,6 +69,7 @@ const TYPE_ICON: Record<string, typeof Box> = {
   file: Box,
 }
 
+/** 按 `type` 取兜底图标（无资源图标时显示）。 */
 function TypeIcon({ taskType, className }: { taskType: string; className?: string }) {
   const Icon = TYPE_ICON[taskType] ?? Box
   return <Icon className={className} />
@@ -121,12 +126,289 @@ const FILTER_TABS: Tab[] = [
   { id: 'failed', label: 'failed' },
 ]
 
+type TFunc = ReturnType<typeof useI18n>['t']
+
+/**
+ * 单张下载任务卡片。
+ *
+ * 刻意放在**模块级**：如果把它定义在 `DownloadCenter` 组件体内，每次渲染都会产生
+ * 新的组件身份，React 会把整棵子树卸载重挂 —— `DownloadSpeedGraph` 卸载即清空
+ * 速度历史（见「下载中心 UI 规范」），折叠/展开时就会出现「图突然变空」。
+ * 除 `task` 与 `t` 外，其余依赖（store 操作、API、图标、格式化）都来自模块级导入，
+ * 所以这里的 props 面很窄。
+ */
+function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
+  const cfg = STATUS_CONFIG[task.status]
+  const isActive = task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'
+  const safeIcon = getSafeIconSrc(task.icon)
+  const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
+  const stepsLive = task.status === 'downloading' || task.status === 'paused'
+  const stepsDoneCount = steps?.filter((s) => s.status === 'done').length ?? 0
+  // 速度图只在字节流动时才有意义，但不应被 stage 门控：整合包的
+  // modpack-files 等阶段同样在下载，旧逻辑按 downloading-* 前缀过滤
+  // 会让图在多个 step 间消失/重挂（历史被清空）。按状态判断即可常显。
+  const showSpeedGraph = task.status === 'downloading' || task.status === 'paused'
+  const activeStep = dominantStep(steps)
+  return (
+    <div className="group glass-surface rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className={cn(
+            'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg',
+            task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : 'bg-primary/10'
+          )}>
+            {safeIcon ? (
+              <img src={safeIcon} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <TypeIcon
+                taskType={task.type}
+                className={cn(
+                  'h-5 w-5',
+                  task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-primary'
+                )}
+              />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="truncate text-sm font-medium">{task.name}</span>
+              <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', cfg.color)}>
+                {t(`downloads.status.${task.status}`)}
+              </span>
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground/70">
+              {task.gameVersion && <span>{task.type === 'java' ? 'Java' : 'Minecraft'} {task.gameVersion}</span>}
+              {task.loader && <span>{task.loader}{task.loaderVersion ? ` ${task.loaderVersion}` : ''}</span>}
+              {task.addons && task.addons.length > 0 && <span>{t('downloads.addonsCount', { count: task.addons.length })}</span>}
+              <span>{t('downloads.createdAt', { date: formatDate(task.createdAt) })}</span>
+              {task.completedAt && <span>{t('downloads.completedAt', { date: formatDate(task.completedAt) })}</span>}
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {isActive && task.type === 'java' && task.status !== 'queued' && (
+            <>
+              <Tooltip content={t(task.status === 'paused' ? 'downloads.resume' : 'downloads.pause')}>
+                <Button variant="ghost" size="icon" className={cn('h-8 w-8 text-muted-foreground', task.status === 'paused' ? 'hover:text-primary' : 'hover:text-amber-400')} onClick={() => task.taskId && (task.status === 'paused' ? resumeJavaDownload(task.taskId) : pauseJavaDownload(task.taskId)).catch(() => updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskInvalid') }))}>
+                  <MorphIcon icon={task.status === 'paused' ? PLAY_ICON : PAUSE_ICON} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
+                </Button>
+              </Tooltip>
+              <Tooltip content={t('downloads.cancel')}>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
+                  if (task.type === 'java' && task.taskId) {
+                    cancelJavaDownload(task.taskId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
+                  } else if (task.status === 'queued') {
+                    removeTask(task.id)
+                  } else if (task.type === 'batch' && task.batchTaskIds && task.batchTaskIds.length > 0) {
+                    import('../api/resource-download.ts').then(m => m.cancelBatch(task.batchTaskIds!)).then(() => removeTask(task.id))
+                  } else if (task.type === 'file' && task.taskId) {
+                    cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
+                  } else if (task.instanceId) {
+                    cancelInstall(task.instanceId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
+                  }
+                }}>
+                  <Square className="h-3.5 w-3.5" />
+                </Button>
+              </Tooltip>
+            </>
+          )}
+          {isActive && task.type === 'file' && task.status !== 'queued' && (
+            <Tooltip content={t('downloads.cancel')}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
+                if (task.taskId) {
+                  cancelResourceDownload(task.taskId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
+                } else {
+                  removeTask(task.id)
+                }
+              }}>
+                <Square className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
+          )}
+          {isActive && task.type !== 'file' && task.type !== 'java' && task.status !== 'queued' && (
+            <>
+              <Tooltip content={t(task.status === 'paused' ? 'downloads.resume' : 'downloads.pause')}>
+                <Button variant="ghost" size="icon" className={cn('h-8 w-8 text-muted-foreground', task.status === 'paused' ? 'hover:text-primary' : 'hover:text-amber-400')} onClick={() => task.instanceId && (task.status === 'paused' ? resumeInstall(task.instanceId) : pauseInstall(task.instanceId))}>
+                  <MorphIcon icon={task.status === 'paused' ? PLAY_ICON : PAUSE_ICON} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
+                </Button>
+              </Tooltip>
+              <Tooltip content={t('downloads.cancel')}>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
+                  if (task.type === 'java' && task.taskId) {
+                    cancelJavaDownload(task.taskId).then(() => removeTask(task.id))
+                  } else if (task.status === 'queued') {
+                    removeTask(task.id)
+                  } else if (task.type === 'batch' && task.batchTaskIds && task.batchTaskIds.length > 0) {
+                    import('../api/resource-download.ts').then(m => m.cancelBatch(task.batchTaskIds!)).then(() => removeTask(task.id))
+                  } else if (task.type === 'file' && task.taskId) {
+                    cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
+                  } else if (task.instanceId) {
+                    cancelInstall(task.instanceId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
+                  }
+                }}>
+                  <Square className="h-3.5 w-3.5" />
+                </Button>
+              </Tooltip>
+            </>
+          )}
+          {task.status === 'failed' && (
+            <Tooltip content={t('downloads.retry')}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => removeTask(task.id)}>
+                <RotateCw className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
+          )}
+          {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'queued') && (
+            <Tooltip content={t('downloads.remove')}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => removeTask(task.id)}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-1.5">
+        <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn(
+              'h-full rounded-full transition-all duration-500',
+              task.status === 'completed' ? 'bg-emerald-500' : task.status === 'failed' ? 'bg-red-500' : task.status === 'paused' ? 'bg-amber-400' : 'bg-primary'
+            )}
+            style={{ width: `${task.progress}%` }}
+          />
+        </div>
+        {(steps || showSpeedGraph) && (
+          <div className={cn('flex items-start gap-4 pt-1', !steps && showSpeedGraph && 'justify-end')}>
+            {steps && (stepsLive ? (
+              <InstallStepsList steps={steps} className="min-w-0 flex-1" />
+            ) : task.status === 'completed' ? (
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-emerald-400">
+                <CheckCircle2 className="h-3 w-3 shrink-0" />
+                <span className="truncate">{t('downloads.status.completed')}</span>
+              </div>
+            ) : (
+              <div className={cn(
+                'flex min-w-0 flex-1 items-center gap-1.5 text-xs',
+                task.status === 'failed' ? 'text-red-400' : 'text-muted-foreground'
+              )}>
+                <ListChecks className="h-3 w-3 shrink-0" />
+                <span className="truncate">
+                  {t('downloads.stepsDone', { done: stepsDoneCount, total: steps.length })}
+                </span>
+              </div>
+            ))}
+            {showSpeedGraph && (
+              <DownloadSpeedGraph
+                speed={task.speed ?? 0}
+                className={cn('w-44 shrink-0', task.status === 'paused' ? 'text-amber-400' : 'text-primary')}
+              />
+            )}
+          </div>
+        )}
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground/60">
+          <span className="min-w-0 truncate">
+            {task.status === 'completed' ? t('downloads.statusText.done') :
+             task.status === 'failed' ? (task.error ? t('downloads.statusText.failedWith', { error: task.error }) : t('downloads.statusText.failed')) :
+             task.status === 'paused' ? t('downloads.statusText.pausedProgress', { progress: task.progress }) :
+             task.status === 'queued' ? t('downloads.statusText.waiting') :
+             // 有 steps 的管线任务：从「权重最大的 active step」派生，避免并行分支
+             // 共用 ProgressField 导致的 stage/currentFile 互相覆写（鬼畜闪烁）。
+             // percent 为该步自身进度，扫描/安装类步骤无字节进度时不显示数字
+             // （避免把合成总进度误读成该步完成度）。
+             activeStep ? (
+               <>
+                 {t(`downloads.steps.${activeStep.id}`)}
+                 {(activeStep.percent ?? 0) > 0 && ` (${Math.round(activeStep.percent!)}%)`}
+               </>
+             ) :
+             // "连接中" only while nothing is known yet — a large file can sit at
+             // a rounded 0% with bytes already flowing.
+              (task.progress > 0 || (task.downloadedBytes ?? 0) > 0 || (task.totalBytes ?? 0) > 0) ? (
+               <>
+                 {task.stage && STAGE_LABELS[task.stage] ? t(`downloads.stage.${task.stage}`) : t('downloads.statusText.downloading')} ({Math.round((task.currentFileProgress ?? 0) > 0 ? (task.currentFileProgress ?? 0) : task.progress)}%)
+                 {task.currentFile && <span className="ml-1.5 opacity-70">· {task.currentFile}</span>}
+               </>
+             ) : (
+              <span>{t('downloads.statusText.connecting')}</span>
+            )}
+          </span>
+          <span className="flex shrink-0 items-center gap-2 ml-2">
+            {task.status === 'downloading' && task.totalFiles !== undefined && task.totalFiles > 0 && task.stage && (
+              <span>{t('downloads.filesCount', { done: task.completedFiles ?? 0, total: task.totalFiles })}</span>
+            )}
+            {task.totalBytes !== undefined && task.totalBytes > 0 && (
+              <span className="tabular-nums">{formatBytes(task.downloadedBytes)} / {formatBytes(task.totalBytes)}</span>
+            )}
+            {task.status === 'downloading' && task.progress > 0 && <span className="tabular-nums">{task.progress}%</span>}
+          </span>
+        </div>
+        {task.status === 'failed' && task.error && (
+          <div className="rounded-md bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-400">
+            {task.error}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 一个资源类型分组：可折叠头部 + 卡片列表。折叠只做视觉隐藏，卡片保持挂载。 */
+function TaskGroupSection({ group, collapsed, onToggle, t }: {
+  group: DownloadGroup
+  collapsed: boolean
+  onToggle: (key: DownloadGroupKey) => void
+  t: TFunc
+}) {
+  const GroupIcon = group.icon
+  const contentId = `download-group-${group.key}`
+  const inProgress = group.tasks.filter(
+    (task) => task.status === 'downloading' || task.status === 'paused' || task.status === 'queued',
+  ).length
+  return (
+    <section>
+      <button
+        type="button"
+        onClick={() => onToggle(group.key)}
+        aria-expanded={!collapsed}
+        aria-controls={contentId}
+        className="flex w-full items-center gap-2 rounded-lg px-1 py-1.5 text-left transition-colors hover:text-foreground"
+      >
+        <ChevronDown className={cn('anim-transition h-4 w-4 shrink-0 text-muted-foreground transition-transform', collapsed && '-rotate-90')} />
+        <GroupIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="text-sm font-medium">{t(group.labelKey)}</span>
+        <span className="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+          {group.tasks.length}
+        </span>
+        {inProgress > 0 && (
+          <span className="text-[10px] text-primary">{t('downloads.groups.inProgress', { count: inProgress })}</span>
+        )}
+      </button>
+      {/* `hidden` 而非条件渲染：卸载会清空 DownloadSpeedGraph 的速度历史，
+          也会中断卡片上的 SSE 更新对账。 */}
+      <div id={contentId} hidden={collapsed} className="mt-2 space-y-3">
+        {group.tasks.map((task) => <TaskCard key={task.id} task={task} t={t} />)}
+      </div>
+    </section>
+  )
+}
+
 export default function DownloadCenter() {
   const { t } = useI18n()
   const navigate = useNavigate()
   const [tasks, setTasks] = useState<DownloadTask[]>(() => getTasks())
   const [filter, setFilter] = useState<FilterMode>('all')
   const [clearing, setClearing] = useState(false)
+  /** 已折叠的分组键。默认全部展开；持久化在独立 localStorage 键里（见 downloadGroups.ts）。 */
+  const [collapsedGroups, setCollapsedGroups] = useState<DownloadGroupKey[]>(() => readCollapsedGroups())
+
+  const toggleGroup = useCallback((key: DownloadGroupKey) => {
+    setCollapsedGroups((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+      writeCollapsedGroups(next)
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     const unsub = subscribe(() => setTasks([...getTasks()]))
@@ -330,6 +612,9 @@ if (task.instanceId && task.type !== 'batch') {
     return t.status === filter
   }), [tasks, filter])
 
+  /** 在状态过滤之后按资源类型分组，固定顺序输出非空分组（组内保持 store 顺序）。 */
+  const groups = useMemo(() => groupTasks(filtered), [filtered])
+
   return (
     <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
       <PageHeader title={t('downloads.title')} subtitle={t('downloads.subtitle', { count: tasks.length })} actions={
@@ -361,222 +646,16 @@ if (task.instanceId && task.type !== 'batch') {
           </Button>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filtered.map((task) => {
-            const cfg = STATUS_CONFIG[task.status]
-            const isActive = task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'
-            const safeIcon = getSafeIconSrc(task.icon)
-            const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
-            const stepsLive = task.status === 'downloading' || task.status === 'paused'
-            const stepsDoneCount = steps?.filter((s) => s.status === 'done').length ?? 0
-            // 速度图只在字节流动时才有意义，但不应被 stage 门控：整合包的
-            // modpack-files 等阶段同样在下载，旧逻辑按 downloading-* 前缀过滤
-            // 会让图在多个 step 间消失/重挂（历史被清空）。按状态判断即可常显。
-            const showSpeedGraph = task.status === 'downloading' || task.status === 'paused'
-            const activeStep = dominantStep(steps)
-            return (
-              <div key={task.id} className="group glass-surface rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <div className={cn(
-                      'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg',
-                      task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : 'bg-primary/10'
-                    )}>
-                      {safeIcon ? (
-                        <img src={safeIcon} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <TypeIcon
-                          taskType={task.type}
-                          className={cn(
-                            'h-5 w-5',
-                            task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-primary'
-                          )}
-                        />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-medium">{task.name}</span>
-                        <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', cfg.color)}>
-                          {t(`downloads.status.${task.status}`)}
-                        </span>
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground/70">
-                        {task.gameVersion && <span>{task.type === 'java' ? 'Java' : 'Minecraft'} {task.gameVersion}</span>}
-                        {task.loader && <span>{task.loader}{task.loaderVersion ? ` ${task.loaderVersion}` : ''}</span>}
-                        {task.addons && task.addons.length > 0 && <span>{t('downloads.addonsCount', { count: task.addons.length })}</span>}
-                        <span>{t('downloads.createdAt', { date: formatDate(task.createdAt) })}</span>
-                        {task.completedAt && <span>{t('downloads.completedAt', { date: formatDate(task.completedAt) })}</span>}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    {isActive && task.type === 'java' && task.status !== 'queued' && (
-                      <>
-                        <Tooltip content={t(task.status === 'paused' ? 'downloads.resume' : 'downloads.pause')}>
-                          <Button variant="ghost" size="icon" className={cn('h-8 w-8 text-muted-foreground', task.status === 'paused' ? 'hover:text-primary' : 'hover:text-amber-400')} onClick={() => task.taskId && (task.status === 'paused' ? resumeJavaDownload(task.taskId) : pauseJavaDownload(task.taskId)).catch(() => updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskInvalid') }))}>
-                            <MorphIcon icon={task.status === 'paused' ? PLAY_ICON : PAUSE_ICON} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
-                          </Button>
-                        </Tooltip>
-                        <Tooltip content={t('downloads.cancel')}>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
-                            if (task.type === 'java' && task.taskId) {
-                              cancelJavaDownload(task.taskId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
-                            } else if (task.status === 'queued') {
-                              removeTask(task.id)
-                            } else if (task.type === 'batch' && task.batchTaskIds && task.batchTaskIds.length > 0) {
-                              import('../api/resource-download.ts').then(m => m.cancelBatch(task.batchTaskIds!)).then(() => removeTask(task.id))
-                            } else if (task.type === 'file' && task.taskId) {
-                              cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
-                            } else if (task.instanceId) {
-                              cancelInstall(task.instanceId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
-                            }
-                          }}>
-                            <Square className="h-3.5 w-3.5" />
-                          </Button>
-                        </Tooltip>
-                      </>
-                    )}
-                    {isActive && task.type === 'file' && task.status !== 'queued' && (
-                      <Tooltip content={t('downloads.cancel')}>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
-                          if (task.taskId) {
-                            cancelResourceDownload(task.taskId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
-                          } else {
-                            removeTask(task.id)
-                          }
-                        }}>
-                          <Square className="h-3.5 w-3.5" />
-                        </Button>
-                      </Tooltip>
-                    )}
-                    {isActive && task.type !== 'file' && task.type !== 'java' && task.status !== 'queued' && (
-                      <>
-                        <Tooltip content={t(task.status === 'paused' ? 'downloads.resume' : 'downloads.pause')}>
-                          <Button variant="ghost" size="icon" className={cn('h-8 w-8 text-muted-foreground', task.status === 'paused' ? 'hover:text-primary' : 'hover:text-amber-400')} onClick={() => task.instanceId && (task.status === 'paused' ? resumeInstall(task.instanceId) : pauseInstall(task.instanceId))}>
-                            <MorphIcon icon={task.status === 'paused' ? PLAY_ICON : PAUSE_ICON} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
-                          </Button>
-                        </Tooltip>
-                        <Tooltip content={t('downloads.cancel')}>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
-                            if (task.type === 'java' && task.taskId) {
-                              cancelJavaDownload(task.taskId).then(() => removeTask(task.id))
-                            } else if (task.status === 'queued') {
-                              removeTask(task.id)
-                            } else if (task.type === 'batch' && task.batchTaskIds && task.batchTaskIds.length > 0) {
-                              import('../api/resource-download.ts').then(m => m.cancelBatch(task.batchTaskIds!)).then(() => removeTask(task.id))
-                            } else if (task.type === 'file' && task.taskId) {
-                              cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
-                            } else if (task.instanceId) {
-                              cancelInstall(task.instanceId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
-                            }
-                          }}>
-                            <Square className="h-3.5 w-3.5" />
-                          </Button>
-                        </Tooltip>
-                      </>
-                    )}
-                    {task.status === 'failed' && (
-                      <Tooltip content={t('downloads.retry')}>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => removeTask(task.id)}>
-                          <RotateCw className="h-3.5 w-3.5" />
-                        </Button>
-                      </Tooltip>
-                    )}
-                    {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'queued') && (
-                      <Tooltip content={t('downloads.remove')}>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => removeTask(task.id)}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </Tooltip>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-3 space-y-1.5">
-                  <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
-                    <div
-                      className={cn(
-                        'h-full rounded-full transition-all duration-500',
-                        task.status === 'completed' ? 'bg-emerald-500' : task.status === 'failed' ? 'bg-red-500' : task.status === 'paused' ? 'bg-amber-400' : 'bg-primary'
-                      )}
-                      style={{ width: `${task.progress}%` }}
-                    />
-                  </div>
-                  {(steps || showSpeedGraph) && (
-                    <div className={cn('flex items-start gap-4 pt-1', !steps && showSpeedGraph && 'justify-end')}>
-                      {steps && (stepsLive ? (
-                        <InstallStepsList steps={steps} className="min-w-0 flex-1" />
-                      ) : task.status === 'completed' ? (
-                        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-emerald-400">
-                          <CheckCircle2 className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{t('downloads.status.completed')}</span>
-                        </div>
-                      ) : (
-                        <div className={cn(
-                          'flex min-w-0 flex-1 items-center gap-1.5 text-xs',
-                          task.status === 'failed' ? 'text-red-400' : 'text-muted-foreground'
-                        )}>
-                          <ListChecks className="h-3 w-3 shrink-0" />
-                          <span className="truncate">
-                            {t('downloads.stepsDone', { done: stepsDoneCount, total: steps.length })}
-                          </span>
-                        </div>
-                      ))}
-                      {showSpeedGraph && (
-                        <DownloadSpeedGraph
-                          speed={task.speed ?? 0}
-                          className={cn('w-44 shrink-0', task.status === 'paused' ? 'text-amber-400' : 'text-primary')}
-                        />
-                      )}
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground/60">
-                    <span className="min-w-0 truncate">
-                      {task.status === 'completed' ? t('downloads.statusText.done') :
-                       task.status === 'failed' ? (task.error ? t('downloads.statusText.failedWith', { error: task.error }) : t('downloads.statusText.failed')) :
-                       task.status === 'paused' ? t('downloads.statusText.pausedProgress', { progress: task.progress }) :
-                       task.status === 'queued' ? t('downloads.statusText.waiting') :
-                       // 有 steps 的管线任务：从「权重最大的 active step」派生，避免并行分支
-                       // 共用 ProgressField 导致的 stage/currentFile 互相覆写（鬼畜闪烁）。
-                       // percent 为该步自身进度，扫描/安装类步骤无字节进度时不显示数字
-                       // （避免把合成总进度误读成该步完成度）。
-                       activeStep ? (
-                         <>
-                           {t(`downloads.steps.${activeStep.id}`)}
-                           {(activeStep.percent ?? 0) > 0 && ` (${Math.round(activeStep.percent!)}%)`}
-                         </>
-                       ) :
-                       // "连接中" only while nothing is known yet — a large file can sit at
-                       // a rounded 0% with bytes already flowing.
-                         (task.progress > 0 || (task.downloadedBytes ?? 0) > 0 || (task.totalBytes ?? 0) > 0) ? (
-                          <>
-                            {task.stage && STAGE_LABELS[task.stage] ? t(`downloads.stage.${task.stage}`) : t('downloads.statusText.downloading')} ({Math.round((task.currentFileProgress ?? 0) > 0 ? (task.currentFileProgress ?? 0) : task.progress)}%)
-                            {task.currentFile && <span className="ml-1.5 opacity-70">· {task.currentFile}</span>}
-                          </>
-                        ) : (
-                         <span>{t('downloads.statusText.connecting')}</span>
-                       )}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2 ml-2">
-                      {task.status === 'downloading' && task.totalFiles !== undefined && task.totalFiles > 0 && task.stage && (
-                        <span>{t('downloads.filesCount', { done: task.completedFiles ?? 0, total: task.totalFiles })}</span>
-                      )}
-                      {task.totalBytes !== undefined && task.totalBytes > 0 && (
-                        <span className="tabular-nums">{formatBytes(task.downloadedBytes)} / {formatBytes(task.totalBytes)}</span>
-                      )}
-                      {task.status === 'downloading' && task.progress > 0 && <span className="tabular-nums">{task.progress}%</span>}
-                    </span>
-                  </div>
-                  {task.status === 'failed' && task.error && (
-                    <div className="rounded-md bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-400">
-                      {task.error}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
+        <div className="space-y-6">
+          {groups.map((group) => (
+            <TaskGroupSection
+              key={group.key}
+              group={group}
+              collapsed={collapsedGroups.includes(group.key)}
+              onToggle={toggleGroup}
+              t={t}
+            />
+          ))}
         </div>
       )}
     </PageShell>
