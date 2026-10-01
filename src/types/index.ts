@@ -400,10 +400,28 @@ export interface InstallProgressResponse {
   isPaused: boolean
 }
 
+/**
+ * 资源的细分类别（下载中心分组用）。
+ *
+ * `DownloadTask.type` 粒度太粗：模组 / 资源包 / 光影都会落成 `file` 或 `batch`，
+ * 真正区分它们的 `category` 只作为目录参数发给后端，后端快照不回传。该字段由
+ * 各发起点在前端写入，仅用于下载中心分组展示。
+ *
+ * 命名刻意避开 `category`——后者在代码里指的是后端目录路由字符串
+ * （`mods` / `resourcepacks` / `shaderpacks` …，含复数与大小写差异）。
+ */
+export type DownloadResourceKind = 'mod' | 'modpack' | 'resourcepack' | 'shader' | 'datapack' | 'save'
+
 export interface DownloadTask {
   id: string
   name: string
   type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java' | 'modpack'
+  /**
+   * 资源细分类别，供下载中心分组。可选：旧任务（持久化在 localStorage 里）没有该
+   * 字段，此时由 `getTaskGroup` 按 `type` 回退，缺信息的一律进「其他」组——
+   * 绝不能默认成 `mod`，否则会把光影/资源包误报成模组。
+   */
+  resourceKind?: DownloadResourceKind
   gameVersion: string
   loader?: string
   loaderVersion?: string

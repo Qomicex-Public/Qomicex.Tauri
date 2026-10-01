@@ -87,6 +87,7 @@
 - [ADR-086：触控板拖动优化——拖动区改位移阈值 + `data-qomicex-drag-region`](1-决策记录/ADR-086-触控板拖动优化-拖动区改位移阈值与data-qomicex-drag-region.md)
 - [ADR-087：双指触摸板滑动 = 滚轮滚动（窗口框架固定）——拖动区边界判定、手势分类与内容位移计算](1-决策记录/ADR-087-双指触摸板滑动等于滚轮滚动-窗口框架固定与拖动区边界判定.md)
 - [ADR-088：模组删除一致性与错误上报：失效后重载 + 请求序号保护 + 后端 IO 错误传播](1-决策记录/ADR-088-模组删除一致性与错误上报-失效后重载-请求序号保护-后端-IO-错误传播.md)
+- [ADR-089：下载中心按资源类型分组与折叠](1-决策记录/ADR-089-下载中心按资源类型分组与折叠.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
