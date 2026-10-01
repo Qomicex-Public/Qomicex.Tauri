@@ -495,8 +495,8 @@ export interface ResourceDetail extends ResourceItem {
  *
  * 唯一键 `source + id + category`；同时携带卡片渲染所需的资源快照，使收藏视图
  * 无需再请求详情即可复用 `ResourceCard` 渲染与安装。
- * `folderId` / `note` / `tags` 为 P2（收藏夹分组 / 备注 / 自定义标签）预留字段，
- * P1 恒为 `null` / `[]`。
+ * `folderId` / `note` / `tags` 为 P2（收藏夹分组 / 备注 / 自定义标签）字段；
+ * 未归类 / 无备注时为 `null`，无标签时为 `[]`。
  */
 export interface ResourceFavorite {
   source: string
@@ -514,6 +514,18 @@ export interface ResourceFavorite {
   folderId: string | null
   note: string | null
   tags: string[]
+  createdAt: string
+}
+
+/**
+ * 资源收藏夹（`GET/POST/PUT/DELETE /api/resource-favorite-folders`）。
+ *
+ * 收藏项通过 `ResourceFavorite.folderId` 引用本类型；`folderId` 指向不存在的夹子时
+ * 前端按「未分组」处理（防御手工改过的 JSON）。删除收藏夹会**连同夹内收藏一起删**。
+ */
+export interface ResourceFavoriteFolder {
+  id: string
+  name: string
   createdAt: string
 }
 

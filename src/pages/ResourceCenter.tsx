@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { ChevronDown, Download, ExternalLink, Heart, RotateCw, Search, Tag, User, X } from 'lucide-react'
+import { ChevronDown, Download, ExternalLink, Folder, FolderPlus, Heart, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
@@ -15,7 +15,7 @@ import { Combobox } from '../components/ui'
 import { cn } from '../components/ui'
 import { searchResources, getResourceCategories, toResourceItem, type ResourceCategory } from '../api/resource.ts'
 import { batchLookupChineseNames } from '../api/mcmod.ts'
-import type { ResourceItem } from '../types/index.ts'
+import type { ResourceItem, ResourceFavorite } from '../types/index.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 import ModpackQuickInstallDialog from '../components/ModpackQuickInstallDialog.tsx'
@@ -23,7 +23,8 @@ import { Tabs } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
-import { useFavoritesStore, useFavoriteKeys, favoriteKey } from '../stores/favoritesStore.ts'
+import { useFavoritesStore, useFavoriteKeys, useFolderMap, favoriteKey } from '../stores/favoritesStore.ts'
+import FavoriteEditDialog from '../components/FavoriteEditDialog.tsx'
 
 interface PageCache {
   items: ResourceItem[]
@@ -49,11 +50,18 @@ interface Snapshot {
   scrollY: number
   /** 资源中心视图：搜索结果 / 收藏（#132）。 */
   view: ResourceView
+  /** 收藏视图的收藏夹过滤（#132 P2）：`all` / `unfiled` / 夹子 id。 */
+  favFolder: string
+  /** 收藏视图的标签过滤（#132 P2，多选 AND）。 */
+  favTags: string[]
 }
 let savedSnapshot: Snapshot | null = null
 
 /** 资源中心的两个视图：搜索（默认）与收藏。 */
 type ResourceView = 'search' | 'favorites'
+
+/** 收藏夹过滤里「未分组」的哨兵值（与具体夹子 id 区分开）。 */
+const UNFILED = '__unfiled__'
 
 function cacheKey(category: string, keyword: string, sort: string, source: string, gameVersion: string, loader: string, tags: string[]): string {
   return `${source}|${category}|${keyword}|${sort}|${gameVersion}|${loader}|${tags.join(',')}`
@@ -220,7 +228,7 @@ async function loadCnNames(items: ResourceItem[]): Promise<Record<string, string
 
 function ResourceCard({
   item, category, keyword, sort, gameVersion, loader, instanceId, tags, onInstall, cnName,
-  isFavorite, onToggleFavorite, favoriteBusy,
+  isFavorite, onToggleFavorite, favoriteBusy, folderName, note, itemTags, onEdit,
 }: {
   item: ResourceItem
   category: string
@@ -235,6 +243,11 @@ function ResourceCard({
   isFavorite: boolean
   onToggleFavorite: () => void
   favoriteBusy: boolean
+  /** P2：以下四项只在对「已收藏条目」渲染时传入（搜索视图不传）。 */
+  folderName?: string
+  note?: string | null
+  itemTags?: string[]
+  onEdit?: () => void
 }) {
   const { t, lang } = useI18n()
   return (
@@ -274,6 +287,27 @@ function ResourceCard({
                 ))}
               </div>
             )}
+            {/* P2：收藏夹 / 自定义标签 / 备注（只在对已收藏条目渲染时出现） */}
+            {(folderName || note || (itemTags?.length ?? 0) > 0) && (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {folderName && (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <Folder className="h-3 w-3" />
+                    {folderName}
+                  </span>
+                )}
+                {(itemTags ?? []).map((tag) => (
+                  <Badge key={tag} variant="secondary" className="rounded-full px-2 py-0.5 text-[11px] font-medium">{tag}</Badge>
+                ))}
+                {note && (
+                  <Tooltip content={note}>
+                    <span className="max-w-full truncate rounded-md bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+                      {t('resource.favorites.note.label')}：{note}
+                    </span>
+                  </Tooltip>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex flex-row gap-2 sm:min-w-[148px] sm:flex-col sm:items-stretch sm:self-stretch">
@@ -291,6 +325,20 @@ function ResourceCard({
                 {t('resource.originalSite')}
               </a>
             </Button>
+          )}
+          {onEdit && (
+            <div className="flex-1 sm:w-full">
+              <Tooltip content={t('resource.favorites.edit.open')}>
+                <Button
+                  variant="outline"
+                  className="w-full px-3"
+                  aria-label={t('resource.favorites.edit.open')}
+                  onClick={onEdit}
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
+              </Tooltip>
+            </div>
           )}
           <div className="flex-1 sm:w-full">
             <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
@@ -314,7 +362,7 @@ function ResourceCard({
 
 export default function ResourceCenter() {
   const { t, lang } = useI18n()
-  const { notify } = useMessageBox()
+  const { notify, prompt, choose } = useMessageBox()
   const [searchParams, setSearchParams] = useSearchParams()
   const snap = savedSnapshot
   const urlCategory = searchParams.get('category')
@@ -369,7 +417,7 @@ export default function ResourceCenter() {
   const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => freshEntry ? {} : (snap?.cnNames ?? {}))
   const pageSize = 20
 
-  // ---- 收藏（#132）----
+  // ---- 收藏（#132 P1）----
   const favorites = useFavoritesStore((s) => s.favorites)
   const favoritesLoaded = useFavoritesStore((s) => s.loaded)
   const favoritesLoading = useFavoritesStore((s) => s.loading)
@@ -381,7 +429,27 @@ export default function ResourceCenter() {
   // 置空，从而提前解除并发请求 B 的忙碌态。
   const [favBusyKeys, setFavBusyKeys] = useState<Set<string>>(() => new Set())
 
+  // ---- 收藏夹 / 标签（#132 P2）----
+  const folders = useFavoritesStore((s) => s.folders)
+  const foldersLoaded = useFavoritesStore((s) => s.foldersLoaded)
+  const loadFolders = useFavoritesStore((s) => s.loadFolders)
+  const createFolder = useFavoritesStore((s) => s.createFolder)
+  const renameFolder = useFavoritesStore((s) => s.renameFolder)
+  const deleteFolder = useFavoritesStore((s) => s.deleteFolder)
+  const folderMap = useFolderMap()
+  /** 收藏视图的收藏夹过滤：`all`（全部）/ `unfiled`（未分组）/ 具体夹子 id。 */
+  const [favFolder, setFavFolder] = useState<string>(() => (!freshEntry ? snap?.favFolder : undefined) ?? 'all')
+  /** 收藏视图的标签过滤（多选，AND）。 */
+  const [favTags, setFavTags] = useState<string[]>(() => (!freshEntry ? snap?.favTags : undefined) ?? [])
+  /** 正在编辑的收藏（弹窗目标）。 */
+  const [editFavorite, setEditFavorite] = useState<ResourceFavorite | null>(null)
+
   useEffect(() => { void loadFavorites() }, [loadFavorites])
+  // 收藏夹列表只在收藏视图需要（搜索视图不产生额外请求）。
+  useEffect(() => {
+    if (view !== 'favorites') return
+    void loadFolders()
+  }, [view, loadFolders])
 
   // 动态类别列表（按 source+category 拉取；失败时回退静态列表 staticTagsFor）
   const [categoryOptions, setCategoryOptions] = useState<ResourceCategory[] | null>(null)
@@ -404,9 +472,9 @@ export default function ResourceCenter() {
   }, [source, category, view])
 
   const restoredRef = useRef(!freshEntry && !!snap)
-  const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view })
+  const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view, favFolder, favTags })
   const listRef = useAnimatedList<HTMLDivElement>([items.length, category, source, keyword, sort, initialLoading, isReplacing], { y: 12, scale: 0.97, duration: 0.25 })
-  useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view } })
+  useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view, favFolder, favTags } })
 
   useEffect(() => {
     const params = new URLSearchParams()
@@ -494,14 +562,69 @@ export default function ResourceCenter() {
     savedSnapshot = { ...snapRef.current, scrollY: scrollEl()?.scrollTop ?? 0 }
   }, [])
 
-  // 收藏视图的数据源：按当前来源/分类本地过滤（source=all 时不按来源过滤）。
-  // 收藏项自带资源快照，因此无需任何网络请求即可渲染 ResourceCard。
-  const favoriteItems = useMemo(
-    () => favorites
-      .filter((f) => (source === 'all' || f.source === source) && f.category === category)
-      .map(toResourceItem),
-    [favorites, source, category],
+  // 收藏视图的数据源：本地过滤（来源 / 分类 / 收藏夹 / 标签），不产生任何搜索请求。
+  // 收藏项自带资源快照，因此可直接复用 ResourceCard 渲染与安装。
+  const favoriteMatchesScope = useCallback(
+    (f: ResourceFavorite) =>
+      (source === 'all' || f.source === source) && f.category === category,
+    [source, category],
   )
+  /** 任一收藏夹（含未分组）在「当前来源/分类」下的条数。 */
+  const favFolderCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const f of favorites) {
+      if (!favoriteMatchesScope(f)) continue
+      // folderId 指向不存在的夹子（手工改过 JSON）按「未分组」统计。
+      const key = f.folderId && folderMap.has(f.folderId) ? f.folderId : UNFILED
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return counts
+  }, [favorites, favoriteMatchesScope, folderMap])
+
+  /** 标签候选：从「当前来源/分类」的收藏里聚合（不受夹子/标签过滤影响，避免选项自己消失）。 */
+  const favTagOptions = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>()
+    for (const f of favorites) {
+      if (!favoriteMatchesScope(f)) continue
+      for (const tag of f.tags ?? []) {
+        const k = tag.toLowerCase()
+        const hit = counts.get(k)
+        if (hit) hit.count += 1
+        else counts.set(k, { label: tag, count: 1 })
+      }
+    }
+    return [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+  }, [favorites, favoriteMatchesScope])
+
+  const favoriteItems = useMemo(
+    () =>
+      favorites
+        .filter((f) => {
+          if (!favoriteMatchesScope(f)) return false
+          if (favFolder === UNFILED) {
+            if (f.folderId && folderMap.has(f.folderId)) return false
+          } else if (favFolder !== 'all' && f.folderId !== favFolder) {
+            return false
+          }
+          if (favTags.length > 0) {
+            const own = (f.tags ?? []).map((x) => x.toLowerCase())
+            if (!favTags.every((tag) => own.includes(tag.toLowerCase()))) return false
+          }
+          return true
+        })
+        .map(toResourceItem),
+    [favorites, favoriteMatchesScope, favFolder, folderMap, favTags],
+  )
+
+  /** 左侧收藏夹栏的条目（全部 / 未分组 / 各夹子 + 计数）。 */
+  const favRailItems = useMemo(() => {
+    const inScope = favorites.filter(favoriteMatchesScope)
+    return [
+      { key: 'all', label: t('resource.favorites.folders.all'), count: inScope.length },
+      { key: UNFILED, label: t('resource.favorites.folders.unfiled'), count: favFolderCounts.get(UNFILED) ?? 0 },
+      ...folders.map((f) => ({ key: f.id, label: f.name, count: favFolderCounts.get(f.id) ?? 0 })),
+    ]
+  }, [favorites, favoriteMatchesScope, favFolderCounts, folders, t])
 
   // 收藏视图同样补中文名（与搜索一致：仅 mod；走 mcmod 批量查询，不涉及资源搜索）。
   useEffect(() => {
@@ -582,6 +705,73 @@ export default function ResourceCenter() {
 
   const loadMore = () => {
     if (!loading && items.length < total) doSearch(page + 1, true)
+  }
+
+  // ---- P2：收藏夹增删改 + 标签过滤 ----
+
+  /** 新建收藏夹：用 MessageBox 的 prompt 取名；重名/空名由服务端拒绝并提示。 */
+  const handleCreateFolder = async () => {
+    const name = await prompt(t('resource.favorites.folders.createPlaceholder'), t('resource.favorites.folders.create'))
+    if (name === null) return
+    if (!name.trim()) {
+      notify(t('resource.favorites.folders.emptyName'), 'error')
+      return
+    }
+    try {
+      const folder = await createFolder(name)
+      // 刻意**不**把过滤切到新夹子：刚建好的夹子必然为空，跳过去只会让用户面对空列表。
+      notify(t('resource.favorites.folders.created', { name: folder.name }), 'success')
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t('resource.favorites.folders.failed'), 'error')
+    }
+  }
+
+  /** 重命名收藏夹。 */
+  const handleRenameFolder = async (id: string, current: string) => {
+    const name = await prompt(t('resource.favorites.folders.renamePlaceholder'), t('resource.favorites.folders.rename'), current)
+    if (name === null) return
+    if (!name.trim()) {
+      notify(t('resource.favorites.folders.emptyName'), 'error')
+      return
+    }
+    try {
+      await renameFolder(id, name)
+      notify(t('resource.favorites.folders.renamed'), 'success')
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t('resource.favorites.folders.failed'), 'error')
+    }
+  }
+
+  /**
+   * 删除收藏夹 —— 服务端会**连同夹内收藏一起删**，所以确认框必须写清条数且不可撤销。
+   */
+  const handleDeleteFolder = async (id: string, name: string) => {
+    const count = favFolderCounts.get(id) ?? 0
+    const ok = await choose(
+      count > 0
+        ? t('resource.favorites.folders.deleteBodyWithItems', { name, count })
+        : t('resource.favorites.folders.deleteBodyEmpty', { name }),
+      t('resource.favorites.folders.delete'),
+      t('common.cancel'),
+      t('resource.favorites.folders.deleteTitle'),
+    )
+    if (!ok) return
+    try {
+      const removed = await deleteFolder(id)
+      if (favFolder === id) setFavFolder('all')
+      notify(t('resource.favorites.folders.deleted', { count: removed }), 'success')
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t('resource.favorites.folders.failed'), 'error')
+    }
+  }
+
+  const toggleFavTag = (tag: string) =>
+    setFavTags((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]))
+
+  /** 打开「编辑收藏」弹窗：需要条目本身（含 folderId/note/tags），故从 store 原始列表取。 */
+  const handleEditFavorite = (item: ResourceItem) => {
+    const key = favoriteKey(item.source, item.id, category)
+    setEditFavorite(favorites.find((f) => favoriteKey(f.source, f.id, f.category) === key) ?? null)
   }
 
   const clearVersion = () => setGameVersion('')
@@ -766,6 +956,118 @@ export default function ResourceCenter() {
         </div>
       </Card>
 
+      {/* P2：收藏视图改两栏 —— 左侧收藏夹栏，右侧「标签筛选 + 列表」。
+          搜索视图不加包裹层（保持原单列布局）。 */}
+      <div className={cn(view === 'favorites' && 'grid items-start gap-4 lg:grid-cols-[212px_minmax(0,1fr)]')}>
+        {view === 'favorites' && (
+          <Card className="border-border/60 bg-card/95 p-2.5">
+            <div className="flex items-center justify-between px-1 pb-1.5">
+              <p className="text-[11px] font-medium uppercase tracking-[0.15em] text-muted-foreground/70">
+                {t('resource.favorites.folders.railTitle')}
+              </p>
+              <Tooltip content={t('resource.favorites.folders.create')}>
+                <button
+                  type="button"
+                  onClick={() => { void handleCreateFolder() }}
+                  aria-label={t('resource.favorites.folders.create')}
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <FolderPlus className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            </div>
+            <div className="space-y-0.5">
+              {favRailItems.map((row) => {
+                const active = favFolder === row.key
+                const isRealFolder = row.key !== 'all' && row.key !== UNFILED
+                return (
+                  <div
+                    key={row.key}
+                    className={cn(
+                      'group/rail flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors',
+                      active ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setFavFolder(row.key)}
+                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                      aria-pressed={active}
+                    >
+                      {row.key === 'all'
+                        ? <Folder className="h-3 w-3 shrink-0 opacity-70" />
+                        : <Folder className={cn('h-3 w-3 shrink-0', active ? 'opacity-100' : 'opacity-50')} />}
+                      <span className="truncate">{row.label}</span>
+                    </button>
+                    <span className="shrink-0 text-[11px] tabular-nums opacity-60">{row.count}</span>
+                    {isRealFolder && (
+                      <span className="hidden shrink-0 items-center gap-0.5 group-hover/rail:flex">
+                        <button
+                          type="button"
+                          onClick={() => { void handleRenameFolder(row.key, row.label) }}
+                          aria-label={t('resource.favorites.folders.rename')}
+                          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { void handleDeleteFolder(row.key, row.label) }}
+                          aria-label={t('resource.favorites.folders.delete')}
+                          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {foldersLoaded === false && (
+              <p className="px-2 pt-1 text-[11px] text-muted-foreground/60">{t('resource.favorites.folders.loading')}</p>
+            )}
+          </Card>
+        )}
+
+        <div className={cn('min-w-0', view === 'favorites' && 'space-y-3')}>
+          {view === 'favorites' && favTagOptions.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-medium text-muted-foreground">
+                {t('resource.favorites.tags.filterLabel')}
+              </span>
+              {favTagOptions.map(({ label, count }) => {
+                const active = favTags.some((x) => x.toLowerCase() === label.toLowerCase())
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => toggleFavTag(label)}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                      active
+                        ? 'border-primary/40 bg-primary/10 text-primary'
+                        : 'border-border/60 bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground',
+                    )}
+                  >
+                    {label}
+                    <span className="tabular-nums opacity-60">{count}</span>
+                  </button>
+                )
+              })}
+              {favTags.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFavTags([])}
+                  className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3 w-3" />
+                  {t('resource.clearFilter')}
+                </button>
+              )}
+            </div>
+          )}
+
       {(view === 'search' ? (initialLoading || isReplacing) : (favoritesLoading && !favoritesLoaded)) ? (
         <div className="flex flex-col gap-3">
           {Array.from({ length: 5 }).map((_, index) => (
@@ -821,6 +1123,13 @@ export default function ResourceCenter() {
           <div ref={listRef} className="flex flex-col gap-3">
             {shownItems.map((item) => {
               const itemKey = favoriteKey(item.source, item.id, category)
+              // 收藏视图下取出该条目的 P2 元数据（夹子名 / 备注 / 标签）与编辑入口。
+              const fav = view === 'favorites'
+                ? favorites.find((f) => favoriteKey(f.source, f.id, f.category) === itemKey)
+                : undefined
+              const folderName = fav?.folderId && folderMap.has(fav.folderId)
+                ? folderMap.get(fav.folderId)?.name
+                : undefined
               return (
                 <div key={`${view}-${item.source}-${item.id}`} data-key={`${item.source}-${item.id}`}>
                   <ResourceCard
@@ -837,6 +1146,10 @@ export default function ResourceCenter() {
                     isFavorite={favoriteKeys.has(itemKey)}
                     favoriteBusy={favBusyKeys.has(itemKey)}
                     onToggleFavorite={() => { void handleToggleFavorite(item) }}
+                    folderName={folderName}
+                    note={fav?.note ?? null}
+                    itemTags={fav?.tags ?? []}
+                    onEdit={view === 'favorites' ? () => handleEditFavorite(item) : undefined}
                   />
                 </div>
               )
@@ -859,6 +1172,18 @@ export default function ResourceCenter() {
             )
           )}
         </>
+      )}
+        </div>
+      </div>
+
+      {editFavorite && (
+        <FavoriteEditDialog
+          open={true}
+          onClose={() => setEditFavorite(null)}
+          favorite={editFavorite}
+          category={category}
+          onSaved={() => notify(t('resource.favorites.edit.saved'), 'success')}
+        />
       )}
 
       {installDialogItem && (

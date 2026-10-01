@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, Download, ExternalLink, Heart, Languages, Layers, RotateCw, Save, Tag, User } from 'lucide-react'
+import { ArrowLeft, ChevronDown, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, StickyNote, Tag, User } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import ReactMarkdown from 'react-markdown'
@@ -24,7 +24,8 @@ import { downloadTo } from '../api/resource-download.ts'
 import { getInstance, getDefaultInstance } from '../api/instance.ts'
 import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance, ResolvedDependency } from '../types/index.ts'
 import { addTask } from '../stores/downloadStore.ts'
-import { useFavoritesStore, useFavoriteKeys, favoriteKey } from '../stores/favoritesStore.ts'
+import { useFavoritesStore, useFavoriteKeys, useFolderMap, favoriteKey } from '../stores/favoritesStore.ts'
+import FavoriteEditDialog from '../components/FavoriteEditDialog.tsx'
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -191,10 +192,23 @@ export default function ResourceDetailPage() {
   const favoriteKeys = useFavoriteKeys()
   const loadFavorites = useFavoritesStore((s) => s.load)
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite)
+  const favorites = useFavoritesStore((s) => s.favorites)
+  const loadFolders = useFavoritesStore((s) => s.loadFolders)
+  const folderMap = useFolderMap()
   const [favBusy, setFavBusy] = useState(false)
   const isFavorited = favoriteKeys.has(favoriteKey(source, resourceId ?? '', category))
+  /** P2：本条收藏的原始条目（含 folderId / note / tags），未收藏时为 undefined。 */
+  const favoriteEntry = favorites.find((f) => favoriteKey(f.source, f.id, f.category) === favoriteKey(source, resourceId ?? '', category))
+  const favoriteFolderName = favoriteEntry?.folderId && folderMap.has(favoriteEntry.folderId)
+    ? folderMap.get(favoriteEntry.folderId)?.name
+    : undefined
+  const [editOpen, setEditOpen] = useState(false)
 
   useEffect(() => { void loadFavorites() }, [loadFavorites])
+  // 收藏夹列表只在「已收藏」时才需要（未收藏时没有编辑入口，不产生额外请求）。
+  useEffect(() => {
+    if (isFavorited) void loadFolders()
+  }, [isFavorited, loadFolders])
 
   const handleToggleFavorite = useCallback(async () => {
     if (!detail || favBusy) return
@@ -646,7 +660,40 @@ export default function ResourceDetailPage() {
                       <Heart className={cn('h-3 w-3', isFavorited && 'fill-current')} />
                       {t(isFavorited ? 'resource.favorites.remove' : 'resource.favorites.add')}
                     </button>
+                    {/* P2：已收藏时才提供编辑入口（收藏夹 / 备注 / 标签） */}
+                    {isFavorited && (
+                      <button
+                        type="button"
+                        onClick={() => setEditOpen(true)}
+                        aria-label={t('resource.favorites.edit.open')}
+                        className="inline-flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        {t('resource.favorites.edit.open')}
+                      </button>
+                    )}
                   </div>
+
+                  {/* P2：收藏夹 / 自定义标签 / 备注 */}
+                  {isFavorited && (favoriteFolderName || favoriteEntry?.note || (favoriteEntry?.tags?.length ?? 0) > 0) && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      {favoriteFolderName && (
+                        <span className="inline-flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5">
+                          <Folder className="h-3 w-3" />
+                          {favoriteFolderName}
+                        </span>
+                      )}
+                      {(favoriteEntry?.tags ?? []).map((tag) => (
+                        <Badge key={tag} variant="secondary" className="rounded-full px-3 py-1">{tag}</Badge>
+                      ))}
+                      {favoriteEntry?.note && (
+                        <span className="inline-flex max-w-full items-center gap-1 rounded-lg bg-muted/60 px-3 py-1.5">
+                          <StickyNote className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{favoriteEntry.note}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {detail.categories.length > 0 && (
                     <div className="space-y-2">
@@ -959,6 +1006,16 @@ export default function ResourceDetailPage() {
           instanceId={instanceIdParam || undefined}
           initialVersion={installVersion}
           resourceCnName={cnName}
+        />
+      )}
+
+      {editOpen && favoriteEntry && (
+        <FavoriteEditDialog
+          open={true}
+          onClose={() => setEditOpen(false)}
+          favorite={favoriteEntry}
+          category={category}
+          onSaved={() => notify(t('resource.favorites.edit.saved'), 'success')}
         />
       )}
     </PageShell>

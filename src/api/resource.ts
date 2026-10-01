@@ -1,5 +1,5 @@
-import { get, post, del } from './client.ts'
-import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion, ResolvedDependency, ResourceItem, ResourceFavorite } from '../types/index.ts'
+import { get, post, put, del } from './client.ts'
+import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion, ResolvedDependency, ResourceItem, ResourceFavorite, ResourceFavoriteFolder } from '../types/index.ts'
 
 export function searchResources(params: {
   category?: string
@@ -113,6 +113,27 @@ export function addResourceFavorite(favorite: ResourceFavorite): Promise<Resourc
 export function removeResourceFavorite(source: string, id: string, category: string): Promise<{ removed: boolean }> {
   const q = new URLSearchParams({ source, id, category })
   return del<{ removed: boolean }>(`/resource-favorites?${q}`)
+}
+
+// ---- 收藏夹（P2）：实体单独存 resource_favorite_folders.json ----
+
+export function listFavoriteFolders(): Promise<ResourceFavoriteFolder[]> {
+  return get<ResourceFavoriteFolder[]>('/resource-favorite-folders')
+}
+
+export function createFavoriteFolder(name: string): Promise<ResourceFavoriteFolder> {
+  return post<ResourceFavoriteFolder>('/resource-favorite-folders', { name })
+}
+
+export function renameFavoriteFolder(id: string, name: string): Promise<ResourceFavoriteFolder> {
+  return put<ResourceFavoriteFolder>(`/resource-favorite-folders/${encodeURIComponent(id)}`, { name })
+}
+
+/**
+ * 删除收藏夹 —— 服务端**级联删除夹内全部收藏**（`removedFavorites` 为被删条数）。
+ */
+export function deleteFavoriteFolder(id: string): Promise<{ removed: boolean; removedFavorites: number }> {
+  return del<{ removed: boolean; removedFavorites: number }>(`/resource-favorite-folders/${encodeURIComponent(id)}`)
 }
 
 /**
