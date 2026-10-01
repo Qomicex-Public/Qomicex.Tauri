@@ -56,6 +56,16 @@ impl ApiError {
         }
     }
 
+    /// 资源冲突（如目标文件正被其它进程占用）→ 409。
+    pub fn conflict(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            detail: None,
+            status: StatusCode::CONFLICT,
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             code: "INTERNAL_ERROR".to_string(),

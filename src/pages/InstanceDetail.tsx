@@ -53,6 +53,7 @@ import { useDebug } from '../components/DebugContext.tsx'
 import { logWindowUrl, openLogWindow } from '../lib/gameLogWindow.ts'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import { useI18n } from '../i18n/index.tsx'
+import { errorCodeToKey } from '../i18n/errors.ts'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import SchematicPreviewDialog from '../components/SchematicPreviewDialog.tsx'
 
@@ -828,13 +829,23 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     try {
       if (batchConfirm.type === 'enable') await batchEnableMods(instanceId, names)
       else if (batchConfirm.type === 'disable') await batchDisableMods(instanceId, names)
-      else if (batchConfirm.type === 'delete') await batchDeleteMods(instanceId, names)
+      else if (batchConfirm.type === 'delete') {
+        const result = await batchDeleteMods(instanceId, names)
+        // 失败的项必须提示：批删整体仍返回 200，此前只写服务端日志，
+        // 被占用的文件实际没删掉却在界面上表现为成功。
+        if (result.failed.length > 0) {
+          const detail = result.failed
+            .map(f => `${f.name}（${errorCodeToKey(f.code) ? t(errorCodeToKey(f.code)!) : t('errors.unknown')}）`)
+            .join('、')
+          notify(t('instanceDetail.mods.batchDeleteFailed', { count: result.failed.length, detail }), 'error')
+        }
+      }
       await refreshMods()
       setSelected(new Set())
     } catch (e) { console.error('Batch action failed:', e) }
     setBatchProcessing(false)
     setBatchConfirm(null)
-  }, [batchConfirm, selected, instanceId, refreshMods])
+  }, [batchConfirm, selected, instanceId, refreshMods, notify, t])
 
   // 悬浮工具条「更新模组」：仅更新当前选中且存在 update 条目的模组
   const handleUpdateSelected = useCallback(async () => {

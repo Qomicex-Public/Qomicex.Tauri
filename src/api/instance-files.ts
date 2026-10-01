@@ -128,7 +128,20 @@ export function batchDisableMods(instanceId: string, names: string[]): Promise<v
   return post(`/instance/${instanceId}/files/mods/batch-disable`, names)
 }
 
-export function batchDeleteMods(instanceId: string, names: string[]): Promise<void> {
+/** 批量删除的单项失败（与后端 `BatchDeleteFailureDto` 对应） */
+export interface BatchDeleteFailure {
+  name: string
+  code: string
+  message: string
+}
+
+/** 批量删除结果：整体 200，失败项显式回传，避免「静默成功」 */
+export interface BatchDeleteResult {
+  deleted: string[]
+  failed: BatchDeleteFailure[]
+}
+
+export function batchDeleteMods(instanceId: string, names: string[]): Promise<BatchDeleteResult> {
   return post(`/instance/${instanceId}/files/mods/batch-delete`, names)
 }
 
