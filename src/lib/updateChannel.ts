@@ -33,17 +33,28 @@ export const UPDATE_CHANNEL_KEY = 'update-channel'
 const TYPE_SEGMENT_RE = /^(alpha|beta|release)(?:\d|$)/i
 
 /**
- * 版本号 → 所属列车。
+ * 版本号 → 所属列车。与后端 `train_of`（进而 `parse_train_version`）逐条对齐。
  *
  * - `0.1.0-release1.0` → `release`
  * - `0.1.0-beta31.0` → `beta`
  * - `0.1.0-alpha20260823.0`（含 legacy `alpha260719.build3`）→ `alpha`
  * - `0.1.0`（无后缀）→ `dev`：本地构建，不属于任何已发布列车
- * - 其它（`-rc1` 等）→ `unknown`
+ * - 核心段非数字或为空（`1.0.x` / `''` / 连核心段都没有的 `-rc1`）→ `unknown`：
+ *   后端 `parse_train_version` 同样解析失败，前端不能把它们当 dev（否则会把
+ *   "未知构建"降级显示成"开发构建"）
+ * - 其它 pre-release 后缀（如 `0.1.0-rc2`）→ `unknown`
  */
 export function trainOf(version: string): UpdateTrain {
-  const v = (version || '').trim().replace(/^v/i, '')
+  // `v+`：后端 `strip_v` 是 `trim_start_matches('v')`，连续前缀全部剥掉。
+  const v = (version || '').trim().replace(/^v+/i, '')
+  if (v === '') return 'unknown'
   const dash = v.indexOf('-')
+  const core = dash === -1 ? v : v.slice(0, dash)
+  // 核心段必须全为数字（容忍 `1..2` 的空段）且至少有一段数字——对应后端
+  // `core_is_numeric` + `nums.next()?`：`1.0.x`、`-rc1` 在后端是 Unknown。
+  const coreSegs = core.split('.')
+  if (!coreSegs.every(s => s === '' || /^\d+$/.test(s))) return 'unknown'
+  if (!coreSegs.some(s => s !== '')) return 'unknown'
   if (dash === -1) return 'dev'
   // 回归防护：旧代码是 `/-(alpha|beta|release)(\d+)/i` 匹配 `v.slice(dash + 1)`，
   // 而 slice 已把 `-` 剥掉 → 正则永远匹配不上 → release/beta/alpha 全部落入
@@ -111,4 +122,18 @@ export function trainLabelKey(train: UpdateTrain): string {
       // "稳定版"会与解析结果矛盾，并让用户误以为跑在稳定通道上。
       return 'settings.about.unknownBuild'
   }
+}
+
+/**
+ * 通道字符串（后端 `Train::as_str()` / `UpdatePlan.channel` 的口径：
+ * `release` | `beta` | `alpha` | `dev`）→ 徽章用的 i18n key。
+ *
+ * 无法识别时返回 `undefined`，由调用方回落到原始字符串——不猜。这样更新弹窗
+ * 文案里的通道名与设置页「关于」徽章同为本地化标签（测试版/稳定版/开发版），
+ * 而不是把后端原始 key（`beta`）直接插进中文句子。
+ */
+export function channelLabelKey(channel: string | undefined): string | undefined {
+  return channel === 'release' || channel === 'beta' || channel === 'alpha' || channel === 'dev'
+    ? trainLabelKey(channel)
+    : undefined
 }
