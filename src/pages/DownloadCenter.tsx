@@ -36,10 +36,12 @@ function getSafeIconSrc(icon?: string): string | null {
   return /^https?:\/\//i.test(trimmed) ? trimmed : null
 }
 
+/** 拼接非空 class（本地实现，避免为页面单独引入 plugin-ui 的 cn）。 */
 function cn(...classes: (string | boolean | undefined | null)[]): string {
   return classes.filter(Boolean).join(' ')
 }
 
+/** 把状态字符串格式化为 `YYYY-MM-DD HH:mm`，供卡片时间行展示。 */
 function formatDate(dateStr: string): string {
   try {
     const d = new Date(dateStr)
@@ -67,6 +69,7 @@ const TYPE_ICON: Record<string, typeof Box> = {
   file: Box,
 }
 
+/** 按 `type` 取兜底图标（无资源图标时显示）。 */
 function TypeIcon({ taskType, className }: { taskType: string; className?: string }) {
   const Icon = TYPE_ICON[taskType] ?? Box
   return <Icon className={className} />

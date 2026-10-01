@@ -98,7 +98,7 @@ export const DOWNLOAD_GROUP_CONFIG: Record<DownloadGroupKey, DownloadGroupConfig
   other: { labelKey: 'downloads.groups.other', icon: Box },
 }
 
-/** 某个分组键是否合法（用于过滤 localStorage 里的脏数据）。 */
+/** 某个分组键是否合法（用于严格校验 localStorage 里的持久化状态）。 */
 export function isDownloadGroupKey(value: unknown): value is DownloadGroupKey {
   return typeof value === 'string' && (DOWNLOAD_GROUP_ORDER as readonly string[]).includes(value)
 }
@@ -159,8 +159,12 @@ export function groupTasks(tasks: DownloadTask[]): DownloadGroup[] {
 export const COLLAPSED_GROUPS_KEY = 'qomicex-download-groups-collapsed'
 
 /**
- * 读取「已折叠的分组键」。默认全部展开——解析失败、类型不符、含非法键时
- * 都回退到空集合，宁可多展开也不要因为脏数据把分组藏起来。
+ * 读取「已折叠的分组键」。默认全部展开——解析失败、类型不符、**含任何非法键**
+ * 时都回退到空集合，宁可多展开也不要因为脏数据把分组藏起来。
+ *
+ * 校验是「全有或全无」而非逐项过滤：`["mod", "__proto__"]` 这类混合值说明这份
+ * 持久化状态已不可信，此时只信任其中合法的那部分等于部分接受脏数据。契约见
+ * `docs/junsi-dev-docs/6-UI/组件/下载中心UI规范.md`。
  */
 export function readCollapsedGroups(): DownloadGroupKey[] {
   try {
@@ -168,7 +172,8 @@ export function readCollapsedGroups(): DownloadGroupKey[] {
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(isDownloadGroupKey)
+    if (!parsed.every(isDownloadGroupKey)) return []
+    return parsed
   } catch {
     return []
   }
