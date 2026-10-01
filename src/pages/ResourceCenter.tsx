@@ -318,41 +318,53 @@ function ResourceCard({
           <Button asChild variant="outline" className="flex-1 sm:w-full">
             <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId, tags) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>{t('resource.viewDetail')}</Link>
           </Button>
-          {item.projectUrl && (
-            <Button asChild variant="ghost" className="px-3 sm:w-full">
-              <a href={item.projectUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-3 w-3" />
-                {t('resource.originalSite')}
-              </a>
-            </Button>
-          )}
-          {onEdit && (
-            <div className="flex-1 sm:w-full">
-              <Tooltip content={t('resource.favorites.edit.open')}>
+          {/* 底行：原站 / 编辑 / 收藏 —— 三个等宽图标按钮并排，样式统一（都用 outline +
+              Tooltip）。不再各占一整行，避免动作列被拉高。 */}
+          <div className="flex flex-row gap-2 sm:w-full">
+            {item.projectUrl && (
+              <div className="flex-1">
+                <Tooltip content={t('resource.originalSite')}>
+                  <Button asChild variant="outline" className="w-full px-2">
+                    <a
+                      href={item.projectUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={t('resource.originalSite')}
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </Button>
+                </Tooltip>
+              </div>
+            )}
+            {onEdit && (
+              <div className="flex-1">
+                <Tooltip content={t('resource.favorites.edit.open')}>
+                  <Button
+                    variant="outline"
+                    className="w-full px-2"
+                    aria-label={t('resource.favorites.edit.open')}
+                    onClick={onEdit}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                </Tooltip>
+              </div>
+            )}
+            <div className="flex-1">
+              <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
                 <Button
-                  variant="outline"
-                  className="w-full px-3"
-                  aria-label={t('resource.favorites.edit.open')}
-                  onClick={onEdit}
+                  variant={isFavorite ? 'secondary' : 'outline'}
+                  className="w-full px-2"
+                  aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
+                  aria-pressed={isFavorite}
+                  disabled={favoriteBusy}
+                  onClick={onToggleFavorite}
                 >
-                  <Pencil className="h-3 w-3" />
+                  <Heart className={cn('h-3 w-3', isFavorite && 'fill-current text-primary')} />
                 </Button>
               </Tooltip>
             </div>
-          )}
-          <div className="flex-1 sm:w-full">
-            <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
-              <Button
-                variant={isFavorite ? 'secondary' : 'outline'}
-                className="w-full px-3"
-                aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
-                aria-pressed={isFavorite}
-                disabled={favoriteBusy}
-                onClick={onToggleFavorite}
-              >
-                <Heart className={cn('h-3 w-3', isFavorite && 'fill-current text-primary')} />
-              </Button>
-            </Tooltip>
           </div>
         </div>
       </div>
@@ -819,30 +831,52 @@ export default function ResourceCenter() {
 
       <Card className="border-border/60 bg-muted/20 p-4">
         <div className="space-y-4">
-          {/* 视图切换：搜索 / 收藏（#132）。收藏视图复用下方来源/分类 Tabs 作本地过滤。 */}
-          <div className="flex flex-wrap items-center gap-3">
-            <Tabs
-              tabs={[
-                { id: 'search', label: t('resource.favorites.viewSearch') },
-                {
-                  id: 'favorites',
-                  label: favorites.length > 0
-                    ? t('resource.favorites.viewLabelWithCount', { count: favorites.length })
-                    : t('resource.favorites.viewLabel'),
-                },
-              ]}
-              activeTab={view}
-              onChange={(next) => setView(next === 'favorites' ? 'favorites' : 'search')}
-            />
-            {view === 'favorites' && (
-              <p className="text-[11px] text-muted-foreground">{t('resource.favorites.filterHint')}</p>
-            )}
-          </div>
-
           <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
-            <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.sourceLabel')}</p>
-              <Tabs tabs={SOURCES.map(s => ({ id: s.key, label: s.key === 'all' ? t('resource.sources.all') : s.label }))} activeTab={source} onChange={handleSourceChange} />
+            <div className="flex items-end gap-2.5">
+              {/* 视图切换（#132）：搜索 / 收藏 收成图标按钮，与「资源源」同一行、位于最左。
+                  计数挪进 Tooltip（图标态不再显示文字）。 */}
+              <div className="flex items-center gap-1">
+                <Tooltip content={t('resource.favorites.viewSearch')}>
+                  <button
+                    type="button"
+                    onClick={() => setView('search')}
+                    aria-label={t('resource.favorites.viewSearch')}
+                    aria-pressed={view === 'search'}
+                    className={cn(
+                      'flex h-10 items-center justify-center rounded-lg px-3 transition-all duration-200',
+                      view === 'search'
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                    )}
+                  >
+                    <Search className="h-4 w-4" />
+                  </button>
+                </Tooltip>
+                <Tooltip
+                  content={favorites.length > 0
+                    ? t('resource.favorites.viewLabelWithCount', { count: favorites.length })
+                    : t('resource.favorites.viewLabel')}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setView('favorites')}
+                    aria-label={t('resource.favorites.viewLabel')}
+                    aria-pressed={view === 'favorites'}
+                    className={cn(
+                      'flex h-10 items-center justify-center rounded-lg px-3 transition-all duration-200',
+                      view === 'favorites'
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                    )}
+                  >
+                    <Heart className={cn('h-4 w-4', view === 'favorites' && 'fill-current')} />
+                  </button>
+                </Tooltip>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.sourceLabel')}</p>
+                <Tabs tabs={SOURCES.map(s => ({ id: s.key, label: s.key === 'all' ? t('resource.sources.all') : s.label }))} activeTab={source} onChange={handleSourceChange} />
+              </div>
             </div>
             <div className="space-y-2 xl:ml-auto">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.categoryLabel')}</p>
