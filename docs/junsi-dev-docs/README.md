@@ -89,6 +89,7 @@
 - [ADR-088：模组删除一致性与错误上报：失效后重载 + 请求序号保护 + 后端 IO 错误传播](1-决策记录/ADR-088-模组删除一致性与错误上报-失效后重载-请求序号保护-后端-IO-错误传播.md)
 - [ADR-089：下载中心按资源类型分组与折叠](1-决策记录/ADR-089-下载中心按资源类型分组与折叠.md)
 - [ADR-090：补齐 mod 换版本/安装端点并接通可配置的全局请求超时（issue #117 + #133）](1-决策记录/ADR-090-补齐-mod-换版本与安装端点并接通可配置的全局请求超时-issue-117-133.md)
+- [ADR-091：修复 Windows 拖入 Yggdrasil 卡片失效（Rust 侧解析 .url）+ 补齐资源校验/补全三端点（issue #136 + #138）](1-决策记录/ADR-091-修复-Windows-拖入-Yggdrasil-失效并补齐资源校验补全端点-issue-136-138.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

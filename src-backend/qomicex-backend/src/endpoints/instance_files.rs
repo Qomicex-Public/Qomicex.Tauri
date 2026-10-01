@@ -1789,8 +1789,13 @@ async fn change_mod_version(
     download_mod_to_file(&state, &req.download_url, &dir, &new_name).await?;
 
     // 新文件已就位，此时才移除旧版本（含 .disabled 变体）。
+    // 删除失败不再静默：新版本已落盘而旧版本仍在，两个版本会被同时加载，
+    // 用户需要知道（#140 之后 delete_mod_file 返回 Result，占用映射 409）。
     if old_name != new_name {
-        delete_mod_file(&dir.join(&old_name));
+        if let Err(e) = delete_mod_file(&dir.join(&old_name)) {
+            tracing::warn!("change-version: remove old mod {old_name} failed: {e}");
+            return Err(map_delete_mod_error(e));
+        }
     }
     // 无需手动失效 mods 缓存：缓存命中要求目录指纹一致，而文件名/大小/mtime
     // 任一变化都会让指纹改变（mods_dir_signature），下次读取自然重扫。

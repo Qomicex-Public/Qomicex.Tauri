@@ -3189,10 +3189,17 @@ export default function InstanceDetailPage() {
           setRepairing(false)
         }
       }, 1000)
-    } catch {
+    } catch (e) {
+      // 补全启动失败此前被完全吞掉（用户只看到按钮弹回）。如实提示。
       setRepairing(false)
+      notify(
+        t('instanceDetail.settingsTab.repairFailed', {
+          error: e instanceof ApiError ? e.displayMessage : String(e),
+        }),
+        'error',
+      )
     }
-  }, [id])
+  }, [id, notify, t])
 
   const handleVerifyResources = useCallback(async () => {
     if (!id) return
@@ -3205,8 +3212,15 @@ export default function InstanceDetailPage() {
         notify(t('instanceDetail.settingsTab.missingFiles', { count: result.missingFiles.length }), 'warning')
         await handleRepairResources()
       }
-    } catch {
-      notify(t('instanceDetail.settingsTab.integrityOk'), 'success')
+    } catch (e) {
+      // 校验失败必须说失败：此前这里 catch 后仍提示「资源完整」，用户会以为
+      // 文件没问题（issue #138 的实际危害）。给出真实错误，不再假绿。
+      notify(
+        t('instanceDetail.settingsTab.verifyFailed', {
+          error: e instanceof ApiError ? e.displayMessage : String(e),
+        }),
+        'error',
+      )
     } finally {
       setVerifying(false)
     }
