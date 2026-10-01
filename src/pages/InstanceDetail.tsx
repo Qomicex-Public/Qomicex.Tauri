@@ -53,6 +53,7 @@ import { useDebug } from '../components/DebugContext.tsx'
 import { logWindowUrl, openLogWindow } from '../lib/gameLogWindow.ts'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import { useI18n } from '../i18n/index.tsx'
+import { errorCodeToKey } from '../i18n/errors.ts'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import SchematicPreviewDialog from '../components/SchematicPreviewDialog.tsx'
 
@@ -560,18 +561,39 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   /** 远程信息反查（enrich）进行中：列表顶部显示加载提示 */
   const [enriching, setEnriching] = useState(false)
 
+  /**
+   * 请求序号：`loadMods` 每次调用递增，只有「最新一次」的响应允许写入列表与缓存。
+   * 删除后立刻刷新时，先前发出的请求（或切换实例后旧实例的响应）可能更晚返回，
+   * 若无此保护会把已删除的行、甚至旧实例的列表重新写回来。
+   */
+  const loadModsSeqRef = useRef(0)
+  /**
+   * enrichment 所有权序号：每轮 `applyEnrich` 递增。仅「最新一轮」允许复位
+   * `enriching`，否则被取代的旧轮次收尾时会把新轮的「远程信息加载中」提前清掉。
+   */
+  const enrichSeqRef = useRef(0)
+
   const loadMods = useCallback(async () => {
+    const seq = ++loadModsSeqRef.current
+    const isStale = () => seq !== loadModsSeqRef.current
     setSelected(new Set())
     setLoadError(null)
+    // 新的加载立即接管 enriching 指示器：本次若在 getModsMetadata 阶段就失败
+    // （根本不会走到 applyEnrich），也不会让上一轮残留的提示永久挂在界面上。
+    setEnriching(false)
     const cacheKey = `api-instance-${instanceId}-mods`
     // enrich 合并（两段式第二步）：异步反查远程 id/图标，合并后回写缓存，
     // 使缓存命中场景（30s 内重复打开）也能拿到远程信息。
     const applyEnrich = async () => {
+      const enrichSeq = ++enrichSeqRef.current
       setEnriching(true)
       try {
         const entries = await enrichMods(instanceId)
+        // 反查期间已有更新的 loadMods：本次 enrichment 结果作废，不回写列表与缓存
+        if (isStale()) return
         const map = new Map(entries.map(e => [e.fileName, e]))
         setMods(prev => {
+          if (isStale()) return prev
           const next = prev.map(m => {
             const e = map.get(m.fileName)
             if (!e) return m
@@ -592,7 +614,10 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
           return next
         })
       } catch { /* 反查失败不影响列表 */ }
-      finally { setEnriching(false) }
+      finally {
+        // 仅当本次 enrichment 仍是最新一轮时才复位：过期轮次不得清掉新轮的指示器。
+        if (enrichSeq === enrichSeqRef.current) setEnriching(false)
+      }
     }
     const fresh = cacheFresh<ModMetadata[]>(cacheKey)
     if (fresh) { setMods(fresh); setLoading(false); void applyEnrich(); return }
@@ -600,11 +625,20 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     if (stale) { setMods(stale); setLoading(false) }
     setLoading(true)
     setLoadProgress(null)
+    // 轮询句柄提到 try 之外：任何退出路径（含提前 return 的过期响应）都要清掉，
+    // 否则本函数的 finally 之前 return 会让 300ms 轮询永久泄漏。
+    let pollId: ReturnType<typeof setInterval> | undefined
     try {
-      getModsCount(instanceId).then(count => setLoadProgress({ current: 0, total: count })).catch(() => {})
-      const pollId = setInterval(async () => {
+      // 两条进度通道同样要受序号保护：否则过期请求会用旧实例/旧一轮的进度
+      // 覆盖当前显示的进度。
+      getModsCount(instanceId).then(count => {
+        if (isStale()) return
+        setLoadProgress({ current: 0, total: count })
+      }).catch(() => {})
+      pollId = setInterval(async () => {
         try {
           const p = await getModsProgress(instanceId)
+          if (isStale()) return
           if (p) setLoadProgress(p)
         } catch {
           // 300ms 轮询：单个周期失败就保留上一次的进度，下一周期还会重试，
@@ -612,18 +646,32 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         }
       }, 300)
       const data = await getModsMetadata(instanceId)
-      clearInterval(pollId)
+      // 过期响应：丢弃 setMods / cacheSet / setLoading，避免旧列表覆盖新状态
+      if (isStale()) return
       setLoadProgress(null)
       setMods(data)
       cacheSet(cacheKey, data)
       void applyEnrich()
     } catch (e) {
+      if (isStale()) return
       console.error('Load mods failed:', e)
       setMods([])
       setLoadError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (pollId !== undefined) clearInterval(pollId)
+      if (!isStale()) setLoading(false)
     }
-    setLoading(false)
   }, [instanceId])
+
+  /**
+   * 统一的「失效后重载」：单卡片删除与批量操作共用同一条刷新路径。
+   * 必须先 `cacheInvalidate` 再 `loadMods`——`loadMods` 会优先读 30s TTL 缓存，
+   * 不过期的话重载会直接命中旧列表，删除的行原样回来（issue #140 的根因）。
+   */
+  const refreshMods = useCallback(async () => {
+    cacheInvalidate(`api-instance-${instanceId}-mods`)
+    await loadMods()
+  }, [instanceId, loadMods])
 
   /**
    * 启禁 Mod 的实现是磁盘重命名（`{name}` ↔ `{name}.disabled`，见后端 `enable_mod`/
@@ -781,14 +829,23 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     try {
       if (batchConfirm.type === 'enable') await batchEnableMods(instanceId, names)
       else if (batchConfirm.type === 'disable') await batchDisableMods(instanceId, names)
-      else if (batchConfirm.type === 'delete') await batchDeleteMods(instanceId, names)
-      cacheInvalidate(`api-instance-${instanceId}-mods`)
-      await loadMods()
+      else if (batchConfirm.type === 'delete') {
+        const result = await batchDeleteMods(instanceId, names)
+        // 失败的项必须提示：批删整体仍返回 200，此前只写服务端日志，
+        // 被占用的文件实际没删掉却在界面上表现为成功。
+        if (result.failed.length > 0) {
+          const detail = result.failed
+            .map(f => `${f.name}（${errorCodeToKey(f.code) ? t(errorCodeToKey(f.code)!) : t('errors.unknown')}）`)
+            .join('、')
+          notify(t('instanceDetail.mods.batchDeleteFailed', { count: result.failed.length, detail }), 'error')
+        }
+      }
+      await refreshMods()
       setSelected(new Set())
     } catch (e) { console.error('Batch action failed:', e) }
     setBatchProcessing(false)
     setBatchConfirm(null)
-  }, [batchConfirm, selected, instanceId, loadMods])
+  }, [batchConfirm, selected, instanceId, refreshMods, notify, t])
 
   // 悬浮工具条「更新模组」：仅更新当前选中且存在 update 条目的模组
   const handleUpdateSelected = useCallback(async () => {
@@ -998,7 +1055,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                       instanceId={instanceId}
                       gameVersion={gameVersion}
                       loader={loader}
-                      onRefresh={loadMods}
+                      onRefresh={refreshMods}
                       onToggle={toggleModLocal}
                       onChangeVersion={setVersionDialogMod}
                       selected={selected.has(mod.fileName)}

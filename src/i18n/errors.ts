@@ -6,6 +6,8 @@ import type { Lang } from './types'
 const CODE_TO_KEY: Record<string, string> = {
   NOT_FOUND: 'errors.notFound',
   FORBIDDEN: 'errors.forbidden',
+  // 文件被其它进程占用（Windows 共享冲突）：给出可操作提示，而非「服务器内部错误」
+  MOD_FILE_IN_USE: 'errors.modFileInUse',
   BAD_REQUEST: 'errors.badRequest',
   INTERNAL_ERROR: 'errors.internalError',
   UPSTREAM_ERROR: 'errors.upstreamError',
@@ -34,6 +36,11 @@ const CODE_TO_KEY: Record<string, string> = {
   PLUGIN_SIGNATURE_CERT_INVALID: 'errors.pluginSignatureCertInvalid',
   PLUGIN_SIGNATURE_HASH_MISMATCH: 'errors.pluginSignatureHashMismatch',
   NO_ROLLBACK_SNAPSHOT: 'errors.noRollbackSnapshot',
+}
+
+/** 错误码 → 翻译 key；未映射返回 null（调用方自行回退后端 message） */
+export function errorCodeToKey(code: string): string | null {
+  return CODE_TO_KEY[code] ?? null
 }
 
 /** 按语言翻译后端错误；未映射的错误码返回 null（调用方回退后端 message） */

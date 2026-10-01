@@ -1087,6 +1087,25 @@ struct CheckUpdatesQuery {
     force: Option<i32>,
 }
 
+/// 批量删除的单项失败：前端据此把「哪个文件为什么没删掉」提示给用户。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchDeleteFailureDto {
+    name: String,
+    /// 稳定的机器可读错误码（如 `MOD_FILE_IN_USE`），供前端做文案映射
+    code: String,
+    message: String,
+}
+
+/// 批量删除响应：整体仍是 200（尽力而为，删掉多少算多少），
+/// 失败项通过 `failed` 明确回传，避免「静默成功」。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchDeleteResponse {
+    deleted: Vec<String>,
+    failed: Vec<BatchDeleteFailureDto>,
+}
+
 /// enrich 结果条目：按 file_name 合并到前端 mod 列表（两段式第二步）。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1573,7 +1592,9 @@ async fn delete_mod(
 ) -> ApiResult<StatusCode> {
     let name = required_name(q.name)?;
     let r = resolve(&id, &state)?;
-    delete_mod_file(&category_dir(&r, "mods").join(&name));
+    // 传播真实结果：占用→409 MOD_FILE_IN_USE、NotFound→404、PermissionDenied→403、其它→500。
+    // 此前静默丢弃错误导致「删除失败但前端收到 204」，是 issue #140 的后端根因。
+    delete_mod_file(&category_dir(&r, "mods").join(&name)).map_err(map_delete_mod_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1804,13 +1825,29 @@ async fn batch_delete_mods(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
     Json(names): Json<Vec<String>>,
-) -> ApiResult<StatusCode> {
+) -> ApiResult<Json<BatchDeleteResponse>> {
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
+    // 尽力而为：单个失败不中断其余删除，整体仍返回 200。
+    // 但失败项必须显式回传——此前只写服务端 warn，前端一律走成功分支，
+    // 用户在「删除被拒绝」时收不到任何提示（issue #140 的批删分支）。
+    let mut deleted = Vec::new();
+    let mut failed = Vec::new();
     for name in names {
-        delete_mod_file(&dir.join(&name));
+        match delete_mod_file(&dir.join(&name)) {
+            Ok(()) => deleted.push(name),
+            Err(e) => {
+                tracing::warn!("batch delete mod {name} failed: {e}");
+                let api_err = map_delete_mod_error(e);
+                failed.push(BatchDeleteFailureDto {
+                    name,
+                    code: api_err.code,
+                    message: api_err.message,
+                });
+            }
+        }
     }
-    Ok(StatusCode::OK)
+    Ok(Json(BatchDeleteResponse { deleted, failed }))
 }
 
 /// POST /instance/{id}/files/mods/batch-update — 批量更新模组（下载新版本并替换旧文件）。
@@ -1823,7 +1860,10 @@ async fn batch_update_mods(
     let dir = category_dir(&r, "mods");
     for update in updates {
         let old_path = dir.join(&update.file_name);
-        delete_mod_file(&old_path);
+        // 尽力而为：旧文件可能不存在（首次更新）或暂时不可删，都不应中断更新流程
+        if let Err(e) = delete_mod_file(&old_path) {
+            tracing::warn!("batch update: remove old mod {old_path:?} failed: {e}");
+        }
         if update.download_url.is_empty() || update.new_file_name.is_empty() {
             continue;
         }
@@ -1846,16 +1886,75 @@ async fn batch_update_mods(
     Ok(StatusCode::OK)
 }
 
-fn delete_mod_file(path: &Path) {
-    if path.is_file() {
-        let _ = std::fs::remove_file(path);
-    } else {
-        let mut disabled = path.to_path_buf();
-        disabled.set_extension("disabled");
-        if disabled.is_file() {
-            let _ = std::fs::remove_file(&disabled);
+/// 目标文件正被其它进程占用（Windows 下游戏读着 jar 时删除会失败）。
+/// 实测 `remove_file` 返回 `ErrorKind::Uncategorized` + `raw_os_error == 32`，
+/// 即 `ERROR_SHARING_VIOLATION`——既不是 `PermissionDenied` 也不是 `NotFound`，
+/// 因此在 `error.rs` 的通用 io 映射里会落到 500，语义完全丢失。
+///
+/// 仅在 Windows 上判定：errno 32 在 Linux/macOS 分别代表 `EPIPE`/其它含义，
+/// 直接按数字匹配会把无关错误误报成「文件被占用」。
+#[cfg(windows)]
+const ERROR_SHARING_VIOLATION: i32 = 32;
+
+fn is_file_in_use(e: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        e.raw_os_error() == Some(ERROR_SHARING_VIOLATION)
+    }
+    #[cfg(not(windows))]
+    {
+        // 非 Windows 无共享冲突语义；Unix 下删除被占用的文件通常直接成功。
+        let _ = e;
+        false
+    }
+}
+
+/// 把 `delete_mod_file` 的 io 错误转成对外 `ApiError`：
+/// 占用 → 409 `MOD_FILE_IN_USE`（前端有专门文案），其余沿用既有映射
+/// （NotFound→404 / PermissionDenied→403 / 其它→500）。
+fn map_delete_mod_error(e: std::io::Error) -> ApiError {
+    if is_file_in_use(&e) {
+        // 系统原文（「另一个程序正在使用此文件」）放 detail，便于排查又不混淆主文案
+        let mut err =
+            ApiError::conflict("MOD_FILE_IN_USE", "mod file is in use by another process");
+        err.detail = Some(e.to_string());
+        return err;
+    }
+    ApiError::from(e)
+}
+
+fn delete_mod_file(path: &Path) -> std::io::Result<()> {
+    // 候选顺序：原路径 → 追加 `.disabled` → `set_extension("disabled")` 历史回退。
+    // 追加后缀是前端 `fileName + '.disabled'` 约定（见 ModCard `handleToggle`），
+    // `set_extension` 会把 `foo.jar` 变成 `foo.disabled`，两种命名都保留以避免回归。
+    let mut candidates = vec![path.to_path_buf()];
+    let mut appended = path.as_os_str().to_os_string();
+    appended.push(".disabled");
+    candidates.push(PathBuf::from(appended));
+    let mut legacy = path.to_path_buf();
+    legacy.set_extension("disabled");
+    candidates.push(legacy);
+
+    for candidate in &candidates {
+        // 用 metadata 而非 `is_file()`：后者在无权限访问时同样返回 false，
+        // 会把权限故障误报成「文件不存在」（NotFound）。此处只让 NotFound 继续
+        // 尝试下一个候选，其它错误（如 PermissionDenied）立即向上传播。
+        match std::fs::metadata(candidate) {
+            Ok(meta) if meta.is_file() => {
+                // 错误向上传播：占用（共享冲突）与其它 IO 失败不再被 `let _ =` 吞掉
+                return std::fs::remove_file(candidate);
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
     }
+    // 刻意不回传解析后的文件系统路径：该消息会经 ApiError 进入 HTTP 响应体，
+    // 对外只表达「目标不存在」，路径细节留在服务端侧即可。
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "mod file not found",
+    ))
 }
 
 // =====================================================================
@@ -2957,6 +3056,183 @@ mod mod_download_tests {
         commit_downloaded_file(&tmp2, &dest2).unwrap();
         assert_eq!(std::fs::read(&dest2).unwrap(), b"FRESH");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 临时目录，写法参考 `util/pcl_icon.rs` 的 `temp_dir(tag)`：只用 std 的
+    /// `std::env::temp_dir()`，不引入 `tempfile` 依赖（与仓库现有测试保持一致）。
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "qomicex-instance-files-test-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn delete_mod_file_removes_existing_jar() {
+        let dir = temp_dir("jar");
+        let jar = dir.join("example.jar");
+        std::fs::write(&jar, b"jar").unwrap();
+
+        delete_mod_file(&jar).unwrap();
+        assert!(!jar.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 前端禁用约定是追加后缀（`foo.jar` → `foo.jar.disabled`），传入启用态名字也要能删到。
+    #[test]
+    fn delete_mod_file_finds_appended_disabled_suffix() {
+        let dir = temp_dir("appended");
+        let enabled = dir.join("foo.jar");
+        let disabled = dir.join("foo.jar.disabled");
+        std::fs::write(&disabled, b"jar").unwrap();
+
+        delete_mod_file(&enabled).unwrap();
+        assert!(!disabled.exists());
+        assert!(!enabled.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 直接传入禁用态文件名时走「原路径」分支。
+    #[test]
+    fn delete_mod_file_removes_disabled_path_directly() {
+        let dir = temp_dir("direct");
+        let disabled = dir.join("foo.jar.disabled");
+        std::fs::write(&disabled, b"jar").unwrap();
+
+        delete_mod_file(&disabled).unwrap();
+        assert!(!disabled.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 三个候选都不存在时必须报 NotFound（→ ApiError 映射为 404），不能静默成功。
+    #[test]
+    fn delete_mod_file_returns_not_found_when_absent() {
+        let dir = temp_dir("absent");
+        let missing = dir.join("nope.jar");
+
+        let err = delete_mod_file(&missing).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同名目录不是文件：必须跳过候选（`Ok(_) => {}` 分支）而不是去删它，
+    /// 最终报 NotFound。这同时守护「用 metadata 替代 is_file()」的改动。
+    #[test]
+    fn delete_mod_file_skips_non_file_candidate() {
+        let dir = temp_dir("dir-candidate");
+        let as_dir = dir.join("foo.jar");
+        std::fs::create_dir_all(&as_dir).unwrap();
+
+        let err = delete_mod_file(&as_dir).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(as_dir.is_dir(), "同名目录不应被删除");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 该错误会经 ApiError 进入 HTTP 响应体，因此不得回传解析后的文件系统路径。
+    #[test]
+    fn delete_mod_file_not_found_message_omits_path() {
+        let dir = temp_dir("no-path-leak");
+        let missing = dir.join("secret-dir").join("nope.jar");
+
+        let err = delete_mod_file(&missing).unwrap_err();
+        let msg = err.to_string();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(
+            !msg.contains("secret-dir") && !msg.contains(&dir.display().to_string()),
+            "错误消息不应包含文件系统路径，实际为: {msg}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 非 Windows 上不存在「共享冲突」语义：errno 32 在 Linux 是 EPIPE，
+    /// 因此 is_file_in_use 必须恒为 false，避免把无关错误误报成「文件被占用」。
+    #[cfg(not(windows))]
+    #[test]
+    fn is_file_in_use_is_always_false_off_windows() {
+        let err = std::io::Error::from_raw_os_error(32);
+        assert!(!is_file_in_use(&err));
+    }
+
+    /// 占用必须映射成 409 + MOD_FILE_IN_USE（而非 500 内部错误），
+    /// 前端据此展示「文件正被占用」的可操作提示。
+    ///
+    /// 注意：Rust 的 `File::open` 默认带 `FILE_SHARE_DELETE`，删除会成功，
+    /// 因此必须用 `share_mode(0)`（独占）才能复现 `ERROR_SHARING_VIOLATION`——
+    /// 这也正是 Windows 下游戏/杀软持有 jar 时的真实情形。
+    #[cfg(windows)]
+    #[test]
+    fn in_use_error_maps_to_conflict_with_stable_code() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = temp_dir("in-use");
+        let jar = dir.join("locked.jar");
+        std::fs::write(&jar, b"jar").unwrap();
+
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&jar)
+            .unwrap();
+
+        let io_err = delete_mod_file(&jar).unwrap_err();
+        assert!(
+            is_file_in_use(&io_err),
+            "共享冲突应被识别为占用，实际 kind={:?} raw={:?}",
+            io_err.kind(),
+            io_err.raw_os_error()
+        );
+
+        let api_err = map_delete_mod_error(io_err);
+        assert_eq!(api_err.code, "MOD_FILE_IN_USE");
+        assert_eq!(api_err.status, StatusCode::CONFLICT);
+        // 系统原文（「另一个程序正在使用此文件」）保留在 detail，便于排查
+        assert!(api_err.detail.is_some());
+
+        drop(lock);
+        // 释放后应能正常删除
+        delete_mod_file(&jar).unwrap();
+        assert!(!jar.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 关键回归守护：占用绝不能被当成 NotFound（否则前端显示「文件不存在」，
+    /// 用户会以为已经删掉了，而文件其实还在）。
+    #[cfg(windows)]
+    #[test]
+    fn in_use_is_not_reported_as_not_found() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = temp_dir("in-use-vs-404");
+        let jar = dir.join("locked.jar");
+        std::fs::write(&jar, b"jar").unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&jar)
+            .unwrap();
+
+        let io_err = delete_mod_file(&jar).unwrap_err();
+        assert_ne!(io_err.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(map_delete_mod_error(io_err).status, StatusCode::CONFLICT);
+
+        drop(lock);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
