@@ -1617,11 +1617,51 @@ async fn batch_disable_mods(
     Ok(StatusCode::OK)
 }
 
-/// 下载一个 mod 文件到 `dir`，落盘用 `.part` 临时文件 + 原子 rename，避免半截文件
-/// 被扫描成可用 mod。返回最终文件名。
+/// 校验「纯文件名」：必须是单个普通路径分量，且是相对路径。
 ///
-/// 单个 mod 体积可达数百 MB，`resp.bytes()` 会把整包读进内存，故改为`chunk()`
-/// 流式落盘。`expected_name` 只用于取扩展名与日志，不参与路径拼接以外的语义。
+/// 拒绝 `/`、`\`、`..`、绝对路径与盘符前缀。**所有会与 mods 目录拼路径的用户输入
+/// 都必须先过这里**——包括下载目标名，也包括被删除的旧文件名：早期版本只校验了
+/// 前者，导致 `change-version` 的 `fileName` 可传 `../../x` 删除 mods 目录外的文件。
+fn validate_plain_file_name(file_name: &str) -> ApiResult<()> {
+    let p = Path::new(file_name);
+    let single_normal_component = matches!(
+        (p.components().count(), p.components().next()),
+        (1, Some(std::path::Component::Normal(_)))
+    );
+    if file_name.trim().is_empty() || !single_normal_component {
+        return Err(ApiError::bad_request(
+            "INVALID_FILE_NAME",
+            "fileName must be a plain file name",
+        ));
+    }
+    Ok(())
+}
+
+/// 把 `tmp` 就位到 `dest`，并在目标已存在时也能成功（跨平台）。
+///
+/// Windows 上 `rename` 目标存在会直接失败（`ERROR_ALREADY_EXISTS`），而「原地重下
+/// 同一文件名」是本端点的正常用法（`new_file_name == 旧文件名`），所以先尝试 rename，
+/// 失败且目标存在时改用「remove + rename」的降级路径，保证同名重下不会白下。
+fn commit_downloaded_file(tmp: &Path, dest: &Path) -> ApiResult<()> {
+    match std::fs::rename(tmp, dest) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // 仅当失败原因是「目标已存在」时才降级删除，避免掩盖其它错误
+            // （如权限不足、跨卷 rename）。
+            if !dest.exists() {
+                return Err(ApiError::from(e));
+            }
+            std::fs::remove_file(dest).map_err(ApiError::from)?;
+            std::fs::rename(tmp, dest).map_err(ApiError::from)
+        }
+    }
+}
+
+/// 下载一个 mod 文件到 `dir`，落盘用唯一 `.part` 临时文件 + 就位，避免半截文件
+/// 被扫描成可用 mod。
+///
+/// 单个 mod 体积可达数百 MB，`resp.bytes()` 会把整包读进内存，故改为 `chunk()`
+/// 流式落盘。
 async fn download_mod_to_file(
     state: &crate::state::AppState,
     url: &str,
@@ -1634,23 +1674,16 @@ async fn download_mod_to_file(
             "downloadUrl is required",
         ));
     }
-    // 文件名必须是不含路径分隔符的纯文件名：否则 `dir.join(name)` 可被
-    // `../` 穿越出 mods 目录（原 C# 版本同样未校验，此处收紧）。
-    if file_name.trim().is_empty()
-        || file_name.contains(['/', '\\'])
-        || Path::new(file_name).components().count() != 1
-    {
-        return Err(ApiError::bad_request(
-            "INVALID_FILE_NAME",
-            "fileName must be a plain file name",
-        ));
-    }
+    validate_plain_file_name(file_name)?;
 
     std::fs::create_dir_all(dir).map_err(ApiError::from)?;
     let dest = dir.join(file_name);
-    // 临时名与目标同目录（rename 才能原子），进程/任务 id 无需唯一化：
-    // 同一 mod 的换版本操作在前端已被按钮禁用串行化。
-    let tmp = dir.join(format!("{file_name}.part"));
+    // 临时名必须**每请求唯一**：同一目标名的并发请求若共用 `{name}.part`，会互相
+    // 覆盖半截内容，甚至把对方的内容 rename 成自己的目标文件。用进程内唯一后缀隔离。
+    let tmp = dir.join(format!(
+        ".{file_name}.{}.part",
+        uuid::Uuid::new_v4().simple()
+    ));
 
     let mut req = state.http_client.get(url);
     // CurseForge 文件下载需要 x-api-key（与 resource-download 同规则；
@@ -1685,8 +1718,8 @@ async fn download_mod_to_file(
         tokio::io::AsyncWriteExt::flush(&mut file)
             .await
             .map_err(ApiError::from)?;
-        // 落盘后再 rename：进程中断只会留下 .part，不会污染 mods 扫描。
-        tokio::fs::rename(&tmp, &dest).await.map_err(ApiError::from)
+        // 落盘后再就位：进程中断只会留下 .part，不会污染 mods 扫描。
+        commit_downloaded_file(&tmp, &dest)
     }
     .await;
 
@@ -1700,7 +1733,7 @@ async fn download_mod_to_file(
 /// POST /instance/{id}/files/mods/change-version — 换版本：下载新 jar 后替换旧文件。
 ///
 /// 顺序刻意是「先下载成功、再删旧文件」：先删会让下载失败直接损失原 mod。
-/// 若新旧文件名相同（原地重下），下载写入的就是同一路径。
+/// 若新旧文件名相同（原地重下），下载会覆盖同一路径。
 async fn change_mod_version(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
@@ -1710,6 +1743,9 @@ async fn change_mod_version(
     let dir = category_dir(&r, "mods");
     let old_name = required_name(Some(req.file_name.clone()))?;
     let new_name = required_name(Some(req.new_file_name.clone()))?;
+    // 旧名同样必须校验：它会被拼进 `dir.join` 并交给 `delete_mod_file`，
+    // 不校验则 `fileName: "../../x"` 能删除 mods 目录外的任意文件。
+    validate_plain_file_name(&old_name)?;
 
     // 下载前不动任何现有文件（失败要能回退）。
     download_mod_to_file(&state, &req.download_url, &dir, &new_name).await?;
@@ -1725,8 +1761,8 @@ async fn change_mod_version(
 
 /// POST /instance/{id}/files/mods/install — 下载一个 mod 并放入 mods 目录。
 ///
-/// 同日未移植（issue #117 排查时发现的同类缺失）。同名已存在时报 409，避免
-/// 静默覆盖用户已装好的文件；调用方需自行处理重名。
+/// 同样属「重写时漏移植」的端点（issue #117 排查时发现）。同名已存在时报
+/// **409 MOD_ALREADY_EXISTS**，避免静默覆盖用户已装好的文件；调用方需自行处理重名。
 async fn install_mod(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
@@ -1735,8 +1771,10 @@ async fn install_mod(
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
     let name = required_name(Some(req.file_name.clone()))?;
+    validate_plain_file_name(&name)?;
     if dir.join(&name).is_file() {
-        return Err(ApiError::bad_request(
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
             "MOD_ALREADY_EXISTS",
             "同名 mod 已存在，请先删除或改名",
         ));
@@ -2820,5 +2858,82 @@ async fn fill_remote_icons(client: &reqwest::Client, api_key: &str, result: &mut
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod mod_download_tests {
+    use super::*;
+
+    /// **安全回归（任意文件删除）**：`change-version` 的旧文件名会被 `dir.join` 拼接后
+    /// 交给 `delete_mod_file`。只校验新文件名是不够的 —— 早期实现下
+    /// `fileName: "../../x"` 能删掉 mods 目录之外的任意文件。所有用户提供的文件名
+    /// 都必须先过同一道校验。
+    #[test]
+    fn rejects_path_traversal_and_absolute_names() {
+        let evil = [
+            "../evil.jar",
+            "../../evil.jar",
+            "..\\..\\evil.jar",
+            "sub/evil.jar",
+            "sub\\evil.jar",
+            "/etc/passwd",
+            "C:\\Windows\\System32\\evil.dll",
+            "\\\\server\\share\\evil.jar",
+            "",
+            "   ",
+            ".",
+            "..",
+        ];
+        for name in evil {
+            assert!(
+                validate_plain_file_name(name).is_err(),
+                "该文件名必须被拒绝（否则可越出 mods 目录）: {name:?}"
+            );
+        }
+    }
+
+    /// 正常 mod 文件名（含中文、空格、多点）必须放行，避免过度收紧把正常用法挡掉。
+    #[test]
+    fn accepts_plain_mod_file_names() {
+        let ok = [
+            "sodium-fabric-0.5.8.jar",
+            "我的模组 1.0.jar",
+            "mod.name.with.dots.jar",
+            "a.jar.disabled",
+        ];
+        for name in ok {
+            assert!(
+                validate_plain_file_name(name).is_ok(),
+                "该文件名应被接受: {name:?}"
+            );
+        }
+    }
+
+    /// **正确性回归（Windows 同名原地重下）**：`commit_downloaded_file` 在目标已存在时
+    /// 也必须成功。Windows 上裸 `rename` 到已存在的目标会失败，而「新版本文件名与旧版本
+    /// 相同」是本端点的正常用法，不能因此白下。
+    #[test]
+    fn commit_replaces_existing_destination() {
+        let dir = std::env::temp_dir().join(format!("qomicex-commit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("mod.jar");
+        let tmp = dir.join(".mod.jar.part");
+
+        std::fs::write(&dest, b"OLD").unwrap();
+        std::fs::write(&tmp, b"NEW").unwrap();
+
+        commit_downloaded_file(&tmp, &dest).expect("目标已存在时也必须能就位（同名原地重下）");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"NEW");
+        assert!(!tmp.exists(), "临时文件应已消失");
+
+        // 目标不存在时也要正常
+        let dest2 = dir.join("fresh.jar");
+        let tmp2 = dir.join(".fresh.jar.part");
+        std::fs::write(&tmp2, b"FRESH").unwrap();
+        commit_downloaded_file(&tmp2, &dest2).unwrap();
+        assert_eq!(std::fs::read(&dest2).unwrap(), b"FRESH");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

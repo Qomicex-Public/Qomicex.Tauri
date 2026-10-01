@@ -463,15 +463,25 @@ async fn cancel_batch(
 
 /// Detect CurseForge download hosts so the x-api-key header is attached.
 ///
-/// The C# original stamps lowest-case host matches against forgecdn.net /
-/// curseforge.com. A plain case-insensitive substring check reproduces that
-/// behaviour without pulling in the `url` crate (keeps zero-new-deps).
+/// **按解析后的 host 判定，不做整串子串匹配**：`x-api-key` 是真实凭据，子串匹配会
+/// 让 `http://evil.example/?x=curseforge.com` 这类 URL 命中并把密钥发给任意主机
+/// （凭据外泄）。只接受域名本身或其子域（`mediafilez.forgecdn.net` 命中，
+/// `evil-forgecdn.net.attacker.com` 不命中）。
 ///
-/// `pub(crate)`：`instance_files` 的 mod 下载（install / change-version）复用
-/// 同一判定，避免两处各维护一份域名列表而漂移。
+/// R6 修：`pub(crate)` — `instance_files` 的 mod 下载（install / change-version）
+/// 复用同一判定，避免两处各维护一份域名列表而漂移。
 pub(crate) fn is_cf_url(url: &str) -> bool {
-    let lower = url.to_lowercase();
-    lower.contains("forgecdn.net") || lower.contains("curseforge.com")
+    const CF_DOMAINS: &[&str] = &["forgecdn.net", "curseforge.com"];
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    CF_DOMAINS
+        .iter()
+        .any(|d| host == *d || host.ends_with(&format!(".{d}")))
 }
 
 // =====================================================================
@@ -860,5 +870,52 @@ mod tests {
 
         let none = write_zip("none", &[("readme.txt", "hi")]);
         assert_eq!(classify_zip(&none, false).0, "unknown");
+    }
+
+    /// **安全回归**：`is_cf_url` 决定是否把配置的 CurseForge `x-api-key` 发给目标主机。
+    /// 早期实现是整串 `contains` 子串匹配，攻击者用一个域名只是「出现在 URL 文本里」的
+    /// 无关地址（如 `http://evil.example/?ref=curseforge.com`）即可骗取凭据。
+    /// 必须按解析后的 host 判定：只有域名本身或其子域才算。
+    #[test]
+    fn is_cf_url_matches_only_real_cf_hosts() {
+        // 真域名与子域 → 命中（需要带 key）
+        assert!(is_cf_url(
+            "https://mediafilez.forgecdn.net/files/1234/5678/mod.jar"
+        ));
+        assert!(is_cf_url("https://edge.forgecdn.net/a.jar"));
+        assert!(is_cf_url("https://forgecdn.net/a.jar"));
+        assert!(is_cf_url("https://www.curseforge.com/a"));
+        assert!(is_cf_url("https://curseforge.com/a"));
+        // 大小写不敏感
+        assert!(is_cf_url("https://EDGE.ForgeCDN.net/a.jar"));
+    }
+
+    /// **安全回归（凭据外泄）**：这些 URL 在旧的子串实现下会命中并把 `x-api-key`
+    /// 发给攻击者控制的主机。修复后必须全部判为「非 CF」。
+    #[test]
+    fn is_cf_url_rejects_lookalikes_and_embedded_domains() {
+        let attackers = [
+            // 域名只出现在 query / path / fragment 中 —— 目标主机与 CF 无关
+            "http://evil.example/?ref=curseforge.com",
+            "http://evil.example/curseforge.com/x.jar",
+            "http://evil.example/#forgecdn.net",
+            // 作为子串出现在攻击者域名中间
+            "http://evil-curseforge.com.attacker.net/x.jar",
+            "http://curseforge.com.attacker.net/x.jar",
+            "http://forgecdn.net.attacker.net/x.jar",
+            // 后缀伪装（不是合法的 `.forgecdn.net` 子域边界）
+            "http://notforgecdn.net/x.jar",
+            "http://mycurseforge.com/x.jar",
+            // 非法 URL 一律不命中
+            "not a url",
+            "curseforge.com",
+            "",
+        ];
+        for url in attackers {
+            assert!(
+                !is_cf_url(url),
+                "该 URL 不得被判为 CurseForge 主机（否则会泄露 x-api-key）: {url}"
+            );
+        }
     }
 }

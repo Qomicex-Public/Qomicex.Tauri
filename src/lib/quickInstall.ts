@@ -176,14 +176,30 @@ async function aggregate(
   const all = [...depsStatuses, mainStatus[0]]
   const failedCount = all.filter(s => s !== 'completed').length
   if (failedCount === 0) {
-    // 全部成功后才清理旧版本文件（失败时保留原件，用户不会丢数据）。
+    // 全部下载成功后才清理旧版本文件（失败时保留原件，用户不会丢数据）。
     // 同名（原地重下同一版本）时跳过：那个文件正是刚下好的新文件。
-    for (const d of toDelete) {
-      if (newFileNames.has(d.fileName)) continue
-      deleteMod(instanceId, d.fileName).catch(() => {})
-    }
-    updateTask(batchId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+    //
+    // 必须 **await 并检查** 删除结果：旧文件删不掉（文件被占用 / 权限拒绝 / 后端抖动）时
+    // 新旧两个版本会同时留在 mods 里 —— 那不是「换版本成功」，静默忽略会误导用户。
+    const pending = toDelete.filter(d => !newFileNames.has(d.fileName))
+    const cleanup = await Promise.allSettled(
+      pending.map(d => deleteMod(instanceId, d.fileName)),
+    )
+    const failedCleanup = cleanup
+      .map((r, i) => (r.status === 'rejected' ? pending[i].fileName : null))
+      .filter((n): n is string => n !== null)
+
+    // 缓存必须在删除完成之后失效：否则刷新的列表可能仍含刚删掉的旧文件。
     cacheInvalidate(`api-instance-${instanceId}-mods`)
+
+    if (failedCleanup.length > 0) {
+      updateTask(batchId, {
+        status: 'failed',
+        error: t('dialogs.common.cleanupFailed', { files: failedCleanup.join('、') }),
+      })
+    } else {
+      updateTask(batchId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+    }
   } else {
     updateTask(batchId, { status: 'failed', error: t('dialogs.common.downloadFailed') })
   }
