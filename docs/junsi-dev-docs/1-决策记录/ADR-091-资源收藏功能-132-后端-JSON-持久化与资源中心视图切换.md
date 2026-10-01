@@ -78,3 +78,68 @@ Issue #132 要求「新增资源收藏功能，以便收集常用模组方便下
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-10-01 | v1.0 | 初版创建 | AI Agent |
+
+### 2026-10-01 更新
+## 2026-10-01 补充（v1.1）：评审修正 4 项
+
+PR 评审（CodeRabbit）提出 4 条 data-integrity 意见，逐条核对**均为有效**，全部修复。
+
+### 1. 写入侧键裁剪必须与 DELETE 同口径
+
+`POST /resource-favorites` 原先只用 `trim()` 判空，却把**原值**落库；而 `DELETE` 的
+`FavoriteKeyQuery::validated()` 会先 `trim` 再精确匹配。结果：形如 `" modrinth "`
+的键写进去后**永远无法删除**。
+
+**修法**：写入前统一裁剪，且裁剪实现只有一处 —— `ResourceFavorite::normalize_key()`
+（`pub`），端点与落库侧共用，避免两侧口径漂移。
+
+> **契约**：`source` / `id` / `category` 的持久化形态始终是裁剪后的值；三个键段
+> 裁剪后为空一律 `400 INVALID_FAVORITE_KEY`。
+
+### 2. 落盘事务性：先落盘、后提交内存
+
+`upsert` / `remove` 原先直接修改锁内的 `Vec`，再调 `save_locked`；若保存失败
+（磁盘满 / 权限不足），内存里仍留着**未持久化**的改动 —— 前端已回滚、`GET` 却仍
+能读到它、重启后又消失，UI / 内存 / 磁盘三处状态互相矛盾。
+
+**修法**：在**副本**上执行修改 → `save_locked(&next)?` 成功 → 才 `*guard = next`；
+`remove` 未命中（无该键）时依旧不触碰磁盘。
+
+### 3. 前端 `load()` 与 mutation 的世代号协调
+
+`load()` 原先无条件用响应覆盖 `favorites` 并置 `loaded: true`。但客户端**没有请求
+队列**，`GET /resource-favorites` 与 `POST`/`DELETE` 是彼此独立的请求：若列表请求
+取得的是「新增之前」的快照、却在新增成功之后才返回，过期列表会覆盖已成功的乐观
+更新；而 `loaded: true` 又让后续 `load()` 直接返回，状态再也修不回来。
+
+**修法**：新增模块级 `mutationEpoch`，`toggleFavorite` 开始与结束各自增一次；
+`load()` 发请求前记下世代号，响应回来若已变化则**丢弃该列表且不置 `loaded`**，
+交给下一次 `load()` 收敛（自愈）。计数器放在模块作用域而非 store state —— 它不是
+渲染依赖，不该触发重渲染。
+
+### 4. 失败只回滚当前键
+
+`toggleFavorite` 失败时原先 `set({ favorites: before })` 整份回滚。但
+`ResourceCenter` 的防连点只挡**同一个键**，用户可以在请求 A 未完成时切换资源 B；
+若 B 已成功而 A 之后失败，A 的整份回滚会把 B 的改动一起清掉。
+
+**修法**：只恢复/移除本次这个键，其余条目保持当前状态。同时把 `ResourceCenter`
+的 `favBusyKey` 单值改为 `Set<string>`：单值时请求 A 完成会把状态置空，从而提前
+解除并发请求 B 的忙碌态。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| `cargo test --bin qomicex-backend` | **289 passed; 0 failed; 2 ignored** |
+| 新增 Rust 测试 | `keys_are_trimmed_on_write_and_match_on_delete`、`save_failure_leaves_memory_untouched`（覆盖 upsert 与 remove 两条路径） |
+| `cargo fmt -- --check` / clippy（改动文件） | 通过 / 0 警告 |
+| `pnpm run typecheck` / `pnpm run build` / `eslint`（改动文件） | 通过 / 通过 / 0 error |
+| 浏览器针对性回归（Playwright + mock API） | ① 列表请求延迟 1.2s 期间点击收藏 → 过期空列表到达后仍为已收藏（旧实现会被覆盖）；② A 慢且 500、B 快且 200 并发 → 最终 `["false","true"]`，只回滚 A、B 保留且与服务端一致（旧实现会得到 `["false","false"]`） |
+
+### 回归防护
+
+上面两个浏览器场景是**竞态专用回归**：修复前分别会得到「被覆盖回未收藏」与
+`["false","false"]`，可用同一 mock 复现。改前端 store 的 `load()` / `toggleFavorite`
+时请连同这两个场景一起复跑。
+
