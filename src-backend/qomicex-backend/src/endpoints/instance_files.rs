@@ -1546,7 +1546,9 @@ async fn delete_mod(
 ) -> ApiResult<StatusCode> {
     let name = required_name(q.name)?;
     let r = resolve(&id, &state)?;
-    delete_mod_file(&category_dir(&r, "mods").join(&name));
+    // 传播真实结果：NotFound→404、PermissionDenied→403、其它→500（见 error.rs 的 io 映射）。
+    // 此前静默丢弃错误导致「删除失败但前端收到 204」，是 issue #140 的后端根因。
+    delete_mod_file(&category_dir(&r, "mods").join(&name)).map_err(ApiError::from)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1598,7 +1600,10 @@ async fn batch_delete_mods(
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
     for name in names {
-        delete_mod_file(&dir.join(&name));
+        // 批量保持尽力而为：单个失败只记警告，继续删其余文件，HTTP 仍 200（契约不变）
+        if let Err(e) = delete_mod_file(&dir.join(&name)) {
+            tracing::warn!("batch delete mod {name} failed: {e}");
+        }
     }
     Ok(StatusCode::OK)
 }
@@ -1613,7 +1618,10 @@ async fn batch_update_mods(
     let dir = category_dir(&r, "mods");
     for update in updates {
         let old_path = dir.join(&update.file_name);
-        delete_mod_file(&old_path);
+        // 尽力而为：旧文件可能不存在（首次更新）或暂时不可删，都不应中断更新流程
+        if let Err(e) = delete_mod_file(&old_path) {
+            tracing::warn!("batch update: remove old mod {old_path:?} failed: {e}");
+        }
         if update.download_url.is_empty() || update.new_file_name.is_empty() {
             continue;
         }
@@ -1636,16 +1644,28 @@ async fn batch_update_mods(
     Ok(StatusCode::OK)
 }
 
-fn delete_mod_file(path: &Path) {
-    if path.is_file() {
-        let _ = std::fs::remove_file(path);
-    } else {
-        let mut disabled = path.to_path_buf();
-        disabled.set_extension("disabled");
-        if disabled.is_file() {
-            let _ = std::fs::remove_file(&disabled);
+fn delete_mod_file(path: &Path) -> std::io::Result<()> {
+    // 候选顺序：原路径 → 追加 `.disabled` → `set_extension("disabled")` 历史回退。
+    // 追加后缀是前端 `fileName + '.disabled'` 约定（见 ModCard `handleToggle`），
+    // `set_extension` 会把 `foo.jar` 变成 `foo.disabled`，两种命名都保留以避免回归。
+    let mut candidates = vec![path.to_path_buf()];
+    let mut appended = path.as_os_str().to_os_string();
+    appended.push(".disabled");
+    candidates.push(PathBuf::from(appended));
+    let mut legacy = path.to_path_buf();
+    legacy.set_extension("disabled");
+    candidates.push(legacy);
+
+    for candidate in &candidates {
+        if candidate.is_file() {
+            // 错误向上传播：占用（PermissionDenied）与其它 IO 失败不再被 `let _ =` 吞掉
+            return std::fs::remove_file(candidate);
         }
     }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("mod file not found: {}", path.display()),
+    ))
 }
 
 // =====================================================================
@@ -2665,5 +2685,74 @@ async fn fill_remote_icons(client: &reqwest::Client, api_key: &str, result: &mut
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 临时目录，写法参考 `util/pcl_icon.rs` 的 `temp_dir(tag)`：只用 std 的
+    /// `std::env::temp_dir()`，不引入 `tempfile` 依赖（与仓库现有测试保持一致）。
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "qomicex-instance-files-test-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn delete_mod_file_removes_existing_jar() {
+        let dir = temp_dir("jar");
+        let jar = dir.join("example.jar");
+        std::fs::write(&jar, b"jar").unwrap();
+
+        delete_mod_file(&jar).unwrap();
+        assert!(!jar.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 前端禁用约定是追加后缀（`foo.jar` → `foo.jar.disabled`），传入启用态名字也要能删到。
+    #[test]
+    fn delete_mod_file_finds_appended_disabled_suffix() {
+        let dir = temp_dir("appended");
+        let enabled = dir.join("foo.jar");
+        let disabled = dir.join("foo.jar.disabled");
+        std::fs::write(&disabled, b"jar").unwrap();
+
+        delete_mod_file(&enabled).unwrap();
+        assert!(!disabled.exists());
+        assert!(!enabled.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 直接传入禁用态文件名时走「原路径」分支。
+    #[test]
+    fn delete_mod_file_removes_disabled_path_directly() {
+        let dir = temp_dir("direct");
+        let disabled = dir.join("foo.jar.disabled");
+        std::fs::write(&disabled, b"jar").unwrap();
+
+        delete_mod_file(&disabled).unwrap();
+        assert!(!disabled.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 三个候选都不存在时必须报 NotFound（→ ApiError 映射为 404），不能静默成功。
+    #[test]
+    fn delete_mod_file_returns_not_found_when_absent() {
+        let dir = temp_dir("absent");
+        let missing = dir.join("nope.jar");
+
+        let err = delete_mod_file(&missing).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

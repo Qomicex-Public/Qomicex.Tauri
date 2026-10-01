@@ -10,6 +10,7 @@ import { cn } from '../lib/utils.ts'
 import { formatBytes } from '../lib/download-format.ts'
 import { MinecraftText } from './MinecraftText.tsx'
 import { enableMod, disableMod, deleteMod } from '../api/instance-files.ts'
+import { ApiError } from '../api/client.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { openUrl, openPath } from '@tauri-apps/plugin-opener'
 import { useMessageBox } from './ui'
@@ -36,7 +37,7 @@ interface ModCardProps {
   instanceId: string
   gameVersion?: string
   loader?: string
-  onRefresh: () => void
+  onRefresh: () => void | Promise<void>
   onToggle: (fileName: string) => void
   onChangeVersion: (mod: ModMetadata) => void
   selected?: boolean
@@ -92,10 +93,16 @@ export default function ModCard({
     setConfirmDelete(false)
     try {
       await deleteMod(instanceId, mod.fileName)
-      onRefresh()
-    } catch (e) { console.error('Delete mod failed:', e) }
-    setDeleting(false)
-  }, [instanceId, mod, onRefresh])
+      notify(t('dialogs.common.deleted', { name: mod.name }), 'success')
+    } catch (e) {
+      // 失败必须可见：文件被游戏进程占用（403）、已被外部删除（404）等不能再静默吞掉
+      notify(t('dialogs.common.deleteFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
+    } finally {
+      // 无论成功或失败都要与文件系统对齐：404 说明文件已经不在了，残留行同样要清掉。
+      // 内层 try/finally 保证 onRefresh 万一抛错也不会把按钮卡在「删除中...」。
+      try { await onRefresh() } finally { setDeleting(false) }
+    }
+  }, [instanceId, mod.fileName, mod.name, onRefresh, notify, t])
 
   useEffect(() => {
     if (!iconRef.current) return

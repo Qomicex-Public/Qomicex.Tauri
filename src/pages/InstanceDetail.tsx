@@ -560,7 +560,16 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   /** 远程信息反查（enrich）进行中：列表顶部显示加载提示 */
   const [enriching, setEnriching] = useState(false)
 
+  /**
+   * 请求序号：`loadMods` 每次调用递增，只有「最新一次」的响应允许写入列表与缓存。
+   * 删除后立刻刷新时，先前发出的请求（或切换实例后旧实例的响应）可能更晚返回，
+   * 若无此保护会把已删除的行、甚至旧实例的列表重新写回来。
+   */
+  const loadModsSeqRef = useRef(0)
+
   const loadMods = useCallback(async () => {
+    const seq = ++loadModsSeqRef.current
+    const isStale = () => seq !== loadModsSeqRef.current
     setSelected(new Set())
     setLoadError(null)
     const cacheKey = `api-instance-${instanceId}-mods`
@@ -570,8 +579,11 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       setEnriching(true)
       try {
         const entries = await enrichMods(instanceId)
+        // 反查期间已有更新的 loadMods：本次 enrichment 结果作废，不回写列表与缓存
+        if (isStale()) return
         const map = new Map(entries.map(e => [e.fileName, e]))
         setMods(prev => {
+          if (isStale()) return prev
           const next = prev.map(m => {
             const e = map.get(m.fileName)
             if (!e) return m
@@ -592,7 +604,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
           return next
         })
       } catch { /* 反查失败不影响列表 */ }
-      finally { setEnriching(false) }
+      finally { if (!isStale()) setEnriching(false) }
     }
     const fresh = cacheFresh<ModMetadata[]>(cacheKey)
     if (fresh) { setMods(fresh); setLoading(false); void applyEnrich(); return }
@@ -600,9 +612,12 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     if (stale) { setMods(stale); setLoading(false) }
     setLoading(true)
     setLoadProgress(null)
+    // 轮询句柄提到 try 之外：任何退出路径（含提前 return 的过期响应）都要清掉，
+    // 否则本函数的 finally 之前 return 会让 300ms 轮询永久泄漏。
+    let pollId: ReturnType<typeof setInterval> | undefined
     try {
       getModsCount(instanceId).then(count => setLoadProgress({ current: 0, total: count })).catch(() => {})
-      const pollId = setInterval(async () => {
+      pollId = setInterval(async () => {
         try {
           const p = await getModsProgress(instanceId)
           if (p) setLoadProgress(p)
@@ -612,18 +627,32 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
         }
       }, 300)
       const data = await getModsMetadata(instanceId)
-      clearInterval(pollId)
+      // 过期响应：丢弃 setMods / cacheSet / setLoading，避免旧列表覆盖新状态
+      if (isStale()) return
       setLoadProgress(null)
       setMods(data)
       cacheSet(cacheKey, data)
       void applyEnrich()
     } catch (e) {
+      if (isStale()) return
       console.error('Load mods failed:', e)
       setMods([])
       setLoadError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (pollId !== undefined) clearInterval(pollId)
+      if (!isStale()) setLoading(false)
     }
-    setLoading(false)
   }, [instanceId])
+
+  /**
+   * 统一的「失效后重载」：单卡片删除与批量操作共用同一条刷新路径。
+   * 必须先 `cacheInvalidate` 再 `loadMods`——`loadMods` 会优先读 30s TTL 缓存，
+   * 不过期的话重载会直接命中旧列表，删除的行原样回来（issue #140 的根因）。
+   */
+  const refreshMods = useCallback(async () => {
+    cacheInvalidate(`api-instance-${instanceId}-mods`)
+    await loadMods()
+  }, [instanceId, loadMods])
 
   /**
    * 启禁 Mod 的实现是磁盘重命名（`{name}` ↔ `{name}.disabled`，见后端 `enable_mod`/
@@ -782,13 +811,12 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       if (batchConfirm.type === 'enable') await batchEnableMods(instanceId, names)
       else if (batchConfirm.type === 'disable') await batchDisableMods(instanceId, names)
       else if (batchConfirm.type === 'delete') await batchDeleteMods(instanceId, names)
-      cacheInvalidate(`api-instance-${instanceId}-mods`)
-      await loadMods()
+      await refreshMods()
       setSelected(new Set())
     } catch (e) { console.error('Batch action failed:', e) }
     setBatchProcessing(false)
     setBatchConfirm(null)
-  }, [batchConfirm, selected, instanceId, loadMods])
+  }, [batchConfirm, selected, instanceId, refreshMods])
 
   // 悬浮工具条「更新模组」：仅更新当前选中且存在 update 条目的模组
   const handleUpdateSelected = useCallback(async () => {
@@ -998,7 +1026,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                       instanceId={instanceId}
                       gameVersion={gameVersion}
                       loader={loader}
-                      onRefresh={loadMods}
+                      onRefresh={refreshMods}
                       onToggle={toggleModLocal}
                       onChangeVersion={setVersionDialogMod}
                       selected={selected.has(mod.fileName)}
