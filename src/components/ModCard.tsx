@@ -91,16 +91,22 @@ export default function ModCard({
   const handleDelete = useCallback(async () => {
     setDeleting(true)
     setConfirmDelete(false)
+    // 仅当删除成功、或确属 404（文件已被外部删除）时才刷新列表。
+    // 其余失败（403 被占用 / 500）文件仍在磁盘上，刷新不会改变列表内容，
+    // 却会因 `loadMods` 首行的 `setSelected(new Set())` 清空用户的多选，故跳过。
+    let shouldRefresh = true
     try {
       await deleteMod(instanceId, mod.fileName)
       notify(t('dialogs.common.deleted', { name: mod.name }), 'success')
     } catch (e) {
       // 失败必须可见：文件被游戏进程占用（403）、已被外部删除（404）等不能再静默吞掉
       notify(t('dialogs.common.deleteFailed', { error: e instanceof ApiError ? e.displayMessage : t('instanceDetail.mods.unknownError') }), 'error')
+      // 404 说明文件已经不在了，残留行仍需清掉
+      shouldRefresh = e instanceof ApiError && e.status === 404
     } finally {
-      // 无论成功或失败都要与文件系统对齐：404 说明文件已经不在了，残留行同样要清掉。
-      // 内层 try/finally 保证 onRefresh 万一抛错也不会把按钮卡在「删除中...」。
-      try { await onRefresh() } finally { setDeleting(false) }
+      // 内层 try/finally 保证 onRefresh 万一抛错也不会把按钮卡在「删除中...」，
+      // 且刷新异常不会被上面的 catch 误报成「删除失败」。
+      try { if (shouldRefresh) await onRefresh() } finally { setDeleting(false) }
     }
   }, [instanceId, mod.fileName, mod.name, onRefresh, notify, t])
 
