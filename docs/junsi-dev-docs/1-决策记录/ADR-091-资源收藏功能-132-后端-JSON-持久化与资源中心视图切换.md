@@ -143,3 +143,51 @@ PR 评审（CodeRabbit）提出 4 条 data-integrity 意见，逐条核对**均�
 `["false","false"]`，可用同一 mock 复现。改前端 store 的 `load()` / `toggleFavorite`
 时请连同这两个场景一起复跑。
 
+
+
+### 2026-10-01 更新
+## 2026-10-01 补充（v1.2）：mutation 在飞时拒绝提交列表，并在其后强制重拉一次
+
+v1.1 只用 `mutationEpoch`（世代号）判断「列表响应是否过期」。评审指出这只覆盖了一半，
+且存在另一条**可达**的交错顺序 —— 核对当前代码后确认成立：
+
+1. 首次 `load()` 失败（如后端瞬时 500）→ `loaded` 仍为 `false`；
+2. 用户点收藏，mutation 开始（世代号 +1，乐观条目入列）；
+3. 此时另一处挂载（例如跳转到资源详情页）再调 `load()`，它取到的世代号**已是最新值**，
+   于是 GET 被发在 mutation **之后**；
+4. 但服务端尚未落库，该 GET 仍返回旧列表 —— 世代号相同 → 被提交，**乐观条目被抹掉**；
+5. POST 随后成功，而原先的「替换」是在列表里找同一个键，键已不在 → 服务端已确认的收藏
+   永远进不了列表，**收藏在 UI 上凭空消失**。
+
+> 判断键不足的原因：世代号只能识别「响应早于 mutation 开始」，识别不了
+> 「响应发出于 mutation 开始之后、但服务端落库之前」。
+
+### 修法
+
+- 新增 `inFlightMutations` 计数：**有 mutation 在飞时 `load()` 一律不提交列表**（即使
+  世代号相同）。这是世代号覆盖不到的那一半。
+- 新增 `reloadPending` + `maybeReload()`：任一列表响应被丢弃即登记，等**所有** mutation
+  收尾后 `load(true)` 强制重拉一次，收敛到服务端真值 —— 避免「丢弃后没人再拉」。
+- 成功路径由「替换」改为「**插入或替换**」：即便该键因任何原因不在当前列表里，服务端
+  已确认的条目也必须出现，纯替换会静默丢掉它。
+- 按 key 回滚与 `favBusyKeys: Set<string>` 保持不变（v1.1 已修）。
+
+### 回归：场景 C（本条交错，精确控制响应顺序）
+
+| 步骤 | 观测 |
+|---|---|
+| 首次 GET 返回 500（使 `loaded` 保持 false） | `getCallsAfterMount = 1` |
+| 点收藏（POST 延迟 1.8s），乐观为已收藏 | `listPressed = true` |
+| 客户端路由到详情页 → 详情页挂载触发第 2 次 GET | `getCallsDuringMutation = 2`（**GET 发在 mutation 在飞时**），返回旧列表 `[]` |
+| 该响应到达后 | `chipDuringMutation = true` —— 旧列表**未被提交**（修复前会被抹成未收藏） |
+| POST 完成 → mutation 收尾 | `getCallsTotal = 3` —— 第 3 次 GET 即**强制重拉**（修复前不会发生） |
+| 最终 | `chipFinal = true`、文案「取消收藏」、服务端含该条目 —— UI 与服务端一致 |
+
+场景 A（响应早于 mutation 开始）与 B（并发回滚）复跑未回归。
+
+### 回归防护
+
+改动 `favoritesStore` 的 `load()` / `toggleFavorite` 时，A / B / C 三个场景需一并复跑：
+A 覆盖「响应早于 mutation」，B 覆盖「并发 mutation 的失败回滚」，C 覆盖「响应发出于
+mutation 之后但落库之前」+ 强制重拉。
+
