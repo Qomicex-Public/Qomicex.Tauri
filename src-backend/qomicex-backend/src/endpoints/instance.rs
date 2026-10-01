@@ -224,6 +224,11 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/install/pause", post(install_pause))
         .route("/instance/{id}/install/resume", post(install_resume))
         .route("/instance/{id}/install/cancel", post(install_cancel))
+        // 资源完整性：校验（只读）+ 补全（后台任务，进度走 install tracker）。
+        // 三个路由此前缺失，前端调用一律 404（issue #138）。
+        .route("/instance/{id}/verify-resources", get(verify_resources))
+        .route("/instance/{id}/repair-resources", post(repair_resources))
+        .route("/instance/{id}/repair", post(repair_instance))
         // 实例扫描同步。请求体会把全部实例的 iconData（base64 data URI）回传，
         // 默认 2MB 的 axum body 上限在几十个实例时就爆（413），必须显式放大。
         .route(
@@ -1224,6 +1229,247 @@ fn truncate_chars(text: &str, max: usize) -> String {
     }
     let cut: String = text.chars().take(max).collect();
     format!("{cut}\n... (truncated)")
+}
+
+// =====================================================================
+// Resource integrity: verify / repair (issue #138)
+// =====================================================================
+
+/// `GET /api/instance/{id}/verify-resources` 响应（前端 `VerifyResourcesResult`）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VerifyResourcesResponse {
+    complete: bool,
+    total_count: i32,
+    missing_files: Vec<MissingFileDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MissingFileDto {
+    name: String,
+    path: String,
+    url: String,
+    sha1: String,
+}
+
+/// `POST /api/instance/{id}/repair-resources` 响应（前端 `RepairResourcesResult`）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepairResourcesResponse {
+    status: String,
+    missing_count: i32,
+}
+
+/// `POST /api/instance/{id}/repair?threads=` 的请求查询参数。
+#[derive(Deserialize, Default)]
+struct RepairQuery {
+    #[serde(default)]
+    threads: Option<i32>,
+}
+
+/// 读取实例版本 JSON 并算出缺失文件列表（`verify-resources` / `repair-*` 共用）。
+///
+/// 复用启动前完整性检查的同一套能力：`build_repair_core`（按实例 game_dir 建 core，
+/// 而非全局 settings 根）+ `locator().get_miss_files_from_json`。
+/// 返回 `(game_dir, 已过滤空 path/url 的 miss 列表)`。
+async fn scan_missing_files(
+    state: &crate::state::AppState,
+    instance_id: &str,
+) -> ApiResult<(
+    String,
+    String,
+    Vec<qomicex_core::models::installer::MissFileInfo>,
+)> {
+    let instance = state
+        .instance
+        .get_by_id(instance_id)
+        .ok_or_else(|| instance_not_found(instance_id))?;
+    let game_dir = instance.game_dir.clone();
+    let version_dir_name = instance.name.clone();
+    let version_json = Path::new(&game_dir)
+        .join("versions")
+        .join(&version_dir_name)
+        .join(format!("{version_dir_name}.json"));
+    let json_content = tokio::fs::read_to_string(&version_json)
+        .await
+        .map_err(|_| {
+            ApiError::not_found(
+                "VERSION_JSON_NOT_FOUND",
+                format!("版本 JSON 不存在: {}", version_json.display()),
+            )
+        })?;
+    let download_source = state.settings.read().await.download_source;
+    let repair_core = crate::services::install_service::build_repair_core(
+        &game_dir,
+        download_source,
+        state.http_client.clone(),
+    );
+    let miss_files = repair_core
+        .locator()
+        .get_miss_files_from_json(&json_content)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let miss_files: Vec<_> = miss_files
+        .into_iter()
+        .filter(|f| !f.path.is_empty() && !f.url.is_empty())
+        .collect();
+    Ok((game_dir, version_dir_name, miss_files))
+}
+
+/// GET /api/instance/{id}/verify-resources — 只读校验，返回缺失文件清单。
+///
+/// 只做扫描、**不下载**（`repair-resources` 才下载）。此前该路由不存在，
+/// 前端拿到 404 后又被 `catch` 当成成功，用户会看到假的「资源完整」（issue #138）。
+async fn verify_resources(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<VerifyResourcesResponse>> {
+    let (_game_dir, _version_dir_name, miss_files) =
+        scan_missing_files(&state, &instance_id).await?;
+    let missing_files: Vec<MissingFileDto> = miss_files
+        .iter()
+        .map(|f| MissingFileDto {
+            name: f.name.clone(),
+            path: f.path.clone(),
+            url: f.url.clone(),
+            sha1: f.sha1.clone(),
+        })
+        .collect();
+    Ok(Json(VerifyResourcesResponse {
+        complete: missing_files.is_empty(),
+        total_count: missing_files.len() as i32,
+        missing_files,
+    }))
+}
+
+/// POST /api/instance/{id}/repair-resources — 后台补全缺失文件，进度走 install tracker。
+///
+/// 复用 `InstallTracker` + `download_batch`：前端已按 `GET /install/progress`
+/// 轮询该实例的进度（`handleRepairResources` 现有逻辑即是），因此补全进度与
+/// 「下载新版本」共用同一条展示通道，无需新进度协议。
+async fn repair_resources(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<RepairResourcesResponse>> {
+    let (_game_dir, _version_dir_name, miss_files) =
+        scan_missing_files(&state, &instance_id).await?;
+    let missing_count = miss_files.len() as i32;
+    if missing_count == 0 {
+        // 无需补全：直接完成，避免前端长时间挂着一个空任务。
+        return Ok(Json(RepairResourcesResponse {
+            status: "completed".to_string(),
+            missing_count: 0,
+        }));
+    }
+    let game_dir = state
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| instance_not_found(&instance_id))?
+        .game_dir
+        .clone();
+    spawn_repair_task(state, instance_id, game_dir, miss_files);
+    Ok(Json(RepairResourcesResponse {
+        status: "started".to_string(),
+        missing_count,
+    }))
+}
+
+/// POST /api/instance/{id}/repair?threads= — 兼容「补全文件」入口（同 repair-resources）。
+///
+/// `threads` 由前端传入（源实现用于控制下载并发）；当前下载并发由全局
+/// `download_manager` 的信号量决定，这里接受该参数但只在日志中体现，
+/// 以免出现「传了 threads 却不生效」的静默差异。
+async fn repair_instance(
+    State(state): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+    Query(q): Query<RepairQuery>,
+) -> ApiResult<Json<RepairResourcesResponse>> {
+    if let Some(threads) = q.threads {
+        tracing::info!(
+            instance = %instance_id,
+            threads,
+            "instance repair: threads 参数由全局下载并发控制托管，此处仅记录"
+        );
+    }
+    let (_game_dir, _version_dir_name, miss_files) =
+        scan_missing_files(&state, &instance_id).await?;
+    let missing_count = miss_files.len() as i32;
+    if missing_count == 0 {
+        return Ok(Json(RepairResourcesResponse {
+            status: "completed".to_string(),
+            missing_count: 0,
+        }));
+    }
+    let game_dir = state
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| instance_not_found(&instance_id))?
+        .game_dir
+        .clone();
+    spawn_repair_task(state, instance_id, game_dir, miss_files);
+    Ok(Json(RepairResourcesResponse {
+        status: "started".to_string(),
+        missing_count,
+    }))
+}
+
+/// 把补全交给 `InstallTracker` 后台跑（进度经 `/install/progress` 与 SSE 暴露）。
+///
+/// `game_dir` 必须显式传入：`MissFileInfo.path` 是**相对**路径，直接拿它做目标
+/// 会让文件落到后端进程的工作目录（启动前完整性检查同样要先 join game_root）。
+fn spawn_repair_task(
+    state: SharedState,
+    instance_id: String,
+    game_dir: String,
+    miss_files: Vec<qomicex_core::models::installer::MissFileInfo>,
+) {
+    let tracker = state.install_tracker.clone();
+    let mgr = state.download_manager.load_full();
+    // 用既有的 resource-completion 入口（kind = "resource"）：语义就是「补全本实例
+    // 缺失的游戏资源」，与 install/modpack 区分，进度经 /install/progress 与 SSE
+    // 的 installs 列表一并暴露（get_all_active 不筛 kind）。
+    tracker.start_resource_completion(instance_id, move |handle| async move {
+        handle.set_status(crate::services::install_tracker::InstallStatus::Downloading);
+        handle.set_stage("repairing");
+        let total = miss_files.len();
+        handle.update(|f| {
+            f.total_files = total as i32;
+        });
+        let step_id = "repair-files";
+        handle.define_steps(
+            &[crate::services::install_tracker::InstallStepSpec {
+                id: step_id,
+                weight: crate::services::install_service::INSTALL_STEP_BUDGET_TOP,
+            }],
+            crate::services::install_service::INSTALL_STEP_BUDGET_TOP,
+        );
+        handle.mark_step(step_id, "active");
+        // 复用批量下载：已含同 dest 合并（issue #122）、镜像备选、暂停/取消与
+        // 冷启动/stall 看门狗，无需在补全路径重写一遍。
+        let game_root = std::path::PathBuf::from(&game_dir);
+        let files: Vec<(String, std::path::PathBuf, Vec<(String, String)>)> = miss_files
+            .into_iter()
+            .map(|f| {
+                let dest = game_root.join(&f.path);
+                if let Some(parent) = dest.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                (f.url, dest, Vec::<(String, String)>::new())
+            })
+            .collect();
+        let result =
+            crate::services::install_service::download_batch(&handle, &mgr, files, Some(step_id))
+                .await;
+        match result {
+            Ok(()) => {
+                handle.mark_step(step_id, "done");
+                handle.set_stage("completed");
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    });
 }
 
 // =====================================================================

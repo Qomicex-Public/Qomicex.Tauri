@@ -32,6 +32,65 @@ const WINTUN_DLL: &[u8] = include_bytes!("../binaries/wintun.dll");
 #[cfg(not(all(windows, not(debug_assertions))))]
 const WINTUN_DLL: &[u8] = &[];
 
+/// authlib-injector 技术规范规定的拖拽前缀。见
+/// `src/pages/Accounts.tsx` 的 `YGG_DND_PREFIX`（前端解析的唯一持有者）。
+const YGG_DND_PREFIX: &str = "authlib-injector:yggdrasil-server:";
+
+/// 从拖入的路径里取出「链接文本」，仅当它确实是 authlib-injector 的拖拽 URI 时返回。
+///
+/// 为什么需要它：Windows 上 Tauri 接管了 WebView2 的拖放（`drag_drop_enabled` 默认 true，
+/// 其文档明确「Disabling it is required to use HTML5 drag and drop on the frontend on
+/// Windows」），所以 DOM 的 `drop` 事件不再派发，前端拿不到 `dataTransfer` 里的文本；
+/// 而 Tauri 的 `DragDropEvent::Drop` **只带 `paths`**。
+///
+/// 从浏览器把**链接**拖进原生窗口时，Windows 会把它落成一个 `.url` 快捷方式文件，
+/// 内容形如 `[InternetShortcut]\r\nURL=authlib-injector:yggdrasil-server:...`。
+/// 这里读该文件取回原始 URI。
+///
+/// 只在「单个文件 + 内容是本前缀」时才接管，其余一律返回 `None` 走原有 file-drop 通道，
+/// 以免影响拖入整合包/mod 的一键安装。
+fn read_dropped_link_text(paths: &[std::path::PathBuf]) -> Option<String> {
+    // 多文件拖入一律按普通文件处理（链接拖拽只可能是一个文件）。
+    let [only] = paths else {
+        return None;
+    };
+    let path = only;
+    let is_url_file = path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("url"))
+        .unwrap_or(false);
+    if !is_url_file {
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    let url = parse_internet_shortcut_url(&content)?;
+    // 只接管 authlib 拖拽；普通网页链接拖入不应被本功能吞掉。
+    if !url.starts_with(YGG_DND_PREFIX) {
+        return None;
+    }
+    Some(url)
+}
+
+/// 解析 `.url`（InternetShortcut）内容里的 `URL=` 行。
+///
+/// 该格式是 INI 风格：段头 `[InternetShortcut]` + `Key=Value` 行，键名大小写不敏感，
+/// 行尾可能是 `\r\n` 或 `\n`。找不到可用 URL 时返回 `None`。
+fn parse_internet_shortcut_url(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let line = line.trim();
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("URL") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
 #[cfg(windows)]
 const BACKEND_EXE: &str = "qomicex-backend.exe";
 #[cfg(unix)]
@@ -266,6 +325,17 @@ pub fn run() {
                             }
                             tauri::DragDropEvent::Drop { paths, .. } => {
                                 let _ = emitter.emit("file-drop-hover", false);
+                                // 浏览器里拖链接到本应用时，Windows 会把链接落成一个
+                                // `.url` 快捷方式文件，而 Tauri 的事件**只带 paths、不带
+                                // 文本**（DOM 的 HTML5 drag 事件在 Windows 上被 Tauri 接管后
+                                // 不再派发，见 tauri-utils config.rs 的 drag_drop_enabled 文档）。
+                                // 因此在这里先尝试把它读出来当文本拖放处理，再按普通文件路径
+                                // 走原有 file-drop 通道。
+                                if let Some(text) = read_dropped_link_text(&paths) {
+                                    let _ = emitter.emit("ygg-server-drop", text);
+                                    // 该拖拽已被当作链接消费，不再触发「拖入文件安装」。
+                                    return;
+                                }
                                 let _ = emitter.emit("file-drop", paths);
                             }
                             _ => {}
@@ -310,4 +380,86 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod dropped_link_tests {
+    use super::*;
+
+    fn write_url_file(tag: &str, content: &str) -> (std::path::PathBuf, Vec<std::path::PathBuf>) {
+        let dir = std::env::temp_dir().join(format!("qomicex-url-drop-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("link.url");
+        std::fs::write(&p, content).unwrap();
+        (p.clone(), vec![p])
+    }
+
+    /// Windows 从浏览器拖链接进来会落成 `.url`；内容按 InternetShortcut 解析出 URI。
+    /// CRLF 与键大小写都要能认。
+    #[test]
+    fn parses_internet_shortcut_url() {
+        let content = "[InternetShortcut]\r\nURL=authlib-injector:yggdrasil-server:https%3A%2F%2Flittleskin.cn%2Fapi%2Fyggdrasil\r\nIconIndex=0\r\n";
+        assert_eq!(
+            parse_internet_shortcut_url(content).as_deref(),
+            Some("authlib-injector:yggdrasil-server:https%3A%2F%2Flittleskin.cn%2Fapi%2Fyggdrasil")
+        );
+        // 键名大小写不敏感、LF 行尾
+        assert_eq!(
+            parse_internet_shortcut_url("[InternetShortcut]\nurl=https://x/y\n").as_deref(),
+            Some("https://x/y")
+        );
+        // 空值/无 URL 行 → None
+        assert_eq!(
+            parse_internet_shortcut_url("[InternetShortcut]\nURL=\n"),
+            None
+        );
+        assert_eq!(parse_internet_shortcut_url("garbage"), None);
+    }
+
+    /// 只接管 authlib 拖拽：普通网页链接拖入必须返回 None，否则会把「拖入文件安装」
+    /// 的路径吞掉（回归保护）。
+    #[test]
+    fn only_claims_authlib_drops() {
+        let (_p, paths) = write_url_file(
+            "authlib",
+            "[InternetShortcut]\r\nURL=authlib-injector:yggdrasil-server:https%3A%2F%2Fx%2Fapi%2Fyggdrasil\r\n",
+        );
+        assert!(read_dropped_link_text(&paths).is_some());
+
+        let (_p2, plain) = write_url_file(
+            "plain",
+            "[InternetShortcut]\r\nURL=https://example.com/\r\n",
+        );
+        assert_eq!(
+            read_dropped_link_text(&plain),
+            None,
+            "普通链接不得被本功能接管"
+        );
+    }
+
+    /// 非 `.url` 文件、多文件、以及不存在的路径一律不接管 → 走原 file-drop 通道。
+    #[test]
+    fn ignores_non_url_files_and_multi_drops() {
+        let dir = std::env::temp_dir().join("qomicex-url-drop-jar");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let jar = dir.join("mod.jar");
+        std::fs::write(&jar, b"x").unwrap();
+        let one = vec![jar];
+        assert_eq!(read_dropped_link_text(&one), None, ".jar 不应被接管");
+
+        let (_p, mut paths) = write_url_file(
+            "multi",
+            "[InternetShortcut]\r\nURL=authlib-injector:yggdrasil-server:https%3A%2F%2Fx%2Fapi%2Fyggdrasil\r\n",
+        );
+        paths.push(paths[0].clone());
+        assert_eq!(read_dropped_link_text(&paths), None, "多文件拖拽不应被接管");
+
+        assert_eq!(read_dropped_link_text(&[]), None);
+        assert_eq!(
+            read_dropped_link_text(&[std::path::PathBuf::from("C:/nope/missing.url")]),
+            None
+        );
+    }
 }
