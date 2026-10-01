@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { ChevronDown, Download, ExternalLink, RotateCw, Search, Tag, User, X } from 'lucide-react'
+import { ChevronDown, Download, ExternalLink, Heart, RotateCw, Search, Tag, User, X } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
@@ -13,14 +13,17 @@ import { Badge } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Combobox } from '../components/ui'
 import { cn } from '../components/ui'
-import { searchResources, getResourceCategories, type ResourceCategory } from '../api/resource.ts'
+import { searchResources, getResourceCategories, toResourceItem, type ResourceCategory } from '../api/resource.ts'
 import { batchLookupChineseNames } from '../api/mcmod.ts'
 import type { ResourceItem } from '../types/index.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 import ModpackQuickInstallDialog from '../components/ModpackQuickInstallDialog.tsx'
 import { Tabs } from '../components/ui'
+import { Tooltip } from '../components/ui'
+import { useMessageBox } from '../components/ui'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
+import { useFavoritesStore, useFavoriteKeys, favoriteKey } from '../stores/favoritesStore.ts'
 
 interface PageCache {
   items: ResourceItem[]
@@ -44,8 +47,13 @@ interface Snapshot {
   searchInput: string
   cnNames: Record<string, string | null>
   scrollY: number
+  /** 资源中心视图：搜索结果 / 收藏（#132）。 */
+  view: ResourceView
 }
 let savedSnapshot: Snapshot | null = null
+
+/** 资源中心的两个视图：搜索（默认）与收藏。 */
+type ResourceView = 'search' | 'favorites'
 
 function cacheKey(category: string, keyword: string, sort: string, source: string, gameVersion: string, loader: string, tags: string[]): string {
   return `${source}|${category}|${keyword}|${sort}|${gameVersion}|${loader}|${tags.join(',')}`
@@ -212,6 +220,7 @@ async function loadCnNames(items: ResourceItem[]): Promise<Record<string, string
 
 function ResourceCard({
   item, category, keyword, sort, gameVersion, loader, instanceId, tags, onInstall, cnName,
+  isFavorite, onToggleFavorite, favoriteBusy,
 }: {
   item: ResourceItem
   category: string
@@ -223,6 +232,9 @@ function ResourceCard({
   tags?: string[]
   onInstall: (item: ResourceItem) => void
   cnName?: string | null
+  isFavorite: boolean
+  onToggleFavorite: () => void
+  favoriteBusy: boolean
 }) {
   const { t, lang } = useI18n()
   return (
@@ -280,6 +292,20 @@ function ResourceCard({
               </a>
             </Button>
           )}
+          <div className="flex-1 sm:w-full">
+            <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
+              <Button
+                variant={isFavorite ? 'secondary' : 'outline'}
+                className="w-full px-3"
+                aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
+                aria-pressed={isFavorite}
+                disabled={favoriteBusy}
+                onClick={onToggleFavorite}
+              >
+                <Heart className={cn('h-3 w-3', isFavorite && 'fill-current text-primary')} />
+              </Button>
+            </Tooltip>
+          </div>
         </div>
       </div>
     </Card>
@@ -288,6 +314,7 @@ function ResourceCard({
 
 export default function ResourceCenter() {
   const { t, lang } = useI18n()
+  const { notify } = useMessageBox()
   const [searchParams, setSearchParams] = useSearchParams()
   const snap = savedSnapshot
   const urlCategory = searchParams.get('category')
@@ -322,6 +349,14 @@ export default function ResourceCenter() {
     return tagsSupported(categoryInit, source) ? normalizeTags(raw, source, categoryInit) : []
   })
   const instanceId = searchParams.get('instanceId') ?? ''
+  // 视图不参与 freshEntry 判定：从详情页带 `?view=favorites` 返回时，筛选未变，
+  // 应恢复快照（含 items 与 view），从实例内带新筛选跳进来才视为全新进入。
+  const urlView = searchParams.get('view')
+  const [view, setView] = useState<ResourceView>(() =>
+    urlView === 'favorites' || urlView === 'search'
+      ? urlView
+      : (!freshEntry && snap?.view === 'favorites' ? 'favorites' : 'search'),
+  )
   const [items, setItems] = useState<ResourceItem[]>(() => freshEntry ? [] : (snap?.items ?? []))
   const [total, setTotal] = useState(() => freshEntry ? 0 : (snap?.total ?? 0))
   const [page, setPage] = useState(() => freshEntry ? 1 : (snap?.page ?? 1))
@@ -334,6 +369,19 @@ export default function ResourceCenter() {
   const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => freshEntry ? {} : (snap?.cnNames ?? {}))
   const pageSize = 20
 
+  // ---- 收藏（#132）----
+  const favorites = useFavoritesStore((s) => s.favorites)
+  const favoritesLoaded = useFavoritesStore((s) => s.loaded)
+  const favoritesLoading = useFavoritesStore((s) => s.loading)
+  const favoritesError = useFavoritesStore((s) => s.error)
+  const loadFavorites = useFavoritesStore((s) => s.load)
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite)
+  const favoriteKeys = useFavoriteKeys()
+  // 正在切换的键（防连点；只影响被点的那张卡）。
+  const [favBusyKey, setFavBusyKey] = useState<string | null>(null)
+
+  useEffect(() => { void loadFavorites() }, [loadFavorites])
+
   // 动态类别列表（按 source+category 拉取；失败时回退静态列表 staticTagsFor）
   const [categoryOptions, setCategoryOptions] = useState<ResourceCategory[] | null>(null)
   const [tagsExpanded, setTagsExpanded] = useState(false)
@@ -342,7 +390,8 @@ export default function ResourceCenter() {
   const tagsRowRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!tagsSupported(source, category)) {
+    // 类别列表只在搜索视图需要（收藏视图不展示类别筛选，也不应产生任何请求）。
+    if (view !== 'search' || !tagsSupported(source, category)) {
       setCategoryOptions(null)
       return
     }
@@ -351,12 +400,12 @@ export default function ResourceCenter() {
       .then((list) => { if (!cancelled) setCategoryOptions(list) })
       .catch(() => { if (!cancelled) setCategoryOptions(null) })
     return () => { cancelled = true }
-  }, [source, category])
+  }, [source, category, view])
 
   const restoredRef = useRef(!freshEntry && !!snap)
-  const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames })
+  const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view })
   const listRef = useAnimatedList<HTMLDivElement>([items.length, category, source, keyword, sort, initialLoading, isReplacing], { y: 12, scale: 0.97, duration: 0.25 })
-  useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames } })
+  useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view } })
 
   useEffect(() => {
     const params = new URLSearchParams()
@@ -368,8 +417,10 @@ export default function ResourceCenter() {
     if (loader) params.set('loader', loader)
     if (tags.length > 0 && tagsSupported(source, category)) params.set('tags', tags.join(','))
     if (instanceId) params.set('instanceId', instanceId)
+    // 只在收藏视图写 view，避免给普通搜索 URL 平白多一个参数。
+    if (view === 'favorites') params.set('view', 'favorites')
     setSearchParams(params, { replace: true })
-  }, [category, keyword, setSearchParams, sort, source, gameVersion, loader, tags, instanceId])
+  }, [category, keyword, setSearchParams, sort, source, gameVersion, loader, tags, instanceId, view])
 
   const doSearch = useCallback(async (pageNum: number, append: boolean) => {
     setLoading(true)
@@ -432,13 +483,34 @@ export default function ResourceCenter() {
   }, [])
 
   useEffect(() => {
+    // 收藏视图只做本地过滤，不碰搜索接口与 searchCache。
+    if (view === 'favorites') { restoredRef.current = false; return }
     if (restoredRef.current) { restoredRef.current = false; return }
     doSearch(1, false)
-  }, [doSearch])
+  }, [doSearch, view])
 
   useEffect(() => () => {
     savedSnapshot = { ...snapRef.current, scrollY: scrollEl()?.scrollTop ?? 0 }
   }, [])
+
+  // 收藏视图的数据源：按当前来源/分类本地过滤（source=all 时不按来源过滤）。
+  // 收藏项自带资源快照，因此无需任何网络请求即可渲染 ResourceCard。
+  const favoriteItems = useMemo(
+    () => favorites
+      .filter((f) => (source === 'all' || f.source === source) && f.category === category)
+      .map(toResourceItem),
+    [favorites, source, category],
+  )
+
+  // 收藏视图同样补中文名（与搜索一致：仅 mod；走 mcmod 批量查询，不涉及资源搜索）。
+  useEffect(() => {
+    if (view !== 'favorites' || category !== 'mod' || favoriteItems.length === 0) return
+    let cancelled = false
+    loadCnNames(favoriteItems)
+      .then((names) => { if (!cancelled) setCnNames((prev) => ({ ...prev, ...names })) })
+      .catch(() => { /* 中文名是增强项，失败静默 */ })
+    return () => { cancelled = true }
+  }, [view, category, favoriteItems])
 
   const handleSearch = () => setKeyword(searchInput.trim())
 
@@ -488,6 +560,20 @@ export default function ResourceCenter() {
     }
   }
 
+  /** 收藏/取消收藏；失败时 store 已回滚，这里只负责提示。 */
+  const handleToggleFavorite = async (item: ResourceItem) => {
+    const key = favoriteKey(item.source, item.id, category)
+    if (favBusyKey === key) return
+    setFavBusyKey(key)
+    try {
+      const nowFavorite = await toggleFavorite(item, category)
+      notify(t(nowFavorite ? 'resource.favorites.added' : 'resource.favorites.removed'), 'success')
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t('resource.favorites.failed'), 'error')
+    }
+    setFavBusyKey(null)
+  }
+
   const loadMore = () => {
     if (!loading && items.length < total) doSearch(page + 1, true)
   }
@@ -525,12 +611,38 @@ export default function ResourceCenter() {
     return found ? t(`resource.categories.${found.key}`) : category
   }, [category, t])
 
+  // 两个视图共用同一套渲染分支，这里把数据源/错误/空态收敛成视图相关的派生值。
+  const shownItems = view === 'favorites' ? favoriteItems : items
+  const shownError = view === 'favorites' ? favoritesError : error
+  /** 是否「有收藏但被当前来源/分类过滤掉了」——决定空态文案。 */
+  const hasAnyFavorite = favorites.length > 0
+
   return (
     <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
       <PageHeader title={t('resource.title')} />
 
       <Card className="border-border/60 bg-muted/20 p-4">
         <div className="space-y-4">
+          {/* 视图切换：搜索 / 收藏（#132）。收藏视图复用下方来源/分类 Tabs 作本地过滤。 */}
+          <div className="flex flex-wrap items-center gap-3">
+            <Tabs
+              tabs={[
+                { id: 'search', label: t('resource.favorites.viewSearch') },
+                {
+                  id: 'favorites',
+                  label: favorites.length > 0
+                    ? t('resource.favorites.viewLabelWithCount', { count: favorites.length })
+                    : t('resource.favorites.viewLabel'),
+                },
+              ]}
+              activeTab={view}
+              onChange={(next) => setView(next === 'favorites' ? 'favorites' : 'search')}
+            />
+            {view === 'favorites' && (
+              <p className="text-[11px] text-muted-foreground">{t('resource.favorites.filterHint')}</p>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
             <div className="space-y-2">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.sourceLabel')}</p>
@@ -542,6 +654,8 @@ export default function ResourceCenter() {
             </div>
           </div>
 
+          {view === 'search' && (
+            <>
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_110px]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
@@ -641,10 +755,12 @@ export default function ResourceCenter() {
               </div>
             )}
           </div>
+            </>
+          )}
         </div>
       </Card>
 
-      {(initialLoading || isReplacing) ? (
+      {(view === 'search' ? (initialLoading || isReplacing) : (favoritesLoading && !favoritesLoaded)) ? (
         <div className="flex flex-col gap-3">
           {Array.from({ length: 5 }).map((_, index) => (
             <Card key={index} className="animate-pulse p-4">
@@ -659,45 +775,81 @@ export default function ResourceCenter() {
             </Card>
           ))}
         </div>
-      ) : error ? (
+      ) : shownError ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
             <Search className="h-6 w-6 text-destructive/60" />
           </div>
-          <p className="text-sm font-medium text-foreground/80">{t('resource.searchFailed')}</p>
-          <p className="mt-1 text-xs text-muted-foreground/60">{error}</p>
-          <Button size="sm" variant="outline" onClick={() => doSearch(1, false)} className="mt-4">
-            <MorphActionIcon active={loading} busy={RotateCwData} rest={RotateCwData} className="mr-1.5 h-3 w-3" />
+          <p className="text-sm font-medium text-foreground/80">{t(view === 'favorites' ? 'resource.favorites.loadFailed' : 'resource.searchFailed')}</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">{shownError}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => { if (view === 'favorites') void loadFavorites(true); else doSearch(1, false) }}
+            className="mt-4"
+          >
+            <MorphActionIcon active={view === 'favorites' ? favoritesLoading : loading} busy={RotateCwData} rest={RotateCwData} className="mr-1.5 h-3 w-3" />
             {t('resource.retry')}
           </Button>
         </div>
-      ) : items.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-            <Search className="h-6 w-6 opacity-40" />
+      ) : shownItems.length === 0 ? (
+        view === 'favorites' ? (
+          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+              <Heart className="h-6 w-6 opacity-40" />
+            </div>
+            <p className="text-sm font-medium text-foreground/80">{t(hasAnyFavorite ? 'resource.favorites.filteredEmpty' : 'resource.favorites.emptyTitle')}</p>
+            <p className="mt-1 text-xs text-muted-foreground/60">{t(hasAnyFavorite ? 'resource.favorites.filteredEmptyHint' : 'resource.favorites.emptyHint')}</p>
           </div>
-          <p className="text-sm font-medium text-foreground/80">{t('resource.notFound')}</p>
-          <p className="mt-1 text-xs text-muted-foreground/60">{t('resource.notFoundHint')}</p>
-        </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+              <Search className="h-6 w-6 opacity-40" />
+            </div>
+            <p className="text-sm font-medium text-foreground/80">{t('resource.notFound')}</p>
+            <p className="mt-1 text-xs text-muted-foreground/60">{t('resource.notFoundHint')}</p>
+          </div>
+        )
       ) : (
         <>
           <div ref={listRef} className="flex flex-col gap-3">
-            {items.map((item) => (
-              <div key={`${item.source}-${item.id}`} data-key={`${item.source}-${item.id}`}>
-              <ResourceCard item={item} category={category} keyword={keyword} sort={sort} gameVersion={gameVersion} loader={loader} instanceId={instanceId} tags={tags} onInstall={handleInstall} cnName={cnNames[item.title]} />
-              </div>
-            ))}
+            {shownItems.map((item) => {
+              const itemKey = favoriteKey(item.source, item.id, category)
+              return (
+                <div key={`${view}-${item.source}-${item.id}`} data-key={`${item.source}-${item.id}`}>
+                  <ResourceCard
+                    item={item}
+                    category={category}
+                    keyword={keyword}
+                    sort={sort}
+                    gameVersion={gameVersion}
+                    loader={loader}
+                    instanceId={instanceId}
+                    tags={tags}
+                    onInstall={handleInstall}
+                    cnName={cnNames[item.title]}
+                    isFavorite={favoriteKeys.has(itemKey)}
+                    favoriteBusy={favBusyKey === itemKey}
+                    onToggleFavorite={() => { void handleToggleFavorite(item) }}
+                  />
+                </div>
+              )
+            })}
           </div>
 
-          {!initialLoading && !isReplacing && !error && items.length > 0 && (
-            items.length < total ? (
-              <div className="mt-5 flex justify-center">
-                <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
-                  {loading ? <><RotateCw className="h-3 w-3 animate-spin" />{t('resource.loading')}</> : <>{t('resource.loadMore', { current: items.length, total })}</>}
-                </Button>
-              </div>
-            ) : (
-              <p className="mt-5 text-center text-xs text-muted-foreground/50">{t('resource.allShown', { count: total })}</p>
+          {view === 'favorites' ? (
+            <p className="mt-5 text-center text-xs text-muted-foreground/50">{t('resource.favorites.allShown', { count: shownItems.length })}</p>
+          ) : (
+            !initialLoading && !isReplacing && !error && items.length > 0 && (
+              items.length < total ? (
+                <div className="mt-5 flex justify-center">
+                  <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
+                    {loading ? <><RotateCw className="h-3 w-3 animate-spin" />{t('resource.loading')}</> : <>{t('resource.loadMore', { current: items.length, total })}</>}
+                  </Button>
+                </div>
+              ) : (
+                <p className="mt-5 text-center text-xs text-muted-foreground/50">{t('resource.allShown', { count: total })}</p>
+              )
             )
           )}
         </>

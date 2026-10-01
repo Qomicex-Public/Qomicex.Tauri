@@ -25,6 +25,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::error::{ApiError, ApiResult};
+use crate::services::resource_favorite::ResourceFavorite;
 use crate::state::SharedState;
 
 // =====================================================================
@@ -270,6 +271,12 @@ pub fn router() -> Router<SharedState> {
         )
         .route("/resources/{id}/translate", get(translate))
         .route("/resources/translate-text", post(translate_text))
+        .route(
+            "/resource-favorites",
+            get(list_resource_favorites)
+                .post(add_resource_favorite)
+                .delete(remove_resource_favorite),
+        )
 }
 
 // =====================================================================
@@ -2291,4 +2298,149 @@ fn extract_cf_required_deps(data: Option<Value>) -> Vec<String> {
                 .map(|x| x.to_string())
         })
         .collect()
+}
+
+// =====================================================================
+// Handlers: resource favorites（收藏，见 services/resource_favorite.rs）
+//
+// 路径用 `/resource-favorites` 而非 `/resources/favorites`：后者会与
+// `/resources/{id}` 的通配段争抢同一路径形状，徒增路由歧义。
+// =====================================================================
+
+/// `DELETE /resource-favorites` 的唯一键查询参数。
+///
+/// 唯一键走 query 而不是路径段，避免资源 id / source 中的特殊字符影响路径匹配。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FavoriteKeyQuery {
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+}
+
+impl FavoriteKeyQuery {
+    /// 三个键段都必须非空，否则返回 400（而不是静默匹配到空键的记录）。
+    fn validated(self) -> ApiResult<(String, String, String)> {
+        let pick = |v: Option<String>, name: &str| -> ApiResult<String> {
+            v.map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    ApiError::bad_request("INVALID_FAVORITE_KEY", format!("{name} 不能为空"))
+                })
+        };
+        Ok((
+            pick(self.source, "source")?,
+            pick(self.id, "id")?,
+            pick(self.category, "category")?,
+        ))
+    }
+}
+
+async fn list_resource_favorites(
+    State(state): State<SharedState>,
+) -> ApiResult<Json<Vec<ResourceFavorite>>> {
+    Ok(Json(state.resource_favorites.get_all()))
+}
+
+async fn add_resource_favorite(
+    State(state): State<SharedState>,
+    req: Json<ResourceFavorite>,
+) -> ApiResult<Json<ResourceFavorite>> {
+    let item = req.0;
+    if item.source.trim().is_empty() || item.id.trim().is_empty() || item.category.trim().is_empty()
+    {
+        return Err(ApiError::bad_request(
+            "INVALID_FAVORITE_KEY",
+            "source / id / category 不能为空",
+        ));
+    }
+    state
+        .resource_favorites
+        .upsert(item)
+        .map(Json)
+        .map_err(|e| ApiError::internal(format!("保存收藏失败: {e}")))
+}
+
+async fn remove_resource_favorite(
+    State(state): State<SharedState>,
+    Query(q): Query<FavoriteKeyQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let (source, id, category) = q.validated()?;
+    let removed = state
+        .resource_favorites
+        .remove(&source, &id, &category)
+        .map_err(|e| ApiError::internal(format!("删除收藏失败: {e}")))?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+#[cfg(test)]
+mod favorites_tests {
+    use super::*;
+
+    fn q(source: Option<&str>, id: Option<&str>, category: Option<&str>) -> FavoriteKeyQuery {
+        FavoriteKeyQuery {
+            source: source.map(str::to_string),
+            id: id.map(str::to_string),
+            category: category.map(str::to_string),
+        }
+    }
+
+    /// `DELETE /resource-favorites` 的唯一键契约：三段必填、空白裁剪、
+    /// 缺失/全空白一律 400（而不是静默匹配到空键记录）。
+    #[test]
+    fn favorite_key_query_validates_all_three_segments() {
+        assert_eq!(
+            q(Some("modrinth"), Some("AANobbMI"), Some("mod"))
+                .validated()
+                .unwrap(),
+            (
+                "modrinth".to_string(),
+                "AANobbMI".to_string(),
+                "mod".to_string()
+            )
+        );
+        // 首尾空白裁剪，避免与写入时的键不一致（" mod " vs "mod"）。
+        assert_eq!(
+            q(Some(" modrinth "), Some(" AANobbMI "), Some(" mod "))
+                .validated()
+                .unwrap()
+                .0,
+            "modrinth"
+        );
+        for bad in [
+            q(None, Some("AANobbMI"), Some("mod")),
+            q(Some("modrinth"), None, Some("mod")),
+            q(Some("modrinth"), Some("AANobbMI"), None),
+            q(Some(""), Some("AANobbMI"), Some("mod")),
+            q(Some("modrinth"), Some("   "), Some("mod")),
+        ] {
+            let err = bad.validated().expect_err("应当返回 400");
+            assert_eq!(err.status, 400);
+            assert_eq!(err.code, "INVALID_FAVORITE_KEY");
+        }
+    }
+
+    /// query 字段名就是 `source` / `id` / `category`（前端 `URLSearchParams`
+    /// 直传）；多余参数必须被忽略而不是报错。
+    #[test]
+    fn favorite_key_query_deserializes_from_query_params() {
+        let parsed: FavoriteKeyQuery =
+            serde_json::from_str(r#"{"source":"curseforge","id":"238222","category":"mod"}"#)
+                .unwrap();
+        assert_eq!(
+            parsed.validated().unwrap(),
+            (
+                "curseforge".to_string(),
+                "238222".to_string(),
+                "mod".to_string()
+            )
+        );
+        let extra: FavoriteKeyQuery =
+            serde_json::from_str(r#"{"source":"a","id":"b","category":"c","extra":"ignored"}"#)
+                .unwrap();
+        assert_eq!(extra.validated().unwrap().0, "a");
+    }
 }

@@ -24,6 +24,7 @@ use crate::services::instance::InstanceService;
 use crate::services::instance_group::InstanceGroupService;
 use crate::services::launch_tracker::LaunchTracker;
 use crate::services::plugin::{FileAuthService, PluginGatewayClient, PluginStore};
+use crate::services::resource_favorite::ResourceFavoriteService;
 use crate::services::scan_cache::VersionScanCache;
 use crate::services::trace::{
     init_file_log, FileLog, LogLevelManager, TraceBufferStore, TraceDumpService,
@@ -69,6 +70,8 @@ pub struct AppState {
     pub instance: Arc<InstanceService>,
     /// 实例自定义分组服务（独立 groups.json）。
     pub instance_groups: Arc<InstanceGroupService>,
+    /// 资源收藏服务（独立 resource_favorites.json）。
+    pub resource_favorites: Arc<ResourceFavoriteService>,
     /// 账号持久化服务（对应 AccountService）。
     pub account: Arc<AccountService>,
     /// 内存 trace 缓冲（对应 TraceBufferStore，容量 2000）。
@@ -187,6 +190,7 @@ impl AppState {
         // 共享后端服务（对应 Program.cs 中 Singleton 注册）。
         let instance = Arc::new(InstanceService::new());
         let instance_groups = Arc::new(InstanceGroupService::new());
+        let resource_favorites = Arc::new(ResourceFavoriteService::new());
         let account = Arc::new(AccountService::new().unwrap_or_default());
         let trace_buffer = Arc::new(TraceBufferStore::default());
         // 注册为全局 trace 缓冲：实时日志（TraceWriter / stderr 捕获）写入此处
@@ -233,6 +237,7 @@ impl AppState {
             app_version,
             instance,
             instance_groups,
+            resource_favorites,
             account,
             trace_buffer,
             trace_dump,
