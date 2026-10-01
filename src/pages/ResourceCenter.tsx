@@ -20,6 +20,7 @@ import { translateCategory } from '../lib/categoryTranslations.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 import ModpackQuickInstallDialog from '../components/ModpackQuickInstallDialog.tsx'
 import { Tabs } from '../components/ui'
+import { Popover } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
@@ -455,6 +456,10 @@ export default function ResourceCenter() {
   const [favTags, setFavTags] = useState<string[]>(() => (!freshEntry ? snap?.favTags : undefined) ?? [])
   /** 正在编辑的收藏（弹窗目标）。 */
   const [editFavorite, setEditFavorite] = useState<ResourceFavorite | null>(null)
+  /** 收藏夹下拉是否展开（Popover 受控，选完/新建完要收起）。 */
+  const [favFolderMenuOpen, setFavFolderMenuOpen] = useState(false)
+  /** 收藏视图的本地搜索（标题 / 作者 / 标签，纯前端过滤，不发请求）。 */
+  const [favQuery, setFavQuery] = useState('')
 
   useEffect(() => { void loadFavorites() }, [loadFavorites])
   // 收藏夹列表只在收藏视图需要（搜索视图不产生额外请求）。
@@ -622,10 +627,16 @@ export default function ResourceCenter() {
             const own = (f.tags ?? []).map((x) => x.toLowerCase())
             if (!favTags.every((tag) => own.includes(tag.toLowerCase()))) return false
           }
+          // 收藏内搜索：标题 / 作者 / 标签，大小写不敏感（纯本地，无网络请求）
+          if (favQuery.trim()) {
+            const q = favQuery.trim().toLowerCase()
+            const haystack = [f.title, f.author, ...(f.tags ?? [])].join('\n').toLowerCase()
+            if (!haystack.includes(q)) return false
+          }
           return true
         })
         .map(toResourceItem),
-    [favorites, favoriteMatchesScope, favFolder, folderMap, favTags],
+    [favorites, favoriteMatchesScope, favFolder, folderMap, favTags, favQuery],
   )
 
   /** 左侧收藏夹栏的条目（全部 / 未分组 / 各夹子 + 计数）。 */
@@ -831,52 +842,148 @@ export default function ResourceCenter() {
 
       <Card className="border-border/60 bg-muted/20 p-4">
         <div className="space-y-4">
+          {/* 顶部工具行（#132 P2 布局）：收藏夹下拉 + 搜索 + 视图切换按钮。
+              视图切换只保留**一个**按钮、文案随视图变（搜索视图=绿色「♡ 收藏 (N)」进入收藏；
+              收藏视图=「搜索」返回），避免图标组与绿色按钮重复表达同一件事。 */}
+          <div className="flex flex-wrap items-center gap-2">
+            {view === 'favorites' && (
+              <Popover
+                open={favFolderMenuOpen}
+                onOpenChange={setFavFolderMenuOpen}
+                className="min-w-[168px] max-w-[220px]"
+                trigger={
+                  <button
+                    type="button"
+                    aria-label={t('resource.favorites.folders.railTitle')}
+                    aria-expanded={favFolderMenuOpen}
+                    className={cn(
+                      'flex h-10 w-full items-center gap-2 rounded-lg border border-border/60 bg-background/60 px-3 text-sm transition-colors',
+                      favFolderMenuOpen ? 'border-primary/40 text-foreground' : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <Folder className="h-4 w-4 shrink-0 opacity-80" />
+                    <span className="min-w-0 flex-1 truncate text-left">
+                      {favRailItems.find((r) => r.key === favFolder)?.label ?? t('resource.favorites.folders.all')}
+                    </span>
+                    <span className="shrink-0 text-[11px] tabular-nums opacity-60">
+                      {favRailItems.find((r) => r.key === favFolder)?.count ?? 0}
+                    </span>
+                    <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', favFolderMenuOpen && 'rotate-180')} />
+                  </button>
+                }
+              >
+                <p className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.15em] text-muted-foreground/60">
+                  {t('resource.favorites.folders.railTitle')}
+                </p>
+                <div className="max-h-72 overflow-y-auto">
+                  {favRailItems.map((row) => {
+                    const active = favFolder === row.key
+                    const isRealFolder = row.key !== 'all' && row.key !== UNFILED
+                    return (
+                      <div
+                        key={row.key}
+                        className={cn(
+                          'group/rail flex items-center gap-1 rounded-md px-2 py-1.5 text-sm transition-colors',
+                          active ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => { setFavFolder(row.key); setFavFolderMenuOpen(false) }}
+                          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                          aria-pressed={active}
+                        >
+                          <Folder className={cn('h-3.5 w-3.5 shrink-0', active ? 'opacity-100' : 'opacity-50')} />
+                          <span className="truncate">{row.label}</span>
+                        </button>
+                        <span className="shrink-0 text-[11px] tabular-nums opacity-60">{row.count}</span>
+                        {isRealFolder && (
+                          <span className="hidden shrink-0 items-center gap-0.5 group-hover/rail:flex">
+                            <button
+                              type="button"
+                              onClick={() => { setFavFolderMenuOpen(false); void handleRenameFolder(row.key, row.label) }}
+                              aria-label={t('resource.favorites.folders.rename')}
+                              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setFavFolderMenuOpen(false); void handleDeleteFolder(row.key, row.label) }}
+                              aria-label={t('resource.favorites.folders.delete')}
+                              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+                {foldersLoaded === false && (
+                  <p className="px-3 pt-1 text-[11px] text-muted-foreground/60">{t('resource.favorites.folders.loading')}</p>
+                )}
+                <div className="mt-1 border-t border-border/60 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => { setFavFolderMenuOpen(false); void handleCreateFolder() }}
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    <FolderPlus className="h-3.5 w-3.5" />
+                    {t('resource.favorites.folders.create')}
+                  </button>
+                </div>
+              </Popover>
+            )}
+
+            {/* 收藏内搜索：只在收藏视图出现（搜索视图有自己的一整行搜索区，避免两个搜索框）。
+                纯本地过滤标题 / 作者 / 标签，不发网络请求。 */}
+            {view === 'favorites' && (
+              <div className="relative min-w-[200px] flex-1">
+                <Input
+                  value={favQuery}
+                  onChange={(e) => setFavQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                  placeholder={t('resource.searchPlaceholder', { category: t('resource.favorites.viewLabel') })}
+                  className="h-10 pl-9"
+                />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              </div>
+            )}
+
+            {/* 视图切换：单个按钮，文案随视图变（有可见文字，故不再套 Tooltip） */}
+            <button
+              type="button"
+              onClick={() => setView(view === 'favorites' ? 'search' : 'favorites')}
+              aria-label={view === 'favorites'
+                ? t('resource.favorites.viewSearch')
+                : t('resource.favorites.viewLabel')}
+              aria-pressed={view === 'favorites'}
+              className={cn(
+                'ml-auto flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-medium transition-colors',
+                view === 'favorites'
+                  ? 'border-border/60 text-muted-foreground hover:bg-accent hover:text-foreground'
+                  : 'border-primary/40 text-primary hover:bg-primary/10',
+              )}
+            >
+              {view === 'favorites'
+                ? <><Search className="h-4 w-4" />{t('resource.favorites.viewSearch')}</>
+                : (
+                  <>
+                    <Heart className="h-4 w-4" />
+                    {favorites.length > 0
+                      ? t('resource.favorites.viewLabelWithCount', { count: favorites.length })
+                      : t('resource.favorites.viewLabel')}
+                  </>
+                )}
+            </button>
+          </div>
+
           <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
-            <div className="flex items-end gap-2.5">
-              {/* 视图切换（#132）：搜索 / 收藏 收成图标按钮，与「资源源」同一行、位于最左。
-                  计数挪进 Tooltip（图标态不再显示文字）。 */}
-              <div className="flex items-center gap-1">
-                <Tooltip content={t('resource.favorites.viewSearch')}>
-                  <button
-                    type="button"
-                    onClick={() => setView('search')}
-                    aria-label={t('resource.favorites.viewSearch')}
-                    aria-pressed={view === 'search'}
-                    className={cn(
-                      'flex h-10 items-center justify-center rounded-lg px-3 transition-all duration-200',
-                      view === 'search'
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                    )}
-                  >
-                    <Search className="h-4 w-4" />
-                  </button>
-                </Tooltip>
-                <Tooltip
-                  content={favorites.length > 0
-                    ? t('resource.favorites.viewLabelWithCount', { count: favorites.length })
-                    : t('resource.favorites.viewLabel')}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setView('favorites')}
-                    aria-label={t('resource.favorites.viewLabel')}
-                    aria-pressed={view === 'favorites'}
-                    className={cn(
-                      'flex h-10 items-center justify-center rounded-lg px-3 transition-all duration-200',
-                      view === 'favorites'
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                    )}
-                  >
-                    <Heart className={cn('h-4 w-4', view === 'favorites' && 'fill-current')} />
-                  </button>
-                </Tooltip>
-              </div>
-              <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.sourceLabel')}</p>
-                <Tabs tabs={SOURCES.map(s => ({ id: s.key, label: s.key === 'all' ? t('resource.sources.all') : s.label }))} activeTab={source} onChange={handleSourceChange} />
-              </div>
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.sourceLabel')}</p>
+              <Tabs tabs={SOURCES.map(s => ({ id: s.key, label: s.key === 'all' ? t('resource.sources.all') : s.label }))} activeTab={source} onChange={handleSourceChange} />
             </div>
             <div className="space-y-2 xl:ml-auto">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.categoryLabel')}</p>
@@ -990,86 +1097,15 @@ export default function ResourceCenter() {
         </div>
       </Card>
 
-      {/* P2：收藏视图改两栏 —— 左侧收藏夹栏，右侧「标签筛选 + 列表」。
-          搜索视图不加包裹层（保持原单列布局）。 */}
-      <div className={cn(view === 'favorites' && 'grid items-start gap-4 lg:grid-cols-[212px_minmax(0,1fr)]')}>
-        {view === 'favorites' && (
-          <Card className="border-border/60 bg-card/95 p-2.5">
-            <div className="flex items-center justify-between px-1 pb-1.5">
-              <p className="text-[11px] font-medium uppercase tracking-[0.15em] text-muted-foreground/70">
-                {t('resource.favorites.folders.railTitle')}
-              </p>
-              <Tooltip content={t('resource.favorites.folders.create')}>
-                <button
-                  type="button"
-                  onClick={() => { void handleCreateFolder() }}
-                  aria-label={t('resource.favorites.folders.create')}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  <FolderPlus className="h-3.5 w-3.5" />
-                </button>
-              </Tooltip>
-            </div>
-            <div className="space-y-0.5">
-              {favRailItems.map((row) => {
-                const active = favFolder === row.key
-                const isRealFolder = row.key !== 'all' && row.key !== UNFILED
-                return (
-                  <div
-                    key={row.key}
-                    className={cn(
-                      'group/rail flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors',
-                      active ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setFavFolder(row.key)}
-                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                      aria-pressed={active}
-                    >
-                      {row.key === 'all'
-                        ? <Folder className="h-3 w-3 shrink-0 opacity-70" />
-                        : <Folder className={cn('h-3 w-3 shrink-0', active ? 'opacity-100' : 'opacity-50')} />}
-                      <span className="truncate">{row.label}</span>
-                    </button>
-                    <span className="shrink-0 text-[11px] tabular-nums opacity-60">{row.count}</span>
-                    {isRealFolder && (
-                      <span className="hidden shrink-0 items-center gap-0.5 group-hover/rail:flex">
-                        <button
-                          type="button"
-                          onClick={() => { void handleRenameFolder(row.key, row.label) }}
-                          aria-label={t('resource.favorites.folders.rename')}
-                          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => { void handleDeleteFolder(row.key, row.label) }}
-                          aria-label={t('resource.favorites.folders.delete')}
-                          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-            {foldersLoaded === false && (
-              <p className="px-2 pt-1 text-[11px] text-muted-foreground/60">{t('resource.favorites.folders.loading')}</p>
-            )}
-          </Card>
-        )}
-
-        <div className={cn('min-w-0', view === 'favorites' && 'space-y-3')}>
-          {view === 'favorites' && favTagOptions.length > 0 && (
+      {/* P2 布局：收藏夹改为顶部下拉后不再需要左栏，列表占满整宽。 */}
+      <div className={cn(view === 'favorites' && 'space-y-3')}>
+          {view === 'favorites' && (favTagOptions.length > 0 || shownItems.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-medium text-muted-foreground">
-                {t('resource.favorites.tags.filterLabel')}
-              </span>
+              {favTagOptions.length > 0 && (
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  {t('resource.favorites.tags.filterLabel')}
+                </span>
+              )}
               {favTagOptions.map(({ label, count }) => {
                 const active = favTags.some((x) => x.toLowerCase() === label.toLowerCase())
                 return (
@@ -1098,6 +1134,12 @@ export default function ResourceCenter() {
                   <X className="h-3 w-3" />
                   {t('resource.clearFilter')}
                 </button>
+              )}
+              {/* 计数挪到筛选行右侧（空列表时由空态文案承担，避免重复） */}
+              {shownItems.length > 0 && (
+                <span className="ml-auto text-xs text-muted-foreground/60">
+                  {t('resource.favorites.allShown', { count: shownItems.length })}
+                </span>
               )}
             </div>
           )}
@@ -1190,9 +1232,7 @@ export default function ResourceCenter() {
             })}
           </div>
 
-          {view === 'favorites' ? (
-            <p className="mt-5 text-center text-xs text-muted-foreground/50">{t('resource.favorites.allShown', { count: shownItems.length })}</p>
-          ) : (
+          {view === 'search' && (
             !initialLoading && !isReplacing && !error && items.length > 0 && (
               items.length < total ? (
                 <div className="mt-5 flex justify-center">
@@ -1207,7 +1247,6 @@ export default function ResourceCenter() {
           )}
         </>
       )}
-        </div>
       </div>
 
       {editFavorite && (
