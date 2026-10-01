@@ -34,7 +34,7 @@ use tauri::{AppHandle, Emitter};
 use windows::core::implement;
 use windows::Win32::Foundation::{HWND, LPARAM, POINTL};
 use windows::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL};
-use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::{
     IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop, CF_HDROP,
     CF_UNICODETEXT, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE,
@@ -188,16 +188,26 @@ impl DragDropTarget {
             None
         } else {
             let p = locked as *const u16;
-            // HGLOBAL 里是 NUL 结尾的宽字符串；先量长度再复制。
+            // 扫描 NUL 结尾的宽字符串，但**必须用 GlobalSize 限界**：
+            // 外部拖放源可以给出畸形/恶意的、不带 NUL 的 CF_UNICODETEXT，
+            // 无界扫描会越界读取甚至崩溃进程（COM 回调里 panic 无法展开）。
+            let max_units = GlobalSize(medium.u.hGlobal) / std::mem::size_of::<u16>();
             let mut len = 0usize;
-            while *p.add(len) != 0 {
+            while len < max_units && *p.add(len) != 0 {
                 len += 1;
             }
-            let slice = std::slice::from_raw_parts(p, len);
-            let s = String::from_utf16_lossy(slice);
-            let _ = GlobalUnlock(medium.u.hGlobal);
-            Some(s)
+            if len == 0 {
+                None
+            } else {
+                let slice = std::slice::from_raw_parts(p, len);
+                let s = String::from_utf16_lossy(slice);
+                Some(s)
+            }
         };
+        // 只在确实加锁成功时解锁（失败时 GlobalUnlock 也会报错，没必要调）。
+        if !locked.is_null() {
+            let _ = GlobalUnlock(medium.u.hGlobal);
+        }
         ReleaseStgMedium(&mut medium);
         text.filter(|s| !s.trim().is_empty())
     }
@@ -346,9 +356,14 @@ pub fn extract_candidate(text: &str) -> Option<String> {
             Some(decoded)
         };
     }
-    if raw.len() > 8
-        && (raw[..8].eq_ignore_ascii_case("https://") || raw[..7].eq_ignore_ascii_case("http://"))
-    {
+    // 用**字节**前缀比较，不要 `raw[..8]`：str 索引必须落在 UTF-8 字符边界上，
+    // 对非 ASCII（如「你好世界你好」）切片会 panic；而这里跑在 COM 的 `Drop`
+    // 回调里，panic 无法跨 `extern "system"` 展开，会直接终止启动器进程。
+    // 大小写不敏感与旧行为一致。
+    let b = raw.as_bytes();
+    let is_scheme = (b.len() >= 7 && b[..7].eq_ignore_ascii_case(b"http://"))
+        || (b.len() >= 8 && b[..8].eq_ignore_ascii_case(b"https://"));
+    if is_scheme {
         return Some(raw.to_string());
     }
     None
@@ -419,11 +434,17 @@ mod tests {
     }
 
     /// 无关文本一律不认，避免把普通拖拽误当成验证服务器地址。
+    ///
+    /// 其中 `"你好世界你好"` 是**回归用例**：它 12 字节、字符边界在 0/3/6/9/12，
+    /// 早期实现用 `raw[..8]` 按字节切片判前缀，会 panic（"byte index 8 is not a
+    /// char boundary"）。该函数跑在 COM 的 `Drop` 回调里，panic 无法跨
+    /// `extern "system"` 展开，等于拖入任意中文文本即可让启动器进程终止。
     #[test]
     fn rejects_unrelated_text() {
         for bad in [
             "",
             "   ",
+            "你好世界你好",
             "hello world",
             "authlib-injector:yggdrasil-server:",
             "ftp://example.com/x",
