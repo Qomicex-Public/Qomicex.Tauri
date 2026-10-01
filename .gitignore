@@ -77,6 +77,9 @@ video-assets/
 # Memory (agent session/decision store, local only)
 .memory/
 
+# junsi-dev-toolkit 生成的文档索引缓存（本地工具状态，非项目文件）
+docs/junsi-dev-docs/docs-index.json
+
 # Agent/skill config (local, not project files)
 .firecrawl/
 .agents/
