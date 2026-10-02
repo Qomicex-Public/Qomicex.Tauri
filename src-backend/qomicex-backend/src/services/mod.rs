@@ -15,6 +15,7 @@ pub mod license;
 pub mod license_core;
 pub mod log_analysis;
 pub mod modpack_export;
+pub mod modpack_manifest;
 pub mod multimc;
 pub mod options;
 pub mod plugin;

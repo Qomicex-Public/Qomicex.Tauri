@@ -710,7 +710,10 @@ fn sha1_hex(data: &[u8]) -> String {
 /// （`compress/x86.rs` + cpufeatures 运行时分发，实测 ~2.2 GB/s，
 /// 软件实现 ~724 MB/s），哈希本身几乎免费，所以瓶颈是读盘与分配 ——
 /// 用固定缓冲喂 `update` 才能让硬件路径真正吃到带宽。
-fn sha1_file_hex(path: &std::path::Path) -> std::io::Result<String> {
+///
+/// `pub(crate)`：整合包更新清单（`services/modpack_manifest.rs`，issue #118）
+/// 复用同一实现，避免第二份哈希代码漂移。
+pub(crate) fn sha1_file_hex(path: &std::path::Path) -> std::io::Result<String> {
     use std::io::Read as _;
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha1::new();

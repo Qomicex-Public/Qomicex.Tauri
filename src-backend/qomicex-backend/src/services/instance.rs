@@ -52,6 +52,24 @@ pub struct GameInstance {
     pub modpack_author: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modpack_summary: Option<String>,
+    // --- 整合包来源（issue #118 原地更新的判定依据）---
+    // 仅「资源中心在线安装」写入；本地导入/拖入/MultiMC 导入不写，故这些实例
+    // `modpack_origin` 为 None → 判定为不可更新（符合 issue「不应为手动导入提供」）。
+    /// 平台来源："modrinth" / "curseforge"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modpack_source: Option<String>,
+    /// 平台项目 id。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modpack_project_id: Option<String>,
+    /// 平台版本 id（更新的身份标识，绝不用版本名比较）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modpack_version_id: Option<String>,
+    /// 安装来源标记：仅 "resource-center" 表示可更新。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modpack_origin: Option<String>,
+    /// 当前版本发布时间（RFC3339）。用于当前版本已被平台删除时的排序回退。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modpack_version_published_at: Option<String>,
     pub skip_integrity_check: bool,
     // 对应 C# [JsonIgnore(WhenWritingNull)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,6 +108,11 @@ impl Default for GameInstance {
             modpack_version: None,
             modpack_author: None,
             modpack_summary: None,
+            modpack_source: None,
+            modpack_project_id: None,
+            modpack_version_id: None,
+            modpack_origin: None,
+            modpack_version_published_at: None,
             skip_integrity_check: false,
             resolved_game_dir: None,
             custom_group_ids: Vec::new(),
