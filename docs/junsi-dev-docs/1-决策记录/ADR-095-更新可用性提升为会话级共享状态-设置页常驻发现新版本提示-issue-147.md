@@ -1,0 +1,227 @@
+# ADR-095：更新可用性提升为会话级共享状态，设置页常驻「发现新版本」提示（issue #147）
+
+| 属性 | 内容 |
+|---|---|
+| 状态 | 已采纳 |
+| 日期 | 2026-10-02 |
+| 决策者 | AI Agent |
+| 影响面 | 前端 `src/stores/updaterStore.ts`、`src/App.tsx`、`src/pages/Settings.tsx`（不动后端、不动 i18n submodule） |
+
+## 背景
+
+> 编号说明：ADR-094 已被在途的资源收藏 P2 分支（#132 / PR #148）占用，故本文取 095，
+> 避免两处 PR 合并时编号撞车。README 索引中 093 → 095 的间隔待 #148 合并后自然补齐。
+
+用户在 [#147](https://github.com/Qomicex-Public/Qomicex.Tauri/issues/147) 报告：
+
+> 存在更新时，若玩家手动取消后，在检查更新附近不会提示有新版本，应予以提示。
+
+期望位置是「设置 → 关于 → 更新」那张卡片里、通道选择器与「检查更新」按钮的同一行右侧。
+
+### 现状（修复前）
+
+更新检测有**两条独立的检查路径**，二者互不知情：
+
+| 路径 | 位置 | 命中「有更新」后的行为 |
+|---|---|---|
+| 启动后台检查 | `App.tsx`，`backendState === 'ready'` 后 5s | 写 `pendingUpdate` → 弹 `UpdateDialog` |
+| 手动检查 | `Settings.tsx` `AboutTab.checkForUpdate` | 写本地 `pendingUpdate` → 弹 `UpdateDialog` |
+
+`AboutTab` 里 `updateState` 的类型**声明了** `'available'`，但 JSX 只渲染了 `devBuild` / `uptodate` / `error` 三个分支，`'available'` **没有任何渲染出口**。
+
+### 根因
+
+「存在可用更新」这一事实只存在两条路径各自的局部 state 里，**没有任何共享、可达的载体**：
+
+1. 用户在自动弹窗点「下次再说」→ `App.tsx` 的 `onClose` 只写 `snooze-update` 并 `setPendingUpdate(null)`，该事实**被清除**；
+2. 之后去设置页看，`AboutTab` 的 `updateState` 仍是 `'idle'`（它从未被告知过），什么都看不到；
+3. 手动检查虽然会再次弹窗，但用户取消后同样只剩 `'available'` 这个**渲染不出来的**状态值。
+
+结果是：**有新版本却哪都不说**——只有再点一次「检查更新」并让弹窗一直开着才看得见。
+
+## 决策
+
+### 1. 把「已探知可用更新」提升为 store 里的唯一事实源
+
+`src/stores/updaterStore.ts` 新增：
+
+```ts
+available: UpdatePlan | null
+setAvailable: (plan: UpdatePlan | null) => void
+```
+
+- `App.tsx` 的后台检查与 `Settings.tsx` 的手动检查**都写入它**；
+- `Settings.tsx` 订阅它渲染常驻提示；
+- `setAvailable` 内部把「缺少 `version` 的计划」归一为 `null`——提示与弹窗都依赖 `version`，没有 `version` 就不该提示（与 `App.tsx`/`Settings.tsx` 里 `!plan.hasUpdate || !plan.version` 的既有守卫同口径）。
+
+### 2. 提示的 UI 与交互
+
+「设置 → 关于 → 更新」行内，「检查更新」按钮右侧渲染一个**可点击的提示**：`↓ 发现新版本 0.1.0-beta32.0`，点击**重新打开更新弹窗**（让用户不必再点一次检查、再等一次网络往返）。
+
+- 点击路径复用新抽出的 `showUpdate(plan)`（手动检查与提示点击共用同一段打开逻辑，避免两处漂移）；
+- 请求进行中（`updateState === 'checking'`）暂不渲染提示，避免与「检查中...」抢注意力；
+- 开发构建（`isDevBuild`）不渲染——它根本不参与更新检查。
+
+### 3. 文案复用既有 key，不新增 i18n key
+
+提示直接用 `dialogs.update.foundNew`（`发现新版本 {version}`）——与更新弹窗标题**同口径**，且比"有新版本"多带一个版本号。
+
+**这是本决策里最关键的取舍**：i18n 资源在**独立 submodule 仓库**（`Qomicex.Tauri.i18n`）。为一句「有新版本」新增 key 意味着：改 7 种语言 → 单独开 i18n 仓库 PR → 等它合并 → 回主仓库更新 gitlink。收益（文案与 issue 字面一致）远小于成本（跨仓库交付链路），而既有 key 语义完全吻合。
+
+### 4. 「下次再说」只抑制弹窗，不抑制提示
+
+用户裁决：提示**常驻到装上为止**。
+
+`App.tsx` 里把 `setUpdateAvailable(plan)` 放在 **snooze 裁决之前**：`snooze-update` 的语义是「别再弹窗烦我」，而设置页的提示反映「确实存在新版本」这一**客观事实**，两者不应互相取消。用户点了「下次再说」后进设置页，仍应看到有新版本。
+
+### 5. 仅会话内存，不持久化
+
+`available` 故意不落 `localStorage`：计划里含签名与下载地址，跨会话缓存可能已被更新的版本取代或已失效。启动后后台检查会在 5s 内重新探知——**短暂不提示优于提示过期信息**。
+
+### 6. 权威「无更新」清提示，请求失败保留
+
+手动检查收到确定的 `hasUpdate: false` 时调用 `setAvailable(null)`：用户可能刚切换了通道（另一条列车无更新），或版本已被别的途径装上——继续提示一个不存在的"新版本"是错误信息。
+
+网络异常走 `catch` 分支，**不**清提示：一次请求失败不能推翻上一次的确凿发现。
+
+### 6b. 提示必须与**当前所选通道**一致（PR #152 评审补充）
+
+`guard_train_plan`（后端 `update.rs`）保证 `hasUpdate=true` 时 `plan.channel` **恒等于该次检查所用通道**，而**切换选择器不会自动重新检查**。于是「发现 beta32 → 把选择器切到稳定版」时，首版仍会显示 `发现新版本 0.1.0-beta32.0`，点击还会打开 beta 的更新弹窗——用户既被提示了一个没订的通道，也**绕过了 ADR-085「永不跨列车自动更新」**。（附带的失真：`channelSwitch` 按「已安装构建」而非「当前选择」计算，弹窗标注也会不符。）
+
+修法：提示渲染前比对计划所属通道与当前选择，不一致则不显示（**过滤**而非清除——切回 beta 提示立即恢复，不影响 `available` 这个事实源）。
+
+比对必须经过 `channelTrainOf` 归一：选择器与 localStorage 沿用发布侧的 `stable`，而 `Train`（`plan.channel` / `trainOf` / 后端）一律用 `release`，不归一则比较恒不成立。
+
+### 6c. 「当前通道」只能有一个同步的事实源（PR #152 第二轮评审补充）
+
+**又一处真实缺陷**（由 code-review bot 指出，实测证实）：`setChannelAndSave` 对 localStorage 写入做了 500ms **防抖**，而 `checkForUpdate` 经 `resolveChannel` → `storedChannel()` **回读 localStorage** 取通道。于是「切通道后 500ms 内点检查更新」读到的仍是**旧**通道。
+
+实测证据（隔离 Vite + Playwright，同一同步块内点选并读取）：
+
+| 时刻 | `localStorage['update-channel']` | 请求实际带的 channel |
+|---|---|---|
+| 修复前 | 选中稳定版后仍为 `beta` | `beta` ← **跨列车口子** |
+| 修复后 | 立即为 `stable` | `stable` |
+
+后果比决策 6b 更重：后端 `guard_train_plan` 会把 `plan.channel` 盖成那个旧列车，且 `channelSwitch` 按「已安装列车」而非「当前选择」计算 → 弹窗**既不标注"切换通道"，用户点更新还完成一次无提示的跨列车安装**——正是 ADR-085 要拦的场景；而 6b 的提示过滤又会让这条计划的提示消失，UI 自相矛盾（有弹窗、无提示）。
+
+修法：**去掉 500ms 防抖，改为同步写入**。这样 localStorage 恒定等于选择器显示值，成为"当前通道"的唯一来源，`resolveChannel` 的既有语义（unknown 构建返回 `undefined` → 不发请求）完全不变。一次 `setItem` 成本可忽略——通道选择是离散的用户动作，不是高频输入，当初防抖针对的"rapid selection"并不存在。写入失败（隐私模式/配额）用 `try/catch` 吞掉，只丢持久化，不影响本次会话。
+
+（未采纳的替代方案：让 `checkForUpdate` 直接读选择器 state。这会改变 unknown 构建的既有行为——`resolveChannel` 对其返回 `undefined` 时**不发请求**，而直接用 state 会绕过这层判断。移除防抖是根因修复且语义零变化。）
+
+### 6d. 存储写入失败时，手动检查不得退回旧通道（PR #152 第三轮评审补充）
+
+**第三处真实缺陷**（由 CodeRabbit 再次指出）：6c 的 `try/catch` 只保证了"切换不被阻断"，却留下一个缺口——`localStorage.setItem` 若抛错（隐私模式/配额），选择器已更新为 `stable`，而 `checkForUpdate` 回读 localStorage 得到的仍是 `beta`。于是**选择器显示一个通道、检查却请求另一个通道**，弹窗与选择器自相矛盾——正是 6b/6c 要消灭的那类不一致。
+
+修法：手动检查优先用**本会话的显式选择**（`channel` state），不再把"写入成功"当作"选择生效"的前提。
+
+但不能无条件用 state：`channel` 的初值是 `resolveChannel(...) ?? 'stable'`，对无法识别的构建（如 `0.1.0-rc1`）那个 `'stable'` 只是**显示占位**、并非用户选择，而既有语义是这类构建**不检查更新**。故引入 `channelChosen` 标志区分两者：
+
+```ts
+function channelForCheck(): string | undefined {
+  if (channelChosen) return channel            // 本会话显式选择：直接用
+  return resolveChannel(APP_INFO.version)      // 否则保持既有语义（未知构建 → undefined → 不检查）
+}
+```
+
+`channelChosen` 在 `setChannelAndSave`（含许可证自动切 alpha 的路径）置 `true`。
+
+### 7. `reset()` 不复位 `available`
+
+`reset()` 是更新弹窗里「重试」的入口（`UpdateDialog` 在 `phase === 'error'` 时调用），语义是**复位下载流程**、不是**否定更新存在**。清掉提示会让用户重试后凭空少一条「有新版本」。
+
+## 备选方案
+
+| 方案 | 未采纳原因 |
+|---|---|
+| `Settings.tsx` 自持一份 `available` state | App 的后台检查与设置页的手动检查两条来源会分叉；设置页只有在用户**恰好手动检查过**时才有提示，issue 场景（自动检查发现 → 去设置页）依然不覆盖 |
+| 新增 i18n key「有新版本」 | 需改 7 种语言 + 跨仓库 i18n PR + 更新 gitlink，交付链路变长且信息量更少（无版本号）；见决策 3 |
+| 持久化到 `localStorage` | 需额外的失效/过期清理逻辑，并与既有 `snooze-update` 键语义重叠；收益仅是"重启后仍提示"，而重启后 5s 内会重新探知 |
+| 复用 `snooze-update` 作为提示开关 | 两者语义正交（抑制弹窗 vs. 陈述事实），耦合后「下次再说」会连提示一起消掉——正是 issue 要修的症状 |
+
+## 验证
+
+**代码门禁**（隔离 worktree，分支 `fix/147-update-available-hint`）：
+
+- `tsc --noEmit` → 退出码 0；
+- `vite build` → 成功；
+- `eslint src/App.tsx src/pages/Settings.tsx src/stores/updaterStore.ts` → 仅 3 个 error，全部位于**未改动的既有代码行**（`Settings.tsx:560/605` 的 `rules-of-hooks`、`855` 的 `prefer-const`，属 AGENTS.md 记载的存量）；
+- `node scripts/test-update-channel.mjs` → 20 条断言全部通过。
+
+**行为验证**（Playwright + Tauri mock 注入，隔离 Vite :1440，拦截 `/api/update/plan` 返回假计划，只观察提示、不触发真实下载）：
+
+用 `docs/junsi-dev-docs/2-架构设计/前端浏览器调试-Playwright-Tauri-mock注入.md` 的方法注入 mock，断言「检查更新」所在 flex 行内是否存在提示按钮、是否在其右侧：
+
+| 场景 | 结果 |
+|---|---|
+| A1 后台检查发现更新后自动弹窗 | PASS（`planCalls=1`） |
+| B1 点「下次再说」关闭弹窗 | PASS |
+| **B2 取消后设置页仍提示「有新版本」** | **PASS** |
+| B3 提示文案带版本号（`0.1.0-beta32.0`） | PASS |
+| B4 提示位于「检查更新」右侧同一行 | PASS |
+| C1 点提示可重新打开更新弹窗（含「立即更新」按钮） | PASS |
+| D1/D2 手动检查弹窗 → 取消 → 提示仍在 | PASS |
+| E1 权威「已是最新」后提示被清除 | PASS |
+
+**反向对照（证明测试真的测到了修复）**：`git stash` 掉三处源码改动后跑同一脚本，B2/B3/B4/D2 四项全部 FAIL，行文本只剩 `测试版 检查更新`——**正是 issue 报告的症状**；恢复改动后 10/10 全通过。
+
+**第二轮（切换通道场景，对应决策 6b）**：切换选择器不重新检查、只观察提示是否随之变化。
+
+| 场景 | 无通道过滤（负向对照） | 有过滤（修复态） |
+|---|---|---|
+| F1 切到稳定版后 beta 的提示消失 | **FAIL**（仍显示 `0.1.0-beta32.0`） | **PASS** |
+| F2 切回 beta 后提示恢复 | PASS | PASS |
+| C1 提示仍可点击重开弹窗 | PASS | PASS |
+| 合计 | 5/6 | **6/6** |
+
+同时回归第一轮全套：**10/10 通过**（含 B2/B4 核心诉求、C1 重开弹窗、E1 权威无更新清提示）。
+
+门禁复跑：`tsc --noEmit` 退出 0；`eslint` 仍仅 3 个存量 error（行号因新增代码位移至 `Settings.tsx:591/636` 与 `886`，均为未改动行）；`test-update-channel` 20 条断言全过。
+
+**第三轮（时序：切通道后立即检查，对应决策 6c）**：在同一同步块内「点选项 → 读 localStorage → 点检查更新」，排除 IPC 往返与后台检查干扰。
+
+| 断言 | 修复前 | 修复后 |
+|---|---|---|
+| 选中后 localStorage 立即为新通道 | **FAIL**（仍为 `beta`） | **PASS**（`stable`） |
+| 该次请求带新通道（跨列车口子已封） | **FAIL**（带 `beta`） | **PASS**（带 `stable`） |
+| 请求未带旧通道 | FAIL | PASS |
+| 合计 | 1/4 | **4/4** |
+
+三轮合计 **20/20 通过**（R1 10/10、R2 6/6、T3 4/4）。
+
+**第四轮（存储写入失败，对应决策 6d）**：用 `addInitScript` 覆盖 `Storage.prototype.setItem`，对 `update-channel` 强制抛 `QuotaExceededError`，模拟隐私模式。
+
+| 断言 | 结果 |
+|---|---|
+| 前提：选择器已切到稳定版、localStorage 仍是旧值 `beta` | PASS |
+| **写入失败时手动检查仍用选择器当前通道**（请求带 `stable`） | **PASS** |
+
+四轮合并套件 **21/21 通过**（R1 10、R2 5、T3 3、T4 3）。
+
+> **两组数字的关系（避免误读）**：上文各轮的 `20/20`（R1 10、R2 6、T3 4）是**分轮独立脚本**的结果；`21/21` 是四轮**合并为单一脚本**后的结果。总数不同是因为合并时删掉了 2 条**在该脚本内冗余的断言**，而非调整了断言标准：
+>
+> | 轮次 | 独立脚本 | 合并后 | 差异原因 |
+> |---|---|---|---|
+> | R1 | 10 | 10 | — |
+> | R2 | 6 | 5 | 删去「提示仍可点击重开弹窗」——该场景与 R1.C1 完全重复 |
+> | T3 | 4 | 3 | 删去「探针执行成功」——这是脚本自检（确认 find/click 成功），不是产品行为断言 |
+> | T4 | 3 | 3 | — |
+>
+> 即：**被测产品行为断言一条未减**，两组数字都成立；写在这里是因为合并套件的分项数与原分轮数不同，若不说明会被读成前后矛盾。
+
+> 保真度限制：Chromium ≠ WebView2（见上述文档「已知差异」）。本 PR 只改 React 状态与 JSX 布局，不涉及文件拖放/合成层等引擎差异敏感的路径；但按仓库约定，UI 变更仍应在真实 Tauri/WebView2 里复核一次。
+
+## 影响
+
+- **不新增 i18n key**，无跨仓库依赖，单 PR 可交付；
+- **不改后端**：`/api/update/plan` 契约与语义均未变；
+- 用户可见变化：设置 → 关于 → 更新，存在更新时按钮右侧常驻可点击提示。
+
+## 修订记录
+
+| 日期 | 版本 | 内容 |
+|---|---|---|
+| 2026-10-02 | v1.0 | 初版：根因（`'available'` 无渲染出口 + 事实无共享载体）、7 项决策、5 个备选方案、门禁与行为验证（含反向对照） |
+| 2026-10-02 | v1.1 | PR #152 评审补充决策 6b：提示须按当前所选通道过滤（含 `channelTrainOf` 归一），并补第二轮切换通道场景的行为验证与反向对照 |
+| 2026-10-02 | v1.2 | PR #152 第二轮评审补充决策 6c：移除通道选择器的 500ms 防抖（「当前通道」须只有一个同步事实源），并补第三轮时序实测与前后对照 |
+| 2026-10-02 | v1.3 | PR #152 第三轮评审补充决策 6d：存储写入失败时手动检查改用本会话显式选择（`channelChosen` 保留未知构建不检查的既有语义），并补第四轮隐私模式实测 |
