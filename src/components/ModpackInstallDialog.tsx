@@ -67,6 +67,10 @@ export default function ModpackInstallDialog({
         source,
         projectId,
         versionId: selectedVersion.id,
+        // 资源中心安装标记（issue #118）：使该实例可原地更新。
+        // 只有本对话框与 ModpackQuickInstallDialog 发送；本地导入/拖入/MultiMC 不发。
+        origin: 'resource-center',
+        versionPublishedAt: selectedVersion.datePublished || null,
       })
       removeTask(taskId)
       addTask({

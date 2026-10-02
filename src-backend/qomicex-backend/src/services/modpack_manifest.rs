@@ -501,7 +501,14 @@ mod tests {
         std::fs::write(dir.join(".qomicex/modpack-manifest.json"), b"{}").unwrap();
         std::fs::write(dir.join(".qomicex/pack/manifest.json"), b"{}").unwrap();
         // 必须排除：非隔离实例根同层的游戏资源/运行产物
-        for d in ["libraries", "assets", "versions", "logs", "temp", "crash-reports"] {
+        for d in [
+            "libraries",
+            "assets",
+            "versions",
+            "logs",
+            "temp",
+            "crash-reports",
+        ] {
             std::fs::create_dir_all(dir.join(d)).unwrap();
             std::fs::write(dir.join(d).join("x.bin"), b"x").unwrap();
         }

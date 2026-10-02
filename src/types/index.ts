@@ -244,6 +244,17 @@ export interface GameInstance {
   modpackVersion: string | null
   modpackAuthor: string | null
   modpackSummary: string | null
+  // --- 整合包来源（issue #118）：仅资源中心安装写入，是「可原地更新」的判定依据 ---
+  /** 平台来源："modrinth" / "curseforge" */
+  modpackSource?: string | null
+  /** 平台项目 id */
+  modpackProjectId?: string | null
+  /** 平台版本 id（更新的身份标识） */
+  modpackVersionId?: string | null
+  /** 仅 `"resource-center"` 表示该实例可原地更新 */
+  modpackOrigin?: string | null
+  /** 当前版本发布时间（RFC3339） */
+  modpackVersionPublishedAt?: string | null
   skipIntegrityCheck?: boolean
   resolvedGameDir: string | null
   /** 所属自定义分组 id 列表（多对多） */
@@ -980,6 +991,14 @@ export interface ModpackInstallRequest {
   fileId?: string | null
   /** 本地导入：整合包绝对路径（parse-path 流程回传，后端直接读本地包体） */
   localPath?: string | null
+  /**
+   * 安装来源标记（issue #118）。**仅资源中心的两个安装对话框**发送
+   * `'resource-center'`，后端据此把该实例标记为「可原地更新」。
+   * 本地导入 / 拖入 / MultiMC / install-direct 一律不发送。
+   */
+  origin?: 'resource-center' | null
+  /** 所选平台版本的发布时间（RFC3339，issue #118），更新排序的回退依据 */
+  versionPublishedAt?: string | null
 }
 
 export interface ModpackExportRequest {

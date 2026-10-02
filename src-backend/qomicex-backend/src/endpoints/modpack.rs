@@ -1195,6 +1195,40 @@ async fn cancel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// 安装请求是否应标记为「可原地更新」（issue #118）。
+///
+/// 白名单式**全条件**判定，任一不满足即不可更新：
+/// 1. 前端显式标记 `origin == "resource-center"`（本地导入/拖入/MultiMC 不发）；
+/// 2. `source` 为 modrinth / curseforge（平台版本列表可查）；
+/// 3. 同时带 `projectId` 与 `versionId`（身份标识完整）；
+/// 4. 不带 `fileId` / `localPath`（排除本地包体导入路径）；
+/// 5. 启用版本隔离（非隔离实例会改到共享目录、波及其他实例，回滚范围无法界定）。
+///
+/// 刻意不用「有 id 就写」：宁可少判可更新，也不要为一个来源不明的实例提供
+/// 原地更新 —— 那会覆盖用户手工搭建的内容。
+fn is_updatable_origin(req: &ModpackInstallRequest) -> bool {
+    let origin_marked = req
+        .origin
+        .as_deref()
+        .is_some_and(|o| o.eq_ignore_ascii_case("resource-center"));
+    let src_norm = req
+        .source
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let source_ok = matches!(src_norm.as_str(), "modrinth" | "curseforge");
+    let ids_ok = req
+        .project_id
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty())
+        && req
+            .version_id
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty());
+    let no_local = req.file_id.is_none() && req.local_path.is_none();
+    origin_marked && source_ok && ids_ok && no_local && req.version_isolation
+}
+
 /// 安装成功后落清单所需的元数据（issue #118）。
 struct ModpackManifestMeta {
     game_dir: String,
@@ -1544,13 +1578,7 @@ impl ModpackServiceData {
         instance.modpack_author = req.modpack_author.clone();
         instance.modpack_summary = req.modpack_summary.clone();
         // === 来源字段（issue #118 原地更新的资格依据）===
-        // 仅当**全部**条件满足时写入，任一不满足即不写 → 该实例判定为不可更新：
-        //   1. 前端显式标记 origin == "resource-center"（本地导入/拖入/MultiMC 不发）；
-        //   2. source 为 modrinth / curseforge（平台版本列表可查）；
-        //   3. 同时带 projectId 与 versionId（身份标识完整）；
-        //   4. 不带 fileId / localPath（排除本地包体导入路径）。
-        // 刻意用白名单式全条件判定而非「有 id 就写」：宁可少判可更新，
-        // 也不要为一个来源不明的实例提供原地更新（可能覆盖用户手工搭建的内容）。
+        // 判定逻辑集中在 `is_updatable_origin`（纯函数，有单测覆盖）。
         let origin_marked = req
             .origin
             .as_deref()
@@ -1560,21 +1588,10 @@ impl ModpackServiceData {
             .as_deref()
             .unwrap_or_default()
             .to_ascii_lowercase();
-        let source_ok = matches!(src_norm.as_str(), "modrinth" | "curseforge");
-        let ids_ok = req
-            .project_id
-            .as_deref()
-            .is_some_and(|s| !s.trim().is_empty())
-            && req
-                .version_id
-                .as_deref()
-                .is_some_and(|s| !s.trim().is_empty());
         let no_local = req.file_id.is_none() && req.local_path.is_none();
-        // 版本隔离：非隔离实例会改到共享目录、波及其他实例且回滚范围无法界定，
-        // 故不标记为可更新（issue #118 决策）。
         let isolation_ok = req.version_isolation;
 
-        let writable_origin = origin_marked && source_ok && ids_ok && no_local && isolation_ok;
+        let writable_origin = is_updatable_origin(&req);
         if writable_origin {
             instance.modpack_source = Some(src_norm.clone());
             instance.modpack_project_id = req.project_id.clone();
@@ -3348,10 +3365,95 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        apply_optional_selection, cf_placeholder_path, is_multimc_zip, modpack_target_path,
-        parse_curseforge_manifest, parse_local_pack_file, release_qml_overrides,
-        ModpackOptionalFile, ParsedModpack,
+        apply_optional_selection, cf_placeholder_path, is_multimc_zip, is_updatable_origin,
+        modpack_target_path, parse_curseforge_manifest, parse_local_pack_file,
+        release_qml_overrides, ModpackInstallRequest, ModpackOptionalFile, ParsedModpack,
     };
+
+    /// 构造「资源中心在线安装」的合法请求，测试在此基础上逐项破坏。
+    fn updatable_req() -> ModpackInstallRequest {
+        ModpackInstallRequest {
+            name: "Pack".to_string(),
+            game_version: "1.20.1".to_string(),
+            loader: Some("forge".to_string()),
+            loader_version: Some("47.1.0".to_string()),
+            max_memory: None,
+            game_dir: ".minecraft".to_string(),
+            version_isolation: true,
+            modpack_files: None,
+            overrides_zip: None,
+            optional_file_ids: None,
+            icon_data: None,
+            modpack_name: Some("Pack".to_string()),
+            modpack_version: Some("1.0".to_string()),
+            modpack_author: None,
+            modpack_summary: None,
+            source: Some("curseforge".to_string()),
+            project_id: Some("123".to_string()),
+            version_id: Some("456".to_string()),
+            optifine_version: None,
+            file_id: None,
+            local_path: None,
+            origin: Some("resource-center".to_string()),
+            version_published_at: Some("2026-01-01T00:00:00Z".to_string()),
+        }
+    }
+
+    /// issue #118：只有「资源中心在线安装 + 版本隔离」才标记为可更新。
+    /// 逐项破坏每个前置条件，验证任一不满足即不可更新 —— 这是「不为手动导入
+    /// 提供更新」这条工单要求的唯一防线。
+    #[test]
+    fn updatable_origin_requires_all_preconditions() {
+        // 基准：全部满足 → 可更新
+        assert!(
+            is_updatable_origin(&updatable_req()),
+            "资源中心在线安装应可更新"
+        );
+
+        // 1. 无 origin 标记（本地导入/拖入/MultiMC/install-direct）→ 不可更新
+        let mut r = updatable_req();
+        r.origin = None;
+        assert!(!is_updatable_origin(&r), "无来源标记不得可更新");
+
+        // 标记大小写不敏感
+        let mut r = updatable_req();
+        r.origin = Some("Resource-Center".to_string());
+        assert!(is_updatable_origin(&r), "来源标记应大小写不敏感");
+
+        // 2. 非 modrinth/curseforge（如 ftb / qml）→ 不可更新
+        for src in ["ftb", "qml", "unknown", ""] {
+            let mut r = updatable_req();
+            r.source = Some(src.to_string());
+            assert!(!is_updatable_origin(&r), "source={src} 不得可更新");
+        }
+
+        // 3. 缺 projectId / versionId（含空白串）→ 不可更新
+        let mut r = updatable_req();
+        r.project_id = None;
+        assert!(!is_updatable_origin(&r), "缺 projectId 不得可更新");
+
+        let mut r = updatable_req();
+        r.version_id = None;
+        assert!(!is_updatable_origin(&r), "缺 versionId 不得可更新");
+
+        let mut r = updatable_req();
+        r.version_id = Some("   ".to_string());
+        assert!(!is_updatable_origin(&r), "空白 versionId 不得可更新");
+
+        // 4. 带 fileId / localPath（本地包体导入）→ 不可更新
+        let mut r = updatable_req();
+        r.file_id = Some("upload-uuid".to_string());
+        assert!(!is_updatable_origin(&r), "带 fileId 不得可更新");
+
+        let mut r = updatable_req();
+        r.local_path = Some("D:/packs/x.zip".to_string());
+        assert!(!is_updatable_origin(&r), "带 localPath 不得可更新");
+
+        // 5. 非版本隔离 → 不可更新（会改到共享目录、波及其他实例）
+        let mut r = updatable_req();
+        r.version_isolation = false;
+        assert!(!is_updatable_origin(&r), "非隔离实例不得可更新");
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
