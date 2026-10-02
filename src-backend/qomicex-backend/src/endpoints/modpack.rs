@@ -1908,17 +1908,17 @@ impl ModpackServiceData {
 
 /// 解析后的整合包清单（三源统一视图）。
 #[derive(Debug, Clone)]
-struct ParsedModpack {
-    game_version: String,
-    loader: String,
-    loader_version: String,
+pub(crate) struct ParsedModpack {
+    pub(crate) game_version: String,
+    pub(crate) loader: String,
+    pub(crate) loader_version: String,
     /// (下载URL, 相对目标路径)。Modrinth：path 为完整相对路径（mods/x.jar 等）；
     /// CurseForge：仅收集 (空 URL, "projectID:fileID") 占位，随后逐个查 CF API。
-    files: Vec<ModpackFileEntry>,
+    pub(crate) files: Vec<ModpackFileEntry>,
     /// CurseForge `manifest.json` 中 `required: false` 的可选条目（issue #129）。
     /// 默认不安装：仅当用户在导入预览里勾选（`optionalFileIds`）才并入 `files`。
     /// 其余来源（Modrinth / Qomicex）无此语义，恒为空。
-    optional_files: Vec<ModpackOptionalFile>,
+    pub(crate) optional_files: Vec<ModpackOptionalFile>,
 }
 
 /// 组装选中项回 `files` 用的占位 path（与 CF manifest 必需项同格式）。
@@ -1927,7 +1927,7 @@ fn cf_placeholder_path(project_id: i64, file_id: i64) -> String {
 }
 
 /// 版本隔离时目标路径落在 `{gameDir}/versions/{name}/` 下，否则 `{gameDir}/`。
-fn modpack_target_path(
+pub(crate) fn modpack_target_path(
     game_dir: &str,
     version_dir_name: &str,
     version_isolation: bool,
@@ -2563,7 +2563,7 @@ fn release_qml_overrides(
 }
 
 /// 解析 Modrinth `.mrpack` 的 `modrinth.index.json`。
-fn parse_modrinth_index(zip_path: &Path) -> Result<ParsedModpack, String> {
+pub(crate) fn parse_modrinth_index(zip_path: &Path) -> Result<ParsedModpack, String> {
     let root = read_zip_json(zip_path, "modrinth.index.json")?;
     let deps = root
         .get("dependencies")
@@ -2720,7 +2720,7 @@ fn parse_qmodpack_index(zip_path: &Path) -> Result<ParsedModpack, String> {
 }
 
 /// 解析 CurseForge 整合包 zip 的 `manifest.json`。
-fn parse_curseforge_manifest(zip_path: &Path) -> Result<ParsedModpack, String> {
+pub(crate) fn parse_curseforge_manifest(zip_path: &Path) -> Result<ParsedModpack, String> {
     let root = read_zip_json(zip_path, "manifest.json")?;
     if root.get("manifestType").and_then(|v| v.as_str()) != Some("minecraftModpack") {
         return Err("不是有效的 CurseForge 整合包".to_string());

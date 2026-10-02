@@ -15,6 +15,8 @@ export interface InstallState {
   currentFileProgress: number
   speed: number
   isPaused: boolean
+  /** 任务类型："install" / "modpack" / "modpack-update" / "resource"（issue #118）。 */
+  kind?: string
   steps?: InstallStepInfo[]
 }
 

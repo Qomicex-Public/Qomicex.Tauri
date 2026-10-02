@@ -426,7 +426,7 @@ export type DownloadResourceKind = 'mod' | 'modpack' | 'resourcepack' | 'shader'
 export interface DownloadTask {
   id: string
   name: string
-  type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java' | 'modpack'
+  type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java' | 'modpack' | 'modpack-update'
   /**
    * 资源细分类别，供下载中心分组。可选：旧任务（持久化在 localStorage 里）没有该
    * 字段，此时由 `getTaskGroup` 按 `type` 回退，缺信息的一律进「其他」组——
@@ -999,6 +999,70 @@ export interface ModpackInstallRequest {
   origin?: 'resource-center' | null
   /** 所选平台版本的发布时间（RFC3339，issue #118），更新排序的回退依据 */
   versionPublishedAt?: string | null
+}
+
+// --- 整合包原地更新（issue #118）---
+
+/** 不可原地更新的原因码（与后端 `NotEligibleReason` 对齐）。 */
+export type ModpackNotEligibleReason =
+  | 'NOT_RESOURCE_CENTER'
+  | 'UNSUPPORTED_SOURCE'
+  | 'MISSING_IDENTITY'
+  | 'NOT_VERSION_ISOLATED'
+  | 'MISSING_MANIFEST'
+
+/** 当前已安装版本的信息。 */
+export interface ModpackCurrentVersion {
+  versionId: string
+  name?: string | null
+  publishedAt?: string | null
+  /** 当前版本是否仍在平台版本列表中（被作者删除时为 false）。 */
+  presentOnPlatform: boolean
+}
+
+/** 一个可更新到的候选版本。 */
+export interface ModpackUpdateCandidate {
+  versionId: string
+  name: string
+  publishedAt?: string | null
+  gameVersions: string[]
+  loaders: string[]
+  /** 该候选变更了 Minecraft 版本（UI 需显式标记 + 更强警告）。 */
+  changesGameVersion: boolean
+  /** 该候选变更加载器类型。 */
+  changesLoader: boolean
+}
+
+/** `GET /instance/{id}/modpack/update-check` 响应。 */
+export interface ModpackUpdateCheck {
+  eligible: boolean
+  reason?: ModpackNotEligibleReason | null
+  current?: ModpackCurrentVersion | null
+  updates: ModpackUpdateCandidate[]
+  /**
+   * 平台版本列表可能缺项（CF 分页失败 / 当前版本发布时间不可知）。
+   * 为 true 时「没有更新」不可信，UI 必须提示用户而不是显示「已是最新」。
+   */
+  incomplete: boolean
+}
+
+/** 单条变更条目。 */
+export interface ModpackChangeEntry {
+  path: string
+  kind: string
+}
+
+/** `POST /instance/{id}/modpack/update-preview` 响应。 */
+export interface ModpackUpdatePreview {
+  added: ModpackChangeEntry[]
+  updated: ModpackChangeEntry[]
+  /** 磁盘哈希 ≠ 清单哈希（用户改过）→ 更新时先备份再覆盖。 */
+  locallyModified: ModpackChangeEntry[]
+  removed: ModpackChangeEntry[]
+  /** 新包已移除但用户改过 → 保留，不删除。 */
+  keptModified: ModpackChangeEntry[]
+  changesGameVersion: boolean
+  changesLoader: boolean
 }
 
 export interface ModpackExportRequest {
