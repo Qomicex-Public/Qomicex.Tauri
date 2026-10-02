@@ -108,10 +108,15 @@ export default function ModpackUpdateDialog({ open, onClose, instanceId, instanc
     setError('')
     try {
       await startModpackUpdate(instanceId, selected.versionId)
-      // 登记到下载中心：后端把进度经 install tracker / SSE 下发，
-      // 任务 id 用 instanceId（与安装任务同一 key 空间）。
+      // 登记到下载中心：后端把进度经 install tracker / SSE 下发。
+      //
+      // `id` 必须与安装任务区分：安装任务用裸 instanceId 作 id，若这里也沿用，
+      // 同一实例「先安装、后更新」就会产生两个同 id 任务 → React 列表 key 冲突
+      // （count 报 "Encountered two children with the same key"）。
+      // 注意 `instanceId` 字段仍是裸 id —— 进度同步与取消都按它匹配，
+      // `id` 只作 store 索引与 React key。
       addTask({
-        id: instanceId,
+        id: `modpack-update-${instanceId}`,
         name: instanceName,
         type: 'modpack-update',
         gameVersion: selected.gameVersions[0] || '',
