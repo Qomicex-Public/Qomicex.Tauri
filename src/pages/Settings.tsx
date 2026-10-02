@@ -18,6 +18,7 @@ import { Switch } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
+import RelayNodesSection from '../components/settings/RelayNodesSection.tsx'
 import DebugTab from '../components/DebugTab.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
@@ -1654,6 +1655,19 @@ export default function Settings() {
                   </label>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectModSourceDesc')}</p>
                 </div>
+            </SettingSection>
+
+            <SettingSection title={t('settings.relayNodes.title')} icon={<Globe className="h-4 w-4" />}>
+              <RelayNodesSection
+                value={settings.relayNodes}
+                // 只落盘，不触发 reload —— 重载由子组件在「应用」时一并完成，
+                // 以保证「保存 + 重载」是一个原子动作（保存成功但重载失败会让用户困惑）。
+                onSave={(nodes) => {
+                  const next = { ...settings, relayNodes: nodes }
+                  setSettings(next)
+                  saveSettings(next)
+                }}
+              />
             </SettingSection>
 
             <SettingSection title={t('settings.network.proxy')} icon={<Globe className="h-4 w-4" />}>
