@@ -878,6 +878,15 @@ export default function ResourceCenter() {
   const currentSortOptions = category === AGGREGATE_CATEGORY
     ? SORT_OPTIONS.aggregate
     : (SORT_OPTIONS[source] ?? SORT_OPTIONS.modrinth)
+
+  // 兜底归一：URL 直接进入聚合分类（或快照恢复）时 sort 可能仍是上一个来源的
+  // 值（如 relevance），而聚合只有 downloads 一个选项 —— Select 没有匹配项会
+  // 渲染成空白。这里在各入口统一收敛回第一个合法选项。
+  useEffect(() => {
+    if (!currentSortOptions.some((o) => o.key === sort)) {
+      setSort(currentSortOptions[0].key)
+    }
+  }, [currentSortOptions, sort])
   const allTags = useMemo(
     () => (categoryOptions ? categoryOptions.map((o) => o.slug) : staticTagsFor(source, category)),
     [categoryOptions, source, category],
