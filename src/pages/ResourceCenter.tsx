@@ -448,7 +448,10 @@ function ResourceCard({
             )}
             <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
               <Button
-                variant={isFavorite ? 'secondary' : 'outline'}
+                // 恒为 outline：本行四个动作要求「一样大、一样颜色」，而 secondary 的
+                // bg-secondary 无边框，会与另外三个 outline（border + bg-background）
+                // 明显不同。收藏态改由填充心形 + text-primary 表达（并有 aria-pressed）。
+                variant="outline"
                 size="icon"
                 className="h-9 w-9"
                 aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
