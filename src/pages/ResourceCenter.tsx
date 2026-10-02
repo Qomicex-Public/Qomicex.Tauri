@@ -390,61 +390,77 @@ function ResourceCard({
             )}
           </div>
         </div>
-        {/* 右侧动作区：全部图标化、整体水平居中；安装按钮放大并单独占上行（最显眼），
-            详情/编辑/收藏 三个等尺寸图标居中排在下行。默认隐藏、hover 卡片时从右侧
-            滑入；键盘可达由 group-focus-within 兜底（Tab 到任一按钮即整行显形，
-            避免键盘用户聚焦到「看不见的按钮」）。 */}
-        <div className="flex flex-col items-center gap-2 transition-all duration-200 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100 sm:self-center">
-          {/* 上行：安装（放大、主色、居中） */}
-          <Tooltip content={t('resource.install')}>
-            <Button
-              size="icon"
-              className="h-11 w-11 rounded-xl [&_svg]:!size-5"
-              aria-label={t('resource.install')}
-              onClick={() => onInstall(item)}
-            >
-              <Download />
-            </Button>
-          </Tooltip>
-          {/* 下行：查看详情 / 编辑收藏 / 收藏 */}
-          <div className="flex flex-row items-center gap-2">
-            <Tooltip content={t('resource.viewDetail')}>
-              <Button asChild variant="outline" size="icon" className="h-9 w-9">
-                <Link
-                  to={buildDetailUrl(item, cardCategory, keyword, sort, gameVersion, loader, instanceId, tags, { category, source }) + '&expandBody=1'}
-                  state={{ iconUrl: item.iconUrl }}
-                  aria-label={t('resource.viewDetail')}
-                >
-                  <Eye />
-                </Link>
+        {/* 右侧区域：资源类型徽章与动作区「轮流占位」。
+            桌面端（sm+）两者占据同一块垂直居中空间：徽章默认可见，hover 或键盘
+            聚焦卡片时淡出，把空间让给滑入的动作区（最大化利用卡片右侧）。
+            窄屏没有 hover、且动作区本就常驻，故徽章改为常驻在动作区上方（mb-2），
+            保证小屏也能分辨资源类型。 */}
+        <div className="relative flex flex-col items-center sm:self-center">
+          {/* 资源类型：取条目真实类型（与卡片动作、收藏唯一键同一口径；聚合视图下
+              每项类型不同）。纯展示，pointer-events-none 避免与动作区抢 hover ——
+              鼠标移到该处仍由卡片承载 :hover，徽章照常退场。 */}
+          <Badge
+            variant="secondary"
+            className="pointer-events-none mb-2 shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 transition-opacity duration-200 sm:absolute sm:left-1/2 sm:top-1/2 sm:mb-0 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:group-hover:opacity-0 sm:group-focus-within:opacity-0"
+          >
+            {t(`resource.categories.${cardCategory}`)}
+          </Badge>
+          {/* 右侧动作区：全部图标化、整体水平居中；安装按钮放大并单独占上行（最显眼），
+              详情/编辑/收藏 三个等尺寸图标居中排在下行。默认隐藏、hover 卡片时从右侧
+              滑入；键盘可达由 group-focus-within 兜底（Tab 到任一按钮即整行显形，
+              避免键盘用户聚焦到「看不见的按钮」）。 */}
+          <div className="flex flex-col items-center gap-2 transition-all duration-200 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100">
+            {/* 上行：安装（放大、主色、居中） */}
+            <Tooltip content={t('resource.install')}>
+              <Button
+                size="icon"
+                className="h-11 w-11 rounded-xl [&_svg]:!size-5"
+                aria-label={t('resource.install')}
+                onClick={() => onInstall(item)}
+              >
+                <Download />
               </Button>
             </Tooltip>
-            {onEdit && (
-              <Tooltip content={t('resource.favorites.edit.open')}>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  aria-label={t('resource.favorites.edit.open')}
-                  onClick={onEdit}
-                >
-                  <Pencil />
+            {/* 下行：查看详情 / 编辑收藏 / 收藏 */}
+            <div className="flex flex-row items-center gap-2">
+              <Tooltip content={t('resource.viewDetail')}>
+                <Button asChild variant="outline" size="icon" className="h-9 w-9">
+                  <Link
+                    to={buildDetailUrl(item, cardCategory, keyword, sort, gameVersion, loader, instanceId, tags, { category, source }) + '&expandBody=1'}
+                    state={{ iconUrl: item.iconUrl }}
+                    aria-label={t('resource.viewDetail')}
+                  >
+                    <Eye />
+                  </Link>
                 </Button>
               </Tooltip>
-            )}
-            <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
-              <Button
-                variant={isFavorite ? 'secondary' : 'outline'}
-                size="icon"
-                className="h-9 w-9"
-                aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
-                aria-pressed={isFavorite}
-                disabled={favoriteBusy}
-                onClick={onToggleFavorite}
-              >
-                <Heart className={cn(isFavorite && 'fill-current text-primary')} />
-              </Button>
-            </Tooltip>
+              {onEdit && (
+                <Tooltip content={t('resource.favorites.edit.open')}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9"
+                    aria-label={t('resource.favorites.edit.open')}
+                    onClick={onEdit}
+                  >
+                    <Pencil />
+                  </Button>
+                </Tooltip>
+              )}
+              <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
+                <Button
+                  variant={isFavorite ? 'secondary' : 'outline'}
+                  size="icon"
+                  className="h-9 w-9"
+                  aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
+                  aria-pressed={isFavorite}
+                  disabled={favoriteBusy}
+                  onClick={onToggleFavorite}
+                >
+                  <Heart className={cn(isFavorite && 'fill-current text-primary')} />
+                </Button>
+              </Tooltip>
+            </div>
           </div>
         </div>
       </div>
