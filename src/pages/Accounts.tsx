@@ -535,9 +535,16 @@ export default function Accounts() {
       const target = data.verificationUriComplete || data.verificationUri
       try { await openUrl(target) } catch { window.open(target, '_blank') }
 
-      const intervalMs = Math.max((data.interval || 5) * 1000, 3000)
       const deadline = Date.now() + (data.expiresIn || 300) * 1000
-      oauthPollTimer.current = setInterval(async () => {
+      // 用递归 setTimeout 而非 setInterval：RFC 8628 要求收到 slow_down 后
+      // 加大轮询间隔，固定间隔无法调整（会持续被要求 slow_down）。
+      let pollDelayMs = Math.max((data.interval || 5) * 1000, 3000)
+
+      const scheduleNextPoll = () => {
+        oauthPollTimer.current = setTimeout(runPoll, pollDelayMs)
+      }
+
+      const runPoll = async () => {
         if (Date.now() > deadline) {
           stopOauthPolling()
           setOauthStep('error')
@@ -546,7 +553,14 @@ export default function Accounts() {
         }
         try {
           const result = await accountApi.littleskinPoll(data.deviceCode)
-          if (result.isPending) return
+          if (result.isPending) {
+            // slow_down：采用上游要求的新间隔后继续轮询。
+            if (result.interval && result.interval > 0) {
+              pollDelayMs = Math.max(result.interval * 1000, 3000)
+            }
+            scheduleNextPoll()
+            return
+          }
           stopOauthPolling()
           if (!result.success) {
             setOauthStep('error')
@@ -568,12 +582,21 @@ export default function Accounts() {
             setOauthMsg(t('accounts.ygg.oauthAuthorized'))
           }
         } catch (e: unknown) {
-          // 白名单未通过等确定性错误应直接中断，而不是空转到超时。
-          stopOauthPolling()
-          setOauthStep('error')
-          setOauthMsg(fmtErr(e))
+          // 确定性失败（4xx/5xx，如未加白名单）→ 立即中断，不必空转到超时。
+          // 网络抖动（status 0）→ 忽略，继续轮询（由 deadline 兜底），
+          // 与微软设备码流程保持一致。
+          const status = e instanceof ApiError ? e.status : 0
+          if (status >= 400) {
+            stopOauthPolling()
+            setOauthStep('error')
+            setOauthMsg(fmtErr(e))
+            return
+          }
+          scheduleNextPoll()
         }
-      }, intervalMs)
+      }
+
+      scheduleNextPoll()
     } catch (e: unknown) {
       setOauthStep('error')
       setOauthMsg(fmtErr(e))

@@ -67,6 +67,19 @@ impl StoredAccount {
             oauth_provider: self.oauth_provider.clone(),
         }
     }
+
+    /// 脱敏后用于 HTTP 响应：清除 `oauth_refresh_token`（长期凭据不应离开后端），
+    /// 其余字段与历史契约保持一致。
+    ///
+    /// 注意 `#[serde(skip_serializing_if = "Option::is_none")]` 只在值为 `None` 时隐藏
+    /// 字段——**有值时仍会序列化**，因此每个直接返回 `StoredAccount` 的响应边界
+    /// 都必须显式调用本方法，不能只依赖 serde 属性。
+    ///
+    /// 持久化路径（`write_file`）不经过本方法，因此磁盘上的刷新令牌保持完整。
+    pub(crate) fn redacted(mut self) -> Self {
+        self.oauth_refresh_token = None;
+        self
+    }
 }
 
 /// 对外账号信息 DTO（源：AccountInfo）。
@@ -228,6 +241,50 @@ impl AccountService {
         self.write_file(&accounts).await?;
         inner.cache = Some(accounts);
         Ok(())
+    }
+
+    /// 把一个 OAuth 刷新令牌同步到「仍持有旧值」的同源账户（issue #145）。
+    ///
+    /// 背景：一次 LittleSkin OAuth 授权可签发**多个角色**的账户，它们共享同一个
+    /// OAuth 刷新令牌。而该刷新令牌**一次性且轮换**——任一角色续期成功后旧值立即
+    /// 失效。若不同步，其余角色下次续期会拿着已作废的旧值，得到 `TOKEN_EXPIRED`。
+    ///
+    /// 这里按 `(oauth_provider, server_url, 旧刷新令牌值)` 匹配并替换为 `new_token`。
+    /// 调用方必须已持有账户刷新锁（见 `refresh_littleskin_oauth_locked`）。
+    ///
+    /// 返回被更新的账户数（不含 `skip_uuid` 自身，它由调用方自行保存）。
+    pub async fn propagate_oauth_refresh_token(
+        &self,
+        oauth_provider: &str,
+        old_token: &str,
+        new_token: &str,
+        skip_uuid: &str,
+    ) -> ApiResult<usize> {
+        if old_token.is_empty() || old_token == new_token {
+            return Ok(0);
+        }
+        let mut inner = self.lock.lock().await;
+        let mut accounts = read_or_cached(&mut inner, &self.file_path).await?;
+        let mut updated = 0usize;
+        for a in accounts.iter_mut() {
+            if a.uuid == skip_uuid {
+                continue;
+            }
+            let same_provider = a
+                .oauth_provider
+                .as_deref()
+                .map(|p| p.eq_ignore_ascii_case(oauth_provider))
+                .unwrap_or(false);
+            if same_provider && a.oauth_refresh_token.as_deref() == Some(old_token) {
+                a.oauth_refresh_token = Some(new_token.to_string());
+                updated += 1;
+            }
+        }
+        if updated > 0 {
+            self.write_file(&accounts).await?;
+            inner.cache = Some(accounts);
+        }
+        Ok(updated)
     }
 
     /// 加载账号（源 `LoadAsync`）：缓存命中直接用，否则按锁内读文件并回填缓存。

@@ -38,6 +38,9 @@ const LITTLESKIN_API_ROOT: &str = "https://littleskin.cn/api/yggdrasil";
 /// 失败时回退的轮询间隔（秒），仅在响应缺少 `interval` 时使用。
 const DEFAULT_INTERVAL: u64 = 5;
 
+/// 单次请求允许选中的角色数上限（防御性上限，见 `select` 处理器）。
+const MAX_SELECTED_PROFILES: usize = 64;
+
 /// LittleSkin 为 Qomicex Launcher 分配的客户端 ID（issue #145 工单）。
 ///
 /// 依 RFC 6749 §2.2 这是**公开值**（会出现在浏览器授权 URL 里），可入库；对齐
@@ -267,6 +270,14 @@ async fn select(
             "selectedProfiles is required",
         ));
     }
+    // 上限防御：请求体来自前端，但按其长度预分配会被超大数组放大成内存压力
+    // （CodeQL rust/uncontrolled-allocation-size）。正常账号远达不到该数量。
+    if req.selected_profiles.len() > MAX_SELECTED_PROFILES {
+        return Err(ApiError::bad_request(
+            "TOO_MANY_PROFILES",
+            format!("selectedProfiles exceeds the limit of {MAX_SELECTED_PROFILES}"),
+        ));
+    }
 
     let mut saved = Vec::with_capacity(req.selected_profiles.len());
 
@@ -297,7 +308,7 @@ async fn select(
             oauth_refresh_token: req.refresh_token.clone(),
         };
         state.account.save_account(&mut stored).await?;
-        saved.push(stored);
+        saved.push(stored.redacted());
     }
 
     Ok(Json(saved))
@@ -720,5 +731,40 @@ mod tests {
         // client_id 依 RFC 6749 §2.2 是公开值；这里守住它不为空（空会直接 400）。
         assert!(!LITTLESKIN_CLIENT_ID.trim().is_empty());
         assert_eq!(resolve_client_id(), LITTLESKIN_CLIENT_ID);
+    }
+
+    #[test]
+    fn selected_profiles_upper_bound_is_sane() {
+        // 上限存在的目的是防「按请求长度预分配」被放大；正常账号远低于该值。
+        assert!(MAX_SELECTED_PROFILES >= 16);
+        assert!(MAX_SELECTED_PROFILES <= 1024);
+    }
+
+    /// 脱敏投影必须清掉刷新令牌、且不影响其它字段（响应边界契约）。
+    #[test]
+    fn redacted_strips_only_oauth_refresh_token() {
+        use crate::services::account::StoredAccount;
+        let acc = StoredAccount {
+            name: "Steve".into(),
+            uuid: "u".into(),
+            token: "ct".into(),
+            access_token: "mc".into(),
+            refresh_token: "ct2".into(),
+            login_method: "Yggdrasil".into(),
+            last_used: 1,
+            is_default: true,
+            server_url: Some("https://littleskin.cn/api/yggdrasil".into()),
+            oauth_provider: Some("LittleSkin".into()),
+            oauth_refresh_token: Some("SECRET".into()),
+        };
+        let json = serde_json::to_value(acc.redacted()).unwrap();
+        assert!(
+            json.get("oauthRefreshToken").is_none(),
+            "刷新令牌必须被清除"
+        );
+        // 其它字段照旧（前端依赖 oauthProvider 区分展示）
+        assert_eq!(json["oauthProvider"], "LittleSkin");
+        assert_eq!(json["accessToken"], "mc");
+        assert_eq!(json["loginMethod"], "Yggdrasil");
     }
 }

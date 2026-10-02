@@ -390,7 +390,7 @@ async fn microsoft_info(
         oauth_refresh_token: None,
     };
     state.account.save_account(&mut stored).await?;
-    Ok(Json(stored))
+    Ok(Json(stored.redacted()))
 }
 
 /// POST /api/auth/microsoft/refresh
@@ -559,7 +559,7 @@ async fn yggdrasil_select(
             oauth_refresh_token: None,
         };
         state.account.save_account(&mut stored).await?;
-        saved.push(stored);
+        saved.push(stored.redacted());
     }
     Ok(Json(saved))
 }
@@ -652,7 +652,7 @@ async fn tongyi(
         oauth_refresh_token: None,
     };
     state.account.save_account(&mut stored).await?;
-    Ok(Json(stored))
+    Ok(Json(stored.redacted()))
 }
 
 /// POST /api/auth/validate

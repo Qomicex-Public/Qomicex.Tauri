@@ -1761,9 +1761,30 @@ async fn refresh_littleskin_oauth_locked(
     // 立刻持久化轮换后的刷新令牌：新值未随响应下发时沿用旧值。
     // 必须先存后取 MC 令牌：若第 ② 步失败，新的刷新令牌已经落库，
     // 下次启动仍可续期（否则旧令牌已作废而新令牌丢失，只能重新登录）。
-    acc.oauth_refresh_token =
-        Some(new_oauth_refresh.unwrap_or_else(|| oauth_refresh_token.to_string()));
+    let rotated_token = new_oauth_refresh.unwrap_or_else(|| oauth_refresh_token.to_string());
+    acc.oauth_refresh_token = Some(rotated_token.clone());
     accounts.save_account(&mut acc).await?;
+
+    // 同一次授权签发的其它角色账户共享同一个刷新令牌，而旧值此刻已作废：
+    // 同步给它们，否则那些角色下次续期会拿着失效的旧值得到 TOKEN_EXPIRED。
+    match accounts
+        .propagate_oauth_refresh_token(
+            acc.oauth_provider.as_deref().unwrap_or("LittleSkin"),
+            oauth_refresh_token,
+            &rotated_token,
+            &acc.uuid,
+        )
+        .await
+    {
+        Ok(n) if n > 0 => {
+            tracing::info!(uuid = %acc.uuid, updated = n, "propagated rotated LittleSkin OAuth refresh token to sibling accounts")
+        }
+        Ok(_) => {}
+        // 传播失败不影响当前账户续期（它已落库成功），仅记录。
+        Err(e) => {
+            tracing::warn!(uuid = %acc.uuid, error = %e.message, "failed to propagate rotated OAuth refresh token")
+        }
+    }
 
     // ② 用 OAuth 令牌换新的 Minecraft 令牌（access_token 即进服凭据）
     let mc = crate::endpoints::littleskin::create_minecraft_token(http, &oauth_access, &acc.uuid)
@@ -2278,6 +2299,113 @@ mod refresh_tests {
         .await
         .unwrap();
         assert!(out.is_none());
+    }
+
+    // ------- 多角色共享 OAuth 刷新令牌的传播（issue #145 评审发现） -------
+
+    /// 一次授权签发的多个角色共享同一刷新令牌。旧值轮换后必须同步给其余角色，
+    /// 否则它们下次续期会拿着已作废的旧值得到 TOKEN_EXPIRED。
+    #[tokio::test]
+    async fn propagate_oauth_refresh_token_updates_siblings_only() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("propagate");
+
+        let mk = |uuid: &str, provider: Option<&str>, rt: &str| {
+            let mut a = ms_account();
+            a.uuid = uuid.into();
+            a.login_method = "Yggdrasil".into();
+            a.oauth_provider = provider.map(str::to_string);
+            a.oauth_refresh_token = Some(rt.to_string());
+            a
+        };
+
+        // 同源同值（应更新）、同源不同值（不应更新）、异源同值（不应更新）
+        accounts
+            .save_account(&mut mk("a", Some("LittleSkin"), "OLD"))
+            .await
+            .unwrap();
+        accounts
+            .save_account(&mut mk("b", Some("LittleSkin"), "OLD"))
+            .await
+            .unwrap();
+        accounts
+            .save_account(&mut mk("c", Some("LittleSkin"), "OTHER"))
+            .await
+            .unwrap();
+        accounts
+            .save_account(&mut mk("d", Some("OtherSkin"), "OLD"))
+            .await
+            .unwrap();
+        // 密码登录的 Yggdrasil 账户（无 provider）不应被牵连
+        accounts
+            .save_account(&mut mk("e", None, "OLD"))
+            .await
+            .unwrap();
+
+        let n = accounts
+            .propagate_oauth_refresh_token("LittleSkin", "OLD", "NEW", "a")
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "只应更新同源且持有旧值的 b");
+
+        assert_eq!(
+            accounts
+                .get_account("b")
+                .await
+                .unwrap()
+                .unwrap()
+                .oauth_refresh_token
+                .as_deref(),
+            Some("NEW")
+        );
+        // 调用方自身的账户 a 不在此方法职责内
+        assert_eq!(
+            accounts
+                .get_account("c")
+                .await
+                .unwrap()
+                .unwrap()
+                .oauth_refresh_token
+                .as_deref(),
+            Some("OTHER")
+        );
+        assert_eq!(
+            accounts
+                .get_account("d")
+                .await
+                .unwrap()
+                .unwrap()
+                .oauth_refresh_token
+                .as_deref(),
+            Some("OLD")
+        );
+        assert_eq!(
+            accounts
+                .get_account("e")
+                .await
+                .unwrap()
+                .unwrap()
+                .oauth_refresh_token
+                .as_deref(),
+            Some("OLD")
+        );
+    }
+
+    /// 新旧值相同 / 旧值为空时是空操作（避免无谓写盘）。
+    #[tokio::test]
+    async fn propagate_oauth_refresh_token_noop_when_unchanged() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("propagate-noop");
+        let n = accounts
+            .propagate_oauth_refresh_token("LittleSkin", "SAME", "SAME", "a")
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+        let n = accounts
+            .propagate_oauth_refresh_token("LittleSkin", "", "NEW", "a")
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[tokio::test]
