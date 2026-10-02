@@ -219,6 +219,11 @@ pub fn is_protected_path(rel: &str) -> bool {
 /// - 不存在的路径直接跳过（下载被跳过 / 用户删除）；
 /// - 受保护路径（`saves/`）永不入清单；
 /// - `kind` 由调用方按来源（下载计划 / overrides）给出。
+///
+/// ⚠️ 生产路径已改用 [`sweep_hosted_files`]（逐源复刻 overrides 前缀规则既易漂移
+/// 又会漏项，改为安装后直接扫盘）。本函数保留给单测做「指定候选集」的精确断言，
+/// 故仅测试期编译。
+#[cfg(test)]
 pub fn collect_hosted_files(
     instance_dir: &Path,
     candidates: impl IntoIterator<Item = (String, HostedFileKind)>,
@@ -254,6 +259,22 @@ pub fn collect_hosted_files(
 
     out.sort_by(|a, b| a.path.cmp(&b.path));
     out
+}
+
+/// 计算实例目录下某相对路径的当前 SHA-1。
+///
+/// 返回 `None` 表示**文件不存在或不可读**（而非「内容变了」）——调用方必须区分
+/// 这两种情况：不存在 = 无需处理；不可读 = 不能当作未修改。统一按「无法判定」
+/// 处理，调用方对 `None` 一律保守（不删除、不覆盖）。
+pub fn sha1_of(instance_dir: &Path, rel: &str) -> Option<String> {
+    if !is_safe_rel_path(rel) {
+        return None;
+    }
+    let abs = instance_dir.join(normalize_rel_path(rel));
+    if !abs.is_file() {
+        return None;
+    }
+    sha1_file_hex(&abs).ok()
 }
 
 /// 安装完成后的清单构建：扫描实例目录得到「包装出来的文件」。

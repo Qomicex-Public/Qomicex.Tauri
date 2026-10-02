@@ -80,16 +80,16 @@ struct ResourceDetailDto {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ResourceFileDto {
-    url: String,
+pub(crate) struct ResourceFileDto {
+    pub(crate) url: String,
     #[serde(rename = "fileName")]
-    filename: String,
-    size: i64,
+    pub(crate) filename: String,
+    pub(crate) size: i64,
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ResourceDependencyDto {
+pub(crate) struct ResourceDependencyDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     version_id: Option<String>,
     project_id: String,
@@ -100,20 +100,20 @@ struct ResourceDependencyDto {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ResourceVersionDto {
-    id: String,
-    name: String,
-    version_number: String,
+pub(crate) struct ResourceVersionDto {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) version_number: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    game_versions: Vec<String>,
+    pub(crate) game_versions: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    loaders: Vec<String>,
+    pub(crate) loaders: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    downloads: Vec<ResourceFileDto>,
+    pub(crate) downloads: Vec<ResourceFileDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    dependencies: Option<Vec<ResourceDependencyDto>>,
+    pub(crate) dependencies: Option<Vec<ResourceDependencyDto>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    date_published: Option<String>,
+    pub(crate) date_published: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -1997,6 +1997,103 @@ async fn cf_versions_raw(
 
     apply_cf_filters(&mut dtos, game_version, loader);
     dtos
+}
+
+/// 完整性可能受损的 CF 版本列表：`(版本列表, 是否不完整)`。
+///
+/// `incomplete == true` 表示部分分页请求失败——版本列表**缺项**。
+/// 更新检查（issue #118）必须把这个信号透出给用户：缺项时「没找到更新的版本」
+/// 不能当作「已是最新」，否则会误导用户以为已经是最新版。
+pub(crate) struct CfVersionList {
+    pub(crate) versions: Vec<ResourceVersionDto>,
+    pub(crate) incomplete: bool,
+}
+
+/// 拉取 CF 项目的**全部**版本，不做 gameVersion / loader 过滤。
+///
+/// 与 [`cf_versions_raw`] 的区别：后者会按 gameVersion 过滤并复用缓存键，
+/// 面向资源中心的「选版本」UI；更新检查需要**未过滤的全量列表**才能判断
+/// 「新版本是否变更了 MC / 加载器」，故单独走一条路径，并显式回报完整性。
+pub(crate) async fn cf_versions_all(
+    client: &reqwest::Client,
+    fetch_service: &crate::services::curseforge_fetch::CurseForgeVersionFetchService,
+    id: &str,
+    api_key: &str,
+) -> CfVersionList {
+    let key = crate::services::curseforge_fetch::CurseForgeVersionFetchService::cache_key(id, None);
+    if let Some(cached) = fetch_service.get_cached(&key) {
+        if !cached.is_empty() {
+            return CfVersionList {
+                versions: cached.iter().map(cf_file_to_version_dto).collect(),
+                incomplete: false,
+            };
+        }
+    }
+
+    let Some(body) = cf_get_raw(client, &cf_files_url(id, None, None), api_key).await else {
+        // 首屏失败：无法区分「项目没有文件」与「请求失败」，标记为不完整交由调用方
+        // 决定；调用方对空列表 + incomplete 会返回错误而非「已是最新」。
+        return CfVersionList {
+            versions: vec![],
+            incomplete: true,
+        };
+    };
+    let first_data: Vec<Value> = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let total_count = body
+        .get("pagination")
+        .and_then(|p| p.get("totalCount"))
+        .and_then(|t| t.as_i64())
+        .unwrap_or(0)
+        .max(0) as usize;
+    let page_size = 50usize;
+    let total_pages = total_count.div_ceil(page_size);
+    let mut all_items: Vec<Value> = first_data;
+    let mut incomplete = false;
+
+    if total_pages > 1 {
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(fetch_service.concurrency()));
+        let mut handles = Vec::new();
+        for p in 1..total_pages {
+            let Ok(permit) = sem.clone().acquire_owned().await else {
+                incomplete = true;
+                break;
+            };
+            let client = client.clone();
+            let api_key = api_key.to_string();
+            let id = id.to_string();
+            handles.push(tokio::spawn(async move {
+                let _permit = permit;
+                let url = cf_files_url(&id, Some((p * page_size) as i64), None);
+                cf_get_raw(&client, &url, &api_key).await.map(|b| {
+                    b.get("data")
+                        .and_then(|d| d.as_array())
+                        .cloned()
+                        .unwrap_or_default()
+                })
+            }));
+        }
+        for h in handles {
+            match h.await {
+                Ok(Some(items)) => all_items.extend(items),
+                // 任一页失败 → 列表缺项，必须如实标注（不可静默当完整列表用）。
+                _ => incomplete = true,
+            }
+        }
+    }
+
+    // 只有完整结果才入缓存，避免把缺项列表固化下来。
+    if !all_items.is_empty() && !incomplete {
+        fetch_service.set_cached(key, all_items.clone());
+    }
+
+    CfVersionList {
+        versions: all_items.iter().map(cf_file_to_version_dto).collect(),
+        incomplete,
+    }
 }
 
 fn apply_cf_filters(
