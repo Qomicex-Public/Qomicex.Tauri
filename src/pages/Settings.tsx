@@ -25,7 +25,7 @@ import PluginStoreTab from '../components/PluginStoreTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { fetchUpdatePlan, type UpdatePlan } from '../api/update.ts'
-import { isDevBuild, resolveChannel, trainLabelKey, trainOf } from '../lib/updateChannel.ts'
+import { isDevBuild, resolveChannel, trainLabelKey, trainOf, channelTrainOf } from '../lib/updateChannel.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useUpdaterStore } from '../stores/updaterStore.ts'
@@ -245,6 +245,18 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
    */
   const availableUpdate = useUpdaterStore((s) => s.available)
   const setUpdateAvailable = useUpdaterStore((s) => s.setAvailable)
+  /**
+   * 提示必须与**当前所选通道**一致。`guard_train_plan`（后端 `update.rs`）保证
+   * `plan.channel` 恒等于**该次检查所用通道**，而切换选择器不会自动重新检查——
+   * 若不加这层过滤，用户「发现 beta32 → 切到稳定版」后提示仍显示 beta32，点击
+   * 还会打开 beta 的更新弹窗，等于绕过了 ADR-085「永不跨列车自动更新」。
+   * `channel` 用 `channelTrainOf` 归一后再比（选择器是 `stable`，Train 是 `release`）；
+   * 类型显式收窄出必存在的 `version`，供下面占位符使用。
+   */
+  const hintUpdate: (UpdatePlan & { version: string }) | null =
+    availableUpdate?.version && channelTrainOf(channel) === (availableUpdate.channel ?? '')
+      ? { ...availableUpdate, version: availableUpdate.version }
+      : null
   const { t } = useI18n()
 
   useEffect(() => {
@@ -443,16 +455,17 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
             )}
             {/* #147：已知有可用更新时常驻提示，点它重新打开更新弹窗。
                 与弹窗的「下次再说」解耦——延迟只抑制弹窗，不再让提示消失。
+                仅当计划所属通道与当前所选通道一致时渲染（见 hintUpdate）。
                 文案复用 dialogs.update.foundNew（与弹窗标题同口径，带版本号），
                 不新增 i18n key，避免为一句提示动 7 种语言。 */}
-            {!devBuild && availableUpdate?.version && updateState !== 'checking' && (
+            {!devBuild && hintUpdate && updateState !== 'checking' && (
               <button
                 type="button"
-                onClick={() => showUpdate(availableUpdate)}
+                onClick={() => showUpdate(hintUpdate)}
                 className="inline-flex min-w-0 items-center gap-1 text-sm text-primary hover:underline"
               >
                 <Download className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{t('dialogs.update.foundNew', { version: availableUpdate.version })}</span>
+                <span className="truncate">{t('dialogs.update.foundNew', { version: hintUpdate.version })}</span>
               </button>
             )}
           </div>

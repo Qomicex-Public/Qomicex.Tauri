@@ -144,3 +144,15 @@ export function channelLabelKey(channel: string | undefined): string | undefined
     ? trainLabelKey(channel)
     : undefined
 }
+
+/**
+ * 设置页通道选择器的值 → 后端 `Train`（`plan.channel`）的口径。
+ *
+ * 两套命名是历史遗留：选择器与 localStorage 沿用发布侧的 `stable`，而 `Train`
+ * （`trainOf` / `channelLabelKey` / 后端 `Train::as_str()`）一律用 `release`。
+ * 二者必须归一后再比较，否则「提示所属通道 === 当前选择」永远不成立。
+ * 无法识别的值原样返回——宁可比较不相等（少显示一条提示），也不要猜。
+ */
+export function channelTrainOf(channel: string): string {
+  return channel === 'stable' ? 'release' : channel
+}
