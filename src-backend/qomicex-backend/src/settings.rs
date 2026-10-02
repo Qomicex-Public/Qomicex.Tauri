@@ -424,10 +424,15 @@ const RELAY_ENDPOINT_SCHEMES: &[&str] = &["http", "https", "txt", "srv", "ring"]
 
 /// 校验单个中继节点地址，返回规范化后的值或可读错误。
 ///
+/// 解析交给标准 `url::Url`（实测能拦住未闭合括号 `[::1:11010`、无左括号 `]:11010`、
+/// 括号内非 IPv6 `[not-an-ip]`、多余分隔符 `a:b:11010`、端口越界 `99999`），
+/// 但它**不拦两件事**，必须自己补：
+/// - `url` 允许 `tcp://host/path`：直连协议带 path 是错的（path 属 manual endpoint 语义）；
+/// - `url` 接受端口 `0`：端口下界需自行校验。
+///
 /// 两类形态：
-/// - **直连协议**（tcp/udp/wg/quic/ws/wss/faketcp）：`scheme://host:port`，必须带端口；
-/// - **manual endpoint**（http/https/txt/srv/ring）：URL 形态，允许路径、允许省略端口，
-///   由 easytier 自行请求解析。
+/// - **直连协议**（tcp/udp/wg/quic/ws/wss/faketcp）：必须有 host:port，且不得带 path；
+/// - **manual endpoint**（http/https/txt/srv/ring）：允许 path，端口可省（easytier 自解析）。
 ///
 /// 校验范围对齐 easytier `tunnel/mod.rs` 的 `TunnelScheme` 全集，而不是我们以为的子集。
 pub fn validate_relay_node(raw: &str) -> Result<String, String> {
@@ -435,64 +440,52 @@ pub fn validate_relay_node(raw: &str) -> Result<String, String> {
     if node.is_empty() {
         return Err("节点地址不能为空".to_string());
     }
-    let (scheme, rest) = node
-        .split_once("://")
+    let scheme_end = node
+        .find("://")
         .ok_or_else(|| "缺少协议前缀（应为 tcp://host:port 或 https://host/path）".to_string())?;
-    let scheme_lc = scheme.to_ascii_lowercase();
+    let scheme_lc = node[..scheme_end].to_ascii_lowercase();
     if !RELAY_NODE_SCHEMES.contains(&scheme_lc.as_str()) {
         return Err(format!(
-            "不支持的协议 `{scheme}`（支持 {}）",
+            "不支持的协议 `{}`（支持 {}）",
+            &node[..scheme_end],
             RELAY_NODE_SCHEMES.join(" / ")
         ));
     }
-    if rest.is_empty() {
-        return Err("缺少主机（应为 host 或 host:port）".to_string());
-    }
-    if rest.contains(char::is_whitespace) {
-        return Err("地址含空白字符".to_string());
-    }
 
-    // manual endpoint：URL 形态（可能有路径/查询），端口可省。
+    // 标准解析器统一处理 authority（含 IPv6 括号、非法字符、端口格式）。
+    let parsed = url::Url::parse(node).map_err(|e| format!("地址格式无效（{e}）"))?;
+    // 注意 `host_str()` 对 IPv6 返回**已带方括号**的形式（`[::1]`），不要再补一次，
+    // 否则会得到 `[[::1]]`。
+    let host = parsed
+        .host_str()
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| "缺少主机名".to_string())?
+        .to_string();
+
     if RELAY_ENDPOINT_SCHEMES.contains(&scheme_lc.as_str()) {
-        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-        if authority.is_empty() {
-            return Err("缺少主机名".to_string());
-        }
-        // 显式给了端口才校验范围；IPv6 形如 [::1]:8443。
-        let port_part = if let Some(close) = authority.find(']') {
-            authority[close + 1..].strip_prefix(':')
-        } else {
-            authority.rsplit_once(':').map(|(_, p)| p)
-        };
-        if let Some(p) = port_part.filter(|p| !p.is_empty()) {
-            let port: u32 = p.parse().map_err(|_| format!("端口 `{p}` 不是数字"))?;
-            if port == 0 || port > 65535 {
-                return Err(format!("端口 {port} 超出范围（1-65535）"));
-            }
+        // manual endpoint：URL 形态，原样保留 path/query（easytier 按原 URL 请求解析）。
+        if parsed.port() == Some(0) {
+            return Err("端口 0 无效（1-65535）".to_string());
         }
         return Ok(node.to_string());
     }
 
-    // 直连协议：必须有 host:port。
-    let (host, port_str) = if let Some(close) = rest.find(']') {
-        let host = &rest[..=close];
-        let after = &rest[close + 1..];
-        let port = after
-            .strip_prefix(':')
-            .ok_or_else(|| "IPv6 地址后缺少端口（应为 [addr]:port）".to_string())?;
-        (host, port)
-    } else {
-        rest.rsplit_once(':')
-            .ok_or_else(|| "缺少端口（应为 host:port）".to_string())?
-    };
-    if host.is_empty() {
-        return Err("主机不能为空".to_string());
+    // 直连协议：必须带端口，且不得有 path/query/fragment。
+    let port = parsed
+        .port()
+        .ok_or_else(|| "缺少端口（应为 host:port）".to_string())?;
+    if port == 0 {
+        return Err("端口 0 无效（1-65535）".to_string());
     }
-    let port: u32 = port_str
-        .parse()
-        .map_err(|_| format!("端口 `{port_str}` 不是数字"))?;
-    if port == 0 || port > 65535 {
-        return Err(format!("端口 {port} 超出范围（1-65535）"));
+    if !parsed.path().is_empty() && parsed.path() != "/" {
+        return Err(format!(
+            "直连协议不支持路径（应为 {scheme_lc}://host:port）"
+        ));
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(format!(
+            "直连协议不支持查询或片段（应为 {scheme_lc}://host:port）"
+        ));
     }
     Ok(format!("{scheme_lc}://{host}:{port}"))
 }
@@ -500,6 +493,9 @@ pub fn validate_relay_node(raw: &str) -> Result<String, String> {
 /// 校验并规范化整份自定义节点列表：去空白、去重（保序）、逐项校验。
 ///
 /// 空列表视为「未配置」（等价于只用官方节点），返回 `Ok(None)`。
+///
+/// **任一项非法即整体失败** —— 用于设置**写入**路径：用户当场得到反馈，
+/// 不静默丢弃（否则会以为已生效）。
 pub fn validate_relay_nodes(raw: Option<&[String]>) -> Result<Option<Vec<String>>, String> {
     let Some(list) = raw else {
         return Ok(None);
@@ -515,6 +511,33 @@ pub fn validate_relay_nodes(raw: Option<&[String]>) -> Result<Option<Vec<String>
         return Ok(None);
     }
     Ok(Some(out))
+}
+
+/// 宽松校验：**逐项跳过**非法条目并记录告警，保留合法条目（去重保序）。
+///
+/// 用于**读取**已落盘配置的路径（`build_client` / `initial_client`）：settings.json
+/// 可能被手工编辑而混入坏条目，此时整份丢弃会让用户「自定义节点全部失效」，
+/// 而它们中多数是好的。写入路径仍走 [`validate_relay_nodes`] 严校验。
+pub fn validate_relay_nodes_lenient(raw: Option<&[String]>) -> Option<Vec<String>> {
+    let list = raw?;
+    let mut out: Vec<String> = Vec::new();
+    for item in list {
+        match validate_relay_node(item) {
+            Ok(node) => {
+                if !out.contains(&node) {
+                    out.push(node);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(node = %item, error = %e, "跳过非法联机中继节点（其余节点仍生效）");
+            }
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 #[cfg(test)]
@@ -651,5 +674,108 @@ mod relay_node_tests {
             "tcp://missing-port.example.com".to_string(),
         ]))
         .is_err());
+    }
+
+    /// 回归（评审 finding #3/#7）：畸形 host **必须**被拒绝。
+    ///
+    /// 旧实现用 `find(']')` / `rsplit_once(':')` 手写切分，以下输入**全部通过校验**
+    /// 并被持久化、随后交给 easytier（实测旧实现 5 条全 Ok）。改用 `url::Url` 解析
+    /// authority 后收紧。
+    #[test]
+    fn rejects_malformed_hosts() {
+        // 未闭合方括号 / 无左括号 / 括号内非 IPv6（url crate 直接拒）
+        assert!(
+            validate_relay_node("tcp://[::1:11010").is_err(),
+            "未闭合方括号应被拒"
+        );
+        assert!(
+            validate_relay_node("tcp://]:11010").is_err(),
+            "无左括号应被拒"
+        );
+        assert!(
+            validate_relay_node("tcp://[not-an-ip]:11010").is_err(),
+            "括号内非 IPv6 应被拒"
+        );
+        // 多余分隔符（url crate 拒：端口非数字）
+        assert!(
+            validate_relay_node("tcp://a:b:11010").is_err(),
+            "多余分隔符应被拒"
+        );
+        // 直连协议带 path（url crate 本身允许，需我们额外拒绝）
+        assert!(
+            validate_relay_node("tcp://host/path:11010").is_err(),
+            "直连协议带路径应被拒"
+        );
+        assert!(
+            validate_relay_node("tcp://host:11010/x").is_err(),
+            "直连协议带路径应被拒"
+        );
+        // 端口下界（url crate 接受 0，需我们额外拒绝）
+        assert!(
+            validate_relay_node("tcp://host:0").is_err(),
+            "端口 0 应被拒"
+        );
+        // 合法 IPv6 仍必须通过，且规范化时补回方括号
+        assert_eq!(
+            validate_relay_node("tcp://[::1]:11010").unwrap(),
+            "tcp://[::1]:11010"
+        );
+    }
+
+    /// manual endpoint 允许路径与省略端口（与直连协议相反），但端口仍须合法。
+    #[test]
+    fn endpoint_schemes_allow_path_and_missing_port() {
+        for s in ["http", "https", "txt", "srv", "ring"] {
+            assert!(
+                validate_relay_node(&format!("{s}://h.example.com/some/path")).is_ok(),
+                "{s} 应允许路径"
+            );
+            assert!(
+                validate_relay_node(&format!("{s}://h.example.com")).is_ok(),
+                "{s} 应允许省略端口"
+            );
+        }
+        assert!(
+            validate_relay_node("https://h.example.com:0/x").is_err(),
+            "端口 0 仍拒"
+        );
+        assert!(
+            validate_relay_node("https://h.example.com:99999/x").is_err(),
+            "端口越界仍拒"
+        );
+    }
+
+    /// 宽松校验（读路径）：逐项跳过非法条目、保留合法节点。
+    ///
+    /// 场景：settings.json 被手工编辑混入坏条目。严格模式会让**全部**自定义节点失效
+    /// （评审 finding），宽松模式只丢坏的那条。
+    #[test]
+    fn lenient_validation_keeps_valid_nodes_and_skips_bad() {
+        let got = validate_relay_nodes_lenient(Some(&[
+            "tcp://good.example.com:11010".to_string(),
+            "tcp://missing-port.example.com".to_string(), // 非法：缺端口
+            "https://etnode.example.com/node1".to_string(), // 合法 manual endpoint
+            "tcp://bad.example.com:0".to_string(),        // 非法：端口 0
+        ]));
+        assert_eq!(
+            got,
+            Some(vec![
+                "tcp://good.example.com:11010".to_string(),
+                "https://etnode.example.com/node1".to_string(),
+            ]),
+            "应跳过非法条目并保留合法节点"
+        );
+
+        // 全部非法 → None（等价于未配置，回退官方节点）
+        assert_eq!(
+            validate_relay_nodes_lenient(Some(&[
+                "tcp://bad1.example.com".to_string(),
+                "tcp://bad2.example.com:0".to_string(),
+            ])),
+            None
+        );
+        // 无配置 / 空列表 → None
+        assert_eq!(validate_relay_nodes_lenient(None), None);
+        assert_eq!(validate_relay_nodes_lenient(Some(&[])), None);
     }
 }

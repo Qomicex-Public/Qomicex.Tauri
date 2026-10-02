@@ -13,8 +13,9 @@ import { useI18n } from '../../i18n/index.tsx'
 interface RelayNodesSectionProps {
   /** 当前已保存的自定义节点列表（空/undefined = 只用官方节点）。 */
   value: string[] | null | undefined
-  /** 保存新列表（由父组件落盘）。 */
-  onSave: (nodes: string[] | null) => void
+  /** 保存新列表（由父组件落盘）。必须返回 Promise：重载要等落盘完成，
+   *  否则后端可能在 PUT 落盘前读到旧 settings.json（评审 finding）。 */
+  onSave: (nodes: string[] | null) => Promise<void>
 }
 
 /** 前端预校验，与后端 `validate_relay_node` 保持同义（后端仍是权威）。
@@ -111,7 +112,10 @@ export default function RelayNodesSection({ value, onSave }: RelayNodesSectionPr
   const apply = async () => {
     setApplying(true)
     try {
-      onSave(nodes.length > 0 ? nodes : null)
+      // 顺序要紧：**先等落盘完成**再触发 reload。reload 端点是读 settings.json 的，
+      // 不等就可能用旧节点列表重建客户端、却报告成功。保存失败时抛错进 catch，
+      // 草稿保留（不 setDirty(false)），用户可修正后重试。
+      await onSave(nodes.length > 0 ? nodes : null)
       const res = await reloadRelayNodes()
       setDirty(false)
       notify(
