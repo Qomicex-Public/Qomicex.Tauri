@@ -897,6 +897,15 @@ export interface ModpackFileEntry {
   size: number | null
 }
 
+/** CurseForge manifest 中 required:false 的可选模组条目（issue #129） */
+export interface ModpackOptionalFile {
+  projectId: number
+  fileId: number
+  /** 展示名（CF 文件名）；补全失败时为 `projectId:fileId` 占位 */
+  name: string
+  size: number | null
+}
+
 export interface ModpackParseResult {
   name: string
   summary: string | null
@@ -907,6 +916,8 @@ export interface ModpackParseResult {
   loaderVersion: string | null
   source: string
   files: ModpackFileEntry[]
+  /** 可选模组清单，默认全部不勾选；仅 CurseForge 来源非空（issue #129） */
+  optionalFiles?: ModpackOptionalFile[]
   hasOverrides: boolean
   fileCount: number
   overridesZip: string | null
@@ -930,6 +941,8 @@ export interface ModpackInstallRequest {
   gameDir: string
   versionIsolation: boolean
   modpackFiles: ModpackFileEntry[]
+  /** 勾选安装的可选模组 fileId 列表（issue #129）；不传/空数组 = 全部不安装 */
+  optionalFileIds?: number[] | null
   overridesZip: string | null
   iconData?: string | null
   modpackName?: string | null

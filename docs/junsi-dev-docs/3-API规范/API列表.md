@@ -916,11 +916,16 @@ Yggdrasil 认证登录。
   "loaderVersion": "47.1.0",
   "source": "modrinth",
   "files": [{ "path": "mods/x.jar", "downloadUrl": "https://..." }],
+  "optionalFiles": [
+    { "projectId": 238222, "fileId": 9027818, "name": "jei-....jar", "size": 2367917 }
+  ],
   "hasOverrides": true,
   "fileCount": 10,
   "fileId": "1ed395be-..."
 }
 ```
+
+`optionalFiles`：CurseForge 包中 `manifest.json` 标了 `required: false` 的可选模组清单（issue #129），默认**不安装**，需用户在导入预览勾选后经 `/install` 的 `optionalFileIds` 回传。仅 `source=curseforge` 可能非空，其余来源恒为 `[]`。`name`/`size` 由后端经 CF 批量文件接口补全；补全失败时 `name` 退化为 `"projectId:fileId"` 占位且 `size` 缺省，**不影响解析成功**。
 
 **错误码：** `MODPACK_PARSE_FILE_REQUIRED`(400)、`MODPACK_PARSE_UPLOAD_FAILED`(400)、`MODPACK_PARSE_TOO_LARGE`(400)、`MODPACK_PARSE_FAILED`(400)
 
@@ -961,6 +966,7 @@ Yggdrasil 认证登录。
 | `source` | 条件 | `modrinth` / `curseforge` / `ftb`；本地导入必传（驱动 mods 下载与 overrides 释放） |
 | `fileId` | 条件 | 本地导入：`/parse` 返回的临时文件句柄 |
 | `modpackFiles` | 条件 | 解析出的文件清单（本地导入传 parse 结果的 files） |
+| `optionalFileIds` | ❌ | 勾选安装的可选模组 `fileId` 列表（issue #129，见 `/parse` 的 `optionalFiles`）。**不传 / 空数组 = 全部不安装**（与引入本功能前行为一致）；仅对 `required: false` 条目生效，必需条目恒装。CF 本地导入时管道会重新解析 zip，选择必须经此独立字段回传（`modpackFiles` 在本地分支不被读取） |
 
 **响应：** `{ "message": "安装已启动", "versionId": "..." }`
 
