@@ -484,6 +484,15 @@ export interface ResourceItem {
   projectUrl: string
   slug: string
   latestVersion: string
+  /**
+   * 条目的**真实**资源类型（mod / modpack / shader / …）。后端在 `category=aggregate`
+   * （聚合分类）下逐类型查询并原样返回该类型，所以聚合视图里每项都可能不同。
+   *
+   * 卡片动作（安装 / 详情 / 收藏）必须用它而不是页面筛选值，否则聚合下会把
+   * shader 当成 mod 去解析版本、把收藏记成 `aggregate`（与分类视图重复）。
+   * 旧接口/旧快照可能不带此字段，读取方需回退到页面分类。
+   */
+  category?: string
 }
 
 export interface ResourceDetail extends ResourceItem {

@@ -177,5 +177,8 @@ export function toResourceItem(favorite: ResourceFavorite): ResourceItem {
     projectUrl: favorite.projectUrl,
     slug: favorite.slug,
     latestVersion: favorite.latestVersion ?? '',
+    // 收藏里存的 category 就是收藏当时该资源的真实类型，回填后卡片动作
+    // （详情 / 安装 / 收藏态）在聚合分类下也能取到正确类型。
+    category: favorite.category,
   }
 }
