@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { ChevronDown, Download, Folder, FolderPlus, Heart, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
+import { ChevronDown, Download, Eye, Folder, FolderPlus, Heart, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
@@ -347,54 +347,61 @@ function ResourceCard({
             )}
           </div>
         </div>
-        <div className="flex flex-row gap-2 sm:min-w-[148px] sm:flex-col sm:items-stretch sm:self-stretch">
-          <Button asChild variant="outline" className="flex-1 sm:w-full">
-            <Link to={buildDetailUrl(item, cardCategory, keyword, sort, gameVersion, loader, instanceId, tags) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>{t('resource.viewDetail')}</Link>
-          </Button>
-          {/* 动作行：安装 / 编辑收藏 / 收藏 —— 三图标等宽并排，**默认隐藏、hover 卡片时
-              从右侧滑入**，避免每张卡片常驻三枚按钮抢视觉焦点。
-              键盘可达：容器用 focus-within、按钮用 focus-visible 各自兜底，Tab 到任一
-              按钮时整行显形（不依赖鼠标 hover，否则键盘用户会点到「看不见的按钮」）。 */}
-          <div className="flex flex-row gap-2 transition-all duration-200 sm:w-full sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100">
-            <div className="flex-1">
-              <Tooltip content={t('resource.install')}>
-                <Button
-                  className="w-full px-2 focus-visible:translate-x-0 focus-visible:opacity-100"
-                  aria-label={t('resource.install')}
-                  onClick={() => onInstall(item)}
+        {/* 右侧动作区：全部图标化、整体水平居中；安装按钮放大并单独占上行（最显眼），
+            详情/编辑/收藏 三个等尺寸图标居中排在下行。默认隐藏、hover 卡片时从右侧
+            滑入；键盘可达由 group-focus-within 兜底（Tab 到任一按钮即整行显形，
+            避免键盘用户聚焦到「看不见的按钮」）。 */}
+        <div className="flex flex-col items-center gap-2 transition-all duration-200 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100 sm:self-center">
+          {/* 上行：安装（放大、主色、居中） */}
+          <Tooltip content={t('resource.install')}>
+            <Button
+              size="icon"
+              className="h-11 w-11 rounded-xl [&_svg]:!size-5"
+              aria-label={t('resource.install')}
+              onClick={() => onInstall(item)}
+            >
+              <Download />
+            </Button>
+          </Tooltip>
+          {/* 下行：查看详情 / 编辑收藏 / 收藏 */}
+          <div className="flex flex-row items-center gap-2">
+            <Tooltip content={t('resource.viewDetail')}>
+              <Button asChild variant="outline" size="icon" className="h-9 w-9">
+                <Link
+                  to={buildDetailUrl(item, cardCategory, keyword, sort, gameVersion, loader, instanceId, tags) + '&expandBody=1'}
+                  state={{ iconUrl: item.iconUrl }}
+                  aria-label={t('resource.viewDetail')}
                 >
-                  <Download className="h-3 w-3" />
-                </Button>
-              </Tooltip>
-            </div>
+                  <Eye />
+                </Link>
+              </Button>
+            </Tooltip>
             {onEdit && (
-              <div className="flex-1">
-                <Tooltip content={t('resource.favorites.edit.open')}>
-                  <Button
-                    variant="outline"
-                    className="w-full px-2"
-                    aria-label={t('resource.favorites.edit.open')}
-                    onClick={onEdit}
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </Button>
-                </Tooltip>
-              </div>
-            )}
-            <div className="flex-1">
-              <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
+              <Tooltip content={t('resource.favorites.edit.open')}>
                 <Button
-                  variant={isFavorite ? 'secondary' : 'outline'}
-                  className="w-full px-2"
-                  aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
-                  aria-pressed={isFavorite}
-                  disabled={favoriteBusy}
-                  onClick={onToggleFavorite}
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9"
+                  aria-label={t('resource.favorites.edit.open')}
+                  onClick={onEdit}
                 >
-                  <Heart className={cn('h-3 w-3', isFavorite && 'fill-current text-primary')} />
+                  <Pencil />
                 </Button>
               </Tooltip>
-            </div>
+            )}
+            <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
+              <Button
+                variant={isFavorite ? 'secondary' : 'outline'}
+                size="icon"
+                className="h-9 w-9"
+                aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
+                aria-pressed={isFavorite}
+                disabled={favoriteBusy}
+                onClick={onToggleFavorite}
+              >
+                <Heart className={cn(isFavorite && 'fill-current text-primary')} />
+              </Button>
+            </Tooltip>
           </div>
         </div>
       </div>
