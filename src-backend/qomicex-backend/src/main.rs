@@ -70,6 +70,15 @@ async fn main() {
     // 启动阶段执行，最坏情况只是延迟监听建立，不影响运行时请求。
     endpoints::mcmod::prewarm();
 
+    // 崩溃恢复：进程在「整合包原地更新」的应用阶段被杀死会留下半更新实例。
+    // 扫描各实例的 update-journal.json，状态停留在 applying 的立即回滚
+    // （issue #118）。必须在开始服务之前做完 —— 否则用户可能先操作到
+    // 一个半更新的实例。
+    let rolled_back = crate::services::modpack_update::rollback_pending_updates(&state.instance);
+    if rolled_back > 0 {
+        tracing::warn!(count = rolled_back, "启动时已回滚未完成的整合包更新");
+    }
+
     // 外部管理器已拉起后端时（如 Tauri 开发期附加），可跳过自建监听逻辑的校验提示。
     let app = app::build_router(std::sync::Arc::new(state));
 

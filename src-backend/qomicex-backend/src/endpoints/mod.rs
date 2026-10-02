@@ -14,6 +14,7 @@ pub mod log;
 pub mod loganalysis;
 pub mod mcmod;
 pub mod modpack;
+pub mod modpack_update;
 pub mod plugin;
 pub mod plugin_store;
 pub mod progress_sse;

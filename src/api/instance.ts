@@ -2,7 +2,7 @@ import { get, post, put, del, API_BASE, ApiError } from './client.ts'
 import { uploadFile } from './ipc.ts'
 import { MODPACK_REQUEST_TIMEOUT_MS } from './drop-install.ts'
 import { hookable } from '../plugins/hookable.ts'
-import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode, ScannedVersion, MultiMcParseResult, MultiMcImportRequest } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode, ScannedVersion, MultiMcParseResult, MultiMcImportRequest, ModpackUpdateCheck, ModpackUpdatePreview } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
   return get<GameInstance[]>('/instance')
@@ -213,6 +213,41 @@ export async function resolveModpack(source: string, projectId: string, versionI
 export async function startModpackInstall(data: ModpackInstallRequest): Promise<{ message: string; instanceId: string }> {
   const res = await post<{ message: string; versionId: string }>('/modpack/install', data)
   return { message: res.message, instanceId: res.versionId }
+}
+
+// --- 整合包原地更新（issue #118）---
+
+/**
+ * 检查该实例是否有可用的整合包更新。
+ *
+ * 后端按「平台 id 定身份、datePublished 定先后」判定；`eligible: false` 时
+ * `reason` 给出不可更新的原因码；`incomplete: true` 表示平台版本列表可能缺项
+ * （此时「没有更新」不可信，UI 必须提示）。
+ */
+export async function checkModpackUpdate(id: string): Promise<ModpackUpdateCheck> {
+  return get<ModpackUpdateCheck>(`/instance/${encodeURIComponent(id)}/modpack/update-check`)
+}
+
+/** 预览某目标版本将带来的变更（只读，不改实例）。 */
+export async function previewModpackUpdate(id: string, targetVersionId: string): Promise<ModpackUpdatePreview> {
+  return post<ModpackUpdatePreview>(
+    `/instance/${encodeURIComponent(id)}/modpack/update-preview`,
+    { targetVersionId },
+    { timeoutMs: MODPACK_REQUEST_TIMEOUT_MS },
+  )
+}
+
+/**
+ * 启动原地更新（后台任务，进度走 install tracker / SSE）。
+ *
+ * 与安装的关键区别：更新**绝不**删除实例，失败时后端按 journal 回滚到更新前状态。
+ */
+export async function startModpackUpdate(id: string, targetVersionId: string): Promise<void> {
+  await post(
+    `/instance/${encodeURIComponent(id)}/modpack/update`,
+    { targetVersionId },
+    { timeoutMs: MODPACK_REQUEST_TIMEOUT_MS },
+  )
 }
 
 /**

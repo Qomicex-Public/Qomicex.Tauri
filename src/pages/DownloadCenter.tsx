@@ -67,6 +67,9 @@ const TYPE_ICON: Record<string, typeof Box> = {
   repair: Hammer,
   batch: Download,
   file: Box,
+  // 整合包安装与更新共用 Package 图标（同属整合包范畴，issue #118）
+  modpack: Package,
+  'modpack-update': Package,
 }
 
 /** 按 `type` 取兜底图标（无资源图标时显示）。 */
@@ -112,6 +115,12 @@ const STAGE_LABELS: Record<string, string> = {
   'extracting-modpack': 'extracting-modpack',
   'modpack-files': 'modpack-files',
   'modpack-overrides': 'modpack-overrides',
+  // 整合包原地更新（issue #118）步骤
+  'modpack-update-resolve': 'modpack-update-resolve',
+  'modpack-update-download': 'modpack-update-download',
+  'modpack-update-backup': 'modpack-update-backup',
+  'modpack-update-apply': 'modpack-update-apply',
+  'modpack-update-finalize': 'modpack-update-finalize',
   'installing-game': 'installing-game',
   'building-version': 'building-version',
   'downloading-game': 'downloading-game',
@@ -227,11 +236,15 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
           )}
           {isActive && task.type !== 'file' && task.type !== 'java' && task.status !== 'queued' && (
             <>
-              <Tooltip content={t(task.status === 'paused' ? 'downloads.resume' : 'downloads.pause')}>
-                <Button variant="ghost" size="icon" className={cn('h-8 w-8 text-muted-foreground', task.status === 'paused' ? 'hover:text-primary' : 'hover:text-amber-400')} onClick={() => task.instanceId && (task.status === 'paused' ? resumeInstall(task.instanceId) : pauseInstall(task.instanceId))}>
-                  <MorphIcon icon={task.status === 'paused' ? PLAY_ICON : PAUSE_ICON} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
-                </Button>
-              </Tooltip>
+              {/* 整合包更新不支持暂停/继续：更新进程一旦进入应用阶段便整体完成或整体回滚，
+                  暴露暂停按钮会误导用户以为可以中断在半途。 */}
+              {task.type !== 'modpack-update' && (
+                <Tooltip content={t(task.status === 'paused' ? 'downloads.resume' : 'downloads.pause')}>
+                  <Button variant="ghost" size="icon" className={cn('h-8 w-8 text-muted-foreground', task.status === 'paused' ? 'hover:text-primary' : 'hover:text-amber-400')} onClick={() => task.instanceId && (task.status === 'paused' ? resumeInstall(task.instanceId) : pauseInstall(task.instanceId))}>
+                    <MorphIcon icon={task.status === 'paused' ? PLAY_ICON : PAUSE_ICON} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
+                  </Button>
+                </Tooltip>
+              )}
               <Tooltip content={t('downloads.cancel')}>
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
                   if (task.type === 'java' && task.taskId) {
@@ -243,6 +256,7 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
                   } else if (task.type === 'file' && task.taskId) {
                     cancelResourceDownload(task.taskId).then(() => removeTask(task.id))
                   } else if (task.instanceId) {
+                    // 更新与安装共用同一 tracker 与取消端点（按 instanceId 键）。
                     cancelInstall(task.instanceId).then(() => removeTask(task.id)).catch(() => removeTask(task.id))
                   }
                 }}>

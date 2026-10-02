@@ -39,6 +39,7 @@ import { PageShell } from '../components/PageShell.tsx'
 import ModCard, { type ModViewMode } from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
 import ModUpdateDialog from '../components/ModUpdateDialog.tsx'
+import ModpackUpdateDialog from '../components/ModpackUpdateDialog.tsx'
 import ExportModpackDialog from '../components/ExportModpackDialog.tsx'
 import type { ModMetadata, ResourcePackMetadata, ShaderMetadata, SaveMetadata, ScreenshotMetadata, DataPackMetadata, ModUpdateEntry } from '../types/index.ts'
 import ResourcePackCard from '../components/ResourcePackCard.tsx'
@@ -2891,6 +2892,8 @@ export default function InstanceDetailPage() {
   })
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
+  // 整合包原地更新（issue #118）
+  const [modpackUpdateOpen, setModpackUpdateOpen] = useState(false)
   const gameDir = useMemo(() => {
     if (!instance) return ''
     if (instance.resolvedGameDir) return instance.resolvedGameDir
@@ -2985,6 +2988,39 @@ export default function InstanceDetailPage() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
   const { confirm, notify } = useMessageBox()
+
+  /**
+   * 「检查更新」按钮的禁用原因（issue #118）。
+   * 不可更新时禁用并给出原因，而不是隐藏按钮 —— 隐藏会让用户以为功能不存在。
+   */
+  const modpackUpdateDisabledReason = useMemo(() => {
+    if (!instance?.modpackName) return t('instanceDetail.overview.checkModpackUpdateNoPack')
+    if (runningInstances.some(r => r.instanceId === id)) {
+      return t('instanceDetail.overview.checkModpackUpdateRunning')
+    }
+    if (instance.modpackOrigin !== 'resource-center') {
+      return t('dialogs.modpackUpdate.reason.notResourceCenter')
+    }
+    const isolated = instance.versionIsolation ?? getSettings().versionIsolation
+    if (!isolated) return t('dialogs.modpackUpdate.reason.notVersionIsolated')
+    return null
+  }, [instance, runningInstances, id, t])
+
+  /** 更新完成后刷新概览数据（模组列表与实例记录都会变）。 */
+  const handleModpackUpdateDone = useCallback(async () => {
+    cacheInvalidate('api-instance-')
+    cacheInvalidate('api-instances')
+    if (id) {
+      try {
+        const fresh = await getInstance(id)
+        setInstance(fresh)
+        setForm(fresh)
+        initialFormRef.current = fresh
+      } catch {
+        /* 刷新失败不影响更新本身：下次进入页面自然重取 */
+      }
+    }
+  }, [id])
 
   const doSave = useCallback(async (formToSave: GameInstance) => {
     if (!id) return
@@ -3462,6 +3498,30 @@ export default function InstanceDetailPage() {
                         <div className="prose prose-sm max-w-none text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: instance.modpackSummary }} />
                       </div>
                     )}
+                    {/* 检查更新（issue #118）：仅资源中心在线安装 + 版本隔离的实例可更新。
+                        不可更新时禁用并说明原因，而不是隐藏——隐藏会让用户以为功能不存在。 */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {modpackUpdateDisabledReason ? (
+                        // 不可更新：禁用按钮并把原因作为提示（Tooltip 无 disabled 属性，
+                        // 故按有无原因二选一渲染）。
+                        <Tooltip content={modpackUpdateDisabledReason}>
+                          <Button size="sm" variant="outline" className="gap-2" disabled>
+                            <RotateCw className="h-3.5 w-3.5" />
+                            {t('instanceDetail.overview.checkModpackUpdate')}
+                          </Button>
+                        </Tooltip>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-2"
+                          onClick={() => setModpackUpdateOpen(true)}
+                        >
+                          <RotateCw className="h-3.5 w-3.5" />
+                          {t('instanceDetail.overview.checkModpackUpdate')}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </SettingSection>
               )}
@@ -3721,6 +3781,15 @@ export default function InstanceDetailPage() {
         onClose={() => setExportOpen(false)}
         instance={instance}
       />
+      {modpackUpdateOpen && id && (
+        <ModpackUpdateDialog
+          open={modpackUpdateOpen}
+          onClose={() => setModpackUpdateOpen(false)}
+          instanceId={id}
+          instanceName={instance?.name ?? ''}
+          onDone={handleModpackUpdateDone}
+        />
+      )}
     </PageShell>
   )
 }

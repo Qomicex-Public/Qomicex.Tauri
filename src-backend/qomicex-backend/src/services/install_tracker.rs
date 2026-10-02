@@ -133,6 +133,10 @@ pub struct InstallProgress {
     pub speed: f64,
     pub is_paused: bool,
     pub stage: String,
+    /// 任务类型："install" / "modpack" / "modpack-update" / "resource"。
+    /// 前端据此区分「安装整合包」与「更新整合包」的卡片文案与操作按钮。
+    #[serde(default)]
+    pub kind: String,
     /// 分步状态；未定义计划的旧任务/其他 kind 为空数组（序列化时省略）。
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub steps: Vec<InstallStep>,
@@ -223,7 +227,11 @@ impl InstallHandle {
 
     pub fn snapshot(&self) -> InstallProgress {
         let guard = self.0.inner.lock().unwrap_or_else(|p| p.into_inner());
-        guard.to_progress(&self.0.instance_id, self.0.paused.load(Ordering::SeqCst))
+        guard.to_progress(
+            &self.0.instance_id,
+            &self.0.kind,
+            self.0.paused.load(Ordering::SeqCst),
+        )
     }
 
     pub fn kind(&self) -> String {
@@ -252,7 +260,7 @@ pub struct ProgressField {
 }
 
 impl ProgressField {
-    fn to_progress(&self, instance_id: &str, is_paused: bool) -> InstallProgress {
+    fn to_progress(&self, instance_id: &str, kind: &str, is_paused: bool) -> InstallProgress {
         InstallProgress {
             instance_id: instance_id.to_string(),
             status: self.status.clone(),
@@ -266,6 +274,7 @@ impl ProgressField {
             speed: self.speed,
             is_paused,
             stage: self.stage.clone(),
+            kind: kind.to_string(),
             steps: self.steps.clone(),
         }
     }
@@ -436,9 +445,69 @@ impl InstallTracker {
             guard.insert(instance_id.clone(), handle.clone());
         }
         handle.broadcast();
+        self.spawn_runner(instance_id, kind.to_string(), handle, runner);
+    }
 
-        let kind_owned = kind.to_string();
-        let id_owned = instance_id.clone();
+    /// 仅当该实例**没有非终态任务**时注册新任务，否则返回 `Err(现有任务 kind)`。
+    ///
+    /// 与 [`Self::start`] 的关键区别：`start` 会静默覆盖同 instanceId 的既有任务
+    /// —— 对安装尚可接受，但**更新**绝不允许覆盖进行中的任务（会丢掉进度、留下
+    /// 半更新的实例）。本方法把「检查 + 插入」放在同一把锁内完成，消除 TOCTOU。
+    pub fn try_start<F, Fut>(
+        &self,
+        instance_id: String,
+        kind: &str,
+        runner: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce(InstallHandle) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = InstallOutcome> + Send + 'static,
+    {
+        let handle = InstallHandle(Arc::new(InstallState::new(
+            instance_id.clone(),
+            kind.to_string(),
+            InstallStatus::Queued,
+            "queued",
+            self.tx.clone(),
+        )));
+        {
+            let mut guard = self.states.lock().unwrap_or_else(|p| p.into_inner());
+            // 占用判定与插入必须同锁内完成，否则两个并发请求都能通过检查。
+            if let Some(existing) = guard.get(&instance_id) {
+                if !existing.snapshot_terminal() {
+                    return Err(existing.kind());
+                }
+            }
+            guard.insert(instance_id.clone(), handle.clone());
+        }
+        handle.broadcast();
+        self.spawn_runner(instance_id, kind.to_string(), handle, runner);
+        Ok(())
+    }
+
+    /// 该实例当前是否存在非终态任务；返回其 kind。
+    pub fn active_kind(&self, instance_id: &str) -> Option<String> {
+        let handle = self.get_handle(instance_id)?;
+        if handle.snapshot_terminal() {
+            None
+        } else {
+            Some(handle.kind())
+        }
+    }
+
+    /// 订阅广播并驱动一个 runner 直到终态（`start` / `try_start` 共用）。
+    fn spawn_runner<F, Fut>(
+        &self,
+        instance_id: String,
+        kind: String,
+        handle: InstallHandle,
+        runner: F,
+    ) where
+        F: FnOnce(InstallHandle) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = InstallOutcome> + Send + 'static,
+    {
+        let kind_owned = kind;
+        let id_owned = instance_id;
 
         tokio::spawn(async move {
             let outcome = runner(handle.clone()).await;
@@ -756,10 +825,13 @@ mod tests {
             speed: 0.0,
             is_paused: false,
             stage: "queued".to_string(),
+            kind: "modpack-update".to_string(),
             steps: Vec::new(),
         };
         let json = serde_json::to_value(&p).unwrap();
         assert!(json.get("steps").is_none());
+        // kind 必须始终透出：前端靠它区分「安装」与「更新整合包」的卡片。
+        assert_eq!(json["kind"], "modpack-update");
 
         let mut p2 = p.clone();
         p2.steps = vec![InstallStep {

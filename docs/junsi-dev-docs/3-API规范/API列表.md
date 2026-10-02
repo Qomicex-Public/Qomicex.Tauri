@@ -1001,6 +1001,114 @@ Yggdrasil 认证登录。
 
 **错误码：** `MODPACK_NAME_REQUIRED`(400)、`MODPACK_GAME_DIR_REQUIRED`(400)、`MODPACK_FILE_NOT_FOUND`(404)、`MODPACK_SOURCE_REQUIRED`(400)、`MODPACK_SOURCE_INVALID`(400)、`MODPACK_PARSE_FAILED`(400)
 
+### 整合包原地更新（issue #118）
+
+> 仅**资源中心在线安装**（`origin: "resource-center"`）且**启用版本隔离**的整合包实例可更新。
+> 手动导入 / 拖入 / MultiMC 导入 / `install-direct` 产生的实例一律不可更新（`eligible: false`）。
+> 更新**绝不删除实例**：失败时按内部 journal 回滚到更新前状态。
+
+安装侧相关字段（`POST /api/modpack/install` 请求体新增）：
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `origin` | ❌ | 仅资源中心的两个安装对话框发送 `"resource-center"`；后端据此把实例标记为可更新 |
+| `versionPublishedAt` | ❌ | 所选平台版本的发布时间（RFC3339）。当前版本被平台删除时作为「更新判定」的排序回退 |
+
+实例记录（`GameInstance`）新增 5 个来源字段：`modpackSource`、`modpackProjectId`、`modpackVersionId`、`modpackOrigin`、`modpackVersionPublishedAt`。旧记录缺这些字段时 serde `default` 兼容（视为不可更新）。
+
+**安装后落盘基线**：`{gameDir}/versions/{name}/.qomicex/modpack-manifest.json` —— 来源快照 + 每个托管文件的 `{path, sha1, kind}`（`kind` ∈ `content`/`override`）。清单写入失败只告警、不让安装失败；无清单的实例判定为不可更新（`MISSING_MANIFEST`）。
+
+#### GET `/api/instance/{id}/modpack/update-check`
+
+检查是否有可用更新。**不修改实例**。
+
+**响应：**
+
+```json
+{
+  "eligible": true,
+  "reason": null,
+  "current": { "versionId": "67890", "name": "1.0.0", "publishedAt": "2026-01-01T00:00:00Z", "presentOnPlatform": true },
+  "updates": [
+    {
+      "versionId": "99999",
+      "name": "1.1.0",
+      "publishedAt": "2026-09-30T00:00:00Z",
+      "gameVersions": ["1.21"],
+      "loaders": ["neoforge"],
+      "changesGameVersion": true,
+      "changesLoader": true
+    }
+  ],
+  "incomplete": false
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `eligible` | 是否可原地更新；`false` 时 `reason` 给出原因码 |
+| `reason` | `NOT_RESOURCE_CENTER` / `UNSUPPORTED_SOURCE` / `MISSING_IDENTITY` / `NOT_VERSION_ISOLATED` / `MISSING_MANIFEST` |
+| `current.presentOnPlatform` | 当前版本是否仍在平台列表中（被作者删除时为 `false`，此时用记录里的时间兜底） |
+| `updates[]` | 发布时间**严格晚于**当前版本的所有版本；`changesGameVersion`/`changesLoader` 供 UI 显式标记跨版本更新 |
+| `incomplete` | 平台版本列表可能缺项（CF 分页失败 / 当前版本发布时间不可知）。为 `true` 时「没有更新」**不可信**，UI 必须提示 |
+
+判定规则：以平台 **id 定身份**、**`datePublished` 定先后**（版本名/`versionNumber` 不可靠：CF 上它就是文件名，且平台返回列表不保证有序）。`datePublished` 缺失或非法者不参与判定。
+
+**错误码：** `INSTANCE_NOT_FOUND`(404)
+
+#### POST `/api/instance/{id}/modpack/update-preview`
+
+预览某目标版本将带来的变更。**只读**，不修改实例文件。
+
+```json
+{ "targetVersionId": "99999" }
+```
+
+**响应：** 五分类结果 + 跨版本变化标志。
+
+```json
+{
+  "added": [{ "path": "mods/new.jar", "kind": "added" }],
+  "updated": [{ "path": "mods/existing.jar", "kind": "updated" }],
+  "locallyModified": [{ "path": "config/opt.toml", "kind": "locallyModified" }],
+  "removed": [{ "path": "mods/old.jar", "kind": "removed" }],
+  "keptModified": [{ "path": "config/mine.toml", "kind": "keptModified" }],
+  "changesGameVersion": true,
+  "changesLoader": false
+}
+```
+
+| 分类 | 含义 | 更新时的处理 |
+|------|------|--------------|
+| `added` | 新包有、旧清单没有 | 新增 |
+| `updated` | 两边都有且磁盘未被改动 | 覆盖 |
+| `locallyModified` | 两边都有但磁盘哈希 ≠ 清单哈希（用户改过） | **先备份再覆盖** |
+| `removed` | 旧清单有、新包没有，且磁盘未被改过 | 删除 |
+| `keptModified` | 旧清单有、新包没有，但用户改过 | **保留，绝不删除** |
+
+不在清单中的文件一律不动；`saves/` 下的一切既不写入也不删除。
+
+**错误码：** `INSTANCE_NOT_FOUND`(404)、`MODPACK_NOT_UPDATABLE`(400)、`MODPACK_TARGET_REQUIRED`(400)、`MODPACK_ALREADY_TARGET`(400)、`MODPACK_SOURCE_UNSUPPORTED`(400)、`MODPACK_NO_DOWNLOAD`(400)、`MODPACK_INDEX_MISSING`(400)
+
+#### POST `/api/instance/{id}/modpack/update`
+
+启动原地更新（后台任务）。请求体同 `update-preview`。
+
+**响应：** `{ "instanceId": "...", "started": true }`（进度走 `/api/instance/{id}/install/progress` 与 SSE 的 `installs[]`，同时取消走 `/api/instance/{id}/install/cancel`）
+
+进度 DTO 的 `kind` 字段为 `modpack-update`，前端据此显示「更新整合包」标签且不提供暂停/继续。
+
+**执行步骤**：`resolve` → `download`（下载到 `.qomicex/update-staging/`，此阶段不改实例）→ `backup` → `apply` → `finalize`。
+
+**安全语义：**
+- 进度 DTO 的步骤表见 `steps[]`；`stage` 取值为 `modpack-update-{resolve,download,backup,apply,finalize}`。
+- 应用阶段**忽略取消**（半途中断会留下不一致实例）；取消请求等价于「跑完或整体回滚」。
+- 失败 → 按 `.qomicex/update-backup/<时间戳>/` 备份 + `update-journal.json` 逆序回滚；回滚成功返回「已回滚到更新前状态」错误，回滚本身失败返回 `MODPACK_UPDATE_ROLLBACK_FAILED` 并附备份目录路径。
+- **进程崩溃恢复**：后端启动时扫描各实例 journal，状态为 `applying` 的自动回滚（`backupStamp` 记在 journal 内，自包含）。
+- 成功后重建清单、只保留最近一次备份。
+
+**错误码：** `INSTANCE_NOT_FOUND`(404)、`INSTANCE_BUSY`(400)、`INSTANCE_RUNNING`(400)、`MODPACK_NOT_UPDATABLE`(400)、`MODPACK_TARGET_REQUIRED`(400)、`MODPACK_UPDATE_ROLLBACK_FAILED`(500)
+
 ### POST `/api/modpack/export/{instanceId}`
 
 把已安装实例导出为整合包：`cf`（CurseForge zip，`manifest.json` + `overrides/`）、`mr`（Modrinth mrpack，`modrinth.index.json` + `overrides/`）或 `qml`（Qomicex 自有瘦身格式 `.qmodpack`，`qmodpack.index.json` + `overrides/`）。**异步任务**：创建任务并返回 `{ taskId }`（202），随后轮询 `GET /api/modpack/export/task/{taskId}` 查看进度，可经 `POST .../cancel` 取消。
