@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { ChevronDown, Download, Eye, Folder, FolderPlus, Heart, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
+import { ChevronDown, Download, Folder, FolderPlus, Heart, Info, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
@@ -405,62 +405,63 @@ function ResourceCard({
           >
             {t(`resource.categories.${cardCategory}`)}
           </Badge>
-          {/* 右侧动作区：全部图标化、整体水平居中；安装按钮放大并单独占上行（最显眼），
-              详情/编辑/收藏 三个等尺寸图标居中排在下行。默认隐藏、hover 卡片时从右侧
-              滑入；键盘可达由 group-focus-within 兜底（Tab 到任一按钮即整行显形，
-              避免键盘用户聚焦到「看不见的按钮」）。 */}
-          <div className="flex flex-col items-center gap-2 transition-all duration-200 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100">
-            {/* 上行：安装（放大、主色、居中） */}
+          {/* 右侧动作区：单行 4 个**等尺寸、等样式**的图标按钮（安装 / 详情 / 编辑 / 收藏），
+              整体在卡片右侧水平居中排列。安装不再是「放大 + 主色」——四个动作在这里是
+              等价可选项，任何一个都不该比其它更抢眼。
+              默认隐藏、hover 卡片时从右侧滑入；键盘可达由 group-focus-within 兜底
+              （Tab 到任一按钮即整行显形，避免键盘用户聚焦到「看不见的按钮」）。 */}
+          <div className="flex flex-row items-center gap-2 transition-all duration-200 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100">
             <Tooltip content={t('resource.install')}>
               <Button
+                variant="outline"
                 size="icon"
-                className="h-11 w-11 rounded-xl [&_svg]:!size-5"
+                className="h-9 w-9"
                 aria-label={t('resource.install')}
                 onClick={() => onInstall(item)}
               >
                 <Download />
               </Button>
             </Tooltip>
-            {/* 下行：查看详情 / 编辑收藏 / 收藏 */}
-            <div className="flex flex-row items-center gap-2">
-              <Tooltip content={t('resource.viewDetail')}>
-                <Button asChild variant="outline" size="icon" className="h-9 w-9">
-                  <Link
-                    to={buildDetailUrl(item, cardCategory, keyword, sort, gameVersion, loader, instanceId, tags, { category, source }) + '&expandBody=1'}
-                    state={{ iconUrl: item.iconUrl }}
-                    aria-label={t('resource.viewDetail')}
-                  >
-                    <Eye />
-                  </Link>
-                </Button>
-              </Tooltip>
-              {onEdit && (
-                <Tooltip content={t('resource.favorites.edit.open')}>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-9 w-9"
-                    aria-label={t('resource.favorites.edit.open')}
-                    onClick={onEdit}
-                  >
-                    <Pencil />
-                  </Button>
-                </Tooltip>
-              )}
-              <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
+            <Tooltip content={t('resource.viewDetail')}>
+              <Button asChild variant="outline" size="icon" className="h-9 w-9">
+                <Link
+                  to={buildDetailUrl(item, cardCategory, keyword, sort, gameVersion, loader, instanceId, tags, { category, source }) + '&expandBody=1'}
+                  state={{ iconUrl: item.iconUrl }}
+                  aria-label={t('resource.viewDetail')}
+                >
+                  <Info />
+                </Link>
+              </Button>
+            </Tooltip>
+            {onEdit && (
+              <Tooltip content={t('resource.favorites.edit.open')}>
                 <Button
-                  variant={isFavorite ? 'secondary' : 'outline'}
+                  variant="outline"
                   size="icon"
                   className="h-9 w-9"
-                  aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
-                  aria-pressed={isFavorite}
-                  disabled={favoriteBusy}
-                  onClick={onToggleFavorite}
+                  aria-label={t('resource.favorites.edit.open')}
+                  onClick={onEdit}
                 >
-                  <Heart className={cn(isFavorite && 'fill-current text-primary')} />
+                  <Pencil />
                 </Button>
               </Tooltip>
-            </div>
+            )}
+            <Tooltip content={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}>
+              <Button
+                // 恒为 outline：本行四个动作要求「一样大、一样颜色」，而 secondary 的
+                // bg-secondary 无边框，会与另外三个 outline（border + bg-background）
+                // 明显不同。收藏态改由填充心形 + text-primary 表达（并有 aria-pressed）。
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                aria-label={t(isFavorite ? 'resource.favorites.remove' : 'resource.favorites.add')}
+                aria-pressed={isFavorite}
+                disabled={favoriteBusy}
+                onClick={onToggleFavorite}
+              >
+                <Heart className={cn(isFavorite && 'fill-current text-primary')} />
+              </Button>
+            </Tooltip>
           </div>
         </div>
       </div>
