@@ -114,6 +114,16 @@ pub struct SettingsResponse {
     pub watermark_subtext: Option<String>,
     pub directories: Option<Vec<String>>,
     pub custom_java_runtimes: Option<Vec<CustomJavaEntryDto>>,
+    /// 自定义联机（EasyTier）中继节点列表（issue #112）。
+    ///
+    /// 语义：**自定义节点在前、官方节点在后**。为空/None = 只用官方节点（默认行为，
+    /// 与引入本功能前完全一致）。用户可用自己的中继服务规避公共节点故障。
+    ///
+    /// 每项必须是 easytier 可直接连接的协议 URI（`tcp://host:port` / `udp://` /
+    /// `quic://` / `wss://`）——`https://` 之类不被 easytier 接受（见 connector 库
+    /// `relay/nodes.rs` 的踩坑注释），故写入前经 [`validate_relay_nodes`] 强校验。
+    #[serde(default)]
+    pub relay_nodes: Option<Vec<String>>,
     /// 主题模式：`"dark"` / `"light"` / `"system"`（跟随系统 prefers-color-scheme）。
     pub theme: Option<String>,
     #[serde(default)]
@@ -261,6 +271,7 @@ impl Default for SettingsResponse {
             watermark_subtext: None,
             directories: None,
             custom_java_runtimes: None,
+            relay_nodes: None,
             theme: None,
             theme_preset: None,
             log_level: Some("info".to_string()),
@@ -386,4 +397,185 @@ pub fn get_global_version_isolation() -> bool {
 /// 全局「资源下载源」（mod 文件 CDN 镜像）：0 = 官方，1 = QML Mirror。
 pub fn get_global_file_download_source() -> i32 {
     load_settings().file_download_source
+}
+
+// =====================================================================
+// 自定义联机节点校验（issue #112）
+// =====================================================================
+
+/// easytier 可直接连接的 peer 协议前缀。
+///
+/// 刻意**不含** `http(s)://`：easytier 不接受 https peer scheme，官方节点服务返回的
+/// `https://...` 条目需要先被解析成实际地址（见 connector 库 `relay/provider.rs`）。
+/// 用户直接把网页地址填进来是最常见的误用，必须在保存前拦住并给出可读原因 ——
+/// 否则要等到建房时 easytier 启动失败才发现，且错误信息难以归因。
+const RELAY_NODE_SCHEMES: &[&str] = &["tcp", "udp", "quic", "wss", "ws"];
+
+/// 校验单个中继节点地址，返回规范化后的值或可读错误。
+///
+/// 要求：`scheme://host:port`，scheme 属于 [`RELAY_NODE_SCHEMES`]，
+/// host 非空且不含空白，port 为 1-65535 的数字。
+pub fn validate_relay_node(raw: &str) -> Result<String, String> {
+    let node = raw.trim();
+    if node.is_empty() {
+        return Err("节点地址不能为空".to_string());
+    }
+    let (scheme, rest) = node
+        .split_once("://")
+        .ok_or_else(|| "缺少协议前缀（应为 tcp://host:port）".to_string())?;
+    let scheme_lc = scheme.to_ascii_lowercase();
+    if !RELAY_NODE_SCHEMES.contains(&scheme_lc.as_str()) {
+        return Err(format!(
+            "不支持的协议 `{scheme}`（仅支持 {}）",
+            RELAY_NODE_SCHEMES.join(" / ")
+        ));
+    }
+    if rest.is_empty() {
+        return Err("缺少主机与端口（应为 host:port）".to_string());
+    }
+    if rest.contains(char::is_whitespace) {
+        return Err("主机或端口含空白字符".to_string());
+    }
+    // 允许 IPv6 字面量 `[::1]:11010`；否则按最后一个 ':' 切 host/port。
+    let (host, port_str) = if let Some(close) = rest.find(']') {
+        let host = &rest[..=close];
+        let after = &rest[close + 1..];
+        let port = after
+            .strip_prefix(':')
+            .ok_or_else(|| "IPv6 地址后缺少端口（应为 [addr]:port）".to_string())?;
+        (host, port)
+    } else {
+        rest.rsplit_once(':')
+            .ok_or_else(|| "缺少端口（应为 host:port）".to_string())?
+    };
+    if host.is_empty() {
+        return Err("主机不能为空".to_string());
+    }
+    let port: u32 = port_str
+        .parse()
+        .map_err(|_| format!("端口 `{port_str}` 不是数字"))?;
+    if port == 0 || port > 65535 {
+        return Err(format!("端口 {port} 超出范围（1-65535）"));
+    }
+    Ok(format!("{scheme_lc}://{host}:{port}"))
+}
+
+/// 校验并规范化整份自定义节点列表：去空白、去重（保序）、逐项校验。
+///
+/// 空列表视为「未配置」（等价于只用官方节点），返回 `Ok(None)`。
+pub fn validate_relay_nodes(raw: Option<&[String]>) -> Result<Option<Vec<String>>, String> {
+    let Some(list) = raw else {
+        return Ok(None);
+    };
+    let mut out: Vec<String> = Vec::new();
+    for item in list {
+        let node = validate_relay_node(item)?;
+        if !out.contains(&node) {
+            out.push(node);
+        }
+    }
+    if out.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(out))
+}
+
+#[cfg(test)]
+mod relay_node_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_supported_schemes_and_normalizes() {
+        assert_eq!(
+            validate_relay_node("tcp://relay.example.com:11010").unwrap(),
+            "tcp://relay.example.com:11010"
+        );
+        // 大小写归一并去空白（host 原样保留——DNS 大小写不敏感）
+        assert_eq!(
+            validate_relay_node("  TCP://Relay.Example.com:11010  ").unwrap(),
+            "tcp://Relay.Example.com:11010"
+        );
+        for s in ["udp", "quic", "wss", "ws"] {
+            assert!(
+                validate_relay_node(&format!("{s}://h.example.com:11010")).is_ok(),
+                "{s} 应被接受"
+            );
+        }
+        // IPv6 字面量
+        assert_eq!(
+            validate_relay_node("tcp://[::1]:11010").unwrap(),
+            "tcp://[::1]:11010"
+        );
+    }
+
+    /// 回归：`https://` 必须被拒绝。
+    ///
+    /// easytier 不接受 https peer scheme（connector 库 `relay/nodes.rs` 注释记录过这次
+    /// 踩坑：旧实现直接抄官方 `https://etnode...` 形式，导致 fallback 时中继列表全部
+    /// 无效）。这是用户最可能的误填，必须在保存前给出可读错误。
+    #[test]
+    fn rejects_http_scheme_with_actionable_message() {
+        let err = validate_relay_node("https://api.qomicex.top/api/nodes").unwrap_err();
+        assert!(
+            err.contains("不支持的协议"),
+            "错误信息应说明协议不支持: {err}"
+        );
+        assert!(err.contains("https"), "错误信息应指出具体协议: {err}");
+        assert!(
+            validate_relay_node("http://h:11010").is_err(),
+            "http 同样不接受"
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_nodes() {
+        assert!(validate_relay_node("").is_err(), "空串");
+        assert!(validate_relay_node("   ").is_err(), "纯空白");
+        assert!(
+            validate_relay_node("relay.example.com:11010").is_err(),
+            "缺协议"
+        );
+        assert!(validate_relay_node("tcp://").is_err(), "协议后无内容");
+        assert!(validate_relay_node("tcp://host").is_err(), "缺端口");
+        assert!(validate_relay_node("tcp://:11010").is_err(), "缺主机");
+        assert!(validate_relay_node("tcp://host:abc").is_err(), "端口非数字");
+        assert!(validate_relay_node("tcp://host:0").is_err(), "端口 0");
+        assert!(validate_relay_node("tcp://host:65536").is_err(), "端口越界");
+        assert!(validate_relay_node("tcp://ho st:11010").is_err(), "含空白");
+    }
+
+    #[test]
+    fn validates_list_dedups_and_treats_empty_as_none() {
+        // 去重保序
+        let got = validate_relay_nodes(Some(&[
+            "tcp://a.example.com:1".to_string(),
+            "tcp://a.example.com:1".to_string(),
+            "udp://b.example.com:2".to_string(),
+        ]))
+        .unwrap();
+        assert_eq!(
+            got,
+            Some(vec![
+                "tcp://a.example.com:1".to_string(),
+                "udp://b.example.com:2".to_string()
+            ])
+        );
+
+        // None / 空列表 → 未配置（等价于只用官方节点）
+        assert_eq!(validate_relay_nodes(None).unwrap(), None);
+        assert_eq!(validate_relay_nodes(Some(&[])).unwrap(), None);
+        // 纯空白项是用户误填，应报错而非静默当作「未配置」——静默会让用户
+        // 以为自己填的节点已生效。
+        assert!(
+            validate_relay_nodes(Some(&["  ".to_string()])).is_err(),
+            "纯空白项应报错"
+        );
+
+        // 任一项非法 → 整体失败（不静默丢弃，避免用户以为已生效）
+        assert!(validate_relay_nodes(Some(&[
+            "tcp://ok.example.com:1".to_string(),
+            "https://bad.example.com".to_string(),
+        ]))
+        .is_err());
+    }
 }
