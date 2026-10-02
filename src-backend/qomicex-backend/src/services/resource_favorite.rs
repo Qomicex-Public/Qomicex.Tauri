@@ -477,10 +477,7 @@ mod tests {
         svc.upsert(touched).unwrap();
 
         let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            raw.contains("folderIds"),
-            "落盘必须写新字段，实际: {raw}"
-        );
+        assert!(raw.contains("folderIds"), "落盘必须写新字段，实际: {raw}");
         assert!(
             !raw.contains("\"folderId\""),
             "旧字段不得再落盘，实际: {raw}"
@@ -731,7 +728,14 @@ mod tests {
         assert_eq!(svc.detach_from_folder("f1").unwrap(), 2);
         let after = svc.get_all();
         assert_eq!(after.len(), 4, "解关联绝不能删除收藏条目");
-        let find = |id: &str| after.iter().find(|f| f.id == id).unwrap().folder_ids.clone();
+        let find = |id: &str| {
+            after
+                .iter()
+                .find(|f| f.id == id)
+                .unwrap()
+                .folder_ids
+                .clone()
+        };
         assert!(find("A").is_empty(), "独占 f1 的收藏应落到未分组");
         assert_eq!(find("B"), vec!["f2".to_string()], "多归属的只摘 f1");
         assert_eq!(find("C"), vec!["f2".to_string()], "不相干的收藏不受影响");
@@ -743,7 +747,10 @@ mod tests {
             items: Mutex::new(load_from_file(&dir.join("resource_favorites.json"))),
         };
         assert_eq!(reloaded.get_all().len(), 4);
-        assert!(reloaded.get_all().iter().all(|f| !f.folder_ids.contains(&"f1".to_string())));
+        assert!(reloaded
+            .get_all()
+            .iter()
+            .all(|f| !f.folder_ids.contains(&"f1".to_string())));
 
         // 再摘同一个（已无关）夹子：0 条，且不触碰磁盘。
         assert_eq!(svc.detach_from_folder("f1").unwrap(), 0);
