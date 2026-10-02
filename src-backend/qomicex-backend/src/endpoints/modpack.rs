@@ -134,7 +134,10 @@ pub fn router() -> Router<SharedState> {
 /// re-uploading. MultiMC 整合包（zip 内含 `mmc-pack.json`/`instance.cfg`）也在此
 /// 识别：解压到 `{BaseDir}/temp/multimc-imports/{uuid}` 并返回 `packType: "multimc"`
 /// + `sourceId`，供 `/modpack/multimc/import` 使用（单次上传，避免大包二次上传）。
-async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> {
+async fn parse(
+    State(s): State<SharedState>,
+    mut multipart: Multipart,
+) -> ApiResult<Json<ModpackParseResult>> {
     let mut file_id: Option<String> = None;
     let mut saved_path: Option<PathBuf> = None;
 
@@ -209,6 +212,7 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
             },
             source: "multimc".to_string(),
             files: Vec::new(),
+            optional_files: Vec::new(),
             has_overrides: false,
             file_count: 0,
             overrides_zip: None,
@@ -228,6 +232,8 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
     let source = parsed.source.clone();
     let mut result = parsed.to_parse_result();
     result.file_id = Some(file_id);
+    let data = modpack_data(&s);
+    enrich_optional_files(&data.core, &data.curse_api_key, &mut result.optional_files).await;
     result.pack_type = Some(match source.as_str() {
         "modrinth" => "modrinth".to_string(),
         "curseforge" => "curseforge".to_string(),
@@ -241,7 +247,10 @@ async fn parse(mut multipart: Multipart) -> ApiResult<Json<ModpackParseResult>> 
 /// IPC 模式下大文件（>200MB）无法通过 Tauri invoke 传输（JSON 序列化 Uint8Array
 /// 触发 RangeError: Invalid array length），改为前端用 dialog 取路径后调此端点，
 /// 后端直接从磁盘读取，绕过 IPC 二进制瓶颈。
-async fn parse_path(Json(req): Json<ParsePathRequest>) -> ApiResult<Json<ModpackParseResult>> {
+async fn parse_path(
+    State(s): State<SharedState>,
+    Json(req): Json<ParsePathRequest>,
+) -> ApiResult<Json<ModpackParseResult>> {
     let path = validate_source_path(&req.path)?;
     if !path.is_file() {
         return Err(ApiError::not_found(
@@ -273,6 +282,7 @@ async fn parse_path(Json(req): Json<ParsePathRequest>) -> ApiResult<Json<Modpack
             },
             source: "multimc".to_string(),
             files: Vec::new(),
+            optional_files: Vec::new(),
             has_overrides: false,
             file_count: 0,
             overrides_zip: None,
@@ -290,6 +300,8 @@ async fn parse_path(Json(req): Json<ParsePathRequest>) -> ApiResult<Json<Modpack
     let source = parsed.source.clone();
     let mut result = parsed.to_parse_result();
     result.file_id = None;
+    let data = modpack_data(&s);
+    enrich_optional_files(&data.core, &data.curse_api_key, &mut result.optional_files).await;
     result.pack_type = Some(match source.as_str() {
         "modrinth" => "modrinth".to_string(),
         "curseforge" => "curseforge".to_string(),
@@ -1262,6 +1274,7 @@ impl ModpackServiceData {
             loader_version: Some(loader_version),
             source: "modrinth".to_string(),
             files,
+            optional_files: Vec::new(),
             has_overrides: false,
             file_count,
             overrides_zip: None,
@@ -1324,6 +1337,7 @@ impl ModpackServiceData {
             loader_version: None,
             source: "curseforge".to_string(),
             files,
+            optional_files: Vec::new(),
             has_overrides: false,
             file_count,
             overrides_zip: None,
@@ -1399,6 +1413,7 @@ impl ModpackServiceData {
             loader_version: Some(loader_version),
             source: "ftb".to_string(),
             files: Vec::new(),
+            optional_files: Vec::new(),
             has_overrides: false,
             file_count: 0,
             overrides_zip: None,
@@ -1478,6 +1493,7 @@ impl ModpackServiceData {
         let project_id = req.project_id.clone();
         let file_id = req.version_id.clone();
         let modpack_files = req.modpack_files.clone();
+        let optional_file_ids = req.optional_file_ids.clone();
         let version_isolation = req.version_isolation;
         // 管道结束后清理上传的临时文件（install-direct 的绝对路径不属于我们，不删）。
         let cleanup_path = if cleanup_upload {
@@ -1510,6 +1526,7 @@ impl ModpackServiceData {
                 local_pack_path.as_deref().and_then(|p| p.to_str()),
                 file_download_source,
                 icon_data_inner,
+                optional_file_ids.as_deref(),
             )
             .await;
             // 清理在线下载的包体临时文件（本地导入的文件不属于我们，不删）。
@@ -1600,6 +1617,8 @@ impl ModpackServiceData {
                 loader_version: Some(p.loader_version),
                 source: parsed.source,
                 files: p.files,
+                // install-direct 走本地路径：选择由请求直接携带，此处无需回填可选清单
+                optional_files: Vec::new(),
                 has_overrides: parsed.has_overrides,
                 file_count: parsed.file_count,
                 overrides_zip: None,
@@ -1650,6 +1669,7 @@ impl ModpackServiceData {
             game_dir: req.game_dir,
             version_isolation: req.version_isolation.unwrap_or(false),
             modpack_files: Some(resolved.files),
+            optional_file_ids: None,
             overrides_zip: resolved.overrides_zip,
             icon_data: resolved.icon_data,
             modpack_name: Some(resolved.name),
@@ -1720,6 +1740,15 @@ struct ParsedModpack {
     /// (下载URL, 相对目标路径)。Modrinth：path 为完整相对路径（mods/x.jar 等）；
     /// CurseForge：仅收集 (空 URL, "projectID:fileID") 占位，随后逐个查 CF API。
     files: Vec<ModpackFileEntry>,
+    /// CurseForge `manifest.json` 中 `required: false` 的可选条目（issue #129）。
+    /// 默认不安装：仅当用户在导入预览里勾选（`optionalFileIds`）才并入 `files`。
+    /// 其余来源（Modrinth / Qomicex）无此语义，恒为空。
+    optional_files: Vec<ModpackOptionalFile>,
+}
+
+/// 组装选中项回 `files` 用的占位 path（与 CF manifest 必需项同格式）。
+fn cf_placeholder_path(project_id: i64, file_id: i64) -> String {
+    format!("{project_id}:{file_id}")
 }
 
 /// 版本隔离时目标路径落在 `{gameDir}/versions/{name}/` 下，否则 `{gameDir}/`。
@@ -1821,6 +1850,7 @@ pub(crate) async fn run_modpack_pipeline(
     local_pack_path: Option<&str>,
     file_download_source: i32,
     icon_data: Option<String>,
+    optional_file_ids: Option<&[i64]>,
 ) -> Result<(), String> {
     let src = source.to_ascii_lowercase();
     let mut zip_path: Option<PathBuf> = None;
@@ -1934,6 +1964,13 @@ pub(crate) async fn run_modpack_pipeline(
         });
         handle.mark_step("parse-modpack", "done");
         zip_path = Some(path);
+    }
+
+    // === 2.5 合并用户在导入预览中勾选的可选条目（CF，issue #129）===
+    // 必须紧跟在 parsed 就绪之后、进入文件下载分支之前：CF 下载分支直接消费
+    // `p.files`，在这里并入即对下载段透明（与必需项同一条 projectID:fileID 路径）。
+    if let Some(p) = parsed.as_mut() {
+        apply_optional_selection(p, optional_file_ids);
     }
 
     // === 3. 确定 game_version / loader / loader_version（调用方传入优先，manifest 补全）===
@@ -2390,6 +2427,7 @@ fn parse_modrinth_index(zip_path: &Path) -> Result<ParsedModpack, String> {
         loader,
         loader_version,
         files,
+        optional_files: Vec::new(),
     })
 }
 
@@ -2469,6 +2507,7 @@ fn parse_qmodpack_index(zip_path: &Path) -> Result<ParsedModpack, String> {
         loader,
         loader_version,
         files,
+        optional_files: Vec::new(),
     })
 }
 
@@ -2507,19 +2546,29 @@ fn parse_curseforge_manifest(zip_path: &Path) -> Result<ParsedModpack, String> {
     }
 
     let mut files = Vec::new();
+    let mut optional_files = Vec::new();
     if let Some(arr) = root.get("files").and_then(|f| f.as_array()) {
         for f in arr {
-            let required = f.get("required").and_then(|r| r.as_bool()).unwrap_or(true);
-            if !required {
-                continue;
-            }
             let proj = f.get("projectID").and_then(|v| v.as_i64()).unwrap_or(0);
             let fid = f.get("fileID").and_then(|v| v.as_i64()).unwrap_or(0);
             if proj <= 0 || fid <= 0 {
                 continue;
             }
+            // required 缺省按必需处理（CF 规范默认值）；false 进可选清单，
+            // 由用户在导入预览中勾选后才安装（issue #129）。
+            let required = f.get("required").and_then(|r| r.as_bool()).unwrap_or(true);
+            if !required {
+                optional_files.push(ModpackOptionalFile {
+                    project_id: proj,
+                    file_id: fid,
+                    // 名称/体积待 CF 批量接口补全（manifest 只有 id）；补不到即用占位。
+                    name: cf_placeholder_path(proj, fid),
+                    size: None,
+                });
+                continue;
+            }
             files.push(ModpackFileEntry {
-                path: format!("{proj}:{fid}"),
+                path: cf_placeholder_path(proj, fid),
                 download_url: None,
                 size: None,
             });
@@ -2531,7 +2580,65 @@ fn parse_curseforge_manifest(zip_path: &Path) -> Result<ParsedModpack, String> {
         loader,
         loader_version,
         files,
+        optional_files,
     })
+}
+
+/// 用 CF 批量文件接口补全可选条目的展示名与体积（issue #129）。
+///
+/// 失败一律降级：保留占位 `name`、`size=None`，**不**让解析失败——可选清单只是
+/// 安装预览的辅助信息，CF 接口抖动不应阻塞导入。
+async fn enrich_optional_files(
+    core: &Arc<GameCore>,
+    cf_api_key: &str,
+    optional_files: &mut [ModpackOptionalFile],
+) {
+    if optional_files.is_empty() {
+        return;
+    }
+    let fids: Vec<i64> = optional_files.iter().map(|o| o.file_id).collect();
+    let cf = core.create_curseforge_source(cf_api_key);
+    let info_map = match cf.get_files_batch(&fids).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("补全 CurseForge 可选模组信息失败（保留占位名称）: {e}");
+            return;
+        }
+    };
+    for o in optional_files.iter_mut() {
+        let Some(info) = info_map.get(&o.file_id) else {
+            continue;
+        };
+        if let Some(name) = info.file_name.as_deref().filter(|n| !n.is_empty()) {
+            o.name = name.to_string();
+        }
+        if let Some(len) = info.file_length.filter(|l| *l > 0) {
+            o.size = Some(len);
+        }
+    }
+}
+
+/// 按用户在导入预览中的勾选，把命中的可选条目并入 `files`（issue #129）。
+///
+/// `selected` 为空（未传 / 空数组）→ 一条都不加，与引入本功能前的行为一致。
+/// `selected = None` 与 `Some(空)` 语义相同，均表示"全不装"。
+fn apply_optional_selection(pack: &mut ParsedModpack, selected: Option<&[i64]>) {
+    let Some(selected) = selected else {
+        return;
+    };
+    if selected.is_empty() || pack.optional_files.is_empty() {
+        return;
+    }
+    let wanted: HashSet<i64> = selected.iter().copied().collect();
+    for o in &pack.optional_files {
+        if wanted.contains(&o.file_id) {
+            pack.files.push(ModpackFileEntry {
+                path: cf_placeholder_path(o.project_id, o.file_id),
+                download_url: None,
+                size: o.size,
+            });
+        }
+    }
 }
 
 /// 读取 zip 内 JSON 文件并解析为 Value。
@@ -2598,6 +2705,8 @@ impl LocalPackParse {
             loader_version: Some(self.pack.loader_version),
             source: self.source,
             files: self.pack.files,
+            // CF 可选条目：由 parse/parse_path 在补全名称后回填（issue #129）
+            optional_files: self.pack.optional_files,
             has_overrides: self.has_overrides,
             file_count: self.file_count,
             overrides_zip: None,
@@ -2814,6 +2923,11 @@ pub struct ModpackParseResult {
     pub loader_version: Option<String>,
     pub source: String,
     pub files: Vec<ModpackFileEntry>,
+    /// CurseForge 可选条目（manifest `required: false`，issue #129）。用户在导入
+    /// 预览中勾选后，经 `ModpackInstallRequest.optionalFileIds` 回传安装。
+    /// 其余来源恒为空数组。
+    #[serde(default)]
+    pub optional_files: Vec<ModpackOptionalFile>,
     pub has_overrides: bool,
     pub file_count: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2840,6 +2954,21 @@ pub struct ModpackFileEntry {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub download_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<i64>,
+}
+
+/// CurseForge `manifest.json` 中 `required: false` 的可选条目（issue #129）。
+///
+/// `manifest.json` 只含 id，`name` / `size` 由 `/modpack/parse` 经 CF 批量文件接口
+/// 补全；补全失败时 `name` 退化为 `projectID:fileID` 占位，不阻断解析。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModpackOptionalFile {
+    pub project_id: i64,
+    pub file_id: i64,
+    /// 展示名：CF 返回的 `fileName`；缺省为 `{projectID}:{fileID}`。
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<i64>,
 }
@@ -2871,6 +3000,11 @@ pub struct ModpackInstallRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[allow(dead_code)]
     pub overrides_zip: Option<String>,
+    /// CurseForge 可选条目的选择（issue #129）：用户在导入预览中勾选的 `fileId` 列表。
+    /// 不传 / 空数组 = 全部不安装（与引入本功能前行为一致）；仅对 `required: false`
+    /// 的条目生效，必需条目恒装。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optional_file_ids: Option<Vec<i64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_data: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3014,7 +3148,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        is_multimc_zip, modpack_target_path, parse_local_pack_file, release_qml_overrides,
+        apply_optional_selection, cf_placeholder_path, is_multimc_zip, modpack_target_path,
+        parse_curseforge_manifest, parse_local_pack_file, release_qml_overrides,
+        ModpackOptionalFile, ParsedModpack,
     };
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -3177,5 +3313,165 @@ mod tests {
         zip.finish().unwrap();
 
         assert!(!is_multimc_zip(&zip_path));
+    }
+
+    // -----------------------------------------------------------------------
+    // issue #129：CurseForge 可选模组
+    // -----------------------------------------------------------------------
+
+    /// 写一个 CF manifest zip，files[] 含必需与可选（required:false / 缺省）三类条目。
+    fn write_cf_pack(dir: &PathBuf, manifest: &str) -> PathBuf {
+        let zip_path = dir.join("pack.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("manifest.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(manifest.as_bytes()).unwrap();
+        zip.finish().unwrap();
+        zip_path
+    }
+
+    /// 解析必须**保留** required:false 条目（此前被 `continue` 直接丢弃），
+    /// 且 required 缺省按必需处理、必需项仍进 files。
+    #[test]
+    fn cf_manifest_keeps_optional_entries() {
+        let root = temp_dir("cf-optional-parse");
+        let zip_path = write_cf_pack(
+            &root,
+            r#"{"manifestType":"minecraftModpack","name":"P","version":"1.0",
+                "minecraft":{"version":"1.20.1","modLoaders":[{"id":"forge-47.1.0"}]},
+                "files":[
+                  {"projectID":1,"fileID":11,"required":true},
+                  {"projectID":2,"fileID":22,"required":false},
+                  {"projectID":3,"fileID":33}
+                ]}"#,
+        );
+
+        let pack = parse_curseforge_manifest(&zip_path).unwrap();
+        assert_eq!(pack.game_version, "1.20.1");
+        assert_eq!(pack.loader, "forge");
+        assert_eq!(pack.loader_version, "47.1.0");
+        // 必需项：显式 required:true + 缺省（按必需）
+        assert_eq!(pack.files.len(), 2);
+        assert_eq!(pack.files[0].path, "1:11");
+        assert_eq!(pack.files[1].path, "3:33");
+        // 可选清单：仅 required:false
+        assert_eq!(pack.optional_files.len(), 1);
+        assert_eq!(pack.optional_files[0].project_id, 2);
+        assert_eq!(pack.optional_files[0].file_id, 22);
+        // 解析阶段尚未补全名称 → 占位
+        assert_eq!(pack.optional_files[0].name, "2:22");
+        assert_eq!(pack.optional_files[0].size, None);
+    }
+
+    /// 端到端组合（复刻管道顺序）：真实 manifest → 解析 → 按勾选合并，
+    /// 断言最终送进下载分支的 `files` 内容。
+    #[test]
+    fn cf_parse_then_select_produces_expected_download_set() {
+        let root = temp_dir("cf-parse-then-select");
+        let zip_path = write_cf_pack(
+            &root,
+            r#"{"manifestType":"minecraftModpack","name":"P","version":"1.0",
+                "minecraft":{"version":"1.20.1","modLoaders":[{"id":"forge-47.1.0"}]},
+                "files":[
+                  {"projectID":10,"fileID":101,"required":true},
+                  {"projectID":20,"fileID":201,"required":false},
+                  {"projectID":30,"fileID":301,"required":false}
+                ]}"#,
+        );
+
+        // 1) 未勾选任何可选 → 只装必需项（= 引入本功能前的行为）
+        let mut pack = parse_curseforge_manifest(&zip_path).unwrap();
+        apply_optional_selection(&mut pack, None);
+        let paths: Vec<&str> = pack.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["10:101"]);
+
+        // 2) 勾选其中一个可选 → 必需项 + 该可选，且不带另一个
+        let mut pack = parse_curseforge_manifest(&zip_path).unwrap();
+        apply_optional_selection(&mut pack, Some(&[301]));
+        let paths: Vec<&str> = pack.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["10:101", "30:301"]);
+        assert!(
+            !paths.contains(&"20:201"),
+            "未勾选的可选模组不得进入下载清单"
+        );
+
+        // 3) 全选 → 三项齐全
+        let mut pack = parse_curseforge_manifest(&zip_path).unwrap();
+        apply_optional_selection(&mut pack, Some(&[201, 301]));
+        assert_eq!(pack.files.len(), 3);
+    }
+
+    /// 选择集为 None / 空 → 一条都不加（= 引入本功能前的行为，向后兼容）。
+    #[test]
+    fn optional_selection_defaults_to_none_installed() {
+        let mut pack = ParsedModpack {
+            game_version: "1.20.1".into(),
+            loader: "forge".into(),
+            loader_version: "47.1.0".into(),
+            files: vec![],
+            optional_files: vec![ModpackOptionalFile {
+                project_id: 2,
+                file_id: 22,
+                name: "Dyn".into(),
+                size: Some(100),
+            }],
+        };
+        apply_optional_selection(&mut pack, None);
+        assert!(pack.files.is_empty(), "None 不应安装任何可选模组");
+
+        apply_optional_selection(&mut pack, Some(&[]));
+        assert!(pack.files.is_empty(), "空选择集不应安装任何可选模组");
+    }
+
+    /// 命中选择：选中项并入 files（与必需项同格式），未选中项保持不装。
+    #[test]
+    fn optional_selection_merges_only_checked_entries() {
+        let mut pack = ParsedModpack {
+            game_version: "1.20.1".into(),
+            loader: "forge".into(),
+            loader_version: "47.1.0".into(),
+            files: vec![],
+            optional_files: vec![
+                ModpackOptionalFile {
+                    project_id: 2,
+                    file_id: 22,
+                    name: "A".into(),
+                    size: Some(100),
+                },
+                ModpackOptionalFile {
+                    project_id: 3,
+                    file_id: 33,
+                    name: "B".into(),
+                    size: Some(200),
+                },
+            ],
+        };
+        apply_optional_selection(&mut pack, Some(&[33]));
+
+        assert_eq!(pack.files.len(), 1, "只应并入被勾选的那一条");
+        assert_eq!(pack.files[0].path, cf_placeholder_path(3, 33));
+        assert_eq!(pack.files[0].download_url, None, "保留 CF 反查占位语义");
+        assert_eq!(pack.files[0].size, Some(200));
+    }
+
+    /// 选择集里的未知 fileId 不应凭空造出条目。
+    #[test]
+    fn optional_selection_ignores_unknown_ids() {
+        let mut pack = ParsedModpack {
+            game_version: "1.20.1".into(),
+            loader: "forge".into(),
+            loader_version: "47.1.0".into(),
+            files: vec![],
+            optional_files: vec![ModpackOptionalFile {
+                project_id: 2,
+                file_id: 22,
+                name: "A".into(),
+                size: None,
+            }],
+        };
+        apply_optional_selection(&mut pack, Some(&[999, 22]));
+        assert_eq!(pack.files.len(), 1);
+        assert_eq!(pack.files[0].path, "2:22");
     }
 }
