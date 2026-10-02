@@ -484,6 +484,15 @@ export interface ResourceItem {
   projectUrl: string
   slug: string
   latestVersion: string
+  /**
+   * 条目的**真实**资源类型（mod / modpack / shader / …）。后端在 `category=aggregate`
+   * （聚合分类）下逐类型查询并原样返回该类型，所以聚合视图里每项都可能不同。
+   *
+   * 卡片动作（安装 / 详情 / 收藏）必须用它而不是页面筛选值，否则聚合下会把
+   * shader 当成 mod 去解析版本、把收藏记成 `aggregate`（与分类视图重复）。
+   * 旧接口/旧快照可能不带此字段，读取方需回退到页面分类。
+   */
+  category?: string
 }
 
 export interface ResourceDetail extends ResourceItem {
@@ -495,8 +504,9 @@ export interface ResourceDetail extends ResourceItem {
  *
  * 唯一键 `source + id + category`；同时携带卡片渲染所需的资源快照，使收藏视图
  * 无需再请求详情即可复用 `ResourceCard` 渲染与安装。
- * `folderId` / `note` / `tags` 为 P2（收藏夹分组 / 备注 / 自定义标签）预留字段，
- * P1 恒为 `null` / `[]`。
+ * `folderIds` / `note` / `tags` 为收藏夹分组 / 备注 / 自定义标签字段；
+ * 一条收藏可归属 **0~N 个** 收藏夹（空数组 = 未分组），备注与标签始终只有一份
+ * （属于资源本身，不随收藏夹变化）。
  */
 export interface ResourceFavorite {
   source: string
@@ -511,9 +521,22 @@ export interface ResourceFavorite {
   projectUrl: string
   slug: string
   latestVersion: string
-  folderId: string | null
+  folderIds: string[]
   note: string | null
   tags: string[]
+  createdAt: string
+}
+
+/**
+ * 资源收藏夹（`GET/POST/PUT/DELETE /api/resource-favorite-folders`）。
+ *
+ * 收藏项通过 `ResourceFavorite.folderIds` 引用本类型（多对多）；`folderIds` 里指向
+ * 不存在夹子的 id 前端按「未分组」忽略（防御手工改过的 JSON）。
+ * 删除收藏夹**只解除关联**，收藏条目本身保留。
+ */
+export interface ResourceFavoriteFolder {
+  id: string
+  name: string
   createdAt: string
 }
 

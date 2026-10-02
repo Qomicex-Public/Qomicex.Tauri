@@ -96,6 +96,7 @@
 - [ADR-093：取代 ADR-092 — 自实现 Windows IDropTarget，同时接文件与文本拖拽（修正 issue #136）](1-决策记录/ADR-093-取代-ADR-092-自实现-Windows-IDropTarget-同时接文件与文本拖拽-issue-136.md)
 - [ADR-094：CurseForge 整合包可选模组安装（#129）](1-决策记录/ADR-094-CurseForge-整合包可选模组安装.md)
 - [ADR-095：更新可用性提升为会话级共享状态，设置页常驻「发现新版本」提示（issue #147）](1-决策记录/ADR-095-更新可用性提升为会话级共享状态-设置页常驻发现新版本提示-issue-147.md)
+- [ADR-096：资源收藏 P2（#132）收藏夹分组 / 备注 / 自定义标签](1-决策记录/ADR-096-资源收藏P2-收藏夹分组-备注-自定义标签.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

@@ -11,7 +11,7 @@
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::{ApiError, ApiResult};
 use crate::services::resource_favorite::ResourceFavorite;
+use crate::services::resource_favorite_folder::{FavoriteFolder, FolderError};
 use crate::state::SharedState;
 
 // =====================================================================
@@ -45,6 +46,11 @@ struct ResourceItemDto {
     categories: Vec<String>,
     project_url: String,
     slug: String,
+    /// 该条目的**真实**资源类型（mod / modpack / shader / ...），由查询时使用的
+    /// category 决定。分类聚合（category=aggregate）下每项类型可能不同，前端收藏
+    /// 必须用这个字段而不是页面筛选值——否则同一资源会在聚合视图与分类视图里被
+    /// 当成两条（收藏唯一键是 source+id+category）。
+    category: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -276,6 +282,14 @@ pub fn router() -> Router<SharedState> {
             get(list_resource_favorites)
                 .post(add_resource_favorite)
                 .delete(remove_resource_favorite),
+        )
+        .route(
+            "/resource-favorite-folders",
+            get(list_favorite_folders).post(create_favorite_folder),
+        )
+        .route(
+            "/resource-favorite-folders/{id}",
+            put(rename_favorite_folder).delete(delete_favorite_folder),
         )
 }
 
@@ -652,6 +666,32 @@ async fn search(
         }));
     }
 
+    // 「聚合」分类：跨资源类型并发查询，按下载量归并（见 search_aggregate_category）。
+    if category
+        .as_deref()
+        .map(|c| c.eq_ignore_ascii_case("aggregate"))
+        .unwrap_or(false)
+    {
+        let (items, total) = search_aggregate_category(
+            &state,
+            &src,
+            &keyword,
+            game_version.as_deref(),
+            loader.as_deref(),
+            sort.as_deref(),
+            tags.as_deref(),
+            page,
+            page_size,
+        )
+        .await?;
+        return Ok(Json(ResourceSearchResponse {
+            items,
+            total,
+            page,
+            page_size,
+        }));
+    }
+
     // "all" = 聚合源：按分类决定可聚合的源。save 仅 CurseForge；
     // modpack 额外含 FTB；其余为 Modrinth + CurseForge。
     let sources: Vec<&str> = if src.eq_ignore_ascii_case("all") {
@@ -722,6 +762,118 @@ async fn search(
     }))
 }
 
+/// 分类聚合可覆盖的全部资源类型。
+const AGGREGATE_TYPES: [&str; 6] = [
+    "mod",
+    "modpack",
+    "shader",
+    "resourcepack",
+    "datapack",
+    "save",
+];
+
+/// 某资源类型实际存在的平台 —— 与 `search` 中 `all` 分支的口径保持一致：
+/// save 仅 CurseForge（Modrinth 无此工程类型）；modpack 额外含 FTB；其余为
+/// Modrinth + CurseForge。
+fn platforms_for_type(ty: &str) -> &'static [&'static str] {
+    match ty {
+        "save" => &["curseforge"],
+        "modpack" => &["modrinth", "curseforge", "ftb"],
+        _ => &["modrinth", "curseforge"],
+    }
+}
+
+/// 分类聚合（category=aggregate）：把「类型 × 平台」的查询全部并发发出，再按
+/// (source,id) 去重、按下载量归并、截断到一页。
+///
+/// 分页语义与「聚合源」一致，同样是**近似**：各组合各自取第 N 页后合并再截断，
+/// 精确交叉分页不值得做（total 为各组合 total 之和）。
+async fn search_aggregate_category(
+    state: &SharedState,
+    src: &str,
+    keyword: &str,
+    game_version: Option<&str>,
+    loader: Option<&str>,
+    sort: Option<&str>,
+    tags: Option<&str>,
+    page: i32,
+    page_size: i32,
+) -> ApiResult<(Vec<ResourceItemDto>, i32)> {
+    // 组装待查的 (类型, 平台) 组合；src 为具体平台时只保留该平台支持的类型，
+    // 避免对 FTB 发 shader 之类的无效请求。
+    let all_platforms = src.eq_ignore_ascii_case("all");
+    let queries: Vec<(&'static str, &'static str)> = AGGREGATE_TYPES
+        .iter()
+        .flat_map(|ty| {
+            platforms_for_type(ty)
+                .iter()
+                .filter(move |p| all_platforms || p.eq_ignore_ascii_case(src))
+                .map(move |p| (*ty, *p))
+        })
+        .collect();
+
+    // 中文关键词解析（与 `search` 对 mod/datapack 的口径一致）：不带上这一层，
+    // 「聚合」分类下用中文名搜不到任何东西，而同关键词在「模组」分类里能搜到。
+    let cn_candidates = crate::endpoints::mcmod::mcmod_data()
+        .resolve_chinese_search_candidates(keyword, CN_CANDIDATE_LIMIT);
+    let cn_candidates = &cn_candidates;
+
+    // ponytail: 分类聚合把请求量放大到最多 12 组（6 类型 × 2~3 平台），顺序执行会
+    // 把延迟叠成十几秒，所以这里并发发出；各请求互相独立，任一失败即整体失败
+    // （与单源/聚合源的既有语义一致）。
+    let futures = queries.into_iter().map(|(ty, platform)| async move {
+        if !cn_candidates.is_empty() && (ty == "mod" || ty == "datapack") {
+            let (items, total) = search_cn_candidates(
+                state,
+                cn_candidates,
+                platform,
+                Some(ty),
+                game_version,
+                loader,
+                sort,
+                tags,
+                page,
+                page_size,
+            )
+            .await;
+            Ok((items, total))
+        } else {
+            search_one(
+                state,
+                platform,
+                keyword,
+                Some(ty),
+                game_version,
+                loader,
+                sort,
+                tags,
+                page,
+                page_size,
+            )
+            .await
+        }
+    });
+    let results = futures::future::join_all(futures).await;
+
+    let mut merged: Vec<ResourceItemDto> = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut total = 0i32;
+    for result in results {
+        let (items, t) = result?;
+        total = total.saturating_add(t);
+        for it in items {
+            // 同一工程可能以多种类型命中（如既是 mod 又是 datapack），按 (source,id)
+            // 去重，保留先出现的类型，避免同一条目在列表里出现两次。
+            if seen.insert((it.source.clone(), it.id.clone())) {
+                merged.push(it);
+            }
+        }
+    }
+    merged.sort_by(|a, b| b.download_count.cmp(&a.download_count));
+    merged.truncate(page_size as usize);
+    Ok((merged, total))
+}
+
 /// 中文关键词候选检索：Modrinth 批量取回候选 slug + 首候选搜索补充；
 /// CurseForge 对前几个候选逐个搜索；跨源/跨候选按 (source, id) 去重，按下载量排序截断。
 const CN_CANDIDATE_LIMIT: usize = 20;
@@ -763,8 +915,14 @@ async fn search_cn_candidates(
                 .iter()
                 .filter_map(|c| c.mr_slug.clone())
                 .collect();
-            let items =
-                fetch_mr_projects_by_slugs(&state.http_client, &slugs, game_version, loader).await;
+            let items = fetch_mr_projects_by_slugs(
+                &state.http_client,
+                &slugs,
+                game_version,
+                loader,
+                category.unwrap_or(""),
+            )
+            .await;
             push_items(&mut merged, items);
             // 首候选（含 mr slug 或非空 term）搜索补充：让主 mod 相关结果也能出现。
             let first = candidates.iter().find_map(|c| {
@@ -830,6 +988,7 @@ async fn fetch_mr_projects_by_slugs(
     slugs: &[String],
     game_version: Option<&str>,
     loader: Option<&str>,
+    category: &str,
 ) -> Vec<ResourceItemDto> {
     if slugs.is_empty() {
         return Vec::new();
@@ -883,11 +1042,11 @@ async fn fetch_mr_projects_by_slugs(
             };
             gv_ok && l_ok
         })
-        .map(project_info_to_item)
+        .map(|p| project_info_to_item(p, category))
         .collect()
 }
 
-fn project_info_to_item(p: ProjectInfo) -> ResourceItemDto {
+fn project_info_to_item(p: ProjectInfo, category: &str) -> ResourceItemDto {
     let slug = p.slug.clone().unwrap_or_else(|| p.id.clone());
     ResourceItemDto {
         id: p.id.clone(),
@@ -900,6 +1059,7 @@ fn project_info_to_item(p: ProjectInfo) -> ResourceItemDto {
         categories: p.categories.clone().unwrap_or_default(),
         project_url: format!("https://modrinth.com/project/{}", slug),
         slug,
+        category: category.to_string(),
     }
 }
 
@@ -953,7 +1113,7 @@ async fn search_one(
         let items = result
             .results
             .iter()
-            .map(|r| search_info_to_item(r, "modrinth"))
+            .map(|r| search_info_to_item(r, "modrinth", category.unwrap_or("")))
             .collect();
         Ok((items, result.total_results))
     } else if source.eq_ignore_ascii_case("curseforge") {
@@ -992,7 +1152,7 @@ async fn search_one(
         let items = result
             .results
             .iter()
-            .filter_map(|r| cf_result_to_item(r, cf_url_slug))
+            .filter_map(|r| cf_result_to_item(r, cf_url_slug, category.unwrap_or("")))
             .collect();
         Ok((items, result.total_count))
     } else if source.eq_ignore_ascii_case("ftb") {
@@ -1023,7 +1183,7 @@ async fn search_one(
             .iter()
             .skip(offset)
             .take(page_size.max(0) as usize)
-            .map(|p| ftb_pack_to_item(p, "ftb"))
+            .map(|p| ftb_pack_to_item(p, "ftb", "modpack"))
             .collect();
         Ok((items, total))
     } else {
@@ -1633,7 +1793,7 @@ async fn translate_text(
 // Item mapping helpers
 // =====================================================================
 
-fn search_info_to_item(r: &SearchResultInfo, source: &str) -> ResourceItemDto {
+fn search_info_to_item(r: &SearchResultInfo, source: &str, category: &str) -> ResourceItemDto {
     let slug = r.slug.clone().unwrap_or_else(|| r.id.clone());
     ResourceItemDto {
         id: r.id.clone(),
@@ -1646,12 +1806,14 @@ fn search_info_to_item(r: &SearchResultInfo, source: &str) -> ResourceItemDto {
         categories: r.categories.clone().unwrap_or_default(),
         project_url: format!("https://modrinth.com/project/{}", slug),
         slug: slug.clone(),
+        category: category.to_string(),
     }
 }
 
 fn cf_result_to_item(
     r: &qomicex_core::models::expansion::curseforge::CurseForgeSearchResult,
     url_slug: &str,
+    category: &str,
 ) -> Option<ResourceItemDto> {
     let download_count = r.download_count.parse::<i64>().unwrap_or(0);
     Some(ResourceItemDto {
@@ -1673,12 +1835,14 @@ fn cf_result_to_item(
             .collect(),
         project_url: format!("https://www.curseforge.com/minecraft/{url_slug}/{}", r.slug),
         slug: r.slug.clone(),
+        category: category.to_string(),
     })
 }
 
 fn ftb_pack_to_item(
     p: &qomicex_core::models::expansion::ftb::ModpackInfo,
     source: &str,
+    category: &str,
 ) -> ResourceItemDto {
     let slug = p.slug.clone().unwrap_or_else(|| p.id.to_string());
     ResourceItemDto {
@@ -1706,6 +1870,7 @@ fn ftb_pack_to_item(
             .unwrap_or_default(),
         project_url: format!("https://www.feed-the-beast.com/modpacks/{}", slug),
         slug: slug.clone(),
+        category: category.to_string(),
     }
 }
 
@@ -2379,6 +2544,91 @@ async fn remove_resource_favorite(
     Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
+// =====================================================================
+// Handlers: resource favorite folders（收藏夹，P2）
+//
+// 收藏夹实体单独存 resource_favorite_folders.json（P1 的扁平数组格式不变）；
+// 条目的 folderIds / note / tags 仍由上面的 POST /resource-favorites（upsert）写入。
+// =====================================================================
+
+/// `POST` / `PUT /resource-favorite-folders` 的请求体。
+#[derive(Deserialize)]
+struct FolderUpsertRequest {
+    #[serde(default)]
+    name: String,
+}
+
+/// 服务层错误 → HTTP：落盘失败 500，不存在 404，其余（名称非法/重名）400。
+fn map_folder_error(e: FolderError) -> ApiError {
+    if e.is_save_failure() {
+        ApiError::internal(e.message())
+    } else if e == FolderError::NotFound {
+        ApiError::not_found(e.code(), e.message())
+    } else {
+        ApiError::bad_request(e.code(), e.message())
+    }
+}
+
+async fn list_favorite_folders(
+    State(state): State<SharedState>,
+) -> ApiResult<Json<Vec<FavoriteFolder>>> {
+    Ok(Json(state.resource_favorite_folders.get_all()))
+}
+
+async fn create_favorite_folder(
+    State(state): State<SharedState>,
+    req: Json<FolderUpsertRequest>,
+) -> ApiResult<Json<FavoriteFolder>> {
+    state
+        .resource_favorite_folders
+        .create(&req.name)
+        .map(Json)
+        .map_err(map_folder_error)
+}
+
+async fn rename_favorite_folder(
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+    req: Json<FolderUpsertRequest>,
+) -> ApiResult<Json<FavoriteFolder>> {
+    state
+        .resource_favorite_folders
+        .rename(&id, &req.name)
+        .map(Json)
+        .map_err(map_folder_error)
+}
+
+async fn delete_favorite_folder(
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // 先确认存在，避免对不存在的 id 做破坏性级联（404 语义要干净）。
+    if !state.resource_favorite_folders.exists(&id) {
+        return Err(ApiError::not_found(
+            "FAVORITE_FOLDER_NOT_FOUND",
+            "收藏夹不存在",
+        ));
+    }
+    // 级联顺序：**先解关联（写 items）→ 再删夹子实体（写 folders）**。
+    // 第二步失败时最坏是「收藏已解关联、夹子空着」这种无害残留；反序会留下指向已删夹子的
+    // 悬空 folderId（详见 services/resource_favorite_folder.rs 模块注释）。
+    //
+    // P3 语义变更：一条收藏可归属多个夹子，级联删除会连带删掉本属于别的夹子的收藏，
+    // 因此这里只**解除关联**、收藏条目本身保留（无可归属夹子的自然落到「未分组」）。
+    let detached_favorites = state
+        .resource_favorites
+        .detach_from_folder(&id)
+        .map_err(|e| ApiError::internal(format!("解除夹内收藏关联失败: {e}")))?;
+    state
+        .resource_favorite_folders
+        .delete(&id)
+        .map_err(map_folder_error)?;
+    Ok(Json(serde_json::json!({
+        "removed": true,
+        "detachedFavorites": detached_favorites,
+    })))
+}
+
 #[cfg(test)]
 mod favorites_tests {
     use super::*;
@@ -2445,5 +2695,65 @@ mod favorites_tests {
             serde_json::from_str(r#"{"source":"a","id":"b","category":"c","extra":"ignored"}"#)
                 .unwrap();
         assert_eq!(extra.validated().unwrap().0, "a");
+    }
+
+    /// 收藏夹错误 → HTTP 状态映射：名称非法 / 重名 → 400，不存在 → 404，
+    /// 落盘失败 → 500。错误码沿用实例分组 `GROUP_*` 的命名风格。
+    #[test]
+    fn folder_error_maps_to_expected_status() {
+        for (err, status, code) in [
+            (FolderError::EmptyName, 400, "FAVORITE_FOLDER_NAME_EMPTY"),
+            (
+                FolderError::NameTooLong,
+                400,
+                "FAVORITE_FOLDER_NAME_TOO_LONG",
+            ),
+            (FolderError::NameTaken, 400, "FAVORITE_FOLDER_NAME_EXISTS"),
+            (FolderError::NotFound, 404, "FAVORITE_FOLDER_NOT_FOUND"),
+            // 落盘失败刻意走 `ApiError::internal`（code `INTERNAL_ERROR`），与 P1 收藏
+            // 端点、以及仓库「意外故障用 internal」的口径一致；具体原因放 message。
+            (FolderError::Save("disk full".into()), 500, "INTERNAL_ERROR"),
+        ] {
+            let mapped = map_folder_error(err);
+            assert_eq!(mapped.status, status);
+            assert_eq!(mapped.code, code);
+        }
+        // 500 的 message 必须带上原因与上下文，否则无从排查。
+        let save_err = map_folder_error(FolderError::Save("disk full".into()));
+        assert!(save_err.message.contains("收藏夹"));
+        assert!(save_err.message.contains("disk full"));
+    }
+
+    /// 请求体契约：`name` 缺省为空串（由服务层判 `EmptyName` → 400，端点不重复裁剪），
+    /// 未知字段忽略（前端后续加 color 等不会把请求打挂）。
+    #[test]
+    fn folder_upsert_request_deserializes() {
+        let with_name: FolderUpsertRequest =
+            serde_json::from_str(r#"{"name":"  优化  "}"#).unwrap();
+        assert_eq!(with_name.name, "  优化  ", "裁剪由服务层统一做");
+        let empty: FolderUpsertRequest = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(empty.name.is_empty());
+        let extra: FolderUpsertRequest =
+            serde_json::from_str(r##"{"name":"a","color":"#fff"}"##).unwrap();
+        assert_eq!(extra.name, "a");
+    }
+
+    /// 收藏夹的 JSON 契约：键名 camelCase（`createdAt`），且只发 `id`/`name`
+    /// 也能反序列化（`createdAt` 走 serde default）。
+    #[test]
+    fn favorite_folder_json_contract_is_camel_case() {
+        let folder = FavoriteFolder {
+            id: "f1".into(),
+            name: "优化".into(),
+            created_at: "2026-10-01T00:00:00+00:00".into(),
+        };
+        let v = serde_json::to_value(&folder).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("createdAt"), "键名必须 camelCase");
+        assert!(!obj.contains_key("created_at"));
+        assert_eq!(obj.len(), 3, "字段数变化说明契约已漂移");
+
+        let minimal: FavoriteFolder = serde_json::from_str(r#"{"id":"x","name":"y"}"#).unwrap();
+        assert_eq!(minimal.created_at, "");
     }
 }

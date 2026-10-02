@@ -1,5 +1,5 @@
-import { get, post, del } from './client.ts'
-import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion, ResolvedDependency, ResourceItem, ResourceFavorite } from '../types/index.ts'
+import { get, post, put, del } from './client.ts'
+import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion, ResolvedDependency, ResourceItem, ResourceFavorite, ResourceFavoriteFolder } from '../types/index.ts'
 
 export function searchResources(params: {
   category?: string
@@ -115,6 +115,30 @@ export function removeResourceFavorite(source: string, id: string, category: str
   return del<{ removed: boolean }>(`/resource-favorites?${q}`)
 }
 
+// ---- 收藏夹（P2）：实体单独存 resource_favorite_folders.json ----
+
+export function listFavoriteFolders(): Promise<ResourceFavoriteFolder[]> {
+  return get<ResourceFavoriteFolder[]>('/resource-favorite-folders')
+}
+
+export function createFavoriteFolder(name: string): Promise<ResourceFavoriteFolder> {
+  return post<ResourceFavoriteFolder>('/resource-favorite-folders', { name })
+}
+
+export function renameFavoriteFolder(id: string, name: string): Promise<ResourceFavoriteFolder> {
+  return put<ResourceFavoriteFolder>(`/resource-favorite-folders/${encodeURIComponent(id)}`, { name })
+}
+
+/**
+ * 删除收藏夹 —— 服务端**只解除关联**（`detachedFavorites` 为受影响的收藏条数）。
+ *
+ * P3 起一条收藏可归属多个夹子，故不再级联删除条目：被解除关联的收藏若没有其他
+ * 夹子则落到「未分组」，条目本身保留。
+ */
+export function deleteFavoriteFolder(id: string): Promise<{ removed: boolean; detachedFavorites: number }> {
+  return del<{ removed: boolean; detachedFavorites: number }>(`/resource-favorite-folders/${encodeURIComponent(id)}`)
+}
+
 /**
  * `ResourceItem` + 当前页面分类 → 收藏条目（资源快照）。
  *
@@ -135,7 +159,7 @@ export function toResourceFavorite(item: ResourceItem, category: string): Resour
     projectUrl: item.projectUrl,
     slug: item.slug,
     latestVersion: item.latestVersion ?? '',
-    folderId: null,
+    folderIds: [],
     note: null,
     tags: [],
     createdAt: new Date().toISOString(),
@@ -156,5 +180,8 @@ export function toResourceItem(favorite: ResourceFavorite): ResourceItem {
     projectUrl: favorite.projectUrl,
     slug: favorite.slug,
     latestVersion: favorite.latestVersion ?? '',
+    // 收藏里存的 category 就是收藏当时该资源的真实类型，回填后卡片动作
+    // （详情 / 安装 / 收藏态）在聚合分类下也能取到正确类型。
+    category: favorite.category,
   }
 }
