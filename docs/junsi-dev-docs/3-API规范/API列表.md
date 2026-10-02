@@ -207,6 +207,80 @@ Yggdrasil 认证登录。
 
 **响应：** `List<StoredAccount>`
 
+### POST `/api/auth/littleskin/device-code`
+
+LittleSkin OAuth 设备代码流：请求设备代码对（issue #145，详见
+[ADR-098](../1-决策记录/ADR-098-LittleSkin-改用-OAuth-设备代码流登录-issue-145.md) 与
+[LittleSkin OAuth 登录接入方案](../2-架构设计/LittleSkin-OAuth-登录接入方案.md)）。
+
+无请求体。后端以表单向 `https://open.littleskin.cn/oauth/device_code` 发起请求，
+scope 固定为 `openid offline_access Yggdrasil.PlayerProfiles.Read
+Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
+
+**响应：**
+
+```json
+{
+  "userCode": "ABCD-EFGH",
+  "deviceCode": "...",
+  "verificationUri": "https://open.littleskin.cn/oauth/link",
+  "verificationUriComplete": "https://open.littleskin.cn/oauth/link?user_code=ABCD-EFGH",
+  "expiresIn": 300,
+  "interval": 5
+}
+```
+
+**错误：** 应用未通过设备代码流白名单时返回
+`400 LITTLESKIN_OAUTH_NOT_WHITELISTED`（需按方案文档 §3.3 发工单申请）。
+
+### POST `/api/auth/littleskin/poll`
+
+轮询授权结果；授权完成后一并返回 OAuth 令牌与用户名下角色列表。
+
+```json
+{ "deviceCode": "..." }
+```
+
+**响应（待授权）：**
+
+```json
+{ "success": false, "isPending": true, "interval": 5 }
+```
+
+**响应（授权成功）：**
+
+```json
+{
+  "success": true,
+  "isPending": false,
+  "accessToken": "<OAuth access token>",
+  "refreshToken": "<OAuth refresh token>",
+  "profiles": [{ "id": "...", "name": "..." }]
+}
+```
+
+`slow_down` 时返回 `isPending: true` 并回传上游要求的新 `interval`。
+
+### POST `/api/auth/littleskin/select`
+
+为每个选中角色换取 Minecraft 令牌并保存账户。`serverUrl` 的 host 必须是
+`littleskin.cn`（含子域），否则返回 `400 LITTLESKIN_ONLY`。
+
+```json
+{
+  "accessToken": "<OAuth access token>",
+  "refreshToken": "<OAuth refresh token>",
+  "serverUrl": "https://littleskin.cn/api/yggdrasil",
+  "selectedProfiles": [{ "id": "...", "name": "..." }]
+}
+```
+
+**响应：** `List<StoredAccount>`
+
+落库账户沿用 `loginMethod: "Yggdrasil"`（不新增枚举值），额外写入
+`oauthProvider: "LittleSkin"` 与 `oauthRefreshToken`（后者**不**出现在
+`GET /api/account` 列表响应中）。
+
 ### POST `/api/auth/tongyi`
 
 统一通行证登录（通义/网易等）。

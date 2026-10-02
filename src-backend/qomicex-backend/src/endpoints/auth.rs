@@ -205,6 +205,8 @@ async fn offline(
         last_used: now_unix(),
         is_default: false,
         server_url: None,
+        oauth_provider: None,
+        oauth_refresh_token: None,
     };
     let _ = state.account.auto_set_default_on_save(&mut account).await;
 
@@ -384,6 +386,8 @@ async fn microsoft_info(
         last_used: 0,
         is_default: false,
         server_url: None,
+        oauth_provider: None,
+        oauth_refresh_token: None,
     };
     state.account.save_account(&mut stored).await?;
     Ok(Json(stored))
@@ -550,6 +554,9 @@ async fn yggdrasil_select(
             last_used: 0,
             is_default: false,
             server_url: req.server_url.clone(),
+            // 密码登录路径：无 OAuth 提供方（与 issue #145 的 OAuth 账户区分）。
+            oauth_provider: None,
+            oauth_refresh_token: None,
         };
         state.account.save_account(&mut stored).await?;
         saved.push(stored);
@@ -641,6 +648,8 @@ async fn tongyi(
         last_used: 0,
         is_default: false,
         server_url: Some(server_url),
+        oauth_provider: None,
+        oauth_refresh_token: None,
     };
     state.account.save_account(&mut stored).await?;
     Ok(Json(stored))

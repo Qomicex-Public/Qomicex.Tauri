@@ -90,11 +90,17 @@ export default function Accounts() {
     }
   }
 
-  function getAccountLabel(loginMethod: string, serverUrl?: string | null): string {
+  function getAccountLabel(loginMethod: string, serverUrl?: string | null, oauthProvider?: string | null): string {
     if (loginMethod === 'Microsoft') return 'Microsoft'
     if (loginMethod === 'Offline') return t('accounts.methodLabel.offline')
     if (loginMethod === 'Yggdrasil') {
       const cached = accountApi.getCachedMeta(serverUrl)
+      // OAuth 账户额外标注提供方，便于与同站密码登录的账户区分。
+      if (oauthProvider) {
+        return cached
+          ? t('accounts.methodLabel.thirdPartyOauthWith', { server: cached })
+          : t('accounts.methodLabel.thirdPartyOauth')
+      }
       return cached ? t('accounts.methodLabel.thirdPartyWith', { server: cached }) : t('accounts.methodLabel.thirdParty')
     }
     if (loginMethod === '统一通行证') {
@@ -122,10 +128,10 @@ export default function Accounts() {
     const q = search.toLowerCase()
     return accounts.filter(a => {
       if (filterType === 'name') return a.name.toLowerCase().includes(q)
-      if (filterType === 'loginMethod') return getAccountLabel(a.loginMethod, a.serverUrl).toLowerCase().includes(q)
+      if (filterType === 'loginMethod') return getAccountLabel(a.loginMethod, a.serverUrl, a.oauthProvider).toLowerCase().includes(q)
       if (filterType === 'server') return (a.serverUrl || '').toLowerCase().includes(q)
       return a.name.toLowerCase().includes(q) ||
-        getAccountLabel(a.loginMethod, a.serverUrl).toLowerCase().includes(q) ||
+        getAccountLabel(a.loginMethod, a.serverUrl, a.oauthProvider).toLowerCase().includes(q) ||
         (a.serverUrl || '').toLowerCase().includes(q)
     })
   }, [accounts, search, filterType, t])
@@ -167,6 +173,20 @@ export default function Accounts() {
   const yggResolvedRef = useRef<YggResolvedInfo | null>(null)
   const yggResolveSeq = useRef(0)
   const yggInFlightRef = useRef<{ target: string; promise: Promise<YggResolvedInfo> } | null>(null)
+
+  // --- LittleSkin OAuth（设备代码流，issue #145） ---
+  // 仅 LittleSkin 支持 OAuth；其它第三方验证服务器仍走密码登录。
+  const [yggLoginMode, setYggLoginMode] = useState<'oauth' | 'password'>('oauth')
+  const [lsOauthData, setLsOauthData] = useState<accountApi.LittleSkinDeviceCodeResponse | null>(null)
+  const [oauthStep, setOauthStep] = useState<MicrosoftStep>('idle')
+  const [oauthMsg, setOauthMsg] = useState('')
+  const [oauthRefreshToken, setOauthRefreshToken] = useState<string | undefined>(undefined)
+  const [oauthAuthToken, setOauthAuthToken] = useState('')
+  const oauthPollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  /** 当前角色列表来源：决定确认时走 OAuth 还是密码端点。 */
+  const [yggProfilesSource, setYggProfilesSource] = useState<'password' | 'oauth'>('password')
+
+  const oauthAvailable = useMemo(() => accountApi.isLittleSkinServer(yggServer), [yggServer])
 
   const [tyServerId, setTyServerId] = useState('')
   const [tyEmail, setTyEmail] = useState('')
@@ -219,6 +239,7 @@ export default function Accounts() {
   useEffect(() => {
     return () => {
       if (pollTimer.current) clearInterval(pollTimer.current)
+      if (oauthPollTimer.current) clearInterval(oauthPollTimer.current)
     }
   }, [])
 
@@ -249,6 +270,13 @@ export default function Accounts() {
     setTyServerId('')
     setTyEmail('')
     setTyPwd('')
+    // Yggdrasil 分支：回到表单并清空 OAuth 状态，避免上次的授权码/角色残留。
+    setYggStep('form')
+    setYggProfiles([])
+    setYggSelected(new Set())
+    setYggProfilesSource('password')
+    setYggLoginMode('oauth')
+    resetOauth()
     if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null }
   }
 
@@ -330,7 +358,7 @@ export default function Accounts() {
     try {
       await accountApi.saveAccount(acc)
       await refresh()
-      setAddOpen(false)
+      closeAddDialog()
       setOfflineName('')
       setOfflineUuid('')
     } catch (e: unknown) {
@@ -447,7 +475,126 @@ export default function Accounts() {
       setYggAuthToken(result.accessToken ?? '')
       setYggClientToken(result.clientToken ?? '')
       setYggSelected(new Set(result.profiles.length > 0 ? [result.profiles[0].id] : []))
+      setYggProfilesSource('password')
       setYggStep('profiles')
+    } catch (e: unknown) {
+      await msgError(fmtErr(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // --- LittleSkin OAuth（issue #145）：与微软设备码流程同构 ---
+
+  /** 停止 OAuth 轮询（幂等）。 */
+  function stopOauthPolling() {
+    if (oauthPollTimer.current) { clearInterval(oauthPollTimer.current); oauthPollTimer.current = null }
+  }
+
+  /** 重置 OAuth 分支到初始态。 */
+  function resetOauth() {
+    stopOauthPolling()
+    setLsOauthData(null)
+    setOauthStep('idle')
+    setOauthMsg('')
+    setOauthRefreshToken(undefined)
+    setOauthAuthToken('')
+  }
+
+  /** 关闭添加账户对话框并清理两条 Yggdrasil 分支的临时状态。 */
+  function closeAddDialog() {
+    stopOauthPolling()
+    setAddOpen(false)
+    setYggStep('form')
+    setYggProfiles([])
+    setYggSelected(new Set())
+    setYggProfilesSource('password')
+    resetOauth()
+  }
+
+  /** 把 OAuth 轮询得到的角色列表接入既有「选择角色」步骤。 */
+  function applyOauthProfiles(profiles: YggdrasilProfileInfo[]) {
+    setYggProfiles(profiles)
+    setYggSelected(new Set(profiles.length > 0 ? [profiles[0].id] : []))
+    setYggProfilesSource('oauth')
+    setYggStep('profiles')
+  }
+
+  async function handleOauthStart() {
+    resetOauth()
+    setOauthStep('fetching-oauth')
+    setOauthMsg(t('accounts.ygg.oauthGettingCode'))
+    try {
+      const data = await accountApi.littleskinDeviceCode()
+      setLsOauthData(data)
+      setOauthStep('waiting-auth')
+      setOauthMsg(t('accounts.ygg.oauthCodeCopied', { code: data.userCode }))
+
+      try { await navigator.clipboard.writeText(data.userCode) } catch { /* clipboard not available */ }
+      // verificationUriComplete 自动带入授权码，用户无需手输。
+      const target = data.verificationUriComplete || data.verificationUri
+      try { await openUrl(target) } catch { window.open(target, '_blank') }
+
+      const intervalMs = Math.max((data.interval || 5) * 1000, 3000)
+      const deadline = Date.now() + (data.expiresIn || 300) * 1000
+      oauthPollTimer.current = setInterval(async () => {
+        if (Date.now() > deadline) {
+          stopOauthPolling()
+          setOauthStep('error')
+          setOauthMsg(t('accounts.ygg.oauthTimeout'))
+          return
+        }
+        try {
+          const result = await accountApi.littleskinPoll(data.deviceCode)
+          if (result.isPending) return
+          stopOauthPolling()
+          if (!result.success) {
+            setOauthStep('error')
+            setOauthMsg(fmtOAuthError(result.errorMessage ?? 'unknown'))
+            return
+          }
+          if (result.accessToken) {
+            setOauthStep('fetching-info')
+            setOauthMsg(t('accounts.ygg.oauthGettingProfiles'))
+            setOauthAuthToken(result.accessToken)
+            setOauthRefreshToken(result.refreshToken)
+            if (!result.profiles?.length) {
+              setOauthStep('error')
+              setOauthMsg(t('accounts.microsoft.noRole'))
+              return
+            }
+            applyOauthProfiles(result.profiles)
+            setOauthStep('done')
+            setOauthMsg(t('accounts.ygg.oauthAuthorized'))
+          }
+        } catch (e: unknown) {
+          // 白名单未通过等确定性错误应直接中断，而不是空转到超时。
+          stopOauthPolling()
+          setOauthStep('error')
+          setOauthMsg(fmtErr(e))
+        }
+      }, intervalMs)
+    } catch (e: unknown) {
+      setOauthStep('error')
+      setOauthMsg(fmtErr(e))
+    }
+  }
+
+  /** 确认 OAuth 角色选择：换取 MC 令牌并落库。 */
+  async function handleOauthConfirm() {
+    if (yggSelected.size === 0 || !oauthAuthToken) return
+    setLoading(true)
+    try {
+      const selected = yggProfiles.filter((p) => yggSelected.has(p.id))
+      await accountApi.littleskinSelectProfiles(
+        oauthAuthToken,
+        oauthRefreshToken,
+        yggServer.trim(),
+        selected,
+      )
+      await refresh()
+      if (selected.length > 0) navigate(`/accounts/${selected[0].id}`)
+      closeAddDialog()
     } catch (e: unknown) {
       await msgError(fmtErr(e))
     } finally {
@@ -463,7 +610,7 @@ export default function Accounts() {
       await accountApi.yggdrasilSelectProfiles(yggAuthToken, yggClientToken, effectiveYggServer(), selected)
       await refresh()
       if (selected.length > 0) navigate(`/accounts/${selected[0].id}`)
-      setAddOpen(false)
+      closeAddDialog()
       setYggStep('form')
       setYggProfiles([])
       setYggSelected(new Set())
@@ -488,7 +635,7 @@ export default function Accounts() {
       const result = await accountApi.tongyiLogin(tyServerId, tyEmail, tyPwd)
       await refresh()
       if (result.uuid) navigate(`/accounts/${result.uuid}`)
-      setAddOpen(false)
+      closeAddDialog()
     } catch (e: unknown) {
       await msgError(fmtErr(e))
     } finally {
@@ -628,7 +775,7 @@ export default function Accounts() {
                   <div className="truncate text-sm font-medium">{acc.name}</div>
                   <div className="flex items-center gap-1.5">
                     <span className={cn('flex h-3.5 w-3.5 shrink-0 items-center justify-center', icon.color)}>{icon.icon}</span>
-                    <span className="truncate text-xs leading-none text-muted-foreground">{getAccountLabel(acc.loginMethod, acc.serverUrl)}</span>
+                    <span className="truncate text-xs leading-none text-muted-foreground">{getAccountLabel(acc.loginMethod, acc.serverUrl, acc.oauthProvider)}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
@@ -673,8 +820,8 @@ export default function Accounts() {
       </Button>
     </I18nBatchToolbar>
 
-    <Dialog open={addOpen} onClose={() => setAddOpen(false)} className="max-w-md" closeOnBackdrop={false}>
-        <DialogHeader onClose={() => setAddOpen(false)}>
+    <Dialog open={addOpen} onClose={closeAddDialog} className="max-w-md" closeOnBackdrop={false}>
+        <DialogHeader onClose={closeAddDialog}>
           <DialogTitle>{t('accounts.addTitle')}</DialogTitle>
         </DialogHeader>
         <DialogBody>
@@ -824,14 +971,6 @@ export default function Accounts() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="ygg-email">{t('accounts.ygg.email')}</Label>
-                    <Input id="ygg-email" value={yggEmail} onChange={(e) => setYggEmail(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="ygg-pwd">{t('accounts.ygg.password')}</Label>
-                    <Input id="ygg-pwd" type="password" value={yggPwd} onChange={(e) => setYggPwd(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
                     <Label htmlFor="ygg-server">{t('accounts.ygg.customServerAddr')}</Label>
                     <Input
                       id="ygg-server"
@@ -852,10 +991,107 @@ export default function Accounts() {
                       </div>
                     )}
                   </div>
-                  <Button className="w-full" onClick={handleYggdrasilLogin} disabled={loading}>
-                    <Fingerprint className="h-4 w-4" />
-                    {loading ? t('accounts.ygg.loginLoading') : t('accounts.ygg.login')}
-                  </Button>
+
+                  {/* 登录方式切换：仅 LittleSkin 支持 OAuth，其它验证服务器仍走密码。 */}
+                  {oauthAvailable && (
+                    <div className="space-y-2">
+                      <Label>{t('accounts.ygg.loginMode')}</Label>
+                      <div className="flex gap-1 rounded-lg bg-muted p-1">
+                        {(['oauth', 'password'] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => { setYggLoginMode(mode); if (mode === 'password') resetOauth() }}
+                            className={cn(
+                              'flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                              yggLoginMode === mode ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                            )}
+                          >
+                            {mode === 'oauth' ? t('accounts.ygg.modeOauth') : t('accounts.ygg.modePassword')}
+                          </button>
+                        ))}
+                      </div>
+                      {yggLoginMode === 'oauth' && (
+                        <p className="text-xs text-muted-foreground">{t('accounts.ygg.oauthDesc')}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* OAuth 分支（设备代码流） */}
+                  {oauthAvailable && yggLoginMode === 'oauth' && (
+                    <div className="space-y-3">
+                      {oauthStep === 'idle' && (
+                        <Button className="w-full" onClick={handleOauthStart}>
+                          <LogIn className="h-4 w-4" />
+                          {t('accounts.ygg.oauthStart')}
+                        </Button>
+                      )}
+
+                      {oauthStep !== 'idle' && (
+                        <div className="space-y-3 rounded-lg border bg-background p-4">
+                          <div className="flex items-center gap-2 text-sm">
+                            <StatusDot step="fetching-oauth" active={oauthStep} />
+                            <span className={oauthStep === 'fetching-oauth' ? 'text-foreground' : 'text-muted-foreground'}>{t('accounts.ygg.oauthStepFetching')}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            <StatusDot step="waiting-auth" active={oauthStep} />
+                            <span className={oauthStep === 'waiting-auth' ? 'text-foreground' : 'text-muted-foreground'}>{t('accounts.ygg.oauthStepWaiting')}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            <StatusDot step="fetching-info" active={oauthStep} />
+                            <span className={oauthStep === 'fetching-info' ? 'text-foreground' : 'text-muted-foreground'}>{t('accounts.ygg.oauthStepProfiles')}</span>
+                          </div>
+
+                          {oauthStep === 'waiting-auth' && (
+                            <div className="mt-3 space-y-2 rounded-md bg-muted p-3">
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                <Copy className="h-3 w-3" />
+                                {t('accounts.microsoft.codeCopiedShort')}
+                              </div>
+                              <code className="block rounded bg-background px-3 py-2 text-center text-lg font-bold tracking-widest text-primary">
+                                {lsOauthData?.userCode}
+                              </code>
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                <ExternalLink className="h-3 w-3" />
+                                {t('accounts.microsoft.browserOpened')}
+                              </div>
+                            </div>
+                          )}
+
+                          {oauthStep === 'error' && (
+                            <p className="mt-2 text-sm text-red-400">{oauthMsg}</p>
+                          )}
+                          {oauthStep === 'done' && (
+                            <p className="mt-2 text-sm text-emerald-400">{oauthMsg}</p>
+                          )}
+
+                          {(oauthStep === 'error' || oauthStep === 'done') && (
+                            <Button variant="outline" size="sm" onClick={resetOauth}>
+                              {t('accounts.microsoft.relogin')}
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 密码分支（原有表单，仅在没有可用的 OAuth 时或用户主动切换时展示） */}
+                  {(!oauthAvailable || yggLoginMode === 'password') && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="ygg-email">{t('accounts.ygg.email')}</Label>
+                        <Input id="ygg-email" value={yggEmail} onChange={(e) => setYggEmail(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="ygg-pwd">{t('accounts.ygg.password')}</Label>
+                        <Input id="ygg-pwd" type="password" value={yggPwd} onChange={(e) => setYggPwd(e.target.value)} />
+                      </div>
+                      <Button className="w-full" onClick={handleYggdrasilLogin} disabled={loading}>
+                        <Fingerprint className="h-4 w-4" />
+                        {loading ? t('accounts.ygg.loginLoading') : t('accounts.ygg.login')}
+                      </Button>
+                    </>
+                  )}
                 </>
               )}
               {yggStep === 'profiles' && (
@@ -883,10 +1119,21 @@ export default function Accounts() {
                     ))}
                   </div>
                   <div className="flex gap-2">
-                    <Button variant="secondary" className="flex-1" onClick={() => { setYggStep('form'); setYggProfiles([]) }}>
+                    <Button
+                      variant="secondary"
+                      className="flex-1"
+                      onClick={() => {
+                        // 返回表单：清空角色选择并重置两条分支的状态，
+                        // 否则 OAuth 分支会残留「已完成」面板而非重新开始按钮。
+                        setYggStep('form')
+                        setYggProfiles([])
+                        setYggSelected(new Set())
+                        resetOauth()
+                      }}
+                    >
                       {t('accounts.ygg.back')}
                     </Button>
-                    <Button className="flex-1" onClick={handleYggdrasilConfirm} disabled={yggSelected.size === 0 || loading}>
+                    <Button className="flex-1" onClick={yggProfilesSource === 'oauth' ? handleOauthConfirm : handleYggdrasilConfirm} disabled={yggSelected.size === 0 || loading}>
                       <Check className="h-4 w-4" />
                       {loading ? t('accounts.ygg.saving') : t('accounts.ygg.confirmCount', { count: yggSelected.size })}
                     </Button>

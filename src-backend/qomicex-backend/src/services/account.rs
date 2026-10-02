@@ -40,6 +40,14 @@ pub struct StoredAccount {
     pub is_default: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_url: Option<String>,
+    /// OAuth 提供方（如 `"LittleSkin"`）。仅 OAuth 登录的账户有值，用于区分展示
+    /// 与判定续期走 OAuth 还是密码路径；密码登录的历史账户为 `None`（免迁移）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_provider: Option<String>,
+    /// OAuth 刷新令牌（`offline_access`），用于启动前自动续期。
+    /// ⚠️ LittleSkin 的刷新令牌**一次性且轮换**：刷新后旧值立即失效，必须串行化。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_refresh_token: Option<String>,
 }
 
 impl StoredAccount {
@@ -56,6 +64,7 @@ impl StoredAccount {
             has_token: !self.access_token.is_empty(),
             is_default: self.is_default,
             server_url: self.server_url.clone(),
+            oauth_provider: self.oauth_provider.clone(),
         }
     }
 }
@@ -75,6 +84,10 @@ pub struct AccountInfo {
     pub is_default: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_url: Option<String>,
+    /// OAuth 提供方（如 `"LittleSkin"`）；密码登录账户为 `None`。
+    /// 注意：**不**对外暴露 `oauth_refresh_token`（凭据不应离开后端）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_provider: Option<String>,
 }
 
 /// 内部状态：缓存 + 「账号曾丢失」标志（源字段 `_cache` / `_accountsWereLost`）。

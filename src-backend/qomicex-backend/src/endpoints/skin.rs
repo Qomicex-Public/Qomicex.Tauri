@@ -757,7 +757,8 @@ async fn mc_token(state: &SharedState, uuid: &str) -> ApiResult<String> {
             "not a Microsoft account",
         ));
     }
-    let account = crate::endpoints::instance::refresh_microsoft_token(
+    let account = crate::endpoints::instance::refresh_account_token(
+        &state.http_client,
         state.core.auth(),
         &state.account,
         Some(account),
