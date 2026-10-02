@@ -25,7 +25,7 @@ import PluginStoreTab from '../components/PluginStoreTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { fetchUpdatePlan, type UpdatePlan } from '../api/update.ts'
-import { isDevBuild, resolveChannel, trainLabelKey, trainOf, channelTrainOf } from '../lib/updateChannel.ts'
+import { isDevBuild, resolveChannel, trainLabelKey, trainOf, channelTrainOf, UPDATE_CHANNEL_KEY } from '../lib/updateChannel.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
 import { useUpdaterStore } from '../stores/updaterStore.ts'
@@ -230,7 +230,6 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [updateError, setUpdateError] = useState<string>()
   // 默认通道跟随已安装构建所属列车（beta 构建默认 beta），不再硬编码 stable。
   const [channel, setChannel] = useState(() => resolveChannel(APP_INFO.version) ?? 'stable')
-  const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [licenseCopied, setLicenseCopied] = useState(false)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [pendingRequired, setPendingRequired] = useState(false)
@@ -276,10 +275,28 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     }
   }, [licenseStatus?.valid, licenseStatus?.channel])
 
+  /**
+   * 切换发布通道并**立即**持久化。
+   *
+   * 原先对 localStorage 写入做了 500ms 防抖（channelTimerRef）。但
+   * `checkForUpdate` 经 `resolveChannel` → `storedChannel()` 读 localStorage 取通道，
+   * 防抖会让「刚切通道就点检查更新」读到**旧**通道（实测：选中稳定版后同一同步块内
+   * localStorage 仍是 beta，请求实际带 `channel=beta`）。后端 `guard_train_plan` 会把
+   * `plan.channel` 盖成该旧列车，且 `channelSwitch` 按「已安装列车」而非「当前选择」
+   * 计算 → 弹窗既不标注"切换通道"，用户点更新还完成了一次**无提示的跨列车安装**，
+   * 正是 ADR-085 要拦的场景（#147 评审）。
+   *
+   * 同步写入让 localStorage 恒定等于选择器显示值，成为"当前通道"的唯一来源；
+   * 一次 setItem 的成本可忽略（选择是离散的用户动作，非高频输入）。
+   * 写入失败（隐私模式/配额）只丢持久化，不影响本次会话内的 state。
+   */
   function setChannelAndSave(v: string) {
     setChannel(v)
-    if (channelTimerRef.current) clearTimeout(channelTimerRef.current)
-    channelTimerRef.current = setTimeout(() => localStorage.setItem('update-channel', v), 500)
+    try {
+      localStorage.setItem(UPDATE_CHANNEL_KEY, v)
+    } catch {
+      // 写不进去只意味着重启后不记忆，不能因此阻断本次切换。
+    }
   }
 
   /**
@@ -307,6 +324,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     setUpdateError(undefined)
     try {
       // 与 App.tsx 一致：显式选择 > 已安装构建所属列车。
+      // localStorage 由 setChannelAndSave 同步写入，因此这里读到的必然是最新选择。
       const channel = resolveChannel(APP_INFO.version)
       if (!channel) {
         setUpdateState('uptodate')

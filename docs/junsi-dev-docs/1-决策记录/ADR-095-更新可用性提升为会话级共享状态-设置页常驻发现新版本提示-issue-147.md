@@ -86,13 +86,28 @@ setAvailable: (plan: UpdatePlan | null) => void
 
 ### 6b. 提示必须与**当前所选通道**一致（PR #152 评审补充）
 
-**这是首版遗漏的真实缺陷**（由 CodeRabbit 指出，经反向对照证实）：
-
 `guard_train_plan`（后端 `update.rs`）保证 `hasUpdate=true` 时 `plan.channel` **恒等于该次检查所用通道**，而**切换选择器不会自动重新检查**。于是「发现 beta32 → 把选择器切到稳定版」时，首版仍会显示 `发现新版本 0.1.0-beta32.0`，点击还会打开 beta 的更新弹窗——用户既被提示了一个没订的通道，也**绕过了 ADR-085「永不跨列车自动更新」**。（附带的失真：`channelSwitch` 按「已安装构建」而非「当前选择」计算，弹窗标注也会不符。）
 
 修法：提示渲染前比对计划所属通道与当前选择，不一致则不显示（**过滤**而非清除——切回 beta 提示立即恢复，不影响 `available` 这个事实源）。
 
 比对必须经过 `channelTrainOf` 归一：选择器与 localStorage 沿用发布侧的 `stable`，而 `Train`（`plan.channel` / `trainOf` / 后端）一律用 `release`，不归一则比较恒不成立。
+
+### 6c. 「当前通道」只能有一个同步的事实源（PR #152 第二轮评审补充）
+
+**又一处真实缺陷**（由 code-review bot 指出，实测证实）：`setChannelAndSave` 对 localStorage 写入做了 500ms **防抖**，而 `checkForUpdate` 经 `resolveChannel` → `storedChannel()` **回读 localStorage** 取通道。于是「切通道后 500ms 内点检查更新」读到的仍是**旧**通道。
+
+实测证据（隔离 Vite + Playwright，同一同步块内点选并读取）：
+
+| 时刻 | `localStorage['update-channel']` | 请求实际带的 channel |
+|---|---|---|
+| 修复前 | 选中稳定版后仍为 `beta` | `beta` ← **跨列车口子** |
+| 修复后 | 立即为 `stable` | `stable` |
+
+后果比决策 6b 更重：后端 `guard_train_plan` 会把 `plan.channel` 盖成那个旧列车，且 `channelSwitch` 按「已安装列车」而非「当前选择」计算 → 弹窗**既不标注"切换通道"，用户点更新还完成一次无提示的跨列车安装**——正是 ADR-085 要拦的场景；而 6b 的提示过滤又会让这条计划的提示消失，UI 自相矛盾（有弹窗、无提示）。
+
+修法：**去掉 500ms 防抖，改为同步写入**。这样 localStorage 恒定等于选择器显示值，成为"当前通道"的唯一来源，`resolveChannel` 的既有语义（unknown 构建返回 `undefined` → 不发请求）完全不变。一次 `setItem` 成本可忽略——通道选择是离散的用户动作，不是高频输入，当初防抖针对的"rapid selection"并不存在。写入失败（隐私模式/配额）用 `try/catch` 吞掉，只丢持久化，不影响本次会话。
+
+（未采纳的替代方案：让 `checkForUpdate` 直接读选择器 state。这会改变 unknown 构建的既有行为——`resolveChannel` 对其返回 `undefined` 时**不发请求**，而直接用 state 会绕过这层判断。移除防抖是根因修复且语义零变化。）
 
 ### 7. `reset()` 不复位 `available`
 
@@ -144,7 +159,18 @@ setAvailable: (plan: UpdatePlan | null) => void
 
 同时回归第一轮全套：**10/10 通过**（含 B2/B4 核心诉求、C1 重开弹窗、E1 权威无更新清提示）。
 
-门禁复跑：`tsc --noEmit` 退出 0；`eslint` 仍仅 3 个存量 error（行号因新增代码位移至 `Settings.tsx:573/618` 与 `868`，均为未改动行）；`test-update-channel` 20 条断言全过。
+门禁复跑：`tsc --noEmit` 退出 0；`eslint` 仍仅 3 个存量 error（行号因新增代码位移至 `Settings.tsx:591/636` 与 `886`，均为未改动行）；`test-update-channel` 20 条断言全过。
+
+**第三轮（时序：切通道后立即检查，对应决策 6c）**：在同一同步块内「点选项 → 读 localStorage → 点检查更新」，排除 IPC 往返与后台检查干扰。
+
+| 断言 | 修复前 | 修复后 |
+|---|---|---|
+| 选中后 localStorage 立即为新通道 | **FAIL**（仍为 `beta`） | **PASS**（`stable`） |
+| 该次请求带新通道（跨列车口子已封） | **FAIL**（带 `beta`） | **PASS**（带 `stable`） |
+| 请求未带旧通道 | FAIL | PASS |
+| 合计 | 1/4 | **4/4** |
+
+三轮合计 **20/20 通过**（R1 10/10、R2 6/6、T3 4/4）。
 
 > 保真度限制：Chromium ≠ WebView2（见上述文档「已知差异」）。本 PR 只改 React 状态与 JSX 布局，不涉及文件拖放/合成层等引擎差异敏感的路径；但按仓库约定，UI 变更仍应在真实 Tauri/WebView2 里复核一次。
 
@@ -160,3 +186,4 @@ setAvailable: (plan: UpdatePlan | null) => void
 |---|---|---|
 | 2026-10-02 | v1.0 | 初版：根因（`'available'` 无渲染出口 + 事实无共享载体）、7 项决策、5 个备选方案、门禁与行为验证（含反向对照） |
 | 2026-10-02 | v1.1 | PR #152 评审补充决策 6b：提示须按当前所选通道过滤（含 `channelTrainOf` 归一），并补第二轮切换通道场景的行为验证与反向对照 |
+| 2026-10-02 | v1.2 | PR #152 第二轮评审补充决策 6c：移除通道选择器的 500ms 防抖（「当前通道」须只有一个同步事实源），并补第三轮时序实测与前后对照 |
