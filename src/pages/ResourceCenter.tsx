@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { ChevronDown, Check, Download, ExternalLink, Folder, FolderPlus, Heart, Layers, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
+import { ChevronDown, Download, Folder, FolderPlus, Heart, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
@@ -68,7 +68,14 @@ function cacheKey(category: string, keyword: string, sort: string, source: strin
   return `${source}|${category}|${keyword}|${sort}|${gameVersion}|${loader}|${tags.join(',')}`
 }
 
+/** 聚合分类：跨资源类型查询（后端逐类型并发再归并）。 */
+const AGGREGATE_CATEGORY = 'aggregate'
+
+/** 顶部筛选区折叠状态的持久化键（默认收起）。 */
+const FILTERS_COLLAPSED_KEY = 'qomicex-resource-filter-collapsed'
+
 const CATEGORIES = [
+  { key: AGGREGATE_CATEGORY },
   { key: 'mod' },
   { key: 'modpack' },
   { key: 'shader' },
@@ -96,6 +103,10 @@ const LOADERS = [
 
 const SORT_OPTIONS: Record<string, { key: string }[]> = {
   all: [
+    { key: 'downloads' },
+  ],
+  // 聚合分类：后端合并后统一按下载量排序，因此只提供这一种排序。
+  aggregate: [
     { key: 'downloads' },
   ],
   modrinth: [
@@ -181,6 +192,8 @@ function getSourceLabel(source: string): string {
 // - curseforge：仅 mod/modpack 有 classId 分类
 // - 其余（modrinth / all 聚合）：mod/modpack/shader/resourcepack/datapack 均支持
 function tagsSupported(source: string, category: string): boolean {
+  // 聚合分类同时包含多套类型，各自类别体系不同，无法用一套标签筛选。
+  if (category === AGGREGATE_CATEGORY) return false
   if (category === 'save') return false
   if (source === 'ftb') return false
   if (source === 'curseforge') return category === 'mod' || category === 'modpack'
@@ -206,6 +219,27 @@ function buildDetailUrl(item: ResourceItem, category: string, keyword: string, s
   if (tags && tags.length > 0) params.set('tags', tags.join(','))
   if (instanceId) params.set('instanceId', instanceId)
   return `/resource-center/${encodeURIComponent(item.id)}?${params.toString()}`
+}
+
+/**
+ * 条目的真实资源类型：优先用后端返回的 `item.category`（聚合分类下每项不同），
+ * 缺失时（旧接口 / 旧快照）回退到页面筛选值 `fallback`。
+ *
+ * 详情页的版本解析、安装目录、收藏唯一键都依赖真实类型，聚合分类下若沿用
+ * 页面值 `aggregate` 会全部走错分支，因此所有卡片动作都必须过这一层。
+ */
+function realCategory(item: ResourceItem, fallback: string): string {
+  return item.category || fallback
+}
+
+/**
+ * 需要查中文名的条目：普通分类下仅 mod 有 mcmod 词库；聚合分类下取真实类型为
+ * mod 的那些（其余类型无词库，查了只会白发请求）。
+ */
+function cnEligibleItems(items: ResourceItem[], category: string): ResourceItem[] {
+  if (category === 'mod') return items
+  if (category === AGGREGATE_CATEGORY) return items.filter((i) => realCategory(i, category) === 'mod')
+  return []
 }
 
 /**
@@ -251,6 +285,8 @@ function ResourceCard({
   onEdit?: () => void
 }) {
   const { t, lang } = useI18n()
+  // 卡片动作一律用条目真实类型（聚合分类下每项不同），见 realCategory 注释。
+  const cardCategory = realCategory(item, category)
   return (
     <Card className="group overflow-hidden border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5">
       <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start">
@@ -312,32 +348,25 @@ function ResourceCard({
           </div>
         </div>
         <div className="flex flex-row gap-2 sm:min-w-[148px] sm:flex-col sm:items-stretch sm:self-stretch">
-          <Button className="flex-1 sm:w-full" onClick={() => onInstall(item)}>
-            <Download className="h-3 w-3" />
-            {t('resource.install')}
-          </Button>
           <Button asChild variant="outline" className="flex-1 sm:w-full">
-            <Link to={buildDetailUrl(item, category, keyword, sort, gameVersion, loader, instanceId, tags) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>{t('resource.viewDetail')}</Link>
+            <Link to={buildDetailUrl(item, cardCategory, keyword, sort, gameVersion, loader, instanceId, tags) + '&expandBody=1'} state={{ iconUrl: item.iconUrl }}>{t('resource.viewDetail')}</Link>
           </Button>
-          {/* 底行：原站 / 编辑 / 收藏 —— 三个等宽图标按钮并排，样式统一（都用 outline +
-              Tooltip）。不再各占一整行，避免动作列被拉高。 */}
-          <div className="flex flex-row gap-2 sm:w-full">
-            {item.projectUrl && (
-              <div className="flex-1">
-                <Tooltip content={t('resource.originalSite')}>
-                  <Button asChild variant="outline" className="w-full px-2">
-                    <a
-                      href={item.projectUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label={t('resource.originalSite')}
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </Button>
-                </Tooltip>
-              </div>
-            )}
+          {/* 动作行：安装 / 编辑收藏 / 收藏 —— 三图标等宽并排，**默认隐藏、hover 卡片时
+              从右侧滑入**，避免每张卡片常驻三枚按钮抢视觉焦点。
+              键盘可达：容器用 focus-within、按钮用 focus-visible 各自兜底，Tab 到任一
+              按钮时整行显形（不依赖鼠标 hover，否则键盘用户会点到「看不见的按钮」）。 */}
+          <div className="flex flex-row gap-2 transition-all duration-200 sm:w-full sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100">
+            <div className="flex-1">
+              <Tooltip content={t('resource.install')}>
+                <Button
+                  className="w-full px-2 focus-visible:translate-x-0 focus-visible:opacity-100"
+                  aria-label={t('resource.install')}
+                  onClick={() => onInstall(item)}
+                >
+                  <Download className="h-3 w-3" />
+                </Button>
+              </Tooltip>
+            </div>
             {onEdit && (
               <div className="flex-1">
                 <Tooltip content={t('resource.favorites.edit.open')}>
@@ -458,10 +487,18 @@ export default function ResourceCenter() {
   const [editFavorite, setEditFavorite] = useState<ResourceFavorite | null>(null)
   /** 收藏夹下拉是否展开（Popover 受控，选完/新建完要收起）。 */
   const [favFolderMenuOpen, setFavFolderMenuOpen] = useState(false)
-  /** 模式下拉（♥ 收藏 / ◇ 资源）是否展开。 */
-  const [modeMenuOpen, setModeMenuOpen] = useState(false)
   /** 收藏视图的本地搜索（标题 / 作者 / 标签，纯前端过滤，不发请求）。 */
   const [favQuery, setFavQuery] = useState('')
+  /** 顶部筛选区（来源 / 分类 / 排序 / 版本 / 加载器 / 标签）是否收起。默认收起，只留最顶搜索行。 */
+  const [filtersCollapsed, setFiltersCollapsed] = useState<boolean>(() => {
+    if (typeof localStorage === 'undefined') return true
+    // 只认显式写入的 'false'（展开）；无值 / 脏值一律按默认收起处理。
+    return localStorage.getItem(FILTERS_COLLAPSED_KEY) !== 'false'
+  })
+
+  useEffect(() => {
+    try { localStorage.setItem(FILTERS_COLLAPSED_KEY, String(filtersCollapsed)) } catch { /* 隐私模式禁用 localStorage，仅不持久化 */ }
+  }, [filtersCollapsed])
 
   useEffect(() => { void loadFavorites() }, [loadFavorites])
   // 收藏夹列表只在收藏视图需要（搜索视图不产生额外请求）。
@@ -521,7 +558,8 @@ export default function ResourceCenter() {
       setPage(pageNum)
       setLoading(false)
       setInitialLoading(false)
-      if (category === 'mod') loadCnNames(cached.items).then(setCnNames)
+      const cnItems = cnEligibleItems(cached.items, category)
+      if (cnItems.length > 0) loadCnNames(cnItems).then(setCnNames)
       else setCnNames({})
       return
     }
@@ -544,7 +582,8 @@ export default function ResourceCenter() {
       setItems((prev) => append ? [...prev, ...pageItems] : pageItems)
       setTotal(res.total)
       setPage(pageNum)
-      if (category === 'mod') loadCnNames(pageItems).then(setCnNames)
+      const cnItems = cnEligibleItems(pageItems, category)
+      if (cnItems.length > 0) loadCnNames(cnItems).then(setCnNames)
       else setCnNames({})
     } catch (e) {
       const msg = e instanceof Error ? e.message : t('resource.searchFailed')
@@ -585,7 +624,9 @@ export default function ResourceCenter() {
   // 收藏项自带资源快照，因此可直接复用 ResourceCard 渲染与安装。
   const favoriteMatchesScope = useCallback(
     (f: ResourceFavorite) =>
-      (source === 'all' || f.source === source) && f.category === category,
+      (source === 'all' || f.source === source) &&
+      // 「聚合」分类含所有类型，故匹配任意类型的收藏。
+      (category === AGGREGATE_CATEGORY || f.category === category),
     [source, category],
   )
   /** 任一收藏夹（含未分组）在「当前来源/分类」下的条数。 */
@@ -653,9 +694,11 @@ export default function ResourceCenter() {
 
   // 收藏视图同样补中文名（与搜索一致：仅 mod；走 mcmod 批量查询，不涉及资源搜索）。
   useEffect(() => {
-    if (view !== 'favorites' || category !== 'mod' || favoriteItems.length === 0) return
+    if (view !== 'favorites' || favoriteItems.length === 0) return
+    const cnItems = cnEligibleItems(favoriteItems, category)
+    if (cnItems.length === 0) return
     let cancelled = false
-    loadCnNames(favoriteItems)
+    loadCnNames(cnItems)
       .then((names) => { if (!cancelled) setCnNames((prev) => ({ ...prev, ...names })) })
       .catch(() => { /* 中文名是增强项，失败静默 */ })
     return () => { cancelled = true }
@@ -663,13 +706,35 @@ export default function ResourceCenter() {
 
   const handleSearch = () => setKeyword(searchInput.trim())
 
+  /**
+   * 搜索按钮双职责（#132 UX）：
+   * - 收藏模式 → 切回搜索模式（不触发检索，避免用户只是想「回到资源库」却白等一次请求）。
+   * - 搜索模式 → 执行检索。
+   */
+  const handleSearchButton = () => {
+    if (view === 'favorites') {
+      setView('search')
+      return
+    }
+    handleSearch()
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') handleSearch()
+    if (e.key === 'Enter') {
+      // 收藏模式的回车同样是本地过滤（favQuery 已即时生效），无需切模式。
+      if (view === 'search') handleSearch()
+    }
   }
 
   const handleCategoryChange = (nextCategory: string) => {
     if (source === 'ftb' && nextCategory !== 'modpack') return
+    // 聚合分类跨多套类型，任何一套的类别标签都不适用；排序也只有下载量可比。
     if (nextCategory !== 'mod') setTags([])
+    if (nextCategory === AGGREGATE_CATEGORY) {
+      setSort('downloads')
+      setCategory(nextCategory)
+      return
+    }
     if (nextCategory === 'save') {
       if (source !== 'curseforge' && source !== 'all') setSource('curseforge')
       setSort('downloads')
@@ -693,6 +758,10 @@ export default function ResourceCenter() {
       setSort('downloads')
       return
     }
+    if (category === AGGREGATE_CATEGORY) {
+      setSort('downloads')
+      return
+    }
     if (category === 'save' && nextSource !== 'curseforge') setCategory('mod')
     setSort(nextSource === 'curseforge' ? 'downloads' : 'relevance')
   }
@@ -702,7 +771,8 @@ export default function ResourceCenter() {
   }
 
   const handleInstall = (item: ResourceItem) => {
-    if (category === 'modpack') {
+    // 聚合分类下每项类型不同，必须按真实类型分流（modpack 走整合包安装）。
+    if (realCategory(item, category) === 'modpack') {
       setModpackInstallItem(item)
     } else {
       setInstallDialogItem(item)
@@ -711,11 +781,12 @@ export default function ResourceCenter() {
 
   /** 收藏/取消收藏；失败时 store 已回滚，这里只负责提示。 */
   const handleToggleFavorite = async (item: ResourceItem) => {
-    const key = favoriteKey(item.source, item.id, category)
+    const realCat = realCategory(item, category)
+    const key = favoriteKey(item.source, item.id, realCat)
     if (favBusyKeys.has(key)) return
     setFavBusyKeys((prev) => new Set(prev).add(key))
     try {
-      const nowFavorite = await toggleFavorite(item, category)
+      const nowFavorite = await toggleFavorite(item, realCat)
       notify(t(nowFavorite ? 'resource.favorites.added' : 'resource.favorites.removed'), 'success')
     } catch (e) {
       notify(e instanceof Error ? e.message : t('resource.favorites.failed'), 'error')
@@ -795,14 +866,18 @@ export default function ResourceCenter() {
 
   /** 打开「编辑收藏」弹窗：需要条目本身（含 folderId/note/tags），故从 store 原始列表取。 */
   const handleEditFavorite = (item: ResourceItem) => {
-    const key = favoriteKey(item.source, item.id, category)
+    const realCat = realCategory(item, category)
+    const key = favoriteKey(item.source, item.id, realCat)
     setEditFavorite(favorites.find((f) => favoriteKey(f.source, f.id, f.category) === key) ?? null)
   }
 
   const clearVersion = () => setGameVersion('')
   const clearLoader = () => setLoader('')
 
-  const currentSortOptions = SORT_OPTIONS[source] ?? SORT_OPTIONS.modrinth
+  // 聚合分类只按下载量排序（后端合并后统一排序），与来源无关。
+  const currentSortOptions = category === AGGREGATE_CATEGORY
+    ? SORT_OPTIONS.aggregate
+    : (SORT_OPTIONS[source] ?? SORT_OPTIONS.modrinth)
   const allTags = useMemo(
     () => (categoryOptions ? categoryOptions.map((o) => o.slug) : staticTagsFor(source, category)),
     [categoryOptions, source, category],
@@ -839,60 +914,14 @@ export default function ResourceCenter() {
 
       <Card className="border-border/60 bg-muted/20 p-4">
         <div className="space-y-4">
-          {/* 顶部工具行（#132 P2）：整个资源中心只有一个「模式」切换，固定在最左、位置与组件都不变。
-              模式 = ♥ 收藏（浏览收藏）/ ◇ 资源（在资源库中搜索）。
-              收藏模式在其右侧多一个「收藏范围」下拉（全部 / 未分组 / 各收藏夹）。
-              搜索框两模式共用同一位置：收藏模式=本地即时过滤（标题/作者/标签，不发请求）；
-              资源模式=回车或点「搜索」按钮向后端检索。 */}
+          {/* 顶部工具行（#132 UX 批次）：不再有独立的「模式」下拉，改为两个并列 Toggle：
+- 「搜索」按钮双职责：搜索模式=执行检索；收藏模式=切回搜索模式。
+  `aria-pressed` 反映当前是否处于搜索模式，让「高亮」有可访问语义。
+- 「收藏」按钮：切到收藏视图。
+搜索框两模式共用同一位置：收藏模式=本地即时过滤（标题/作者/标签，不发请求）；
+搜索模式=回车或点「搜索」按钮向后端检索。
+行尾的折叠按钮控制下方整块筛选区（来源/分类/排序/版本/加载器/标签）。 */}
           <div className="flex flex-wrap items-center gap-2">
-            <Popover
-              open={modeMenuOpen}
-              onOpenChange={setModeMenuOpen}
-              className="min-w-[150px]"
-              trigger={
-                <button
-                  type="button"
-                  aria-label={t('resource.mode.label')}
-                  aria-expanded={modeMenuOpen}
-                  className={cn(
-                    'flex h-10 w-full items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors',
-                    modeMenuOpen ? 'border-primary/40 text-foreground' : 'border-border/60 hover:bg-accent',
-                  )}
-                >
-                  {view === 'favorites'
-                    ? <Heart className="h-4 w-4 shrink-0 text-primary" />
-                    : <Layers className="h-4 w-4 shrink-0 text-primary" />}
-                  <span className="min-w-0 flex-1 truncate text-left">
-                    {view === 'favorites' ? t('resource.favorites.viewLabel') : t('resource.mode.browse')}
-                  </span>
-                  <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', modeMenuOpen && 'rotate-180')} />
-                </button>
-              }
-            >
-              {([
-                { id: 'favorites' as const, icon: Heart, label: t('resource.favorites.viewLabel') },
-                { id: 'search' as const, icon: Layers, label: t('resource.mode.browse') },
-              ]).map(({ id, icon: Icon, label }) => {
-                const active = view === id
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => { setView(id); setModeMenuOpen(false) }}
-                    aria-pressed={active}
-                    className={cn(
-                      'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors',
-                      active ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="flex-1 text-left">{label}</span>
-                    {active && <Check className="h-3.5 w-3.5 shrink-0" />}
-                  </button>
-                )
-              })}
-            </Popover>
-
             {view === 'favorites' && (
               <Popover
                 open={favFolderMenuOpen}
@@ -984,8 +1013,7 @@ export default function ResourceCenter() {
               </Popover>
             )}
 
-            {/* 搜索框：两模式共用同一位置。收藏模式本地过滤（即时，故不配搜索按钮）；
-                资源模式回车或点右侧「搜索」按钮向后端检索。 */}
+            {/* 搜索框：两模式共用同一位置。收藏模式本地过滤；搜索模式回车或点「搜索」检索。 */}
             <div className="relative min-w-[200px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               {view === 'favorites' ? (
@@ -1006,15 +1034,51 @@ export default function ResourceCenter() {
               )}
             </div>
 
-            {/* 搜索按钮只在资源模式出现：收藏模式是即时本地过滤，放个按钮会是「点了没用」的控件 */}
-            {view === 'search' && (
-              <Button onClick={handleSearch} className="h-10 shrink-0 rounded-lg">
+            {/* 「搜索」Toggle 双职责：搜索模式=执行检索；收藏模式=切回搜索模式。
+                aria-pressed 表达「当前处于搜索模式」，高亮与语义一致。 */}
+            <Tooltip content={t('resource.search')}>
+              <Button
+                variant={view === 'search' ? 'default' : 'outline'}
+                aria-label={t('resource.search')}
+                aria-pressed={view === 'search'}
+                onClick={handleSearchButton}
+                className="h-10 shrink-0 rounded-lg px-3"
+              >
                 <Search className="h-3.5 w-3.5" />
-                {t('resource.search')}
               </Button>
-            )}
+            </Tooltip>
+
+            {/* 「收藏」Toggle：与「搜索」并列，二者互斥高亮。 */}
+            <Tooltip content={t('resource.favorites.viewLabel')}>
+              <Button
+                variant={view === 'favorites' ? 'default' : 'outline'}
+                aria-label={t('resource.favorites.viewLabel')}
+                aria-pressed={view === 'favorites'}
+                onClick={() => setView('favorites')}
+                className="h-10 shrink-0 rounded-lg px-3"
+              >
+                <Heart className={cn('h-3.5 w-3.5', view === 'favorites' && 'fill-current')} />
+              </Button>
+            </Tooltip>
+
+            {/* 筛选区折叠开关：默认收起，状态持久化到 localStorage。 */}
+            <Tooltip content={t(filtersCollapsed ? 'resource.expandFilters' : 'resource.collapseFilters')}>
+              <Button
+                variant="outline"
+                aria-label={t(filtersCollapsed ? 'resource.expandFilters' : 'resource.collapseFilters')}
+                aria-expanded={!filtersCollapsed}
+                onClick={() => setFiltersCollapsed((v) => !v)}
+                className="h-10 shrink-0 rounded-lg px-3"
+              >
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', filtersCollapsed && 'rotate-180')} />
+              </Button>
+            </Tooltip>
           </div>
 
+          {/* 可折叠筛选区：默认收起，只留最顶的搜索行。收起时完全不渲染（而非 CSS
+              隐藏），这样隐藏的控件不会被 Tab 聚焦到。 */}
+          {!filtersCollapsed && (
+            <>
           <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
             <div className="space-y-2">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.sourceLabel')}</p>
@@ -1123,6 +1187,8 @@ export default function ResourceCenter() {
           </div>
             </>
           )}
+            </>
+          )}
         </div>
       </Card>
 
@@ -1227,7 +1293,9 @@ export default function ResourceCenter() {
         <>
           <div ref={listRef} className="flex flex-col gap-3">
             {shownItems.map((item) => {
-              const itemKey = favoriteKey(item.source, item.id, category)
+              // 卡片动作/收藏态一律用条目真实类型（聚合分类下每项不同）。
+              const itemCategory = realCategory(item, category)
+              const itemKey = favoriteKey(item.source, item.id, itemCategory)
               // 收藏视图下取出该条目的 P2 元数据（夹子名 / 备注 / 标签）与编辑入口。
               const fav = view === 'favorites'
                 ? favorites.find((f) => favoriteKey(f.source, f.id, f.category) === itemKey)
@@ -1283,7 +1351,7 @@ export default function ResourceCenter() {
           open={true}
           onClose={() => setEditFavorite(null)}
           favorite={editFavorite}
-          category={category}
+          category={editFavorite.category || category}
           onSaved={() => notify(t('resource.favorites.edit.saved'), 'success')}
         />
       )}
@@ -1296,7 +1364,7 @@ export default function ResourceCenter() {
           resourceTitle={installDialogItem.title}
           resourceIcon={installDialogItem.iconUrl}
           source={installDialogItem.source}
-          category={category}
+          category={realCategory(installDialogItem, category)}
           instanceId={instanceId}
           resourceCnName={cnNames[installDialogItem.title] ?? null}
         />
