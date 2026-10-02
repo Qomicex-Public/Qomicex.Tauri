@@ -150,8 +150,8 @@ pub fn save_manifest(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("创建清单目录失败 {}: {e}", parent.display()))?;
     }
-    let json = serde_json::to_string_pretty(manifest)
-        .map_err(|e| format!("序列化整合包清单失败: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(manifest).map_err(|e| format!("序列化整合包清单失败: {e}"))?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| format!("写入清单临时文件失败: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| {
@@ -241,9 +241,115 @@ pub fn collect_hosted_files(
             continue;
         }
         match sha1_file_hex(&abs) {
-            Ok(sha1) => out.push(HostedFile { path: rel, sha1, kind }),
+            Ok(sha1) => out.push(HostedFile {
+                path: rel,
+                sha1,
+                kind,
+            }),
             Err(e) => {
                 tracing::warn!(path = %abs.display(), error = %e, "整合包清单：文件哈希失败，已跳过");
+            }
+        }
+    }
+
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+/// 安装完成后的清单构建：扫描实例目录得到「包装出来的文件」。
+///
+/// ## 为什么以磁盘扫描为准，而不是以「下载计划 + overrides 条目」为准
+///
+/// 安装管线的游戏分支 / 内容下载分支 / overrides 解压分支是**并发**的，同名文件
+/// 可能互相覆盖，且各源（MR / CF / QML / FTB）的 overrides 前缀规则不同
+/// （`overrides/`、`client-overrides/`、CF manifest 的 `overrides` 字段）。
+/// 逐源复刻前缀逻辑既易漂移又会漏项。安装刚完成时**实例目录里的一切都是本次安装
+/// 产生的**（此时不存在用户后加的文件），因此直接扫描磁盘既准确又源无关。
+///
+/// `content_rels`：本次下载计划里的相对路径集合，用于把文件分类为
+/// [`HostedFileKind::Content`]；不在其中的即 overrides 释放出来的
+/// [`HostedFileKind::Override`]。
+///
+/// 排除项（`sweep` 与导出的 `EXCLUDED_DIRS` 语义一致）：
+/// - `.qomicex/`：本模块自己的清单/索引/暂存/备份，绝不能自吞；
+/// - `saves/`：issue #118 要求更新绝不触碰存档；
+/// - `libraries` / `assets` / `versions` / `logs` / `temp` / `crash-reports`：
+///   游戏本体资源与运行期产物，不是整合包内容（非隔离实例的实例根即 game_dir，
+///   这些目录就在同一层）；
+/// - 根目录下的版本 json / jar 与 `icon.png`：版本定义与图标，不属于包内容，
+///   更新时不得删除。
+pub fn sweep_hosted_files(
+    instance_dir: &Path,
+    version_dir_name: &str,
+    content_rels: &std::collections::HashSet<String>,
+) -> Vec<HostedFile> {
+    const SKIP_DIRS: &[&str] = &[
+        QOMICEX_DIR,
+        "saves",
+        "libraries",
+        "assets",
+        "versions",
+        "logs",
+        "temp",
+        "crash-reports",
+    ];
+
+    let version_json = format!("{}.json", version_dir_name.to_ascii_lowercase());
+    let version_jar = format!("{}.jar", version_dir_name.to_ascii_lowercase());
+
+    let mut out: Vec<HostedFile> = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![instance_dir.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let lower = name.to_ascii_lowercase();
+            let Ok(ft) = entry.file_type() else { continue };
+
+            if ft.is_dir() {
+                if SKIP_DIRS.iter().any(|d| lower == *d) {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+            if !ft.is_file() {
+                // 符号链接等一律忽略：清单只描述常规文件。
+                continue;
+            }
+            // 根目录下的版本定义与图标不属于包内容。
+            let is_root = path.parent() == Some(instance_dir);
+            if is_root && (lower == version_json || lower == version_jar || lower == "icon.png") {
+                continue;
+            }
+
+            let Ok(rel_path) = path.strip_prefix(instance_dir) else {
+                continue;
+            };
+            let rel = normalize_rel_path(&rel_path.to_string_lossy());
+            if rel.is_empty() || is_protected_path(&rel) {
+                continue;
+            }
+            match sha1_file_hex(&path) {
+                Ok(sha1) => {
+                    let kind = if content_rels.contains(&rel) {
+                        HostedFileKind::Content
+                    } else {
+                        HostedFileKind::Override
+                    };
+                    out.push(HostedFile {
+                        path: rel,
+                        sha1,
+                        kind,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "整合包清单：文件哈希失败，已跳过");
+                }
             }
         }
     }
@@ -255,6 +361,10 @@ pub fn collect_hosted_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 这些用例会改写进程级 `QOMICEX_HOME`，必须与其它同类用例串行
+    /// （仓库既有约定，见 `error_report::tests::ENV_LOCK`）。
+    use crate::services::error_report::tests::ENV_LOCK;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -291,7 +401,9 @@ mod tests {
     #[test]
     fn safe_rel_path_rejects_absolute_before_normalizing() {
         assert!(!is_safe_rel_path("/etc/passwd"));
-        assert!(!is_safe_rel_path("\\Windows\\system32\\drivers\\etc\\hosts"));
+        assert!(!is_safe_rel_path(
+            "\\Windows\\system32\\drivers\\etc\\hosts"
+        ));
         assert!(!is_safe_rel_path("//attacker/share"));
         // 同时确认归一化函数本身确实会剥掉前导斜杠（即它不是安全边界）
         assert_eq!(normalize_rel_path("/etc/passwd"), "etc/passwd");
@@ -303,7 +415,7 @@ mod tests {
         assert!(is_protected_path("saves/world/level.dat"));
         assert!(is_protected_path("Saves/World/level.dat")); // 大小写不敏感
         assert!(is_protected_path("saves\\world\\level.dat")); // 反斜杠同样识别
-        // 前缀相似但不属于 saves 的不能被误保护
+                                                               // 前缀相似但不属于 saves 的不能被误保护
         assert!(!is_protected_path("saves_backup/x.dat"));
         assert!(!is_protected_path("mods/saves.jar"));
         assert!(!is_protected_path("config/saves.toml"));
@@ -332,8 +444,11 @@ mod tests {
                 ("mods/a.jar".to_string(), HostedFileKind::Content),
                 ("mods/b.jar".to_string(), HostedFileKind::Content),
                 ("mods/missing.jar".to_string(), HostedFileKind::Content), // 不存在 → 跳过
-                ("saves/world/level.dat".to_string(), HostedFileKind::Override), // 存档 → 跳过
-                ("../escape.jar".to_string(), HostedFileKind::Content), // 逃逸 → 跳过
+                (
+                    "saves/world/level.dat".to_string(),
+                    HostedFileKind::Override,
+                ), // 存档 → 跳过
+                ("../escape.jar".to_string(), HostedFileKind::Content),    // 逃逸 → 跳过
                 ("config.toml".to_string(), HostedFileKind::Override),
             ],
         );
@@ -369,8 +484,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 安装后的磁盘扫描：只收录包内容，排除存档、游戏资源、版本定义与 `.qomicex/` 自身。
+    #[test]
+    fn sweep_hosted_files_excludes_non_content() {
+        let dir = temp_dir("sweep");
+        // 包内容
+        std::fs::create_dir_all(dir.join("mods")).unwrap();
+        std::fs::create_dir_all(dir.join("config")).unwrap();
+        std::fs::write(dir.join("mods/a.jar"), b"a").unwrap();
+        std::fs::write(dir.join("config/opt.toml"), b"c").unwrap();
+        // 必须排除：存档
+        std::fs::create_dir_all(dir.join("saves/world")).unwrap();
+        std::fs::write(dir.join("saves/world/level.dat"), b"w").unwrap();
+        // 必须排除：清单自身所在目录（否则清单会把自己写进去、无限膨胀）
+        std::fs::create_dir_all(dir.join(".qomicex/pack")).unwrap();
+        std::fs::write(dir.join(".qomicex/modpack-manifest.json"), b"{}").unwrap();
+        std::fs::write(dir.join(".qomicex/pack/manifest.json"), b"{}").unwrap();
+        // 必须排除：非隔离实例根同层的游戏资源/运行产物
+        for d in ["libraries", "assets", "versions", "logs", "temp", "crash-reports"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+            std::fs::write(dir.join(d).join("x.bin"), b"x").unwrap();
+        }
+        // 必须排除：根目录版本定义与图标
+        std::fs::write(dir.join("Pack.json"), b"{}").unwrap();
+        std::fs::write(dir.join("Pack.jar"), b"jar").unwrap();
+        std::fs::write(dir.join("icon.png"), b"png").unwrap();
+
+        let content: std::collections::HashSet<String> =
+            ["mods/a.jar".to_string()].into_iter().collect();
+        let files = sweep_hosted_files(&dir, "Pack", &content);
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+
+        assert_eq!(
+            paths,
+            vec!["config/opt.toml", "mods/a.jar"],
+            "只应收录包内容（存档/游戏资源/版本定义/.qomicex 均排除）: {paths:?}"
+        );
+        // 下载计划内的 → Content；其余（overrides 释放的）→ Override
+        let a = files.iter().find(|f| f.path == "mods/a.jar").unwrap();
+        assert_eq!(a.kind, HostedFileKind::Content);
+        let c = files.iter().find(|f| f.path == "config/opt.toml").unwrap();
+        assert_eq!(c.kind, HostedFileKind::Override);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn save_and_load_manifest_roundtrip() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let home = temp_dir("roundtrip");
         let old_home = std::env::var_os("QOMICEX_HOME");
         std::env::set_var("QOMICEX_HOME", &home);
@@ -417,6 +578,7 @@ mod tests {
 
     #[test]
     fn load_manifest_rejects_unknown_schema_version() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let home = temp_dir("schema");
         let old_home = std::env::var_os("QOMICEX_HOME");
         std::env::set_var("QOMICEX_HOME", &home);

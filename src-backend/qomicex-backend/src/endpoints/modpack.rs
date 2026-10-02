@@ -1195,6 +1195,78 @@ async fn cancel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// 安装成功后落清单所需的元数据（issue #118）。
+struct ModpackManifestMeta {
+    game_dir: String,
+    version_dir_name: String,
+    game_version: String,
+    loader: Option<String>,
+    loader_version: Option<String>,
+    source: String,
+    project_id: Option<String>,
+    version_id: Option<String>,
+    version_published_at: Option<String>,
+}
+
+/// 安装成功后生成并写入托管文件清单。
+///
+/// 只告警不失败：安装已完成，清单是**后续更新**的辅助基线，写不出来不该让成功的
+/// 安装报失败（那会引导用户重装一遍）。用户在下一次安装/更新时自然会重建。
+fn write_manifest_after_install(
+    meta: &ModpackManifestMeta,
+    version_isolation: bool,
+    content_rels: &[String],
+) {
+    let instance_dir = modpack_target_path(
+        &meta.game_dir,
+        &meta.version_dir_name,
+        version_isolation,
+        "",
+    );
+    let content: std::collections::HashSet<String> = content_rels
+        .iter()
+        .map(|r| crate::services::modpack_manifest::normalize_rel_path(r))
+        .collect();
+
+    let files = crate::services::modpack_manifest::sweep_hosted_files(
+        &instance_dir,
+        &meta.version_dir_name,
+        &content,
+    );
+
+    let manifest = crate::services::modpack_manifest::ModpackManifest {
+        schema_version: crate::services::modpack_manifest::MANIFEST_SCHEMA_VERSION,
+        game_version: meta.game_version.clone(),
+        loader: meta.loader.clone().filter(|s| !s.is_empty()),
+        loader_version: meta.loader_version.clone().filter(|s| !s.is_empty()),
+        origin: crate::services::modpack_manifest::ManifestOrigin {
+            source: Some(meta.source.clone()),
+            project_id: meta.project_id.clone(),
+            version_id: meta.version_id.clone(),
+            origin: Some("resource-center".to_string()),
+            version_published_at: meta.version_published_at.clone(),
+        },
+        files,
+    };
+
+    match crate::services::modpack_manifest::save_manifest(
+        &meta.game_dir,
+        &meta.version_dir_name,
+        &manifest,
+    ) {
+        Ok(()) => tracing::info!(
+            instance = %meta.version_dir_name,
+            files = manifest.files.len(),
+            "整合包托管文件清单已写入（原地更新基线就绪）"
+        ),
+        Err(e) => tracing::warn!(
+            instance = %meta.version_dir_name,
+            error = %e,
+            "写入整合包托管文件清单失败（安装已完成，该实例将不可原地更新）"
+        ),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Modpack service (private struct; port of Services/ModpackService.cs)
 // ---------------------------------------------------------------------------
@@ -1471,6 +1543,58 @@ impl ModpackServiceData {
         instance.modpack_version = req.modpack_version.clone();
         instance.modpack_author = req.modpack_author.clone();
         instance.modpack_summary = req.modpack_summary.clone();
+        // === 来源字段（issue #118 原地更新的资格依据）===
+        // 仅当**全部**条件满足时写入，任一不满足即不写 → 该实例判定为不可更新：
+        //   1. 前端显式标记 origin == "resource-center"（本地导入/拖入/MultiMC 不发）；
+        //   2. source 为 modrinth / curseforge（平台版本列表可查）；
+        //   3. 同时带 projectId 与 versionId（身份标识完整）；
+        //   4. 不带 fileId / localPath（排除本地包体导入路径）。
+        // 刻意用白名单式全条件判定而非「有 id 就写」：宁可少判可更新，
+        // 也不要为一个来源不明的实例提供原地更新（可能覆盖用户手工搭建的内容）。
+        let origin_marked = req
+            .origin
+            .as_deref()
+            .is_some_and(|o| o.eq_ignore_ascii_case("resource-center"));
+        let src_norm = req
+            .source
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let source_ok = matches!(src_norm.as_str(), "modrinth" | "curseforge");
+        let ids_ok = req
+            .project_id
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+            && req
+                .version_id
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty());
+        let no_local = req.file_id.is_none() && req.local_path.is_none();
+        // 版本隔离：非隔离实例会改到共享目录、波及其他实例且回滚范围无法界定，
+        // 故不标记为可更新（issue #118 决策）。
+        let isolation_ok = req.version_isolation;
+
+        let writable_origin = origin_marked && source_ok && ids_ok && no_local && isolation_ok;
+        if writable_origin {
+            instance.modpack_source = Some(src_norm.clone());
+            instance.modpack_project_id = req.project_id.clone();
+            instance.modpack_version_id = req.version_id.clone();
+            instance.modpack_origin = Some("resource-center".to_string());
+            instance.modpack_version_published_at = req
+                .version_published_at
+                .clone()
+                .filter(|s| !s.trim().is_empty());
+        } else if origin_marked {
+            // 标记了却落不进来源字段：静默降级会让「为什么不能更新」无从排查。
+            tracing::info!(
+                source = %src_norm,
+                has_project_id = req.project_id.is_some(),
+                has_version_id = req.version_id.is_some(),
+                has_local_input = !no_local,
+                version_isolation = isolation_ok,
+                "整合包安装：标记为资源中心来源但未写入更新元数据（该实例将不可原地更新）"
+            );
+        }
         // 同 MultiMC 导入：只缩小实例记录里的 icon_data，落盘的原图 icon.png 不受影响。
         instance.icon_data = req
             .icon_data
@@ -1506,6 +1630,25 @@ impl ModpackServiceData {
         let inst_svc = self.instance.clone();
         let inst_id_inner = instance_id.clone();
         let icon_data_inner = req.icon_data.clone();
+        // 清单写入所需的元数据（仅可更新实例才写；见下方判定）。
+        let manifest_meta = if writable_origin {
+            Some(ModpackManifestMeta {
+                game_dir: game_dir.clone(),
+                version_dir_name: version_dir_name.clone(),
+                game_version: game_version.clone(),
+                loader: loader_in.clone(),
+                loader_version: loader_version_in.clone(),
+                source: src_norm.clone(),
+                project_id: req.project_id.clone(),
+                version_id: req.version_id.clone(),
+                version_published_at: req
+                    .version_published_at
+                    .clone()
+                    .filter(|s| !s.trim().is_empty()),
+            })
+        } else {
+            None
+        };
         tracker.start_modpack_install(instance_id.clone(), move |handle| async move {
             let result = run_modpack_pipeline(
                 &handle,
@@ -1529,6 +1672,16 @@ impl ModpackServiceData {
                 optional_file_ids.as_deref(),
             )
             .await;
+            // 安装成功 → 落托管文件清单（issue #118 的更新基线）。
+            // 清单失败**只告警**：安装本身已经完成，不能因为一份辅助记录把成功的安装
+            // 报成失败（那会误导用户重装）。
+            let result = match (result, &manifest_meta) {
+                (Ok(content_rels), Some(meta)) => {
+                    write_manifest_after_install(meta, version_isolation, &content_rels);
+                    Ok(())
+                }
+                (other, _) => other.map(|_| ()),
+            };
             // 清理在线下载的包体临时文件（本地导入的文件不属于我们，不删）。
             if local_pack_path.is_none() {
                 let ext = if source == "modrinth" {
@@ -1682,6 +1835,11 @@ impl ModpackServiceData {
             optifine_version: None,
             file_id: None,
             local_path: local_pack_path,
+            // install-direct（拖入 / 一键安装 / 插件）不声明资源中心来源：
+            // 即便带 projectId+fileId，其入口未经资源中心的两个安装对话框确认，
+            // 按 issue #118「不为手动导入提供更新」的口径一律不标记可更新。
+            origin: None,
+            version_published_at: None,
         };
         self.install(install_request).await
     }
@@ -1851,7 +2009,7 @@ pub(crate) async fn run_modpack_pipeline(
     file_download_source: i32,
     icon_data: Option<String>,
     optional_file_ids: Option<&[i64]>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let src = source.to_ascii_lowercase();
     let mut zip_path: Option<PathBuf> = None;
     let mut parsed: Option<ParsedModpack> = None;
@@ -2046,10 +2204,12 @@ pub(crate) async fn run_modpack_pipeline(
     let branch_files = async move {
         h_g.mark_step("download-files", "active");
         h_g.set_stage("modpack-files");
-        let result: Result<(), String> = match src_g.as_str() {
+        let result: Result<Vec<String>, String> = match src_g.as_str() {
             "modrinth" => {
                 let p = parsed_g.as_ref().expect("modrinth 必有解析结果");
-                let files: Vec<(String, PathBuf, Vec<(String, String)>)> = p
+                // 计划落盘的相对路径（清单基线用）与下载目标一并构建：下载后
+                // `files` 被 download_batch 消费，相对路径必须提前留一份。
+                let planned: Vec<(String, PathBuf, Vec<(String, String)>, String)> = p
                     .files
                     .iter()
                     .filter_map(|f| {
@@ -2057,15 +2217,19 @@ pub(crate) async fn run_modpack_pipeline(
                         if url.is_empty() {
                             return None;
                         }
-                        let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &f.path);
+                        let rel = f.path.clone();
+                        let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
                         let (url, headers) = mirror_mod_url(url, cf_api_key, file_download_source);
-                        Some((url, dest, headers))
+                        Some((url, dest, headers, rel))
                     })
                     .collect();
+                let rels: Vec<String> = planned.iter().map(|(_, _, _, r)| r.clone()).collect();
+                let files: Vec<(String, PathBuf, Vec<(String, String)>)> =
+                    planned.into_iter().map(|(u, d, h, _)| (u, d, h)).collect();
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
                 }
-                Ok(())
+                Ok(rels)
             }
             "curseforge" => {
                 let p = parsed_g.as_ref().ok_or("整合包清单未解析（curseforge）")?;
@@ -2088,6 +2252,7 @@ pub(crate) async fn run_modpack_pipeline(
                     .map_err(|e| format!("批量获取 CurseForge 文件信息失败: {e}"))?;
 
                 let mut files = Vec::new();
+                let mut rels: Vec<String> = Vec::new();
                 let mut missing = 0usize;
                 for f in &p.files {
                     let Some((_, fid)) = f.path.split_once(':') else {
@@ -2112,15 +2277,12 @@ pub(crate) async fn run_modpack_pipeline(
                             .unwrap_or("mod.jar")
                             .to_string()
                     });
-                    let dest = modpack_target_path(
-                        &gd_g,
-                        &vdn_g,
-                        version_isolation,
-                        &format!("mods/{filename}"),
-                    );
+                    let rel = format!("mods/{filename}");
+                    let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
                     let (download_url, headers) =
                         mirror_mod_url(download_url.to_string(), cf_api_key, file_download_source);
                     files.push((download_url, dest, headers));
+                    rels.push(rel);
                 }
                 if missing > 0 {
                     tracing::warn!(
@@ -2131,7 +2293,7 @@ pub(crate) async fn run_modpack_pipeline(
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
                 }
-                Ok(())
+                Ok(rels)
             }
             "ftb" => {
                 // core FtbModpackInstaller：FTB API 文件清单 + CF 批量查询 mods 链接
@@ -2150,10 +2312,19 @@ pub(crate) async fn run_modpack_pipeline(
                         (url, PathBuf::from(&l.path), headers)
                     })
                     .collect();
+                // FTB 的 lib 路径是绝对路径，清单需要相对实例目录的形式：
+                // 相对 version 目录（隔离）/ 相对 game_dir（非隔离）都是相对实例根的。
+                let mut rels: Vec<String> = Vec::new();
+                for l in &libs {
+                    let abs = Path::new(&l.path);
+                    if let Some(rel) = relative_to_instance(abs, &gd_g, &vdn_g, version_isolation) {
+                        rels.push(rel);
+                    }
+                }
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
                 }
-                Ok(())
+                Ok(rels)
             }
             "qml" => {
                 // QML：files[] 混合来源——modrinth 直链 + curseforge 占位反查
@@ -2169,16 +2340,19 @@ pub(crate) async fn run_modpack_pipeline(
                 let cf = core_g.create_curseforge_source(cf_api_key);
                 // 先分拣：modrinth 直链直接入列；curseforge 占位收集 fileId 后一次批量解析
                 let mut files = Vec::new();
+                let mut rels: Vec<String> = Vec::new();
                 let mut placeholder_fids: Vec<i64> = Vec::new();
                 for f in &p.files {
                     if let Some(url) = f.download_url.as_deref() {
                         if url.is_empty() {
                             continue;
                         }
-                        let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &f.path);
+                        let rel = f.path.clone();
+                        let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
                         let (u, h) =
                             mirror_mod_url(url.to_string(), cf_api_key, file_download_source);
                         files.push((u, dest, h));
+                        rels.push(rel);
                     } else if let Some((_, fid)) = f.path.split_once(':') {
                         // curseforge 占位：path = "projectID:fileID"
                         if let Ok(fidn) = fid.parse::<i64>() {
@@ -2216,18 +2390,15 @@ pub(crate) async fn run_modpack_pipeline(
                                 .unwrap_or("mod.jar")
                                 .to_string()
                         });
-                        let dest = modpack_target_path(
-                            &gd_g,
-                            &vdn_g,
-                            version_isolation,
-                            &format!("mods/{filename}"),
-                        );
+                        let rel = format!("mods/{filename}");
+                        let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
                         let (download_url, headers) = mirror_mod_url(
                             download_url.to_string(),
                             cf_api_key,
                             file_download_source,
                         );
                         files.push((download_url, dest, headers));
+                        rels.push(rel);
                     }
                     if missing > 0 {
                         tracing::warn!(
@@ -2239,9 +2410,9 @@ pub(crate) async fn run_modpack_pipeline(
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
                 }
-                Ok(())
+                Ok(rels)
             }
-            _ => Ok(()),
+            _ => Ok(Vec::new()),
         };
         if result.is_ok() {
             h_g.mark_step("download-files", "done");
@@ -2303,7 +2474,7 @@ pub(crate) async fn run_modpack_pipeline(
     }
     ensure_not_cancelled(handle)?;
     res_e?;
-    res_g?;
+    let content_rels = res_g?;
     res_o?;
 
     handle.update(|f| {
@@ -2313,7 +2484,27 @@ pub(crate) async fn run_modpack_pipeline(
     });
     // 图标落盘 versions/{name}/icon.png（HMCL 约定，扫描兜底读取；CF/MR 与 MultiMC 导入一致）。
     write_pack_icon(game_dir, version_dir_name, icon_data.as_deref())?;
-    Ok(())
+    Ok(content_rels)
+}
+
+/// 把一个绝对路径折算成相对**实例根目录**的相对路径（清单基线用）。
+///
+/// 实例根 = 隔离时 `{gameDir}/versions/{name}`，否则 `{gameDir}`。
+/// 不在实例根内 → `None`（该文件不属于本实例内容，不入清单）。
+fn relative_to_instance(
+    abs: &Path,
+    game_dir: &str,
+    version_dir_name: &str,
+    version_isolation: bool,
+) -> Option<String> {
+    let instance_dir = modpack_target_path(game_dir, version_dir_name, version_isolation, "");
+    let rel = abs.strip_prefix(&instance_dir).ok()?;
+    let s = rel.to_string_lossy().replace('\\', "/");
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 /// 释放 QML `.qmodpack` 的 `overrides/**` 到目标目录（结构简单，不走 core 安装器）。
@@ -3033,6 +3224,15 @@ pub struct ModpackInstallRequest {
     /// install-direct 内部亦直传；供管道直接读本地包体，避免误走在线下载分支。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
+    /// 安装来源标记（issue #118）：**仅**资源中心的两个安装对话框发送
+    /// `"resource-center"`，后端据此写入实例的可更新来源字段。
+    /// 本地导入 / 拖入 / MultiMC / install-direct 一律不发送 → 这些实例不可更新。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// 所选平台版本的发布时间（RFC3339，issue #118）。
+    /// 当前版本将来若被平台删除，用它作为「更新判定」的排序回退。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_published_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
