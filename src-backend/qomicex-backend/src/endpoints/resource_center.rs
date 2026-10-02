@@ -2548,7 +2548,7 @@ async fn remove_resource_favorite(
 // Handlers: resource favorite folders（收藏夹，P2）
 //
 // 收藏夹实体单独存 resource_favorite_folders.json（P1 的扁平数组格式不变）；
-// 条目的 folderId / note / tags 仍由上面的 POST /resource-favorites（upsert）写入。
+// 条目的 folderIds / note / tags 仍由上面的 POST /resource-favorites（upsert）写入。
 // =====================================================================
 
 /// `POST` / `PUT /resource-favorite-folders` 的请求体。
@@ -2609,20 +2609,23 @@ async fn delete_favorite_folder(
             "收藏夹不存在",
         ));
     }
-    // 级联顺序：**先删夹内收藏（写 items）→ 再删夹子实体（写 folders）**。
-    // 第二步失败时最坏是「收藏已删、夹子空着」这种无害残留；反序会留下指向已删夹子的
+    // 级联顺序：**先解关联（写 items）→ 再删夹子实体（写 folders）**。
+    // 第二步失败时最坏是「收藏已解关联、夹子空着」这种无害残留；反序会留下指向已删夹子的
     // 悬空 folderId（详见 services/resource_favorite_folder.rs 模块注释）。
-    let removed_favorites = state
+    //
+    // P3 语义变更：一条收藏可归属多个夹子，级联删除会连带删掉本属于别的夹子的收藏，
+    // 因此这里只**解除关联**、收藏条目本身保留（无可归属夹子的自然落到「未分组」）。
+    let detached_favorites = state
         .resource_favorites
-        .remove_by_folder(&id)
-        .map_err(|e| ApiError::internal(format!("删除夹内收藏失败: {e}")))?;
+        .detach_from_folder(&id)
+        .map_err(|e| ApiError::internal(format!("解除夹内收藏关联失败: {e}")))?;
     state
         .resource_favorite_folders
         .delete(&id)
         .map_err(map_folder_error)?;
     Ok(Json(serde_json::json!({
         "removed": true,
-        "removedFavorites": removed_favorites,
+        "detachedFavorites": detached_favorites,
     })))
 }
 

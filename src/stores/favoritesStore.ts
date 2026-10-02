@@ -91,18 +91,24 @@ const favoriteMutationTails = new Map<string, Promise<void>>()
 /**
  * 收藏夹删除屏障（值为「最近一次删除的完成信号」）。
  *
- * **为什么需要**：删夹子是**级联删除夹内收藏**，但它不是某个收藏键的操作，走不到
- * `serializeByKey` 里。若只等在发起删除**那一刻**已入队的 mutation，那么删除期间
- * 新发起的 upsert（用户在卡片上点「编辑收藏」改备注/标签/换夹子）会与级联删除并发：
- * - 后端 `upsert` 不校验 `folderId` 是否存在（实测：传不存在的 folderId 原样落库）；
- * - 于是晚到的 upsert 在级联删除之后重建该条目，留下一条指向已删夹子的悬空收藏；
- * - 前端删除时已把它从本地列表移除，而晚到的 upsert 成功分支又插回来 → UI 与服务端
- *   都多出一条「未分组」的幽灵收藏。
+ * **为什么需要**：删夹子会改写**所有**含该夹子的收藏条目（解关联），但它不是某个收藏键的
+ * 操作，走不到 `serializeByKey` 里。若只等在发起删除**那一刻**已入队的 mutation，那么
+ * 删除期间新发起的 upsert（用户在卡片上点「编辑收藏」改备注/标签/换夹子）会与解关联并发：
+ * - 后端 `upsert` 是整条替换（含 `folderIds`），且不校验夹子是否存在；
+ * - 于是晚到的 upsert 会把它自己那份 `folderIds`（可能仍含刚被删掉的夹子）写回去，
+ *   留下指向已删夹子的悬空 id —— 前端已把它从条目里摘掉，服务端却还在。
  *
  * 屏障把「删除期间新发起的收藏 mutation」也挡在删除之后（与已入队的那些一起），
  * 删除结束后才放行，消灭这个时序窗口。
  */
 let folderDeletionTail: Promise<void> = Promise.resolve()
+
+/** 从所有收藏里摘掉某个夹子 id（本地与服务端解关联保持同一口径）。 */
+function withoutFolder(items: ResourceFavorite[], folderId: string): ResourceFavorite[] {
+  return items.map((f) =>
+    f.folderIds?.includes(folderId) ? { ...f, folderIds: f.folderIds.filter((id) => id !== folderId) } : f,
+  )
+}
 
 function serializeByKey<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const previous = favoriteMutationTails.get(key) ?? Promise.resolve()
@@ -121,9 +127,9 @@ function serializeByKey<T>(key: string, operation: () => Promise<T>): Promise<T>
   return run
 }
 
-/** 收藏的 P2 元数据补丁（`folderId` / `note` / `tags`）。 */
+/** 收藏的元数据补丁（`folderIds` 多归属 / `note` / `tags`）。 */
 export interface FavoriteMetaPatch {
-  folderId: string | null
+  folderIds: string[]
   note: string | null
   tags: string[]
 }
@@ -147,12 +153,12 @@ interface FavoritesState {
   isFavorite: (source: string, id: string, category: string) => boolean
   /** 切换收藏；返回切换后的状态（true = 已收藏）。失败时回滚并抛出。 */
   toggleFavorite: (item: ResourceItem, category: string) => Promise<boolean>
-  /** 更新已收藏条目的 P2 元数据（收藏夹 / 备注 / 标签）。失败时回滚并抛出。 */
+  /** 更新已收藏条目的元数据（所属收藏夹 / 备注 / 标签）。失败时回滚并抛出。 */
   updateFavoriteMeta: (item: ResourceItem, category: string, patch: FavoriteMetaPatch) => Promise<boolean>
   /** 新建收藏夹；重名/空名由服务端拒绝（错误抛出给调用方提示）。 */
   createFolder: (name: string) => Promise<ResourceFavoriteFolder>
   renameFolder: (id: string, name: string) => Promise<ResourceFavoriteFolder>
-  /** 删除收藏夹并**级联删除夹内收藏**，返回被删的收藏条数。 */
+  /** 删除收藏夹并**解除所有条目与它的关联**，返回受影响的收藏条数（条目保留）。 */
   deleteFolder: (id: string) => Promise<number>
 }
 
@@ -271,7 +277,7 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
 
       const optimistic: ResourceFavorite = {
         ...current,
-        folderId: patch.folderId,
+        folderIds: patch.folderIds,
         note: patch.note,
         tags: patch.tags,
         // createdAt 由服务端保留原值（upsert 命中已有键时不刷新），这里清掉即可。
@@ -326,9 +332,9 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
   },
 
   deleteFolder: async (id) => {
-    // 先等所有**已入队**的收藏 mutation 结束：删夹子会**级联删除夹内收藏**，若此刻还有
-    // 同键 POST 在飞，它可能在级联删除之后把条目重新加回来（服务端于是留下一条无夹子的
-    // 收藏，而 UI 已按「删掉了」渲染）。
+    // 先等所有**已入队**的收藏 mutation 结束：删夹子会改写所有含它的收藏条目（解关联），
+    // 若此刻还有 upsert 在飞，它可能把「仍含该夹子」的 folderIds 写回去（服务端于是留下
+    // 悬空的夹子 id，而 UI 已按「解关联了」渲染）。
     const existing = [...favoriteMutationTails.values()]
     // 删除本身也要排在「上一次删除」之后，避免两次删除交错。
     const deletion = folderDeletionTail.then(async () => {
@@ -339,9 +345,10 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
         const res = await deleteFavoriteFolder(id)
         set({
           folders: get().folders.filter((f) => f.id !== id),
-          favorites: get().favorites.filter((f) => f.folderId !== id),
+          // 只摘关联，**条目保留**（P3）：没有其他夹子的自然落入「未分组」。
+          favorites: withoutFolder(get().favorites, id),
         })
-        return res.removedFavorites ?? 0
+        return res.detachedFavorites ?? 0
       } finally {
         inFlightMutations -= 1
         mutationEpoch += 1
@@ -372,7 +379,7 @@ export function useFavoriteKeys(): Set<string> {
 /**
  * 收藏夹 id → 收藏夹 的查找表（渲染夹子名/过滤时用）。
  *
- * `folderId` 指向不存在的夹子时（例如手工改过 JSON）由调用方按「未分组」处理。
+ * `folderIds` 里指向不存在夹子的 id（例如手工改过 JSON）由调用方按「未分组」处理。
  */
 export function useFolderMap(): Map<string, ResourceFavoriteFolder> {
   const folders = useFavoritesStore((s) => s.folders)

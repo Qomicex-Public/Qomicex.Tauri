@@ -263,7 +263,7 @@ async function loadCnNames(items: ResourceItem[]): Promise<Record<string, string
 
 function ResourceCard({
   item, category, keyword, sort, gameVersion, loader, instanceId, tags, onInstall, cnName,
-  isFavorite, onToggleFavorite, favoriteBusy, folderName, note, itemTags, onEdit,
+  isFavorite, onToggleFavorite, favoriteBusy, folderNames, note, itemTags, onEdit,
 }: {
   item: ResourceItem
   category: string
@@ -279,7 +279,8 @@ function ResourceCard({
   onToggleFavorite: () => void
   favoriteBusy: boolean
   /** P2：以下四项只在对「已收藏条目」渲染时传入（搜索视图不传）。 */
-  folderName?: string
+  /** 所属收藏夹名（多归属时可多个；空 = 未分组，不渲染）。 */
+  folderNames?: string[]
   note?: string | null
   itemTags?: string[]
   onEdit?: () => void
@@ -324,15 +325,18 @@ function ResourceCard({
                 ))}
               </div>
             )}
-            {/* P2：收藏夹 / 自定义标签 / 备注（只在对已收藏条目渲染时出现） */}
-            {(folderName || note || (itemTags?.length ?? 0) > 0) && (
+            {/* P2/P3：所属收藏夹（可多个）/ 自定义标签 / 备注（只在对已收藏条目渲染时出现） */}
+            {((folderNames?.length ?? 0) > 0 || note || (itemTags?.length ?? 0) > 0) && (
               <div className="flex flex-wrap items-center gap-2 text-xs">
-                {folderName && (
-                  <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                {(folderNames ?? []).map((name) => (
+                  <span
+                    key={name}
+                    className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                  >
                     <Folder className="h-3 w-3" />
-                    {folderName}
+                    {name}
                   </span>
-                )}
+                ))}
                 {(itemTags ?? []).map((tag) => (
                   <Badge key={tag} variant="secondary" className="rounded-full px-2 py-0.5 text-[11px] font-medium">{tag}</Badge>
                 ))}
@@ -642,9 +646,14 @@ export default function ResourceCenter() {
     const counts = new Map<string, number>()
     for (const f of favorites) {
       if (!favoriteMatchesScope(f)) continue
-      // folderId 指向不存在的夹子（手工改过 JSON）按「未分组」统计。
-      const key = f.folderId && folderMap.has(f.folderId) ? f.folderId : UNFILED
-      counts.set(key, (counts.get(key) ?? 0) + 1)
+      // 一条收藏可归属多个夹子，每个有效夹子计数都 +1（「全部」是条目数、不重复计）。
+      // 指向不存在夹子的悬空 id（手工改过 JSON）按「未分组」统计。
+      const valid = (f.folderIds ?? []).filter((id) => folderMap.has(id))
+      if (valid.length === 0) {
+        counts.set(UNFILED, (counts.get(UNFILED) ?? 0) + 1)
+        continue
+      }
+      for (const id of valid) counts.set(id, (counts.get(id) ?? 0) + 1)
     }
     return counts
   }, [favorites, favoriteMatchesScope, folderMap])
@@ -669,9 +678,11 @@ export default function ResourceCenter() {
       favorites
         .filter((f) => {
           if (!favoriteMatchesScope(f)) return false
+          // 一条收藏可归属多个夹子：命中任一即算属于该夹子。
+          const valid = (f.folderIds ?? []).filter((id) => folderMap.has(id))
           if (favFolder === UNFILED) {
-            if (f.folderId && folderMap.has(f.folderId)) return false
-          } else if (favFolder !== 'all' && f.folderId !== favFolder) {
+            if (valid.length > 0) return false
+          } else if (favFolder !== 'all' && !valid.includes(favFolder)) {
             return false
           }
           if (favTags.length > 0) {
@@ -847,7 +858,8 @@ export default function ResourceCenter() {
   }
 
   /**
-   * 删除收藏夹 —— 服务端会**连同夹内收藏一起删**，所以确认框必须写清条数且不可撤销。
+   * 删除收藏夹 —— 服务端**只解除关联**，收藏条目保留（多归属下若级联删除会连带毁掉
+   * 别的夹子的成员），独占该夹子的收藏落入「未分组」。
    */
   const handleDeleteFolder = async (id: string, name: string) => {
     const count = favFolderCounts.get(id) ?? 0
@@ -861,9 +873,9 @@ export default function ResourceCenter() {
     )
     if (!ok) return
     try {
-      const removed = await deleteFolder(id)
+      const detached = await deleteFolder(id)
       if (favFolder === id) setFavFolder('all')
-      notify(t('resource.favorites.folders.deleted', { count: removed }), 'success')
+      notify(t('resource.favorites.folders.deleted', { count: detached }), 'success')
     } catch (e) {
       notify(e instanceof Error ? e.message : t('resource.favorites.folders.failed'), 'error')
     }
@@ -872,7 +884,7 @@ export default function ResourceCenter() {
   const toggleFavTag = (tag: string) =>
     setFavTags((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]))
 
-  /** 打开「编辑收藏」弹窗：需要条目本身（含 folderId/note/tags），故从 store 原始列表取。 */
+  /** 打开「编辑收藏」弹窗：需要条目本身（含 folderIds/note/tags），故从 store 原始列表取。 */
   const handleEditFavorite = (item: ResourceItem) => {
     const realCat = realCategory(item, category)
     const key = favoriteKey(item.source, item.id, realCat)
@@ -1339,9 +1351,10 @@ export default function ResourceCenter() {
               const fav = view === 'favorites'
                 ? favorites.find((f) => favoriteKey(f.source, f.id, f.category) === itemKey)
                 : undefined
-              const folderName = fav?.folderId && folderMap.has(fav.folderId)
-                ? folderMap.get(fav.folderId)?.name
-                : undefined
+              // 一条收藏可归属多个夹子：逐个解析为名字（悬空 id 自动被滤掉）。
+              const folderNames = (fav?.folderIds ?? [])
+                .filter((id) => folderMap.has(id))
+                .map((id) => folderMap.get(id)!.name)
               return (
                 <div key={`${view}-${item.source}-${item.id}`} data-key={`${item.source}-${item.id}`}>
                   <ResourceCard
@@ -1358,7 +1371,7 @@ export default function ResourceCenter() {
                     isFavorite={favoriteKeys.has(itemKey)}
                     favoriteBusy={favBusyKeys.has(itemKey)}
                     onToggleFavorite={() => { void handleToggleFavorite(item) }}
-                    folderName={folderName}
+                    folderNames={folderNames}
                     note={fav?.note ?? null}
                     itemTags={fav?.tags ?? []}
                     onEdit={view === 'favorites' ? () => handleEditFavorite(item) : undefined}

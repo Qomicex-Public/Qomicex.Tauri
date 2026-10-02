@@ -1,13 +1,13 @@
 //! 资源收藏夹服务（独立 `resource_favorite_folders.json` 持久化）。
 //!
-//! 收藏项通过 `ResourceFavorite.folder_id` 关联到本文件里的夹子，条目本身仍存
+//! 收藏项通过 `ResourceFavorite.folder_ids` 关联到本文件里的夹子，条目本身仍存
 //! `resource_favorites.json`（P1 的扁平数组格式**保持不变**，因此零格式迁移）。
 //! 与 `instance_group.rs` 同构：`Mutex<Vec<_>>` + 独立 JSON + 原子写 + 错误上报。
 //!
-//! 「删除收藏夹连同夹内收藏」由调用方（端点）编排，顺序是
-//! **先 `ResourceFavoriteService::remove_by_folder` 再 `delete` 本服务**：
-//! 若第二步失败，最坏是「收藏已删、夹子空着」这种无害残留；反序会留下指向已删夹子的
-//! 悬空 `folderId`。
+//! P3 起一条收藏可归属**多个**夹子。删除收藏夹由调用方（端点）编排，顺序是
+//! **先 `ResourceFavoriteService::detach_from_folder` 再 `delete` 本服务**：
+//! 若第二步失败，最坏是「收藏已解关联、夹子空着」这种无害残留；反序会留下指向已删夹子的
+//! 悬空 `folderId`。注意这里**不再删除收藏条目** —— 多归属下删除会连带毁掉别的夹子的成员。
 
 use std::path::PathBuf;
 use std::sync::Mutex;

@@ -11,6 +11,11 @@
 //!
 //! P2 预留字段（`folderId` / `note` / `tags`）在此即已落盘，P2 只加 UI 与端点，
 //! 不需要对既有 JSON 做数据迁移。
+//!
+//! P3（多收藏夹）把 `folderId: Option<String>` 换成 `folderIds: Vec<String>`，一条收藏
+//! 可同时归属多个夹子。旧格式的 `folderId` 由 `legacy_folder_id` 接收（只反序列化、
+//! 不序列化），在 `normalize_meta` 里并入 `folderIds` 后清零 —— 于是「读兼容旧字段、
+//! 写只写新字段」，**零手动迁移**：旧文件被读进来即已生效，下一次写入自然改写为新格式。
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -25,6 +30,11 @@ const MAX_NOTE_CHARS: usize = 2000;
 const MAX_TAGS: usize = 20;
 /// 单个标签的字符上限（P2）。
 const MAX_TAG_CHARS: usize = 32;
+/// 单条收藏可归属的收藏夹数上限（P3）。本地 JSON 也做防御性上限。
+///
+/// 取值与 `MAX_TAGS` 一致：两者都是「用户手工枚举的字符串数组」，量级相同；
+/// 该上限只为拦截无界增长（改坏的 JSON、脚本灌入），远高于真实使用。
+const MAX_FOLDERS_PER_FAVORITE: usize = 20;
 
 /// 收藏条目（全部 camelCase）。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -57,8 +67,16 @@ pub struct ResourceFavorite {
     #[serde(default)]
     pub latest_version: String,
     // ---- P2 预留（收藏夹 / 备注 / 自定义标签）----
+    // ---- P3：`folder_id` → `folder_ids`（一条收藏可归属多个夹子）----
+    /// 所属收藏夹 id 列表（去重、保序，空 = 未分组）。
     #[serde(default)]
-    pub folder_id: Option<String>,
+    pub folder_ids: Vec<String>,
+    /// **旧格式兼容（P2 的单夹子字段）**：只反序列化，不再序列化。
+    ///
+    /// `normalize_meta` 会把它并入 `folder_ids` 后清空，因此它永远不会被写回磁盘
+    /// ——「读兼容 + 写只写新字段」，无需一次性迁移脚本。
+    #[serde(default, rename = "folderId", skip_serializing)]
+    pub legacy_folder_id: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
     #[serde(default)]
@@ -84,19 +102,36 @@ impl ResourceFavorite {
         self.category = self.category.trim().to_string();
     }
 
-    /// 规范化 P2 元数据（`folderId` / `note` / `tags`），在落库边界统一执行。
+    /// 规范化 P2 元数据（`folderIds` / `note` / `tags`），在落库边界统一执行。
     ///
-    /// - `folderId`：裁剪；空串视为 `None`（前端清空选择时可能传来 `""`）。
+    /// - `folderIds`：先并入旧格式的 `legacyFolderId`（若有），再逐个裁剪、丢空、
+    ///   **精确去重**（保序）、整体上限 `MAX_FOLDERS_PER_FAVORITE`。空数组即「未分组」。
     /// - `note`：裁剪；空串视为 `None`；超长按字符截断到 `MAX_NOTE_CHARS`。
     /// - `tags`：逐个裁剪、丢空、**大小写不敏感去重**（保留首次出现的写法）、
     ///   单标签截断到 `MAX_TAG_CHARS`、整体上限 `MAX_TAGS`（防本地 JSON 无界增长）。
     pub fn normalize_meta(&mut self) {
-        self.folder_id = self
-            .folder_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string);
+        // 旧格式迁移点：把单夹子字段并入数组后清空，落盘即只剩 `folderIds`。
+        if let Some(legacy) = self.legacy_folder_id.take() {
+            let legacy = legacy.trim();
+            if !legacy.is_empty() && !self.folder_ids.iter().any(|x| x.trim() == legacy) {
+                self.folder_ids.push(legacy.to_string());
+            }
+        }
+
+        let mut seen_ids: Vec<String> = Vec::new();
+        let mut folder_ids: Vec<String> = Vec::new();
+        for raw in std::mem::take(&mut self.folder_ids) {
+            let id = raw.trim().to_string();
+            if id.is_empty() || seen_ids.contains(&id) {
+                continue;
+            }
+            seen_ids.push(id.clone());
+            folder_ids.push(id);
+            if folder_ids.len() >= MAX_FOLDERS_PER_FAVORITE {
+                break;
+            }
+        }
+        self.folder_ids = folder_ids;
 
         self.note = self
             .note
@@ -216,23 +251,30 @@ impl ResourceFavoriteService {
         Ok(true)
     }
 
-    /// 删除指定收藏夹内的**全部**收藏，返回删除条数（P2 删夹子的级联步骤）。
+    /// 把指定收藏夹从所有收藏的 `folderIds` 里摘掉，返回受影响条数
+    /// （P3 删夹子的解关联步骤）。
     ///
-    /// 与 `remove` 同一口径：先在副本上改、落盘成功才提交内存；空夹子不触碰磁盘。
-    /// 端点负责先调本方法、再删收藏夹实体 —— 顺序理由见
-    /// `resource_favorite_folder.rs` 的模块注释（避免悬空 `folderId`）。
-    pub fn remove_by_folder(&self, folder_id: &str) -> Result<usize, String> {
+    /// **P3 语义变更**：P2 此处是 `remove_by_folder`（连同夹内收藏一起删）。一条收藏
+    /// 现在可同时归属多个夹子，级联删除会连带删掉本属于别的夹子的收藏 —— 因此改为
+    /// 「只解除关联、收藏保留」，没有任何夹子的收藏自然落到「未分组」。
+    ///
+    /// 与 `remove` 同一口径：先在副本上改、落盘成功才提交内存；无命中不触碰磁盘。
+    /// 端点负责先解关联、再删收藏夹实体 —— 顺序理由见
+    /// `resource_favorite_folder.rs` 的模块注释（避免悬空 folderId）。
+    pub fn detach_from_folder(&self, folder_id: &str) -> Result<usize, String> {
         let folder_id = folder_id.trim();
         let mut guard = self.lock();
         let hits = guard
             .iter()
-            .filter(|x| x.folder_id.as_deref() == Some(folder_id))
+            .filter(|x| x.folder_ids.iter().any(|id| id == folder_id))
             .count();
         if hits == 0 {
             return Ok(0);
         }
         let mut next = guard.clone();
-        next.retain(|x| x.folder_id.as_deref() != Some(folder_id));
+        for item in next.iter_mut() {
+            item.folder_ids.retain(|id| id != folder_id);
+        }
         self.save_locked(&next)?;
         *guard = next;
         Ok(hits)
@@ -242,7 +284,13 @@ impl ResourceFavoriteService {
 fn load_from_file(file_path: &PathBuf) -> Vec<ResourceFavorite> {
     if file_path.exists() {
         if let Ok(content) = std::fs::read_to_string(file_path) {
-            if let Ok(list) = serde_json::from_str::<Vec<ResourceFavorite>>(&content) {
+            if let Ok(mut list) = serde_json::from_str::<Vec<ResourceFavorite>>(&content) {
+                // 读路径也必须规范化：旧格式的 `folderId` 只有在这里并入 `folderIds`，
+                // 内存中才是新口径。否则「读到旧文件但还没写过」的这段时间里，
+                // `get_all()` 返回的条目会被前端当成「未分组」，而磁盘上明明有夹子。
+                for item in list.iter_mut() {
+                    item.normalize_meta();
+                }
                 return list;
             }
             // 文件损坏时按空列表启动（不覆盖原文件，等下一次写入才重建）。
@@ -345,7 +393,8 @@ mod tests {
             project_url: "http://x/p".into(),
             slug: "sodium".into(),
             latest_version: "mc1.21.4-0.6.0".into(),
-            folder_id: None,
+            folder_ids: vec!["fav-1".into()],
+            legacy_folder_id: None,
             note: None,
             tags: vec![],
             created_at: "2026-10-01T00:00:00+00:00".into(),
@@ -365,7 +414,7 @@ mod tests {
             "projectUrl",
             "slug",
             "latestVersion",
-            "folderId",
+            "folderIds",
             "note",
             "tags",
             "createdAt",
@@ -375,6 +424,12 @@ mod tests {
         assert!(
             !obj.contains_key("icon_url"),
             "键名必须 camelCase，不能是 snake_case"
+        );
+        // 旧格式的 `folderId` 只读不写：它必须**不出现在输出里**，否则前端要面对
+        // 「folderId 与 folderIds 谁是权威」的歧义，且旧字段会永远留在磁盘上。
+        assert!(
+            !obj.contains_key("folderId"),
+            "P2 的 folderId 已由 folderIds 取代，不得再被序列化"
         );
         assert_eq!(obj.len(), 16, "字段数变化说明契约已漂移");
 
@@ -387,8 +442,78 @@ mod tests {
         assert_eq!(minimal.latest_version, "");
         assert_eq!(minimal.download_count, 0);
         assert!(minimal.categories.is_empty());
-        assert!(minimal.folder_id.is_none());
+        assert!(minimal.folder_ids.is_empty(), "缺省即未分组");
+        assert!(minimal.legacy_folder_id.is_none());
         assert!(minimal.tags.is_empty());
+    }
+
+    /// P3 兼容：旧格式（P2 的单个 `folderId`）必须能被读进来并**自动并入 `folderIds`**，
+    /// 且下一次落盘后磁盘上只剩新字段。这是「零手动迁移」的全部依据。
+    #[test]
+    fn legacy_folder_id_is_migrated_into_folder_ids_on_write() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("resource_favorites.json");
+
+        // 模拟 P2 写下的旧文件。
+        std::fs::write(
+            &path,
+            r#"[{"source":"modrinth","id":"AANobbMI","category":"mod","title":"Sodium","folderId":"fav-1"}]"#,
+        )
+        .unwrap();
+
+        let svc = ResourceFavoriteService {
+            file_path: path.clone(),
+            items: Mutex::new(load_from_file(&path)),
+        };
+        // 读进来就已在内存里体现（不必等写入）。
+        let loaded = svc.get_all();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].folder_ids, vec!["fav-1".to_string()]);
+
+        // 触发一次写入（改备注即可），磁盘上旧字段应被新字段取代。
+        let mut touched = loaded[0].clone();
+        touched.note = Some("迁移验证".into());
+        svc.upsert(touched).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            raw.contains("folderIds"),
+            "落盘必须写新字段，实际: {raw}"
+        );
+        assert!(
+            !raw.contains("\"folderId\""),
+            "旧字段不得再落盘，实际: {raw}"
+        );
+
+        // 二次加载仍能读到同一个夹子（迁移无损）。
+        let again = ResourceFavoriteService {
+            file_path: path.clone(),
+            items: Mutex::new(load_from_file(&path)),
+        };
+        assert_eq!(again.get_all()[0].folder_ids, vec!["fav-1".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 旧 `folderId` 与已有 `folderIds` 同时出现时合并（不丢、不重复）。
+    #[test]
+    fn legacy_folder_id_merges_without_duplicating() {
+        let mut both: ResourceFavorite = serde_json::from_str(
+            r#"{"source":"modrinth","id":"X","category":"mod","folderIds":["f-1","f-2"],"folderId":"f-1"}"#,
+        )
+        .unwrap();
+        both.normalize_meta();
+        assert_eq!(both.folder_ids, vec!["f-1".to_string(), "f-2".to_string()]);
+        assert!(both.legacy_folder_id.is_none(), "迁移后必须清空旧字段");
+
+        // 旧字段带首尾空白 / `folderIds` 里是空串时也要收敛干净。
+        let mut messy: ResourceFavorite = serde_json::from_str(
+            r#"{"source":"modrinth","id":"Y","category":"mod","folderIds":["  ","f-9 "],"folderId":"  f-3  "}"#,
+        )
+        .unwrap();
+        messy.normalize_meta();
+        assert_eq!(messy.folder_ids, vec!["f-9".to_string(), "f-3".to_string()]);
     }
 
     /// P2 预留字段（`folderId` / `note` / `tags`）在 P1 也必须原样落盘往返，
@@ -403,7 +528,7 @@ mod tests {
             items: Mutex::new(Vec::new()),
         };
         let mut with_p2 = item("AANobbMI", "mod", "Sodium");
-        with_p2.folder_id = Some("fav-1".into());
+        with_p2.folder_ids = vec!["fav-1".into()];
         with_p2.note = Some("常用".into());
         with_p2.tags = vec!["优化".into()];
         svc.upsert(with_p2).unwrap();
@@ -415,7 +540,7 @@ mod tests {
         };
         let got = reloaded.get_all();
         assert_eq!(got.len(), 1);
-        assert_eq!(got[0].folder_id.as_deref(), Some("fav-1"));
+        assert_eq!(got[0].folder_ids, vec!["fav-1".to_string()]);
         assert_eq!(got[0].note.as_deref(), Some("常用"));
         assert_eq!(got[0].tags, vec!["优化".to_string()]);
 
@@ -508,7 +633,7 @@ mod tests {
         };
 
         let mut with_meta = item("AANobbMI", "mod", "Sodium");
-        with_meta.folder_id = Some("  f-1  ".into());
+        with_meta.folder_ids = vec!["  f-1  ".into(), "".into(), "   ".into(), "f-1".into()];
         with_meta.note = Some("  常用性能模组  ".into());
         with_meta.tags = vec![
             " 优化 ".into(),
@@ -520,7 +645,7 @@ mod tests {
             "字".repeat(MAX_TAG_CHARS + 5), // 超长 → 截断
         ];
         let saved = svc.upsert(with_meta).unwrap();
-        assert_eq!(saved.folder_id.as_deref(), Some("f-1"));
+        assert_eq!(saved.folder_ids, vec!["f-1".to_string()]);
         assert_eq!(saved.note.as_deref(), Some("常用性能模组"));
         assert_eq!(
             saved.tags,
@@ -531,13 +656,31 @@ mod tests {
             ]
         );
 
-        // 空串一律转 None（前端清空选择/清空备注时可能传 ""）。
+        // 多个夹子：保序 + 精确去重（大小写敏感 —— 夹子 id 是 uuid，不做大小写折叠）。
+        let mut multi = item("AANobbMI", "modpack", "Sodium");
+        multi.folder_ids = vec!["f-a".into(), "f-b".into(), "f-a".into(), " f-c ".into()];
+        let saved_multi = svc.upsert(multi).unwrap();
+        assert_eq!(
+            saved_multi.folder_ids,
+            vec!["f-a".to_string(), "f-b".to_string(), "f-c".to_string()]
+        );
+
+        // 空数组即「未分组」（前端取消勾选所有夹子时传 [] 或空串）。
         let mut cleared = item("238222", "mod", "JEI");
-        cleared.folder_id = Some("   ".into());
+        cleared.folder_ids = vec!["   ".into(), "".into()];
         cleared.note = Some("".into());
         let saved2 = svc.upsert(cleared).unwrap();
-        assert!(saved2.folder_id.is_none());
+        assert!(saved2.folder_ids.is_empty());
         assert!(saved2.note.is_none());
+
+        // 夹子数量上限（防本地 JSON 无界增长）。
+        let mut many_folders = item("Z", "mod", "Z");
+        many_folders.folder_ids = (0..(MAX_FOLDERS_PER_FAVORITE + 8))
+            .map(|i| format!("f{i}"))
+            .collect();
+        let saved5 = svc.upsert(many_folders).unwrap();
+        assert_eq!(saved5.folder_ids.len(), MAX_FOLDERS_PER_FAVORITE);
+        assert_eq!(saved5.folder_ids[0], "f0", "截断必须保留靠前的夹子");
 
         // 标签数量上限。
         let mut many = item("X", "mod", "X");
@@ -557,9 +700,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 删夹子的级联步骤：按 `folderId` 删除全部条目；空夹子不触碰磁盘。
+    /// P3 删夹子的解关联步骤：从所有收藏的 `folderIds` 里摘掉该夹子，**条目本身保留**。
+    ///
+    /// 与 P2 的级联删除对照：多归属下若沿用级联，会连带删掉本属于别的夹子的收藏；
+    /// 独占该夹子的收藏摘掉后自然落到「未分组」。
     #[test]
-    fn remove_by_folder_cascades_and_is_noop_when_empty() {
+    fn detach_from_folder_keeps_items_and_is_noop_when_unrelated() {
         let dir = std::env::temp_dir().join(format!("qmx-fav-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("resource_favorites.json");
@@ -568,33 +714,40 @@ mod tests {
             items: Mutex::new(Vec::new()),
         };
 
-        let mut in_f1_a = item("A", "mod", "A");
-        in_f1_a.folder_id = Some("f1".into());
-        let mut in_f1_b = item("B", "mod", "B");
-        in_f1_b.folder_id = Some("f1".into());
-        let mut in_f2 = item("C", "mod", "C");
-        in_f2.folder_id = Some("f2".into());
+        // A 只在 f1；B 同时在 f1 与 f2（多归属）；C 只在 f2；D 未分组。
+        let mut only_f1 = item("A", "mod", "A");
+        only_f1.folder_ids = vec!["f1".into()];
+        let mut both = item("B", "mod", "B");
+        both.folder_ids = vec!["f1".into(), "f2".into()];
+        let mut only_f2 = item("C", "mod", "C");
+        only_f2.folder_ids = vec!["f2".into()];
         let unfiled = item("D", "mod", "D");
-        for it in [in_f1_a, in_f1_b, in_f2, unfiled] {
+        for it in [only_f1, both, only_f2, unfiled] {
             svc.upsert(it).unwrap();
         }
         assert_eq!(svc.get_all().len(), 4);
 
-        assert_eq!(svc.remove_by_folder("f1").unwrap(), 2);
-        let left: Vec<_> = svc.get_all().into_iter().map(|f| f.id).collect();
-        assert_eq!(left.len(), 2);
-        assert!(left.contains(&"C".to_string()) && left.contains(&"D".to_string()));
+        // 解关联 f1：命中 A 与 B 两条，但**一条收藏都不该消失**。
+        assert_eq!(svc.detach_from_folder("f1").unwrap(), 2);
+        let after = svc.get_all();
+        assert_eq!(after.len(), 4, "解关联绝不能删除收藏条目");
+        let find = |id: &str| after.iter().find(|f| f.id == id).unwrap().folder_ids.clone();
+        assert!(find("A").is_empty(), "独占 f1 的收藏应落到未分组");
+        assert_eq!(find("B"), vec!["f2".to_string()], "多归属的只摘 f1");
+        assert_eq!(find("C"), vec!["f2".to_string()], "不相干的收藏不受影响");
+        assert!(find("D").is_empty());
 
         // 落盘内容也应同步（重新加载验证）。
         let reloaded = ResourceFavoriteService {
             file_path: path,
             items: Mutex::new(load_from_file(&dir.join("resource_favorites.json"))),
         };
-        assert_eq!(reloaded.get_all().len(), 2);
+        assert_eq!(reloaded.get_all().len(), 4);
+        assert!(reloaded.get_all().iter().all(|f| !f.folder_ids.contains(&"f1".to_string())));
 
-        // 再删同一个空夹子：0 条，且不触碰磁盘。
-        assert_eq!(svc.remove_by_folder("f1").unwrap(), 0);
-        assert_eq!(svc.remove_by_folder("nope").unwrap(), 0);
+        // 再摘同一个（已无关）夹子：0 条，且不触碰磁盘。
+        assert_eq!(svc.detach_from_folder("f1").unwrap(), 0);
+        assert_eq!(svc.detach_from_folder("nope").unwrap(), 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

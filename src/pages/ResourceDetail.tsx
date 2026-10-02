@@ -197,11 +197,12 @@ export default function ResourceDetailPage() {
   const folderMap = useFolderMap()
   const [favBusy, setFavBusy] = useState(false)
   const isFavorited = favoriteKeys.has(favoriteKey(source, resourceId ?? '', category))
-  /** P2：本条收藏的原始条目（含 folderId / note / tags），未收藏时为 undefined。 */
+  /** 本条收藏的原始条目（含 folderIds / note / tags），未收藏时为 undefined。 */
   const favoriteEntry = favorites.find((f) => favoriteKey(f.source, f.id, f.category) === favoriteKey(source, resourceId ?? '', category))
-  const favoriteFolderName = favoriteEntry?.folderId && folderMap.has(favoriteEntry.folderId)
-    ? folderMap.get(favoriteEntry.folderId)?.name
-    : undefined
+  /** 本条收藏所属的收藏夹名（多归属时可多个；悬空 id 静默忽略）。 */
+  const favoriteFolderNames = (favoriteEntry?.folderIds ?? [])
+    .filter((fid) => folderMap.has(fid))
+    .map((fid) => folderMap.get(fid)!.name)
   const [editOpen, setEditOpen] = useState(false)
 
   useEffect(() => { void loadFavorites() }, [loadFavorites])
@@ -674,15 +675,15 @@ export default function ResourceDetailPage() {
                     )}
                   </div>
 
-                  {/* P2：收藏夹 / 自定义标签 / 备注 */}
-                  {isFavorited && (favoriteFolderName || favoriteEntry?.note || (favoriteEntry?.tags?.length ?? 0) > 0) && (
+                  {/* 所属收藏夹（可多个）/ 自定义标签 / 备注 */}
+                  {isFavorited && ((favoriteFolderNames.length > 0) || favoriteEntry?.note || (favoriteEntry?.tags?.length ?? 0) > 0) && (
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      {favoriteFolderName && (
-                        <span className="inline-flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5">
+                      {favoriteFolderNames.map((name) => (
+                        <span key={name} className="inline-flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5">
                           <Folder className="h-3 w-3" />
-                          {favoriteFolderName}
+                          {name}
                         </span>
-                      )}
+                      ))}
                       {(favoriteEntry?.tags ?? []).map((tag) => (
                         <Badge key={tag} variant="secondary" className="rounded-full px-3 py-1">{tag}</Badge>
                       ))}

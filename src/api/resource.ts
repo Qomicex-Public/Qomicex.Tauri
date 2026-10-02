@@ -130,10 +130,13 @@ export function renameFavoriteFolder(id: string, name: string): Promise<Resource
 }
 
 /**
- * 删除收藏夹 —— 服务端**级联删除夹内全部收藏**（`removedFavorites` 为被删条数）。
+ * 删除收藏夹 —— 服务端**只解除关联**（`detachedFavorites` 为受影响的收藏条数）。
+ *
+ * P3 起一条收藏可归属多个夹子，故不再级联删除条目：被解除关联的收藏若没有其他
+ * 夹子则落到「未分组」，条目本身保留。
  */
-export function deleteFavoriteFolder(id: string): Promise<{ removed: boolean; removedFavorites: number }> {
-  return del<{ removed: boolean; removedFavorites: number }>(`/resource-favorite-folders/${encodeURIComponent(id)}`)
+export function deleteFavoriteFolder(id: string): Promise<{ removed: boolean; detachedFavorites: number }> {
+  return del<{ removed: boolean; detachedFavorites: number }>(`/resource-favorite-folders/${encodeURIComponent(id)}`)
 }
 
 /**
@@ -156,7 +159,7 @@ export function toResourceFavorite(item: ResourceItem, category: string): Resour
     projectUrl: item.projectUrl,
     slug: item.slug,
     latestVersion: item.latestVersion ?? '',
-    folderId: null,
+    folderIds: [],
     note: null,
     tags: [],
     createdAt: new Date().toISOString(),
