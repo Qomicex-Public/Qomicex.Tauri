@@ -990,7 +990,10 @@ export default function ResourceCenter() {
                         </button>
                         <span className="shrink-0 text-[11px] tabular-nums opacity-60">{row.count}</span>
                         {isRealFolder && (
-                          <span className="hidden shrink-0 items-center gap-0.5 group-hover/rail:flex">
+                          // 用 opacity 而非 hidden：`display:none` 的元素不可聚焦，
+                          // group-focus-within 永远触发不了（死结），纯键盘用户就无法
+                          // 访问重命名/删除。opacity 保留可聚焦性，Tab 到此处即显形。
+                          <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/rail:opacity-100 group-focus-within/rail:opacity-100">
                             <button
                               type="button"
                               onClick={() => { setFavFolderMenuOpen(false); void handleRenameFolder(row.key, row.label) }}
@@ -1210,7 +1213,10 @@ export default function ResourceCenter() {
 
       {/* P2 布局：收藏夹改为顶部下拉后不再需要左栏，列表占满整宽。 */}
       <div className={cn(view === 'favorites' && 'space-y-3')}>
-          {view === 'favorites' && (favTagOptions.length > 0 || shownItems.length > 0) && (
+          {/* `favTags.length > 0` 必须参与判断：若用户先选中某标签、再在编辑弹窗里
+              把该标签删掉，则 favTagOptions 与 shownItems 会同时为空，整行被隐藏
+              ——连「清除筛选」也一起消失，用户就被空列表卡死了。 */}
+          {view === 'favorites' && (favTagOptions.length > 0 || shownItems.length > 0 || favTags.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5">
               {favTagOptions.length > 0 && (
                 <span className="text-[11px] font-medium text-muted-foreground">
