@@ -109,6 +109,23 @@ setAvailable: (plan: UpdatePlan | null) => void
 
 （未采纳的替代方案：让 `checkForUpdate` 直接读选择器 state。这会改变 unknown 构建的既有行为——`resolveChannel` 对其返回 `undefined` 时**不发请求**，而直接用 state 会绕过这层判断。移除防抖是根因修复且语义零变化。）
 
+### 6d. 存储写入失败时，手动检查不得退回旧通道（PR #152 第三轮评审补充）
+
+**第三处真实缺陷**（由 CodeRabbit 再次指出）：6c 的 `try/catch` 只保证了"切换不被阻断"，却留下一个缺口——`localStorage.setItem` 若抛错（隐私模式/配额），选择器已更新为 `stable`，而 `checkForUpdate` 回读 localStorage 得到的仍是 `beta`。于是**选择器显示一个通道、检查却请求另一个通道**，弹窗与选择器自相矛盾——正是 6b/6c 要消灭的那类不一致。
+
+修法：手动检查优先用**本会话的显式选择**（`channel` state），不再把"写入成功"当作"选择生效"的前提。
+
+但不能无条件用 state：`channel` 的初值是 `resolveChannel(...) ?? 'stable'`，对无法识别的构建（如 `0.1.0-rc1`）那个 `'stable'` 只是**显示占位**、并非用户选择，而既有语义是这类构建**不检查更新**。故引入 `channelChosen` 标志区分两者：
+
+```ts
+function channelForCheck(): string | undefined {
+  if (channelChosen) return channel            // 本会话显式选择：直接用
+  return resolveChannel(APP_INFO.version)      // 否则保持既有语义（未知构建 → undefined → 不检查）
+}
+```
+
+`channelChosen` 在 `setChannelAndSave`（含许可证自动切 alpha 的路径）置 `true`。
+
 ### 7. `reset()` 不复位 `available`
 
 `reset()` 是更新弹窗里「重试」的入口（`UpdateDialog` 在 `phase === 'error'` 时调用），语义是**复位下载流程**、不是**否定更新存在**。清掉提示会让用户重试后凭空少一条「有新版本」。
@@ -172,6 +189,15 @@ setAvailable: (plan: UpdatePlan | null) => void
 
 三轮合计 **20/20 通过**（R1 10/10、R2 6/6、T3 4/4）。
 
+**第四轮（存储写入失败，对应决策 6d）**：用 `addInitScript` 覆盖 `Storage.prototype.setItem`，对 `update-channel` 强制抛 `QuotaExceededError`，模拟隐私模式。
+
+| 断言 | 结果 |
+|---|---|
+| 前提：选择器已切到稳定版、localStorage 仍是旧值 `beta` | PASS |
+| **写入失败时手动检查仍用选择器当前通道**（请求带 `stable`） | **PASS** |
+
+四轮合并套件 **21/21 通过**（R1 10、R2 5、T3 3、T4 3）。
+
 > 保真度限制：Chromium ≠ WebView2（见上述文档「已知差异」）。本 PR 只改 React 状态与 JSX 布局，不涉及文件拖放/合成层等引擎差异敏感的路径；但按仓库约定，UI 变更仍应在真实 Tauri/WebView2 里复核一次。
 
 ## 影响
@@ -187,3 +213,4 @@ setAvailable: (plan: UpdatePlan | null) => void
 | 2026-10-02 | v1.0 | 初版：根因（`'available'` 无渲染出口 + 事实无共享载体）、7 项决策、5 个备选方案、门禁与行为验证（含反向对照） |
 | 2026-10-02 | v1.1 | PR #152 评审补充决策 6b：提示须按当前所选通道过滤（含 `channelTrainOf` 归一），并补第二轮切换通道场景的行为验证与反向对照 |
 | 2026-10-02 | v1.2 | PR #152 第二轮评审补充决策 6c：移除通道选择器的 500ms 防抖（「当前通道」须只有一个同步事实源），并补第三轮时序实测与前后对照 |
+| 2026-10-02 | v1.3 | PR #152 第三轮评审补充决策 6d：存储写入失败时手动检查改用本会话显式选择（`channelChosen` 保留未知构建不检查的既有语义），并补第四轮隐私模式实测 |

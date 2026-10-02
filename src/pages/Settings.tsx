@@ -230,6 +230,11 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [updateError, setUpdateError] = useState<string>()
   // 默认通道跟随已安装构建所属列车（beta 构建默认 beta），不再硬编码 stable。
   const [channel, setChannel] = useState(() => resolveChannel(APP_INFO.version) ?? 'stable')
+  /**
+   * 本会话内用户是否**显式**选过通道（区分 state 的真实选择与 `?? 'stable'` 占位）。
+   * 见 `channelForCheck`。
+   */
+  const [channelChosen, setChannelChosen] = useState(false)
   const [licenseCopied, setLicenseCopied] = useState(false)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [pendingRequired, setPendingRequired] = useState(false)
@@ -292,11 +297,32 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
    */
   function setChannelAndSave(v: string) {
     setChannel(v)
+    // 标记"本会话已有显式选择"：手动检查据此直接用选择器值，不再依赖存储。
+    setChannelChosen(true)
     try {
       localStorage.setItem(UPDATE_CHANNEL_KEY, v)
     } catch {
-      // 写不进去只意味着重启后不记忆，不能因此阻断本次切换。
+      // 写不进去只意味着重启后不记忆，不能因此阻断本次切换，
+      // 更不能让本次会话的手动检查退回旧通道（见 channelForCheck）。
     }
+  }
+
+  /**
+   * 手动检查该用哪个通道。
+   *
+   * 优先用**本会话的显式选择**（`channel` state），而不是回读 localStorage：
+   * 后者会把"写入成功"变成"选择生效"的前提，一旦 `setItem` 抛错（隐私模式/配额）
+   * 或写入尚未落地，选择器已显示新通道、检查却按旧通道请求，弹窗与选择器自相矛盾
+   * （#147 第三轮评审）。
+   *
+   * 但**不能无条件**用 state：`channel` 的初值是 `resolveChannel(...) ?? 'stable'`，
+   * 对无法识别的构建（如 `0.1.0-rc1`）那个 `'stable'` 只是显示占位、并非用户选择，
+   * 而既有语义是这种构建**不检查更新**。`channelChosen` 正是用来区分这两者，
+   * 从而在修掉本缺陷的同时保持未知构建行为不变。
+   */
+  function channelForCheck(): string | undefined {
+    if (channelChosen) return channel
+    return resolveChannel(APP_INFO.version)
   }
 
   /**
@@ -323,9 +349,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     setUpdateState('checking')
     setUpdateError(undefined)
     try {
-      // 与 App.tsx 一致：显式选择 > 已安装构建所属列车。
-      // localStorage 由 setChannelAndSave 同步写入，因此这里读到的必然是最新选择。
-      const channel = resolveChannel(APP_INFO.version)
+      const channel = channelForCheck()
       if (!channel) {
         setUpdateState('uptodate')
         return
