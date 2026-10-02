@@ -18,16 +18,41 @@ interface RelayNodesSectionProps {
 }
 
 /** 前端预校验，与后端 `validate_relay_node` 保持同义（后端仍是权威）。
- *  只用于即时反馈：让用户当场看到格式错，而不是等保存被拒。 */
+ *  只用于即时反馈：让用户当场看到格式错，而不是等保存被拒。
+ *
+ *  两类形态（对齐 easytier `TunnelScheme` 全集）：
+ *  - 直连协议 tcp/udp/wg/quic/ws/wss/faketcp → `scheme://host:port`，必须带端口；
+ *  - manual endpoint http/https/txt/srv/ring → URL 形态，允许路径、允许省略端口
+ *    （easytier 会自己去 GET 解析，官方节点服务就是这种）。
+ */
+const IP_SCHEMES = ['tcp', 'udp', 'wg', 'quic', 'ws', 'wss', 'faketcp']
+const ENDPOINT_SCHEMES = ['http', 'https', 'txt', 'srv', 'ring']
+
 function localValidate(raw: string): string | null {
   const node = raw.trim()
   if (!node) return 'empty'
   const m = node.match(/^([a-zA-Z]+):\/\/(.+)$/)
   if (!m) return 'noScheme'
   const scheme = m[1].toLowerCase()
-  if (!['tcp', 'udp', 'quic', 'wss', 'ws'].includes(scheme)) return 'badScheme'
+  if (!IP_SCHEMES.includes(scheme) && !ENDPOINT_SCHEMES.includes(scheme)) return 'badScheme'
   const rest = m[2]
   if (!rest || /\s/.test(rest)) return 'badHost'
+
+  if (ENDPOINT_SCHEMES.includes(scheme)) {
+    const authority = rest.split(/[/?#]/)[0]
+    if (!authority) return 'badHost'
+    const close = authority.indexOf(']')
+    const portPart = close >= 0
+      ? authority.slice(close + 1).replace(/^:/, '')
+      : (authority.includes(':') ? authority.split(':').pop() ?? '' : '')
+    if (portPart) {
+      const port = Number(portPart)
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) return 'badPort'
+    }
+    return null
+  }
+
+  // 直连协议：必须有 host:port
   const close = rest.indexOf(']')
   const portPart = close >= 0 ? rest.slice(close + 1).replace(/^:/, '') : rest.split(':').pop() ?? ''
   const host = close >= 0 ? rest.slice(0, close + 1) : rest.slice(0, rest.lastIndexOf(':'))

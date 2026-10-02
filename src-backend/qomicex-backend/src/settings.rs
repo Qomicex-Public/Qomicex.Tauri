@@ -403,18 +403,33 @@ pub fn get_global_file_download_source() -> i32 {
 // 自定义联机节点校验（issue #112）
 // =====================================================================
 
-/// easytier 可直接连接的 peer 协议前缀。
+/// easytier 支持的中继节点 scheme 全集。
 ///
-/// 刻意**不含** `http(s)://`：easytier 不接受 https peer scheme，官方节点服务返回的
-/// `https://...` 条目需要先被解析成实际地址（见 connector 库 `relay/provider.rs`）。
-/// 用户直接把网页地址填进来是最常见的误用，必须在保存前拦住并给出可读原因 ——
-/// 否则要等到建房时 easytier 启动失败才发现，且错误信息难以归因。
-const RELAY_NODE_SCHEMES: &[&str] = &["tcp", "udp", "quic", "wss", "ws"];
+/// 来源：easytier `easytier/src/tunnel/mod.rs` 的 `TunnelScheme` 枚举。
+/// 校验必须对齐 easytier 的**真实能力**，而不是我们以为的子集 —— 早期版本这里只放
+/// `tcp/udp/quic/wss/ws` 并拒绝 `https`，结果把「用 https 节点服务」这一官方用法
+/// 本身挡在门外（官方节点服务就是返回 `https://etnode.../nodeN`）。
+const RELAY_NODE_SCHEMES: &[&str] = &[
+    // 直连协议（easytier `IpScheme`）
+    "tcp", "udp", "wg", "quic", "ws", "wss", "faketcp",
+    // manual endpoint（easytier `TunnelScheme`，注释标 `// Only for connector`）：
+    // 这类地址由 easytier **自行 GET/解析**——请求该 URL，把返回体 trim 后当作真正的
+    // 节点地址。官方节点服务正是此形态（`https://etnode.../nodeN` → 返回 `tcp://...`）。
+    "http", "https", "txt", "srv", "ring",
+];
+
+/// manual endpoint 类 scheme：地址是「查询入口」而非最终 socket 地址。
+/// 允许带路径、允许省略端口（由 easytier 自行解析）。
+const RELAY_ENDPOINT_SCHEMES: &[&str] = &["http", "https", "txt", "srv", "ring"];
 
 /// 校验单个中继节点地址，返回规范化后的值或可读错误。
 ///
-/// 要求：`scheme://host:port`，scheme 属于 [`RELAY_NODE_SCHEMES`]，
-/// host 非空且不含空白，port 为 1-65535 的数字。
+/// 两类形态：
+/// - **直连协议**（tcp/udp/wg/quic/ws/wss/faketcp）：`scheme://host:port`，必须带端口；
+/// - **manual endpoint**（http/https/txt/srv/ring）：URL 形态，允许路径、允许省略端口，
+///   由 easytier 自行请求解析。
+///
+/// 校验范围对齐 easytier `tunnel/mod.rs` 的 `TunnelScheme` 全集，而不是我们以为的子集。
 pub fn validate_relay_node(raw: &str) -> Result<String, String> {
     let node = raw.trim();
     if node.is_empty() {
@@ -422,21 +437,43 @@ pub fn validate_relay_node(raw: &str) -> Result<String, String> {
     }
     let (scheme, rest) = node
         .split_once("://")
-        .ok_or_else(|| "缺少协议前缀（应为 tcp://host:port）".to_string())?;
+        .ok_or_else(|| "缺少协议前缀（应为 tcp://host:port 或 https://host/path）".to_string())?;
     let scheme_lc = scheme.to_ascii_lowercase();
     if !RELAY_NODE_SCHEMES.contains(&scheme_lc.as_str()) {
         return Err(format!(
-            "不支持的协议 `{scheme}`（仅支持 {}）",
+            "不支持的协议 `{scheme}`（支持 {}）",
             RELAY_NODE_SCHEMES.join(" / ")
         ));
     }
     if rest.is_empty() {
-        return Err("缺少主机与端口（应为 host:port）".to_string());
+        return Err("缺少主机（应为 host 或 host:port）".to_string());
     }
     if rest.contains(char::is_whitespace) {
-        return Err("主机或端口含空白字符".to_string());
+        return Err("地址含空白字符".to_string());
     }
-    // 允许 IPv6 字面量 `[::1]:11010`；否则按最后一个 ':' 切 host/port。
+
+    // manual endpoint：URL 形态（可能有路径/查询），端口可省。
+    if RELAY_ENDPOINT_SCHEMES.contains(&scheme_lc.as_str()) {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        if authority.is_empty() {
+            return Err("缺少主机名".to_string());
+        }
+        // 显式给了端口才校验范围；IPv6 形如 [::1]:8443。
+        let port_part = if let Some(close) = authority.find(']') {
+            authority[close + 1..].strip_prefix(':')
+        } else {
+            authority.rsplit_once(':').map(|(_, p)| p)
+        };
+        if let Some(p) = port_part.filter(|p| !p.is_empty()) {
+            let port: u32 = p.parse().map_err(|_| format!("端口 `{p}` 不是数字"))?;
+            if port == 0 || port > 65535 {
+                return Err(format!("端口 {port} 超出范围（1-65535）"));
+            }
+        }
+        return Ok(node.to_string());
+    }
+
+    // 直连协议：必须有 host:port。
     let (host, port_str) = if let Some(close) = rest.find(']') {
         let host = &rest[..=close];
         let after = &rest[close + 1..];
@@ -495,7 +532,7 @@ mod relay_node_tests {
             validate_relay_node("  TCP://Relay.Example.com:11010  ").unwrap(),
             "tcp://Relay.Example.com:11010"
         );
-        for s in ["udp", "quic", "wss", "ws"] {
+        for s in ["udp", "quic", "wss", "ws", "wg", "faketcp"] {
             assert!(
                 validate_relay_node(&format!("{s}://h.example.com:11010")).is_ok(),
                 "{s} 应被接受"
@@ -508,22 +545,57 @@ mod relay_node_tests {
         );
     }
 
-    /// 回归：`https://` 必须被拒绝。
+    /// **回归（曾判错）**：`http(s)://` 必须被**接受**。
     ///
-    /// easytier 不接受 https peer scheme（connector 库 `relay/nodes.rs` 注释记录过这次
-    /// 踩坑：旧实现直接抄官方 `https://etnode...` 形式，导致 fallback 时中继列表全部
-    /// 无效）。这是用户最可能的误填，必须在保存前给出可读错误。
+    /// 早期版本这里拒绝 https，理由是「easytier 不支持 https peer scheme」——那是错的，
+    /// 依据只来自 connector 库早期的一段踩坑注释。核实 easytier 源码
+    /// （`easytier/src/tunnel/mod.rs` 的 `TunnelScheme`）后确认：
+    ///
+    /// ```rust
+    /// pub enum TunnelScheme {
+    ///     Ip(IpScheme),          // tcp/udp/wg/quic/ws/wss/faketcp
+    ///     // Only for connector
+    ///     Http, Https, Ring, Txt, Srv,
+    /// }
+    /// fn is_manual_endpoint_scheme(scheme: &str) -> bool {
+    ///     matches!(scheme, "http" | "https" | "txt" | "srv")
+    /// }
+    /// ```
+    ///
+    /// `http(s)` 是 **manual endpoint**：easytier 自己去 GET、把响应体 trim 后当作真正
+    /// 的节点地址。官方节点服务正是这个形态（`https://etnode.../nodeN` → `tcp://...`）。
+    /// 拒绝它等于把官方支持的用法挡在门外。
     #[test]
-    fn rejects_http_scheme_with_actionable_message() {
-        let err = validate_relay_node("https://api.qomicex.top/api/nodes").unwrap_err();
-        assert!(
-            err.contains("不支持的协议"),
-            "错误信息应说明协议不支持: {err}"
+    fn accepts_http_endpoint_schemes() {
+        // 官方节点服务形态（带路径、无端口）
+        assert_eq!(
+            validate_relay_node("https://etnode.zkitefly.eu.org/node2").unwrap(),
+            "https://etnode.zkitefly.eu.org/node2"
         );
-        assert!(err.contains("https"), "错误信息应指出具体协议: {err}");
+        // 带端口与路径
+        assert_eq!(
+            validate_relay_node("https://relay.example.com:8443/api/nodes").unwrap(),
+            "https://relay.example.com:8443/api/nodes"
+        );
+        // http / txt / srv / ring 同属 manual endpoint
+        for s in ["http", "txt", "srv", "ring"] {
+            assert!(
+                validate_relay_node(&format!("{s}://h.example.com/x")).is_ok(),
+                "{s} 应被接受（manual endpoint）"
+            );
+        }
+        // manual endpoint 给了非法端口仍要拒绝
+        assert!(validate_relay_node("https://h.example.com:0/x").is_err());
+        assert!(validate_relay_node("https://h.example.com:99999/x").is_err());
+    }
+
+    /// manual endpoint 允许省略端口（URL 形态），直连协议不允许。
+    #[test]
+    fn endpoint_schemes_allow_missing_port_but_ip_schemes_do_not() {
+        assert!(validate_relay_node("https://etnode.example.com/n1").is_ok());
         assert!(
-            validate_relay_node("http://h:11010").is_err(),
-            "http 同样不接受"
+            validate_relay_node("tcp://relay.example.com").is_err(),
+            "直连协议必须带端口"
         );
     }
 
@@ -571,10 +643,12 @@ mod relay_node_tests {
             "纯空白项应报错"
         );
 
-        // 任一项非法 → 整体失败（不静默丢弃，避免用户以为已生效）
+        // 任一项非法 → 整体失败（不静默丢弃，避免用户以为已生效）。
+        // 用「直连协议缺端口」当非法样本 —— `https://` 现在是**合法**的
+        // （manual endpoint），不能再用它当反例。
         assert!(validate_relay_nodes(Some(&[
             "tcp://ok.example.com:1".to_string(),
-            "https://bad.example.com".to_string(),
+            "tcp://missing-port.example.com".to_string(),
         ]))
         .is_err());
     }
