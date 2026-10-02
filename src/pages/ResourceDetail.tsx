@@ -78,12 +78,18 @@ function LoaderBadge({ loader }: { loader: string }) {
   )
 }
 
-function DependenciesCard({ resourceId, source, versions, gameVersion, loader }: {
+function DependenciesCard({ resourceId, source, versions, gameVersion, loader, fromCategory, fromSource }: {
   resourceId: string
   source: string
   versions: ResourceVersion[]
   gameVersion: string
   loader: string
+  /**
+   * 来源列表的筛选值：前置模组链是「列表 → 详情 → 前置详情」的第二跳，若不继续
+   * 透传，用户在第二跳后返回就彻底丢失聚合上下文。
+   */
+  fromCategory: string
+  fromSource: string
 }) {
   const [deps, setDeps] = useState<ResolvedDependency[] | null>(null)
   const { t } = useI18n()
@@ -122,10 +128,18 @@ function DependenciesCard({ resourceId, source, versions, gameVersion, loader }:
           <p className="text-xs text-muted-foreground">{t('resourceDetail.noPrereq')}</p>
         ) : (
           <div className="grid gap-1.5">
-            {deps.map(d => (
+            {deps.map(d => {
+              // 与列表页 buildDetailUrl 同一口径：只在与该前置模组自身值不同时才写，
+              // 非聚合场景 URL 保持原样（前置模组恒为 mod/category=mod）。
+              const dSource = d.source || 'modrinth'
+              const dn = new URLSearchParams()
+              if (fromCategory !== 'mod') dn.set('fromCategory', fromCategory)
+              if (fromSource !== dSource) dn.set('fromSource', fromSource)
+              const depFrom = dn.toString() ? `&${dn.toString()}` : ''
+              return (
               <Link
                 key={d.projectId}
-                to={`/resource-center/${encodeURIComponent(d.projectId)}?source=${d.source || 'modrinth'}&category=mod`}
+                to={`/resource-center/${encodeURIComponent(d.projectId)}?source=${dSource}&category=mod${depFrom}`}
                 className="flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs transition-colors hover:bg-accent/30"
               >
                 {d.iconUrl ? (
@@ -138,7 +152,8 @@ function DependenciesCard({ resourceId, source, versions, gameVersion, loader }:
                 <span className="min-w-0 flex-1 truncate font-medium">{d.name}</span>
                 <span className="max-w-[45%] shrink-0 truncate text-muted-foreground">{d.versionNumber}</span>
               </Link>
-            ))}
+              )
+            })}
           </div>
         )}
       </CardContent>
@@ -469,9 +484,16 @@ export default function ResourceDetailPage() {
   const expandBody = searchParams.get('expandBody') === '1'
   const [bodyCollapsed, setBodyCollapsed] = useState(!expandBody)
 
+  // 返回链接要回到**来源筛选列表**，而不是条目自身的类型。
+  // 本页的 source/category 是条目自身的（用于拉详情、拼收藏唯一键），默认落聚合
+  // 后从聚合列表点进某个模组时它们是 modrinth/mod；若照搬回去就会从聚合列表跳到
+  // 「模组 / Modrinth」。列表页因此额外带了 fromCategory / fromSource（仅在与条目
+  // 自身值不同时才写），这里优先采用，非聚合场景两者相同、行为不变。
+  const fromCategory = searchParams.get('fromCategory') ?? category
+  const fromSource = searchParams.get('fromSource') ?? source
   const backQuery = new URLSearchParams()
-  backQuery.set('source', source)
-  backQuery.set('category', category)
+  backQuery.set('source', fromSource)
+  backQuery.set('category', fromCategory)
   if (keyword) backQuery.set('keyword', keyword)
   backQuery.set('sort', sort)
   if (urlGameVersion) backQuery.set('gameVersion', urlGameVersion)
@@ -775,6 +797,8 @@ export default function ResourceDetailPage() {
                   versions={filteredVersions}
                   gameVersion={selectedGameVersion}
                   loader={selectedLoader}
+                  fromCategory={fromCategory}
+                  fromSource={fromSource}
                 />
               )}
 

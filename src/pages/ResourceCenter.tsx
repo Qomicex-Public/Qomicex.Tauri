@@ -130,6 +130,18 @@ const SORT_OPTIONS: Record<string, { key: string }[]> = {
   ],
 }
 
+/**
+ * 某「分类 + 来源」组合下可用的排序项。聚合分类只按下载量排序（后端合并后统一
+ * 排序），与来源无关；未知来源回退 Modrinth。
+ *
+ * 初始值也走这里取第一项，避免默认排序与下拉选项不一致（聚合下若初始为
+ * `relevance`，Select 无匹配项会先渲染一帧空白）。
+ */
+function sortOptionsFor(category: string, source: string): { key: string }[] {
+  if (category === AGGREGATE_CATEGORY) return SORT_OPTIONS.aggregate
+  return SORT_OPTIONS[source] ?? SORT_OPTIONS.modrinth
+}
+
 // 两套独立的标签体系：Modrinth 与 CurseForge 的 category 词汇完全不同。
 // 前端按来源展示对应的一套；后端各自解析（Modrinth 直接用 slug，CurseForge
 // 把 slug 映射到其数字 categoryId）。
@@ -208,7 +220,28 @@ function staticTagsFor(source: string, category: string): string[] {
   return MOD_TAGS
 }
 
-function buildDetailUrl(item: ResourceItem, category: string, keyword: string, sort: string, gameVersion?: string, loader?: string, instanceId?: string, tags?: string[]): string {
+/**
+ * 详情页 URL。
+ *
+ * `source` / `category` 必须是**条目自身的**（`item.source` + 真实类型），详情页靠
+ * 它们解析版本、依赖与安装目录；聚合列表下每条类型不同，沿用页面筛选值会走错分支。
+ *
+ * 但「返回列表」需要的是**来源列表的**筛选值：默认落聚合后，从聚合列表点进某条
+ * 模组（详情 category=mod），返回时若只拿到 mod，就会从聚合列表跳到「模组 /
+ * Modrinth」，筛选上下文与滚动位置全丢。故额外带上 `fromCategory` / `fromSource`，
+ * 仅在与条目自身值不同时才写，非聚合场景 URL 保持原样。
+ */
+function buildDetailUrl(
+  item: ResourceItem,
+  category: string,
+  keyword: string,
+  sort: string,
+  gameVersion?: string,
+  loader?: string,
+  instanceId?: string,
+  tags?: string[],
+  from?: { category: string; source: string },
+): string {
   const params = new URLSearchParams()
   params.set('source', item.source)
   params.set('category', category)
@@ -218,6 +251,10 @@ function buildDetailUrl(item: ResourceItem, category: string, keyword: string, s
   if (loader) params.set('loader', loader)
   if (tags && tags.length > 0) params.set('tags', tags.join(','))
   if (instanceId) params.set('instanceId', instanceId)
+  if (from) {
+    if (from.category !== category) params.set('fromCategory', from.category)
+    if (from.source !== item.source) params.set('fromSource', from.source)
+  }
   return `/resource-center/${encodeURIComponent(item.id)}?${params.toString()}`
 }
 
@@ -262,11 +299,13 @@ async function loadCnNames(items: ResourceItem[]): Promise<Record<string, string
 }
 
 function ResourceCard({
-  item, category, keyword, sort, gameVersion, loader, instanceId, tags, onInstall, cnName,
+  item, category, source, keyword, sort, gameVersion, loader, instanceId, tags, onInstall, cnName,
   isFavorite, onToggleFavorite, favoriteBusy, folderNames, note, itemTags, onEdit,
 }: {
   item: ResourceItem
+  /** 页面级筛选值（聚合分类下与条目真实类型不同）：决定返回列表时回到哪个筛选。 */
   category: string
+  source: string
   keyword: string
   sort: string
   gameVersion?: string
@@ -372,7 +411,7 @@ function ResourceCard({
             <Tooltip content={t('resource.viewDetail')}>
               <Button asChild variant="outline" size="icon" className="h-9 w-9">
                 <Link
-                  to={buildDetailUrl(item, cardCategory, keyword, sort, gameVersion, loader, instanceId, tags) + '&expandBody=1'}
+                  to={buildDetailUrl(item, cardCategory, keyword, sort, gameVersion, loader, instanceId, tags, { category, source }) + '&expandBody=1'}
                   state={{ iconUrl: item.iconUrl }}
                   aria-label={t('resource.viewDetail')}
                 >
@@ -433,15 +472,23 @@ export default function ResourceCenter() {
     ['tags', urlTags === null ? null : urlTags.split(',').map((t) => t.trim()).filter(Boolean)],
   ]
   const freshEntry = snap !== null && urlState.some(([k, v]) => v !== null && JSON.stringify(v) !== JSON.stringify(snap[k]))
-  const categoryInit = urlCategory ?? (!freshEntry ? snap?.category : undefined) ?? 'mod'
-  const [category, setCategory] = useState(categoryInit)
-  const [source, setSource] = useState(() => {
-    const src = urlSource ?? (!freshEntry ? snap?.source : undefined) ?? 'modrinth'
+  // 默认落「聚合」：资源源 = all（聚合源）、资源分类 = aggregate（聚合分类），
+  // 一进页面即可看到跨类型 / 跨平台的结果，不必先手动切两个筛选。
+  const categoryInit = urlCategory ?? (!freshEntry ? snap?.category : undefined) ?? AGGREGATE_CATEGORY
+  const sourceInit = (() => {
+    const src = urlSource ?? (!freshEntry ? snap?.source : undefined) ?? 'all'
     return categoryInit === 'save' ? 'curseforge' : src
-  })
+  })()
+  const [category, setCategory] = useState(categoryInit)
+  const [source, setSource] = useState(sourceInit)
   const [keyword, setKeyword] = useState(() => urlKeyword ?? (!freshEntry ? snap?.keyword : undefined) ?? '')
   const [searchInput, setSearchInput] = useState(() => urlKeyword ?? (!freshEntry ? snap?.searchInput : undefined) ?? '')
-  const [sort, setSort] = useState(() => urlSort ?? (!freshEntry ? snap?.sort : undefined) ?? 'relevance')
+  const [sort, setSort] = useState(() => {
+    // 默认排序取当前「分类 + 来源」组合的第一个合法项，而不是写死 relevance：
+    // 默认已落在聚合（只有 downloads），写死 relevance 会让下拉先渲染一帧空白。
+    const fallback = sortOptionsFor(categoryInit, sourceInit)[0].key
+    return urlSort ?? (!freshEntry ? snap?.sort : undefined) ?? fallback
+  })
   const [gameVersion, setGameVersion] = useState(() => urlGameVersion ?? (!freshEntry ? snap?.gameVersion : undefined) ?? '')
   const [loader, setLoader] = useState(() => (urlLoader ?? (!freshEntry ? snap?.loader : undefined) ?? '').toLowerCase())
   const [tags, setTags] = useState<string[]>(() => {
@@ -894,10 +941,7 @@ export default function ResourceCenter() {
   const clearVersion = () => setGameVersion('')
   const clearLoader = () => setLoader('')
 
-  // 聚合分类只按下载量排序（后端合并后统一排序），与来源无关。
-  const currentSortOptions = category === AGGREGATE_CATEGORY
-    ? SORT_OPTIONS.aggregate
-    : (SORT_OPTIONS[source] ?? SORT_OPTIONS.modrinth)
+  const currentSortOptions = sortOptionsFor(category, source)
 
   // 兜底归一：URL 直接进入聚合分类（或快照恢复）时 sort 可能仍是上一个来源的
   // 值（如 relevance），而聚合只有 downloads 一个选项 —— Select 没有匹配项会
@@ -1360,6 +1404,7 @@ export default function ResourceCenter() {
                   <ResourceCard
                     item={item}
                     category={category}
+                    source={source}
                     keyword={keyword}
                     sort={sort}
                     gameVersion={gameVersion}
