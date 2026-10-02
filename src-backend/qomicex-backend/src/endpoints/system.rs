@@ -234,6 +234,12 @@ async fn put_settings(
     // 就钳住，否则一个手改的 settings.json 或一次直连 API 调用就能让后续请求 panic。
     body.clamp_numeric_ranges();
 
+    // 自定义联机节点（issue #112）在落盘前强制校验并规范化：非法条目拒绝保存。
+    // 放在这里而非仅在前端校验 —— settings.json 可手改、本地 API 也能被插件直接调用，
+    // 而坏节点要等到建房时 easytier 启动失败才暴露，归因困难。
+    body.relay_nodes = settings::validate_relay_nodes(body.relay_nodes.as_deref())
+        .map_err(|e| ApiError::bad_request("CONNECTOR_RELAY_INVALID", e))?;
+
     settings::save_settings(&body)?;
     state
         .curseforge_fetch

@@ -305,6 +305,49 @@ Yggdrasil 认证登录。
 
 **响应：** `EasyTierDownloadStatus`
 
+### POST `/api/connector/relay/reload`
+
+重建联机客户端以应用最新的中继节点配置（issue #112）。无请求体。
+
+**背景**：中继节点列表在 `ScaffoldingClient` 构造时固化，而客户端是进程级单例；
+不重建的话，用户改完「设置 → 联机节点」必须重启启动器才生效。
+
+**行为**：
+
+- 检查与占用在同一把锁内完成（判 `Idle` → 置 `Reloading` 预留），因此并发建房/加入
+  不会落进「拉取官方节点」的 await 窗口拿到旧客户端（旧 client 托管的 easytier 实例
+  会因客户端被替换而失去归属、无法回收）。
+- 拉取官方节点列表后，按「**自定义在前、官方在后**」拼合（同址去重）并原子替换。
+- 处理结束（成功或失败）都会复位为 `Idle`。
+
+**响应：**
+
+```json
+{ "reloaded": true, "customNodeCount": 1, "usingCustom": true }
+```
+
+**错误码：** `CONNECTOR_BUSY`(**409**，非空闲即正在联机/建房中)、`CONNECTOR_RELAY_INVALID`(400，落盘配置非法)
+
+### 自定义联机节点设置（issue #112）
+
+`GET/PUT /api/settings` 新增字段 `relayNodes: string[] | null`。语义：**自定义节点在前、
+官方节点在后**；`null`/空数组 = 只用官方节点（默认，行为与引入本功能前一致）。
+
+**支持的两类地址形态**（对齐 easytier `TunnelScheme` 全集）：
+
+| 类别 | scheme | 格式要求 |
+|------|--------|----------|
+| 直连协议 | `tcp` `udp` `wg` `quic` `ws` `wss` `faketcp` | `scheme://host:port`，**必须带端口**，不允许 path/query/fragment |
+| manual endpoint | `http` `https` `txt` `srv` `ring` | URL 形态，**允许 path、可省略端口**（easytier 自行 GET 该 URL 并解析响应体为真实节点地址） |
+
+`https://` 是官方节点服务的形态（`https://etnode.../nodeN` → 返回 `tcp://...`），**必须支持**。
+
+**校验**：`PUT /api/settings` 逐项严格校验，任一项非法即整份拒绝并返回
+`CONNECTOR_RELAY_INVALID`(400)。读取已落盘配置时改为**宽松**模式：逐项跳过非法条目
+并记录告警，保留合法节点（settings.json 可被手工编辑，整份丢弃会让好节点一起失效）。
+
+**响应：** `204 No Content`
+
 ### POST `/api/connector/leave`
 
 离开房间/停止联机。

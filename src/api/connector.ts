@@ -100,3 +100,22 @@ export function scanPorts(): Promise<{ port: number | null }> {
 export function getNatType(): Promise<NatTypeResult> {
   return get<NatTypeResult>('/connector/nat-type')
 }
+
+/** POST /connector/relay/reload 的响应（issue #112）。 */
+export interface RelayReloadResult {
+  reloaded: boolean
+  /** 生效的自定义节点数（0 = 只用官方节点）。 */
+  customNodeCount: number
+  usingCustom: boolean
+}
+
+/**
+ * 重建联机客户端，使最新的中继节点配置立即生效（issue #112）。
+ *
+ * 必要性：中继节点列表在客户端构造时固化，不重建则改完设置要重启启动器。
+ * 后端在**非空闲**（正在建房/联机中）时返回 400 `CONNECTOR_BUSY`，
+ * 以避免孤儿化进行中的房间。
+ */
+export function reloadRelayNodes(): Promise<RelayReloadResult> {
+  return post<RelayReloadResult>('/connector/relay/reload')
+}
