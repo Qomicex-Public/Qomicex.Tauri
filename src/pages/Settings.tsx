@@ -28,6 +28,7 @@ import { fetchUpdatePlan, type UpdatePlan } from '../api/update.ts'
 import { isDevBuild, resolveChannel, trainLabelKey, trainOf } from '../lib/updateChannel.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
+import { useUpdaterStore } from '../stores/updaterStore.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui'
 import { useExpandAnimation, useAnimatedList } from '../hooks/useGsapAnimations.ts'
@@ -237,6 +238,13 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [privacyDialogOpen, setPrivacyDialogOpen] = useState(false)
   const [sponsors, setSponsors] = useState<Sponsor[]>([])
   const [sponsorsFailed, setSponsorsFailed] = useState(false)
+  /**
+   * 「有可用更新」的唯一事实源（#147）：App.tsx 启动时的后台检查与本页「检查更新」
+   * 都写入 store，本页更新行据此常驻提示。此前该事实只存在于 App 局部 state，
+   * 用户点「下次再说」后设置页便无从得知有新版本。
+   */
+  const availableUpdate = useUpdaterStore((s) => s.available)
+  const setUpdateAvailable = useUpdaterStore((s) => s.setAvailable)
   const { t } = useI18n()
 
   useEffect(() => {
@@ -262,6 +270,21 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     channelTimerRef.current = setTimeout(() => localStorage.setItem('update-channel', v), 500)
   }
 
+  /**
+   * 打开更新弹窗并同步「有可用更新」提示（#147）。
+   *
+   * 手动检查与后台检查共用同一份 store 状态，任一路径发现的新版本都会在
+   * 更新行右侧留下常驻提示；用户关掉弹窗（「下次再说」/「稍后」）不会清除它。
+   */
+  function showUpdate(plan: UpdatePlan) {
+    // required 由上游随 plan 一并给出。
+    setPendingUpdate(plan)
+    setPendingRequired(plan.required === true)
+    setUpdateState('available')
+    setUpdateDialogOpen(true)
+    setUpdateAvailable(plan)
+  }
+
   async function checkForUpdate() {
     // 开发构建（裸 X.Y.Z）不属于任何已发布列车，不检查更新。
     if (devBuild) {
@@ -280,13 +303,13 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       const plan = await fetchUpdatePlan(channel)
       if (!plan.hasUpdate || !plan.version) {
         setUpdateState('uptodate')
+        // 本次检查是权威结论（用户可能刚切换了通道，或版本已被别的途径装上）：
+        // 清掉此前的提示，避免指向一个已不存在的"新版本"。请求失败走 catch，
+        // 不走到这里，因此网络异常不会误清提示。
+        setUpdateAvailable(null)
         return
       }
-      // required 由上游随 plan 一并给出。
-      setPendingUpdate(plan)
-      setPendingRequired(plan.required === true)
-      setUpdateState('available')
-      setUpdateDialogOpen(true)
+      showUpdate(plan)
     } catch (e) {
       setUpdateState('error')
       setUpdateError(String(e instanceof Error ? e.message : e))
@@ -417,6 +440,20 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               <Tooltip content={updateError}>
                 <span className="text-sm text-destructive cursor-help">{t('settings.about.checkUpdateFailed')}</span>
               </Tooltip>
+            )}
+            {/* #147：已知有可用更新时常驻提示，点它重新打开更新弹窗。
+                与弹窗的「下次再说」解耦——延迟只抑制弹窗，不再让提示消失。
+                文案复用 dialogs.update.foundNew（与弹窗标题同口径，带版本号），
+                不新增 i18n key，避免为一句提示动 7 种语言。 */}
+            {!devBuild && availableUpdate?.version && updateState !== 'checking' && (
+              <button
+                type="button"
+                onClick={() => showUpdate(availableUpdate)}
+                className="inline-flex min-w-0 items-center gap-1 text-sm text-primary hover:underline"
+              >
+                <Download className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{t('dialogs.update.foundNew', { version: availableUpdate.version })}</span>
+              </button>
             )}
           </div>
 
