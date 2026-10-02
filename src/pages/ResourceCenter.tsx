@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { ChevronDown, Download, ExternalLink, Folder, FolderPlus, Heart, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
+import { ChevronDown, Check, Download, ExternalLink, Folder, FolderPlus, Heart, Layers, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
@@ -458,6 +458,8 @@ export default function ResourceCenter() {
   const [editFavorite, setEditFavorite] = useState<ResourceFavorite | null>(null)
   /** 收藏夹下拉是否展开（Popover 受控，选完/新建完要收起）。 */
   const [favFolderMenuOpen, setFavFolderMenuOpen] = useState(false)
+  /** 模式下拉（♥ 收藏 / ◇ 资源）是否展开。 */
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
   /** 收藏视图的本地搜索（标题 / 作者 / 标签，纯前端过滤，不发请求）。 */
   const [favQuery, setFavQuery] = useState('')
 
@@ -825,11 +827,6 @@ export default function ResourceCenter() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [allTags, tags, lang])
-  const activeCategoryLabel = useMemo(() => {
-    const found = CATEGORIES.find((item) => item.key === category)
-    return found ? t(`resource.categories.${found.key}`) : category
-  }, [category, t])
-
   // 两个视图共用同一套渲染分支，这里把数据源/错误/空态收敛成视图相关的派生值。
   const shownItems = view === 'favorites' ? favoriteItems : items
   const shownError = view === 'favorites' ? favoritesError : error
@@ -842,10 +839,60 @@ export default function ResourceCenter() {
 
       <Card className="border-border/60 bg-muted/20 p-4">
         <div className="space-y-4">
-          {/* 顶部工具行（#132 P2 布局）：收藏夹下拉 + 搜索 + 视图切换按钮。
-              视图切换只保留**一个**按钮、文案随视图变（搜索视图=绿色「♡ 收藏 (N)」进入收藏；
-              收藏视图=「搜索」返回），避免图标组与绿色按钮重复表达同一件事。 */}
+          {/* 顶部工具行（#132 P2）：整个资源中心只有一个「模式」切换，固定在最左、位置与组件都不变。
+              模式 = ♥ 收藏（浏览收藏）/ ◇ 资源（在资源库中搜索）。
+              收藏模式在其右侧多一个「收藏范围」下拉（全部 / 未分组 / 各收藏夹）。
+              搜索框两模式共用同一位置：收藏模式=本地即时过滤（标题/作者/标签，不发请求）；
+              资源模式=回车或点「搜索」按钮向后端检索。 */}
           <div className="flex flex-wrap items-center gap-2">
+            <Popover
+              open={modeMenuOpen}
+              onOpenChange={setModeMenuOpen}
+              className="min-w-[150px]"
+              trigger={
+                <button
+                  type="button"
+                  aria-label={t('resource.mode.label')}
+                  aria-expanded={modeMenuOpen}
+                  className={cn(
+                    'flex h-10 w-full items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors',
+                    modeMenuOpen ? 'border-primary/40 text-foreground' : 'border-border/60 hover:bg-accent',
+                  )}
+                >
+                  {view === 'favorites'
+                    ? <Heart className="h-4 w-4 shrink-0 text-primary" />
+                    : <Layers className="h-4 w-4 shrink-0 text-primary" />}
+                  <span className="min-w-0 flex-1 truncate text-left">
+                    {view === 'favorites' ? t('resource.favorites.viewLabel') : t('resource.mode.browse')}
+                  </span>
+                  <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', modeMenuOpen && 'rotate-180')} />
+                </button>
+              }
+            >
+              {([
+                { id: 'favorites' as const, icon: Heart, label: t('resource.favorites.viewLabel') },
+                { id: 'search' as const, icon: Layers, label: t('resource.mode.browse') },
+              ]).map(({ id, icon: Icon, label }) => {
+                const active = view === id
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => { setView(id); setModeMenuOpen(false) }}
+                    aria-pressed={active}
+                    className={cn(
+                      'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors',
+                      active ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex-1 text-left">{label}</span>
+                    {active && <Check className="h-3.5 w-3.5 shrink-0" />}
+                  </button>
+                )
+              })}
+            </Popover>
+
             {view === 'favorites' && (
               <Popover
                 open={favFolderMenuOpen}
@@ -937,47 +984,35 @@ export default function ResourceCenter() {
               </Popover>
             )}
 
-            {/* 收藏内搜索：只在收藏视图出现（搜索视图有自己的一整行搜索区，避免两个搜索框）。
-                纯本地过滤标题 / 作者 / 标签，不发网络请求。 */}
-            {view === 'favorites' && (
-              <div className="relative min-w-[200px] flex-1">
+            {/* 搜索框：两模式共用同一位置。收藏模式本地过滤（即时，故不配搜索按钮）；
+                资源模式回车或点右侧「搜索」按钮向后端检索。 */}
+            <div className="relative min-w-[200px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              {view === 'favorites' ? (
                 <Input
                   value={favQuery}
                   onChange={(e) => setFavQuery(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-                  placeholder={t('resource.searchPlaceholder', { category: t('resource.favorites.viewLabel') })}
+                  placeholder={t('resource.favorites.searchPlaceholder')}
                   className="h-10 pl-9"
                 />
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              </div>
-            )}
-
-            {/* 视图切换：单个按钮，文案随视图变（有可见文字，故不再套 Tooltip） */}
-            <button
-              type="button"
-              onClick={() => setView(view === 'favorites' ? 'search' : 'favorites')}
-              aria-label={view === 'favorites'
-                ? t('resource.favorites.viewSearch')
-                : t('resource.favorites.viewLabel')}
-              aria-pressed={view === 'favorites'}
-              className={cn(
-                'ml-auto flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-medium transition-colors',
-                view === 'favorites'
-                  ? 'border-border/60 text-muted-foreground hover:bg-accent hover:text-foreground'
-                  : 'border-primary/40 text-primary hover:bg-primary/10',
+              ) : (
+                <Input
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={t('resource.mode.searchPlaceholder')}
+                  className="h-10 pl-9"
+                />
               )}
-            >
-              {view === 'favorites'
-                ? <><Search className="h-4 w-4" />{t('resource.favorites.viewSearch')}</>
-                : (
-                  <>
-                    <Heart className="h-4 w-4" />
-                    {favorites.length > 0
-                      ? t('resource.favorites.viewLabelWithCount', { count: favorites.length })
-                      : t('resource.favorites.viewLabel')}
-                  </>
-                )}
-            </button>
+            </div>
+
+            {/* 搜索按钮只在资源模式出现：收藏模式是即时本地过滤，放个按钮会是「点了没用」的控件 */}
+            {view === 'search' && (
+              <Button onClick={handleSearch} className="h-10 shrink-0 rounded-lg">
+                <Search className="h-3.5 w-3.5" />
+                {t('resource.search')}
+              </Button>
+            )}
           </div>
 
           <div className="flex flex-wrap items-start gap-4 xl:items-center xl:justify-between">
@@ -993,20 +1028,14 @@ export default function ResourceCenter() {
 
           {view === 'search' && (
             <>
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_110px]">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
-              <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={t('resource.searchPlaceholder', { category: activeCategoryLabel })} className="h-10 rounded-xl border-border/60 bg-background pl-9" />
-            </div>
-            <Select value={sort} onChange={setSort} className="h-10">
+          {/* 搜索框与「搜索」按钮已上移到顶部工具行（两模式共用同一位置）；
+              这里只保留排序。 */}
+          <div className="flex flex-wrap items-center gap-3">
+            <Select value={sort} onChange={setSort} className="h-10 min-w-[160px]">
               {currentSortOptions.map((item) => (
                 <SelectOption key={item.key} value={item.key}>{t(`resource.sort.${item.key}`)}</SelectOption>
               ))}
             </Select>
-            <Button onClick={handleSearch} className="h-10 rounded-xl">
-              <Search className="h-3.5 w-3.5" />
-              {t('resource.search')}
-            </Button>
           </div>
 
           <div className="flex flex-wrap items-start gap-4">
