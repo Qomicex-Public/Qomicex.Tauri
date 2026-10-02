@@ -481,6 +481,7 @@ export default function ResourceCenter() {
   // ---- 收藏夹 / 标签（#132 P2）----
   const folders = useFavoritesStore((s) => s.folders)
   const foldersLoaded = useFavoritesStore((s) => s.foldersLoaded)
+  const foldersError = useFavoritesStore((s) => s.foldersError)
   const loadFolders = useFavoritesStore((s) => s.loadFolders)
   const createFolder = useFavoritesStore((s) => s.createFolder)
   const renameFolder = useFavoritesStore((s) => s.renameFolder)
@@ -1016,7 +1017,23 @@ export default function ResourceCenter() {
                     )
                   })}
                 </div>
-                {foldersLoaded === false && (
+                {/* 加载失败必须显示错误与重试入口：只判 `foldersLoaded === false` 时，
+                    失败后 foldersLoaded 仍是 false，会永远显示「加载中」，用户既看不到
+                    原因也无法重试（只能切视图碰运气）。
+                    直接显示服务端返回的 `foldersError`（截断）而非通用文案：这里是
+                    唯一能告诉用户「为什么没加载出来」的地方，且无需新增 i18n 键。 */}
+                {foldersError ? (
+                  <button
+                    type="button"
+                    onClick={() => { void loadFolders(true) }}
+                    title={foldersError}
+                    className="flex w-full items-center gap-1.5 px-3 pt-1 text-left text-[11px] text-destructive hover:underline"
+                  >
+                    <RotateCw className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{foldersError}</span>
+                    <span className="shrink-0">· {t('resource.retry')}</span>
+                  </button>
+                ) : foldersLoaded === false && (
                   <p className="px-3 pt-1 text-[11px] text-muted-foreground/60">{t('resource.favorites.folders.loading')}</p>
                 )}
                 <div className="mt-1 border-t border-border/60 pt-1">

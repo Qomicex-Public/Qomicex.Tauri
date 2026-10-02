@@ -88,10 +88,27 @@ function discardStaleList(kind: 'favorites' | 'folders'): void {
  */
 const favoriteMutationTails = new Map<string, Promise<void>>()
 
+/**
+ * 收藏夹删除屏障（值为「最近一次删除的完成信号」）。
+ *
+ * **为什么需要**：删夹子是**级联删除夹内收藏**，但它不是某个收藏键的操作，走不到
+ * `serializeByKey` 里。若只等在发起删除**那一刻**已入队的 mutation，那么删除期间
+ * 新发起的 upsert（用户在卡片上点「编辑收藏」改备注/标签/换夹子）会与级联删除并发：
+ * - 后端 `upsert` 不校验 `folderId` 是否存在（实测：传不存在的 folderId 原样落库）；
+ * - 于是晚到的 upsert 在级联删除之后重建该条目，留下一条指向已删夹子的悬空收藏；
+ * - 前端删除时已把它从本地列表移除，而晚到的 upsert 成功分支又插回来 → UI 与服务端
+ *   都多出一条「未分组」的幽灵收藏。
+ *
+ * 屏障把「删除期间新发起的收藏 mutation」也挡在删除之后（与已入队的那些一起），
+ * 删除结束后才放行，消灭这个时序窗口。
+ */
+let folderDeletionTail: Promise<void> = Promise.resolve()
+
 function serializeByKey<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const previous = favoriteMutationTails.get(key) ?? Promise.resolve()
+  // 两个前置都不可拒绝（均为已结算的 tail），故 operation 必定执行。
   // 前一个无论成功失败都要放行本次（失败已经由各自调用方回滚，不该卡住队列）。
-  const run = previous.then(operation, operation)
+  const run = Promise.all([previous, folderDeletionTail]).then(() => operation())
   const tail = run.then(
     () => undefined,
     () => undefined,
@@ -309,24 +326,35 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
   },
 
   deleteFolder: async (id) => {
-    // 先等所有在飞的收藏 mutation 结束：删夹子会**级联删除夹内收藏**，若此刻还有同键
-    // POST 在飞，它可能在级联删除之后把条目重新加回来（服务端于是留下一条无夹子的收藏，
-    // 而 UI 已按「删掉了」渲染）。
-    await Promise.allSettled([...favoriteMutationTails.values()])
-    mutationEpoch += 1
-    inFlightMutations += 1
-    try {
-      const res = await deleteFavoriteFolder(id)
-      set({
-        folders: get().folders.filter((f) => f.id !== id),
-        favorites: get().favorites.filter((f) => f.folderId !== id),
-      })
-      return res.removedFavorites ?? 0
-    } finally {
-      inFlightMutations -= 1
+    // 先等所有**已入队**的收藏 mutation 结束：删夹子会**级联删除夹内收藏**，若此刻还有
+    // 同键 POST 在飞，它可能在级联删除之后把条目重新加回来（服务端于是留下一条无夹子的
+    // 收藏，而 UI 已按「删掉了」渲染）。
+    const existing = [...favoriteMutationTails.values()]
+    // 删除本身也要排在「上一次删除」之后，避免两次删除交错。
+    const deletion = folderDeletionTail.then(async () => {
+      await Promise.allSettled(existing)
       mutationEpoch += 1
-      maybeReload()
-    }
+      inFlightMutations += 1
+      try {
+        const res = await deleteFavoriteFolder(id)
+        set({
+          folders: get().folders.filter((f) => f.id !== id),
+          favorites: get().favorites.filter((f) => f.folderId !== id),
+        })
+        return res.removedFavorites ?? 0
+      } finally {
+        inFlightMutations -= 1
+        mutationEpoch += 1
+        maybeReload()
+      }
+    })
+    // 屏障必须**在返回前**就位（且吞掉拒绝，避免未处理的 rejection）：
+    // 删除期间新发起的 serializeByKey 会据此排在删除之后。
+    folderDeletionTail = deletion.then(
+      () => undefined,
+      () => undefined,
+    )
+    return deletion
   },
 }))
 
