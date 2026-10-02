@@ -1128,17 +1128,17 @@ export default function ResourceCenter() {
 
           {view === 'search' && (
             <>
-          {/* 搜索框与「搜索」按钮已上移到顶部工具行（两模式共用同一位置）；
-              这里只保留排序。 */}
-          <div className="flex flex-wrap items-center gap-3">
-            <Select value={sort} onChange={setSort} className="h-10 min-w-[160px]">
-              {currentSortOptions.map((item) => (
-                <SelectOption key={item.key} value={item.key}>{t(`resource.sort.${item.key}`)}</SelectOption>
-              ))}
-            </Select>
-          </div>
-
+          {/* 排序 / 游戏版本 / 加载器 放在同一行，三者用同一套标题样式与控件高度（h-9），
+              视觉上成为一组等价的筛选维度。类别筛选因标签数量多，仍独占下一行。 */}
           <div className="flex flex-wrap items-start gap-4">
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">{t('resource.sortLabel')}</p>
+              <Select value={sort} onChange={setSort} className="h-9 min-w-[160px]">
+                {currentSortOptions.map((item) => (
+                  <SelectOption key={item.key} value={item.key}>{t(`resource.sort.${item.key}`)}</SelectOption>
+                ))}
+              </Select>
+            </div>
             <div className="space-y-1">
               <p className="text-[11px] font-medium text-muted-foreground">{t('resource.gameVersionLabel')}</p>
               <div className="flex items-center gap-1">
