@@ -43,6 +43,7 @@ import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from '.
 import { SplashScreen } from './components/SplashScreen.tsx'
 import { InitialSetupWizard } from './components/InitialSetupWizard.tsx'
 import { usePluginStore, collectInstalledPlugins, buildUpdatesMap } from './stores/pluginStore.ts'
+import { useUpdaterStore } from './stores/updaterStore.ts'
 import { activatePlugin, deactivatePlugin, sortByDependencies } from './plugins/plugin-loader.tsx'
 import { checkStoreUpdates } from './api/pluginStore.ts'
 import './plugins/plugin-registry.ts'
@@ -97,6 +98,11 @@ function AppContent() {
   /** 插件更新静默轮询只做一次（与 autoCheckDone/javaChecked 同模式） */
   const pluginUpdatesChecked = useRef(false)
   const { loadPlugins } = usePluginStore()
+  /**
+   * 「有可用更新」的会话级事实源（#147）：后台检查发现新版本时写入，
+   * 设置页「更新」区域据此常驻提示。`available == null` 表示尚未探知或无更新。
+   */
+  const setUpdateAvailable = useUpdaterStore((s) => s.setAvailable)
   const [showWizard, setShowWizard] = useState(false)
   const [settingsReady, setSettingsReady] = useState(false)
   const [wizardSettings, setWizardSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
@@ -185,6 +191,11 @@ function AppContent() {
         // required 由上游随 plan 一并给出，无需再打一次 /update/check。
         const required = plan.required === true
 
+        // #147：先记「有可用更新」，再做 24h 延迟裁决。设置页的提示反映「确实存在
+        // 新版本」这一客观事实，与弹窗的 snooze（别再弹窗烦我）是两回事——用户点了
+        // 「下次再说」后仍应在设置页看到提示，避免"有新版本却哪都不说"。
+        setUpdateAvailable(plan)
+
         // snooze 键带通道：同版本号在不同通道下是不同目标，不能互相抵消。
         const snooze = localStorage.getItem('snooze-update')
         if (!required && snooze) {
@@ -204,7 +215,7 @@ function AppContent() {
       }
     }, 5000)
     return () => clearTimeout(timer)
-  }, [backendState])
+  }, [backendState, setUpdateAvailable])
 
   // 更新完成交接（#108）：自更新重启后的首次启动读取旧进程留下的交接文件，
   // 弹「更新完成」对话框展示新版本与 changelog。读后即删，只提示一次；

@@ -25,9 +25,10 @@ import PluginStoreTab from '../components/PluginStoreTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { fetchUpdatePlan, type UpdatePlan } from '../api/update.ts'
-import { isDevBuild, resolveChannel, trainLabelKey, trainOf } from '../lib/updateChannel.ts'
+import { isDevBuild, resolveChannel, trainLabelKey, trainOf, channelTrainOf, UPDATE_CHANNEL_KEY } from '../lib/updateChannel.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
+import { useUpdaterStore } from '../stores/updaterStore.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { useMessageBox } from '../components/ui'
 import { useExpandAnimation, useAnimatedList } from '../hooks/useGsapAnimations.ts'
@@ -229,7 +230,11 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [updateError, setUpdateError] = useState<string>()
   // 默认通道跟随已安装构建所属列车（beta 构建默认 beta），不再硬编码 stable。
   const [channel, setChannel] = useState(() => resolveChannel(APP_INFO.version) ?? 'stable')
-  const channelTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  /**
+   * 本会话内用户是否**显式**选过通道（区分 state 的真实选择与 `?? 'stable'` 占位）。
+   * 见 `channelForCheck`。
+   */
+  const [channelChosen, setChannelChosen] = useState(false)
   const [licenseCopied, setLicenseCopied] = useState(false)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [pendingRequired, setPendingRequired] = useState(false)
@@ -237,6 +242,25 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [privacyDialogOpen, setPrivacyDialogOpen] = useState(false)
   const [sponsors, setSponsors] = useState<Sponsor[]>([])
   const [sponsorsFailed, setSponsorsFailed] = useState(false)
+  /**
+   * 「有可用更新」的唯一事实源（#147）：App.tsx 启动时的后台检查与本页「检查更新」
+   * 都写入 store，本页更新行据此常驻提示。此前该事实只存在于 App 局部 state，
+   * 用户点「下次再说」后设置页便无从得知有新版本。
+   */
+  const availableUpdate = useUpdaterStore((s) => s.available)
+  const setUpdateAvailable = useUpdaterStore((s) => s.setAvailable)
+  /**
+   * 提示必须与**当前所选通道**一致。`guard_train_plan`（后端 `update.rs`）保证
+   * `plan.channel` 恒等于**该次检查所用通道**，而切换选择器不会自动重新检查——
+   * 若不加这层过滤，用户「发现 beta32 → 切到稳定版」后提示仍显示 beta32，点击
+   * 还会打开 beta 的更新弹窗，等于绕过了 ADR-085「永不跨列车自动更新」。
+   * `channel` 用 `channelTrainOf` 归一后再比（选择器是 `stable`，Train 是 `release`）；
+   * 类型显式收窄出必存在的 `version`，供下面占位符使用。
+   */
+  const hintUpdate: (UpdatePlan & { version: string }) | null =
+    availableUpdate?.version && channelTrainOf(channel) === (availableUpdate.channel ?? '')
+      ? { ...availableUpdate, version: availableUpdate.version }
+      : null
   const { t } = useI18n()
 
   useEffect(() => {
@@ -256,10 +280,64 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     }
   }, [licenseStatus?.valid, licenseStatus?.channel])
 
+  /**
+   * 切换发布通道并**立即**持久化。
+   *
+   * 原先对 localStorage 写入做了 500ms 防抖（channelTimerRef）。但
+   * `checkForUpdate` 经 `resolveChannel` → `storedChannel()` 读 localStorage 取通道，
+   * 防抖会让「刚切通道就点检查更新」读到**旧**通道（实测：选中稳定版后同一同步块内
+   * localStorage 仍是 beta，请求实际带 `channel=beta`）。后端 `guard_train_plan` 会把
+   * `plan.channel` 盖成该旧列车，且 `channelSwitch` 按「已安装列车」而非「当前选择」
+   * 计算 → 弹窗既不标注"切换通道"，用户点更新还完成了一次**无提示的跨列车安装**，
+   * 正是 ADR-085 要拦的场景（#147 评审）。
+   *
+   * 同步写入让 localStorage 恒定等于选择器显示值，成为"当前通道"的唯一来源；
+   * 一次 setItem 的成本可忽略（选择是离散的用户动作，非高频输入）。
+   * 写入失败（隐私模式/配额）只丢持久化，不影响本次会话内的 state。
+   */
   function setChannelAndSave(v: string) {
     setChannel(v)
-    if (channelTimerRef.current) clearTimeout(channelTimerRef.current)
-    channelTimerRef.current = setTimeout(() => localStorage.setItem('update-channel', v), 500)
+    // 标记"本会话已有显式选择"：手动检查据此直接用选择器值，不再依赖存储。
+    setChannelChosen(true)
+    try {
+      localStorage.setItem(UPDATE_CHANNEL_KEY, v)
+    } catch {
+      // 写不进去只意味着重启后不记忆，不能因此阻断本次切换，
+      // 更不能让本次会话的手动检查退回旧通道（见 channelForCheck）。
+    }
+  }
+
+  /**
+   * 手动检查该用哪个通道。
+   *
+   * 优先用**本会话的显式选择**（`channel` state），而不是回读 localStorage：
+   * 后者会把"写入成功"变成"选择生效"的前提，一旦 `setItem` 抛错（隐私模式/配额）
+   * 或写入尚未落地，选择器已显示新通道、检查却按旧通道请求，弹窗与选择器自相矛盾
+   * （#147 第三轮评审）。
+   *
+   * 但**不能无条件**用 state：`channel` 的初值是 `resolveChannel(...) ?? 'stable'`，
+   * 对无法识别的构建（如 `0.1.0-rc1`）那个 `'stable'` 只是显示占位、并非用户选择，
+   * 而既有语义是这种构建**不检查更新**。`channelChosen` 正是用来区分这两者，
+   * 从而在修掉本缺陷的同时保持未知构建行为不变。
+   */
+  function channelForCheck(): string | undefined {
+    if (channelChosen) return channel
+    return resolveChannel(APP_INFO.version)
+  }
+
+  /**
+   * 打开更新弹窗并同步「有可用更新」提示（#147）。
+   *
+   * 手动检查与后台检查共用同一份 store 状态，任一路径发现的新版本都会在
+   * 更新行右侧留下常驻提示；用户关掉弹窗（「下次再说」/「稍后」）不会清除它。
+   */
+  function showUpdate(plan: UpdatePlan) {
+    // required 由上游随 plan 一并给出。
+    setPendingUpdate(plan)
+    setPendingRequired(plan.required === true)
+    setUpdateState('available')
+    setUpdateDialogOpen(true)
+    setUpdateAvailable(plan)
   }
 
   async function checkForUpdate() {
@@ -271,8 +349,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
     setUpdateState('checking')
     setUpdateError(undefined)
     try {
-      // 与 App.tsx 一致：显式选择 > 已安装构建所属列车。
-      const channel = resolveChannel(APP_INFO.version)
+      const channel = channelForCheck()
       if (!channel) {
         setUpdateState('uptodate')
         return
@@ -280,13 +357,13 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
       const plan = await fetchUpdatePlan(channel)
       if (!plan.hasUpdate || !plan.version) {
         setUpdateState('uptodate')
+        // 本次检查是权威结论（用户可能刚切换了通道，或版本已被别的途径装上）：
+        // 清掉此前的提示，避免指向一个已不存在的"新版本"。请求失败走 catch，
+        // 不走到这里，因此网络异常不会误清提示。
+        setUpdateAvailable(null)
         return
       }
-      // required 由上游随 plan 一并给出。
-      setPendingUpdate(plan)
-      setPendingRequired(plan.required === true)
-      setUpdateState('available')
-      setUpdateDialogOpen(true)
+      showUpdate(plan)
     } catch (e) {
       setUpdateState('error')
       setUpdateError(String(e instanceof Error ? e.message : e))
@@ -417,6 +494,21 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               <Tooltip content={updateError}>
                 <span className="text-sm text-destructive cursor-help">{t('settings.about.checkUpdateFailed')}</span>
               </Tooltip>
+            )}
+            {/* #147：已知有可用更新时常驻提示，点它重新打开更新弹窗。
+                与弹窗的「下次再说」解耦——延迟只抑制弹窗，不再让提示消失。
+                仅当计划所属通道与当前所选通道一致时渲染（见 hintUpdate）。
+                文案复用 dialogs.update.foundNew（与弹窗标题同口径，带版本号），
+                不新增 i18n key，避免为一句提示动 7 种语言。 */}
+            {!devBuild && hintUpdate && updateState !== 'checking' && (
+              <button
+                type="button"
+                onClick={() => showUpdate(hintUpdate)}
+                className="inline-flex min-w-0 items-center gap-1 text-sm text-primary hover:underline"
+              >
+                <Download className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{t('dialogs.update.foundNew', { version: hintUpdate.version })}</span>
+              </button>
             )}
           </div>
 

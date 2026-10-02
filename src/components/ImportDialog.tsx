@@ -3,6 +3,7 @@ import { Download, FileDown, FolderOpen, RotateCw } from 'lucide-react'
 import { listen } from '@tauri-apps/api/event'
 import { Dialog, DialogBody, DialogHeader, DialogTitle } from '../components/ui'
 import { Button } from '../components/ui'
+import { Checkbox } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { Separator } from '../components/ui'
@@ -14,6 +15,13 @@ import { addTask } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
 import { importDialogActive } from '../lib/drop-routing.ts'
+
+/** 字节数格式化为 MB/KB（可选模组体积展示）。 */
+function formatSize(bytes: number | null): string {
+  if (bytes == null || bytes <= 0) return ''
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
 
 interface Props {
   open: boolean
@@ -38,6 +46,8 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
   // 清掉 state，请求进行中关闭再重开对话框就能绕过按钮 disabled 再次发起安装（PR#82 review）。
   const installingRef = useRef(false)
   const [dropHover, setDropHover] = useState(false)
+  // 勾选安装的可选模组 fileId 集合（issue #129）。默认全不勾选 = 保持原安装行为。
+  const [selectedOptional, setSelectedOptional] = useState<number[]>([])
   // 单调递增请求 ID：丢弃过期解析结果（快速连续拖入多个包时旧响应不得覆盖新预览）。
   const parseReqIdRef = useRef(0)
 
@@ -85,6 +95,11 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
       unDrop?.()
     }
   }, [open, t])
+
+  // 新解析结果 = 新的可选清单：清空上次勾选（默认全部不勾选，issue #129）。
+  useEffect(() => {
+    setSelectedOptional([])
+  }, [parsed])
 
   /** 解析一个 MultiMC 实例文件夹。 */
   const parseFolder = async (path: string, reqId = ++parseReqIdRef.current) => {
@@ -164,6 +179,9 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             // 本地导入（parse-path）：modpackFiles 是包内 mod 直链，后端走本地包体
             // 分支时不读它，回传只会白占请求体；仅在在线解析结果时才带上。
             modpackFiles: sourcePath ? [] : (parsed as ModpackParseResult).files,
+            // 可选模组：本地导入由后端重新解析 zip，选择必须以独立字段回传
+            // （modpackFiles 在本地分支不被读取，issue #129）。
+            optionalFileIds: selectedOptional.length > 0 ? selectedOptional : null,
             overridesZip: sourcePath ? null : (parsed as ModpackParseResult).overridesZip,
             iconData: parsed.iconData,
             modpackName: parsed.name,
@@ -207,6 +225,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     setError('')
     setInstalling(false)
     setDropHover(false)
+    setSelectedOptional([])
   }
 
   // 统一关闭路径：标题栏 × 与弹窗遮罩都先 reset（作废在途解析）再 onClose，
@@ -215,6 +234,11 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     reset()
     onClose()
   }
+
+  // 可选模组清单（仅 CurseForge 非空）。MultiMC 结果无该字段，取空数组。
+  const optionalFiles = (!parsed || parsed.packType === 'multimc'
+    ? []
+    : (parsed as ModpackParseResult).optionalFiles ?? [])
 
   return (
     <Dialog open={open} onClose={handleDialogClose}>
@@ -297,6 +321,64 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
               <Label htmlFor="inst-name">{t('dialogs.import.instanceName')}</Label>
               <Input id="inst-name" value={instanceName} onChange={e => setInstanceName(e.target.value)} />
             </div>
+            {optionalFiles.length > 0 && (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>
+                      {t('dialogs.import.optionalMods', { count: optionalFiles.length })}
+                    </Label>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setSelectedOptional(optionalFiles.map(o => o.fileId))}
+                      >
+                        {t('dialogs.import.selectAll')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setSelectedOptional([])}
+                      >
+                        {t('dialogs.import.selectNone')}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="max-h-[180px] space-y-1 overflow-y-auto rounded-lg border border-border/60 p-2">
+                    {optionalFiles.map(o => (
+                      <label
+                        key={o.fileId}
+                        className="flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 text-sm transition-colors hover:bg-accent/30"
+                      >
+                        <Checkbox
+                          checked={selectedOptional.includes(o.fileId)}
+                          onCheckedChange={checked => {
+                            setSelectedOptional(prev =>
+                              checked ? [...prev, o.fileId] : prev.filter(id => id !== o.fileId),
+                            )
+                          }}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-xs">{o.name}</span>
+                        {formatSize(o.size) && (
+                          <span className="shrink-0 text-[11px] text-muted-foreground">{formatSize(o.size)}</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t('dialogs.import.optionalSummary', {
+                      required: (parsed as ModpackParseResult).files?.length ?? 0,
+                      selected: selectedOptional.length,
+                      total: optionalFiles.length,
+                    })}
+                  </p>
+                </div>
+              </>
+            )}
             {error && <p className="text-destructive text-sm">{error}</p>}
             <div className="flex justify-end gap-2">
               <Button variant="outline" disabled={installing} onClick={() => { reset(); onClose() }}>{t('common.cancel')}</Button>
