@@ -577,12 +577,21 @@ fn mr_loaders_cache() -> &'static Mutex<Option<(Instant, Vec<(String, String, St
 /// `supported_project_types`（如 iris→shader、minecraft→resourcepack、
 /// forge→mod+modpack）。此前前端写死一份与类型无关的列表，导致光影包选
 /// forge 后 Modrinth 的 `categories:forge` facet 命中 0 条（列表空白）。
+///
+/// 缓存策略：成功结果缓存 6 小时；**失败/空结果也带时间戳缓存**，但用较短的
+/// 抑制窗口 —— 本函数会在 `search_one`（每次搜索、聚合分类下最多 12 次）与
+/// `/resources/loaders` 里被调用，上游故障时若完全不缓存，一次搜索就会放大成
+/// 十几次无效请求。
 async fn fetch_mr_loaders(client: &reqwest::Client) -> Vec<(String, String, String)> {
-    const TTL: Duration = Duration::from_secs(6 * 3600);
+    /// 成功结果的有效期。
+    const TTL_OK: Duration = Duration::from_secs(6 * 3600);
+    /// 失败/空结果的抑制窗口：短到能较快自愈，长到足以挡住一次搜索里的重复调用。
+    const TTL_ERR: Duration = Duration::from_secs(60);
     {
         let g = mr_loaders_cache().lock().unwrap();
         if let Some((ts, list)) = g.as_ref() {
-            if ts.elapsed() < TTL {
+            let ttl = if list.is_empty() { TTL_ERR } else { TTL_OK };
+            if ts.elapsed() < ttl {
                 return list.clone();
             }
         }
@@ -619,10 +628,9 @@ async fn fetch_mr_loaders(client: &reqwest::Client) -> Vec<(String, String, Stri
         }
         _ => Vec::new(),
     };
-    if !list.is_empty() {
-        let mut g = mr_loaders_cache().lock().unwrap();
-        *g = Some((Instant::now(), list.clone()));
-    }
+    // 成功与失败都记录时间戳，避免上游故障时反复重试（TTL 按结果是否为空区分）。
+    let mut g = mr_loaders_cache().lock().unwrap();
+    *g = Some((Instant::now(), list.clone()));
     list
 }
 

@@ -224,6 +224,22 @@ function staticTagsFor(source: string, category: string): string[] {
 }
 
 /**
+ * 加载器列表拉取失败时的兜底（#163）。
+ *
+ * 兜底内容只对「模组系」成立：`FALLBACK_LOADERS` 是 forge/fabric/neoforge/
+ * quilt，对光影包（iris/optifine）、资源包（minecraft）、数据包（datapack）
+ * 都是错选项。后者的正确加载器只能来自上游，离线推断不出来，宁可返回空列表
+ * 让控件隐藏，也不要给出一个「选了等于没选」的选项（后端会丢弃它并返回未过滤
+ * 结果，界面上却显示筛选已生效）。
+ */
+function fallbackLoaders(category: string): ResourceCategory[] {
+  if (category === 'mod' || category === 'modpack' || category === AGGREGATE_CATEGORY) {
+    return FALLBACK_LOADERS
+  }
+  return []
+}
+
+/**
  * 加载器筛选对哪些「来源 + 资源类型」生效（#163）。
  *
  * 与后端 `/resources/loaders` 的口径保持一致：
@@ -629,25 +645,47 @@ export default function ResourceCenter() {
   // 加载器列表（#163）：与类别列表同样按 source+category 拉取。切换分类/来源后
   // 列表会变（如光影包→iris/optifine），已选加载器若不在新列表中必须清掉，
   // 否则会把上一个类型的 loader 发给新类型，命中 0 条。
+  //
+  // 注意这里**同步**清空 loader（而不是等新列表返回后再清）：`loader` 是
+  // `doSearch` 的依赖，切换分类瞬间就会用旧的 loader 发一次搜索；等请求返回再清
+  // 会多打一次无效请求并让列表闪一下。同步清掉可让那次搜索直接以「无加载器」发出。
+  const prevLoaderScopeRef = useRef(`${source}|${category}`)
   useEffect(() => {
-    if (view !== 'search' || !loadersSupported(source, category)) {
+    const scope = `${source}|${category}`
+    const scopeChanged = prevLoaderScopeRef.current !== scope
+    prevLoaderScopeRef.current = scope
+
+    if (!loadersSupported(source, category)) {
       setLoaderOptions(null)
       // 该组合没有加载器概念（如切到存档/FTB）时清掉已选项，否则残留的 loader
       // 会继续写进 URL 与请求，被后端当作有效筛选静默丢弃。
       setLoader('')
       return
     }
+    // 收藏视图不展示该控件，也不应产生请求；但**不要**清掉 loader —— 用户
+    // 只是切了个视图，切回搜索时筛选应当还在（URL 上也一直保留着）。
+    if (view !== 'search') {
+      setLoaderOptions(null)
+      return
+    }
+    if (scopeChanged) {
+      // 先清空：避免在新列表返回前把上一个类型的选项渲染出来（短暂显示旧选项）。
+      setLoaderOptions(null)
+      setLoader((prev) => (prev ? '' : prev))
+    }
     let cancelled = false
     getResourceLoaders(source, category)
       .then((list) => {
         if (cancelled) return
-        setLoaderOptions(list.length > 0 ? list : FALLBACK_LOADERS)
-        setLoader((prev) => (prev && !list.some((l) => l.slug === prev) ? '' : prev))
+        const opts = list.length > 0 ? list : fallbackLoaders(category)
+        setLoaderOptions(opts)
+        setLoader((prev) => (prev && !opts.some((l) => l.slug === prev) ? '' : prev))
       })
       .catch(() => {
         if (cancelled) return
-        setLoaderOptions(FALLBACK_LOADERS)
-        setLoader((prev) => (prev && !FALLBACK_LOADERS.some((l) => l.slug === prev) ? '' : prev))
+        const opts = fallbackLoaders(category)
+        setLoaderOptions(opts)
+        setLoader((prev) => (prev && !opts.some((l) => l.slug === prev) ? '' : prev))
       })
     return () => { cancelled = true }
   }, [source, category, view])
