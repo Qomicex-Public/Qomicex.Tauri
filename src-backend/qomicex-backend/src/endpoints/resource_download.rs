@@ -286,13 +286,26 @@ fn ensure_watcher(manager: Arc<DownloadManager>) {
                     if state == TaskState::Completed {
                         let intent = extract_intents().lock().unwrap().remove(&id);
                         if let Some(intent) = intent {
+                            // 进入解压前先把快照收到「下载 100%、速度 0」：下载已
+                            // 完成，若保持最后一次进度 tick 的值，下载中心会在解压
+                            // 期间显示一个未满的进度条与虚假速度（CodeRabbit 评审
+                            // 指出）。解压结束由 finish_extract 写终态。
+                            {
+                                let mut reg = task_registry().lock().unwrap();
+                                if let Some(s) = reg.get_mut(&id) {
+                                    s.speed = 0;
+                                    if s.total > 0 {
+                                        s.downloaded = s.total;
+                                    }
+                                }
+                            }
                             spawn_extract(id, intent);
                             continue;
                         }
                     } else if matches!(state, TaskState::Failed | TaskState::Cancelled) {
-                        // 下载没成功就谈不上解压：清掉意图，避免条目随失败/取消的任务
-                        // 永久滞留在 map 里（task id 会被复用，残留会让后续无关任务
-                        // 在完成时去解压一个不相干的路径）。
+                        // 下载没成功就谈不上解压：清掉意图。否则条目会随失败/取消的
+                        // 任务滞留在 map 里（这些 id 虽然不会复用，但残留会一直占用
+                        // 内存，且语义上是「永远不会执行的意图」）。
                         extract_intents().lock().unwrap().remove(&id);
                     }
                     let status = status_of(state).to_string();
