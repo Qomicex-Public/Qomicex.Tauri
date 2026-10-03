@@ -1386,6 +1386,30 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 **响应：** `ResourceSearchResponse`
 
+> **`loader` 必须与 `category` 匹配**（#163）。加载器与资源类型强相关：光影包用
+> `iris`/`optifine`、资源包用 `minecraft`、数据包用 `datapack`。传入与当前类型不
+> 兼容的 loader 时，Modrinth 会返回 **0 条而非报错**，旧版会因此显示空白列表。
+> 后端现在会丢弃不兼容的 loader（等价于不筛选）而不是让列表变空。可用取值见
+> `/api/resources/loaders`。
+
+### GET `/api/resources/loaders?source={src}&category={c}`
+
+返回该「来源 + 资源类型」组合下**真正可用**的加载器选项（#163），供资源中心的
+加载器筛选项渲染。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| source | string | `all`（默认）、`modrinth`、`curseforge`、`ftb` |
+| category | string | `mod`（默认）、`modpack`、`resourcepack`、`shader`、`datapack`、`save`、`aggregate` |
+
+**响应：** `List<{ slug, name }>`
+
+- Modrinth 取 `v2/tag/loader` 的 `supported_project_types` 过滤（上游新增加载器自动生效）。
+- CurseForge 仅 `mod` / `modpack` 有加载器概念，其余类型返回空列表。
+- FTB 仅 `modpack`，取其实测 `modloader` target 名（`forge` / `fabric` / `neoforge`）。
+- `category=aggregate`（聚合）返回各类型可用加载器的并集。
+- 返回空列表表示该组合没有加载器概念，前端应隐藏该筛选控件。
+
 ### GET `/api/resources/{id}?source={src}`
 
 获取资源详情。
