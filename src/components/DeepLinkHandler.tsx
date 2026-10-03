@@ -15,6 +15,7 @@ import { ApiError } from '../api/client.ts'
 import {
   DEEP_LINK_EVENT,
   isTrustedInstallUrl,
+  matchLaunchTarget,
   parseDeepLink,
   type DeepLinkAction,
 } from '../lib/deepLink.ts'
@@ -116,15 +117,31 @@ export default function DeepLinkHandler({ backendReady, blocked }: DeepLinkHandl
       switch (action.kind) {
         case 'launch': {
           const list = await getInstances()
-          // 先按 ID 再按名字：实例 ID 是后端生成的短串（`short_id()`），用户完全可能
-          // 把一个实例命名成另一个实例的 id。ID 是精确标识，冲突时应让它胜出。
-          const inst =
-            list.find((i) => i.id === action.target) ?? list.find((i) => i.name === action.target)
-          if (!inst) {
-            notify(t('deepLink.launchNotFound', { target: action.target }), 'error')
+          // 匹配规则见 `lib/deepLink.ts` 的 `matchLaunchTarget`：ID 优先，可带
+          // `目录:实例名` 精确定位，且**同名多命中一律拒绝**而不是静默取第一个。
+          const match = matchLaunchTarget(list, {
+            raw: action.raw,
+            name: action.target,
+            dir: action.dir,
+          })
+          if (match.kind === 'notFound') {
+            notify(t('deepLink.launchNotFound', { target: action.raw }), 'error')
             return
           }
-          await launchInstance(inst.id, inst.name)
+          if (match.kind === 'ambiguous') {
+            // 给出可直接照抄的示例：拿第一个候选的真实 gameDir 拼，用户复制即用。
+            const example = `${match.candidates[0].gameDir}:${match.candidates[0].name}`
+            notify(
+              t('deepLink.launchAmbiguous', {
+                count: match.candidates.length,
+                target: action.raw,
+                example,
+              }),
+              'warning',
+            )
+            return
+          }
+          await launchInstance(match.instance.id, match.instance.name)
           return
         }
 

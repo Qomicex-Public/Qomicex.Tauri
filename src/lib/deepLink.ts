@@ -58,11 +58,127 @@ const ALLOWED_ROUTES: readonly string[] = [
 ]
 
 export type DeepLinkAction =
-  | { kind: 'launch'; target: string }
+  | { kind: 'launch'; target: string; dir?: string; raw: string }
   | { kind: 'open'; route: string }
   | { kind: 'join'; code: string }
   | { kind: 'installPlugin'; slug?: string; version?: string; url?: string }
   | { kind: 'installModpack'; source: ModpackSource; projectId: string; fileId: string; name?: string }
+
+/**
+ * `launch/` 后面那一段的解析结果。
+ *
+ * 两种写法：
+ * - `launch/<实例名或ID>` → `dir` 为 undefined，`name` = 原串；
+ * - `launch/<游戏目录>:<实例名>` → 同时给出 `dir` 与 `name`。
+ */
+export interface LaunchTarget {
+  /** 原始 target（错误提示原样回显用）。 */
+  raw: string
+  /** 要匹配的名字（无目录时即原始串）。 */
+  name: string
+  /** 游戏目录；仅当 target 里含「有效的」冒号分隔时才有值。 */
+  dir?: string
+}
+
+/**
+ * 解析 `launch/` 的 target，**从右往左**按最后一个冒号切分。
+ *
+ * 为什么必须从右往左：Windows 绝对路径自带盘符（`C:\Users\x\.minecraft`），
+ * 从左切会把 `C` 当成目录、`\Users\x\.minecraft` 当成实例名。
+ */
+export function splitLaunchTarget(raw: string): LaunchTarget {
+  const trimmed = raw.trim()
+  const idx = trimmed.lastIndexOf(':')
+  if (idx < 0) return { raw: trimmed, name: trimmed }
+  const dir = trimmed.slice(0, idx).trim()
+  const name = trimmed.slice(idx + 1).trim()
+  // `:name` / `dir:` 这类切出空半边的写法**不**当作目录形式：退化成纯名字匹配，
+  // 最终由调用方走「找不到实例」提示，而不是拿空目录去比对出一个假的精确命中。
+  if (!dir || !name) return { raw: trimmed, name: trimmed }
+  // 兜底盘符：`C:\mc\inst`（只给了目录、没给实例名）的最后一个冒号就是盘符本身，
+  // 会被切成 dir="C" + name="\mc\inst"。判定条件收紧到「单个字母 + 后半以路径分隔符
+  // 开头」，避免误伤 `C:MyPack` 这类合法的「盘符 + 名字」写法。
+  if (/^[A-Za-z]$/.test(dir) && /^[\\/]/.test(name)) return { raw: trimmed, name: trimmed }
+  return { raw: trimmed, name, dir }
+}
+
+/** 实例匹配所需的最小结构（不依赖 GameInstance，便于独立测试）。 */
+export interface LaunchCandidate {
+  id: string
+  name: string
+  gameDir: string
+}
+
+export type LaunchMatch<T> =
+  | { kind: 'matched'; instance: T }
+  | { kind: 'notFound' }
+  | { kind: 'ambiguous'; candidates: T[] }
+
+function sameText(a: string, b: string, loose: boolean): boolean {
+  return loose ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+/** 路径比较前归一化：反斜杠转正斜杠、去掉尾部斜杠。 */
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+/**
+ * 「精确命中唯一」才接受：先按原样比，无人命中再按大小写不敏感比。
+ *
+ * 为什么不用「大小写不敏感优先」：Linux 上 `DirA` 与 `dira` 是两个真实不同的目录，
+ * 一律折叠会制造新的歧义。先精确、后宽松、且宽松必须唯一，才能同时照顾
+ * Windows（大小写不敏感）与 Linux（敏感）。
+ */
+function pickUnique<T>(
+  items: readonly T[],
+  match: (item: T, loose: boolean) => boolean,
+): LaunchMatch<T> {
+  const exact = items.filter((item) => match(item, false))
+  if (exact.length === 1) return { kind: 'matched', instance: exact[0] }
+  if (exact.length > 1) return { kind: 'ambiguous', candidates: exact }
+  const loose = items.filter((item) => match(item, true))
+  if (loose.length === 1) return { kind: 'matched', instance: loose[0] }
+  if (loose.length > 1) return { kind: 'ambiguous', candidates: loose }
+  return { kind: 'notFound' }
+}
+
+/**
+ * 按 target 在实例列表里定位唯一实例。
+ *
+ * 匹配顺序：
+ * 1. **实例 ID 精确命中**——ID 是后端生成的全局唯一串（`short_id()`），先判它可
+ *    同时消除「名字撞车」与「用户把实例命名成别的实例 ID」两种情况。
+ * 2. 带目录时按 `(gameDir, name)` 精确匹配。
+ * 3. 退化到按**原始串**匹配名字——这样「名字里真带冒号」的旧链接仍然可用
+ *    （带目录但没匹配上时也走这条兜底）。
+ *
+ * 关键约束：**同名多命中一律返回 ambiguous，绝不静默取第一个**。列表顺序在有扫描
+ * 缓存时来自 `HashMap` 迭代（随机种子），实测同一份数据会从 idAAA 跳到 idCCC，
+ * 静默取首等于「点同一个链接今天启动 A、明天启动 B」。
+ */
+export function matchLaunchTarget<T extends LaunchCandidate>(
+  instances: readonly T[],
+  target: LaunchTarget,
+): LaunchMatch<T> {
+  const byId = instances.filter((inst) => inst.id === target.raw)
+  if (byId.length === 1) return { kind: 'matched', instance: byId[0] }
+  if (byId.length > 1) return { kind: 'ambiguous', candidates: byId }
+
+  if (target.dir !== undefined) {
+    const dir = normalizePath(target.dir)
+    const hit = pickUnique(
+      instances,
+      (inst, loose) =>
+        sameText(normalizePath(inst.gameDir), dir, loose) && sameText(inst.name, target.name, loose),
+    )
+    // 目录形式**命中或歧义**都直接返回；只有「完全找不到」才继续兜底按原串找名字，
+    // 否则一个笔误目录会静默落到同名的另一实例上。
+    if (hit.kind !== 'notFound') return hit
+  }
+
+  return pickUnique(instances, (inst, loose) => sameText(inst.name, target.raw, loose))
+}
 
 /** 后端 `install-direct` 在线分支接受的来源标识（见 `modpack.rs` 的 source 匹配）。 */
 export type ModpackSource = 'modrinth' | 'curseforge' | 'ftb'
@@ -112,8 +228,10 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
 
   switch (action) {
     case 'launch': {
-      const target = first.trim()
-      return target ? { kind: 'launch', target } : null
+      const raw = first.trim()
+      if (!raw) return null
+      const { name, dir } = splitLaunchTarget(raw)
+      return { kind: 'launch', target: name, dir, raw }
     }
     case 'open': {
       // 先拒绝「解码后才出现的路径结构」，再拼路由过白名单。
