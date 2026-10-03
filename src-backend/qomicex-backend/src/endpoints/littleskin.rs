@@ -406,14 +406,20 @@ impl MinecraftTokenResponse {
 /// ⚠️ LittleSkin 的刷新令牌**一次性且轮换**：刷新成功后旧令牌立即失效，
 /// 因此调用方必须串行化「读取 → 刷新 → 落库」，否则并发刷新会用旧值覆盖
 /// 已轮换的新值，导致该账户永久无法续期。
+///
+/// ⚠️ 本函数**不使用共享 HTTP 客户端**：共享客户端沿用 reqwest 默认重定向策略
+/// （最多 10 跳），且用户开启「忽略 SSL 证书」时会接受无效证书。`refresh_token`
+/// 位于表单体中，307/308 重定向会重放请求体，而 reqwest 只在跨主机/端口时剥离
+/// Authorization 等敏感**头**——不保护请求体。故此处用专用客户端：不跟随重定向
+/// （端点地址固定且官方文档未定义重定向语义）+ 始终校验证书。
 pub(crate) async fn refresh_oauth_token(
-    http: &reqwest::Client,
     refresh_token: &str,
 ) -> ApiResult<(String, Option<String>)> {
+    let client = oauth_refresh_client()?;
     let client_id = resolve_client_id();
     let url = format!("{LITTLESKIN_OAUTH_BASE}/oauth/token");
 
-    let resp = http
+    let resp = client
         .post(&url)
         .header(reqwest::header::ACCEPT, "application/json")
         .form(&[
@@ -455,6 +461,17 @@ pub(crate) async fn refresh_oauth_token(
     let access_token = json_str(&doc, "access_token")
         .ok_or_else(|| ApiError::upstream("LittleSkin 刷新响应缺少 access_token"))?;
     Ok((access_token, json_str(&doc, "refresh_token")))
+}
+
+/// 承载 OAuth 刷新令牌的专用 HTTP 客户端（见 [`refresh_oauth_token`] 的说明）：
+/// **不跟随重定向**，且**不因用户设置而放宽证书校验**。
+fn oauth_refresh_client() -> ApiResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent(crate::state::USER_AGENT)
+        .build()
+        .map_err(|e| ApiError::internal(format!("构建 OAuth 客户端失败: {e}")))
 }
 
 /// 用 OAuth 令牌换取某个角色的 Minecraft 令牌（需 `Yggdrasil.MinecraftToken.Create`）。

@@ -1756,7 +1756,7 @@ async fn refresh_littleskin_oauth_locked(
 ) -> Result<crate::services::account::StoredAccount, ApiError> {
     // ① 换新的 OAuth 访问令牌（旧刷新令牌在此刻被作废）
     let (oauth_access, new_oauth_refresh) =
-        crate::endpoints::littleskin::refresh_oauth_token(http, oauth_refresh_token).await?;
+        crate::endpoints::littleskin::refresh_oauth_token(oauth_refresh_token).await?;
 
     // 立刻持久化轮换后的刷新令牌：新值未随响应下发时沿用旧值。
     // 必须先存后取 MC 令牌：若第 ② 步失败，新的刷新令牌已经落库，
