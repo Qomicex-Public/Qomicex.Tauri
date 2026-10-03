@@ -100,7 +100,7 @@ if debug_port.is_none() {
 | Rust 编译 | `cargo check`（backend + tauri） | 均 `EXIT=0` |
 | 后端测试 | `cargo test -p qomicex-backend` | `361 passed; 0 failed; 2 ignored` |
 | Tauri 网关测试 | `cargo test --lib plugin_gateway` | `2 passed` |
-| i18n 结构 | 7 语言 key/占位符奇偶校验 | 均 `keys=12`、占位符集合一致 |
+| i18n 结构 | 7 语言 key/占位符奇偶校验 | 均 `keys=12`、占位符集合一致（此后随迭代增长：审计修复 +5 → 17，同名实例歧义 +1 → **18**） |
 
 **新端点 `POST /api/plugins/install-url` 端到端实测**（真实后端 + 临时 `QOMICEX_HOME`，`:5099`）：
 
