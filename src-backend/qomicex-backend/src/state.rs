@@ -102,11 +102,16 @@ pub struct AppState {
     pub proxy_client: reqwest::Client,
     /// 插件包直链下载专用客户端（`POST /plugins/install-url`）。
     ///
-    /// **禁用自动重定向**：该端点的目标 URL 由外部深链提供，而唯一那道 SSRF 校验
-    /// （[`crate::endpoints::plugin::validate_target`]）只看初始主机。reqwest 默认会
-    /// 跟随最多 10 跳且不重校验，于是公网 URL 可 302 到 `127.0.0.1` 把校验绕过去。
-    /// 官方 `.qplugin` 分发（cdn.qomicex.top）实测是 200 直出、不依赖重定向，
-    /// 故直接关掉重定向而不是逐跳重校验。
+    /// 相对共享客户端有**两处刻意的差异**：
+    ///
+    /// 1. **禁用自动重定向**：该端点的目标 URL 由外部深链提供，而唯一那道 SSRF 校验
+    ///    （[`crate::endpoints::plugin::validate_target`]）只看初始主机。reqwest 默认会
+    ///    跟随最多 10 跳且不重校验，于是公网 URL 可 302 到 `127.0.0.1` 把校验绕过去。
+    ///    官方 `.qplugin` 分发（cdn.qomicex.top）实测是 200 直出、不依赖重定向，
+    ///    故直接关掉重定向而不是逐跳重校验。
+    /// 2. **不继承 `ignore_ssl_cert`**：该设置本意是给自签名/内网镜像放行，但会让 TLS
+    ///    校验完全失效；而这条链路下载的是**马上要被当成代码安装的 `.qplugin`**，
+    ///    继承它等于允许中间人替换正在安装的插件。代理设置仍然继承。
     pub plugin_download_client: reqwest::Client,
     /// 当前设置（内存缓存，PUT /settings 时同步更新）。
     pub settings: Arc<RwLock<SettingsResponse>>,
@@ -198,16 +203,22 @@ impl AppState {
             b.build().expect("构建插件代理 HTTP 客户端失败")
         };
 
-        // 插件包直链下载客户端：其余参数与共享客户端一致（代理/忽略 SSL/UA/超时），
-        // 唯一差别是 redirect(none) —— 见字段注释里的 SSRF 理由。
+        // 插件包直链下载客户端：相对共享客户端只改两处 ——
+        //   1. `redirect(none)`：见字段注释里的 SSRF 理由（唯一那道 SSRF 校验只看初始主机）；
+        //   2. **不继承 `ignore_ssl`**：`danger_accept_invalid_certs` 会让 TLS 校验完全失效，
+        //      而这个端点下载的是**马上要被当作代码安装的 .qplugin**。把用户的「忽略 SSL」
+        //      设置（本意是给自签名/内网镜像放行）自动扩大到这条链路上，等于让中间人可以用
+        //      任意包替换掉一个正在安装的插件 —— 这与本端点其余防护（SSRF 校验、禁重定向、
+        //      体积上限）自相矛盾。官方分发（cdn.qomicex.top）用有效证书，正常路径不受影响；
+        //      确需自签名源的场景应走「本地上传」，那条路用户能看到实际文件。
+        //      同时也是 CodeQL `rust/disabled-certificate-check` 的修复：该规则对 PR 变更行
+        //      报警，先前继承 ignore_ssl 正是新告警的来源。
+        // 代理与 no_proxy 仍然继承：它们不降低安全边界，且不继承会破坏企业内网环境。
         let plugin_download_client = {
             let mut b = reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
                 .user_agent(user_agent.clone())
                 .redirect(reqwest::redirect::Policy::none());
-            if ignore_ssl {
-                b = b.danger_accept_invalid_certs(true);
-            }
             if no_proxy {
                 b = b.no_proxy();
             }
