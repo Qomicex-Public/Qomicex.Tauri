@@ -279,7 +279,10 @@ async fn select(
         ));
     }
 
-    let mut saved = Vec::with_capacity(req.selected_profiles.len());
+    // 不用 `with_capacity(req.selected_profiles.len())`：CodeQL 会把「以请求体长度
+    // 预分配」判定为 rust/uncontrolled-allocation-size（其数据流不认可上面的 guard）。
+    // 空 Vec 按需增长，实际容量由通过校验的条目数（≤ MAX_SELECTED_PROFILES）决定。
+    let mut saved = Vec::new();
 
     for profile in &req.selected_profiles {
         let mc = create_minecraft_token(&state.http_client, &req.access_token, &profile.id).await?;
