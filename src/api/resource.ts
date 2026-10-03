@@ -34,6 +34,17 @@ export function getResourceCategories(source: string, category: string): Promise
   return get<ResourceCategory[]>(`/resources/categories?source=${encodeURIComponent(source)}&category=${encodeURIComponent(category)}`)
 }
 
+/**
+ * 某「来源 + 资源类型」组合下可用的加载器选项（#163）。
+ *
+ * 加载器与资源类型强相关（光影包是 iris/optifine、资源包是 minecraft、整合包是
+ * forge/fabric/neoforge/quilt），故由后端按类型下发而不是前端写死一份列表——
+ * 写死会让光影包也列出 Forge，选中后上游 facet 命中 0 条（列表空白）。
+ */
+export function getResourceLoaders(source: string, category: string): Promise<ResourceCategory[]> {
+  return get<ResourceCategory[]>(`/resources/loaders?source=${encodeURIComponent(source)}&category=${encodeURIComponent(category)}`)
+}
+
 export function getResourceDetail(id: string, source?: string, category?: string): Promise<ResourceDetail> {
   const q = new URLSearchParams()
   if (source) q.set('source', source)
