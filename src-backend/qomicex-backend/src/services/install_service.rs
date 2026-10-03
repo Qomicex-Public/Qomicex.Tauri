@@ -1935,7 +1935,15 @@ mod tests {
             sha1: String::new(),
             path: path.to_string(),
         };
-        let root = std::env::temp_dir().join("qomicex-miss-root");
+        // root 必须真的存在，且按 pid 隔离：`dedup_key` 会探测父目录的大小写敏感性，
+        // 目录不存在时 `probe_case_insensitive_walk_up` 会一路向上找已存在祖先，
+        // 最终落到共享的 `%TEMP%` 并在那里建同名探针文件。与同样探测 `%TEMP%` 的
+        // 其它测试并发时，双方会看到对方残留的探针 → 探测得到不一致的结论 →
+        // 去重键不一致（issue #166 的 flaky 根因）。
+        // 建好目录后探测只发生在本目录内，不再与其它测试共享探针位置。
+        let root = std::env::temp_dir().join(format!("qomicex-miss-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
         let (kept, dropped) = dedup_miss_files(
             vec![
                 mk(
@@ -1957,6 +1965,8 @@ mod tests {
         assert_eq!(kept[0].name, "org.lwjgl3:lwjgl:3.3.3");
         assert_eq!(dropped.len(), 1);
         assert_eq!(dropped[0].name, "org.lwjgl3:lwjgl:3.3.3");
+        // 探测会在 root 内留下 .__qmx_case_probe__ 残留，测完清理避免堆积。
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 判重键由去重函数内部归一化：`/` 与 `\` 形态是同一个目标（core 的 maven 路径带
@@ -1970,7 +1980,12 @@ mod tests {
             sha1: String::new(),
             path: path.to_string(),
         };
-        let root = std::env::temp_dir().join("qomicex-miss-root-sep");
+        // 同 `dedup_miss_files_merges_same_path`：root 必须存在且按 pid 隔离，
+        // 否则大小写探测会上溯到共享 `%TEMP%` 与并发测试互撞（issue #166）。
+        let root =
+            std::env::temp_dir().join(format!("qomicex-miss-root-sep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
         let (kept, dropped) = dedup_miss_files(
             vec![
                 mk(
@@ -1988,6 +2003,8 @@ mod tests {
         assert_eq!(dropped.len(), 1);
         // 保留的是首次出现的原始记录（含原始分隔符），UI 名称不受影响。
         assert_eq!(kept[0].name, "org.ow2.asm:asm:9.10.1");
+        // 同 merges_same_path：清理探测残留。
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // --- merge_dropped_mirrors / attach_mirrors（跨平台可测，不依赖 cfg(windows)） ---
