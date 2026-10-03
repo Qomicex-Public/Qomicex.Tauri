@@ -10,6 +10,10 @@ dist/
 # 原先是两个按目录写死的规则，新增 crate 时会漏。
 target/
 
+# 后端运行配置（issue #159）：含 CurseForge API key 等敏感值，由 build.rs
+# 以 appsettings.example.json 为模板 + 环境变量生成，不入库。
+src-backend/qomicex-backend/appsettings.json
+
 # Legacy C# backend runtime leftovers (deleted source; dir contains a test
 # artifact with an NTFS-reserved name that cannot be removed via Win32 APIs)
 src-backend/Qomicex.Launcher.Backend.Neo/

@@ -13,7 +13,7 @@ import { Badge } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Combobox } from '../components/ui'
 import { cn } from '../components/ui'
-import { searchResources, getResourceCategories, toResourceItem, type ResourceCategory } from '../api/resource.ts'
+import { searchResources, getResourceCategories, getResourceLoaders, toResourceItem, type ResourceCategory } from '../api/resource.ts'
 import { batchLookupChineseNames } from '../api/mcmod.ts'
 import type { ResourceItem, ResourceFavorite } from '../types/index.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
@@ -93,12 +93,15 @@ const SOURCES = [
 
 const GAME_VERSIONS = ['26.2', '26.1.2', '26.1.1', '26.1', '1.21.11', '1.21.10', '1.21.9', '1.21.8', '1.21.7', '1.21.6', '1.21.5', '1.21.4', '1.21.3', '1.21.2', '1.21.1', '1.21', '1.20.6', '1.20.5', '1.20.4', '1.20.3', '1.20.2', '1.20.1', '1.20', '1.19.4', '1.19.3', '1.19.2', '1.19.1', '1.19', '1.18.2', '1.18.1', '1.18', '1.17.1', '1.17', '1.16.5', '1.16.4', '1.16.3', '1.16.2', '1.16.1', '1.16']
 
-const LOADERS = [
-  { key: 'forge', label: 'Forge' },
-  { key: 'fabric', label: 'Fabric' },
-  { key: 'neoforge', label: 'NeoForge' },
-  { key: 'quilt', label: 'Quilt' },
-  { key: 'liteloader', label: 'LiteLoader' },
+// 加载器选项由后端按「来源 + 资源类型」下发（#163）。此前这里写死 5 项、
+// 与资源类型无关：光影包也会列出 Forge，选中后 Modrinth 的 categories:forge
+// facet 命中 0 条（列表空白），且模组缺少 babric / legacy-fabric 等真实加载器。
+// 全局默认（后端不可达时的兜底，仅模组/整合包通用项）。
+const FALLBACK_LOADERS = [
+  { slug: 'forge', name: 'Forge' },
+  { slug: 'fabric', name: 'Fabric' },
+  { slug: 'neoforge', name: 'NeoForge' },
+  { slug: 'quilt', name: 'Quilt' },
 ]
 
 const SORT_OPTIONS: Record<string, { key: string }[]> = {
@@ -218,6 +221,40 @@ function staticTagsFor(source: string, category: string): string[] {
   if (source === 'curseforge') return CF_TAGS
   if (source === 'all') return ALL_TAGS
   return MOD_TAGS
+}
+
+/**
+ * 加载器列表拉取失败时的兜底（#163）。
+ *
+ * 兜底内容只对「模组系」成立：`FALLBACK_LOADERS` 是 forge/fabric/neoforge/
+ * quilt，对光影包（iris/optifine）、资源包（minecraft）、数据包（datapack）
+ * 都是错选项。后者的正确加载器只能来自上游，离线推断不出来，宁可返回空列表
+ * 让控件隐藏，也不要给出一个「选了等于没选」的选项（后端会丢弃它并返回未过滤
+ * 结果，界面上却显示筛选已生效）。
+ */
+function fallbackLoaders(category: string): ResourceCategory[] {
+  if (category === 'mod' || category === 'modpack' || category === AGGREGATE_CATEGORY) {
+    return FALLBACK_LOADERS
+  }
+  return []
+}
+
+/**
+ * 加载器筛选对哪些「来源 + 资源类型」生效（#163）。
+ *
+ * 与后端 `/resources/loaders` 的口径保持一致：
+ * - `save`（存档）任何来源都无加载器概念
+ * - CurseForge 仅 mod/modpack 有（其余类型 classId 无加载器维度）
+ * - FTB 仅 modpack
+ * - Modrinth / 聚合：mod/modpack/shader/resourcepack/datapack 都有真实加载器
+ *   （shader→iris/optifine、resourcepack→minecraft、datapack→datapack）
+ */
+function loadersSupported(source: string, category: string): boolean {
+  if (category === 'save') return false
+  if (source === 'ftb') return category === 'modpack'
+  if (source === 'curseforge') return category === 'mod' || category === 'modpack'
+  // modrinth / all（含聚合分类）：除存档外都有加载器维度
+  return true
 }
 
 /**
@@ -585,6 +622,8 @@ export default function ResourceCenter() {
 
   // 动态类别列表（按 source+category 拉取；失败时回退静态列表 staticTagsFor）
   const [categoryOptions, setCategoryOptions] = useState<ResourceCategory[] | null>(null)
+  // 动态加载器列表（#163：按来源 + 资源类型拉取；失败时回退 FALLBACK_LOADERS）
+  const [loaderOptions, setLoaderOptions] = useState<ResourceCategory[] | null>(null)
   const [tagsExpanded, setTagsExpanded] = useState(false)
   const [tagsOverflow, setTagsOverflow] = useState(false)
   const [tagsFullHeight, setTagsFullHeight] = useState(TAG_COLLAPSED_PX)
@@ -600,6 +639,54 @@ export default function ResourceCenter() {
     getResourceCategories(source === 'curseforge' ? 'curseforge' : 'modrinth', category)
       .then((list) => { if (!cancelled) setCategoryOptions(list) })
       .catch(() => { if (!cancelled) setCategoryOptions(null) })
+    return () => { cancelled = true }
+  }, [source, category, view])
+
+  // 加载器列表（#163）：与类别列表同样按 source+category 拉取。切换分类/来源后
+  // 列表会变（如光影包→iris/optifine），已选加载器若不在新列表中必须清掉，
+  // 否则会把上一个类型的 loader 发给新类型，命中 0 条。
+  //
+  // 注意这里**同步**清空 loader（而不是等新列表返回后再清）：`loader` 是
+  // `doSearch` 的依赖，切换分类瞬间就会用旧的 loader 发一次搜索；等请求返回再清
+  // 会多打一次无效请求并让列表闪一下。同步清掉可让那次搜索直接以「无加载器」发出。
+  const prevLoaderScopeRef = useRef(`${source}|${category}`)
+  useEffect(() => {
+    const scope = `${source}|${category}`
+    const scopeChanged = prevLoaderScopeRef.current !== scope
+    prevLoaderScopeRef.current = scope
+
+    if (!loadersSupported(source, category)) {
+      setLoaderOptions(null)
+      // 该组合没有加载器概念（如切到存档/FTB）时清掉已选项，否则残留的 loader
+      // 会继续写进 URL 与请求，被后端当作有效筛选静默丢弃。
+      setLoader('')
+      return
+    }
+    // 收藏视图不展示该控件，也不应产生请求；但**不要**清掉 loader —— 用户
+    // 只是切了个视图，切回搜索时筛选应当还在（URL 上也一直保留着）。
+    if (view !== 'search') {
+      setLoaderOptions(null)
+      return
+    }
+    if (scopeChanged) {
+      // 先清空：避免在新列表返回前把上一个类型的选项渲染出来（短暂显示旧选项）。
+      setLoaderOptions(null)
+      setLoader((prev) => (prev ? '' : prev))
+    }
+    let cancelled = false
+    getResourceLoaders(source, category)
+      .then((list) => {
+        if (cancelled) return
+        const opts = list.length > 0 ? list : fallbackLoaders(category)
+        setLoaderOptions(opts)
+        setLoader((prev) => (prev && !opts.some((l) => l.slug === prev) ? '' : prev))
+      })
+      .catch(() => {
+        if (cancelled) return
+        const opts = fallbackLoaders(category)
+        setLoaderOptions(opts)
+        setLoader((prev) => (prev && !opts.some((l) => l.slug === prev) ? '' : prev))
+      })
     return () => { cancelled = true }
   }, [source, category, view])
 
@@ -1223,21 +1310,26 @@ export default function ResourceCenter() {
                 )}
               </div>
             </div>
-            <div className="space-y-1">
-              <p className="text-[11px] font-medium text-muted-foreground">{t('resource.loaderLabel')}</p>
-              <div className="flex items-center gap-1">
-                <Select value={loader} onChange={(v) => setLoader(v.toLowerCase())} className="h-9 min-w-[120px]" placeholder={t('resource.allLoaders')}>
-                  {LOADERS.map((l) => (
-                    <SelectOption key={l.key} value={l.key}>{l.label}</SelectOption>
-                  ))}
-                </Select>
-                {loader && (
-                  <button onClick={clearLoader} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
+            {/* 加载器（#163）：选项按当前来源+资源类型动态下发；该组合没有加载器
+                概念时（如存档、FTB 非整合包、CurseForge 光影包）整个控件不渲染，
+                避免给出选了必然空结果的筛选。 */}
+            {loadersSupported(source, category) && (
+              <div className="space-y-1">
+                <p className="text-[11px] font-medium text-muted-foreground">{t('resource.loaderLabel')}</p>
+                <div className="flex items-center gap-1">
+                  <Select value={loader} onChange={(v) => setLoader(v.toLowerCase())} className="h-9 min-w-[120px]" placeholder={t('resource.allLoaders')}>
+                    {(loaderOptions ?? []).map((l) => (
+                      <SelectOption key={l.slug} value={l.slug}>{l.name}</SelectOption>
+                    ))}
+                  </Select>
+                  {loader && (
+                    <button onClick={clearLoader} className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
             {tagsSupported(source, category) && (
               <div className="w-full space-y-1">
                 <p className="text-[11px] font-medium text-muted-foreground">

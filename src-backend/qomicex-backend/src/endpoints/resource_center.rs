@@ -149,9 +149,24 @@ struct ResourceCategoryDto {
     name: String,
 }
 
+/// 加载器筛选选项（#163）。`slug` 是下发给上游筛选的值，`name` 是展示名。
+#[derive(Serialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ResourceLoaderDto {
+    slug: String,
+    name: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CategoriesQuery {
+    source: Option<String>,
+    category: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoadersQuery {
     source: Option<String>,
     category: Option<String>,
 }
@@ -255,6 +270,7 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/resources/search", get(search))
         .route("/resources/categories", get(categories))
+        .route("/resources/loaders", get(loaders))
         .route("/resources/{id}", get(detail))
         .route("/resources/{id}/versions", get(versions))
         .route(
@@ -297,14 +313,65 @@ pub fn router() -> Router<SharedState> {
 // Shared mapping helpers (source Map* static methods)
 // =====================================================================
 
+/// CurseForge 的 `modLoaderTypes` 枚举（#163 issue 回复给出：
+/// `0=Any, 1=Forge, 2=Cauldron, 3=LiteLoader, 4=Fabric, 5=Quilt, 6=NeoForge`）。
+///
+/// 只暴露**实测有数据**的项：探针显示 `2`(Cauldron) 与 `3`(LiteLoader) 在
+/// mods(6)/modpacks(4471) 下 `totalCount` 恒为 0（加不加 `gameVersions` 都一样），
+/// 列进选项等于给用户一个必然空结果的筛选。`0`(Any) 传给 API 同样返回 0 而非
+/// 「全部」—— 它是「不限」的占位，由前端「清除筛选」承担，不作为可选项下发。
+///
+/// 元组为 `(slug, 展示名, modLoaderTypes 数值)`；数值随条目显式给出，
+/// 不从下标推导，避免调整顺序时静默错配枚举。
+const CF_LOADERS: [(&str, &str, &str); 4] = [
+    ("forge", "Forge", "1"),
+    ("fabric", "Fabric", "4"),
+    ("quilt", "Quilt", "5"),
+    ("neoforge", "NeoForge", "6"),
+];
+
+/// CurseForge 加载器筛选值：返回传给 `modLoaderTypes` 的**数字 id**。
+/// 探针确认数字 id 与名称都可用，但数字 id 无歧义（名称拼错会被 CF
+/// **静默忽略**并返回全部结果，筛选器形同虚设——实测 `[Bogus]` → 10000）。
 fn map_cf_loader(loader: &str) -> Option<Vec<String>> {
-    match loader.to_lowercase().as_str() {
-        "forge" => Some(vec!["Forge".to_string()]),
-        "fabric" => Some(vec!["Fabric".to_string()]),
-        "quilt" => Some(vec!["Quilt".to_string()]),
-        "neoforge" => Some(vec!["NeoForge".to_string()]),
-        _ => None,
+    let norm = loader.trim().to_ascii_lowercase();
+    let (_, _, id) = CF_LOADERS.iter().find(|(slug, _, _)| *slug == norm)?;
+    Some(vec![id.to_string()])
+}
+
+/// CurseForge 仅「模组 / 整合包」有加载器概念（`classId` 6 / 4471）。
+/// 其余类型（光影包 6552、资源包 12 等）传加载器会得到 0 条或近乎不过滤的
+/// 结果（实测 shader + Forge 仅从 704 降到 702），应视为无此筛选。
+/// 注意：调用方传入的是**具体资源类型**（聚合分类已按类型拆成多次查询），
+/// 故这里不处理 `aggregate`。
+fn cf_category_supports_loader(category: Option<&str>) -> bool {
+    matches!(
+        category.unwrap_or("").to_ascii_lowercase().as_str(),
+        "mod" | "modpack"
+    )
+}
+
+/// Modrinth：该 loader 是否支持指定资源类型（#163 后端保护）。
+///
+/// 前端已按类型提供合法加载器，但 URL 里可能残留上一个类型的 loader
+/// （如从光影包切回模组）。Modrinth 对不兼容 facet 返回 **0 条而非报错**，
+/// 会让用户看到一个莫名其妙的空列表，故这里直接丢弃无效加载器。
+/// 加载器表拉取失败时**保留** loader（宁可交给上游判断，也不擅自削弱筛选）。
+async fn mr_loader_supported(
+    client: &reqwest::Client,
+    category: Option<&str>,
+    loader: &str,
+) -> bool {
+    let Some(category) = category else {
+        return true;
+    };
+    let all = fetch_mr_loaders(client).await;
+    if all.is_empty() {
+        return true;
     }
+    let slug = normalize_tag(loader);
+    all.iter()
+        .any(|(pt, s, _)| pt.eq_ignore_ascii_case(category) && *s == slug)
 }
 
 fn map_cf_class_id(category: Option<&str>) -> Option<i32> {
@@ -494,6 +561,79 @@ fn mr_categories_cache() -> &'static Mutex<Option<(Instant, Vec<(String, String,
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
+/// 全局缓存的 Modrinth 加载器表（`tag/loader` 为全局资源，含 supported_project_types）。
+/// 缓存 (project_type, slug, name) 三元组：一个加载器可支持多种项目类型
+/// （如 forge 支持 mod 与 modpack），故按其支持的每种类型各展开一行。
+fn mr_loaders_cache() -> &'static Mutex<Option<(Instant, Vec<(String, String, String)>)>> {
+    // (project_type, slug, name)
+    static CACHE: OnceLock<Mutex<Option<(Instant, Vec<(String, String, String)>)>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// 拉取 Modrinth 加载器表并按 `supported_project_types` 展开（#163）。
+///
+/// 这是「加载器随资源类型变化」的事实来源：`/v2/tag/loader` 每个标签都带
+/// `supported_project_types`（如 iris→shader、minecraft→resourcepack、
+/// forge→mod+modpack）。此前前端写死一份与类型无关的列表，导致光影包选
+/// forge 后 Modrinth 的 `categories:forge` facet 命中 0 条（列表空白）。
+///
+/// 缓存策略：成功结果缓存 6 小时；**失败/空结果也带时间戳缓存**，但用较短的
+/// 抑制窗口 —— 本函数会在 `search_one`（每次搜索、聚合分类下最多 12 次）与
+/// `/resources/loaders` 里被调用，上游故障时若完全不缓存，一次搜索就会放大成
+/// 十几次无效请求。
+async fn fetch_mr_loaders(client: &reqwest::Client) -> Vec<(String, String, String)> {
+    /// 成功结果的有效期。
+    const TTL_OK: Duration = Duration::from_secs(6 * 3600);
+    /// 失败/空结果的抑制窗口：短到能较快自愈，长到足以挡住一次搜索里的重复调用。
+    const TTL_ERR: Duration = Duration::from_secs(60);
+    {
+        let g = mr_loaders_cache().lock().unwrap();
+        if let Some((ts, list)) = g.as_ref() {
+            let ttl = if list.is_empty() { TTL_ERR } else { TTL_OK };
+            if ts.elapsed() < ttl {
+                return list.clone();
+            }
+        }
+    }
+    let list: Vec<(String, String, String)> = match client
+        .get("https://api.modrinth.com/v2/tag/loader")
+        .header("Accept", "application/json")
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let arr: Vec<Value> = r.json().await.unwrap_or_default();
+            let mut out: Vec<(String, String, String)> = Vec::new();
+            for v in &arr {
+                let name = v
+                    .get("name")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let slug = normalize_tag(&name);
+                let Some(types) = v.get("supported_project_types").and_then(|t| t.as_array())
+                else {
+                    continue;
+                };
+                for ty in types {
+                    let Some(ty) = ty.as_str() else { continue };
+                    out.push((ty.to_string(), slug.clone(), name.clone()));
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    };
+    // 成功与失败都记录时间戳，避免上游故障时反复重试（TTL 按结果是否为空区分）。
+    let mut g = mr_loaders_cache().lock().unwrap();
+    *g = Some((Instant::now(), list.clone()));
+    list
+}
+
 async fn fetch_mr_categories(client: &reqwest::Client) -> Vec<(String, String, String)> {
     const TTL: Duration = Duration::from_secs(6 * 3600);
     {
@@ -611,6 +751,111 @@ async fn categories(
             .collect();
     }
     Ok(Json(filtered))
+}
+
+/// 加载器 slug → 展示名。Modrinth 的 slug 是全小写连字符形式
+/// （`neoforge` / `legacy-fabric`），直接展示对用户不友好；已知项给
+/// 品牌正确的大小写，其余回退为逐词首字母大写。
+fn loader_display_name(slug: &str) -> String {
+    match slug {
+        "forge" => "Forge".to_string(),
+        "fabric" => "Fabric".to_string(),
+        "neoforge" => "NeoForge".to_string(),
+        "quilt" => "Quilt".to_string(),
+        "liteloader" => "LiteLoader".to_string(),
+        "legacy-fabric" => "Legacy Fabric".to_string(),
+        "bta-babric" => "BTA Babric".to_string(),
+        "java-agent" => "Java Agent".to_string(),
+        "bungeecord" => "BungeeCord".to_string(),
+        other => other
+            .split('-')
+            .filter(|w| !w.is_empty())
+            .map(|w| {
+                let mut c = w.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
+}
+
+/// GET /api/resources/loaders?source={all|modrinth|curseforge|ftb}&category={...}
+///
+/// 返回该「来源 + 资源类型」组合下**真正可用**的加载器选项（#163）。
+///
+/// 修复前的加载器列表是前端写死的 5 项，与资源类型无关：光影包也会列出
+/// Forge，选中后 Modrinth 的 `categories:forge` facet 命中 0 条（列表空白），
+/// 且模组缺少 babric / legacy-fabric 等真实存在的加载器。
+///
+/// `category=aggregate`（聚合分类）跨多个类型，取各类型可用加载器的**并集**
+/// —— 聚合查询会按类型分别下发同一个 loader，选中项在对应类型里仍有结果。
+async fn loaders(
+    State(state): State<SharedState>,
+    Query(q): Query<LoadersQuery>,
+) -> ApiResult<Json<Vec<ResourceLoaderDto>>> {
+    let source = q.source.clone().unwrap_or_else(|| "all".to_string());
+    let category = q.category.clone().unwrap_or_else(|| "mod".to_string());
+    let aggregate = category.eq_ignore_ascii_case("aggregate");
+
+    let srcs: Vec<&str> = if source.eq_ignore_ascii_case("all") {
+        vec!["modrinth", "curseforge", "ftb"]
+    } else {
+        vec![source.as_str()]
+    };
+
+    // (slug, name)，按 slug 去重
+    let mut out: Vec<(String, String)> = Vec::new();
+
+    for src in srcs {
+        if src.eq_ignore_ascii_case("modrinth") {
+            let all = fetch_mr_loaders(&state.http_client).await;
+            let items = all.iter().filter(|(pt, _, _)| {
+                // 聚合：并集（不过滤类型）；具体类型：精确匹配
+                aggregate || pt.eq_ignore_ascii_case(&category)
+            });
+            for (_, slug, name) in items {
+                out.push((slug.clone(), name.clone()));
+            }
+        } else if src.eq_ignore_ascii_case("curseforge") {
+            // CurseForge 只有「模组 / 整合包」有加载器概念（其余类型传加载器
+            // 要么恒 0 要么近乎不过滤），聚合下保留这两类可用的项。
+            let supported = aggregate || cf_category_supports_loader(Some(&category));
+            if supported {
+                for (slug, name, _) in CF_LOADERS {
+                    out.push((slug.to_string(), name.to_string()));
+                }
+            }
+        } else if src.eq_ignore_ascii_case("ftb") {
+            // FTB 仅整合包。加载器名为自由文本 target name，实测（94 个包全覆盖）
+            // 只出现 forge / fabric / neoforge（另有字面量 "unknown"，非加载器，排除）。
+            if aggregate || category.eq_ignore_ascii_case("modpack") {
+                for slug in ["forge", "fabric", "neoforge"] {
+                    out.push((slug.to_string(), loader_display_name(slug)));
+                }
+            }
+        }
+    }
+
+    // 按 slug 去重（跨源交集：forge/fabric/quilt/neoforge 三源通用），
+    // 再按展示名排序，保证列表稳定。
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut list: Vec<ResourceLoaderDto> = out
+        .into_iter()
+        .filter(|(slug, _)| seen.insert(slug.clone()))
+        .map(|(slug, name)| ResourceLoaderDto {
+            name: if name.is_empty() {
+                loader_display_name(&slug)
+            } else {
+                name
+            },
+            slug,
+        })
+        .collect();
+    list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(Json(list))
 }
 
 // =====================================================================
@@ -1092,7 +1337,19 @@ async fn search_one(
     };
     if source.eq_ignore_ascii_case("modrinth") {
         let mr = state.core.create_modrinth_source();
-        let loaders: Vec<String> = loader.map(|l| vec![l.to_string()]).unwrap_or_default();
+        // #163：丢弃与当前资源类型不兼容的 loader（如光影包 + forge），
+        // 否则 Modrinth 会静默返回 0 条，用户看到空白列表。
+        let effective_loader = match loader {
+            Some(l)
+                if !l.is_empty() && !mr_loader_supported(&state.http_client, category, l).await =>
+            {
+                None
+            }
+            other => other,
+        };
+        let loaders: Vec<String> = effective_loader
+            .map(|l| vec![l.to_string()])
+            .unwrap_or_default();
         let result = mr
             .search(
                 keyword,
@@ -1122,7 +1379,13 @@ async fn search_one(
             .create_curseforge_source(&state.curse_forge_api_key);
         let cf_class_id = map_cf_class_id(category);
         let cf_url_slug = map_cf_url_slug(category);
-        let loaders = loader.and_then(map_cf_loader).unwrap_or_default();
+        // #163：CurseForge 仅模组/整合包有加载器概念；非模组类型上忽略 loader
+        // （否则会得到恒 0 的结果，如 shader + 数值 loader）。
+        let loaders = if cf_category_supports_loader(category) {
+            loader.and_then(map_cf_loader).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         // 把标签 slug 解析为 CurseForge 数字 categoryId（无匹配则忽略，等价于不过滤）。
         let cf_category_ids: Option<Vec<Option<i32>>> = cf_resolve_category_ids(
             &state.http_client,
@@ -2852,5 +3115,84 @@ mod favorites_tests {
 
         let minimal: FavoriteFolder = serde_json::from_str(r#"{"id":"x","name":"y"}"#).unwrap();
         assert_eq!(minimal.created_at, "");
+    }
+
+    // =================================================================
+    // #163 加载器分类
+    // =================================================================
+
+    /// CF 加载器下发的是**数字 id**（无歧义），未知名称必须返回 None。
+    ///
+    /// 名称拼错会被 CurseForge 静默忽略并返回全部结果（实测 `[Bogus]` →
+    /// totalCount 10000），筛选器形同虚设；故这里断言未知值不被下发。
+    #[test]
+    fn cf_loader_maps_to_numeric_ids_and_rejects_unknown() {
+        // 枚举值来自 issue 回复：1=Forge, 4=Fabric, 5=Quilt, 6=NeoForge
+        for (input, expected) in [
+            ("forge", "1"),
+            ("Fabric", "4"),
+            ("  Quilt ", "5"),
+            ("NEOFORGE", "6"),
+        ] {
+            assert_eq!(
+                map_cf_loader(input),
+                Some(vec![expected.to_string()]),
+                "loader {input:?} 应映射到 modLoaderTypes=[{expected}]"
+            );
+        }
+        // Cauldron(2) / LiteLoader(3) 实测恒为 0 条，Any(0) 也返回 0 而非「全部」，
+        // 故都不是合法选项；未知值一律 None，避免被 CF 静默忽略。
+        for bad in ["cauldron", "liteloader", "any", "bogus", ""] {
+            assert_eq!(map_cf_loader(bad), None, "{bad:?} 不应作为加载器下发");
+        }
+    }
+
+    /// CurseForge 只在模组/整合包上有加载器概念。
+    #[test]
+    fn cf_loader_only_applies_to_mod_and_modpack() {
+        assert!(cf_category_supports_loader(Some("mod")));
+        assert!(cf_category_supports_loader(Some("ModPack")));
+        for unsupported in [
+            "shader",
+            "resourcepack",
+            "datapack",
+            "save",
+            "aggregate",
+            "",
+        ] {
+            assert!(
+                !cf_category_supports_loader(Some(unsupported)),
+                "{unsupported:?} 不应启用 CF 加载器筛选"
+            );
+        }
+        assert!(!cf_category_supports_loader(None));
+    }
+
+    /// 展示名：品牌大小写必须正确（issue 明确点名 NeoForge / Babric / LegacyFabric）。
+    #[test]
+    fn loader_display_name_uses_brand_casing() {
+        assert_eq!(loader_display_name("neoforge"), "NeoForge");
+        assert_eq!(loader_display_name("liteloader"), "LiteLoader");
+        assert_eq!(loader_display_name("legacy-fabric"), "Legacy Fabric");
+        assert_eq!(loader_display_name("bta-babric"), "BTA Babric");
+        assert_eq!(loader_display_name("bungeecord"), "BungeeCord");
+        // 未知项回退逐词首字母大写，且不 panic
+        assert_eq!(loader_display_name("ornithe"), "Ornithe");
+        assert_eq!(loader_display_name("java-agent"), "Java Agent");
+        assert_eq!(loader_display_name(""), "");
+    }
+
+    /// DTO 的 JSON 契约：camelCase 键名（`slug`/`name`），与前端
+    /// `ResourceCategory` 的解构保持一致。
+    #[test]
+    fn resource_loader_dto_json_contract() {
+        let dto = ResourceLoaderDto {
+            slug: "neoforge".into(),
+            name: "NeoForge".into(),
+        };
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["slug"], "neoforge");
+        assert_eq!(v["name"], "NeoForge");
+        assert_eq!(v.as_object().unwrap().len(), 2);
     }
 }

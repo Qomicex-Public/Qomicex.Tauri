@@ -1,6 +1,6 @@
 name: OpenCodeReview PR Review
 
-# 自动审查 PR：opened/synchronize/reopened 时触发；评论 /open-code-review 手动重跑
+# 按需 AI 审查 PR（次要信号）：由人类维护者评论 /open-code-review 手动触发
 #
 # 需要在 Settings -> Secrets and variables -> Actions 配置：
 #   secret   OCR_LLM_URL             LLM API 地址，如 https://api.anthropic.com
@@ -8,11 +8,16 @@ name: OpenCodeReview PR Review
 #   variable OCR_LLM_MODEL          模型名，如 claude-opus-4-6
 #   variable OCR_LLM_USE_ANTHROPIC  Anthropic 传 'true'，OpenAI 兼容端点传 'false'
 #
-# pull_request_target 让 fork PR 也能拿到 secrets；官方 action 只读 diff、
-# 不执行 PR 代码，安全。每次审查消耗 LLM token。
+# issue_comment 事件在默认分支上下文中运行，因此 fork PR 也能拿到 secrets；
+# 官方 action 只读 diff、不执行 PR 代码，安全。每次审查消耗 LLM token。
+# （此前用 pull_request_target 自动触发，已停用——见下方 on: 的说明。）
+# 仅按需手动触发：OCR 在长 PR/大改动上反复撞穿 30min job 墙并取消，而取消的 run
+# 发不出 sticky 总结、也就写不出 checkpoint，于是下次 push 仍全量、再次被取消
+# （实测 run 37103048704：#160 18 文件/2021 行，30m17s canceled；run 37116707205
+# 只审 3 个文件同样 28.9min canceled）。主审职责交给 CodeRabbit / Sourcery，
+# 本工作流降级为**次要的按需信号**：由人类维护者在 PR 评论 `/open-code-review`
+# 或 `@open-code-review` 显式触发，不再随 opened/synchronize/reopened 自动跑。
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
   issue_comment:
     types: [created]
 
@@ -26,23 +31,19 @@ concurrency:
   group: >-
     ${{
     (
-      github.event_name == 'pull_request_target'
-      || (
-        github.event_name == 'issue_comment'
-        && github.event.issue.pull_request
-        && github.event.comment.user.type != 'Bot'
-        && (
-          github.event.comment.author_association == 'MEMBER'
-          || github.event.comment.author_association == 'OWNER'
-          || github.event.comment.author_association == 'COLLABORATOR'
-        )
-        && (
-          startsWith(github.event.comment.body, '/open-code-review')
-          || startsWith(github.event.comment.body, '@open-code-review')
-        )
+      github.event.issue.pull_request
+      && github.event.comment.user.type != 'Bot'
+      && (
+        github.event.comment.author_association == 'MEMBER'
+        || github.event.comment.author_association == 'OWNER'
+        || github.event.comment.author_association == 'COLLABORATOR'
+      )
+      && (
+        startsWith(github.event.comment.body, '/open-code-review')
+        || startsWith(github.event.comment.body, '@open-code-review')
       )
     )
-    && format('ocr-{0}', github.event.pull_request.number || github.event.issue.number)
+    && format('ocr-{0}', github.event.issue.number)
     || format('noop-{0}', github.run_id)
     }}
   cancel-in-progress: true
@@ -50,23 +51,28 @@ concurrency:
 jobs:
   code-review:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # 仅 PR 事件，或人类维护者发起的触发评论
+    # 45 而非 30：OCR 的 LLM 客户端写死 WithMaxRetries(5)（至多 6 次尝试，
+    # 每次都吃满一个 llm_timeout）。默认 llm_timeout=300 → 单个请求最坏
+    # 6×300=1800s=30min，正好撞穿本上限，job 被判 exceeded the maximum
+    # execution time 而 canceled —— 取消的 run 不写 sticky 总结，也就写不出
+    # checkpoint，于是下次 push 又是全量，形成"大 PR 永远审不出来"的死循环
+    # （实测 run 37103048704 / 37116707205，单次静默阻塞 1138s / 1109s，
+    # 93–98% 墙钟耗在等 LLM）。这里给 LLM 预算留出比 job 墙更短的路径，
+    # 让 OCR 有机会正常收尾（哪怕只是 partial），从而发布总结 + 落 checkpoint。
+    timeout-minutes: 45
+    # 仅人类维护者发起的触发评论（自动触发已停用，见顶部 on: 注释）
     if: |
-      github.event_name == 'pull_request_target'
-      || (
-        github.event_name == 'issue_comment'
-        && github.event.issue.pull_request
-        && github.event.comment.user.type != 'Bot'
-        && (
-          github.event.comment.author_association == 'MEMBER'
-          || github.event.comment.author_association == 'OWNER'
-          || github.event.comment.author_association == 'COLLABORATOR'
-        )
-        && (
-          startsWith(github.event.comment.body, '/open-code-review')
-          || startsWith(github.event.comment.body, '@open-code-review')
-        )
+      github.event_name == 'issue_comment'
+      && github.event.issue.pull_request
+      && github.event.comment.user.type != 'Bot'
+      && (
+        github.event.comment.author_association == 'MEMBER'
+        || github.event.comment.author_association == 'OWNER'
+        || github.event.comment.author_association == 'COLLABORATOR'
+      )
+      && (
+        startsWith(github.event.comment.body, '/open-code-review')
+        || startsWith(github.event.comment.body, '@open-code-review')
       )
     steps:
       # issue_comment 没有顶层 pull_request 载荷，需解析 base/head 供审查
@@ -92,6 +98,16 @@ jobs:
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ vars.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}
+          # 单请求 LLM 超时（默认 300）：OCR 客户端写死 WithMaxRetries(5)，
+          # 6×300s=30min 正好撞穿 job 墙。且 OCR_LLM_URL 经 Cloudflare 前置，
+          # 其源站代理读超时是 120s —— 任何耗时 >120s 的请求上游必然返回 524
+          # （实测 4 个 plan 组 3 个 524），客户端再等 300s 只是空耗。
+          # 取 120 与上游代理上限对齐：最坏 6×120s=12min，仍在 45min 墙内。
+          llm_timeout: 120
+          # 降审阅深度换"跑得完"：每个文件组 1 轮（默认 3 轮）。
+          # 注意 EFFORT 计入 checkpoint 指纹，本行改动会让已存 checkpoint
+          # 作废一次、下次走全量，之后恢复增量。需 OCR >= v1.10.0（当前 v1.12.11）。
+          effort: low
           # 中文输出审查评论
           language: 中文
           # 降噪：style/documentation/other 类别与 low 及以下严重度的发现
@@ -101,10 +117,11 @@ jobs:
           # 实时 [ocr] 进度行流入 workflow log，避免长任务"看起来死了"
           # （composite 输入为字符串语义，必须引号；需 OCR >= v1.9.8）
           stream_progress: 'true'
-          # 增量审查：同一 PR 再次触发时只审上次 checkpoint 以来的新 diff，
-          # 长 PR 增量 push 从全量 ~14 分钟降到分钟级。
+          # 增量审查：同一 PR 再次手动触发时只审上次 checkpoint 以来的新 diff。
+          # 注意：checkpoint 写在 sticky 总结评论里，只在审查成功收尾时才写入；
+          # 被取消的 run 写不出 checkpoint，下次仍走全量。
           # 依赖 sticky_summary（默认 true）；任何不确定因素 fail-closed 回全量。
           checkpoint_range: 'true'
-          # pull_request_target 时 action 自行解析，issue_comment 用上面拿到的 refs
+          # 本工作流现仅由 issue_comment 触发，refs 一律用上面 Get PR context 的输出
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
