@@ -82,6 +82,14 @@ export interface AppSettings {
   telemetryEnabled?: boolean
   /** 启用 HTTP/3 文件下载（实验性）；缺失 = 关闭（默认走 HTTP/2） */
   enableHttp3?: boolean
+  /**
+   * 自定义联机（EasyTier）中继节点列表（issue #112）。
+   *
+   * 语义：**自定义节点在前、官方节点在后**。空/缺失 = 只用官方节点（默认）。
+   * 每项须为 `tcp://host:port` 形式（tcp/udp/quic/wss/ws）；后端保存前强校验，
+   * 非法条目会被拒绝（`CONNECTOR_RELAY_INVALID`）。
+   */
+  relayNodes?: string[] | null
   /** 代理模式：'off' = 不使用代理；'system' = 使用系统代理；'http' = 自定义 HTTP(S) 代理；'socks5' = SOCKS5 代理 */
   proxyMode: 'off' | 'system' | 'http' | 'socks5'
   /** 代理地址（host:port，如 127.0.0.1:7890）；proxyMode 为 http/socks5 时生效 */
@@ -151,6 +159,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoReportErrors: true,
   telemetryEnabled: false,
   enableHttp3: false,
+  relayNodes: null,
   proxyMode: 'system',
   proxyHost: '',
   ignoreSslCert: false,
@@ -215,13 +224,27 @@ export function isSettingsLoaded(): boolean {
   return loaded
 }
 
-export async function saveSettings(settings: AppSettings): Promise<void> {
+/**
+ * 保存设置。
+ *
+ * 默认**静默吞掉**落盘错误（本地缓存已更新，UI 保持可用）——这是既有约定，多数
+ * 设置项改错也不该弹错。调用方需要「落盘失败必须知道」时传 `throwOnError: true`
+ * （联机节点区：保存失败却继续 reload 会读到旧 settings.json 并谎报成功）。
+ */
+export async function saveSettings(
+  settings: AppSettings,
+  opts?: { throwOnError?: boolean },
+): Promise<void> {
   cached = settings
   applyDownloadTimeoutSetting(cached)
   try {
     await put('/settings', settings as unknown as Record<string, unknown>)
-  } catch {
+  } catch (e) {
     // ponytail: silent fail, cache still updated locally
+    if (opts?.throwOnError) {
+      listeners.forEach(fn => fn(cached))
+      throw e
+    }
   }
   listeners.forEach(fn => fn(cached))
 }

@@ -18,6 +18,7 @@ import { Switch } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
 import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
+import RelayNodesSection from '../components/settings/RelayNodesSection.tsx'
 import DebugTab from '../components/DebugTab.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
@@ -137,8 +138,15 @@ const DEP_CATEGORY_KEYS: Record<string, string> = {
   '渲染与展示': 'settings.about.depRendering',
 }
 
-function saveSettings(settings: AppSettings) {
-  apiSaveSettings(settings)
+/**
+ * 保存设置并同步应用 UI 副作用。
+ *
+ * 返回落盘 Promise，让需要「先存完再做事」的调用方可以等待（联机节点区：
+ * 保存后立刻 reload，不等就可能让后端读到旧 settings.json）。此前是
+ * fire-and-forget，调用方 `await` 无效。
+ */
+function saveSettings(settings: AppSettings, throwOnError = false): Promise<void> {
+  const persisted = apiSaveSettings(settings, { throwOnError })
   const enabled = settings.animationsEnabled !== false
   const speed = settings.animationSpeed ?? 1
   const maxFps = settings.maxFrameRate ?? 0
@@ -164,6 +172,7 @@ function saveSettings(settings: AppSettings) {
   const dop = Math.min(100, Math.max(0, settings.dialogOpacity ?? 75))
   document.documentElement.style.setProperty('--dialog-opacity', String(dop / 100))
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
+  return persisted
 }
 
 /** 背景资源类型：按扩展名判定 */
@@ -1654,6 +1663,21 @@ export default function Settings() {
                   </label>
                   <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectModSourceDesc')}</p>
                 </div>
+            </SettingSection>
+
+            <SettingSection title={t('settings.relayNodes.title')} icon={<Globe className="h-4 w-4" />}>
+              <RelayNodesSection
+                value={settings.relayNodes}
+                // 必须**返回并等待**保存 Promise：`saveSettings` 是 async 的 PUT /settings，
+                // 不 await 就调 reload，后端可能在 PUT 落盘前读到旧 settings.json，
+                // 用旧节点列表重建客户端却报告成功（评审 finding）。
+                onSave={async (nodes) => {
+                  const next = { ...settings, relayNodes: nodes }
+                  setSettings(next)
+                  // throwOnError：保存失败必须抛错，否则会继续 reload 并谎报成功。
+                  await saveSettings(next, true)
+                }}
+              />
             </SettingSection>
 
             <SettingSection title={t('settings.network.proxy')} icon={<Globe className="h-4 w-4" />}>

@@ -8,6 +8,7 @@
 //! 当前会话模式（idle/starting/host/guest）由 Mutex 保护；EasyTier 为库内嵌
 //! （easytier-core crate，无需下载独立二进制）。
 
+use arc_swap::ArcSwap;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
@@ -100,12 +101,29 @@ enum Mode {
     Idle,
     /// host/instance：实例启动中 + 等待检测局域网端口
     Starting,
+    /// 正在重载中继节点（issue #112）：构造新客户端期间**预留**联机。
+    ///
+    /// 存在的必要性：reload 要先 `.await` 拉官方节点列表（可能数百毫秒），若只检查
+    /// `Idle` 就释放锁去 await，并发的 host/join 能在此期间进入 `Starting` 并拿到
+    /// **旧**客户端建房；随后 reload 换掉客户端，旧 client 托管的 easytier 实例就
+    /// 失去归属（`close_all` 只作用在新 client 上），实例残留且无法回收。
+    /// 用本状态在 await 期间占位，让 host/join 的 `Idle` 检查失败即可。
+    ///
+    /// 对前端表现为 `mode: "starting"`（与真正建房中同义），不需要单独的 UI 语义。
+    Reloading,
     Host(Arc<ScaffoldingCenter>),
     Guest(Arc<ScaffoldingGuest>),
 }
 
 struct ConnectorState {
-    client: ScaffoldingClient,
+    /// 联机客户端（issue #112：支持运行时热替换，使自定义中继节点配置立即生效）。
+    ///
+    /// 用 `ArcSwap` 而非普通字段的原因：`connector()` 是进程级 `OnceLock` 单例，
+    /// 中继节点列表在 `ScaffoldingClient` 构造时固化。若用普通字段，用户改完
+    /// 「自定义联机节点」必须重启启动器才生效 —— 那是很差的体验，且服务端崩溃时
+    /// 用户正着急换节点。`ArcSwap` 让整体替换变成一次原子指针交换（与
+    /// `AppState::download_manager` 同一范式）。
+    client: ArcSwap<ScaffoldingClient>,
     mode: tokio::sync::Mutex<Mode>,
     ct: qomicex_connector::util::CancellationToken,
     /// host 端发布的版本信息（DelegateProtocol 闭包同步读取）
@@ -173,23 +191,94 @@ where
             op_ct.cancel();
             let _ = rx.await;
             let conn = connector();
-            conn.client.close_all(conn.ct.clone()).await;
+            client_of(conn).close_all(conn.ct.clone()).await;
             *conn.mode.lock().await = Mode::Idle;
             Err(ApiError::bad_request(timeout_code, timeout_message))
         }
     }
 }
 
+/// 构造联机客户端。
+///
+/// 中继节点顺序（issue #112）：**自定义节点在前、官方节点在后**。
+///
+/// 为什么要把官方列表「拉下来再拼」而不是用 connector 的 `additional_relay_nodes`：
+/// 库的 `relay::nodes::resolve` 只会把 `additional` 追加到**列表末尾**，即
+/// 「官方在前、自定义在后」——与用户要求的顺序正好相反。所以这里用
+/// `RelayNodeProvider::fetch()`（pub）主动取官方列表，拼成 `[自定义..., 官方...]`
+/// 后作为 `override` 传入：override 的语义是「完全取代」，不触发库内远程获取，
+/// 顺序也就完全由我们掌握（connector 库零改动）。
+///
+/// 无自定义节点时返回 `(None, None)` —— 走库的默认路径，行为与引入本功能前一致。
+async fn build_client(settings: &crate::settings::SettingsResponse) -> ScaffoldingClient {
+    // 读路径用**宽松**校验：settings.json 可能被手改混入坏条目，逐项跳过并记录告警，
+    // 保留合法节点（严格校验只用于设置写入路径）。
+    let custom = crate::settings::validate_relay_nodes_lenient(settings.relay_nodes.as_deref())
+        .unwrap_or_default();
+
+    if custom.is_empty() {
+        return ScaffoldingClient::new(
+            None,
+            None,
+            Some(format!("QML/{}", crate::state::APP_VERSION)),
+            None,
+        )
+        .with_relay_endpoint(RELAY_ENDPOINT);
+    }
+
+    // 拉官方列表（内建 10s 超时 + 失败回退 DEFAULT_NODES，不会 panic/阻塞过久）。
+    let provider = qomicex_connector::relay::provider::RelayNodeProvider::new(
+        Some(format!("QML/{}", crate::state::APP_VERSION)),
+        None,
+    )
+    .with_endpoint(RELAY_ENDPOINT);
+    let official = provider.fetch().await;
+
+    // 自定义在前、官方在后；同址去重（用户可能把官方节点也填了）。
+    let custom_count = custom.len();
+    let mut all = custom;
+    for node in official {
+        if !all.contains(&node) {
+            all.push(node);
+        }
+    }
+    tracing::info!(
+        total = all.len(),
+        custom = custom_count,
+        "联机中继节点：自定义在前、官方在后"
+    );
+    ScaffoldingClient::new(
+        Some(all),
+        None,
+        Some(format!("QML/{}", crate::state::APP_VERSION)),
+        None,
+    )
+    .with_relay_endpoint(RELAY_ENDPOINT)
+}
+
+/// 取当前联机客户端（`Arc` 所有权副本，可跨 `.await` 持有）。
+///
+/// 用 `load_full()` 而非 `load()`：`load()` 返回的守卫借用 `ArcSwap`，跨 `.await`
+/// 持有会让 future 不满足 `Send`（且 reload 时会被阻塞）。`load_full()` 拿一份
+/// `Arc`，既满足 `Send` 又保证整段操作期间客户端不被换掉。
+fn client() -> Arc<ScaffoldingClient> {
+    connector().client.load_full()
+}
+
+/// 取当前联机客户端（从已有 `conn` 引用出发，避免重复 `connector()` 查找）。
+fn client_of(conn: &ConnectorState) -> Arc<ScaffoldingClient> {
+    conn.client.load_full()
+}
+
 fn connector() -> &'static Arc<ConnectorState> {
     CONNECTOR.get_or_init(|| {
+        // 首次构造：读一次设置。此时不能 `.await`（OnceLock 初始化是同步闭包），
+        // 故先用「自定义 + 内建默认节点」拼一个可用列表；官方远程列表由
+        // `POST /connector/relay/reload` 在 async 上下文里补齐。
+        let settings = crate::settings::load_settings();
+        let initial = initial_client(&settings);
         Arc::new(ConnectorState {
-            client: ScaffoldingClient::new(
-                None,
-                None,
-                Some(format!("QML/{}", crate::state::APP_VERSION)),
-                None,
-            )
-            .with_relay_endpoint(RELAY_ENDPOINT),
+            client: ArcSwap::from(Arc::new(initial)),
             mode: tokio::sync::Mutex::new(Mode::Idle),
             ct: qomicex_connector::util::CancellationToken::new(),
             game_info: Arc::new(RwLock::new(None)),
@@ -205,6 +294,72 @@ fn connector() -> &'static Arc<ConnectorState> {
             nat_cache: tokio::sync::Mutex::new(None),
         })
     })
+}
+
+/// 同步构造初始客户端（无网络请求，`OnceLock` 初始化不能 await）。
+///
+/// 有自定义节点时先拼「自定义 + 内建 DEFAULT_NODES」作为**临时值**；随后由
+/// [`spawn_startup_relay_refresh`] 在后台用真实官方列表替换它。
+///
+/// ⚠️ 为什么必须后台刷新：`override` 的语义是「完全取代」，一旦带上它，库就**不会**
+/// 再去远程拉官方列表。若只留这个临时值，用户在「不点应用」的情况下重启启动器，
+/// 会一直用内建的 2 个默认节点，而不是线上最新的官方列表（评审 finding）。
+fn initial_client(settings: &crate::settings::SettingsResponse) -> ScaffoldingClient {
+    let custom = crate::settings::validate_relay_nodes_lenient(settings.relay_nodes.as_deref())
+        .unwrap_or_default();
+    let ua = Some(format!("QML/{}", crate::state::APP_VERSION));
+    if custom.is_empty() {
+        // 无自定义节点：不设 override，库自身会拉官方列表，行为与引入本功能前一致。
+        return ScaffoldingClient::new(None, None, ua, None).with_relay_endpoint(RELAY_ENDPOINT);
+    }
+    let mut all = custom;
+    for node in qomicex_connector::relay::nodes::DEFAULT_NODES {
+        let node = node.to_string();
+        if !all.contains(&node) {
+            all.push(node);
+        }
+    }
+    ScaffoldingClient::new(Some(all), None, ua, None).with_relay_endpoint(RELAY_ENDPOINT)
+}
+
+/// 启动后在后台把「临时客户端」换成带真实官方列表的客户端（仅有自定义节点时才需要）。
+///
+/// 刻意复用 [`reload_relay_nodes`] 同一套「Idle 检查 + Reloading 预留」语义：
+/// 若此刻已在联机（用户启动后立刻建房），就直接放弃刷新 —— 绝不能在建房过程中换
+/// 客户端，否则旧 client 托管的 easytier 实例会失去归属（那正是本 PR 修的竞态）。
+pub(crate) fn spawn_startup_relay_refresh() {
+    let has_custom = crate::settings::validate_relay_nodes_lenient(
+        crate::settings::load_settings().relay_nodes.as_deref(),
+    )
+    .is_some();
+    if !has_custom {
+        return;
+    }
+    tokio::spawn(async {
+        let conn = connector();
+        {
+            let mut mode = conn.mode.lock().await;
+            // 忙则放弃：等下次显式「应用」或重启再刷新。
+            if !matches!(&*mode, Mode::Idle) {
+                tracing::info!("启动刷新中继节点跳过：当前非空闲");
+                return;
+            }
+            *mode = Mode::Reloading;
+        }
+        let result = reload_relay_nodes_inner(&conn).await;
+        {
+            let mut mode = conn.mode.lock().await;
+            if matches!(&*mode, Mode::Reloading) {
+                *mode = Mode::Idle;
+            }
+        }
+        match result {
+            Ok(_) => tracing::info!("启动时已刷新联机中继节点（自定义 + 官方最新列表）"),
+            Err(e) => {
+                tracing::warn!(error = %e.message, "启动刷新联机中继节点失败（继续用临时列表）")
+            }
+        }
+    });
 }
 
 /// 当前登录账号名（无账号 → "Player"）。
@@ -467,6 +622,7 @@ pub fn router() -> Router<SharedState> {
         .route("/connector/kick/review", post(decide_kick_review))
         .route("/connector/easytier/status", get(easytier_status))
         .route("/connector/easytier/download", post(easytier_download))
+        .route("/connector/relay/reload", post(reload_relay_nodes))
         .route("/connector/scan-ports", get(scan_ports))
         .route("/connector/nat-type", get(nat_type))
 }
@@ -585,7 +741,7 @@ async fn host_port(
             move |ct| {
                 let ping_handler = ping_handler.clone();
                 Box::pin(async move {
-                    conn.client
+                    client_of(conn)
                         .create_room(
                             host_name,
                             machine_id(),
@@ -888,8 +1044,7 @@ async fn host_instance(
                 // 踢人/重连审核管理器（player_ping 钩子须在 create_room 前注入）
                 let kick = Arc::new(crate::services::kick::KickManager::new());
                 let ping_handler = kick.ping_handler();
-                match conn
-                    .client
+                match client_of(conn)
                     .create_room(
                         host_name,
                         machine_id(),
@@ -1014,7 +1169,7 @@ async fn join_room(
             // 清理本次 join 的残留：join_room 已成功（guest 已托管）但
             // map_minecraft_port 失败时，easytier 实例会残留并持续重连，
             // 必须 close_all 回收。
-            conn.client.close_all(conn.ct.clone()).await;
+            client_of(conn).close_all(conn.ct.clone()).await;
             *conn.mode.lock().await = Mode::Idle;
             Err(e)
         }
@@ -1028,8 +1183,7 @@ async fn join_inner(
     code: &str,
     ct: CancellationToken,
 ) -> Result<(Arc<ScaffoldingGuest>, String, u16), ApiError> {
-    let guest = conn
-        .client
+    let guest = client_of(conn)
         .join_room(
             code,
             player_name(state).await,
@@ -1097,6 +1251,10 @@ async fn status() -> ApiResult<Json<ConnectorStatusResponse>> {
     match &*mode {
         Mode::Idle => {}
         Mode::Starting => {
+            resp.mode = "starting".to_string();
+        }
+        Mode::Reloading => {
+            // 重载中继节点：对前端与「正在准备」同义（不可建房/加入，但会自行复位）。
             resp.mode = "starting".to_string();
         }
         Mode::Host(center) => {
@@ -1404,7 +1562,7 @@ async fn reset_connector_state(notify_leave: bool) {
             }
         }
     }
-    conn.client.close_all(conn.ct.clone()).await;
+    client_of(conn).close_all(conn.ct.clone()).await;
     *conn.game_info.write().unwrap() = None;
     *conn.starting_instance.write().unwrap() = None;
     *conn.host_center.write().unwrap() = None;
@@ -1513,6 +1671,79 @@ async fn decide_kick_review(
     Ok(Json(StatusMessageResponse {
         status: "ok".to_string(),
     }))
+}
+
+/// POST /connector/relay/reload —— 重建联机客户端以应用最新的中继节点配置（issue #112）。
+///
+/// 为什么需要这个端点：`ScaffoldingClient` 在构造时固化中继节点列表，而
+/// `connector()` 是进程级 `OnceLock` 单例。不重建的话，用户在设置里改完节点
+/// 必须重启启动器才生效。
+///
+/// **仅在空闲时允许**：进行中的房间（`Mode::Host`/`Guest`/`Starting`）的
+/// `ScaffoldingCenter`/`Guest` 都托管在**旧** client 上，直接换掉会让它们失去
+/// 归属（`close_all` 再也回收不到，easytier 实例残留）。忙时返回 **409**
+/// （`ApiError::conflict`），让前端提示用户先退出房间。
+///
+/// **预留（关键）**：检查通过后立即把 mode 置为 [`Mode::Reloading`] 再 `.await`
+/// 拉节点。否则并发的 host/join 会在 await 窗口内进入 `Starting` 并拿到旧客户端建房，
+/// 随后被换掉 → 旧实例失联。
+async fn reload_relay_nodes() -> ApiResult<Json<RelayReloadResponse>> {
+    let conn = connector();
+    // 检查与占用必须在同一把锁内完成（TOCTOU）：拿锁 → 判 Idle → 置 Reloading → 放锁。
+    {
+        let mut mode = conn.mode.lock().await;
+        if !matches!(&*mode, Mode::Idle) {
+            return Err(ApiError::conflict(
+                "CONNECTOR_BUSY",
+                "当前正在联机中，请先退出房间再应用节点设置",
+            ));
+        }
+        *mode = Mode::Reloading;
+    }
+
+    // 占用之后到换 client 之前，任何 host/join 都会被 Reloading 挡住。
+    let result = reload_relay_nodes_inner(&conn).await;
+
+    // 无论成功失败都要复位，否则联机被永久卡死。
+    {
+        let mut mode = conn.mode.lock().await;
+        if matches!(&*mode, Mode::Reloading) {
+            *mode = Mode::Idle;
+        }
+    }
+    result
+}
+
+/// reload 的实际工作（已持有 Reloading 预留）。
+///
+/// 节点列表用**宽松**校验（逐项跳过非法并告警、保留合法）：这条路径读的是已落盘配置，
+/// 与 [`build_client`] 一致。settings.json 可被手工编辑，此处若用严格校验，一个坏条目
+/// 会让**全部**自定义节点失效并让整个 reload 失败（评审 finding #6）——
+/// 严格校验只属于设置**写入**路径（`PUT /settings`）。
+async fn reload_relay_nodes_inner(
+    conn: &Arc<ConnectorState>,
+) -> ApiResult<Json<RelayReloadResponse>> {
+    let settings = crate::settings::load_settings();
+    let custom = crate::settings::validate_relay_nodes_lenient(settings.relay_nodes.as_deref());
+    let new_client = build_client(&settings).await;
+    let custom_count = custom.as_ref().map(|v| v.len()).unwrap_or(0);
+    let has_custom = custom.is_some();
+    conn.client.store(Arc::new(new_client));
+    tracing::info!(custom = custom_count, "联机中继节点已重载");
+    Ok(Json(RelayReloadResponse {
+        reloaded: true,
+        custom_node_count: custom_count,
+        using_custom: has_custom,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayReloadResponse {
+    reloaded: bool,
+    /// 生效的自定义节点数（0 = 只用官方节点）。
+    custom_node_count: usize,
+    using_custom: bool,
 }
 
 /// GET /connector/easytier/status — EasyTier 为库内嵌，恒"已就绪"。

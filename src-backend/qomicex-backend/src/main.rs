@@ -79,6 +79,11 @@ async fn main() {
         tracing::warn!(count = rolled_back, "启动时已回滚未完成的整合包更新");
     }
 
+    // 联机中继节点：有自定义节点时，初始客户端只用「自定义 + 内建默认官方节点」
+    // （`OnceLock` 初始化不能 await）。这里在 async 上下文里后台换成带**线上最新
+    // 官方列表**的客户端（issue #112 评审 finding）。空闲时才换，联机中则跳过。
+    endpoints::connector::spawn_startup_relay_refresh();
+
     // 外部管理器已拉起后端时（如 Tauri 开发期附加），可跳过自建监听逻辑的校验提示。
     let app = app::build_router(std::sync::Arc::new(state));
 
