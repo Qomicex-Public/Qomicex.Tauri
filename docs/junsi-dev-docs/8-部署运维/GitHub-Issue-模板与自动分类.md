@@ -111,3 +111,52 @@ on:
 - `.github/ISSUE_TEMPLATE/{bug_report,feature_request,improvement_suggestion,config}.yml`
 - `.github/PULL_REQUEST_TEMPLATE.md`、`.github/dependabot.yml`
 - `.github/workflows/opencode.yml`（评论触发 `/oc`，未改动）、`.github/workflows/ocr-review.yml`（PR 审查，仅 `github-script` 升版）
+
+## 10. OpenCodeReview（OCR）审查：按需手动触发
+
+**现状（2026-10）**：`.github/workflows/ocr-review.yml` **不再自动审查 PR**，降级为**次要的按需信号**。主审由 CodeRabbit / Sourcery 承担。
+
+**触发方式**：人类维护者（MEMBER/OWNER/COLLABORATOR）在 PR 评论 `/open-code-review` 或 `@open-code-review`。
+
+### 为什么停用自动触发（根因，非猜测）
+
+原 `pull_request_target: [opened, synchronize, reopened]` 在长 PR 上会**撞穿 30min job 墙被取消**，而取消的 run 发不出 sticky 总结、也就写不出 checkpoint，于是下次 push 仍全量、再次被取消 —— 形成**大 PR 永远审不出来**的死循环。三个叠加因素：
+
+1. **重试放大**：OCR 的 LLM 客户端写死 `WithMaxRetries(5)`（至多 6 次尝试，每次吃满一个 `llm_timeout`）。工作流未传 `llm_timeout` → 默认 300s → 单请求最坏 `6×300s=30min`，与 `timeout-minutes: 30` 正好撞在一起。
+2. **上游 524**：`OCR_LLM_URL`（自建中转 `newapi.lenmei233.top`）经 Cloudflare 前置，其源站代理读超时为 **120s**；任何 >120s 的请求必返 524（实测 4 个 plan 组中 3 个 524），客户端继续空等 300s 纯属浪费。
+3. **时间全在等 LLM**：按 `[ocr]` 行间隔统计，**93–98%** 墙钟耗在等 LLM 响应（工具调用本身仅 2–8ms）。
+
+**实测证据**（`gh run view --log`）：
+
+| run | PR | 文件/改动 | 结果 | 关键观测 |
+|---|---|---|---|---|
+| 37103048704 | #160 | 18 文件 / 2021 行 | 30m17s **canceled** | 单次静默阻塞 1138.8s；4 组 plan 有 3 组 524 |
+| 37116707205 | #168 | 3 文件 / 503 行 | 30m23s **canceled** | 单次静默阻塞 1109.2s；2 组 524 |
+| 37113605787 | #167 | 1 文件 / 21 行 | 4m23s success | 对比组 |
+
+注意 **#168 只审 3 个文件同样超时** —— 不是"PR 大所以慢"，而是单次 LLM 请求一旦挂死就吃掉整个预算。被取消 run 的 `ocr-result.json` 为 **0 字节**（零产出）。
+
+**checkpoint 从未生效**：查了 8 个 run，**全部**打印 `[checkpoint] reviewing full (no_summary_comment)`；#160/#168 的 PR 上确实没有 `github-actions[bot]` 的 `<!-- ocr-summary -->` 评论。增量审查依赖成功发布的总结评论，因此在取消的 run 上永远不会启动。
+
+### 当前配置（缓解，非治本）
+
+- `timeout-minutes: 45`（原 30）——给 LLM 预算留出比 job 墙更短的路径，让 OCR 有机会正常收尾并发布总结。
+- `llm_timeout: 120`（原默认 300）——与上游 Cloudflare 代理读超时对齐；最坏 `6×120s=12min`。
+- `effort: low`——每组 1 轮（默认 3 轮）。**注意该值计入 checkpoint 指纹**，改动它会让已存 checkpoint 作废一次。
+
+### 上游状态（未修复）
+
+- [alibaba/open-code-review#1155](https://github.com/alibaba/open-code-review/issues/1155)：`--timeout` 无法延长 provider 的 5 分钟单请求上限。
+- [alibaba/open-code-review#1635](https://github.com/alibaba/open-code-review/issues/1635)：组超时后整组被丢弃，不重试、不拆分。
+
+两者在最新版 v1.12.11（2026-09-29）中**仍 open**，故只能靠配置层规避。
+
+### 排障表
+
+| 现象 | 排查 |
+|---|---|
+| 想让 OCR 重跑 | PR 评论 `/open-code-review`（须为维护者） |
+| 评论触发后 job 立即 skipped | 评论者非 MEMBER/OWNER/COLLABORATOR，或非 PR 评论，或评论体不以 `/open-code-review` 开头 |
+| 又超时了 | 看日志 `[ocr]` 行间隔确认是否卡在等 LLM；查是否有 `Error 524` 与 `newapi.lenmei233.top` |
+| 想确认是否走了增量 | 搜文件名中的 `[checkpoint] reviewing`；`full (no_summary_comment)` 表示上次没成功发布总结 |
+| 审查"没结果" | 看该 run 的 artifact `ocr-review-result-*`；`ocr-result.json` 为 0 字节即零产出 |
