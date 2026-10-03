@@ -160,6 +160,9 @@ jobs:
       # updateChannel 的回归（版本前缀大小写须与后端 strip_v 一致，见 ADR-085 v1.2）。
       # 零依赖脚本：用仓库自带 tsc 编译真实源码后断言，不是测试框架。
       - run: pnpm run test:update-channel
+      # 深链解析的安全边界回归（路径穿越绕白名单 / 非法编码抛错 / 同名实例被静默乱挑）。
+      # 同样是用仓库自带 tsc 编译真实源码后断言，不依赖 Node 的类型剥离。
+      - run: pnpm run test:deep-link
       # lint 尚未进阻断：存量见 AGENTS.md「Lint 现状」，清零后再去掉 continue-on-error。
       - name: ESLint
         continue-on-error: true

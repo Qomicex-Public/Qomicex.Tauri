@@ -18,6 +18,7 @@ import PluginWebviewPage from './pages/PluginWebviewPage.tsx'
 import LogAnalysis from './pages/LogAnalysis.tsx'
 import GameLogWindow from './pages/GameLogWindow.tsx'
 import PluginOverlayManager from './components/PluginOverlayManager.tsx'
+import DeepLinkHandler from './components/DeepLinkHandler.tsx'
 import { MessageBoxProvider, useMessageBox } from './components/ui'
 import TaskCompletionNotifier from './components/TaskCompletionNotifier.tsx'
 import useCloseGuard from './hooks/useCloseGuard.ts'
@@ -287,6 +288,14 @@ function AppContent() {
       <BrowserRouter>
         <RunningNotifyBridge />
         <TaskCompletionNotifier />
+        {/* 外部唤起（qomicex-launcher:// 深链，issue #127）：须在 Router 内（用 navigate）
+            且在 RunningProvider 内（用 launchInstance）。冷启动链接要等后端就绪**且设置已加载**
+            再消费——只看后端会让整合包安装读到默认 gameDir 而装错目录。 */}
+        <DeepLinkHandler
+          backendReady={backendState === 'ready'}
+          settingsReady={settingsReady}
+          blocked={showWizard || !settingsReady}
+        />
         <ErrorBoundary>
           <Routes>
             <Route element={<Layout />}>

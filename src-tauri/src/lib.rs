@@ -6,6 +6,7 @@ use tauri::{Emitter, Manager};
 
 #[macro_use]
 mod logger;
+mod deep_link;
 mod dialog_cmd;
 #[cfg(target_os = "windows")]
 mod dnd;
@@ -219,7 +220,8 @@ pub fn run() {
     // --debug <port>：显式调试模式（第三方开发者无需源码/CLI 即可用）——开放 CDP
     // 调试端口，日志经 stderr 实时推送（logger::log_line 回显 + backend 转发）。
     // release 默认行为不变（纯 IPC），仅显式传参才启用。
-    if let Some(port) = parse_debug_port() {
+    let debug_port = parse_debug_port();
+    if let Some(port) = debug_port {
         std::env::set_var(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
             format!("--remote-debugging-port={port}"),
@@ -240,11 +242,33 @@ pub fn run() {
     });
     let pipe_shared = std::sync::Arc::new(std::sync::Mutex::new(pipe_name.clone()));
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // single-instance 必须是**第一个**注册的插件：插件按注册顺序执行，第二次启动
+    // 必须在其余 setup 跑起来之前就被拦下并转交 argv（否则新进程会先 spawn 一个
+    // 后端、再被判定为重复实例退出，留下孤儿后端与抢占的管道名）。
+    // `deep-link` feature 使插件在回调前先把 argv 转交给 deep-link 插件，
+    // 于是已有窗口会收到 `deep-link://new-url`，与冷启动路径汇合。
+    //
+    // **显式 `--debug <port>` 时不注册单实例**：那个模式的意义就是每次开新进程并把
+    // CDP 端口暴露给 `qomicex debug` / Playwright（ADR-063）。CDP 端口在进程启动时
+    // 由环境变量决定，无法转交给已在跑的实例——若被单实例吞掉，第二次调试会静默
+    // 拿不到端口。故调试模式退化为「无单实例」，与本次改动之前的行为一致。
+    #[cfg(desktop)]
+    if debug_port.is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            deep_link::handle_second_instance(app, &argv)
+        }));
+    }
+
+    let app = builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .manage(BackendChild(Mutex::new(None)))
+        .manage(deep_link::PendingDeepLink::default())
+        .manage(deep_link::DeepLinkRegistration::default())
         .manage(ipc::IpcPipe(pipe_shared.clone()))
         .manage(ipc::StreamRegistry::default())
         .register_asynchronous_uri_scheme_protocol(
@@ -252,6 +276,9 @@ pub fn run() {
             ipc::make_protocol_handler(pipe_shared),
         )
         .setup(move |app| {
+            // 深链监听必须早于前端挂载：冷启动 URL 在此处取走并存入 PendingDeepLink，
+            // 前端挂载时经 take_pending_deep_link 消费（事件在无接收方时会丢）。
+            deep_link::init(app.handle());
             if let Some(w) = app.get_webview_window("main") {
                 #[cfg(target_os = "windows")]
                 let _ = w.set_decorations(false);
@@ -301,7 +328,11 @@ pub fn run() {
             ipc::ipc_stream,
             ipc::ipc_stream_abort,
             updater::run_updater,
-            updater::take_pending_update_notice
+            updater::take_pending_update_notice,
+            deep_link::take_pending_deep_link,
+            deep_link::complete_deep_link,
+            deep_link::deep_link_registration_status,
+            deep_link::register_deep_link
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -1,5 +1,5 @@
 import type { PluginInfo } from '../plugins/types.ts'
-import { API_BASE } from './client.ts'
+import { API_BASE, post } from './client.ts'
 
 // 惰性求值：API_BASE 是活绑定（IPC 探测后才切换），模块级常量会捕获旧值
 const base = () => `${API_BASE}/plugins`
@@ -35,4 +35,23 @@ export async function rollbackPlugin(id: string): Promise<PluginInfo> {
   const res = await fetch(`${base()}/${encodeURIComponent(id)}/rollback`, { method: 'POST' })
   if (!res.ok) throw new Error(`Plugin rollback failed: ${res.status}`)
   return res.json()
+}
+
+/**
+ * 从 URL 下载 `.qplugin` 并安装（深链快捷安装，issue #127）。
+ *
+ * 后端复用 `/plugins/proxy` 的 SSRF 校验（拒内网/保留地址），默认要求有效签名；
+ * `allowUnsigned` 仅在用户已确认风险时传 true（与 `/plugins/upload` 语义一致）。
+ * 下载可能超过全局 15s 超时，这里显式放宽。
+ */
+export async function installPluginFromUrl(
+  url: string,
+  options: { allowUnsigned?: boolean; timeoutMs?: number } = {},
+): Promise<PluginInfo> {
+  const query = options.allowUnsigned ? '?allowUnsigned=true' : ''
+  return post<PluginInfo>(
+    `${base()}/install-url${query}`,
+    { url },
+    { timeoutMs: options.timeoutMs ?? 60_000 },
+  )
 }

@@ -100,6 +100,14 @@ pub struct AppState {
     pub plugin_gateway: Arc<PluginGatewayClient>,
     /// 插件 proxy 专用 HTTP 客户端（对应命名 HttpClient "PluginProxy"）。
     pub proxy_client: reqwest::Client,
+    /// 插件包直链下载专用客户端（`POST /plugins/install-url`）。
+    ///
+    /// **禁用自动重定向**：该端点的目标 URL 由外部深链提供，而唯一那道 SSRF 校验
+    /// （[`crate::endpoints::plugin::validate_target`]）只看初始主机。reqwest 默认会
+    /// 跟随最多 10 跳且不重校验，于是公网 URL 可 302 到 `127.0.0.1` 把校验绕过去。
+    /// 官方 `.qplugin` 分发（cdn.qomicex.top）实测是 200 直出、不依赖重定向，
+    /// 故直接关掉重定向而不是逐跳重校验。
+    pub plugin_download_client: reqwest::Client,
     /// 当前设置（内存缓存，PUT /settings 时同步更新）。
     pub settings: Arc<RwLock<SettingsResponse>>,
     /// CurseForge 版本异步拉取服务（对应 CurseForgeVersionFetchService）。
@@ -190,6 +198,27 @@ impl AppState {
             b.build().expect("构建插件代理 HTTP 客户端失败")
         };
 
+        // 插件包直链下载客户端：其余参数与共享客户端一致（代理/忽略 SSL/UA/超时），
+        // 唯一差别是 redirect(none) —— 见字段注释里的 SSRF 理由。
+        let plugin_download_client = {
+            let mut b = reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .user_agent(user_agent.clone())
+                .redirect(reqwest::redirect::Policy::none());
+            if ignore_ssl {
+                b = b.danger_accept_invalid_certs(true);
+            }
+            if no_proxy {
+                b = b.no_proxy();
+            }
+            if let Some(url) = proxy_url.as_deref() {
+                if let Ok(p) = reqwest::Proxy::all(url) {
+                    b = b.proxy(p);
+                }
+            }
+            b.build().expect("构建插件包下载 HTTP 客户端失败")
+        };
+
         // 共享后端服务（对应 Program.cs 中 Singleton 注册）。
         let instance = Arc::new(InstanceService::new());
         let instance_groups = Arc::new(InstanceGroupService::new());
@@ -255,6 +284,7 @@ impl AppState {
             plugin_auth,
             plugin_gateway,
             proxy_client,
+            plugin_download_client,
             settings,
             curseforge_fetch,
             world_view,
