@@ -455,13 +455,25 @@ async fn start(
     let full_path = target_dir.join(&req.file_name);
     // 存档名取 zip 的文件名主干（`MyWorld.zip` → `MyWorld`），与用户在
     // Minecraft 里看到的世界名一致。
+    //
+    // 这里**没有用户交互**（与 `/download-to` 的改名对话框不同），故按 CodeRabbit
+    // 评审：入队前就清成合法名并避开同名，否则非法名/同名会等到下载**跑完**才失败，
+    // 白下一遍且这条路径无从重试。
     let world_name = if cat == "saves" && is_zip_path(&full_path) {
-        Some(
-            full_path
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "world".to_string()),
-        )
+        let stem = full_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let cleaned = crate::services::archive::sanitize_world_name(&stem);
+        let base = if cleaned.is_empty() {
+            "world".to_string()
+        } else {
+            cleaned
+        };
+        Some(crate::services::archive::unique_world_name(
+            &target_dir,
+            &base,
+        ))
     } else {
         None
     };

@@ -132,8 +132,50 @@ pub fn extract_zip(data: &[u8], dest: &Path) -> Result<(), String> {
     extract_archive(&mut archive, dest, None)
 }
 
-/// 校验地图存档文件夹名：必须是**单一目录名**，不得含路径分隔符或 `..`。
+/// 把任意文本清成可作存档文件夹名的字符串（#162）。
 ///
+/// 用于**没有用户交互**的路径（`/start` 按 `category=saves` 自动推导存档名）：
+/// 文件名主干可能带 `..`、Windows 非法字符或控制字符，直接当目录名会被
+/// `validate_world_name` 拒绝，而那条路径没有改名对话框可退——所以这里尽量
+/// 清成合法名，实在清不出内容时由调用方回退到一个默认名。
+pub fn sanitize_world_name(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        // 控制字符与 Windows 非法字符一律换成空格，其余保留（含中文）。
+        let bad =
+            (c as u32) < 0x20 || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/' | '\\');
+        if bad {
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    // `..` 折叠掉（路径穿越的另一个入口），再压缩空白。
+    while out.contains("..") {
+        out = out.replace("..", " ");
+    }
+    let cleaned: String = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    cleaned.chars().take(64).collect()
+}
+
+/// 在 `saves_dir` 下为 `base` 找一个**尚不存在**的目录名（`base`、`base-2`…）。
+///
+/// 供无交互路径使用：不能弹对话框让用户改名，但也不能覆盖已有世界，故退让到
+/// 一个不冲突的名字（与用户手动重命名的效果等价）。
+pub fn unique_world_name(saves_dir: &Path, base: &str) -> String {
+    if !saves_dir.join(base).exists() {
+        return base.to_string();
+    }
+    for n in 2..10_000 {
+        let cand = format!("{base}-{n}");
+        if !saves_dir.join(&cand).exists() {
+            return cand;
+        }
+    }
+    format!("{base}-{}", std::process::id())
+}
+
+/// 校验地图存档文件夹名：必须是**单一目录名**，不得含路径分隔符或 `..`。
 /// 该名字会被直接拼进 `saves/` 下作为目录名，若不校验，`../../` 这类输入就能
 /// 把解压内容写到存档目录之外（zip-slip 的另一种入口）。
 pub fn validate_world_name(name: &str) -> Result<String, String> {
@@ -447,6 +489,51 @@ mod tests {
         }
         assert_eq!(validate_world_name("  My World  ").unwrap(), "My World");
         assert_eq!(validate_world_name("世界-1").unwrap(), "世界-1");
+    }
+
+    /// `sanitize_world_name` 供**无交互**路径使用：清完的结果必须能通过
+    /// `validate_world_name`，否则那条路径的下载会在跑完后才失败。
+    #[test]
+    fn sanitize_world_name_output_always_validates() {
+        let cases = [
+            "My World",
+            "My..Map",
+            "A:B",
+            "a/b\\c",
+            "with\u{1}control",
+            "tab\tand\nnewline",
+            "  spaced  out  ",
+            "世界/地图",
+            "???",
+        ];
+        for raw in cases {
+            let cleaned = sanitize_world_name(raw);
+            if cleaned.is_empty() {
+                // 清空的情况由调用方回退到默认名（见 /start），这里只需确认不 panic。
+                continue;
+            }
+            let validated = validate_world_name(&cleaned)
+                .unwrap_or_else(|e| panic!("清理后的 {cleaned:?}（源 {raw:?}）应合法，却: {e}"));
+            assert_eq!(validated, cleaned);
+            assert!(cleaned.chars().count() <= 64, "长度应被截断");
+        }
+        // 明确检查：控制字符与 `..` 必须被清掉。
+        assert_eq!(sanitize_world_name("a\u{1}b"), "a b");
+        assert!(!sanitize_world_name("a..b").contains(".."));
+    }
+
+    /// `unique_world_name` 必须避开已存在的目录（无交互路径不能覆盖已有世界）。
+    #[test]
+    fn unique_world_name_avoids_existing_dirs() {
+        let root = temp_dir("uniq");
+        let saves = root.join("saves");
+        std::fs::create_dir_all(&saves).unwrap();
+        assert_eq!(unique_world_name(&saves, "Map"), "Map");
+        std::fs::create_dir_all(saves.join("Map")).unwrap();
+        assert_eq!(unique_world_name(&saves, "Map"), "Map-2");
+        std::fs::create_dir_all(saves.join("Map-2")).unwrap();
+        assert_eq!(unique_world_name(&saves, "Map"), "Map-3");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 声明大小与实际大小不符时，按**实际写入**的字节数执行上限。

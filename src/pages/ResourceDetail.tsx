@@ -65,17 +65,20 @@ function getSourceLabel(source: string): string {
  * 把任意文本清成可作存档文件夹名的字符串（#162）。
  *
  * 地图下载会解压成 `saves/<名称>/`，该名称直接成为磁盘目录名：必须去掉路径
- * 分隔符与 Windows 非法字符，否则资源标题里的 `:` `?` `/` 会让创建目录失败
- * （或意外跨目录）。后端 `validate_world_name` 会再校验一次，这里是前置清理，
- * 让提示名默认就是可用的。
+ * 分隔符、Windows 非法字符**与控制字符**（后端 `validate_world_name` 会拒绝
+ * 码点 < 0x20 的字符，若只清空白类，`\x01` 这类会让请求以 400 失败，而 400
+ * 不走改名重试分支）。后端会再校验一次，这里是前置清理。
  */
 function sanitizeWorldName(raw: string): string {
-  return raw
-    .replace(/[\\/:*?"<>|]/g, ' ')
-    .replace(/\.\./g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 64)
+  return (
+    raw
+      // eslint-disable-next-line no-control-regex -- 有意匹配控制字符：后端会拒绝它们
+      .replace(/[\u0000-\u001f\u007f\\/:*?"<>|]/g, ' ')
+      .replace(/\.\./g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 64)
+  )
 }
 
 function LoaderBadge({ loader }: { loader: string }) {
