@@ -6,6 +6,13 @@ on:
   push:
     branches: [ main ]
 
+env:
+  # 后端配置注入（issue #159）：appsettings.json 不再入库，由 build.rs 以
+  # appsettings.example.json 为模板 + 这两个环境变量在构建期生成。
+  # fork PR 上 secrets 不可用 → 展开为空串 → build.rs 回退模板基线，构建照常通过。
+  CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+  MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
+
 jobs:
   frontend-check:
     runs-on: ubuntu-latest

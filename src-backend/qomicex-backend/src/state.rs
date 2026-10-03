@@ -372,11 +372,17 @@ fn build_http_client(
     b.build().expect("构建共享 HTTP 客户端失败")
 }
 
-/// Fallback CurseForge API key read from the (embedded) `appsettings.json`
-/// `CurseForge:ApiKey`, matching the previous C# backend's configuration
-/// source. The repo-default value is a placeholder that CurseForge rejects; a
-/// real key is injected via `CURSEFORGE_API_KEY` (or by deploying a real
-/// appsettings).
+/// Fallback CurseForge API key read from the generated `appsettings.json`
+/// `CurseForge:ApiKey` (matches the previous C# backend's configuration source).
+///
+/// 该文件**不再入库**（issue #159）：由 `build.rs` 以 `appsettings.example.json`
+/// 为模板 + `CURSEFORGE_API_KEY` 环境变量生成，见 crate 根 build.rs 头注释。
+/// 因此这里的值通常来自 `CURSEFORGE_API_KEY`（见 `AppState::build`），本函数只在
+/// 构建期未注入时回退到模板里的空值。
+///
+/// 注意：历史注释曾称「仓库默认值是占位符，CurseForge 会拒绝」——**这是错的**，
+/// 当时入库的值实测有效（`GET /v1/games/432` → 200，对照非法 key → 403），
+/// 这正是本次改为构建期注入的原因。
 fn embedded_cf_api_key() -> String {
     const APP_SETTINGS: &str = include_str!("../appsettings.json");
     serde_json::from_str::<serde_json::Value>(APP_SETTINGS)
