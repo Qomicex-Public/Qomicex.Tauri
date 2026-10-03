@@ -103,7 +103,7 @@ async fn get_account(
         .get_account(&uuid)
         .await?
         .ok_or_else(|| ApiError::not_found("NOT_FOUND", "Account not found"))?;
-    Ok(Json(account))
+    Ok(Json(account.redacted()))
 }
 
 async fn save_account(
@@ -111,7 +111,7 @@ async fn save_account(
     Json(mut body): Json<StoredAccount>,
 ) -> ApiResult<Json<StoredAccount>> {
     state.account.auto_set_default_on_save(&mut body).await?;
-    Ok(Json(body))
+    Ok(Json(body.redacted()))
 }
 
 async fn delete_account(
@@ -137,7 +137,7 @@ async fn get_default(State(state): State<SharedState>) -> ApiResult<Json<StoredA
         .get_default()
         .await?
         .ok_or_else(|| ApiError::not_found("NOT_FOUND", "No default account"))?;
-    Ok(Json(account))
+    Ok(Json(account.redacted()))
 }
 
 async fn set_default(
@@ -150,7 +150,7 @@ async fn set_default(
         .await?
         .ok_or_else(|| ApiError::not_found("NOT_FOUND", "Account not found"))?;
     state.account.set_default(&uuid).await?;
-    Ok(Json(account))
+    Ok(Json(account.redacted()))
 }
 
 async fn clear_default(State(state): State<SharedState>) -> ApiResult<StatusCode> {

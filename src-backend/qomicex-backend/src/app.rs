@@ -27,6 +27,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(endpoints::resource_download::router())
         .merge(endpoints::instance_files::router())
         .merge(endpoints::auth::router())
+        .merge(endpoints::littleskin::router())
         .merge(endpoints::account::router())
         .merge(endpoints::skin::router())
         .merge(endpoints::modpack::router())

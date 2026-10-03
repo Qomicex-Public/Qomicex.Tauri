@@ -625,7 +625,13 @@ async fn launch_instance(
         Some(uuid) if !uuid.is_empty() => state.account.get_account(uuid).await?,
         _ => state.account.get_default().await?,
     };
-    let account = refresh_microsoft_token(state.core.auth(), &state.account, account).await?;
+    let account = refresh_account_token(
+        &state.http_client,
+        state.core.auth(),
+        &state.account,
+        account,
+    )
+    .await?;
     let auth_options = resolve_auth_options(account);
 
     let tracker = state.launch_tracker.clone();
@@ -1618,13 +1624,14 @@ fn instance_not_found(id: &str) -> ApiError {
 ///   前端按 code 提示检查网络或改用离线登录。
 /// 非 Microsoft 账户或缺 refresh_token（历史数据）时不刷新、原样放行。
 ///
-/// 全局锁串行化「读取→刷新→保存」窗口：微软会轮换 refresh_token，并发刷新
-/// 同一账户时慢者会把已轮换的旧 refresh_token 写回覆盖新值，导致后续刷新
-/// 永远失败；持锁后以最新持久化状态为准可避免该竞态。
-/// 全局微软刷新锁：串行化「读取→refresh_login→保存」窗口，防止并发刷新
-/// 同一账户时旧 refresh_token 覆盖微软轮换后的新值（详见 refresh_microsoft_token）。
-static MS_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// 全局账户刷新锁：串行化「读取→刷新→保存」窗口，防止并发刷新同一账户时
+/// 旧 refresh_token 覆盖上游轮换后的新值（微软与 LittleSkin OAuth 共用此锁，
+/// 两者都是「一次性/可轮换刷新令牌」语义，详见 refresh_account_token）。
+static ACCOUNT_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Microsoft 账户启动前强制刷新令牌并落库（保留原入口，其单元测试与语义不变）。
+///
+/// 新代码请优先使用 [`refresh_account_token`]，它额外覆盖 LittleSkin OAuth 账户。
 pub(crate) async fn refresh_microsoft_token(
     auth: &dyn qomicex_core::api::auth::AuthProvider,
     accounts: &crate::services::account::AccountService,
@@ -1633,13 +1640,24 @@ pub(crate) async fn refresh_microsoft_token(
     let Some(incoming) = account else {
         return Ok(None);
     };
-    let _guard = MS_REFRESH_LOCK.lock().await;
-    let mut acc = match accounts.get_account(&incoming.uuid).await? {
+    let _guard = ACCOUNT_REFRESH_LOCK.lock().await;
+    let acc = match accounts.get_account(&incoming.uuid).await? {
         Some(latest) => latest,
         None => incoming,
     };
+    refresh_microsoft_locked(auth, accounts, acc)
+        .await
+        .map(Some)
+}
+
+/// 微软刷新主体。**调用方必须已持有 `ACCOUNT_REFRESH_LOCK`。**
+async fn refresh_microsoft_locked(
+    auth: &dyn qomicex_core::api::auth::AuthProvider,
+    accounts: &crate::services::account::AccountService,
+    mut acc: crate::services::account::StoredAccount,
+) -> Result<crate::services::account::StoredAccount, ApiError> {
     if !acc.login_method.eq_ignore_ascii_case("microsoft") || acc.refresh_token.is_empty() {
-        return Ok(Some(acc));
+        return Ok(acc);
     }
     let result = match auth.refresh_login(acc.refresh_token.as_str()).await {
         Ok(r) => r,
@@ -1659,7 +1677,7 @@ pub(crate) async fn refresh_microsoft_token(
         // 强制刷新、照样撞限流，形成"永远过期"死循环。
         if msg.contains("429") || msg.contains("Too Many Requests") {
             tracing::warn!(uuid = %acc.uuid, "microsoft refresh rate-limited, falling back to existing token");
-            return Ok(Some(acc));
+            return Ok(acc);
         }
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
@@ -1683,7 +1701,105 @@ pub(crate) async fn refresh_microsoft_token(
     // Minecraft profile UUID 并不一致；覆盖后会污染账户标识，使 save_account 按
     // 新 uuid 追加重复账户，原账户令牌无人续期，导致「重新登录也修不好披风/启动」。
     accounts.save_account(&mut acc).await?;
-    Ok(Some(acc))
+    Ok(acc)
+}
+
+/// 启动前账户令牌刷新总入口（覆盖 Microsoft 与 LittleSkin OAuth 两类账户）。
+///
+/// 与 [`refresh_microsoft_token`] 共用同一把全局锁，语义一致：
+/// - 非托管账户（离线/统一通行证/密码登录的 Yggdrasil）→ 原样放行；
+/// - Microsoft → 走 core 刷新链，失败分流见 [`refresh_microsoft_locked`]；
+/// - LittleSkin OAuth → 见 [`refresh_littleskin_oauth_locked`]。
+pub(crate) async fn refresh_account_token(
+    http: &reqwest::Client,
+    auth: &dyn qomicex_core::api::auth::AuthProvider,
+    accounts: &crate::services::account::AccountService,
+    account: Option<crate::services::account::StoredAccount>,
+) -> Result<Option<crate::services::account::StoredAccount>, ApiError> {
+    let Some(incoming) = account else {
+        return Ok(None);
+    };
+    let _guard = ACCOUNT_REFRESH_LOCK.lock().await;
+    let acc = match accounts.get_account(&incoming.uuid).await? {
+        Some(latest) => latest,
+        None => incoming,
+    };
+
+    // LittleSkin OAuth 账户（login_method 沿用 "Yggdrasil"，以 oauth_provider 区分）
+    if acc.login_method.eq_ignore_ascii_case("yggdrasil") {
+        if let Some(rt) = acc.oauth_refresh_token.clone().filter(|s| !s.is_empty()) {
+            return refresh_littleskin_oauth_locked(http, accounts, acc, &rt)
+                .await
+                .map(Some);
+        }
+        // 密码登录的第三方账户没有 OAuth 刷新令牌 → 原样放行（行为同历史）。
+        return Ok(Some(acc));
+    }
+
+    refresh_microsoft_locked(auth, accounts, acc)
+        .await
+        .map(Some)
+}
+
+/// LittleSkin OAuth 账户续期。**调用方必须已持有 `ACCOUNT_REFRESH_LOCK`。**
+///
+/// 两步：① OAuth 刷新令牌换新访问令牌；② 用新访问令牌换新 Minecraft 令牌。
+///
+/// ⚠️ 关键顺序：LittleSkin 的 OAuth 刷新令牌**一次性且轮换**，第 ① 步成功即意味着
+/// 旧刷新令牌作废。因此**先落库新的 OAuth 令牌**，再尝试第 ② 步——否则第 ② 步
+/// 失败时新的刷新令牌丢失，该账户将永久无法续期（只能重新登录）。
+async fn refresh_littleskin_oauth_locked(
+    http: &reqwest::Client,
+    accounts: &crate::services::account::AccountService,
+    mut acc: crate::services::account::StoredAccount,
+    oauth_refresh_token: &str,
+) -> Result<crate::services::account::StoredAccount, ApiError> {
+    // ① 换新的 OAuth 访问令牌（旧刷新令牌在此刻被作废）
+    let (oauth_access, new_oauth_refresh) =
+        crate::endpoints::littleskin::refresh_oauth_token(oauth_refresh_token).await?;
+
+    // 立刻持久化轮换后的刷新令牌：新值未随响应下发时沿用旧值。
+    // 必须先存后取 MC 令牌：若第 ② 步失败，新的刷新令牌已经落库，
+    // 下次启动仍可续期（否则旧令牌已作废而新令牌丢失，只能重新登录）。
+    let rotated_token = new_oauth_refresh.unwrap_or_else(|| oauth_refresh_token.to_string());
+    acc.oauth_refresh_token = Some(rotated_token.clone());
+    accounts.save_account(&mut acc).await?;
+
+    // 同一次授权签发的其它角色账户共享同一个刷新令牌，而旧值此刻已作废：
+    // 同步给它们，否则那些角色下次续期会拿着失效的旧值得到 TOKEN_EXPIRED。
+    match accounts
+        .propagate_oauth_refresh_token(
+            acc.oauth_provider.as_deref().unwrap_or("LittleSkin"),
+            oauth_refresh_token,
+            &rotated_token,
+            &acc.uuid,
+        )
+        .await
+    {
+        Ok(n) if n > 0 => {
+            tracing::info!(uuid = %acc.uuid, updated = n, "propagated rotated LittleSkin OAuth refresh token to sibling accounts")
+        }
+        Ok(_) => {}
+        // 传播失败不影响当前账户续期（它已落库成功），仅记录。
+        Err(e) => {
+            tracing::warn!(uuid = %acc.uuid, error = %e.message, "failed to propagate rotated OAuth refresh token")
+        }
+    }
+
+    // ② 用 OAuth 令牌换新的 Minecraft 令牌（access_token 即进服凭据）
+    let mc = crate::endpoints::littleskin::create_minecraft_token(http, &oauth_access, &acc.uuid)
+        .await?;
+
+    acc.access_token = mc.access_token().unwrap_or_default().to_string();
+    acc.token = acc.access_token.clone();
+    if let Some(ct) = mc.client_token() {
+        acc.refresh_token = ct.to_string();
+    }
+    if let Some(name) = mc.selected_profile_name() {
+        acc.name = name;
+    }
+    accounts.save_account(&mut acc).await?;
+    Ok(acc)
 }
 
 /// Build core `AuthOptions` from a stored account (source: ResolveAuthOptions).
@@ -2056,6 +2172,8 @@ mod refresh_tests {
             last_used: 0,
             is_default: true,
             server_url: None,
+            oauth_provider: None,
+            oauth_refresh_token: None,
         }
     }
 
@@ -2095,6 +2213,199 @@ mod refresh_tests {
         .await
         .unwrap();
         assert!(out.is_none());
+    }
+
+    // ---------------- refresh_account_token（issue #145 统一入口） ----------------
+
+    /// 密码登录的 Yggdrasil 账户（无 OAuth 刷新令牌）必须原样放行：
+    /// 这是回归防线——若误判为 OAuth 账户会对不存在的刷新令牌发起网络请求。
+    #[tokio::test]
+    async fn yggdrasil_password_account_passthrough() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("ygg-pwd");
+        let mut acc = ms_account();
+        acc.login_method = "Yggdrasil".into();
+        acc.oauth_provider = None;
+        acc.oauth_refresh_token = None;
+        let original = acc.clone();
+        let out = refresh_account_token(
+            &reqwest::Client::new(),
+            &MockAuth {
+                scenario: Scenario::NoCall,
+            },
+            &accounts,
+            Some(acc),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, Some(original));
+    }
+
+    /// 有 oauth_provider 但刷新令牌为空（历史数据/异常态）同样放行，不发网络请求。
+    #[tokio::test]
+    async fn oauth_account_without_refresh_token_passthrough() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("ygg-oauth-nort");
+        let mut acc = ms_account();
+        acc.login_method = "Yggdrasil".into();
+        acc.oauth_provider = Some("LittleSkin".into());
+        acc.oauth_refresh_token = Some(String::new());
+        let original = acc.clone();
+        let out = refresh_account_token(
+            &reqwest::Client::new(),
+            &MockAuth {
+                scenario: Scenario::NoCall,
+            },
+            &accounts,
+            Some(acc),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, Some(original));
+    }
+
+    /// 微软账户经统一入口仍走 core 刷新链（此处为「拒绝」场景 → TOKEN_EXPIRED）。
+    #[tokio::test]
+    async fn microsoft_via_account_entry_blocks_on_rejected() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("acct-ms-rejected");
+        let err = refresh_account_token(
+            &reqwest::Client::new(),
+            &MockAuth {
+                scenario: Scenario::Rejected,
+            },
+            &accounts,
+            Some(ms_account()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, "TOKEN_EXPIRED");
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// None 账户经统一入口直接返回 None（不触碰网络与锁竞争）。
+    #[tokio::test]
+    async fn account_entry_none_passthrough() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("acct-none");
+        let out = refresh_account_token(
+            &reqwest::Client::new(),
+            &MockAuth {
+                scenario: Scenario::NoCall,
+            },
+            &accounts,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(out.is_none());
+    }
+
+    // ------- 多角色共享 OAuth 刷新令牌的传播（issue #145 评审发现） -------
+
+    /// 一次授权签发的多个角色共享同一刷新令牌。旧值轮换后必须同步给其余角色，
+    /// 否则它们下次续期会拿着已作废的旧值得到 TOKEN_EXPIRED。
+    #[tokio::test]
+    async fn propagate_oauth_refresh_token_updates_siblings_only() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("propagate");
+
+        let mk = |uuid: &str, provider: Option<&str>, rt: &str| {
+            let mut a = ms_account();
+            a.uuid = uuid.into();
+            a.login_method = "Yggdrasil".into();
+            a.oauth_provider = provider.map(str::to_string);
+            a.oauth_refresh_token = Some(rt.to_string());
+            a
+        };
+
+        // 同源同值（应更新）、同源不同值（不应更新）、异源同值（不应更新）
+        accounts
+            .save_account(&mut mk("a", Some("LittleSkin"), "OLD"))
+            .await
+            .unwrap();
+        accounts
+            .save_account(&mut mk("b", Some("LittleSkin"), "OLD"))
+            .await
+            .unwrap();
+        accounts
+            .save_account(&mut mk("c", Some("LittleSkin"), "OTHER"))
+            .await
+            .unwrap();
+        accounts
+            .save_account(&mut mk("d", Some("OtherSkin"), "OLD"))
+            .await
+            .unwrap();
+        // 密码登录的 Yggdrasil 账户（无 provider）不应被牵连
+        accounts
+            .save_account(&mut mk("e", None, "OLD"))
+            .await
+            .unwrap();
+
+        let n = accounts
+            .propagate_oauth_refresh_token("LittleSkin", "OLD", "NEW", "a")
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "只应更新同源且持有旧值的 b");
+
+        assert_eq!(
+            accounts
+                .get_account("b")
+                .await
+                .unwrap()
+                .unwrap()
+                .oauth_refresh_token
+                .as_deref(),
+            Some("NEW")
+        );
+        // 调用方自身的账户 a 不在此方法职责内
+        assert_eq!(
+            accounts
+                .get_account("c")
+                .await
+                .unwrap()
+                .unwrap()
+                .oauth_refresh_token
+                .as_deref(),
+            Some("OTHER")
+        );
+        assert_eq!(
+            accounts
+                .get_account("d")
+                .await
+                .unwrap()
+                .unwrap()
+                .oauth_refresh_token
+                .as_deref(),
+            Some("OLD")
+        );
+        assert_eq!(
+            accounts
+                .get_account("e")
+                .await
+                .unwrap()
+                .unwrap()
+                .oauth_refresh_token
+                .as_deref(),
+            Some("OLD")
+        );
+    }
+
+    /// 新旧值相同 / 旧值为空时是空操作（避免无谓写盘）。
+    #[tokio::test]
+    async fn propagate_oauth_refresh_token_noop_when_unchanged() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (accounts, _env) = test_account_service("propagate-noop");
+        let n = accounts
+            .propagate_oauth_refresh_token("LittleSkin", "SAME", "SAME", "a")
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+        let n = accounts
+            .propagate_oauth_refresh_token("LittleSkin", "", "NEW", "a")
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[tokio::test]

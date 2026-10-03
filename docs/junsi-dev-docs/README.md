@@ -98,8 +98,9 @@
 - [ADR-095：更新可用性提升为会话级共享状态，设置页常驻「发现新版本」提示（issue #147）](1-决策记录/ADR-095-更新可用性提升为会话级共享状态-设置页常驻发现新版本提示-issue-147.md)
 - [ADR-096：资源收藏 P2（#132）收藏夹分组 / 备注 / 自定义标签](1-决策记录/ADR-096-资源收藏P2-收藏夹分组-备注-自定义标签.md)
 - [ADR-097：资源中心整合包原地更新（issue #118）——索引+清单双基线、journal 回滚、绝不删除实例](1-决策记录/ADR-097-资源中心整合包原地更新-索引清单双基线与-journal-回滚-issue-118.md)
-- [ADR-099：修复 #116：存档卡片选中态丢失基础内边距导致内容上浮](1-决策记录/ADR-099-修复-116-存档卡片选中态丢失基础内边距导致内容上浮.md)
-- [ADR-100：Issue #127 外部唤起：qomicex-launcher:// OS 协议 + single-instance + 深链动作分发](1-决策记录/ADR-100-Issue--127------qomicex-launcher----OS------single-instance---------.md)
+- [ADR-098：LittleSkin 改用 OAuth 设备代码流登录（issue #145）](1-决策记录/ADR-098-LittleSkin-改用-OAuth-设备代码流登录-issue-145.md)
+- [ADR-099：修复 #116——存档卡片选中态丢失基础内边距导致内容上浮](1-决策记录/ADR-099-修复-116-存档卡片选中态丢失基础内边距导致内容上浮.md)
+- [ADR-100：Issue #127 外部唤起：qomicex-launcher:// OS 协议 + single-instance + 深链动作分发](1-决策记录/ADR-100-外部唤起-qomicex-launcher-OS协议-single-instance-深链动作分发-issue-127.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

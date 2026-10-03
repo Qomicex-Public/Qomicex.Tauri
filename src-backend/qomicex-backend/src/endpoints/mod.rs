@@ -9,6 +9,7 @@ pub mod instance_logs;
 pub mod java;
 pub mod launch;
 pub mod license;
+pub mod littleskin;
 pub mod loader;
 pub mod log;
 pub mod loganalysis;

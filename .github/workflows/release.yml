@@ -99,6 +99,11 @@ on:
 env:
   CARGO_TERM_COLORS: always
   GITHUB_SHA: ${{ github.sha }}
+  # 后端配置注入（issue #159）：appsettings.json 不再入库，由 build.rs 以
+  # appsettings.example.json 为模板 + 这两个环境变量在构建期生成。
+  # 未配置的 secret 展开为空串 → build.rs 视为「未提供」→ 回退模板基线（构建不失败）。
+  CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+  MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
 
 jobs:
   setup:
