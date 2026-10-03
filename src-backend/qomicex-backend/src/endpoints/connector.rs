@@ -141,6 +141,11 @@ struct ConnectorState {
     host_instance: Arc<RwLock<Option<crate::services::instance::GameInstance>>>,
     /// Starting 阶段正在启动的实例 id（leave 取消时经 LaunchTracker 杀进程）
     starting_instance: Arc<RwLock<Option<String>>>,
+    /// 请求级 Starting 占用标识（见 `release_starting_if_owner`）。
+    ///
+    /// 用于「认领式」复位：只有仍持有该 token 的请求才可把自己的 Starting 占用
+    /// 释放为 Idle，避免误放 leave/新请求取得的占用。
+    starting_token: Arc<RwLock<Option<String>>>,
     /// host 端 mods 扫描缓存（None=尚未扫描/无实例；Some(空)=已扫描无 mods）
     host_mods: Arc<RwLock<Option<Vec<GameModEntry>>>>,
     /// guest 侧缓存：从房主拉取的 mods 列表（qml:game_mods；房主不支持时 None）
@@ -270,6 +275,30 @@ fn client_of(conn: &ConnectorState) -> Arc<ScaffoldingClient> {
     conn.client.load_full()
 }
 
+/// 若 Starting 占用仍属于 `token` 持有者，则释放为 Idle（否则保持原样）。
+///
+/// 用法：host/instance 在取得 Starting 后、令牌刷新失败的错误路径调用。
+/// 条件判定保证不会误放「leave 已复位后新请求重新取得的占用」或「他人占用」。
+async fn release_starting_if_owner(conn: &ConnectorState, token: &str) {
+    let owns = conn
+        .starting_token
+        .read()
+        .unwrap()
+        .as_deref()
+        .map(|t| t == token)
+        .unwrap_or(false);
+    if !owns {
+        // 占用已被 leave 或后续请求接管：不动 mode。
+        return;
+    }
+    let mut mode = conn.mode.lock().await;
+    if matches!(*mode, Mode::Starting) {
+        *mode = Mode::Idle;
+    }
+    // 一并清掉认领标记，避免陈旧 token 影响后续判定。
+    *conn.starting_token.write().unwrap() = None;
+}
+
 fn connector() -> &'static Arc<ConnectorState> {
     CONNECTOR.get_or_init(|| {
         // 首次构造：读一次设置。此时不能 `.await`（OnceLock 初始化是同步闭包），
@@ -288,6 +317,7 @@ fn connector() -> &'static Arc<ConnectorState> {
             last_guest_player_count: std::sync::Mutex::new(-1),
             host_instance: Arc::new(RwLock::new(None)),
             starting_instance: Arc::new(RwLock::new(None)),
+            starting_token: Arc::new(RwLock::new(None)),
             host_mods: Arc::new(RwLock::new(None)),
             room_mods: Arc::new(RwLock::new(None)),
             instance_mods_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -817,15 +847,35 @@ async fn host_instance(
     let tracker = state.launch_tracker.clone();
     let instance_clone = instance.clone();
     let starting_id = instance.id.clone();
+    // 请求级占用标识：Starting 占用与本次请求一一对应，用于错误路径的条件复位。
+    //
+    // 为什么需要它（PR #145 评审发现）：本请求在上面把 mode 置为 Starting，
+    // 而令牌刷新可能在网络错误/令牌失效时失败 → `?` 提前返回，后台任务的复位
+    // 逻辑不会执行，之后建房将永久 CONNECTOR_BUSY（只能靠 leave 解开）。
+    //
+    // 为什么不能无条件置 Idle：期间可能已发生 leave（复位 Idle 并清空占用）或
+    // 新请求重新取得 Starting，无条件复位会覆盖新持有者。也不能用实例 id 判断
+    // 归属——同一实例重试时 id 相同，会误判。故用每次请求唯一的 token，
+    // 并且**在刷新之前**就登记，使错误路径能可靠判断「占用是否仍属于本请求」。
+    let starting_token = uuid::Uuid::new_v4().to_string();
+    *conn.starting_token.write().unwrap() = Some(starting_token.clone());
     // 与普通启动路径一致：用默认账号解析 auth（离线/微软/外置登录），
     // 否则 --accessToken 为空会被 joptsimple 拒绝（Missing required option）。
-    // 微软账户先刷新令牌；令牌失效或断网均阻止建房（不带着旧 token 白启）
-    let host_auth_account = crate::endpoints::instance::refresh_microsoft_token(
+    // 微软/外置登录账户先刷新令牌；令牌失效或断网均阻止建房（不带着旧 token 白启）
+    let host_auth_account = match crate::endpoints::instance::refresh_account_token(
+        &state.http_client,
         state.core.auth(),
         &state.account,
         state.account.get_default().await.ok().flatten(),
     )
-    .await?;
+    .await
+    {
+        Ok(acc) => acc,
+        Err(e) => {
+            release_starting_if_owner(conn, &starting_token).await;
+            return Err(e);
+        }
+    };
     let auth_options = crate::endpoints::instance::resolve_auth_options(host_auth_account);
     // 记录 starting 实例，leave 取消时经 LaunchTracker 杀进程
     *conn.starting_instance.write().unwrap() = Some(starting_id.clone());
@@ -1564,6 +1614,9 @@ async fn reset_connector_state(notify_leave: bool) {
     client_of(conn).close_all(conn.ct.clone()).await;
     *conn.game_info.write().unwrap() = None;
     *conn.starting_instance.write().unwrap() = None;
+    // 清掉请求级占用认领标记：leave 之后原请求不再持有任何占用，
+    // 其错误路径不得再复位 mode（见 release_starting_if_owner）。
+    *conn.starting_token.write().unwrap() = None;
     *conn.host_center.write().unwrap() = None;
     *conn.kick.write().unwrap() = None;
     conn.icon_map.write().unwrap().clear();

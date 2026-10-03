@@ -84,6 +84,8 @@ export interface Account {
   hasToken?: boolean
   isDefault?: boolean
   serverUrl?: string | null
+  /** OAuth 提供方（如 `'LittleSkin'`）；密码登录账户为 undefined。issue #145 */
+  oauthProvider?: string | null
 }
 
 export interface MicrosoftOAuthResponse {
