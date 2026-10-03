@@ -270,7 +270,9 @@ export default function ResourceDetailPage() {
       }
       const targetPath = await save({ defaultPath })
       if (!targetPath) return
-      const { taskId } = await downloadTo(downloadUrl, targetPath)
+      // #162：地图（save）下载的是压缩包，必须解压成存档文件夹才能被 Minecraft
+      // 识别；其余类型（模组/资源包/光影/数据包）保持原样直接落盘。
+      const { taskId } = await downloadTo(downloadUrl, targetPath, category === 'save')
       addTask({
         id: taskId,
         name: targetName,
