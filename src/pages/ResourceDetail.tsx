@@ -15,7 +15,7 @@ import { Card, CardContent } from '../components/ui'
 import { Badge } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
-import { get, post, API_BASE } from '../api/client.ts'
+import { get, post, API_BASE, ApiError } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, getResourceDependencies, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
 import { lookupChineseName } from '../api/mcmod.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
@@ -59,6 +59,23 @@ function getSourceLabel(source: string): string {
     ftb: 'FTB',
   }
   return map[source] ?? source
+}
+
+/**
+ * 把任意文本清成可作存档文件夹名的字符串（#162）。
+ *
+ * 地图下载会解压成 `saves/<名称>/`，该名称直接成为磁盘目录名：必须去掉路径
+ * 分隔符与 Windows 非法字符，否则资源标题里的 `:` `?` `/` 会让创建目录失败
+ * （或意外跨目录）。后端 `validate_world_name` 会再校验一次，这里是前置清理，
+ * 让提示名默认就是可用的。
+ */
+function sanitizeWorldName(raw: string): string {
+  return raw
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\.\./g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 64)
 }
 
 function LoaderBadge({ loader }: { loader: string }) {
@@ -166,7 +183,7 @@ export default function ResourceDetailPage() {
   const [searchParams] = useSearchParams()
   const location = useLocation()
   const navIconUrl = (location.state as { iconUrl?: string } | null)?.iconUrl
-  const { notify } = useMessageBox()
+  const { notify, prompt } = useMessageBox()
   const { t, lang } = useI18n()
   const source = searchParams.get('source') ?? 'modrinth'
   const category = searchParams.get('category') ?? 'mod'
@@ -270,12 +287,42 @@ export default function ResourceDetailPage() {
       }
       const targetPath = await save({ defaultPath })
       if (!targetPath) return
-      // #162：地图（save）下载的是压缩包，必须解压成存档文件夹才能被 Minecraft
-      // 识别；其余类型（模组/资源包/光影/数据包）保持原样直接落盘。
-      const { taskId } = await downloadTo(downloadUrl, targetPath, category === 'save')
+      // #162：地图（save）下载的是压缩包，必须解压成 saves/<存档名>/ 才能被
+      // Minecraft 识别；其余类型（模组/资源包/光影/数据包）保持原样直接落盘。
+      const isSave = category === 'save'
+      // 存档名默认取资源标题（用户看到的名字）；标题全是非法字符时回退到文件名
+      // 主干，再不行用 `world`——绝不能送空白名（后端会 400，前端要能自愈）。
+      const fallbackName = targetName.replace(/\.zip$/i, '')
+      let worldName = isSave
+        ? (sanitizeWorldName(detail?.title || '') || sanitizeWorldName(fallbackName) || 'world')
+        : undefined
+      let taskId: string
+      for (;;) {
+        try {
+          const res = await downloadTo(downloadUrl, targetPath, isSave, worldName)
+          taskId = res.taskId
+          break
+        } catch (e) {
+          // 同名冲突 → 弹对话框让用户改名后重试（不覆盖已有存档）。
+          if (isSave && e instanceof ApiError && (e.code === 'SAVE_NAME_CONFLICT' || e.status === 409)) {
+            const input = await prompt(
+              t('resourceDetail.saveNameConflictHint'),
+              t('resourceDetail.saveNameTitle'),
+              worldName ?? '',
+            )
+            if (input === null) return
+            // 清成空串说明输入全是非法字符：重新弹一次，不要把空白名发给后端。
+            const cleaned = sanitizeWorldName(input)
+            if (!cleaned) continue
+            worldName = cleaned
+            continue
+          }
+          throw e
+        }
+      }
       addTask({
         id: taskId,
-        name: targetName,
+        name: worldName ? `${worldName}.zip` : targetName,
         type: 'file',
         gameVersion: '',
         status: 'queued',
@@ -290,7 +337,7 @@ export default function ResourceDetailPage() {
     } catch {
       notify(t('resourceDetail.downloadFailed'), 'error')
     }
-  }, [source, resourceId, category, instance, detail, notify, t])
+  }, [source, resourceId, category, instance, detail, notify, t, prompt])
 
   const handleFtbExportJson = useCallback(async (versionId: string, versionName: string) => {
     const exportUrl = `${API_BASE}/api/resources/ftb/${resourceId}/export?versionId=${encodeURIComponent(versionId)}`
