@@ -17,15 +17,31 @@ ok()   { echo "  PASS: $1"; ((PASS++)) || true; }
 fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
 skip() { echo "  SKIP: $1"; ((SKIP++)) || true; }
 
-# CurseForge 断言需要 API key：后端在**构建期**经 appsettings.json 嵌入
+# CurseForge 断言需要 API key：后端在**构建期**把 key 嵌入 appsettings.json
 # （issue #159 起由 build.rs 从 CURSEFORGE_API_KEY 环境变量注入，见 crate 根
 # build.rs 头注释）。该 secret 未配置时（如 fork PR、新仓库）key 为空，
 # CF 端点必然返回 0 结果 —— 这是**凭据缺失**而非功能缺陷，因此跳过而非判失败。
 # 有 key 时照常断言，不做任何静默放行。
+#
+# 判定依据必须是**后端实际生效的配置**，而非本进程的环境变量：build.rs 在无环境
+# 变量覆盖时会保留已有的 appsettings.json，因此「本地填了 key 但未导出环境变量」
+# 时后端仍能访问 CF，此时不应误报跳过（否则会掩盖真实回归）。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CF_CONFIGURED=0
-if [ -n "${CURSEFORGE_API_KEY:-}" ]; then CF_CONFIGURED=1; fi
+# 1) 环境变量（CI 注入路径）
+if [ -n "${CURSEFORGE_API_KEY:-}" ]; then
+    CF_CONFIGURED=1
+else
+    # 2) 后端构建产物中嵌入的配置（本地开发路径）
+    for cfg in "$SCRIPT_DIR/../src-backend/qomicex-backend/appsettings.json" \
+               "$SCRIPT_DIR/../src-backend/qomicex-backend/appsettings.example.json"; do
+        [ -f "$cfg" ] || continue
+        key=$(jq -r '.CurseForge.ApiKey // empty' "$cfg" 2>/dev/null || echo "")
+        if [ -n "$key" ]; then CF_CONFIGURED=1; break; fi
+    done
+fi
 if [ "$CF_CONFIGURED" -eq 0 ]; then
-    skip "CurseForge 测试（未配置 CURSEFORGE_API_KEY；后端构建期未嵌入 key）"
+    skip "CurseForge 测试（后端未配置 CurseForge.ApiKey；CURSEFORGE_API_KEY 未设置且 appsettings.json 中为空）"
 fi
 
 # ─── CurseForge: old mod with gameVersion+loader filter ──────────────────────

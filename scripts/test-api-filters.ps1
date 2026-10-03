@@ -12,14 +12,34 @@ function Pass([string]$m) { Write-Output "  PASS: $m"; $script:pass++ }
 function Fail([string]$m) { Write-Output "  FAIL: $m"; $script:fail++ }
 function Skip([string]$m) { Write-Output "  SKIP: $m"; $script:skip++ }
 
-# CurseForge 断言需要 API key：后端在**构建期**经 appsettings.json 嵌入
+# CurseForge 断言需要 API key：后端在**构建期**把 key 嵌入 appsettings.json
 # （issue #159 起由 build.rs 从 CURSEFORGE_API_KEY 环境变量注入，见 crate 根
 # build.rs 头注释）。该 secret 未配置时（如 fork PR、新仓库）key 为空，
 # CF 端点必然返回 0 结果 —— 这是**凭据缺失**而非功能缺陷，因此跳过而非判失败。
 # 有 key 时照常断言，不做任何静默放行。
-$cfConfigured = [bool]($env:CURSEFORGE_API_KEY -and $env:CURSEFORGE_API_KEY.Trim())
+#
+# 判定依据必须是**后端实际生效的配置**，而非本进程的环境变量：build.rs 在无环境
+# 变量覆盖时会保留已有的 appsettings.json，因此「本地填了 key 但未导出环境变量」
+# 时后端仍能访问 CF，此时不应误报跳过（否则会掩盖真实回归）。
+$cfConfigured = $false
+# 1) 环境变量（CI 注入路径）
+if ($env:CURSEFORGE_API_KEY -and $env:CURSEFORGE_API_KEY.Trim()) { $cfConfigured = $true }
+# 2) 后端构建产物中嵌入的配置（本地开发路径）
+else {
+    $candidates = @(
+        (Join-Path $PSScriptRoot '..\src-backend\qomicex-backend\appsettings.json'),
+        (Join-Path $PSScriptRoot '..\src-backend\qomicex-backend\appsettings.example.json')
+    )
+    foreach ($cfg in $candidates) {
+        if (-not (Test-Path $cfg)) { continue }
+        try {
+            $key = (Get-Content $cfg -Raw | ConvertFrom-Json).CurseForge.ApiKey
+            if ($key -and $key.Trim()) { $cfConfigured = $true; break }
+        } catch { /* 配置不可解析则继续尝试下一个候选 */ }
+    }
+}
 if (-not $cfConfigured) {
-    Skip "CurseForge 测试（未配置 CURSEFORGE_API_KEY；后端构建期未嵌入 key）"
+    Skip "CurseForge 测试（后端未配置 CurseForge.ApiKey；CURSEFORGE_API_KEY 未设置且 appsettings.json 中为空）"
 }
 
 Write-Output "=== CurseForge local loader filter (238222 / 1.12.2 / forge) ==="

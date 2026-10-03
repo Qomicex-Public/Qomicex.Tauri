@@ -93,10 +93,24 @@ fn generate_appsettings(manifest: &std::path::Path) {
         }
     };
 
-    let mut doc: serde_json::Value = match serde_json::from_str(&example) {
+    let example_doc: serde_json::Value = match serde_json::from_str(&example) {
         Ok(v) => v,
         Err(e) => panic!("{} 不是合法 JSON：{e}", example_path.display()),
     };
+
+    // 基线优先取**现有文件**（若存在且可解析）：开发者可能已在本地填好 key，
+    // 只设置其中一个环境变量时，不应把其它字段重置回模板值（issue #159 评审发现：
+    // 仅设 MICROSOFT_CLIENT_ID 会清空本地 CurseForge.ApiKey）。
+    // 现有文件缺失或损坏时回退模板。
+    let mut doc: serde_json::Value = match fs::read_to_string(&out_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+    {
+        Some(existing) => existing,
+        None => example_doc.clone(),
+    };
+    // 模板新增的键（若现有文件缺）补齐，避免旧文件漏键导致读取方拿不到值。
+    merge_missing(&mut doc, &example_doc);
 
     let mut overridden: Vec<&str> = Vec::new();
     for (env_var, path) in OVERRIDABLE {
@@ -120,33 +134,65 @@ fn generate_appsettings(manifest: &std::path::Path) {
         overridden.push(env_var);
     }
 
-    // 环境变量提供了值时总是重写（避免本地残留文件遮蔽 CI 注入的值）；
-    // 否则仅在文件不存在时生成，不动开发者已填好的本地配置。
-    if overridden.is_empty() && out_path.exists() {
-        return;
-    }
-
+    // 环境变量提供了值时总是重写（保证 CI 注入值不被本地残留文件遮蔽）；
+    // 否则只在「文件不存在」或「补齐模板新增键后内容有变化」时写，
+    // 不改动开发者已填好的本地配置（保持文件 mtime 稳定，避免无谓重编）。
     let rendered = match serde_json::to_string_pretty(&doc) {
-        Ok(s) => s,
+        Ok(s) => format!("{s}\n"),
         Err(e) => panic!("序列化 appsettings 失败：{e}"),
     };
-    if let Err(e) = fs::write(&out_path, format!("{rendered}\n")) {
-        panic!("写入 {} 失败：{e}", out_path.display());
-    }
+    let unchanged = fs::read_to_string(&out_path)
+        .map(|existing| existing == rendered)
+        .unwrap_or(false);
+    let wrote = if overridden.is_empty() && unchanged {
+        false
+    } else {
+        if let Err(e) = fs::write(&out_path, &rendered) {
+            panic!("写入 {} 失败：{e}", out_path.display());
+        }
+        true
+    };
 
-    if overridden.is_empty() {
+    // 降级提示只在「最终生效的 CurseForge key 为空」时给出，与实际行为一致。
+    let cf_key = doc
+        .get("CurseForge")
+        .and_then(|c| c.get("ApiKey"))
+        .and_then(|k| k.as_str())
+        .unwrap_or_default();
+    if cf_key.trim().is_empty() {
         println!(
-            "cargo::warning=appsettings.json 由模板生成（未提供 {}）；CurseForge 相关功能将降级",
+            "cargo::warning=appsettings.json 的 CurseForge.ApiKey 为空（未提供 {}）；\
+             CurseForge 相关功能将降级。本地开发可复制 appsettings.example.json 填写自己的 key。",
             OVERRIDABLE
                 .iter()
                 .map(|(v, _)| *v)
                 .collect::<Vec<_>>()
                 .join(" / ")
         );
-    } else {
+    } else if !overridden.is_empty() {
         println!(
             "cargo::warning=appsettings.json 已注入：{}",
             overridden.join(" / ")
         );
+    } else if wrote {
+        println!("cargo::warning=appsettings.json 已按模板补齐缺失键（保留本地已有值）");
+    }
+
+    /// 递归补齐 `dst` 中缺失于 `patch` 之外的键（不覆盖 dst 已有值）。
+    ///
+    /// `dst` 为对象时逐键递归；`patch` 中的键在 `dst` 中不存在则整棵拷入。
+    /// 非对象类型不处理（保留 dst 原值，避免把开发者的自定义结构覆盖掉）。
+    fn merge_missing(dst: &mut serde_json::Value, patch: &serde_json::Value) {
+        let (Some(dst_obj), Some(patch_obj)) = (dst.as_object_mut(), patch.as_object()) else {
+            return;
+        };
+        for (key, patch_val) in patch_obj {
+            match dst_obj.get_mut(key) {
+                Some(existing) => merge_missing(existing, patch_val),
+                None => {
+                    dst_obj.insert(key.clone(), patch_val.clone());
+                }
+            }
+        }
     }
 }
