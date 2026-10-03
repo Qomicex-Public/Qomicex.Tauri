@@ -876,11 +876,10 @@ fn is_multimc_zip(zip_path: &std::path::Path) -> bool {
     false
 }
 
-/// 从磁盘 zip 文件解压到目标目录（防 zip-slip：仅使用 `enclosed_name` 安全路径）。
+/// zip 解压统一走 `services::archive`（#162 抽出共享，避免整合包与地图存档
+/// 各维护一份 zip-slip / 炸弹防护而漂移）。此处仅保留调用点需要的窄包装。
 fn extract_zip_file(zip_path: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
-    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
-    extract_archive(&mut archive, dest, None)
+    crate::services::archive::extract_zip_file(zip_path, dest)
 }
 
 /// 从磁盘 zip 文件解压到目标目录并逐条目上报进度 (已完成条目, 总条目)。
@@ -889,80 +888,12 @@ fn extract_zip_file_progressed(
     dest: &std::path::Path,
     progress: &mut dyn FnMut(usize, usize),
 ) -> Result<(), String> {
-    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
-    extract_archive(&mut archive, dest, Some(progress))
+    crate::services::archive::extract_zip_file_progressed(zip_path, dest, progress)
 }
 
 /// 从内存字节解压到目标目录（防 zip-slip：仅使用 `enclosed_name` 安全路径）。
 fn extract_zip(data: &[u8], dest: &std::path::Path) -> Result<(), String> {
-    let cursor = std::io::Cursor::new(data);
-    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("读取整合包失败: {e}"))?;
-    extract_archive(&mut archive, dest, None)
-}
-
-/// zip 炸弹防护阈值（远高于正常整合包：GTNH 约 1.2 万条目 / 解压 0.72GB）。
-const MAX_ZIP_ENTRIES: usize = 200_000;
-const MAX_ENTRY_UNCOMPRESSED: u64 = 8 * 1024 * 1024 * 1024; // 单文件 8 GiB
-const MAX_TOTAL_UNCOMPRESSED: u64 = 64 * 1024 * 1024 * 1024; // 总解压 64 GiB
-
-fn extract_archive<R: std::io::Read + std::io::Seek>(
-    archive: &mut zip::ZipArchive<R>,
-    dest: &std::path::Path,
-    mut progress: Option<&mut dyn FnMut(usize, usize)>,
-) -> Result<(), String> {
-    let total_entries = archive.len();
-    if total_entries > MAX_ZIP_ENTRIES {
-        return Err(format!(
-            "整合包条目数过多（{total_entries} > {MAX_ZIP_ENTRIES}），疑似异常压缩包"
-        ));
-    }
-    let mut total_uncompressed: u64 = 0;
-    let mut done: usize = 0;
-    for i in 0..total_entries {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| format!("读取整合包条目失败: {e}"))?;
-        let Some(enclosed) = entry.enclosed_name() else {
-            return Err("整合包内含非法路径（zip-slip）".to_string());
-        };
-        let rel: &std::path::Path = enclosed.as_ref();
-        let target = dest.join(rel);
-        if entry.is_dir() {
-            std::fs::create_dir_all(&target)
-                .map_err(|e| format!("创建目录失败 {}: {e}", target.display()))?;
-            done += 1;
-            if let Some(p) = progress.as_deref_mut() {
-                p(done, total_entries);
-            }
-            continue;
-        }
-        let size = entry.size();
-        if size > MAX_ENTRY_UNCOMPRESSED {
-            return Err(format!(
-                "整合包内文件过大（{} > {MAX_ENTRY_UNCOMPRESSED} B）：{}",
-                size,
-                entry.name()
-            ));
-        }
-        total_uncompressed += size;
-        if total_uncompressed > MAX_TOTAL_UNCOMPRESSED {
-            return Err("整合包解压总大小超出限制，疑似异常压缩包".to_string());
-        }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("创建目录失败 {}: {e}", parent.display()))?;
-        }
-        let mut out = std::fs::File::create(&target)
-            .map_err(|e| format!("创建文件失败 {}: {e}", target.display()))?;
-        std::io::copy(&mut entry, &mut out)
-            .map_err(|e| format!("解压文件失败 {}: {e}", target.display()))?;
-        done += 1;
-        if let Some(p) = progress.as_deref_mut() {
-            p(done, total_entries);
-        }
-    }
-    Ok(())
+    crate::services::archive::extract_zip(data, dest)
 }
 
 /// `{BaseDir}/temp/multimc-imports/`（zip 解压根）；顺带清理超过 1 天的残留。
