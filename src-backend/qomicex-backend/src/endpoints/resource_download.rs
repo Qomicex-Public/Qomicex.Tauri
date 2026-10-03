@@ -77,11 +77,14 @@ struct DownloadProgressResponse {
 struct DownloadToRequest {
     url: String,
     target_path: String,
-    /// 下载完成后是否把 `.zip` 解压到目标目录（并删除原 zip），见 `download_to`
-    /// 与 `spawn_extract_on_complete`（#162）。缺省 false：普通文件下载
-    /// （ToolboxTab 直链、FTB 导出 json 等）保持原样，只有地图存档需要解压。
+    /// 下载完成后是否解压（#162）。见 `download_to`。
     #[serde(default)]
     extract: bool,
+    /// 地图存档的目标文件夹名（#162）。给定时按**地图语义**解压：解成
+    /// `saves/<worldName>/` 恰好一层，同名已存在则拒绝（用户改名后重试）。
+    /// 不给定时 `extract` 走通用语义（解到 zip 所在目录）。
+    #[serde(default)]
+    world_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -126,14 +129,59 @@ fn task_registry() -> &'static Mutex<HashMap<TaskId, TaskSnapshot>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 下载完成**后**需要解压的任务登记（#162）：`task_id -> (zip 路径, 解压目标目录)`。
+/// 下载完成**后**需要解压的任务登记（#162）：`task_id -> 解压意图`。
 ///
 /// `/download-to` 与 `/start` 都是「入队即返回」，此时文件还没下完，不能在请求内
 /// 解压。故把解压意图登记下来，由 `ensure_watcher` 的事件循环在收到 `Completed`
 /// 时取出并执行（下载器是 fsync + rename 原子完成，事件到达时文件已在最终路径）。
-fn extract_intents() -> &'static Mutex<HashMap<TaskId, (PathBuf, PathBuf)>> {
-    static INTENTS: OnceLock<Mutex<HashMap<TaskId, (PathBuf, PathBuf)>>> = OnceLock::new();
+fn extract_intents() -> &'static Mutex<HashMap<TaskId, ExtractIntent>> {
+    static INTENTS: OnceLock<Mutex<HashMap<TaskId, ExtractIntent>>> = OnceLock::new();
     INTENTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 解压意图的两种形态。
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ExtractIntent {
+    /// 普通解压：把 zip 解到 `dest_dir`（整合包等通用场景）。
+    IntoDir { zip: PathBuf, dest_dir: PathBuf },
+    /// 地图存档：解成 `saves_dir/<world_name>/` 一层目录（#162）。
+    ///
+    /// 与 `IntoDir` 分开是因为存档有额外语义：必须恰好一层（否则游戏认不出）、
+    /// 同名时**不覆盖**而是报冲突让用户改名。
+    World {
+        zip: PathBuf,
+        saves_dir: PathBuf,
+        world_name: String,
+    },
+}
+
+/// 登记解压意图并返回任务 id。
+///
+/// **必须在持锁状态下先 `add()` 再插入意图**：下载器对极小的文件可能在 `add()`
+/// 返回后立刻完成，事件循环若此时取不到意图，就会把任务标成 completed 而跳过解压
+/// （意图还成了永久残留）。事件循环取意图时用**同一把锁**，于是两种顺序都成立：
+/// 要么它先拿到锁（此时插入还没发生 → 但它必然在 `add()` 之后才可能收到完成事件，
+/// 故拿锁时插入已完成），要么插入先完成。见 `ensure_watcher` 的 Completed 分支。
+fn add_with_intent(
+    manager: &Arc<DownloadManager>,
+    task: DownloadTask,
+    intent: ExtractIntent,
+) -> TaskId {
+    let mut guard = extract_intents().lock().unwrap();
+    let id = manager.add(task);
+    guard.insert(id, intent);
+    id
+}
+
+/// 解析地图存档的目标目录与名称（`/download-to` 的 worldName 语义，见 #162）。
+/// 返回 `(saves 目录, 规范化后的存档名)`。
+fn resolve_world_target(
+    target_dir: &Path,
+    world_name: &str,
+) -> Result<(PathBuf, String), ApiError> {
+    let name = crate::services::archive::validate_world_name(world_name)
+        .map_err(|e| ApiError::bad_request("INVALID_WORLD_NAME", format!("存档名称非法: {e}")))?;
+    Ok((target_dir.to_path_buf(), name))
 }
 
 /// 该路径是否是需要解压的 `.zip`（#162）。
@@ -145,14 +193,6 @@ fn is_zip_path(path: &Path) -> bool {
     path.to_string_lossy()
         .to_ascii_lowercase()
         .ends_with(".zip")
-}
-
-/// 登记「该任务下载完成后解压到 `dest_dir`」（仅 `.zip` 生效，语义同 C#）。
-fn register_extract_intent(id: TaskId, zip_path: PathBuf, dest_dir: PathBuf) {
-    extract_intents()
-        .lock()
-        .unwrap()
-        .insert(id, (zip_path, dest_dir));
 }
 
 /// 完成解压后回写状态：`completed` / `failed`（后者带上失败原因）。
@@ -168,24 +208,43 @@ fn finish_extract(id: TaskId, error: Option<String>) {
                 }
             }
             Some(msg) => {
+                // 同名冲突用专门的 code，前端据此弹「改名」对话框。
                 s.status = status_of(TaskState::Failed).to_string();
-                s.error = Some(msg);
+                s.error = Some(
+                    if msg.starts_with(crate::services::archive::ERR_ALREADY_EXISTS) {
+                        format!("SAVE_NAME_CONFLICT: {msg}")
+                    } else {
+                        msg
+                    },
+                );
             }
         }
     }
 }
 
-/// 在后台线程解压（阻塞文件 IO 不能放在事件循环里），成功后按 C# 语义删除原 zip。
+/// 在后台线程解压（阻塞文件 IO 不能放在事件循环里），成功后删除原 zip。
 ///
 /// 失败时**保留** zip 并置 `failed`：C# 是 `ExtractToDirectory` 抛错后直接进 catch，
 /// `File.Delete` 不会执行 —— 用户至少还能拿到已下载的包，比两样都没有好。
-fn spawn_extract(id: TaskId, zip_path: PathBuf, dest_dir: PathBuf) {
+fn spawn_extract(id: TaskId, intent: ExtractIntent) {
     tokio::task::spawn_blocking(move || {
-        let result =
-            crate::services::archive::extract_zip_file(&zip_path, &dest_dir).and_then(|()| {
-                std::fs::remove_file(&zip_path)
-                    .map_err(|e| format!("解压成功但删除原压缩包失败 {}: {e}", zip_path.display()))
-            });
+        let archive = crate::services::archive::extract_zip_file;
+        let result = match intent {
+            ExtractIntent::IntoDir { zip, dest_dir } => {
+                archive(&zip, &dest_dir).map(|()| zip.clone())
+            }
+            // 地图存档：解成 saves/<worldName>/ 恰好一层；同名已存在则报冲突。
+            ExtractIntent::World {
+                zip,
+                saves_dir,
+                world_name,
+            } => crate::services::archive::extract_world_zip(&zip, &saves_dir, &world_name)
+                .map(|_| zip.clone()),
+        }
+        .and_then(|zip| {
+            std::fs::remove_file(&zip)
+                .map_err(|e| format!("解压成功但删除原压缩包失败 {}: {e}", zip.display()))
+        });
         finish_extract(id, result.err());
     });
 }
@@ -226,8 +285,8 @@ fn ensure_watcher(manager: Arc<DownloadManager>) {
                     // completed，解压失败也来不及反映。
                     if state == TaskState::Completed {
                         let intent = extract_intents().lock().unwrap().remove(&id);
-                        if let Some((zip_path, dest_dir)) = intent {
-                            spawn_extract(id, zip_path, dest_dir);
+                        if let Some(intent) = intent {
+                            spawn_extract(id, intent);
                             continue;
                         }
                     } else if matches!(state, TaskState::Failed | TaskState::Cancelled) {
@@ -379,14 +438,20 @@ async fn start(
 
     std::fs::create_dir_all(&target_dir)?;
 
-    // 地图存档（saves）下载的是 zip，需在下完后解压（#162）——见下方
-    // register_extract_intent 与 spawn_extract。
+    // 地图存档（saves）下载的是 zip，需在下完后解压成 saves/<存档名>/（#162）。
     let full_path = target_dir.join(&req.file_name);
-    // #162：地图存档（category=saves）下载的是 zip，Minecraft 只认解压后的存档
-    // 文件夹，故下完要解压到 saves/ 并删除原 zip（与 C# /start 的 saves 分支一致：
-    // ExtractToDirectory + File.Delete）。这里在 `full_path` 被 move 进 DownloadTask
-    // 之前决定，登记动作放在拿到 task id 之后。
-    let extract_after = cat == "saves" && is_zip_path(&full_path);
+    // 存档名取 zip 的文件名主干（`MyWorld.zip` → `MyWorld`），与用户在
+    // Minecraft 里看到的世界名一致。
+    let world_name = if cat == "saves" && is_zip_path(&full_path) {
+        Some(
+            full_path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "world".to_string()),
+        )
+    } else {
+        None
+    };
     // 资源下载源：重写文件 CDN 域名（官方/QML Mirror）。api-key 按重写前的原始 host 判断。
     let download_url = crate::services::file_mirror::rewrite_file_cdn(
         &req.url,
@@ -401,11 +466,18 @@ async fn start(
         task = task.with_header("x-api-key", state.curse_forge_api_key.clone());
     }
 
-    let id = state.download_manager.load_full().add(task);
-
-    if extract_after {
-        register_extract_intent(id, full_path, target_dir.clone());
-    }
+    let id = match world_name {
+        Some(name) => add_with_intent(
+            &state.download_manager.load_full(),
+            task,
+            ExtractIntent::World {
+                zip: full_path,
+                saves_dir: target_dir.clone(),
+                world_name: name,
+            },
+        ),
+        None => state.download_manager.load_full().add(task),
+    };
 
     let file_name = req.file_name.clone();
     {
@@ -463,14 +535,53 @@ async fn download_to(
         task = task.with_header("x-api-key", state.curse_forge_api_key.clone());
     }
 
-    let id = state.download_manager.load_full().add(task);
-
     // #162：地图存档走的是本端点（前端 `ResourceDetail` 用 downloadTo 落 saves/）。
-    // `extract` 由调用方显式传入，只在目标文件是 `.zip` 时才有意义。解压目标就是
-    // zip 所在目录（C# 的 `ExtractToDirectory(fullPath, targetDir)`）。
-    if req.extract && is_zip_path(&target) {
-        register_extract_intent(id, target.clone(), target_dir.clone());
-    }
+    //
+    // 两种解压语义：
+    // - 给了 `worldName` → 地图语义：解成 `saves/<worldName>/` 恰好一层，
+    //   同名已存在时**拒绝并让前端弹改名对话框**（不静默覆盖用户已有世界）。
+    //   冲突在这里**开下载之前**就判定，避免白下一遍再失败。
+    // - 只给 `extract` → 通用语义：解到 zip 所在目录（C# 的
+    //   `ExtractToDirectory(fullPath, targetDir)`）。
+    //
+    // 注意 `worldName` **出现即走地图语义**（哪怕值是空白）：空白名由
+    // `resolve_world_target` 判为非法返回 400，而不是悄悄退回「解到 saves/ 根」——
+    // 后者正是 #162 要修坏的布局（level.dat 摊在 saves/ 下，游戏认不出）。
+    let intent = match req.world_name.as_deref() {
+        Some(raw_name) => {
+            if !is_zip_path(&target) {
+                // 非 zip 却要求按存档解压：多半是上游文件改名/扩展名异常。
+                return Err(ApiError::bad_request(
+                    "NOT_AN_ARCHIVE",
+                    "该文件不是 .zip，无法作为地图存档解压",
+                ));
+            }
+            let (saves_dir, name) = resolve_world_target(&target_dir, raw_name)?;
+            // 冲突预检：目标世界目录已存在 → 409，前端据此弹「改名」对话框。
+            let dest = saves_dir.join(&name);
+            if dest.exists() {
+                return Err(ApiError::conflict(
+                    "SAVE_NAME_CONFLICT",
+                    format!("已存在同名存档「{name}」，请换一个名称"),
+                ));
+            }
+            Some(ExtractIntent::World {
+                zip: target.clone(),
+                saves_dir,
+                world_name: name,
+            })
+        }
+        None if req.extract && is_zip_path(&target) => Some(ExtractIntent::IntoDir {
+            zip: target.clone(),
+            dest_dir: target_dir.clone(),
+        }),
+        None => None,
+    };
+
+    let id = match intent {
+        Some(intent) => add_with_intent(&state.download_manager.load_full(), task, intent),
+        None => state.download_manager.load_full().add(task),
+    };
 
     let path = target.to_string_lossy().into_owned();
     {
@@ -1048,22 +1159,57 @@ mod tests {
     }
 
     /// 解压意图的登记/取出/清除语义（map 行为直接决定会不会解压错文件）。
+    ///
+    /// 取出即消费：第二次必须拿不到，否则重试/重启会重复解压。
     #[test]
     fn extract_intent_is_single_shot_and_clearable() {
         let id: TaskId = 987_654_321;
-        let zip = PathBuf::from("C:/x/world.zip");
-        let dest = PathBuf::from("C:/x/saves");
-        register_extract_intent(id, zip.clone(), dest.clone());
+        let intent = ExtractIntent::World {
+            zip: PathBuf::from("C:/x/world.zip"),
+            saves_dir: PathBuf::from("C:/x/saves"),
+            world_name: "MyMap".to_string(),
+        };
+        extract_intents().lock().unwrap().insert(id, intent.clone());
 
-        // 取出即消费：第二次必须拿不到（否则重启/重试会重复解压）。
         let got = extract_intents().lock().unwrap().remove(&id);
-        assert_eq!(got, Some((zip.clone(), dest.clone())));
-        assert_eq!(extract_intents().lock().unwrap().remove(&id), None);
+        assert!(matches!(got, Some(ExtractIntent::World { .. })));
+        assert!(
+            extract_intents().lock().unwrap().remove(&id).is_none(),
+            "意图取出后必须已被消费"
+        );
 
         // 再次登记后清除（模拟下载失败/取消）：不能再残留。
-        register_extract_intent(id, zip, dest);
+        extract_intents().lock().unwrap().insert(id, intent);
         extract_intents().lock().unwrap().remove(&id);
-        assert_eq!(extract_intents().lock().unwrap().remove(&id), None);
+        assert!(extract_intents().lock().unwrap().remove(&id).is_none());
+    }
+
+    /// 存档名合法性在端点层被前置校验（它会成为 saves/ 下的目录名）。
+    #[test]
+    fn resolve_world_target_rejects_bad_names() {
+        let dir = PathBuf::from("C:/saves");
+        assert!(resolve_world_target(&dir, "../evil").is_err());
+        assert!(resolve_world_target(&dir, "a/b").is_err());
+        assert!(resolve_world_target(&dir, "   ").is_err());
+        let (saves, name) = resolve_world_target(&dir, "  My World ").unwrap();
+        assert_eq!(saves, dir);
+        assert_eq!(name, "My World");
+    }
+
+    /// **回归**：`worldName` 出现就必须走地图语义，空白值返回 400 而不是
+    /// 悄悄退回「解到 saves/ 根」。
+    ///
+    /// 退回去的后果正是 #162 要修的坏布局（`level.dat` 摊在 `saves/` 下、
+    /// 游戏认不出），而且用户不会收到任何提示——比直接报错更难排查。
+    #[test]
+    fn blank_world_name_is_rejected_not_downgraded() {
+        let dir = PathBuf::from("C:/saves");
+        for blank in ["", "   ", "\t"] {
+            assert!(
+                resolve_world_target(&dir, blank).is_err(),
+                "{blank:?} 必须被拒绝（不得降级为通用解压）"
+            );
+        }
     }
 
     /// `extract` 是可选字段：老客户端（不带该字段）必须仍能反序列化，
@@ -1079,5 +1225,13 @@ mod tests {
         )
         .unwrap();
         assert!(on.extract);
+
+        // worldName 缺省为 None（普通解压/不解压），给定时按地图语义处理。
+        assert!(legacy.world_name.is_none());
+        let world: DownloadToRequest = serde_json::from_str(
+            r#"{"url":"https://x/w.zip","targetPath":"C:/s/w.zip","extract":true,"worldName":"MyMap"}"#,
+        )
+        .unwrap();
+        assert_eq!(world.world_name.as_deref(), Some("MyMap"));
     }
 }
