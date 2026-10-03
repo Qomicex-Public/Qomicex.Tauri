@@ -21,7 +21,13 @@
 //!   → 本模块的 `on_open_url` 回调。
 //!
 //! 两条路径统一写入 [`PendingDeepLink`] 并向主窗口 emit [`EVENT_NAME`]；前端挂载时用
-//! `take_pending_deep_link` 取走并清空——否则前端尚未挂载时的事件会丢失（冷启动必然如此）。
+//! `take_pending_deep_link` 取走**全部**待处理项，处理完每条后再用
+//! [`complete_deep_link`] 逐条回执——Rust 侧核对回执与队列里的 URL 一致才移除。
+//!
+//! 为什么是「取走全部 + 逐条回执」而不是「取出即清空」：前端可能因为后端尚未就绪、
+//! 动作被取消、组件重挂等任何原因没真正处理完。清空太早会**丢链接**（#7/#8/#11 的
+//! 共同根因），而只靠事件推送不清理又会**重复执行**同一个 URL。回执让前端成为
+//! 「这条已处理」的唯一裁决者，Rust 只负责去重与保留。
 
 use std::sync::Mutex;
 
@@ -31,13 +37,15 @@ use tauri_plugin_deep_link::DeepLinkExt;
 /// 转发给前端的深链事件名（payload：URL 字符串数组）。
 pub const EVENT_NAME: &str = "deep-link://action";
 
-/// OS 协议名（不含 `://`）。与内部 IPC 协议 `qomicex` 区分，见模块头注释。
+/// OS 协议名（不含 `://`）。与内部协议 `qomicex` 区分，见模块头注释。
 pub const SCHEME: &str = "qomicex-launcher";
 
-/// 已接收但前端尚未消费的深链 URL。
+/// 已接收但前端尚未回执的深链 URL。
 ///
-/// 前端首次挂载时经 `take_pending_deep_link` 一次性取走（take 语义 = 读取即清空），
-/// 因此「冷启动 URL」与「挂载前到达的 URL」都不会丢，也不会被重复处理。
+/// 语义：**待处理集合**（不是「待投递一次」的队列）。
+/// - `push` 去重后加入（同一 URL 重复到达只留一份，避免重复执行）；
+/// - `take_pending` 返回全部但**不清空**（前端重挂时可再次拿到）；
+/// - `complete` 按 URL 移除（前端确认处理完毕）。
 #[derive(Default)]
 pub struct PendingDeepLink(Mutex<Vec<String>>);
 
@@ -46,14 +54,30 @@ impl PendingDeepLink {
         if urls.is_empty() {
             return;
         }
-        // 中毒锁不影响功能：仅是一个 URL 队列，取回内部值继续用即可。
+        // 中毒锁不影响功能：仅是一个 URL 列表，取回内部值继续用即可。
         let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        guard.extend(urls);
+        for url in urls {
+            if !guard.iter().any(|existing| existing == &url) {
+                guard.push(url);
+            }
+        }
     }
 
-    fn take(&self) -> Vec<String> {
+    fn take_pending(&self) -> Vec<String> {
+        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        guard.clone()
+    }
+
+    /// 前端回执：仅在 URL 确实还在待处理集合里时移除，返回是否移除成功。
+    fn complete(&self, url: &str) -> bool {
         let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        std::mem::take(&mut *guard)
+        match guard.iter().position(|existing| existing == url) {
+            Some(idx) => {
+                guard.remove(idx);
+                true
+            }
+            None => false,
+        }
     }
 }
 
@@ -94,24 +118,59 @@ pub fn init(app: &AppHandle) {
     register_scheme(app);
 }
 
-/// 确保本可执行文件是 `qomicex-launcher://` 的处理器。
+/// 确保本可执行文件是 `qomicex-launcher://` 的处理器——**只在需要时写**。
 ///
-/// 官方 bundler 会在安装包里写注册表/desktop 文件，但 dev 构建与 AppImage 等
-/// 未安装形态不会——`register_all` 即为此提供自愈（官方文档推荐的写法）。
+/// 为什么不是无条件 `register_all()`：Windows 上它把 `HKCU\Software\Classes\qomicex-launcher`
+/// 的处理器改写成「当前 exe」。启动器同时存在 NSIS 安装版与免安装/解压版，无条件重写会让
+/// 后运行的任意一份构建（含临时目录里的 dev 产物）抢走整个系统的协议关联，那份文件一被
+/// 删除，链接就彻底打不开。故先用 `is_registered()` 查：已是当前 exe 就什么都不做。
+///
+/// 不满足时**不在这里补注册**，而是置一个「需要注册」标记，由前端在初始化向导（OOBE）
+/// 阶段或启动时提示用户确认——注册表写入属用户可见的系统改动，不该在无人知情时发生。
 /// 失败只记日志：注册不了不应让启动器起不来。
 fn register_scheme(app: &AppHandle) {
     #[cfg(any(windows, target_os = "linux"))]
     {
-        if let Err(e) = app.deep_link().register_all() {
-            crate::tauri_log!("deep-link", "register_all failed: {e}");
-        } else {
-            crate::tauri_log!("deep-link", "scheme '{SCHEME}' registered");
+        match app.deep_link().is_registered(SCHEME) {
+            Ok(true) => {
+                crate::tauri_log!("deep-link", "scheme '{SCHEME}' already associated");
+                app.state::<DeepLinkRegistration>().set_registered();
+            }
+            Ok(false) => {
+                crate::tauri_log!(
+                    "deep-link",
+                    "scheme '{SCHEME}' not associated; awaiting user"
+                );
+                app.state::<DeepLinkRegistration>().set_pending();
+            }
+            Err(e) => {
+                crate::tauri_log!("deep-link", "is_registered failed: {e}");
+                app.state::<DeepLinkRegistration>().set_pending();
+            }
         }
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         // macOS 只支持构建期由 Info.plist 注册（crate 层返回 UnsupportedPlatform）。
-        let _ = app;
+        app.state::<DeepLinkRegistration>().set_registered();
+    }
+}
+
+/// 协议关联状态，供前端决定是否在 OOBE / 启动时提示注册。
+#[derive(Default)]
+pub struct DeepLinkRegistration(Mutex<bool>);
+
+impl DeepLinkRegistration {
+    fn set_registered(&self) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    }
+
+    fn set_pending(&self) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    }
+
+    fn is_registered(&self) -> bool {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -119,8 +178,11 @@ fn register_scheme(app: &AppHandle) {
 ///
 /// URL 本身已由 single-instance（`deep-link` feature）转交给 deep-link 插件并触发
 /// `on_open_url`，这里只负责窗口激活，不重复解析 argv。
+///
+/// 只记参数个数：argv 里就是深链原文，含房间码；`tauri_log!` 会同时落盘到
+/// `{BaseDir}/logs/qomicex-tauri.log` 并回显 stderr，记全文等于把房间码写进日志。
 pub fn handle_second_instance(app: &AppHandle, argv: &[String]) {
-    crate::tauri_log!("deep-link", "second instance: {argv:?}");
+    crate::tauri_log!("deep-link", "second instance: {} arg(s)", argv.len());
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
         let _ = win.show();
@@ -128,8 +190,45 @@ pub fn handle_second_instance(app: &AppHandle, argv: &[String]) {
     }
 }
 
-/// 取走挂起队列（读取即清空）。前端挂载时调用一次。
+/// 取走**全部**待处理深链（不清空；前端处理完需逐条回执）。前端挂载或后端就绪时调用。
 #[tauri::command]
 pub fn take_pending_deep_link(state: tauri::State<'_, PendingDeepLink>) -> Vec<String> {
-    state.take()
+    state.take_pending()
+}
+
+/// 前端回执：某条深链已处理完毕，可从待处理集合移除。返回是否确实移除。
+#[tauri::command]
+pub fn complete_deep_link(state: tauri::State<'_, PendingDeepLink>, url: String) -> bool {
+    state.complete(&url)
+}
+
+/// 查询协议关联状态（false = 需要用户确认后注册）。
+#[tauri::command]
+pub fn deep_link_registration_status(state: tauri::State<'_, DeepLinkRegistration>) -> bool {
+    state.is_registered()
+}
+
+/// 写入协议关联（前端在 OOBE / 提示确认后调用）。返回是否成功。
+#[cfg(any(windows, target_os = "linux"))]
+#[tauri::command]
+pub fn register_deep_link(app: AppHandle) -> bool {
+    match app.deep_link().register_all() {
+        Ok(()) => {
+            app.state::<DeepLinkRegistration>().set_registered();
+            // 成功路径同样不记 argv / 不记额外信息，只记结果。
+            crate::tauri_log!("deep-link", "scheme '{SCHEME}' registration confirmed");
+            true
+        }
+        Err(e) => {
+            crate::tauri_log!("deep-link", "register_all failed: {e}");
+            false
+        }
+    }
+}
+
+/// macOS 无运行时注册能力（由 Info.plist 在打包期声明），恒返回 false。
+#[cfg(not(any(windows, target_os = "linux")))]
+#[tauri::command]
+pub fn register_deep_link(_app: AppHandle) -> bool {
+    false
 }

@@ -117,3 +117,72 @@ if debug_port.is_none() {
 
 **未在本机验证（需真机）**：OS 协议注册本身（Windows 注册表 `HKCU\Software\Classes\qomicex-launcher` 写入、从浏览器点击链接唤起、二次唤起转发到已有窗口）——需要安装/运行构建后的启动器并点击链接，属环境依赖项。
 
+
+
+### 2026-10-04 更新
+
+## 补充决策：PR #172 审计评论处理（2026-10-04）
+
+CodeRabbit 提了 13 条 inline 意见。逐条按「证据优先」裁定后的处理如下。
+
+### 安全三条（全修）
+
+**① 路径穿越绕过 `open` 白名单**（评论 #13）—— 探针实测可利用
+
+`open/settings/%2F..%2F..%2Fplugins%2Fp%2Fx`：`URL` 只折叠字面量 `.`/`..`，`%2F`/`%2E` 会原样留在 pathname。解码拼成 `/settings//../../plugins/p/x` 后凭 `/settings/` 前缀通过白名单；`BrowserRouter` 按 WHATWG 规则规范化成 `/plugins/p/x`，跳到白名单外的插件路由。探针输出 `escapesWhitelist: true`。
+
+修法：新增 `hasPathEscape(segments)`，在**拼路由之前**拒绝解码后含 `/`、`\`、`.`、`..` 的段。
+
+**② 重定向绕开 SSRF 校验**（评论 #2）
+
+`validate_target` 只校验初始主机，而共享 `http_client` 用 reqwest 默认策略（≤10 跳，不重校验）→ 公网 URL 可 302 到回环地址。新增 `AppState::plugin_download_client`，参数与共享客户端一致、仅 `redirect(Policy::none())`；3xx 报新错误码 `INSTALL_URL_REDIRECT_NOT_ALLOWED`。
+
+**选「禁用」而非「逐跳重校验」的依据**：实测官方 `.qplugin` 分发不依赖重定向（`cdn.qomicex.top/plugins/…` 以 `redirect=manual` 请求得 200 直出、无 `Location`）。
+
+**③ 64 MiB 上限在整读之后才检查**（评论 #3）
+
+无 `Content-Length`（chunked）时 `resp.bytes()` 先全量入内存。改为 `bytes_stream()` 逐块累加、越限立即返回；头部预检保留为快速路径。
+
+### 时序重构（评论 #4/#7/#8/#11 同一根因）
+
+原设计是「`take` 读取即清空 + emit 事件」：清空太早会**丢链接**（后端未就绪、组件重挂、监听未注册完成三个缝隙），只 emit 不清理又会**重复执行**。
+
+改为**待处理集合 + 逐条回执**：
+
+- Rust `PendingDeepLink`：`push` 去重、`take_pending` 返回全部**不清空**、`complete` 按 URL 移除；新增 `complete_deep_link` 命令。
+- 前端等 `listen` 注册落地后再取集合（否则「读走」与「事件投递」之间到达的 URL 两边都捞不到）。
+- 前端消费门控在 `backendReady` 之后（冷启动时后端可能还在解压/spawn，此时发 `launch` 必然失败而链接已被当成处理过）。
+- 已取出但未处理完的存模块级 `pendingBuffer`，跨 `StrictMode` 双挂载不丢。
+- 非法编码（`%FF`）的 `decodeURIComponent` 抛错纳入 `try/catch` 返回 `null`（评论 #12），且这类 URL 也回执，避免永久滞留。
+
+### 协议注册改为 OOBE 引导（评论 #6，用户裁定）
+
+无条件 `register_all()` 会让**后运行的任意构建**（含临时目录里的 dev 产物）抢走系统协议关联，该文件一删链接即失效。改为 `is_registered()` 门控 + **不自动写入**：未关联时置 `DeepLinkRegistration` 标记，由前端在 OOBE 阶段/启动时弹窗征询，用户同意后才调 `register_deep_link`；拒绝记 localStorage，不再反复打扰。
+
+### 小修
+
+- `handle_second_instance` 只记 `argv.len()`：argv 就是深链原文（含房间码），而 `tauri_log!` 会落盘 `{BaseDir}/logs/qomicex-tauri.log` 并回显 stderr（评论 #5）。
+- `launch` 改为**先按 ID 再按名字**：实例 ID 是后端 `short_id()` 生成的短串，与用户自定义名字存在撞车可能，ID 是精确标识应优先（评论 #9）。
+- ADR 标签索引里 ADR-100 的链接指向重命名前的旧文件名（评论 #1）——`create_adr` 生成索引时文件尚未改名；已修链接并用 `index_docs` 刷新索引（计数 105 与实际一致）。
+
+### 不采纳
+
+- **评论 #10**（`from './ui'` 缺扩展名）：AGENTS.md 明确「目录 barrel 如 `src/components/ui`（其 `index.ts`）无需扩展名」，仓库内同写法 **122 处**，CI `frontend-lint` 通过。按仓库规范保持原样。
+- **评论 #4 的「消费后清理」在其原方案下**已由回执机制覆盖，无需额外的「消费确认」层。
+
+### 验证证据
+
+| 项 | 结果 |
+| :--- | :--- |
+| `npx tsc --noEmit` / `pnpm run build` | 0 / 0 |
+| `cargo fmt -- --check`（backend/tauri） | 0 / 0 |
+| `cargo test`（后端全量） | **376 passed; 0 failed; 2 ignored** |
+| `node scripts/test-deep-link-parse.mjs`（新增，27 例） | 27 passed |
+| 解析测试反向探针（抽掉修复） | 路径穿越 4 例 FAIL；`%FF` 直接抛 URIError → 证明测试非空绿 |
+| 重定向对比（同一 URL `http://github.com/…`） | 修复前 502（跟到 github 后 406，**证明跳转发生**）→ 修复后 **400 `INSTALL_URL_REDIRECT_NOT_ALLOWED`** |
+| 逐块限流反向探针（抽掉头部预检 + 上限压至 1 KiB） | 仍 **400 `INSTALL_URL_TOO_LARGE`** → 拦截来自逐块累加本身 |
+| 官方包回归 | 200，安装落盘，`GET /api/plugins` 可见 |
+| 既有错误路径回归 | 空 url / ftp / 回环 / 非 zip 四项错误码不变 |
+
+**踩坑记录**：`Copy-Item` 还原探针会保留**旧 mtime**，cargo 因此判定「已是最新」不重编，导致复测跑的还是探针二进制（一度误得 406）。已在还原后显式 `touch` 源文件强制重建；这也是「确认测的是哪个二进制」这条实测纪律的实际价值。
+

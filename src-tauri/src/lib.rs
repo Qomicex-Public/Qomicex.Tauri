@@ -268,6 +268,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(BackendChild(Mutex::new(None)))
         .manage(deep_link::PendingDeepLink::default())
+        .manage(deep_link::DeepLinkRegistration::default())
         .manage(ipc::IpcPipe(pipe_shared.clone()))
         .manage(ipc::StreamRegistry::default())
         .register_asynchronous_uri_scheme_protocol(
@@ -328,7 +329,10 @@ pub fn run() {
             ipc::ipc_stream_abort,
             updater::run_updater,
             updater::take_pending_update_notice,
-            deep_link::take_pending_deep_link
+            deep_link::take_pending_deep_link,
+            deep_link::complete_deep_link,
+            deep_link::deep_link_registration_status,
+            deep_link::register_deep_link
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

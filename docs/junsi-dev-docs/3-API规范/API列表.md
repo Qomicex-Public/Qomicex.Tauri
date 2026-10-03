@@ -2777,3 +2777,32 @@ Query：`allowUnsigned=true` 时跳过强制签名校验（前端风险确认后
 
 **消费方：** 深链 `qomicex-launcher://install/plugin?url=…`（前端 `installPluginFromUrl` → `src/components/DeepLinkHandler.tsx`）。
 
+
+
+### 2026-10-04 更新
+
+### 2026-10-04 更新（PR #172 审计修复）
+
+`POST /api/plugins/install-url` 的两处安全加固 + 一个新错误码：
+
+**1. 不跟随 HTTP 重定向**（`plugin_download_client`，`state.rs`）
+
+原实现用共享 `http_client`（reqwest 默认最多跟随 10 跳）。`validate_target` 只校验**初始主机**，跟随后的目标不重校验 → 公网 URL 可 302 到 `127.0.0.1` 绕过 SSRF 防护。现改用专用客户端，参数与共享客户端一致（代理 / 忽略 SSL / UA / 60s 超时），仅 `redirect(Policy::none())`。
+
+代价与依据：官方分发实测不依赖重定向（`cdn.qomicex.top/plugins/...` 用 `redirect=manual` 取是 **200 直出、无 Location**），故直接禁用而非逐跳重校验。
+
+新增错误码：**400 `INSTALL_URL_REDIRECT_NOT_ALLOWED`**（响应为 3xx 时返回，提示「出于安全考虑不跟随，请提供直链」）。
+
+**2. 下载改为流式边收边判**
+
+原实现 `resp.bytes()` 先整包读进内存再检查大小：响应无 `Content-Length`（chunked）时，60 秒超时内可累积远超 64 MiB 的内存。现改为 `bytes_stream()` 逐块累加，累加值一旦越过 `INSTALL_URL_MAX_BYTES` 立即返回 400 `INSTALL_URL_TOO_LARGE`。`Content-Length` 头部预检保留为快速路径。
+
+**验证证据**（本机真实后端 + 临时 `QOMICEX_HOME`，`:5099`）：
+
+| 用例 | 修复前 | 修复后 |
+| :--- | :--- | :--- |
+| `http://github.com/a.qplugin`（301） | 502 `UPSTREAM_ERROR`（跟到 github 后 406，**证明跳转确实发生**） | **400 `INSTALL_URL_REDIRECT_NOT_ALLOWED`** |
+| 官方包 `cdn.qomicex.top/.../1.0.0.qplugin` | 200 | **200**（流式路径走通，安装落盘） |
+| 无 `Content-Length` + 上限压至 1 KiB（抽掉头部预检的探针） | — | **400 `INSTALL_URL_TOO_LARGE`**（拦截来自逐块累加本身） |
+| 回环 `http://127.0.0.1:1/…` | 400 `PROXY_PRIVATE_ADDRESS` | 400 `PROXY_PRIVATE_ADDRESS`（回归不变） |
+

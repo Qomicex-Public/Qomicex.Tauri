@@ -100,7 +100,14 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
 
   // 形如 `qomicex-launcher://launch/foo` 时动作在 host、参数在 pathname。
   const action = url.hostname.toLowerCase()
-  const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
+  // `%FF` 这类非法编码会让 decodeURIComponent 抛 URIError：调用方按「不认识的链接」
+  // 静默忽略是约定行为（任何网页都能构造），不能让异常冒出去打断整批处理。
+  let segments: string[]
+  try {
+    segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
+  } catch {
+    return null
+  }
   const first = segments[0] ?? ''
 
   switch (action) {
@@ -109,6 +116,13 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
       return target ? { kind: 'launch', target } : null
     }
     case 'open': {
+      // 先拒绝「解码后才出现的路径结构」，再拼路由过白名单。
+      //
+      // 不这样做的实际后果（已实测）：`open/settings/%2F..%2F..%2Fplugins%2Fp%2Fx` 会被
+      // 解码成 `/settings//../../plugins/p/x`，凭 `/settings/` 前缀通过白名单；而
+      // BrowserRouter 拿到该路径后会按 WHATWG 规则规范化成 `/plugins/p/x`，于是跳到
+      // 白名单外的插件路由。判定必须发生在**拼路由之前**，且要看解码后的内容。
+      if (hasPathEscape(segments)) return null
       const route = `/${segments.join('/')}`
       return isAllowedRoute(route) ? { kind: 'open', route } : null
     }
@@ -140,6 +154,23 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
     default:
       return null
   }
+}
+
+/**
+ * 解码后的分段里是否含「路径结构」——分隔符或点段。
+ *
+ * `URL` 只折叠字面量的 `.`/`..` 段，`%2E%2E`、`%2F` 这类编码形态会原样留在 pathname 里，
+ * 解码后才变回 `..`/`/`。路由拼接与白名单必须在**解码后**再做一次结构判定，
+ * 否则前缀匹配会被构造出的路径穿越绕开（见 `parseDeepLink` 的 open 分支注释）。
+ */
+export function hasPathEscape(segments: readonly string[]): boolean {
+  return segments.some(
+    (segment) =>
+      segment.includes('/') ||
+      segment.includes('\\') ||
+      segment === '.' ||
+      segment === '..',
+  )
 }
 
 /** 路由必须在白名单内（含其子路径，如 `/instances/abc`）。 */

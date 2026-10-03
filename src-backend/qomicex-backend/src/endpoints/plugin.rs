@@ -23,6 +23,7 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use futures::StreamExt;
 use qomicex_downloader::{DownloadEvent, DownloadManager, DownloadTask, TaskId, TaskState};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
@@ -491,13 +492,20 @@ async fn install_url(
         .to_string();
     validate_target(&host, parsed.port_or_known_default().unwrap_or(80)).await?;
 
+    // 专用客户端禁用了重定向（见 AppState::plugin_download_client 注释）：3xx 不跟随，
+    // 报成明确错误而不是把未校验的重定向目标当成下载失败。
     let resp = state
-        .http_client
+        .plugin_download_client
         .get(parsed.as_str())
-        .timeout(Duration::from_secs(60))
         .send()
         .await
         .map_err(|e| ApiError::upstream(format!("插件包下载失败: {e}")))?;
+    if resp.status().is_redirection() {
+        return Err(ApiError::bad_request(
+            "INSTALL_URL_REDIRECT_NOT_ALLOWED",
+            "下载地址返回了重定向；出于安全考虑不跟随，请提供直链",
+        ));
+    }
     if !resp.status().is_success() {
         return Err(ApiError::upstream(format!(
             "插件包下载失败: HTTP {}",
@@ -512,15 +520,20 @@ async fn install_url(
             ));
         }
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| ApiError::upstream(format!("插件包下载失败: {e}")))?;
-    if bytes.len() as u64 > INSTALL_URL_MAX_BYTES {
-        return Err(ApiError::bad_request(
-            "INSTALL_URL_TOO_LARGE",
-            "插件包超过大小上限",
-        ));
+
+    // 逐块累加、边收边判：`resp.bytes()` 会先把整个响应体读进内存再检查，chunked
+    // 编码（无 Content-Length）时超限判断来得太晚，外部深链可借此把进程内存打爆。
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| ApiError::upstream(format!("插件包下载失败: {e}")))?;
+        if bytes.len() as u64 + chunk.len() as u64 > INSTALL_URL_MAX_BYTES {
+            return Err(ApiError::bad_request(
+                "INSTALL_URL_TOO_LARGE",
+                "插件包超过大小上限",
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
     }
 
     let plugin = install_from_package(&bytes, true, query.allow_unsigned)?

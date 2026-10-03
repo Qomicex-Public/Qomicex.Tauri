@@ -19,8 +19,27 @@ import {
   type DeepLinkAction,
 } from '../lib/deepLink.ts'
 
-/** 同一条 URL 在「事件」与「挂起队列」两条路径上可能各到一次，短窗内去重。 */
+/** 同一条 URL 在「事件」与「待处理集合」两条路径上可能各到一次，短窗内去重。 */
 const DEDUPE_WINDOW_MS = 3000
+
+/** 「用户拒绝注册协议关联」的记忆键：拒绝后不再每次启动都问。 */
+const REGISTER_DECLINED_KEY = 'qomicex-deeplink-register-declined'
+
+/**
+ * 已取出、但**尚未处理**的 URL（后端未就绪或组件正被卸载时暂存）。
+ *
+ * 放模块级而非 ref：`StrictMode` 的双挂载会让组件在处理完之前卸载重建，若把已取出的
+ * URL 丢在旧实例里就找不回来了。Rust 侧在收到回执前也不会移除它们，两端配合保证不丢。
+ */
+const pendingBuffer: string[] = []
+
+/**
+ * 当前挂载实例的「处理一条 URL」入口，供缓冲放行时复用。
+ *
+ * 不放进 React 状态：它只是转发函数，进状态会引发无意义的重渲染；放模块级则能跨
+ * 挂载周期指向**当前**活着的那个实例（cleanup 会置回 null，避免指向已卸载实例）。
+ */
+let dispatchCurrent: ((raw: string) => void) | null = null
 
 function fmtErr(e: unknown): string {
   if (e instanceof ApiError) return e.displayMessage
@@ -40,20 +59,32 @@ function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
+interface DeepLinkHandlerProps {
+  /** 后端 `/health` 通过后才放行动作：冷启动深链的 launch/install 都要打后端。 */
+  backendReady: boolean
+  /** 引导流程尚未结束（设置未加载 / 初始化向导开着）时不弹协议注册询问，避免叠窗。 */
+  blocked: boolean
+}
+
 /**
- * 深链动作分发（issue #127）。
+ * 深链动作分发 + 协议关联引导（issue #127）。
  *
  * 挂在 `BrowserRouter` 内（需要 `useNavigate`）与 `RunningProvider` 内（需要
- * `launchInstance`）。两条入口最终都汇到同一个 `run`：
- * - **挂起队列**：Rust 侧把冷启动 URL 存入 `PendingDeepLink`，挂载时经
- *   `take_pending_deep_link` 取走（读取即清空）。前端挂载前到达的事件只能靠它，
- *   冷启动必然如此。
+ * `launchInstance`）。三条链路最终都汇到同一个 `process`：
+ * - **待处理集合**：Rust 侧把冷启动 URL 存入 `PendingDeepLink`，`take_pending_deep_link`
+ *   返回**全部且不清空**，前端处理完一条再用 `complete_deep_link` 逐条回执。
+ *   冷启动 URL 只可能从这里拿到（前端挂载前的事件没有接收方）。
  * - **事件**：应用运行中被二次唤起时由 Rust emit `DEEP_LINK_EVENT`。
+ * - **模块缓冲**：上一轮已取出但没处理完的（后端未就绪 / 组件卸载）留到下一轮。
+ *
+ * 为什么消费要等 `backendReady`：冷启动时 Rust 早已把 URL 放进集合，而前端挂载时
+ * 后端可能还在解压/spawn。此时就发 `launch`/`install` 请求必然失败，用户看到报错、
+ * 链接却已被当成「处理过」。等就绪再消费，代价只是几百毫秒。
  *
  * 安全：深链可被任意网页触发，凡是会落地代码的动作都在 `run` 里做来源判定 +
  * 用户确认，见 `lib/deepLink.ts` 的白名单与设计说明。
  */
-export default function DeepLinkHandler() {
+export default function DeepLinkHandler({ backendReady, blocked }: DeepLinkHandlerProps) {
   const navigate = useNavigate()
   const { confirm, notify } = useMessageBox()
   const { t } = useI18n()
@@ -64,11 +95,19 @@ export default function DeepLinkHandler() {
   const depsRef = useRef({ navigate, confirm, notify, t, launchInstance, loadPlugins })
   depsRef.current = { navigate, confirm, notify, t, launchInstance, loadPlugins }
 
-  const seenRef = useRef(new Map<string, number>())
+  const backendReadyRef = useRef(backendReady)
+  backendReadyRef.current = backendReady
 
+  const seenRef = useRef(new Map<string, number>())
+  /** 正在处理中的 URL：防止「事件」与「集合」同时投递同一条时并发跑两遍。 */
+  const inFlightRef = useRef(new Set<string>())
+  /** 当前挂载是否有效；卸载后取回的结果转入模块缓冲而不是丢弃。 */
+  const aliveRef = useRef(true)
+
+  // --- 挂载期：注册监听 + 取回待处理集合 + 暴露给缓冲放行（只做一次） ---
   useEffect(() => {
     if (!isTauri()) return
-    let disposed = false
+    aliveRef.current = true
 
     async function run(action: DeepLinkAction) {
       const { navigate, confirm, notify, t, launchInstance, loadPlugins } = depsRef.current
@@ -77,8 +116,10 @@ export default function DeepLinkHandler() {
       switch (action.kind) {
         case 'launch': {
           const list = await getInstances()
+          // 先按 ID 再按名字：实例 ID 是后端生成的短串（`short_id()`），用户完全可能
+          // 把一个实例命名成另一个实例的 id。ID 是精确标识，冲突时应让它胜出。
           const inst =
-            list.find((i) => i.name === action.target) ?? list.find((i) => i.id === action.target)
+            list.find((i) => i.id === action.target) ?? list.find((i) => i.name === action.target)
           if (!inst) {
             notify(t('deepLink.launchNotFound', { target: action.target }), 'error')
             return
@@ -186,45 +227,144 @@ export default function DeepLinkHandler() {
       }
     }
 
-    function handle(raw: string) {
-      const action = parseDeepLink(raw)
-      if (!action) return
+    /** 回执：告诉 Rust 这条已处理完，可从待处理集合移除。 */
+    async function ack(raw: string) {
+      try {
+        await invoke<boolean>('complete_deep_link', { url: raw })
+      } catch (e) {
+        console.error('[deep-link] ack failed:', e)
+      }
+    }
+
+    /** 处理一条深链，无论成败都回执（失败已弹提示，重试由用户重新点链接发起）。 */
+    async function process(raw: string) {
+      if (inFlightRef.current.has(raw)) return
       const now = Date.now()
       const seen = seenRef.current
       const last = seen.get(raw)
       if (last !== undefined && now - last < DEDUPE_WINDOW_MS) return
+
+      const action = parseDeepLink(raw)
+      if (!action) {
+        // 不是本应用的链接 / 参数非法：静默忽略，但要回执，否则会一直留在集合里。
+        void ack(raw)
+        return
+      }
+
       seen.set(raw, now)
-      // 顺手清理过期项，避免长会话里 Map 无限增长。
       for (const [key, ts] of seen) {
         if (now - ts >= DEDUPE_WINDOW_MS) seen.delete(key)
       }
-      void run(action).catch((e) => console.error('[deep-link] action failed:', e))
+
+      inFlightRef.current.add(raw)
+      try {
+        await run(action)
+      } catch (e) {
+        console.error('[deep-link] action failed:', e)
+      } finally {
+        inFlightRef.current.delete(raw)
+        void ack(raw)
+      }
     }
 
-    const unlisteners: Array<() => void> = []
-    listen<string[]>(DEEP_LINK_EVENT, (event) => {
-      if (disposed) return
-      for (const url of event.payload ?? []) handle(url)
-    })
-      .then((fn) => {
-        if (disposed) fn()
-        else unlisteners.push(fn)
-      })
-      .catch(() => {})
+    /** 后端未就绪时暂存，就绪后由下面的 effect 放行。 */
+    function accept(raw: string) {
+      if (!backendReadyRef.current) {
+        if (!pendingBuffer.includes(raw)) pendingBuffer.push(raw)
+        return
+      }
+      void process(raw)
+    }
 
-    // 监听器就绪后再取挂起队列：冷启动 URL 与「挂载前到达」的都在这里。
-    invoke<string[]>('take_pending_deep_link')
-      .then((urls) => {
-        if (disposed) return
-        for (const url of urls ?? []) handle(url)
-      })
-      .catch((e) => console.error('[deep-link] take pending failed:', e))
+    dispatchCurrent = accept
+
+    const unlisteners: Array<() => void> = []
+    // 先注册监听、等它落地后再读集合：「读集合」与「事件投递」之间到达的 URL
+    // 否则会两边都捞不到（集合已读走、监听还没挂上）。
+    void (async () => {
+      try {
+        const fn = await listen<string[]>(DEEP_LINK_EVENT, (event) => {
+          if (!aliveRef.current) return
+          for (const url of event.payload ?? []) accept(url)
+        })
+        if (!aliveRef.current) {
+          fn()
+          return
+        }
+        unlisteners.push(fn)
+      } catch (e) {
+        // 监听注册失败也要继续读集合：能处理多少算多少。
+        console.error('[deep-link] listen failed:', e)
+      }
+      try {
+        const urls = await invoke<string[]>('take_pending_deep_link')
+        if (!aliveRef.current) {
+          // 组件已卸载但集合已读出：转入模块缓冲交给下一个挂载实例，
+          // 而不是丢掉（Rust 侧未收到回执，条目仍在，两端不会各说各话）。
+          for (const url of urls ?? []) {
+            if (!pendingBuffer.includes(url)) pendingBuffer.push(url)
+          }
+          return
+        }
+        for (const url of urls ?? []) accept(url)
+      } catch (e) {
+        console.error('[deep-link] take pending failed:', e)
+      }
+    })()
 
     return () => {
-      disposed = true
+      aliveRef.current = false
+      if (dispatchCurrent === accept) dispatchCurrent = null
       for (const fn of unlisteners) fn()
     }
   }, [])
+
+  /**
+   * 后端就绪后放行缓冲（含上一轮挂载遗留的）。
+   *
+   * 单独一个 effect 而不是把 `backendReady` 塞进挂载 effect 的依赖：那样每次
+   * 就绪态变化都要重挂监听，重挂窗口反而丢事件。这里只做「放行」。
+   */
+  useEffect(() => {
+    if (!backendReady || !isTauri()) return
+    // 逐条摘走而非整表清空：处理期间新到的仍留在缓冲里等下一轮。
+    while (pendingBuffer.length > 0) {
+      const raw = pendingBuffer.shift()
+      if (raw === undefined) break
+      dispatchCurrent?.(raw)
+    }
+  }, [backendReady])
+
+  // --- 协议关联引导：未关联时询问用户；用户拒绝后不再打扰 ---
+  useEffect(() => {
+    if (!isTauri() || !backendReady || blocked) return
+    if (localStorage.getItem(REGISTER_DECLINED_KEY) === '1') return
+    let cancelled = false
+    void (async () => {
+      try {
+        const registered = await invoke<boolean>('deep_link_registration_status')
+        if (cancelled || registered) return
+        const ok = await confirm(t('deepLink.registerDesc'), t('deepLink.registerTitle'))
+        if (cancelled) return
+        if (!ok) {
+          localStorage.setItem(REGISTER_DECLINED_KEY, '1')
+          notify(t('deepLink.registerDeclined'), 'info')
+          return
+        }
+        const done = await invoke<boolean>('register_deep_link')
+        if (cancelled) return
+        notify(
+          t(done ? 'deepLink.registerSuccess' : 'deepLink.registerFailed'),
+          done ? 'success' : 'error',
+        )
+      } catch (e) {
+        console.error('[deep-link] registration check failed:', e)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [backendReady, blocked, confirm, notify, t])
 
   return null
 }
