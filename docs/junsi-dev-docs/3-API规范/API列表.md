@@ -2787,7 +2787,11 @@ Query：`allowUnsigned=true` 时跳过强制签名校验（前端风险确认后
 
 **1. 不跟随 HTTP 重定向**（`plugin_download_client`，`state.rs`）
 
-原实现用共享 `http_client`（reqwest 默认最多跟随 10 跳）。`validate_target` 只校验**初始主机**，跟随后的目标不重校验 → 公网 URL 可 302 到 `127.0.0.1` 绕过 SSRF 防护。现改用专用客户端，参数与共享客户端一致（代理 / 忽略 SSL / UA / 60s 超时），仅 `redirect(Policy::none())`。
+原实现用共享 `http_client`（reqwest 默认最多跟随 10 跳）。`validate_target` 只校验**初始主机**，跟随后的目标不重校验 → 公网 URL 可 302 到 `127.0.0.1` 绕过 SSRF 防护。现改用专用 `plugin_download_client`，`redirect(Policy::none())`，UA / 60s 超时 / 代理沿用共享设置。
+
+**该客户端刻意不继承 `ignore_ssl_cert`**：`danger_accept_invalid_certs` 会让 TLS 校验完全失效，而这个端点下载的是**马上要被当成代码安装的 `.qplugin`** —— 继承用户的「忽略 SSL」设置等于允许中间人替换正在安装的插件，与本端点其余防护（SSRF 校验 / 禁重定向 / 体积上限）自相矛盾。官方分发（`cdn.qomicex.top`）用有效证书，正常路径不受影响；确需自签名源的场景应走「本地上传」。
+
+> 这条正是 CodeQL `rust/disabled-certificate-check`（severity high）的修复：该规则对 PR 变更行报警，先前的继承写法就是新告警的来源。
 
 代价与依据：官方分发实测不依赖重定向（`cdn.qomicex.top/plugins/...` 用 `redirect=manual` 取是 **200 直出、无 Location**），故直接禁用而非逐跳重校验。
 
