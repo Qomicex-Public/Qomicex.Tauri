@@ -77,6 +77,11 @@ struct DownloadProgressResponse {
 struct DownloadToRequest {
     url: String,
     target_path: String,
+    /// 下载完成后是否把 `.zip` 解压到目标目录（并删除原 zip），见 `download_to`
+    /// 与 `spawn_extract_on_complete`（#162）。缺省 false：普通文件下载
+    /// （ToolboxTab 直链、FTB 导出 json 等）保持原样，只有地图存档需要解压。
+    #[serde(default)]
+    extract: bool,
 }
 
 #[derive(Serialize)]
@@ -121,6 +126,70 @@ fn task_registry() -> &'static Mutex<HashMap<TaskId, TaskSnapshot>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// 下载完成**后**需要解压的任务登记（#162）：`task_id -> (zip 路径, 解压目标目录)`。
+///
+/// `/download-to` 与 `/start` 都是「入队即返回」，此时文件还没下完，不能在请求内
+/// 解压。故把解压意图登记下来，由 `ensure_watcher` 的事件循环在收到 `Completed`
+/// 时取出并执行（下载器是 fsync + rename 原子完成，事件到达时文件已在最终路径）。
+fn extract_intents() -> &'static Mutex<HashMap<TaskId, (PathBuf, PathBuf)>> {
+    static INTENTS: OnceLock<Mutex<HashMap<TaskId, (PathBuf, PathBuf)>>> = OnceLock::new();
+    INTENTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 该路径是否是需要解压的 `.zip`（#162）。
+///
+/// 只认扩展名，**大小写不敏感**（`.ZIP` 同样是 zip；Windows 上文件名大小写
+/// 由上游决定，不能假定小写）。非 zip（`.jar` / `.json` / `.mrpack`）一律不解压：
+/// 解压它们会破坏文件本身。
+fn is_zip_path(path: &Path) -> bool {
+    path.to_string_lossy()
+        .to_ascii_lowercase()
+        .ends_with(".zip")
+}
+
+/// 登记「该任务下载完成后解压到 `dest_dir`」（仅 `.zip` 生效，语义同 C#）。
+fn register_extract_intent(id: TaskId, zip_path: PathBuf, dest_dir: PathBuf) {
+    extract_intents()
+        .lock()
+        .unwrap()
+        .insert(id, (zip_path, dest_dir));
+}
+
+/// 完成解压后回写状态：`completed` / `failed`（后者带上失败原因）。
+fn finish_extract(id: TaskId, error: Option<String>) {
+    let mut reg = task_registry().lock().unwrap();
+    if let Some(s) = reg.get_mut(&id) {
+        s.speed = 0;
+        match error {
+            None => {
+                s.status = status_of(TaskState::Completed).to_string();
+                if s.total > 0 {
+                    s.downloaded = s.total;
+                }
+            }
+            Some(msg) => {
+                s.status = status_of(TaskState::Failed).to_string();
+                s.error = Some(msg);
+            }
+        }
+    }
+}
+
+/// 在后台线程解压（阻塞文件 IO 不能放在事件循环里），成功后按 C# 语义删除原 zip。
+///
+/// 失败时**保留** zip 并置 `failed`：C# 是 `ExtractToDirectory` 抛错后直接进 catch，
+/// `File.Delete` 不会执行 —— 用户至少还能拿到已下载的包，比两样都没有好。
+fn spawn_extract(id: TaskId, zip_path: PathBuf, dest_dir: PathBuf) {
+    tokio::task::spawn_blocking(move || {
+        let result =
+            crate::services::archive::extract_zip_file(&zip_path, &dest_dir).and_then(|()| {
+                std::fs::remove_file(&zip_path)
+                    .map_err(|e| format!("解压成功但删除原压缩包失败 {}: {e}", zip_path.display()))
+            });
+        finish_extract(id, result.err());
+    });
+}
+
 static WATCHER_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Install the one-off background subscriber that mirrors downloader events
@@ -151,6 +220,22 @@ fn ensure_watcher(manager: Arc<DownloadManager>) {
                     }
                 }
                 Ok(DownloadEvent::StateChanged { id, state, detail }) => {
+                    // #162：下载完成且登记了解压意图 → 转交解压，状态先保持
+                    // 「完成」直到解压有结果由 finish_extract 回写（失败置 failed）。
+                    // 这里必须在上面的快照更新之前抢走 Completed，否则会先被写成
+                    // completed，解压失败也来不及反映。
+                    if state == TaskState::Completed {
+                        let intent = extract_intents().lock().unwrap().remove(&id);
+                        if let Some((zip_path, dest_dir)) = intent {
+                            spawn_extract(id, zip_path, dest_dir);
+                            continue;
+                        }
+                    } else if matches!(state, TaskState::Failed | TaskState::Cancelled) {
+                        // 下载没成功就谈不上解压：清掉意图，避免条目随失败/取消的任务
+                        // 永久滞留在 map 里（task id 会被复用，残留会让后续无关任务
+                        // 在完成时去解压一个不相干的路径）。
+                        extract_intents().lock().unwrap().remove(&id);
+                    }
                     let status = status_of(state).to_string();
                     let error = if state == TaskState::Failed {
                         detail
@@ -294,16 +379,21 @@ async fn start(
 
     std::fs::create_dir_all(&target_dir)?;
 
-    // The C# Save flavour extracts the downloaded zip; that extraction is not
-    // performed here (see TODOs below). Nothing else is specific to `saves`.
+    // 地图存档（saves）下载的是 zip，需在下完后解压（#162）——见下方
+    // register_extract_intent 与 spawn_extract。
     let full_path = target_dir.join(&req.file_name);
+    // #162：地图存档（category=saves）下载的是 zip，Minecraft 只认解压后的存档
+    // 文件夹，故下完要解压到 saves/ 并删除原 zip（与 C# /start 的 saves 分支一致：
+    // ExtractToDirectory + File.Delete）。这里在 `full_path` 被 move 进 DownloadTask
+    // 之前决定，登记动作放在拿到 task id 之后。
+    let extract_after = cat == "saves" && is_zip_path(&full_path);
     // 资源下载源：重写文件 CDN 域名（官方/QML Mirror）。api-key 按重写前的原始 host 判断。
     let download_url = crate::services::file_mirror::rewrite_file_cdn(
         &req.url,
         state.settings.read().await.file_download_source,
     );
     let mirrors = crate::services::file_mirror::mirror_fallback_urls(&download_url);
-    let mut task = DownloadTask::new(download_url, full_path);
+    let mut task = DownloadTask::new(download_url, full_path.clone());
     if !mirrors.is_empty() {
         task = task.with_mirrors(mirrors);
     }
@@ -312,6 +402,10 @@ async fn start(
     }
 
     let id = state.download_manager.load_full().add(task);
+
+    if extract_after {
+        register_extract_intent(id, full_path, target_dir.clone());
+    }
 
     let file_name = req.file_name.clone();
     {
@@ -370,6 +464,13 @@ async fn download_to(
     }
 
     let id = state.download_manager.load_full().add(task);
+
+    // #162：地图存档走的是本端点（前端 `ResourceDetail` 用 downloadTo 落 saves/）。
+    // `extract` 由调用方显式传入，只在目标文件是 `.zip` 时才有意义。解压目标就是
+    // zip 所在目录（C# 的 `ExtractToDirectory(fullPath, targetDir)`）。
+    if req.extract && is_zip_path(&target) {
+        register_extract_intent(id, target.clone(), target_dir.clone());
+    }
 
     let path = target.to_string_lossy().into_owned();
     {
@@ -917,5 +1018,66 @@ mod tests {
                 "该 URL 不得被判为 CurseForge 主机（否则会泄露 x-api-key）: {url}"
             );
         }
+    }
+
+    // =================================================================
+    // #162 地图存档解压
+    // =================================================================
+
+    /// 只有 `.zip` 需要解压，且**大小写不敏感**。
+    ///
+    /// 关键反例：`.jar`（模组本体）、`.mrpack`、`.json`（FTB 导出）都不是 zip
+    /// 存档，解压会破坏文件；而 `.ZIP` 必须在 Windows 上同样识别。
+    #[test]
+    fn is_zip_path_only_matches_zip_case_insensitively() {
+        for yes in ["a.zip", "world.ZIP", "World.Zip", "C:/games/saves/x.zip"] {
+            assert!(is_zip_path(Path::new(yes)), "{yes:?} 应被识别为 zip");
+        }
+        for no in [
+            "mod.jar",
+            "pack.mrpack",
+            "export.json",
+            "zip",
+            ".zipx",
+            "a.zip.txt",
+            "a.zi",
+            "",
+        ] {
+            assert!(!is_zip_path(Path::new(no)), "{no:?} 不应被识别为 zip");
+        }
+    }
+
+    /// 解压意图的登记/取出/清除语义（map 行为直接决定会不会解压错文件）。
+    #[test]
+    fn extract_intent_is_single_shot_and_clearable() {
+        let id: TaskId = 987_654_321;
+        let zip = PathBuf::from("C:/x/world.zip");
+        let dest = PathBuf::from("C:/x/saves");
+        register_extract_intent(id, zip.clone(), dest.clone());
+
+        // 取出即消费：第二次必须拿不到（否则重启/重试会重复解压）。
+        let got = extract_intents().lock().unwrap().remove(&id);
+        assert_eq!(got, Some((zip.clone(), dest.clone())));
+        assert_eq!(extract_intents().lock().unwrap().remove(&id), None);
+
+        // 再次登记后清除（模拟下载失败/取消）：不能再残留。
+        register_extract_intent(id, zip, dest);
+        extract_intents().lock().unwrap().remove(&id);
+        assert_eq!(extract_intents().lock().unwrap().remove(&id), None);
+    }
+
+    /// `extract` 是可选字段：老客户端（不带该字段）必须仍能反序列化，
+    /// 且默认 **false** —— 不能让所有普通下载都变成解压。
+    #[test]
+    fn download_to_request_extract_defaults_to_false() {
+        let legacy: DownloadToRequest =
+            serde_json::from_str(r#"{"url":"https://x/a.jar","targetPath":"C:/m/a.jar"}"#).unwrap();
+        assert!(!legacy.extract, "缺省必须不解压");
+
+        let on: DownloadToRequest = serde_json::from_str(
+            r#"{"url":"https://x/w.zip","targetPath":"C:/s/w.zip","extract":true}"#,
+        )
+        .unwrap();
+        assert!(on.extract);
     }
 }
