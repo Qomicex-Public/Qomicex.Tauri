@@ -11,12 +11,28 @@ BASE="${BASE:-http://localhost:5000/api/resources}"
 CURL_TIMEOUT="${CURL_TIMEOUT:-60}"
 PASS=0
 FAIL=0
+SKIP=0
 
 ok()   { echo "  PASS: $1"; ((PASS++)) || true; }
 fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
+skip() { echo "  SKIP: $1"; ((SKIP++)) || true; }
+
+# CurseForge 断言需要 API key：后端在**构建期**经 appsettings.json 嵌入
+# （issue #159 起由 build.rs 从 CURSEFORGE_API_KEY 环境变量注入，见 crate 根
+# build.rs 头注释）。该 secret 未配置时（如 fork PR、新仓库）key 为空，
+# CF 端点必然返回 0 结果 —— 这是**凭据缺失**而非功能缺陷，因此跳过而非判失败。
+# 有 key 时照常断言，不做任何静默放行。
+CF_CONFIGURED=0
+if [ -n "${CURSEFORGE_API_KEY:-}" ]; then CF_CONFIGURED=1; fi
+if [ "$CF_CONFIGURED" -eq 0 ]; then
+    skip "CurseForge 测试（未配置 CURSEFORGE_API_KEY；后端构建期未嵌入 key）"
+fi
 
 # ─── CurseForge: old mod with gameVersion+loader filter ──────────────────────
 echo "=== CurseForge local loader filter ==="
+if [ "$CF_CONFIGURED" -eq 0 ]; then
+    skip "CF versions filter (238222 / 1.12.2 / forge)"
+else
 # JEI (238222) has 1.12.2 forge versions — many old files lack modLoaderType field
 resp=$(curl -sf --max-time "$CURL_TIMEOUT" "$BASE/238222/versions?source=curseforge&gameVersion=1.12.2&loader=forge" 2>&1) || {
     fail "CF versions endpoint unreachable: $resp"
@@ -35,9 +51,13 @@ if [ "$count" -gt 0 ]; then
 else
     fail "CF versions returned 0 results (fix likely broken)"
 fi
+fi
 
 # ─── CurseForge streaming ────────────────────────────────────────────────────
 echo "=== CurseForge streaming (start + progress + result) ==="
+if [ "$CF_CONFIGURED" -eq 0 ]; then
+    skip "CF streaming (start + progress + result)"
+else
 task_json=$(curl -sf --max-time "$CURL_TIMEOUT" -X POST "$BASE/238222/versions/start-fetch?gameVersion=1.12.2&loader=forge" 2>&1) || {
     fail "CF start-fetch unreachable: $task_json"
     task_json="{}"
@@ -75,6 +95,7 @@ if [ -n "$task_id" ]; then
 else
     fail "CF streaming failed to start"
 fi
+fi
 
 # ─── Modrinth: empty Loaders [] should be included ───────────────────────────
 echo "=== Modrinth empty loaders filter ==="
@@ -105,6 +126,6 @@ fi
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "===================="
-echo "  $PASS passed, $FAIL failed"
+echo "  $PASS passed, $FAIL failed, $SKIP skipped"
 echo "===================="
 exit $((FAIL > 0 ? 1 : 0))
