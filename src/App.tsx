@@ -289,9 +289,13 @@ function AppContent() {
         <RunningNotifyBridge />
         <TaskCompletionNotifier />
         {/* 外部唤起（qomicex-launcher:// 深链，issue #127）：须在 Router 内（用 navigate）
-            且在 RunningProvider 内（用 launchInstance）。冷启动链接要等后端就绪再消费，
-            否则 launch/install 会打到还没起来的后端上（链接却已被当成已处理）。 */}
-        <DeepLinkHandler backendReady={backendState === 'ready'} blocked={showWizard || !settingsReady} />
+            且在 RunningProvider 内（用 launchInstance）。冷启动链接要等后端就绪**且设置已加载**
+            再消费——只看后端会让整合包安装读到默认 gameDir 而装错目录。 */}
+        <DeepLinkHandler
+          backendReady={backendState === 'ready'}
+          settingsReady={settingsReady}
+          blocked={showWizard || !settingsReady}
+        />
         <ErrorBoundary>
           <Routes>
             <Route element={<Layout />}>

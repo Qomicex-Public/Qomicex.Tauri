@@ -63,6 +63,14 @@ function isTauri(): boolean {
 interface DeepLinkHandlerProps {
   /** 后端 `/health` 通过后才放行动作：冷启动深链的 launch/install 都要打后端。 */
   backendReady: boolean
+  /**
+   * 设置加载完成才放行动作。
+   *
+   * 为什么不能只看 `backendReady`：`/health` 通过时 `loadSettings()` 可能仍在路上，
+   * 此时 `getSettings()` 返回的是 **DEFAULT_SETTINGS**（`gameDir: '.minecraft'`）。
+   * 整合包安装正是读 `getSettings().gameDir` —— 用户实际配的是别的目录时，会装错地方。
+   */
+  settingsReady: boolean
   /** 引导流程尚未结束（设置未加载 / 初始化向导开着）时不弹协议注册询问，避免叠窗。 */
   blocked: boolean
 }
@@ -78,14 +86,15 @@ interface DeepLinkHandlerProps {
  * - **事件**：应用运行中被二次唤起时由 Rust emit `DEEP_LINK_EVENT`。
  * - **模块缓冲**：上一轮已取出但没处理完的（后端未就绪 / 组件卸载）留到下一轮。
  *
- * 为什么消费要等 `backendReady`：冷启动时 Rust 早已把 URL 放进集合，而前端挂载时
- * 后端可能还在解压/spawn。此时就发 `launch`/`install` 请求必然失败，用户看到报错、
- * 链接却已被当成「处理过」。等就绪再消费，代价只是几百毫秒。
+ * 为什么消费要等就绪：冷启动时 Rust 早已把 URL 放进集合，而前端挂载时后端可能还在
+ * 解压/spawn，设置也可能还没从后端拉回来。此时就发 `launch`/`install` 请求必然失败、
+ * 或读到默认 `gameDir` 装错目录，而链接却已被当成「处理过」。等就绪再消费，代价只是
+ * 几百毫秒。
  *
  * 安全：深链可被任意网页触发，凡是会落地代码的动作都在 `run` 里做来源判定 +
  * 用户确认，见 `lib/deepLink.ts` 的白名单与设计说明。
  */
-export default function DeepLinkHandler({ backendReady, blocked }: DeepLinkHandlerProps) {
+export default function DeepLinkHandler({ backendReady, settingsReady, blocked }: DeepLinkHandlerProps) {
   const navigate = useNavigate()
   const { confirm, notify } = useMessageBox()
   const { t } = useI18n()
@@ -96,8 +105,11 @@ export default function DeepLinkHandler({ backendReady, blocked }: DeepLinkHandl
   const depsRef = useRef({ navigate, confirm, notify, t, launchInstance, loadPlugins })
   depsRef.current = { navigate, confirm, notify, t, launchInstance, loadPlugins }
 
-  const backendReadyRef = useRef(backendReady)
-  backendReadyRef.current = backendReady
+  // 动作就绪 = 后端可用 **且** 设置已加载。两个条件都必须满足：只看后端会让整合包
+  // 安装读到默认 gameDir；只看设置则请求还没有可用的后端。
+  const actionsReady = backendReady && settingsReady
+  const actionsReadyRef = useRef(actionsReady)
+  actionsReadyRef.current = actionsReady
 
   const seenRef = useRef(new Map<string, number>())
   /** 正在处理中的 URL：防止「事件」与「集合」同时投递同一条时并发跑两遍。 */
@@ -255,11 +267,19 @@ export default function DeepLinkHandler({ backendReady, blocked }: DeepLinkHandl
 
     /** 处理一条深链，无论成败都回执（失败已弹提示，重试由用户重新点链接发起）。 */
     async function process(raw: string) {
-      if (inFlightRef.current.has(raw)) return
       const now = Date.now()
       const seen = seenRef.current
       const last = seen.get(raw)
-      if (last !== undefined && now - last < DEDUPE_WINDOW_MS) return
+      // 短窗内重复到达（同一 URL 既从事件、又从集合投递，或用户连点两次）：
+      // **不动手但必须回执**。只 return 不回执会把这条永久留在 Rust 待处理集合里，
+      // 下次挂载又取到、又被去重跳过——变成「永远处理不掉也永远不消失」的僵尸项。
+      if (last !== undefined && now - last < DEDUPE_WINDOW_MS) {
+        void ack(raw)
+        return
+      }
+      // 正在处理中：这一轮由在飞的那次负责回执，此处不能再回执，否则会在它完成前
+      // 就把条目移除，失败时失去「留在集合里可重试」的保障。
+      if (inFlightRef.current.has(raw)) return
 
       const action = parseDeepLink(raw)
       if (!action) {
@@ -286,7 +306,7 @@ export default function DeepLinkHandler({ backendReady, blocked }: DeepLinkHandl
 
     /** 后端未就绪时暂存，就绪后由下面的 effect 放行。 */
     function accept(raw: string) {
-      if (!backendReadyRef.current) {
+      if (!actionsReadyRef.current) {
         if (!pendingBuffer.includes(raw)) pendingBuffer.push(raw)
         return
       }
@@ -339,18 +359,18 @@ export default function DeepLinkHandler({ backendReady, blocked }: DeepLinkHandl
   /**
    * 后端就绪后放行缓冲（含上一轮挂载遗留的）。
    *
-   * 单独一个 effect 而不是把 `backendReady` 塞进挂载 effect 的依赖：那样每次
-   * 就绪态变化都要重挂监听，重挂窗口反而丢事件。这里只做「放行」。
+   * 单独一个 effect 而不是把就绪态塞进挂载 effect 的依赖：那样每次就绪态变化都要
+   * 重挂监听，重挂窗口反而丢事件。这里只做「放行」。
    */
   useEffect(() => {
-    if (!backendReady || !isTauri()) return
+    if (!actionsReady || !isTauri()) return
     // 逐条摘走而非整表清空：处理期间新到的仍留在缓冲里等下一轮。
     while (pendingBuffer.length > 0) {
       const raw = pendingBuffer.shift()
       if (raw === undefined) break
       dispatchCurrent?.(raw)
     }
-  }, [backendReady])
+  }, [actionsReady])
 
   // --- 协议关联引导：未关联时询问用户；用户拒绝后不再打扰 ---
   useEffect(() => {

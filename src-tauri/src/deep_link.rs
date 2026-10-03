@@ -131,22 +131,33 @@ pub fn init(app: &AppHandle) {
 fn register_scheme(app: &AppHandle) {
     #[cfg(any(windows, target_os = "linux"))]
     {
-        match app.deep_link().is_registered(SCHEME) {
-            Ok(true) => {
-                crate::tauri_log!("deep-link", "scheme '{SCHEME}' already associated");
-                app.state::<DeepLinkRegistration>().set_registered();
-            }
-            Ok(false) => {
-                crate::tauri_log!(
-                    "deep-link",
-                    "scheme '{SCHEME}' not associated; awaiting user"
-                );
-                app.state::<DeepLinkRegistration>().set_pending();
-            }
+        // Linux 上 `is_registered()` 只跑 `xdg-mime query default x-scheme-handler/<scheme>`
+        // 并检查输出里是否含按**可执行文件名**拼的 `<name>-handler.desktop`（见 crate
+        // 2.4.10 源码），**不核对那个 desktop 文件的 `Exec=` 指向哪个文件**。于是安装版与
+        // 便携版同名（都叫 `Qomicex Launcher`）但路径不同时，它会报 true，而实际关联可能
+        // 指向另一份已被删/被移走的程序——用户点链接会静默失败。
+        // 因此 Linux 上再补一步：读出真实 desktop 文件的 Exec，确认指向当前可执行文件。
+        #[cfg(target_os = "linux")]
+        let associated = app.deep_link().is_registered(SCHEME).unwrap_or(false)
+            && linux_handler_exec_matches(SCHEME);
+        #[cfg(windows)]
+        let associated = match app.deep_link().is_registered(SCHEME) {
+            Ok(v) => v,
             Err(e) => {
                 crate::tauri_log!("deep-link", "is_registered failed: {e}");
-                app.state::<DeepLinkRegistration>().set_pending();
+                false
             }
+        };
+
+        if associated {
+            crate::tauri_log!("deep-link", "scheme '{SCHEME}' already associated");
+            app.state::<DeepLinkRegistration>().set_registered();
+        } else {
+            crate::tauri_log!(
+                "deep-link",
+                "scheme '{SCHEME}' not associated with this build; awaiting user"
+            );
+            app.state::<DeepLinkRegistration>().set_pending();
         }
     }
     #[cfg(not(any(windows, target_os = "linux")))]
@@ -154,6 +165,81 @@ fn register_scheme(app: &AppHandle) {
         // macOS 只支持构建期由 Info.plist 注册（crate 层返回 UnsupportedPlatform）。
         app.state::<DeepLinkRegistration>().set_registered();
     }
+}
+
+/// Linux：确认 `x-scheme-handler/<scheme>` 对应的 desktop 文件 `Exec=` 指向**当前可执行文件**。
+///
+/// 找不到文件/读不出 Exec 时返回 `false`（宁可提示用户重新确认一次，也不要让一个指向别处的
+/// 关联被当成「已就绪」）。
+#[cfg(target_os = "linux")]
+fn linux_handler_exec_matches(scheme: &str) -> bool {
+    use std::process::Command;
+
+    let mime = format!("x-scheme-handler/{scheme}");
+    let out = match Command::new("xdg-mime")
+        .args(["query", "default", &mime])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return false,
+    };
+    let desktop_name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if desktop_name.is_empty() {
+        return false;
+    }
+
+    // 按 XDG 规范顺序找 desktop 文件（用户目录优先）。
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(home) = std::env::var("XDG_DATA_HOME") {
+        candidates.push(std::path::PathBuf::from(home).join("applications"));
+    } else if let Ok(home) = std::env::var("HOME") {
+        candidates.push(
+            std::path::PathBuf::from(home)
+                .join(".local/share")
+                .join("applications"),
+        );
+    }
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+    for dir in data_dirs.split(':').filter(|d| !d.trim().is_empty()) {
+        candidates.push(std::path::PathBuf::from(dir).join("applications"));
+    }
+
+    for dir in candidates {
+        let Ok(content) = std::fs::read_to_string(dir.join(&desktop_name)) else {
+            continue;
+        };
+        let Some(exec) = content
+            .lines()
+            .find_map(|l| l.strip_prefix("Exec="))
+            .map(str::trim)
+        else {
+            continue;
+        };
+        // Exec 形如 `"/path/to/app" %u`：取出第一段（可能带引号）与当前 exe 比路径。
+        let program = exec
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_matches('"');
+        let Ok(current) = std::env::current_exe() else {
+            return false;
+        };
+        // 用 canonicalize 消掉符号链接差异；失败时退回字面比较。
+        let same = match (std::fs::canonicalize(program), current.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => std::path::Path::new(program) == current.as_path(),
+        };
+        if same {
+            return true;
+        }
+        crate::tauri_log!(
+            "deep-link",
+            "desktop handler Exec points elsewhere; will ask user to re-associate"
+        );
+        return false;
+    }
+    false
 }
 
 /// 协议关联状态，供前端决定是否在 OOBE / 启动时提示注册。
