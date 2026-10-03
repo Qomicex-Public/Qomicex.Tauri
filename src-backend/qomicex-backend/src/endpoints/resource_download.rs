@@ -162,6 +162,9 @@ enum ExtractIntent {
 /// （意图还成了永久残留）。事件循环取意图时用**同一把锁**，于是两种顺序都成立：
 /// 要么它先拿到锁（此时插入还没发生 → 但它必然在 `add()` 之后才可能收到完成事件，
 /// 故拿锁时插入已完成），要么插入先完成。见 `ensure_watcher` 的 Completed 分支。
+///
+/// 同一把锁也让**存档名预留**成为原子的：`reserve_world_name` 在锁内挑选并占用
+/// 名字，并发的同名下载不会挑到同一个（见该函数）。
 fn add_with_intent(
     manager: &Arc<DownloadManager>,
     task: DownloadTask,
@@ -171,6 +174,42 @@ fn add_with_intent(
     let id = manager.add(task);
     guard.insert(id, intent);
     id
+}
+
+/// **原子地**挑存档名 + 入队 + 登记解压意图（#162）。
+///
+/// 三件事必须在**同一次持锁**内完成，否则并发的同名下载会在「挑名」与「占名」
+/// 之间互相插队，挑到同一个名字（CodeRabbit 评审指出）。返回任务 id 与实际
+/// 使用的名字（供日志/响应展示）。
+fn add_world_atomically(
+    manager: &Arc<DownloadManager>,
+    task: DownloadTask,
+    zip: PathBuf,
+    saves_dir: PathBuf,
+    base: &str,
+) -> (TaskId, String) {
+    let mut guard = extract_intents().lock().unwrap();
+    let taken_by_intent = |cand: &str| {
+        guard.values().any(|it| match it {
+            ExtractIntent::World {
+                saves_dir: d,
+                world_name,
+                ..
+            } => *d == saves_dir && world_name == cand,
+            _ => false,
+        })
+    };
+    let name = crate::services::archive::unique_world_name_with(&saves_dir, base, &taken_by_intent);
+    let id = manager.add(task);
+    guard.insert(
+        id,
+        ExtractIntent::World {
+            zip,
+            saves_dir,
+            world_name: name.clone(),
+        },
+    );
+    (id, name)
 }
 
 /// 解析地图存档的目标目录与名称（`/download-to` 的 worldName 语义，见 #162）。
@@ -458,22 +497,18 @@ async fn start(
     //
     // 这里**没有用户交互**（与 `/download-to` 的改名对话框不同），故按 CodeRabbit
     // 评审：入队前就清成合法名并避开同名，否则非法名/同名会等到下载**跑完**才失败，
-    // 白下一遍且这条路径无从重试。
-    let world_name = if cat == "saves" && is_zip_path(&full_path) {
+    // 白下一遍且这条路径无从重试。实际挑名在 `add_world_atomically` 的锁内完成。
+    let world_base = if cat == "saves" && is_zip_path(&full_path) {
         let stem = full_path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let cleaned = crate::services::archive::sanitize_world_name(&stem);
-        let base = if cleaned.is_empty() {
+        Some(if cleaned.is_empty() {
             "world".to_string()
         } else {
             cleaned
-        };
-        Some(crate::services::archive::unique_world_name(
-            &target_dir,
-            &base,
-        ))
+        })
     } else {
         None
     };
@@ -491,16 +526,18 @@ async fn start(
         task = task.with_header("x-api-key", state.curse_forge_api_key.clone());
     }
 
-    let id = match world_name {
-        Some(name) => add_with_intent(
-            &state.download_manager.load_full(),
-            task,
-            ExtractIntent::World {
-                zip: full_path,
-                saves_dir: target_dir.clone(),
-                world_name: name,
-            },
-        ),
+    let id = match world_base {
+        Some(base) => {
+            // 挑名 + 入队 + 登记在同一把锁内，避免并发同名下载挑到同一个名字。
+            add_world_atomically(
+                &state.download_manager.load_full(),
+                task,
+                full_path,
+                target_dir.clone(),
+                &base,
+            )
+            .0
+        }
         None => state.download_manager.load_full().add(task),
     };
 

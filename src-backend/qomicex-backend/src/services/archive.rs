@@ -162,17 +162,30 @@ pub fn sanitize_world_name(raw: &str) -> String {
 ///
 /// 供无交互路径使用：不能弹对话框让用户改名，但也不能覆盖已有世界，故退让到
 /// 一个不冲突的名字（与用户手动重命名的效果等价）。
-pub fn unique_world_name(saves_dir: &Path, base: &str) -> String {
-    if !saves_dir.join(base).exists() {
+///
+/// `extra_taken` 用于把**尚未落盘的占用**也算进来：存档目录要到下载+解压完成后
+/// 才出现，只查文件系统的话，两个并发的同名下载会挑到同一个名字，后者解压时
+/// 撞名失败（CodeRabbit 评审指出）。
+pub fn unique_world_name_with(
+    saves_dir: &Path,
+    base: &str,
+    extra_taken: &dyn Fn(&str) -> bool,
+) -> String {
+    if !saves_dir.join(base).exists() && !extra_taken(base) {
         return base.to_string();
     }
     for n in 2..10_000 {
         let cand = format!("{base}-{n}");
-        if !saves_dir.join(&cand).exists() {
+        if !saves_dir.join(&cand).exists() && !extra_taken(&cand) {
             return cand;
         }
     }
     format!("{base}-{}", std::process::id())
+}
+
+/// [`unique_world_name_with`] 的便捷包装：只查文件系统。
+pub fn unique_world_name(saves_dir: &Path, base: &str) -> String {
+    unique_world_name_with(saves_dir, base, &|_| false)
 }
 
 /// 校验地图存档文件夹名：必须是**单一目录名**，不得含路径分隔符或 `..`。
@@ -533,6 +546,24 @@ mod tests {
         assert_eq!(unique_world_name(&saves, "Map"), "Map-2");
         std::fs::create_dir_all(saves.join("Map-2")).unwrap();
         assert_eq!(unique_world_name(&saves, "Map"), "Map-3");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `unique_world_name_with` 必须把**尚未落盘**的占用也算进去。
+    ///
+    /// 存档目录要到下载+解压完成才出现，只查文件系统的话两个并发同名下载会挑到
+    /// 同一个名字（后者解压撞名失败）。这里模拟「已在途」的那个名字。
+    #[test]
+    fn unique_world_name_with_avoids_in_flight_reservations() {
+        let root = temp_dir("uniq2");
+        let saves = root.join("saves");
+        std::fs::create_dir_all(&saves).unwrap();
+        // 没有任何文件，但 Map 已被在途任务占用 → 必须让到 Map-2。
+        let taken = |cand: &str| cand == "Map";
+        assert_eq!(unique_world_name_with(&saves, "Map", &taken), "Map-2");
+        // 两个都在途 → Map-3
+        let taken2 = |cand: &str| cand == "Map" || cand == "Map-2";
+        assert_eq!(unique_world_name_with(&saves, "Map", &taken2), "Map-3");
         let _ = std::fs::remove_dir_all(&root);
     }
 
