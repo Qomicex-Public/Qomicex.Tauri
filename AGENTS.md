@@ -204,7 +204,7 @@ Exception: directory barrels like `src/components/ui` (its `index.ts`) resolve f
 - Data dir resolution (`settings.rs` `resolve_base_dir`): `QOMICEX_HOME` env → `.qomicex-bootstrap` file (content is the path) → `{LocalAppData}/qomicex-launcher`.
 - Shared services in `services/` and `state.rs` (`AppState`): reqwest HTTP clients (Modrinth, CurseForge, FTB, etc.), `InstallTracker`, `LaunchTracker`, account/skin services, trace buffer, plugin service. License core only under `--features license-required` (`#[cfg(feature = "license-required")]` in `license_core.rs`).
 - Embedded resources: `Resources/Alex.png`, `Resources/mcmod_data.json.gz`（gzip 嵌入，运行时 flate2 解压）, `appsettings.json` (via `include_bytes!` / `include_str!`). 重新生成见 `scripts/build-mcmod-data.mjs`。
-- `appsettings.json` includes a `CurseForge:ApiKey` (set in repo).
+- **`appsettings.json` 不入库**（issue #159）：由 `build.rs` 以入库模板 `appsettings.example.json` 为基线 + 环境变量（`CURSEFORGE_API_KEY` / `MICROSOFT_CLIENT_ID`）在构建期生成，并已 gitignore。`include_str!` 是编译期展开，**删掉生成逻辑会导致编译失败**，改 `build.rs` 前先读它的头注释。未配置环境变量时 `CurseForge:ApiKey` 为空 → CF 相关功能（模组图标补全/更新检查）优雅降级，构建不失败。CI 注入点在三个 workflow 的**工作流级 `env:`**（各 1 处，非逐作业）。本地开发：复制 `appsettings.example.json` 为 `appsettings.json` 并填自己的值。
 - No OpenAPI endpoint (C# `/openapi/v1.json` removed in the Rust rewrite).
 
 ## Error handling

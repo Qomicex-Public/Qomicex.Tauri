@@ -20,6 +20,11 @@ license = "GPL-3.0"
 name = "qomicex-backend"
 path = "src/main.rs"
 
+# 构建期生成 appsettings.json（issue #159）：以 appsettings.example.json 为基线，
+# 用环境变量覆盖敏感项。serde_json 已在依赖树中，无新增下载。
+[build-dependencies]
+serde_json = "1"
+
 [dependencies]
 qomicex-core = { package = "qomicex-core-rust", path = "../../qomicex-core-rust" }
 qomicex-downloader = { path = "../../qomicex-downloader-rust" }
