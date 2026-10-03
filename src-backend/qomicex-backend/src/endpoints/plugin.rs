@@ -329,6 +329,7 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/{id}", get(get_plugin).delete(delete_plugin))
         .route("/plugins/rescan", post(rescan))
         .route("/plugins/install", post(install))
+        .route("/plugins/install-url", post(install_url))
         .route("/plugins/upload", post(upload))
         .route("/plugins/log", post(plugin_log))
         .route("/plugins/{id}/state", put(set_state))
@@ -437,6 +438,95 @@ async fn upload(
 struct UploadQuery {
     #[serde(default)]
     allow_unsigned: bool,
+}
+
+/// 深链快捷安装的下载体积上限（64 MiB）。插件包是 zip，正常量级在个位数 MiB；
+/// 设上限是为了让「外部 URL 触发的下载」不能靠超大响应打爆内存。
+const INSTALL_URL_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallUrlRequest {
+    url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallUrlQuery {
+    #[serde(default)]
+    allow_unsigned: bool,
+}
+
+/// POST /api/plugins/install-url — 从 URL 下载 `.qplugin` 并安装（issue #127 深链快捷安装）。
+///
+/// 与 `/plugins/upload` 的差别仅是「字节从哪来」；校验与安装走同一条
+/// `install_from_package` 路径，签名策略也一致：默认 `require_signature = true`，
+/// 只有显式 `allowUnsigned=true`（前端风险确认后）才放宽。
+///
+/// SSRF：复用 `/plugins/proxy` 的 `validate_target`（DNS 解析后逐 IP 拒内网/保留地址），
+/// 不另起一套判断——否则两处规则迟早漂移，留下绕过面。
+async fn install_url(
+    State(state): State<SharedState>,
+    Query(query): Query<InstallUrlQuery>,
+    Json(req): Json<InstallUrlRequest>,
+) -> ApiResult<Json<PluginInfo>> {
+    let raw = req.url.trim();
+    if raw.is_empty() {
+        return Err(ApiError::bad_request(
+            "INSTALL_URL_REQUIRED",
+            "url 不能为空",
+        ));
+    }
+    let parsed = url::Url::parse(raw)
+        .map_err(|_| ApiError::bad_request("INSTALL_URL_INVALID", "无效的下载 URL"))?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(ApiError::bad_request(
+            "INSTALL_URL_SCHEME_NOT_ALLOWED",
+            "仅支持 http/https 协议",
+        ));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| ApiError::bad_request("INSTALL_URL_INVALID", "无效的下载 URL"))?
+        .to_string();
+    validate_target(&host, parsed.port_or_known_default().unwrap_or(80)).await?;
+
+    let resp = state
+        .http_client
+        .get(parsed.as_str())
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| ApiError::upstream(format!("插件包下载失败: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(ApiError::upstream(format!(
+            "插件包下载失败: HTTP {}",
+            resp.status()
+        )));
+    }
+    if let Some(len) = resp.content_length() {
+        if len > INSTALL_URL_MAX_BYTES {
+            return Err(ApiError::bad_request(
+                "INSTALL_URL_TOO_LARGE",
+                "插件包超过大小上限",
+            ));
+        }
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| ApiError::upstream(format!("插件包下载失败: {e}")))?;
+    if bytes.len() as u64 > INSTALL_URL_MAX_BYTES {
+        return Err(ApiError::bad_request(
+            "INSTALL_URL_TOO_LARGE",
+            "插件包超过大小上限",
+        ));
+    }
+
+    let plugin = install_from_package(&bytes, true, query.allow_unsigned)?
+        .ok_or_else(|| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "Invalid plugin package"))?;
+    state.plugin_store.invalidate_cache();
+    Ok(Json(plugin))
 }
 
 /// POST /api/plugins/log — 插件日志写入 trace 缓冲 + 落盘（debug SSE / 诊断导出可见）。

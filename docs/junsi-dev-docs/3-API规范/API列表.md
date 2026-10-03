@@ -2680,3 +2680,26 @@ mismatching renders: 0 / 24   (8 线程 × 3 轮，容量 64 的极端压力下�
 
 **开关变化不新增失效逻辑**：三个开关都写进瓦片 URL，`CachedTileLayer` 的模板比较会自动清缓存重绘。
 
+
+
+### 2026-10-04 更新
+### POST `/api/plugins/install-url`
+
+从 URL 下载 `.qplugin` 包并安装（issue #127 深链快捷安装）。
+
+```json
+{ "url": "https://example.com/plugin.qplugin" }
+```
+
+Query：`allowUnsigned=true` 时跳过强制签名校验（前端风险确认后传；缺省要求有效签名，与 `/plugins/upload` 同口径）。
+
+**校验与限制：**
+
+- 仅接受 `http` / `https`；主机经 DNS 解析后逐 IP 拒绝内网与保留地址（复用 `/plugins/proxy` 的 `validate_target`）。
+- 下载体积上限 64 MiB（`INSTALL_URL_MAX_BYTES`），超限返回 400 `INSTALL_URL_TOO_LARGE`。
+- 下载失败/非 2xx 返回 502 `UPSTREAM_ERROR`。
+
+**响应：** 与 `GET /api/plugins` 列表同构的 `PluginInfo`。
+
+**消费方：** 深链 `qomicex-launcher://install/plugin?url=…`（前端 `installPluginFromUrl` → `src/components/DeepLinkHandler.tsx`）。
+

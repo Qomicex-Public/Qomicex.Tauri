@@ -22,6 +22,11 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = { version = "2", default-features = false, features = ["xdg-portal"] }
 tauri-plugin-process = "2"
+# OS 级 qomicex-launcher:// 协议唤起（issue #127）。deep-link 负责「从 argv 解析 URL」，
+# single-instance 负责「已有实例在跑时把新进程的 argv 转交过去」——两者必须配合：
+# Windows/Linux 上深链是「新进程带 URL 参数启动」，没有单实例就只会多开一个窗口。
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 rfd = { version = "0.16", default-features = false, features = ["xdg-portal"] }
 serde = { version = "1", features = ["derive"] }
 log = { version = "0.4", features = ["std"] }
