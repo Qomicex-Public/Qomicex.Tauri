@@ -102,14 +102,21 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
   const loadPlugins = usePluginStore((s) => s.loadPlugins)
 
   // 用 ref 持有最新回调，避免依赖变化导致反复重挂监听（重挂窗口内的事件会丢）。
+  // 写入放在 effect 里而不是 render 期间：render 可能被 React 重放或丢弃，渲染期改 ref
+  // 会让「已挂载的监听」读到从未提交的值（React Doctor: no-ref-current-in-render）。
   const depsRef = useRef({ navigate, confirm, notify, t, launchInstance, loadPlugins })
-  depsRef.current = { navigate, confirm, notify, t, launchInstance, loadPlugins }
+  useEffect(() => {
+    depsRef.current = { navigate, confirm, notify, t, launchInstance, loadPlugins }
+  }, [navigate, confirm, notify, t, launchInstance, loadPlugins])
 
-  // 动作就绪 = 后端可用 **且** 设置已加载。两个条件都必须满足：只看后端会让整合包
-  // 安装读到默认 gameDir；只看设置则请求还没有可用的后端。
-  const actionsReady = backendReady && settingsReady
+  // 动作就绪 = 后端可用 **且** 设置已加载 **且** 引导流程已结束。三个条件都必须满足：
+  // 只看后端会让整合包安装读到默认 gameDir；只看设置则请求还没有可用的后端；
+  // 忽略 `blocked` 则首次设置向导还开着时就执行动作，安装会读到用户保存前的旧设置。
+  const actionsReady = backendReady && settingsReady && !blocked
   const actionsReadyRef = useRef(actionsReady)
-  actionsReadyRef.current = actionsReady
+  useEffect(() => {
+    actionsReadyRef.current = actionsReady
+  }, [actionsReady])
 
   const seenRef = useRef(new Map<string, number>())
   /** 正在处理中的 URL：防止「事件」与「集合」同时投递同一条时并发跑两遍。 */
