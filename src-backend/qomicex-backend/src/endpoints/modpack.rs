@@ -1932,6 +1932,24 @@ fn mirror_mod_url(
     (rewritten, headers)
 }
 
+/// 确定整合包安装的生效游戏版本（issue #176 复盘，评审确认的方向 A）。
+///
+/// **manifest 解析结果优先，调用方传入值仅兜底**。此前是「调用方优先，manifest 补全」，
+/// 实测踩坑：CF 的 `sortableGameVersions` 顺序为 `["1.12", "Forge", "1.12.2"]`
+/// （MeatballCraft 全部文件实测如此），前端把 `gameVersions[0]`（"1.12"）作为
+/// gameVersion 传入，而包内 `manifest.json` 的 `minecraft.version` 才是权威值
+/// （"1.12.2"）——沿用调用方值会用 1.12 去查 Forge 版本列表（112 个候选无
+/// 14.23.5.2860）→「找不到 forge x 的安装器」。
+///
+/// manifest 未覆盖该字段的场景（FTB 在线解析不下载包体、`resolve_curseforge_online`
+/// 预览留空）仍回落调用方传入值，不破坏既有入口。
+fn resolve_effective_game_version(game_version_in: &str, parsed: Option<&ParsedModpack>) -> String {
+    parsed
+        .map(|p| p.game_version.clone())
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| game_version_in.to_string())
+}
+
 /// 主安装管道（后台任务 runner）。任一步失败 → Err(msg) → tracker 置 Failed。
 ///
 /// `local_pack_path` 非空时跳过包体下载，直接用该文件解析 manifest 并释放
@@ -2079,14 +2097,12 @@ pub(crate) async fn run_modpack_pipeline(
         apply_optional_selection(p, optional_file_ids);
     }
 
-    // === 3. 确定 game_version / loader / loader_version（调用方传入优先，manifest 补全）===
-    let mut game_version = game_version_in.to_string();
+    // === 3. 确定 game_version / loader / loader_version ===
+    // 详见 resolve_effective_game_version 的文档：game_version 以 manifest 优先。
+    let mut game_version = resolve_effective_game_version(game_version_in, parsed.as_ref());
     let mut loader = loader_in.unwrap_or_default().to_string();
     let mut loader_version = loader_version_in.unwrap_or_default().to_string();
     if let Some(p) = parsed.as_ref() {
-        if game_version.is_empty() {
-            game_version = p.game_version.clone();
-        }
         if loader.is_empty() {
             loader = p.loader.clone();
         }
@@ -3298,8 +3314,53 @@ mod tests {
     use super::{
         apply_optional_selection, cf_placeholder_path, is_multimc_zip, is_updatable_origin,
         modpack_target_path, parse_curseforge_manifest, parse_local_pack_file,
-        release_qml_overrides, ModpackInstallRequest, ModpackOptionalFile, ParsedModpack,
+        release_qml_overrides, resolve_effective_game_version, ModpackInstallRequest,
+        ModpackOptionalFile, ParsedModpack,
     };
+
+    /// issue #176 复盘回归：gameVersion 决策必须 manifest 优先。
+    ///
+    /// 实测背景：CF `sortableGameVersions` = ["1.12", "Forge", "1.12.2"]，
+    /// 前端传 gameVersions[0]（"1.12"），包内 manifest 是权威值 "1.12.2"。
+    /// 修复前「调用方优先」会用 1.12 查 Forge 列表（112 候选无 14.23.5.2860）
+    /// →「找不到 forge 14.23.5.2860 的安装器」。
+    #[test]
+    fn effective_game_version_prefers_manifest_over_caller() {
+        let parsed = ParsedModpack {
+            game_version: "1.12.2".to_string(),
+            loader: "forge".to_string(),
+            loader_version: "14.23.5.2860".to_string(),
+            files: Vec::new(),
+            optional_files: Vec::new(),
+        };
+
+        // 调用方传了错误值（前端 gameVersions[0]="1.12"）→ manifest 赢
+        assert_eq!(
+            resolve_effective_game_version("1.12", Some(&parsed)),
+            "1.12.2",
+            "manifest 的权威版本必须覆盖调用方传入值"
+        );
+        // 调用方传了正确值 → 仍以 manifest 为准（口径唯一，不依赖前端正确性）
+        assert_eq!(
+            resolve_effective_game_version("1.12.2", Some(&parsed)),
+            "1.12.2"
+        );
+
+        // manifest 未覆盖该字段（FTB 在线解析 / 预览留空）→ 调用方值兜底
+        let empty = ParsedModpack {
+            game_version: String::new(),
+            loader: String::new(),
+            loader_version: String::new(),
+            files: Vec::new(),
+            optional_files: Vec::new(),
+        };
+        assert_eq!(
+            resolve_effective_game_version("1.12.2", Some(&empty)),
+            "1.12.2",
+            "manifest 为空时回落调用方传入值"
+        );
+        assert_eq!(resolve_effective_game_version("1.12.2", None), "1.12.2");
+    }
 
     /// 构造「资源中心在线安装」的合法请求，测试在此基础上逐项破坏。
     fn updatable_req() -> ModpackInstallRequest {
