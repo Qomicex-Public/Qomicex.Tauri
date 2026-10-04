@@ -1161,6 +1161,7 @@ fn is_updatable_origin(req: &ModpackInstallRequest) -> bool {
 }
 
 /// 安装成功后落清单所需的元数据（issue #118）。
+#[derive(Clone)]
 struct ModpackManifestMeta {
     game_dir: String,
     version_dir_name: String,
@@ -1620,12 +1621,39 @@ impl ModpackServiceData {
                 optional_file_ids.as_deref(),
             )
             .await;
-            // 安装成功 → 落托管文件清单（issue #118 的更新基线）。
+            // 安装成功 → 用管线内确定的**生效版本**回写实例记录与托管清单。
+            // （CodeRabbit 评审 #183：实例在管线前以请求原始值（如 1.12）创建、
+            // 清单元数据同源，而实际安装的是 manifest 权威值（如 1.12.2）——
+            // 不回写会让两处持久化与实际安装版本不一致。）
             // 清单失败**只告警**：安装本身已经完成，不能因为一份辅助记录把成功的安装
             // 报成失败（那会误导用户重装）。
             let result = match (result, &manifest_meta) {
-                (Ok(content_rels), Some(meta)) => {
-                    write_manifest_after_install(meta, version_isolation, &content_rels);
+                (Ok((content_rels, effective_gv)), Some(meta)) => {
+                    // 清单元数据改为生效版本后落清单
+                    let meta = ModpackManifestMeta {
+                        game_version: effective_gv.clone(),
+                        ..meta.clone()
+                    };
+                    write_manifest_after_install(&meta, version_isolation, &content_rels);
+                    // 实例记录回写生效版本（失败只告警——安装已完成）
+                    if let Some(mut inst) = inst_svc.get_by_id(&inst_id_inner) {
+                        if inst.game_version != effective_gv {
+                            tracing::info!(
+                                instance = %inst_id_inner,
+                                requested = %inst.game_version,
+                                effective = %effective_gv,
+                                "整合包生效游戏版本与请求值不一致，已按 manifest 回写实例"
+                            );
+                            inst.game_version = effective_gv.clone();
+                            inst.loader_version = meta.loader_version.clone();
+                            if inst_svc.update(&inst_id_inner, inst).is_none() {
+                                tracing::warn!(
+                                    instance = %inst_id_inner,
+                                    "生效版本回写实例失败（实例可能已被删除）"
+                                );
+                            }
+                        }
+                    }
                     Ok(())
                 }
                 (other, _) => other.map(|_| ()),
@@ -1952,6 +1980,11 @@ fn resolve_effective_game_version(game_version_in: &str, parsed: Option<&ParsedM
 
 /// 主安装管道（后台任务 runner）。任一步失败 → Err(msg) → tracker 置 Failed。
 ///
+/// 成功返回 `(content_rels, effective_game_version)`：生效版本是管线内按
+/// `resolve_effective_game_version`（manifest 优先）确定的，调用方必须用它
+/// 回写实例记录与托管清单元数据——否则两处持久化仍标请求原始值（如 1.12），
+/// 与实际安装的 1.12.2 不一致（CodeRabbit 评审 #183 指出）。
+///
 /// `local_pack_path` 非空时跳过包体下载，直接用该文件解析 manifest 并释放
 /// overrides（本地导入；mods 仍按源下载——mr 按 URL、cf 按 projectID:fileID）。
 #[allow(clippy::too_many_arguments)]
@@ -1975,7 +2008,7 @@ pub(crate) async fn run_modpack_pipeline(
     file_download_source: i32,
     icon_data: Option<String>,
     optional_file_ids: Option<&[i64]>,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, String), String> {
     let src = source.to_ascii_lowercase();
     let mut zip_path: Option<PathBuf> = None;
     let mut parsed: Option<ParsedModpack> = None;
@@ -2448,7 +2481,7 @@ pub(crate) async fn run_modpack_pipeline(
     });
     // 图标落盘 versions/{name}/icon.png（HMCL 约定，扫描兜底读取；CF/MR 与 MultiMC 导入一致）。
     write_pack_icon(game_dir, version_dir_name, icon_data.as_deref())?;
-    Ok(content_rels)
+    Ok((content_rels, game_version))
 }
 
 /// 把一个绝对路径折算成相对**实例根目录**的相对路径（清单基线用）。
