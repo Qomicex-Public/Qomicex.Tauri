@@ -58,13 +58,15 @@ pub fn is_technic_zip(zip_path: &Path) -> bool {
 
 /// 从 Technic SingleZip 包解析元数据（探测已由调用方完成）。
 ///
-/// 读取顺序对齐 Prism：
+/// 读取顺序对齐 Prism `TechnicPackProcessor`：
 /// 1. `bin/version.json` 存在 → 直接用（部分包把 version.json 放 zip 根 bin/ 下）；
 /// 2. 否则打开 `bin/modpack.jar`：
-///    - jar 内有 `version.json` → 用 jar 内的（Technic 1.5.2+ 标准包）；
-///    - jar 内无 `version.json` → 古董包：有 `fmlversion.properties` 时尝试
-///      `fmlbuild.mcversion` 兜底 MC 版本（此时 loader 走 `forgeversion.properties`
-///      识别），无兜底则报错。
+///    - jar 内有 `version.json` → 用 jar 内的（Technic 1.5.2+ 标准包；真实包
+///      实测如 Agrarian Skies：jar 内 version.json **无** `inheritsFrom`，MC 版本
+///      由 jar 内 `fmlversion.properties` 的 `fmlbuild.mcversion` 兜底）；
+///    - jar 内无 `version.json` → 古董包：Prism 走 installJarMods 注入路线
+///      （含 fmlversion/forgeversion.properties 解析），QML 无 jarmod 能力，
+///      明确报 [`JARMOD_UNSUPPORTED`]（#180）。
 /// 3. 两者都缺失 → 非法包（bin/ 探测命中但条目不可读）。
 pub fn parse_technic_zip(zip_path: &Path) -> Result<TechnicMeta, String> {
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包文件失败: {e}"))?;
@@ -77,7 +79,7 @@ pub fn parse_technic_zip(zip_path: &Path) -> Result<TechnicMeta, String> {
             .map_err(|e| format!("读取 bin/version.json 失败: {e}"))?;
         let root: Value = serde_json::from_str(&content)
             .map_err(|e| format!("解析 bin/version.json 失败: {e}"))?;
-        return meta_from_version_json(&root);
+        return meta_from_version_json(&root, None);
     }
 
     // bin/version.json 不在 zip 根：打开 modpack.jar 找
@@ -91,46 +93,76 @@ pub fn parse_technic_zip(zip_path: &Path) -> Result<TechnicMeta, String> {
     let mut inner = zip::ZipArchive::new(std::io::Cursor::new(&jar_bytes))
         .map_err(|e| format!("bin/modpack.jar 不是有效的 zip: {e}"))?;
 
-    if let Ok(mut entry) = inner.by_name("version.json") {
+    // 先判存在再读（借用分两段，避免 entry 借用与 fml 读取冲突）
+    let has_version_json = inner.by_name("version.json").is_ok();
+    if has_version_json {
         let mut content = String::new();
-        entry
-            .read_to_string(&mut content)
-            .map_err(|e| format!("读取 modpack.jar 内 version.json 失败: {e}"))?;
+        {
+            let mut entry = inner
+                .by_name("version.json")
+                .map_err(|e| format!("读取 modpack.jar 内 version.json 失败: {e}"))?;
+            entry
+                .read_to_string(&mut content)
+                .map_err(|e| format!("读取 modpack.jar 内 version.json 失败: {e}"))?;
+        }
         let root: Value = serde_json::from_str(&content)
             .map_err(|e| format!("解析 modpack.jar 内 version.json 失败: {e}"))?;
-        return meta_from_version_json(&root);
+        // fml 兜底 MC 版本（Prism 同款）：version.json 的 inheritsFrom 缺失时，
+        // 用 jar 内 fmlversion.properties 的 fmlbuild.mcversion。
+        let fml_mc = read_fml_mcversion(&mut inner);
+        return meta_from_version_json(&root, fml_mc.as_deref());
     }
 
     // === 古董包：jar 内无 version.json，需要 jarmod（#180）===
     // Prism 行为：net.minecraft + installJarMods({modpack.jar})，forge 走
     // forgeversion.properties。QML core 无 jarmod 概念，明确拒绝。
-    if inner.by_name("fmlversion.properties").is_ok() {
-        // fml 兜底能让 MC 版本落地，但 loader（forge）版本无法从
-        // forgeversion.properties 直接转成可安装组件（Prism 也是先 jarmod 再
-        // 补 Forge 组件）；jarmod 缺位时该路线仍不可启动，故统一报 jarmod 不支持。
-        return Err(format!(
-            "{JARMOD_UNSUPPORTED}: modpack.jar 内无 version.json（需要 JarMod 注入，暂不支持，见 issue #180）"
-        ));
-    }
-    // 完全无 fml 线索：同样走 jarmod 路线（Prism 会 installJarMods + 依赖
-    // 调用方传入的 minecraftVersion；我们没有可靠的 MC 版本来源，统一拒绝）。
     Err(format!(
         "{JARMOD_UNSUPPORTED}: modpack.jar 内无 version.json（需要 JarMod 注入，暂不支持，见 issue #180）"
     ))
 }
 
+/// 读 jar 内 `fmlversion.properties` 的 `fmlbuild.mcversion`（INI 风格，键名精确
+/// 匹配；Prism 用 INIFile 语义，等价于首个 `fmlbuild.mcversion=<v>` 行）。
+fn read_fml_mcversion<R: std::io::Read + std::io::Seek>(
+    inner: &mut zip::ZipArchive<R>,
+) -> Option<String> {
+    let mut entry = inner.by_name("fmlversion.properties").ok()?;
+    let mut content = String::new();
+    entry.read_to_string(&mut content).ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(v) = line.strip_prefix("fmlbuild.mcversion=") {
+            let v = v.trim();
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// 从 version.json（zip 根 bin/ 或 modpack.jar 内）提取元数据。
 ///
-/// MC 版本 = `inheritsFrom`；loader 由 `libraries[]` 坐标识别；`name` 为展示名
-/// （缺失时调用方退化为 zip 文件名）。
-fn meta_from_version_json(root: &Value) -> Result<TechnicMeta, String> {
+/// MC 版本 = `inheritsFrom`，缺失时用 `fml_mc_version`（jar 内
+/// fmlversion.properties 的 `fmlbuild.mcversion`，Prism 同款兜底）；
+/// loader 由 `libraries[]` 坐标识别；`name` 为展示名（缺失时调用方退化为
+/// zip 文件名）。
+fn meta_from_version_json(
+    root: &Value,
+    fml_mc_version: Option<&str>,
+) -> Result<TechnicMeta, String> {
     let game_version = root
         .get("inheritsFrom")
         .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .or(fml_mc_version)
         .unwrap_or_default()
         .to_string();
     if game_version.is_empty() {
-        return Err("version.json 缺少 inheritsFrom（无法确定 Minecraft 版本）".to_string());
+        return Err(
+            "version.json 缺少 inheritsFrom 且无 fmlversion.properties 兜底（无法确定 Minecraft 版本）"
+                .to_string(),
+        );
     }
     let (loader, loader_version) = detect_loader(root);
     let name = root
@@ -324,7 +356,24 @@ mod tests {
     #[test]
     fn meta_requires_inherits_from() {
         let root = serde_json::json!({ "name": "x", "libraries": [] });
-        assert!(meta_from_version_json(&root).is_err());
+        assert!(meta_from_version_json(&root, None).is_err());
+    }
+
+    #[test]
+    fn meta_falls_back_to_fml_mcversion() {
+        // 真实场景（Agrarian Skies，issue #123 期1 实测发现）：
+        // modpack.jar 内 version.json 无 inheritsFrom，靠 fmlversion.properties
+        // 的 fmlbuild.mcversion 兜底 MC 版本；loader 从 libraries 坐标识别。
+        let root = serde_json::json!({
+            "id": "1.6.4-Forge9.11.1.965",
+            "libraries": [ { "name": "net.minecraftforge:minecraftforge:9.11.1.965" } ]
+        });
+        let meta = meta_from_version_json(&root, Some("1.6.4")).unwrap();
+        assert_eq!(meta.game_version, "1.6.4");
+        assert_eq!(meta.loader.as_deref(), Some("forge"));
+        assert_eq!(meta.loader_version.as_deref(), Some("9.11.1.965"));
+        // 无兜底则报错
+        assert!(meta_from_version_json(&root, None).is_err());
     }
 
     #[test]
