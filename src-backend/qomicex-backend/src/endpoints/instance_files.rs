@@ -86,6 +86,28 @@ struct ModMetadataDto {
     active: bool,
     file_size: i64,
     last_modified: String,
+    /// 模组自身声明的 mod id（issue #165：依赖闭包判定的键）
+    #[serde(default)]
+    mod_id: String,
+    /// 强制前置依赖（issue #165）；前端据此标出「缺失依赖」。
+    /// `default` 保证旧缓存文件反序列化不失败。
+    #[serde(default)]
+    dependencies: Vec<ModDependencyDto>,
+    /// 本 jar 额外提供的 mod id（issue #165：嵌套 Jar-in-Jar 子模块，
+    /// 典型如 `fabric-api` 提供 `fabric-lifecycle-events-v1` 等）。不含自身 modId。
+    #[serde(default)]
+    provides_ids: Vec<String>,
+}
+
+/// 单条强制前置依赖（对应 core `ModDependencyInfo`，issue #165）。
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModDependencyDto {
+    /// 被依赖的 mod id
+    mod_id: String,
+    /// 版本约束谓词；无约束 → 空串
+    #[serde(default)]
+    version_range: String,
 }
 
 /// POST /instance/{id}/files/mods/change-version body (source:
@@ -275,6 +297,12 @@ fn remove_progress(id: &str) {
 const MODS_CACHE_TTL_SECS: i64 = 6 * 3600;
 /// 扫描结果为空时的短缓存：避免临时失败（网络抖动/目录错位）把空列表冻结 6 小时。
 const MODS_CACHE_EMPTY_TTL_SECS: i64 = 5 * 60;
+/// mods 缓存结构版本（issue #165）：新增 modId / dependencies 字段后，旧缓存文件
+/// 反序列化虽因 `#[serde(default)]` 不报错，但缺依赖数据 → 依赖警告最长 6 小时不出现。
+/// 版本号不一致一律视为 miss，强制重扫一次。
+/// v3：新增 `providesIds`（嵌套 Jar-in-Jar 子模块 id）——旧缓存缺该字段会把
+/// `fabric-api` 的子模块判成缺失，造成误报，必须一并失效。
+const MODS_CACHE_SCHEMA: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -288,6 +316,9 @@ struct ModsCacheEntry {
     /// 缺省 = 未记录（兼容旧缓存文件 → 直接 miss 重扫）。
     #[serde(default)]
     dir_signature: Option<u64>,
+    /// 写入时的缓存结构版本；缺省/不匹配 = 旧结构（无依赖数据）→ miss。
+    #[serde(default)]
+    schema: Option<u32>,
 }
 
 static REFRESH_LOCK: LazyLock<Mutex<HashMap<String, ()>>> =
@@ -310,6 +341,10 @@ fn read_mods_cache(
     let cache: ModsCacheEntry = serde_json::from_slice(&bytes).ok()?;
     let now = now_secs();
     let ttl = cache.ttl_secs.unwrap_or(MODS_CACHE_TTL_SECS);
+    // 结构版本不符（写了依赖字段之前的旧缓存）→ miss，强制重扫补齐依赖数据。
+    if cache.schema != Some(MODS_CACHE_SCHEMA) {
+        return None;
+    }
     // TTL 内还须目录指纹一致：用户在文件系统增删/改名/移动 mod 后立即失效。
     if now - cache.fetched_at < ttl && cache.dir_signature == Some(expected_signature) {
         Some(cache.entries)
@@ -326,6 +361,11 @@ fn read_mods_cache_stale(
     let path = mods_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
     let cache: ModsCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    // 结构版本不符 → 连 stale 都不给：依赖数据缺失的列表若先返回再后台刷新，
+    // 用户会看到「无缺失依赖」的错误结论，故宁可同步重扫。
+    if cache.schema != Some(MODS_CACHE_SCHEMA) {
+        return None;
+    }
     // 仅"目录未动、纯 TTL 过期"走 stale-while-revalidate；
     // 签名不一致说明用户刚改过文件，必须同步重扫（见调用方）。
     if cache.dir_signature != Some(expected_signature) {
@@ -352,6 +392,7 @@ fn write_mods_cache(
         entries,
         ttl_secs: Some(ttl_secs),
         dir_signature: Some(dir_signature),
+        schema: Some(MODS_CACHE_SCHEMA),
     };
     if let Ok(json) = serde_json::to_vec(&cache) {
         let _ = std::fs::write(path, json);
@@ -505,6 +546,9 @@ async fn refresh_mods_cache(
                 active: d.active,
                 file_size: d.file_size,
                 last_modified: d.last_modified.clone(),
+                mod_id: d.mod_id.clone(),
+                dependencies: d.dependencies.clone(),
+                provides_ids: d.provides_ids.clone(),
             }
         })
         .collect();
@@ -1044,6 +1088,16 @@ fn map_mod_dtos(list: &[qomicex_core::models::expansion::local::ModInfo]) -> Vec
                 active: m.is_active(),
                 file_size,
                 last_modified,
+                mod_id: m.mod_id.clone(),
+                dependencies: m
+                    .dependencies
+                    .iter()
+                    .map(|d| ModDependencyDto {
+                        mod_id: d.mod_id.clone(),
+                        version_range: d.version_range.clone(),
+                    })
+                    .collect(),
+                provides_ids: m.provides_ids.clone(),
             }
         })
         .collect()

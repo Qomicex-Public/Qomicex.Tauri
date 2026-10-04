@@ -646,7 +646,7 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 | GET | `/mods` | 列出模组文件 |
 | GET | `/mods/count` | 模组数量（含 .disabled） |
 | GET | `/mods/progress` | 模组元数据加载进度 |
-| GET | `/mods/metadata` | 模组元数据（名称、版本、描述、图标、CF/MR ID） |
+| GET | `/mods/metadata` | 模组元数据（名称、版本、描述、图标、CF/MR ID、`modId`/`dependencies` 依赖信息） |
 | GET | `/installed-names?category=mods` | 已安装文件名列表 |
 | POST | `/mods/enable?name=...` | 启用模组 |
 | POST | `/mods/disable?name=...` | 禁用模组 |

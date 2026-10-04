@@ -19,6 +19,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { cn } from '../lib/utils.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
+import { computeMissingDependencies } from '../lib/modDependencies.ts'
 import { useMessageBox } from '../components/ui'
 import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
@@ -504,6 +505,13 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const updateFileNames = useMemo(() => new Set(updates.map(u => u.fileName)), [updates])
   const updateMap = useMemo(() => new Map(updates.map(u => [u.fileName, u])), [updates])
 
+  /**
+   * 缺失强制依赖（issue #165）：key = fileName。
+   * 判定需要全列表视角（依赖是否被别的 mod 提供），故在父级统一计算后下传卡片。
+   * 严格口径：只有启用中的 mod 才算「已提供」——见 lib/modDependencies.ts。
+   */
+  const missingDepsMap = useMemo(() => computeMissingDependencies(mods), [mods])
+
   const [filterType, setFilterType] = useState('all')
   const [sortBy, setSortBy] = useState('name-asc')
   // 列表模式（紧凑 / 详细），持久化到 localStorage。
@@ -522,6 +530,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     { key: 'disabled', label: t('instanceDetail.mods.disable'), icon: Ban },
     { key: 'updatable', label: t('instanceDetail.mods.updatable'), icon: ArrowUp },
     { key: 'duplicate', label: t('instanceDetail.mods.duplicate'), icon: CopyPlus },
+    { key: 'missing-deps', label: t('instanceDetail.mods.missingDeps'), icon: TriangleAlert },
   ]
   const SORT_OPTIONS = [
     { key: 'name-asc', label: t('instanceDetail.mods.sortNameAsc') },
@@ -552,8 +561,9 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       disabled: base.length - activeCount,
       updatable: base.filter(m => updateFileNames.has(m.fileName)).length,
       duplicate: base.filter(m => (seen.get(m.name.toLowerCase()) ?? 0) > 1).length,
+      'missing-deps': base.filter(m => missingDepsMap.has(m.fileName)).length,
     } as Record<string, number>
-  }, [mods, search, updateFileNames, lang])
+  }, [mods, search, updateFileNames, lang, missingDepsMap])
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchConfirm, setBatchConfirm] = useState<{ type: 'enable' | 'disable' | 'delete' } | null>(null)
@@ -748,6 +758,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       result.forEach(m => seen.set(m.name.toLowerCase(), (seen.get(m.name.toLowerCase()) ?? 0) + 1))
       result = result.filter(m => (seen.get(m.name.toLowerCase()) ?? 0) > 1)
     }
+    else if (filterType === 'missing-deps') result = result.filter(m => missingDepsMap.has(m.fileName))
     result.sort((a, b) => {
       if (sortBy === 'name-asc') return a.name.localeCompare(b.name)
       if (sortBy === 'name-desc') return b.name.localeCompare(a.name)
@@ -758,7 +769,26 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       return 0
     })
     return result
-  }, [mods, search, filterType, sortBy, updateFileNames, lang])
+  }, [mods, search, filterType, sortBy, updateFileNames, lang, missingDepsMap])
+
+  /** 缺失依赖的模组数（顶部汇总横幅用），与筛选桶计数口径一致。 */
+  const missingDepsCount = missingDepsMap.size
+
+  /**
+   * 「去下载前置」（issue #165）：拿到缺失的 mod id 后跳资源中心搜索。
+   * mod id 通常即 Modrinth/CurseForge 的 slug，故以 Modrinth 为默认源、
+   * category=mod，并带上本实例的游戏版本与加载器以缩小结果。
+   */
+  const openDependencySearch = useCallback((depModId: string) => {
+    const params = new URLSearchParams()
+    params.set('keyword', depModId)
+    params.set('source', 'modrinth')
+    params.set('category', 'mod')
+    if (gameVersion) params.set('gameVersion', gameVersion)
+    if (loader) params.set('loader', loader.toLowerCase())
+    if (instanceId) params.set('instanceId', instanceId)
+    navigate(`/resource-center?${params.toString()}`)
+  }, [navigate, gameVersion, loader, instanceId])
 
   // 依赖含 modViewMode：切换模式时重新播放入场动画（Instances.tsx 的 grid/list 同此做法）
   const modsAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading, modViewMode], { y: 12, scale: 0.95 })
@@ -998,6 +1028,23 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             </div>
           )}
 
+          {/* 依赖缺失汇总（issue #165）：进入页面即可见；0 缺失时完全不渲染，不在正常实例上占位 */}
+          {!loading && missingDepsCount > 0 && (
+            <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+              <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+              <span className="flex-1">{t('instanceDetail.mods.missingDepsBanner', { count: missingDepsCount })}</span>
+              {filterType !== 'missing-deps' && (
+                <button
+                  type="button"
+                  onClick={() => setFilterType('missing-deps')}
+                  className="shrink-0 rounded border border-amber-500/30 px-2 py-0.5 font-medium transition-colors hover:bg-amber-500/20"
+                >
+                  {t('instanceDetail.mods.missingDepsShowOnly')}
+                </button>
+              )}
+            </div>
+          )}
+
           {loading ? (
             <div className="space-y-3 p-4">
               {loadProgress && loadProgress.total > 0 && (
@@ -1066,6 +1113,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                       viewMode={modViewMode}
                       modsDir={`${gameDir}/mods`}
                       selectMode={selectMode}
+                      missingDependencies={missingDepsMap.get(mod.fileName)}
+                      onFindDependency={(dep) => openDependencySearch(dep.modId)}
                     />
                   </div>
                 ))}
