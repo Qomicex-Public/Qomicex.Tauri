@@ -2779,19 +2779,13 @@ Query：`allowUnsigned=true` 时跳过强制签名校验（前端风险确认后
 
 
 
-### 2026-10-04 更新
+### 2026-10-04 更新（PR #172 审计修复 + PR #173 证书校验修复）
 
-### 2026-10-04 更新（PR #172 审计修复）
-
-`POST /api/plugins/install-url` 的两处安全加固 + 一个新错误码：
+`POST /api/plugins/install-url` 的**三处**安全加固 + 一个新错误码：
 
 **1. 不跟随 HTTP 重定向**（`plugin_download_client`，`state.rs`）
 
 原实现用共享 `http_client`（reqwest 默认最多跟随 10 跳）。`validate_target` 只校验**初始主机**，跟随后的目标不重校验 → 公网 URL 可 302 到 `127.0.0.1` 绕过 SSRF 防护。现改用专用 `plugin_download_client`，`redirect(Policy::none())`，UA / 60s 超时 / 代理沿用共享设置。
-
-**该客户端刻意不继承 `ignore_ssl_cert`**：`danger_accept_invalid_certs` 会让 TLS 校验完全失效，而这个端点下载的是**马上要被当成代码安装的 `.qplugin`** —— 继承用户的「忽略 SSL」设置等于允许中间人替换正在安装的插件，与本端点其余防护（SSRF 校验 / 禁重定向 / 体积上限）自相矛盾。官方分发（`cdn.qomicex.top`）用有效证书，正常路径不受影响；确需自签名源的场景应走「本地上传」。
-
-> 这条正是 CodeQL `rust/disabled-certificate-check`（severity high）的修复：该规则对 PR 变更行报警，先前的继承写法就是新告警的来源。
 
 代价与依据：官方分发实测不依赖重定向（`cdn.qomicex.top/plugins/...` 用 `redirect=manual` 取是 **200 直出、无 Location**），故直接禁用而非逐跳重校验。
 
@@ -2801,12 +2795,20 @@ Query：`allowUnsigned=true` 时跳过强制签名校验（前端风险确认后
 
 原实现 `resp.bytes()` 先整包读进内存再检查大小：响应无 `Content-Length`（chunked）时，60 秒超时内可累积远超 64 MiB 的内存。现改为 `bytes_stream()` 逐块累加，累加值一旦越过 `INSTALL_URL_MAX_BYTES` 立即返回 400 `INSTALL_URL_TOO_LARGE`。`Content-Length` 头部预检保留为快速路径。
 
-**验证证据**（本机真实后端 + 临时 `QOMICEX_HOME`，`:5099`）：
+**3. 该客户端刻意不继承 `ignore_ssl_cert`**（PR #173 补修）
+
+`danger_accept_invalid_certs` 会让 TLS 校验完全失效，而这个端点下载的是**马上要被当成代码安装的 `.qplugin`** —— 继承用户的「忽略 SSL」设置（本意是给自签名/内网镜像放行）等于允许中间人替换正在安装的插件，与本端点其余防护（SSRF 校验 / 禁重定向 / 体积上限）自相矛盾。**代理与 `no_proxy` 仍然继承**（不降低安全边界，且不继承会破坏企业内网环境）。
+
+官方分发（`cdn.qomicex.top`）用有效证书，正常路径不受影响；确需自签名源的场景应走「本地上传」，那条路用户能看到实际文件。
+
+> 该条同时是 CodeQL `rust/disabled-certificate-check`（severity **high**）的修复：该规则对 PR 变更行报警，先前 `danger_accept_invalid_certs` 出现在新增行上即被标记。**注意**：查 CodeQL 告警时必须显式传 `ref=refs/pull/<N>/merge` —— 该 API 不加 `ref=` 时只返回默认分支告警，曾因此误判过一次「无新告警」。
+
+**验证证据**（本机真实后端 + 临时 `QOMICEX_HOME`，`:5099` / `:5096`）：
 
 | 用例 | 修复前 | 修复后 |
 | :--- | :--- | :--- |
 | `http://github.com/a.qplugin`（301） | 502 `UPSTREAM_ERROR`（跟到 github 后 406，**证明跳转确实发生**） | **400 `INSTALL_URL_REDIRECT_NOT_ALLOWED`** |
-| 官方包 `cdn.qomicex.top/.../1.0.0.qplugin` | 200 | **200**（流式路径走通，安装落盘） |
+| 官方包 `cdn.qomicex.top/.../1.0.0.qplugin` | 200 | **200**（流式路径走通，安装落盘；**不继承 ignore_ssl 后仍 200**，证书校验未破坏正常路径） |
 | 无 `Content-Length` + 上限压至 1 KiB（抽掉头部预检的探针） | — | **400 `INSTALL_URL_TOO_LARGE`**（拦截来自逐块累加本身） |
 | 回环 `http://127.0.0.1:1/…` | 400 `PROXY_PRIVATE_ADDRESS` | 400 `PROXY_PRIVATE_ADDRESS`（回归不变） |
 
