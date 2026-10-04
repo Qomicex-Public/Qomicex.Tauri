@@ -153,6 +153,21 @@ fn register_scheme(app: &AppHandle) {
                 crate::tauri_log!("deep-link", "auto-register disabled by user; skipping");
                 app.state::<DeepLinkRegistration>().set_disabled();
             }
+            StartupAction::Unregister => {
+                // 意图是关但仍关联着：上次关闭时 unregister 失败（或缺权限）。
+                // 启动期补一次，让「开关关了」这件事最终一定生效。
+                match app.deep_link().unregister(SCHEME) {
+                    Ok(()) => {
+                        crate::tauri_log!("deep-link", "scheme '{SCHEME}' unregistered (deferred)");
+                        app.state::<DeepLinkRegistration>().set_disabled();
+                    }
+                    Err(e) => {
+                        // 仍未成功：如实标记，别让 UI 说「已关闭」而链接其实还能唤起。
+                        crate::tauri_log!("deep-link", "deferred unregister failed: {e}");
+                        app.state::<DeepLinkRegistration>().set_registered();
+                    }
+                }
+            }
             StartupAction::KeepRegistered => {
                 crate::tauri_log!("deep-link", "scheme '{SCHEME}' already associated");
                 app.state::<DeepLinkRegistration>().set_registered();
@@ -183,8 +198,10 @@ fn register_scheme(app: &AppHandle) {
 /// 启动时该对协议关联做什么。
 #[derive(Debug, PartialEq, Eq)]
 enum StartupAction {
-    /// 用户显式关过 → 什么都不做（**不因为「检测到未关联」就注册回去**）。
+    /// 用户显式关过且已无关联 → 什么都不做。
     LeaveDisabled,
+    /// 用户显式关过但系统里仍关联着 → 补一次注销（用户上次关的时候 OS 那步失败了）。
+    Unregister,
     /// 已关联到本构建 → 保持。
     KeepRegistered,
     /// 应当写入关联。
@@ -196,13 +213,17 @@ enum StartupAction {
 /// 这是本次改动最容易写错的一处：把「用户意图」与「实际关联状态」两个布尔组合成正确动作。
 /// 尤其**不能**写成「未关联就注册」——用户主动关掉后 `associated` 必然是 false，
 /// 那样写会让开关在下次启动时被自动撤销。
+///
+/// 启动期按**持久意图**收敛（而不是只在两处各做一次）：用户关闭时若 `unregister()` 失败、
+/// 或偏好写失败导致意图没落盘，下一次启动都能各自纠正回来——比在命令里做 OS 回滚更可靠
+/// （回滚本身也可能失败，且窗口期内容易出现「UI 说关了、系统还关联」的谎报）。
 fn startup_action(auto_register: bool, associated: bool) -> StartupAction {
-    if !auto_register {
-        StartupAction::LeaveDisabled
-    } else if associated {
-        StartupAction::KeepRegistered
-    } else {
-        StartupAction::Register
+    match (auto_register, associated) {
+        (false, false) => StartupAction::LeaveDisabled,
+        // 意图是关但仍关联着 → 补注销，把上次没做成的收尾。
+        (false, true) => StartupAction::Unregister,
+        (true, true) => StartupAction::KeepRegistered,
+        (true, false) => StartupAction::Register,
     }
 }
 
@@ -246,11 +267,15 @@ impl DeepLinkPreference {
         Self::load_from(&Self::path())
     }
 
-    /// 写入偏好。失败只记日志：关不掉开关比启动失败轻得多。
-    fn save(&self) {
-        if let Err(e) = self.save_to(&Self::path()) {
+    /// 写入偏好。**返回 Result 而不是吞掉错误**：调用方（设置开关）必须能知道
+    /// 「意图没落盘」，否则会出现「UI 显示已关闭、但下次启动又注册回来」这种自相矛盾
+    /// ——偏好没写成，下次启动就会按旧偏好（true）重新注册。
+    fn save(&self) -> std::io::Result<()> {
+        let result = self.save_to(&Self::path());
+        if let Err(e) = &result {
             crate::tauri_log!("deep-link", "write preference failed: {e}");
         }
+        result
     }
 
     /// 路径参数化的读取（供测试注入临时目录）。
@@ -430,12 +455,7 @@ pub struct DeepLinkStatus {
 /// 查询协议关联状态。
 #[tauri::command]
 pub fn deep_link_status(state: tauri::State<'_, DeepLinkRegistration>) -> DeepLinkStatus {
-    let current = state.get();
-    DeepLinkStatus {
-        enabled: current == RegistrationState::Registered,
-        changeable: cfg!(any(windows, target_os = "linux")),
-        failed: current == RegistrationState::Failed,
-    }
+    status_of(state.get())
 }
 
 /// 开启/关闭协议关联（设置页开关）。返回操作后的状态快照。
@@ -448,34 +468,43 @@ pub fn set_deep_link_enabled(app: AppHandle, enabled: bool) -> DeepLinkStatus {
 
     #[cfg(any(windows, target_os = "linux"))]
     {
+        // **偏好先行**：先把用户意图落盘，再动系统关联。
+        //
+        // 顺序为什么是这个方向：意图是「唯一必须可靠的事」。偏好写成功而后面的 OS 操作
+        // 失败，下次启动 `startup_action` 会按意图把它纠正回来（Register / Unregister
+        // 两个分支就是为此存在）。反之若先动 OS、偏好却写失败，下次启动会按**旧**偏好
+        // 走——用户明明点了关闭，重启后链接又能唤起，而 UI 还显示已关闭。
+        let preference = DeepLinkPreference {
+            auto_register: enabled,
+        };
+        if let Err(e) = preference.save() {
+            crate::tauri_log!("deep-link", "toggle aborted: cannot persist intent: {e}");
+            // 意图没落盘就绝不改系统状态：否则会出现「这次生效了、重启又变回去」的
+            // 摇摆，比干脆失败更让人困惑。保持原状态并如实上报。
+            return status_of(state.get());
+        }
+
         if enabled {
             match app.deep_link().register_all() {
                 Ok(()) => {
-                    DeepLinkPreference {
-                        auto_register: true,
-                    }
-                    .save();
                     state.set_registered();
                     crate::tauri_log!("deep-link", "scheme '{SCHEME}' enabled by user");
                 }
                 Err(e) => {
+                    // 意图已落盘为「开」，下次启动会重试；本次如实标记失败。
                     crate::tauri_log!("deep-link", "enable failed: {e}");
-                    // 注册失败不写偏好：意图仍是想开，下次启动应再试一次。
                     state.set_failed();
                 }
             }
         } else {
             match app.deep_link().unregister(SCHEME) {
                 Ok(()) => {
-                    DeepLinkPreference {
-                        auto_register: false,
-                    }
-                    .save();
                     state.set_disabled();
                     crate::tauri_log!("deep-link", "scheme '{SCHEME}' disabled by user");
                 }
                 Err(e) => {
-                    // 注销失败就不改意图，也不谎报已关——否则用户以为关了、链接却还能唤起。
+                    // 意图已落盘为「关」，下次启动的 StartupAction::Unregister 会补做；
+                    // 本次不谎报已关——否则用户以为关了、链接却还能唤起。
                     crate::tauri_log!("deep-link", "disable failed: {e}");
                     state.set_registered();
                 }
@@ -490,7 +519,11 @@ pub fn set_deep_link_enabled(app: AppHandle, enabled: bool) -> DeepLinkStatus {
         crate::tauri_log!("deep-link", "runtime toggle unsupported on this platform");
     }
 
-    let current = state.get();
+    status_of(state.get())
+}
+
+/// 由状态构造给前端的快照（`RegistrationState` 只在这里映射成 UI 字段）。
+fn status_of(current: RegistrationState) -> DeepLinkStatus {
     DeepLinkStatus {
         enabled: current == RegistrationState::Registered,
         changeable: cfg!(any(windows, target_os = "linux")),
@@ -593,27 +626,59 @@ mod tests {
         assert_eq!(s.get(), RegistrationState::Registered);
     }
 
-    /// 启动决策的**核心不变量**：用户关掉后即便处于「未关联」，也绝不自动注册回去。
+    /// 启动决策的**核心不变量**：用户关掉后绝不因「检测到未关联」而注册回去。
     ///
     /// 这一条是反向探针逼出来的——最初这段逻辑内联在需要 `AppHandle` 的
-    /// `register_scheme` 里，把 `if !白名单` 改成 `if false` 后**全部测试照样通过**，
+    /// `register_scheme` 里，把该判定改成 `if false` 后**全部测试照样通过**，
     /// 等于「开关会不会失效」这件事没有任何覆盖。抽成纯函数后才钉得住。
     ///
-    /// 若这里退化成 `Register`：用户关掉开关 → unregister → 下次启动检测到未关联
-    /// → 又注册回去 → 开关形同虚设（而 UI 上还会显示成「已关闭」，自相矛盾）。
+    /// 若 (false, _) 退化成 `Register`：用户关掉开关 → unregister → 下次启动检测到
+    /// 未关联 → 又注册回去 → 开关形同虚设（而 UI 上还会显示成「已关闭」，自相矛盾）。
     #[test]
-    fn user_disabled_wins_over_unassociated() {
+    fn user_disabled_never_gets_re_registered() {
         assert_eq!(
             startup_action(false, false),
             StartupAction::LeaveDisabled,
-            "用户已关闭时必须保持关闭，即便当前未关联"
+            "用户已关闭且未关联 → 保持关闭"
         );
-        // 用户关闭后关联被别的程序建起来，也不该去动它
         assert_eq!(
             startup_action(false, true),
-            StartupAction::LeaveDisabled,
-            "用户已关闭时不要插手关联状态"
+            StartupAction::Unregister,
+            "用户已关闭但仍关联 → 补注销，而不是放着不管"
         );
+    }
+
+    /// 启动期要能**收敛**「偏好与系统状态不一致」的两种残留（评审意见 #1 的核心）。
+    ///
+    /// 不一致只可能来自「偏好写成功、OS 操作失败」，因此两个方向都必须自愈：
+    /// 意图关 + 仍关联 → 补注销；意图开 + 未关联 → 补注册。否则 UI 会长期谎报。
+    #[test]
+    fn startup_reconciles_persisted_intent_with_os_state() {
+        assert_eq!(startup_action(false, true), StartupAction::Unregister);
+        assert_eq!(startup_action(true, false), StartupAction::Register);
+        // 一致的两种情形都不该有多余动作
+        assert_eq!(startup_action(false, false), StartupAction::LeaveDisabled);
+        assert_eq!(startup_action(true, true), StartupAction::KeepRegistered);
+    }
+
+    /// `save` 必须把写失败**报告出来**（评审意见 #1）。
+    ///
+    /// 原先它吞掉错误，于是 `set_deep_link_enabled` 一律返回成功——用户看到「已关闭」，
+    /// 偏好却还是 `true`，下次启动照旧注册回来。这里用一个不可写路径验证错误确实上抛。
+    #[test]
+    fn save_reports_write_failure() {
+        // 把文件路径指到一个「父级是文件」的位置，create_dir_all 必然失败。
+        let dir = temp_dir("savefail");
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "not a directory").expect("write blocker");
+        let path = blocker.join("deep-link.json");
+
+        let err = DeepLinkPreference {
+            auto_register: false,
+        }
+        .save_to(&path);
+        assert!(err.is_err(), "父级不是目录时写入必须报错，不能静默成功");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 默认（未关闭）时的决策矩阵。
