@@ -135,9 +135,11 @@ CodeRabbit 提了 13 条 inline 意见。逐条按「证据优先」裁定后的
 
 **② 重定向绕开 SSRF 校验**（评论 #2）
 
-`validate_target` 只校验初始主机，而共享 `http_client` 用 reqwest 默认策略（≤10 跳，不重校验）→ 公网 URL 可 302 到回环地址。新增 `AppState::plugin_download_client`，参数与共享客户端一致、仅 `redirect(Policy::none())`；3xx 报新错误码 `INSTALL_URL_REDIRECT_NOT_ALLOWED`。
+`validate_target` 只校验初始主机，而共享 `http_client` 用 reqwest 默认策略（≤10 跳，不重校验）→ 公网 URL 可 302 到回环地址。新增 `AppState::plugin_download_client`，`redirect(Policy::none())`，UA / 60s 超时 / 代理沿用共享设置；3xx 报新错误码 `INSTALL_URL_REDIRECT_NOT_ALLOWED`。
 
 **选「禁用」而非「逐跳重校验」的依据**：实测官方 `.qplugin` 分发不依赖重定向（`cdn.qomicex.top/plugins/…` 以 `redirect=manual` 请求得 200 直出、无 `Location`）。
+
+> **⚠️ 该客户端后来还有第二处刻意差异**：它**不再继承 `ignore_ssl_cert`**（始终校验证书）。此处初版写的是「参数与共享客户端一致」，那是错的 —— 见文末「补充决策：不继承 ignore_ssl_cert」。
 
 **③ 64 MiB 上限在整读之后才检查**（评论 #3）
 
@@ -233,8 +235,50 @@ let all_scanned = cache.values().flat_map(|v| v.iter().cloned()).collect();
 
 | 项 | 结果 |
 | :--- | :--- |
-| `node scripts/test-deep-link-parse.mjs` | **43 passed, 0 failed**（新增反序解析与歧义共 16 例） |
+| `node scripts/test-deep-link-parse.mjs` | **43 passed, 0 failed**（新增反序解析与歧义共 16 例；后改为 tsc 编译真实源码并补 1 例，现为 **44 条断言**，见文末补充决策） |
 | 反向探针 A（抽掉盘符兜底） | `只有盘符、无实例名分隔` **FAIL** |
 | 反向探针 B（多命中退回静默取首） | `单靠名字命中多个 → ambiguous` **FAIL** |
 | 边界手测 | `C:\mc\inst:MyPack` → 正确切分；`C:\mc\inst` → 不切；`C:MyPack` → 切出 `dir=C`；`/home/u/mc:Name` → 正确 |
+
+## 补充决策：不继承 `ignore_ssl_cert` + 一次 CodeQL 误判的纠正（2026-10-04，PR #173）
+
+### 先纠正一个错误判断
+
+PR #172 合并时，我判定「CodeQL 失败属存量告警、与本 PR 无关」并据此放行。**该判断是错的**：PR #172 实际引入了 1 条 **high** 告警。
+
+**错因（方法论）**：我用 `GET /code-scanning/alerts`（**不加 `ref=` 参数**）去统计「非默认分支的告警数」，得到 0 便当作证据。而该接口不加 `ref=` 时**本来就只返回默认分支的告警** —— 那个 0 是逻辑上必然成立的恒真式，不构成任何证据。
+
+补上 `ref=refs/pull/172/merge` 后真相反转：
+
+```
+118 [rust/disabled-certificate-check] severity=high
+    src-backend/qomicex-backend/src/state.rs:209   ref=refs/pull/172/merge
+```
+
+`state.rs:209` 正是本 ADR 新增的 `plugin_download_client` 中的 `danger_accept_invalid_certs`。
+
+**可复用的检查方法**：统计某分支/PR 的告警**必须显式传 `ref=refs/pull/<N>/merge` 或 `ref=refs/heads/<branch>`**；判断「是否本 PR 引入」应对比 PR ref 与 base ref 的告警集差异，不能依赖任何默认过滤。
+
+（附注：同批那两条 `rust/command-line-injection` @ `plugin.rs:1472/1476` 经同样方法复查确为存量 —— PR ref 下 0 条、main 上 `created=2026-09-09`。**同一个错误方法正好对了一半，反而更易让人信以为真**。）
+
+### 技术根因与修复
+
+`plugin_download_client` 初版为「与共享客户端参数一致」而继承了 `ignore_ssl_cert`。这是**设计取舍错误**：`danger_accept_invalid_certs` 让 TLS 校验完全失效，而这条链路下载的是**马上要被当成代码安装的 `.qplugin`** —— 继承用户的「忽略 SSL」设置（本意是给自签名/内网镜像放行）等于允许中间人替换正在安装的插件，与本端点其余防护（SSRF 校验 / 禁重定向 / 体积上限）自相矛盾。
+
+修复（PR #173，main `55a0be04`）：该客户端**不再继承 `ignore_ssl_cert`**，始终校验证书。**代理与 `no_proxy` 仍然继承** —— 它们不降低安全边界，且不继承会破坏企业内网环境。
+
+代价：官方分发（`cdn.qomicex.top`）用有效证书，正常路径不受影响（已实测真实商店包经该端点安装返回 200 并落盘）。确需自签名源的场景应走「本地上传」，那条路用户能看到实际文件。
+
+### 验证证据
+
+| 项 | 结果 |
+| :--- | :--- |
+| PR #173 的 `CodeQL` 检查结论 | **success — "No new alerts in code changed by this pull request"**（#172 为 `failure — 1 new alert including 1 high severity`） |
+| `ref=refs/pull/173/merge` 查该规则 | **0 条**（#172 的 ref 下为 1 条） |
+| `cargo check` / `cargo fmt --check` / `cargo test` | 0 / 0 / 376 passed, 0 failed, 2 ignored |
+| 端到端 | 官方 https 包 → **200 安装落盘**（证书校验未破坏正常路径）；`github.com` 301 → 400 `INSTALL_URL_REDIRECT_NOT_ALLOWED`；`127.0.0.1` → 400 `PROXY_PRIVATE_ADDRESS`；非 zip → 400 `INVALID_PLUGIN_PACKAGE`；空 url → 400 `INSTALL_URL_REQUIRED` |
+
+### 测试脚本的另一处调整
+
+`scripts/test-deep-link-parse.mjs` 从「直接 `node xx.ts` 依赖类型剥离」改为**用仓库自带 tsc 把真实源码编译到临时目录再断言**（对齐既有 `test-update-channel.mjs` 范式）。原因：`package.json` 声明 `engines.node >= 22`，而 Node 的类型剥离 **22.18.0 才默认开启**，22.0~22.17 会在断言执行前就失败。同时该测试已接入 CI（`frontend-lint` 作业）。
 

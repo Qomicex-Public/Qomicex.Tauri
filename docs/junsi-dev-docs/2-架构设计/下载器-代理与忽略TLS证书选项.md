@@ -31,3 +31,30 @@
 ## 修订记录
 | 日期 | 版本 | 修改内容 | 修改人 |
 | 2026-08-20 | v1.0 | 初版创建 | AI Agent |
+
+### 2026-10-04 更新
+
+## 启动器后端侧的作用范围界定（2026-10-04 补充）
+
+以上是 downloader 子模块自身的选项语义。在**启动器后端**（`src-backend/qomicex-backend/`）里，设置项 `ignoreSslCert`（`settings.rs` 的 `ignore_ssl_cert`）会被散播到多个 reqwest 客户端，**但不是无差别生效**：
+
+| 客户端 / 链路 | 是否应用 `ignore_ssl_cert` | 说明 |
+| :--- | :--- | :--- |
+| 共享 `http_client`（`build_http_client`） | 是 | 启动器大部分出站请求 |
+| 插件 proxy 客户端 `proxy_client` | 是 | 对应 C# 命名 HttpClient "PluginProxy" |
+| downloader / core 内部客户端 | 是 | 经 `DownloadOptions` / `CoreOptions` 传入 |
+| **插件包直链下载 `plugin_download_client`** | **否（刻意例外）** | 见下 |
+
+### 为什么 `plugin_download_client` 不继承（issue #127 / PR #173）
+
+该客户端服务于 `POST /api/plugins/install-url`（深链快捷安装），下载的是**马上要被当成代码安装的 `.qplugin`**。若继承 `ignore_ssl_cert`，则用户为「自签名/内网镜像」开的那个设置会顺带允许中间人用任意包替换正在安装的插件 —— 与本端点其余防护（SSRF 校验 / 禁重定向 / 体积上限）自相矛盾。
+
+因此该客户端**始终校验证书**；其余参数（代理、`no_proxy`、UA、60s 超时）仍继承 —— 代理不降低安全边界，且不继承会破坏企业内网环境。官方分发（`cdn.qomicex.top`）用有效证书，正常路径不受影响；确需自签名源的场景应走「本地上传」，那条路用户能看到实际文件。
+
+> 该取舍曾以「参数与共享客户端一致」的形式写进 ADR-100 初版，后被证伪并修正。修复同时消掉了 CodeQL `rust/disabled-certificate-check`（severity **high**）告警 —— 该规则对 PR 变更行报警，先前 `danger_accept_invalid_certs` 出现在新增行上即被标记。
+
+### 排障提示：查 CodeQL 告警必须显式传 `ref`
+
+`GET /repos/{owner}/{repo}/code-scanning/alerts` **不加 `ref=` 参数时只返回默认分支的告警**。统计某个 PR/分支的告警必须显式传 `ref=refs/pull/<N>/merge` 或 `ref=refs/heads/<branch>`，否则会把「默认分支之外的告警数 = 0」这个恒真式误当成「没有新告警」的证据（该误判曾真实发生过一次）。
+
+
