@@ -1,6 +1,6 @@
 import { useCallback, useState, useRef, useEffect, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Box, Check, Ellipsis } from 'lucide-react'
+import { Box, Check, Ellipsis, TriangleAlert } from 'lucide-react'
 import { Card, CardContent, Switch, Checkbox, Popover } from './ui'
 import { Tooltip } from './ui'
 import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
@@ -12,10 +12,11 @@ import { MinecraftText } from './MinecraftText.tsx'
 import { enableMod, disableMod, deleteMod } from '../api/instance-files.ts'
 import { ApiError } from '../api/client.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
+import { formatMissingDependency } from '../lib/modDependencies.ts'
 import { openUrl, openPath } from '@tauri-apps/plugin-opener'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
-import type { ModMetadata, ModUpdateEntry } from '../types/index.ts'
+import type { ModDependency, ModMetadata, ModUpdateEntry } from '../types/index.ts'
 
 /**
  * 列表模式，两种模式有明确的信息差（不是同一布局放大缩小）：
@@ -47,6 +48,13 @@ interface ModCardProps {
   onUpdated?: (fileName: string) => void
   /** Mod 文件夹绝对路径（更多菜单「打开 Mod 文件夹」用） */
   modsDir?: string
+  /**
+   * 该模组缺失的强制前置依赖（issue #165）。空/缺省 → 不渲染警告徽标。
+   * 由父级经 `computeMissingDependencies` 统一计算（判定需全列表视角，卡片内无法自足）。
+   */
+  missingDependencies?: ModDependency[]
+  /** 「去下载前置」：把缺失依赖的 mod id 交给父级跳资源中心 */
+  onFindDependency?: (dep: ModDependency) => void
   /** 列表模式，默认 compact */
   viewMode?: ModViewMode
   /**
@@ -59,6 +67,7 @@ interface ModCardProps {
 export default function ModCard({
   mod, instanceId, gameVersion, loader, onRefresh, onToggle, onChangeVersion,
   selected, onSelect, update, onUpdated, modsDir, viewMode = 'compact', selectMode = false,
+  missingDependencies, onFindDependency,
 }: ModCardProps) {
   const { t, lang } = useI18n()
   const navigate = useNavigate()
@@ -135,6 +144,10 @@ export default function ModCard({
     navigate(`/resource-center/${encodeURIComponent(remoteId)}?${params.toString()}&expandBody=1`, { state: { iconUrl } })
   }, [remoteId, mod.source, mod.iconUrl, mod.iconBase64, gameVersion, loader, instanceId, navigate])
 
+  // 依赖缺失状态（issue #165）：在 contextItems 之前求值，菜单与徽标共用。
+  const hasMissingDeps = !!missingDependencies && missingDependencies.length > 0
+  const missingDepText = missingDependencies ?? []
+
   const contextItems: ContextMenuItem[] = []
   if (mod.mcmodId) {
     contextItems.push({
@@ -144,6 +157,16 @@ export default function ModCard({
   }
   if (remoteId) {
     contextItems.push({ label: t('dialogs.common.viewDetail'), onClick: openDetail })
+  }
+  // 依赖缺失时，为每个缺失项提供「去下载前置」入口（issue #165）。
+  // 放在菜单而非 Tooltip 里：Tooltip 内容 pointer-events-none，无法承载可点击项。
+  if (hasMissingDeps && onFindDependency) {
+    for (const dep of missingDepText) {
+      contextItems.push({
+        label: t('instanceDetail.mods.findDependencyNamed', { name: formatMissingDependency(dep) }),
+        onClick: () => onFindDependency(dep),
+      })
+    }
   }
   contextItems.push(
     {
@@ -328,9 +351,27 @@ export default function ModCard({
     )
   }
 
-  // 状态徽标：可更新（有 update 条目）/ 启用状态。
-  // 注意：暂无「依赖缺失」类问题状态——ModMetadata 没有依赖字段，后端也不返回，
-  // 有数据源后再在此处扩展，不伪造状态。
+  // 状态徽标：可更新（有 update 条目）/ 依赖缺失（issue #165）/ 启用状态。
+  // 依赖缺失 Tooltip 仅供查看（Tooltip 内容 pointer-events-none 且 mouseleave
+  // 即隐藏，无法承载可点击项）；「去下载前置」入口放在 contextItems 菜单里。
+  const missingDepList = (deps: ModDependency[]) => (
+    <div className="max-w-[280px] space-y-0.5">
+      <div className="font-medium">{t('instanceDetail.mods.missingDeps')}</div>
+      {deps.map((dep) => (
+        <div key={dep.modId} className="truncate">{formatMissingDependency(dep)}</div>
+      ))}
+    </div>
+  )
+
+  const missingDepBadge = hasMissingDeps ? (
+    <Tooltip content={missingDepList(missingDepText)}>
+      <span className="inline-flex items-center gap-0.5 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+        <TriangleAlert className="h-2.5 w-2.5" />
+        {t('instanceDetail.mods.missingDeps')}
+      </span>
+    </Tooltip>
+  ) : null
+
   const statusBadges = (
     <>
       {hasUpdate && (
@@ -338,6 +379,7 @@ export default function ModCard({
           {t('instanceDetail.mods.updatable')}
         </span>
       )}
+      {missingDepBadge}
       <span className={cn(
         'inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-medium',
         mod.active
@@ -423,6 +465,14 @@ export default function ModCard({
               </div>
               {/* 更新标记：固定宽度槽位（无更新时也占位），避免圆点出现/消失挤动版本列 */}
               <span className="flex w-2.5 shrink-0 justify-center">{updateDot}</span>
+              {/* 依赖缺失标记：紧凑模式无状态行，用图标 + Tooltip 呈现（issue #165） */}
+              {hasMissingDeps && (
+                <Tooltip content={missingDepList(missingDepText)}>
+                  <span className="flex shrink-0 items-center text-amber-600 dark:text-amber-400">
+                    <TriangleAlert className="h-3.5 w-3.5" />
+                  </span>
+                </Tooltip>
+              )}
               {moreMenu}
               {toggleSwitch}
             </CardContent>

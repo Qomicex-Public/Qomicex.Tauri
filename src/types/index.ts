@@ -602,6 +602,14 @@ export interface ModUpdateEntry {
   iconUrl?: string
 }
 
+/** 模组声明的一条强制前置依赖（issue #165） */
+export interface ModDependency {
+  /** 被依赖的 mod id */
+  modId: string
+  /** 版本约束谓词；无约束 → 空串 */
+  versionRange?: string
+}
+
 export interface ModMetadata {
   fileName: string
   name: string
@@ -622,6 +630,16 @@ export interface ModMetadata {
   active: boolean
   fileSize?: number
   lastModified?: string
+  /** 模组自身声明的 mod id（issue #165 依赖闭包判定的键）；解析不到 → 空串 */
+  modId?: string
+  /** 强制前置依赖（issue #165）；无声明 → 空数组 */
+  dependencies?: ModDependency[]
+  /**
+   * 本 jar 额外提供的 mod id（issue #165：嵌套 Jar-in-Jar 子模块）。
+   * 典型如 `fabric-api` 通过 `META-INF/jars/` 提供 `fabric-lifecycle-events-v1`
+   * 等数十个子模块 id——依赖判定必须把这些也算作「已提供」，否则误报缺失。
+   */
+  providesIds?: string[]
 }
 
 /** mods/enrich 返回条目（两段式第二步：按 fileName 合并 id 到列表） */
