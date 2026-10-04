@@ -1625,16 +1625,22 @@ impl ModpackServiceData {
             // （CodeRabbit 评审 #183：实例在管线前以请求原始值（如 1.12）创建、
             // 清单元数据同源，而实际安装的是 manifest 权威值（如 1.12.2）——
             // 不回写会让两处持久化与实际安装版本不一致。）
+            // ⚠️ 实例回写**不看出处**（CodeRabbit 二轮评审）：install_direct 等入口
+            // origin=None → manifest_meta=None，若回写套在 Some(meta) 分支内，直接
+            // 安装（拖入/一键装/插件）的实例永远不会被修正。清单落盘仍仅在
+            // manifest_meta 存在（可更新实例）时执行——那是它独有的用途。
             // 清单失败**只告警**：安装本身已经完成，不能因为一份辅助记录把成功的安装
             // 报成失败（那会误导用户重装）。
             let result = match (result, &manifest_meta) {
-                (Ok((content_rels, effective_gv)), Some(meta)) => {
-                    // 清单元数据改为生效版本后落清单
-                    let meta = ModpackManifestMeta {
-                        game_version: effective_gv.clone(),
-                        ..meta.clone()
-                    };
-                    write_manifest_after_install(&meta, version_isolation, &content_rels);
+                (Ok((content_rels, effective_gv)), meta) => {
+                    if let Some(meta) = meta {
+                        // 清单元数据改为生效版本后落清单（仅可更新实例有清单）
+                        let meta = ModpackManifestMeta {
+                            game_version: effective_gv.clone(),
+                            ..meta.clone()
+                        };
+                        write_manifest_after_install(&meta, version_isolation, &content_rels);
+                    }
                     // 实例记录回写生效版本（失败只告警——安装已完成）
                     if let Some(mut inst) = inst_svc.get_by_id(&inst_id_inner) {
                         if inst.game_version != effective_gv {
@@ -1645,7 +1651,9 @@ impl ModpackServiceData {
                                 "整合包生效游戏版本与请求值不一致，已按 manifest 回写实例"
                             );
                             inst.game_version = effective_gv.clone();
-                            inst.loader_version = meta.loader_version.clone();
+                            if let Some(meta) = meta {
+                                inst.loader_version = meta.loader_version.clone();
+                            }
                             if inst_svc.update(&inst_id_inner, inst).is_none() {
                                 tracing::warn!(
                                     instance = %inst_id_inner,
