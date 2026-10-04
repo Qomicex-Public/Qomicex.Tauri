@@ -118,7 +118,7 @@ async fn loader_versions(
             .map_err(map_core_error)?
     };
 
-    let infos = results
+    let infos: Vec<LoaderVersionInfo> = results
         .into_iter()
         .map(|r| LoaderVersionInfo {
             r#type: r.r#type as i32,
@@ -130,6 +130,17 @@ async fn loader_versions(
             published_at: r.release_time,
         })
         .collect();
+
+    // issue #176：返回空列表是用户可见故障（前端「暂无可加载器版本，无法下载」），
+    // 而 core 侧的失败原因走 `eprintln!` 不入 tracing 日志。这里补一条带查询参数的
+    // 警告，使「上游抽风导致列表为空」在日志中可直接定位，不必再靠猜。
+    if infos.is_empty() {
+        tracing::warn!(
+            game_version = game_version.as_str(),
+            loader = loader_str,
+            "加载器版本列表为空（上游数据源失败或版本确实不存在）"
+        );
+    }
 
     Ok(Json(infos))
 }

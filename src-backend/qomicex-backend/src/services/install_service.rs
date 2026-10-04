@@ -319,20 +319,50 @@ pub async fn run_install_pipeline(
             };
 
             // 首轮未命中且为 NeoForge 时，换另一数据源并跳过缓存重试一次（官方列表可能非空但缺该版本）。
+            // issue #176：core 内部的失败原因走 `eprintln!`（不入 tracing 日志体系），
+            // 故在此把「列表拿到了但没命中目标版本」这一用户可见故障记进日志，
+            // 附带候选数量——否则线上只剩一句「找不到 X 的安装器」，无法区分
+            // 「列表为空」与「列表非空但缺该版本」。
+            let loader_count = loaders.len();
             let matched = match pick_loader_by_version(loaders, lver) {
                 Some(m) => m,
-                None if is_neoforge => pick_loader_by_version(
-                    core_a
+                None if is_neoforge => {
+                    let retry = core_a
                         .installer_provider()
                         .get_neoforge_versions_with_priority(&gv_a, !prefer_bmclapi, true)
                         .await
-                        .unwrap_or_default(),
-                    lver,
-                )
-                .ok_or_else(missing_err)?,
-                None => return Err(missing_err()),
+                        .unwrap_or_default();
+                    let retry_count = retry.len();
+                    pick_loader_by_version(retry, lver).ok_or_else(|| {
+                        tracing::warn!(
+                            loader = loader_a.as_deref().unwrap_or(""),
+                            game_version = gv_a.as_str(),
+                            loader_version = lver,
+                            candidates = loader_count,
+                            retry_candidates = retry_count,
+                            "加载器版本列表未命中目标版本（已换源重试）"
+                        );
+                        missing_err()
+                    })?
+                }
+                None => {
+                    tracing::warn!(
+                        loader = loader_a.as_deref().unwrap_or(""),
+                        game_version = gv_a.as_str(),
+                        loader_version = lver,
+                        candidates = loader_count,
+                        "加载器版本列表未命中目标版本"
+                    );
+                    return Err(missing_err());
+                }
             };
             if matched.url.trim().is_empty() {
+                tracing::warn!(
+                    loader = loader_a.as_deref().unwrap_or(""),
+                    game_version = gv_a.as_str(),
+                    loader_version = lver,
+                    "加载器版本命中但下载链接为空，疑似版本列表解析异常"
+                );
                 return Err(format!(
                     "{} {} 安装器的下载链接为空，可能是版本列表解析异常",
                     loader_a.as_deref().unwrap_or(""),
