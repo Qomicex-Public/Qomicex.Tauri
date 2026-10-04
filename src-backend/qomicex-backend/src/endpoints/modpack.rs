@@ -1189,8 +1189,7 @@ fn copy_technic_content(
 fn copy_tree_simple(src: &Path, dest: &Path) -> Result<u64, String> {
     // 先建目标目录本身：递归子目录时目标父目录链由本行保证存在
     // （复测发现：仅拷文件时建父目录，嵌套目录 a/b/c 的拷贝会在 b 层失败）。
-    std::fs::create_dir_all(dest)
-        .map_err(|e| format!("创建目录失败 {}: {e}", dest.display()))?;
+    std::fs::create_dir_all(dest).map_err(|e| format!("创建目录失败 {}: {e}", dest.display()))?;
     let mut files = 0u64;
     let entries =
         std::fs::read_dir(src).map_err(|e| format!("读取 {} 失败: {e}", src.display()))?;
