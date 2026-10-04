@@ -855,6 +855,7 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
     let mut has_qml = false;
     let mut has_cf_manifest = false;
     let mut has_mmc = false;
+    let mut has_technic = false;
     let mut has_shaders = false;
     let mut has_mcmeta = false;
     // mmc-pack.json 的完整条目名（可能是 `xxx/mmc-pack.json`）：探测时顺手记下，
@@ -871,6 +872,8 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
             "qmodpack.index.json" => has_qml = true,
             "manifest.json" => has_cf_manifest = true,
             "pack.mcmeta" => has_mcmeta = true,
+            // Technic SingleZip 特征（issue #123 期1）：zip 根 = minecraft 目录
+            "bin/modpack.jar" | "bin/version.json" => has_technic = true,
             n if n == "mmc-pack.json" || n.ends_with("/mmc-pack.json") => {
                 has_mmc = true;
                 mmc_entry.get_or_insert_with(|| n.to_string());
@@ -915,6 +918,9 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
             "modpack",
             multimc_pack_meta(&mut archive, mmc_entry.as_deref()),
         );
+    }
+    if has_technic {
+        return ("modpack", technic_pack_meta(&mut archive));
     }
 
     if has_shaders {
@@ -998,6 +1004,60 @@ fn multimc_pack_meta(
     });
     Some(PackMeta {
         name,
+        game_version,
+        loader,
+        summary: None,
+    })
+}
+
+/// Technic SingleZip 整合包预览元数据（issue #123 期1）：
+/// name 取 `bin/version.json`（或 modpack.jar 内 version.json）的 `name`；
+/// game_version/loader 复用 `services::technic` 的识别逻辑（含
+/// fmlversion.properties 的 fmlbuild.mcversion 兜底，Agrarian Skies 实测场景）。
+/// 解析失败返回缺省元数据（探测已命中，真正的失败由安装处以明确错误报告）。
+fn technic_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<PackMeta> {
+    // modpack.jar 读入内存上限（与 services::technic::MAX_JAR_BYTES 同语义；
+    // classify 是拖拽预览热路径，上限收紧到 64 MiB）。
+    const MAX_JAR_BYTES: u64 = 64 * 1024 * 1024;
+    fn read_text<R: std::io::Read + std::io::Seek>(
+        archive: &mut zip::ZipArchive<R>,
+        name: &str,
+    ) -> Option<String> {
+        let mut f = archive.by_name(name).ok()?;
+        // 有界读：元数据条目超 1 MiB 视为非法（与 services::technic 同语义）
+        crate::services::technic::read_bounded_string(&mut f)
+    }
+    // bin/version.json（zip 根）→ modpack.jar 内 version.json（含 fml 兜底）
+    let version_json_text = read_text(archive, "bin/version.json").or_else(|| {
+        let jar_bytes = {
+            let mut f = archive.by_name("bin/modpack.jar").ok()?;
+            if f.size() as u64 > MAX_JAR_BYTES {
+                return None;
+            }
+            let mut b = Vec::new();
+            use std::io::Read as _;
+            std::io::Read::take(&mut f, MAX_JAR_BYTES)
+                .read_to_end(&mut b)
+                .ok()?;
+            b
+        };
+        let mut inner = zip::ZipArchive::new(std::io::Cursor::new(&jar_bytes)).ok()?;
+        read_text(&mut inner, "version.json")
+    })?;
+    let root: serde_json::Value = serde_json::from_str(&version_json_text).ok()?;
+    // game_version：inheritsFrom 缺失时由 loader 坐标兜底不了版本本身，预览阶段
+    // 允许为空（安装时 parse_technic_zip 会做 fml 兜底并强制校验）。
+    let game_version = root
+        .get("inheritsFrom")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let (loader, _loader_version) = crate::services::technic::detect_loader_for_classify(&root);
+    Some(PackMeta {
+        name: root
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .filter(|s| !s.is_empty()),
         game_version,
         loader,
         summary: None,

@@ -27,6 +27,7 @@ pub mod resource_favorite;
 pub mod resource_favorite_folder;
 pub mod scan_cache;
 pub mod schematic_assets;
+pub mod technic;
 pub mod trace;
 pub mod translation;
 pub mod update_channel;

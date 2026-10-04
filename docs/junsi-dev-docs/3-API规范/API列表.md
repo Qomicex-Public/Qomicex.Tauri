@@ -1,6 +1,6 @@
 # API 端点参考
 
-> 更新日期：2026-08-16
+> 更新日期：2026-10-04
 
 后端基础地址：`http://localhost:5000`。前端 Vite 代理将 `/api/*` 转发到此地址。
 
@@ -1117,6 +1117,32 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 **响应：** `{ "instanceId": "..." }`（安装异步进行，进度走下载中心 / SSE）
 
 **错误码：** `MODPACK_NAME_REQUIRED`(400)、`MODPACK_GAME_DIR_REQUIRED`(400)、`MODPACK_FILE_NOT_FOUND`(404)、`MODPACK_SOURCE_REQUIRED`(400)、`MODPACK_SOURCE_INVALID`(400)、`MODPACK_PARSE_FAILED`(400)
+
+### POST `/api/modpack/technic/import`（issue #123 期1）
+
+开始 Technic SingleZip 整合包导入（后台任务，进度走 `/modpack/progress/{instanceId}`）。与 MultiMC 导入同骨架：RAII 临时清理 / 大包后台解压 / 全局锁选名 / 失败回滚实例；版本隔离**强制**（zip 根 = minecraft 目录）。
+
+```json
+{
+  "sourcePath": "C:/downloads/pack.zip",
+  "name": "My Technic Pack",
+  "gameDir": "C:/games/instances",
+  "versionIsolation": true
+}
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `sourcePath` | ✅ | SingleZip 包体绝对路径（`/parse-path` 已验证存在；指向 `modpack-uploads/` 时导入后自动清理） |
+| `name` | ✅ | 实例名（空时后端退化为 zip 文件名 / version.json name） |
+| `gameDir` | ✅ | 实例根目录 |
+| `versionIsolation` | ❌ | 接受但忽略（强制 `true`，同 MultiMC 语义） |
+
+**管线步骤**：`extract`（解压 zip）→ `install-game`（嵌套标准安装管线装 MC + loader，loader 由 `bin/version.json` / modpack.jar 内 version.json 的 libraries 坐标识别）→ `copy-files`（包内容拷入 `versions/{name}/`，剔除 `bin/` 残壳，`libraries/` 落共享目录）→ `finalize`。
+
+**格式识别**：`/modpack/parse`、`/modpack/parse-path`、`/install-direct`（`path` 分支）与拖拽分类均已自动识别 Technic 特征（zip 中央目录含 `bin/modpack.jar` 或 `bin/version.json`），返回 `packType: "technic"`、`source: "technic"`。
+
+**错误码：** `TECHNIC_SOURCE_REQUIRED`(400)、`TECHNIC_SOURCE_NOT_FOUND`(404)、`TECHNIC_PARSE_FAILED`(400，detail 含 `TECHNIC_JARMOD_UNSUPPORTED` = 古董包 modpack.jar 无 version.json，需 JarMod 支持，见 issue #180)、`MULTIMC_SOURCE_PATH_RELATIVE`(400 源路径非绝对)、`MULTIMC_SOURCE_PATH_TRAVERSAL`(400 源路径含 `..`，与 MultiMC 导入共用 `validate_source_path`)。
 
 ### 整合包原地更新（issue #118）
 

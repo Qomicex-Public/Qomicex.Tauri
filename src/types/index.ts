@@ -978,7 +978,7 @@ export interface ModpackParseResult {
   iconData: string | null
   /** 本地导入：上传临时文件句柄，随 /modpack/install 传回 */
   fileId?: string | null
-  /** 整合包类型：modrinth / curseforge / qomicex / multimc */
+  /** 整合包类型：modrinth / curseforge / qomicex / multimc / technic（issue #123 期1） */
   packType?: string | null
   /** MultiMC 导入：multimc-imports 解压根句柄，随 /modpack/multimc/import 传回 */
   sourceId?: string | null
