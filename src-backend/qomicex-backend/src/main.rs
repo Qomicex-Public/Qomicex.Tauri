@@ -1,4 +1,9 @@
 mod app;
+// 开发期 `.env` 加载（issue #159 / PR #170）：`#[cfg]` 限定为 debug 专属，
+// release 的凭据由 CI/发布流水线在构建期经 `CURSEFORGE_API_KEY` 注入并编译进产物，
+// 不得再去读用户机器上意外存在的 `.env`（那会让发布行为依赖进程工作目录）。
+#[cfg(debug_assertions)]
+mod dev_env;
 mod endpoints;
 mod error;
 mod ipc;
@@ -47,6 +52,13 @@ async fn main() {
             SetConsoleOutputCP(CP_UTF8);
         }
     }
+
+    // 开发期先从 `.env.local` / `.env` 注入环境变量（issue #159 / PR #170）：
+    // `appsettings.json` 改为构建期生成后本地 dev 默认没有 CurseForge key，相关
+    // 功能静默降级；`AppState::build()` 的取值顺序是「运行时环境变量非空优先，
+    // 否则回退编译期嵌入值」，故必须**在它之前**加载。debug-only（见模块声明）。
+    #[cfg(debug_assertions)]
+    crate::dev_env::load();
 
     // 先构建 state（内部注册全局 trace 缓冲），再初始化 tracing 与 stdout/stderr 捕获，
     // 保证日志写入有目标可落。
