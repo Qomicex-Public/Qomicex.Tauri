@@ -85,12 +85,39 @@ fn is_occupied(existing: Option<&str>) -> bool {
 }
 
 /// 按候选目录 × 候选文件名查找首个可读文件并解析。
+///
+/// 文件**不存在**是正常情况（绝大多数用户不会有 `.env.local`），静默跳过；
+/// 但其它读取错误必须告警：典型是 Windows 记事本把 `.env.local` 存成 GBK，
+/// `read_to_string` 返回 `InvalidData`。若一并静默，本模块要解决的
+/// 「凭据缺失却毫无提示」问题会以另一种形式复现（实测该错误类型**不是**
+/// `NotFound`，故不能用「有错就忽略」概括）。
 fn find_and_parse() -> Option<(PathBuf, Vec<(String, String)>)> {
-    for dir in candidate_dirs() {
+    find_and_parse_in(&candidate_dirs(), &|msg| eprintln!("{msg}"))
+}
+
+/// [`find_and_parse`] 的实现体。
+///
+/// - `dirs`：显式候选目录，便于单测注入临时目录。
+/// - `warn`：读取失败时的告警出口（生产传 `eprintln!`，测试可收集以断言
+///   「非 NotFound 错误确实**可见**」——静默正是评审 finding #2 的实质）。
+fn find_and_parse_in(
+    dirs: &[PathBuf],
+    warn: &dyn Fn(&str),
+) -> Option<(PathBuf, Vec<(String, String)>)> {
+    for dir in dirs {
         for name in FILE_NAMES {
             let path = dir.join(name);
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                return Some((path, parse(&content)));
+            match std::fs::read_to_string(&path) {
+                Ok(content) => return Some((path, parse(&content))),
+                // 文件不存在是正常情况（绝大多数用户没有 .env.local），静默。
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                // 其它错误**必须可见**：典型是记事本把文件存成 GBK →
+                // `InvalidData`。若静默，「文件在、键也在、功能却不生效」
+                // 的静默降级会复现。只打印路径与错误，**不打印文件内容**。
+                Err(e) => warn(&format!(
+                    "[dev_env] 读取 {} 失败（已跳过）：{e}",
+                    path.display()
+                )),
             }
         }
     }
@@ -155,7 +182,16 @@ fn parse(content: &str) -> Vec<(String, String)> {
         if key.is_empty() || key.contains('\0') {
             continue;
         }
-        out.push((key.to_string(), unquote(raw_value.trim())));
+        // **值**同样必须跳过含 NUL 的：`std::env::set_var` 的值含 NUL 会 panic
+        // （实测 Windows 下报 "strings passed to WinAPI cannot contain NULs"）。
+        // 本模块的约定是 best-effort、绝不失败——若在此 panic，debug 后端会在
+        // `AppState::build()` 之前直接启动失败，比「凭据缺失降级」更糟。
+        // 去引号后再判断：`KEY="a\0b"` 这类写法同样要拦。
+        let value = unquote(raw_value.trim());
+        if value.contains('\0') {
+            continue;
+        }
+        out.push((key.to_string(), value));
     }
     out
 }
@@ -323,5 +359,101 @@ mod tests {
         // 非空 → 已占用，文件不得覆盖
         assert!(is_occupied(Some("real-key")));
         assert!(is_occupied(Some("  real-key  ")));
+    }
+
+    /// **回归（评审 finding #1）**：含 NUL 的**值**必须被丢弃。
+    ///
+    /// 实测：`std::env::set_var` 的值含 NUL 会 panic
+    /// （`failed to set environment variable: strings passed to WinAPI cannot contain NULs`）。
+    /// 旧实现只拦了含 NUL 的**键**，值直通 `set_var` → debug 后端在
+    /// `AppState::build()` 之前 panic，启动失败——比「凭据缺失降级」严重得多，
+    /// 且违背本模块 best-effort、绝不失败的约定。
+    #[test]
+    fn skips_values_containing_nul() {
+        // 裸 NUL 值被丢弃，同一文件里的合法条目保留
+        assert_eq!(
+            pairs("BAD=a\0b\nGOOD=ok\n"),
+            vec![("GOOD".to_string(), "ok".to_string())]
+        );
+        // 去引号后再判断：`KEY="a\0b"` 这类写法同样要拦
+        assert!(pairs("BAD=\"a\0b\"\n").is_empty());
+        // 键含 NUL 依旧被拦（原有行为不得回退）
+        assert!(pairs("a\0b=value\n").is_empty());
+        // 合法值不受影响
+        assert_eq!(
+            pairs("CURSEFORGE_API_KEY=abc123\n"),
+            vec![("CURSEFORGE_API_KEY".to_string(), "abc123".to_string())]
+        );
+    }
+
+    /// **回归（评审 finding #2）**：非 UTF-8 的 `.env.local` 不得被**静默**吞掉。
+    ///
+    /// 实测：Windows 记事本存成 GBK 时 `read_to_string` 返回 `InvalidData`，
+    /// **不是** `NotFound`。旧实现 `if let Ok(..)` 把两者一并忽略，于是
+    /// 「文件存在、键也在、却完全没生效」且无任何提示——正是本模块要消除的
+    /// 那类静默降级。
+    ///
+    /// **断言的是「是否告警」而非「能否继续搜索」**：后者旧实现也满足
+    /// （`Err(_) => {}` 同样继续循环），用它做断言会让测试在回退时仍然通过
+    /// ——实测确认过这一点，故改断言有可观测副作用的告警出口。
+    #[test]
+    fn non_utf8_file_warns_and_does_not_abort_search() {
+        let root = std::env::temp_dir().join("qomicex_dev_env_test_nonutf8");
+        let _ = std::fs::remove_dir_all(&root);
+        let bad_dir = root.join("a");
+        let good_dir = root.join("b");
+        let empty_dir = root.join("empty");
+        std::fs::create_dir_all(&bad_dir).expect("建 a 目录");
+        std::fs::create_dir_all(&good_dir).expect("建 b 目录");
+        std::fs::create_dir_all(&empty_dir).expect("建 empty 目录");
+
+        // a/.env.local = GBK 内容（0xD6 0xD0 0xCE 0xC4 非合法 UTF-8）
+        std::fs::write(
+            bad_dir.join(".env.local"),
+            [b'#', 0xD6, 0xD0, 0xCE, 0xC4, b'\n'],
+        )
+        .expect("写 GBK 文件");
+        // b/.env.local = 合法 UTF-8
+        std::fs::write(good_dir.join(".env.local"), b"CURSEFORGE_API_KEY=from-b\n")
+            .expect("写合法文件");
+
+        use std::cell::RefCell;
+        let warnings: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let warn = |msg: &str| warnings.borrow_mut().push(msg.to_string());
+
+        // 坏文件在前：不得中断搜索，且必须发出告警。
+        let (path, pairs) = find_and_parse_in(&[bad_dir.clone(), good_dir.clone()], &warn)
+            .expect("应回退到 b 目录");
+        assert_eq!(path, good_dir.join(".env.local"), "应采用 b 目录的文件");
+        assert_eq!(
+            pairs,
+            vec![("CURSEFORGE_API_KEY".to_string(), "from-b".to_string())]
+        );
+        // 用作用域限制不可变借用，避免与后续 `borrow_mut()` 冲突。
+        {
+            let ws = warnings.borrow();
+            assert_eq!(ws.len(), 1, "非 UTF-8 恰好应告警一次，实际：{ws:?}");
+            assert!(
+                ws[0].contains(".env.local"),
+                "告警应包含路径便于定位：{}",
+                ws[0]
+            );
+        }
+
+        // 只有坏文件 → 返回 None 且已告警（而非 panic / 静默）。
+        warnings.borrow_mut().clear();
+        assert!(find_and_parse_in(&[bad_dir.clone()], &warn).is_none());
+        assert_eq!(warnings.borrow().len(), 1, "坏文件本身应告警一次");
+
+        // 目录里没有该文件 → NotFound 分支，**必须零告警**（常见情形不该刷屏）。
+        warnings.borrow_mut().clear();
+        assert!(find_and_parse_in(&[empty_dir.clone()], &warn).is_none());
+        assert!(
+            warnings.borrow().is_empty(),
+            "文件不存在属正常情况，不应告警：{:?}",
+            warnings.borrow()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
