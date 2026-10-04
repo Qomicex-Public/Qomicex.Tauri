@@ -7,7 +7,7 @@ import { Checkbox } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { Separator } from '../components/ui'
-import { parseModpackFileByPath, startModpackInstall, parseMultiMcFolder, startMultiMcImport } from '../api/instance.ts'
+import { parseModpackFileByPath, startModpackInstall, parseMultiMcFolder, startMultiMcImport, startTechnicImport } from '../api/instance.ts'
 import { ApiError } from '../api/client.ts'
 import type { ModpackParseResult, MultiMcParseResult } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
@@ -161,10 +161,19 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
     setError('')
     try {
       const isMultiMc = parsed.packType === 'multimc' || (parsed as MultiMcParseResult).sourcePath != null
+      const isTechnic = parsed.packType === 'technic' && !isMultiMc
       const instanceId = isMultiMc
         ? (await startMultiMcImport({
             sourceId: parsed.sourceId ?? undefined,
             sourcePath: (parsed as MultiMcParseResult).sourcePath ?? undefined,
+            name: instanceName,
+            gameDir,
+            versionIsolation,
+          })).instanceId
+        : isTechnic
+        ? (await startTechnicImport({
+            // Technic 导入：sourcePath 由 parse-path 回传（本地 zip 绝对路径）
+            sourcePath: (parsed as ModpackParseResult).sourcePath ?? sourcePath ?? '',
             name: instanceName,
             gameDir,
             versionIsolation,

@@ -278,6 +278,22 @@ export async function startMultiMcImport(data: MultiMcImportRequest): Promise<{ 
   return post<{ instanceId: string }>('/modpack/multimc/import', data, { timeoutMs: MODPACK_REQUEST_TIMEOUT_MS })
 }
 
+/** Technic 导入请求（issue #123 期1；sourcePath = SingleZip 包体绝对路径）。 */
+export interface TechnicImportRequest {
+  sourcePath: string
+  name: string
+  gameDir: string
+  versionIsolation?: boolean
+}
+
+/**
+ * 开始 Technic SingleZip 导入（后台任务，进度走 /modpack/progress/{instanceId}）。
+ * sourcePath 指向 zip：同 MultiMC zip 导入放宽到 60s，避免大型包 15s 超时（issue #119）。
+ */
+export async function startTechnicImport(data: TechnicImportRequest): Promise<{ instanceId: string }> {
+  return post<{ instanceId: string }>('/modpack/technic/import', data, { timeoutMs: MODPACK_REQUEST_TIMEOUT_MS })
+}
+
 /** 读取实例可导出文件树（HMCL 风格勾选列表）。 */
 export async function listExportFiles(instanceId: string): Promise<ModpackExportFileNode[]> {
   return get<ModpackExportFileNode[]>(`/modpack/export/files/${encodeURIComponent(instanceId)}`)

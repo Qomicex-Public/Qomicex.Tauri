@@ -855,6 +855,7 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
     let mut has_qml = false;
     let mut has_cf_manifest = false;
     let mut has_mmc = false;
+    let mut has_technic = false;
     let mut has_shaders = false;
     let mut has_mcmeta = false;
     // mmc-pack.json 的完整条目名（可能是 `xxx/mmc-pack.json`）：探测时顺手记下，
@@ -871,6 +872,8 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
             "qmodpack.index.json" => has_qml = true,
             "manifest.json" => has_cf_manifest = true,
             "pack.mcmeta" => has_mcmeta = true,
+            // Technic SingleZip 特征（issue #123 期1）：zip 根 = minecraft 目录
+            "bin/modpack.jar" | "bin/version.json" => has_technic = true,
             n if n == "mmc-pack.json" || n.ends_with("/mmc-pack.json") => {
                 has_mmc = true;
                 mmc_entry.get_or_insert_with(|| n.to_string());
@@ -915,6 +918,9 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
             "modpack",
             multimc_pack_meta(&mut archive, mmc_entry.as_deref()),
         );
+    }
+    if has_technic {
+        return ("modpack", technic_pack_meta(&mut archive));
     }
 
     if has_shaders {
@@ -998,6 +1004,51 @@ fn multimc_pack_meta(
     });
     Some(PackMeta {
         name,
+        game_version,
+        loader,
+        summary: None,
+    })
+}
+
+/// Technic SingleZip 整合包预览元数据（issue #123 期1）：
+/// name 取 `bin/version.json`（或 modpack.jar 内 version.json）的 `name`；
+/// game_version/loader 复用 `services::technic` 的识别逻辑。解析失败返回
+/// 缺省元数据（探测已命中，真正的失败由安装处以明确错误报告）。
+fn technic_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<PackMeta> {
+    // 拿到的 archive 属于 classify 阶段的临时文件，直接复用 services::technic
+    // 需要路径；此处从打开的 archive 逐条目读关键文件（三个小文件，代价可忽略）。
+    fn read_text<R: std::io::Read + std::io::Seek>(
+        archive: &mut zip::ZipArchive<R>,
+        name: &str,
+    ) -> Option<String> {
+        let mut f = archive.by_name(name).ok()?;
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut f, &mut s).ok()?;
+        Some(s)
+    }
+    // bin/version.json（zip 根）→ modpack.jar 内 version.json
+    let version_json_text = read_text(archive, "bin/version.json").or_else(|| {
+        let jar_bytes = {
+            let mut f = archive.by_name("bin/modpack.jar").ok()?;
+            let mut b = Vec::new();
+            std::io::Read::read_to_end(&mut f, &mut b).ok()?;
+            b
+        };
+        let mut inner = zip::ZipArchive::new(std::io::Cursor::new(&jar_bytes)).ok()?;
+        read_text(&mut inner, "version.json")
+    })?;
+    let root: serde_json::Value = serde_json::from_str(&version_json_text).ok()?;
+    let game_version = root
+        .get("inheritsFrom")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let (loader, _loader_version) = crate::services::technic::detect_loader_for_classify(&root);
+    Some(PackMeta {
+        name: root
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .filter(|s| !s.is_empty()),
         game_version,
         loader,
         summary: None,

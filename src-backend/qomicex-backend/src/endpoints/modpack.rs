@@ -101,6 +101,7 @@ pub fn router() -> Router<SharedState> {
         )
         .route("/modpack/multimc/parse-folder", post(multimc_parse_folder))
         .route("/modpack/multimc/import", post(multimc_import))
+        .route("/modpack/technic/import", post(technic_import))
         .route("/modpack/parse-path", post(parse_path))
         .route("/modpack/resolve", post(resolve))
         .route("/modpack/install", post(install))
@@ -224,6 +225,40 @@ async fn parse(
         }));
     }
 
+    // === Technic SingleZip 整合包（zip 含 bin/modpack.jar / bin/version.json）===
+    // 探测阶段不落盘（只读中央目录 + 少量条目）；安装阶段（technic_import）再
+    // 解压到临时目录并清理（大包解压耗时，必须后台可见进度，同 MultiMC / #89）。
+    if crate::services::technic::is_technic_zip(&path) {
+        let meta = crate::services::technic::parse_technic_zip(&path)
+            .map_err(|e| ApiError::bad_request("TECHNIC_PARSE_FAILED", e))?;
+        let name = meta.name.clone().unwrap_or_else(|| {
+            // 无 name：退化为 zip 文件名（去扩展名）
+            path.file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Technic 整合包".to_string())
+        });
+        return Ok(Json(ModpackParseResult {
+            name,
+            summary: None,
+            author: None,
+            version: None,
+            game_version: meta.game_version.clone(),
+            loader: meta.loader.clone().unwrap_or_default(),
+            loader_version: meta.loader_version.clone(),
+            source: "technic".to_string(),
+            files: Vec::new(),
+            optional_files: Vec::new(),
+            has_overrides: false,
+            file_count: 0,
+            overrides_zip: None,
+            icon_data: None,
+            file_id: Some(file_id),
+            pack_type: Some("technic".to_string()),
+            source_id: None,
+            source_path: Some(path.to_string_lossy().into_owned()),
+        }));
+    }
+
     let parsed = parse_local_pack_file(&path).map_err(|e| {
         let _ = std::fs::remove_file(&path);
         ApiError::bad_request("MODPACK_PARSE_FAILED", e)
@@ -289,6 +324,37 @@ async fn parse_path(
             icon_data: meta.icon_data,
             file_id: None,
             pack_type: Some("multimc".to_string()),
+            source_id: None,
+            source_path: Some(path.to_string_lossy().into_owned()),
+        }));
+    }
+
+    // Technic SingleZip 整合包：同 parse 的探测（不落盘）。
+    if crate::services::technic::is_technic_zip(path) {
+        let meta = crate::services::technic::parse_technic_zip(path)
+            .map_err(|e| ApiError::bad_request("TECHNIC_PARSE_FAILED", e))?;
+        let name = meta.name.clone().unwrap_or_else(|| {
+            path.file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Technic 整合包".to_string())
+        });
+        return Ok(Json(ModpackParseResult {
+            name,
+            summary: None,
+            author: None,
+            version: None,
+            game_version: meta.game_version.clone(),
+            loader: meta.loader.clone().unwrap_or_default(),
+            loader_version: meta.loader_version.clone(),
+            source: "technic".to_string(),
+            files: Vec::new(),
+            optional_files: Vec::new(),
+            has_overrides: false,
+            file_count: 0,
+            overrides_zip: None,
+            icon_data: None,
+            file_id: None,
+            pack_type: Some("technic".to_string()),
             source_id: None,
             source_path: Some(path.to_string_lossy().into_owned()),
         }));
@@ -814,6 +880,357 @@ async fn run_multimc_import(
     write_pack_icon(game_dir, version_dir_name, meta.icon_data.as_deref())?;
     handle.mark_step("finalize", "done");
     Ok(())
+}
+
+/// POST /modpack/technic/import 请求体。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TechnicImportRequest {
+    /// Technic SingleZip 包体绝对路径（parse / parse-path 已验证存在）。
+    #[serde(default)]
+    pub source_path: Option<String>,
+    pub name: String,
+    pub game_dir: String,
+    /// 接受但忽略：Technic zip 根 = minecraft 目录，隔离强制（同 MultiMC，
+    /// 见 technic_import_impl 注释）；保留字段以兼容前端统一请求形状。
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub version_isolation: Option<bool>,
+}
+
+/// POST /modpack/technic/import -- 创建实例并后台执行 Technic SingleZip 导入
+/// （issue #123 期1）。骨架对齐 `multimc_import_impl`：RAII 临时清理 / 大包
+/// 后台解压 / 全局锁选名 / 失败回滚实例。版本隔离强制（zip 根内容 = minecraft
+/// 目录，必须落 `versions/{name}/`，同 MultiMC 语义）。
+async fn technic_import(
+    State(s): State<SharedState>,
+    Json(req): Json<TechnicImportRequest>,
+) -> ApiResult<Json<ModpackInstallDirectResponse>> {
+    technic_import_impl(s, req).await
+}
+
+async fn technic_import_impl(
+    s: SharedState,
+    req: TechnicImportRequest,
+) -> ApiResult<Json<ModpackInstallDirectResponse>> {
+    // 源 zip 必须存在（parse-path 前置解析过，此处兜底：用户可能在预览后移动/
+    // 删除了文件）。
+    let zip_path = match req.source_path.as_deref() {
+        Some(p) => {
+            let p = validate_source_path(p)?;
+            if !p.is_file() {
+                return Err(ApiError::not_found(
+                    "TECHNIC_SOURCE_NOT_FOUND",
+                    "Technic 整合包文件不存在或已被移动/删除，请重新选择",
+                ));
+            }
+            p.to_path_buf()
+        }
+        None => {
+            return Err(ApiError::bad_request(
+                "TECHNIC_SOURCE_REQUIRED",
+                "缺少 sourcePath（Technic 包体绝对路径）",
+            ))
+        }
+    };
+    // 上传的 zip（位于 modpack-uploads/）导入完成后删除，避免累积（同 MultiMC）。
+    let cleanup_upload = zip_path.starts_with(&modpack_uploads_dir()?);
+
+    // 元数据只读解析（zip 根 bin/version.json 或 modpack.jar 内 version.json）。
+    let meta = crate::services::technic::parse_technic_zip(&zip_path)
+        .map_err(|e| ApiError::bad_request("TECHNIC_PARSE_FAILED", e))?;
+    let game_version = meta.game_version.clone();
+    let fallback_name = meta.name.clone().unwrap_or_else(|| {
+        zip_path
+            .file_stem()
+            .map(|st| st.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    let base_name = sanitize_instance_name(if req.name.trim().is_empty() {
+        fallback_name.as_str()
+    } else {
+        req.name.trim()
+    });
+    let game_dir = validate_source_path(&req.game_dir)?.to_path_buf();
+    let game_dir = crate::services::install_service::absolute_path(&game_dir.to_string_lossy());
+    // Technic zip 根内容就是 minecraft 目录（含 mods/config 等版本隔离内容），
+    // 必须写入 `versions/{name}` 隔离目录（同 MultiMC：共享根会让内容与启动
+    // 路径不一致），强制隔离。
+    let version_isolation = true;
+    // 并发导入同名实例的选名竞态用全局锁串行化（同 multimc_import_impl）。
+    static TECHNIC_IMPORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = TECHNIC_IMPORT_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let name = unique_instance_name(&game_dir, &base_name);
+    let mut inst = crate::services::instance::GameInstance::default();
+    inst.name = name.clone();
+    inst.game_version = game_version.clone();
+    inst.loader = meta.loader.clone();
+    inst.loader_version = meta.loader_version.clone();
+    inst.game_dir = game_dir.to_string_lossy().into_owned();
+    inst.version_isolation = Some(version_isolation);
+    inst.modpack_name = Some(base_name.clone());
+    let created = s.instance.create(inst);
+    drop(_guard);
+    let instance_id = created.id.clone();
+
+    let tracker = s.install_tracker.clone();
+    let mgr = s.download_manager.load_full();
+    let http_client = s.http_client.clone();
+    let inst_svc = s.instance.clone();
+    let gd = game_dir.to_string_lossy().into_owned();
+    let inst_id_inner = instance_id.clone();
+    let technic_root = technic_imports_dir()?;
+
+    tracker.start_modpack_install(instance_id.clone(), move |handle| async move {
+        // RAII：失败/成功都清理解压目录与上传 zip（成功路径在导入体内已无临时
+        // 数据时由 Drop 兜底，幂等）。
+        struct Cleanup {
+            dirs: Vec<PathBuf>,
+            files: Vec<PathBuf>,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                for d in &self.dirs {
+                    let _ = std::fs::remove_dir_all(d);
+                }
+                for f in &self.files {
+                    let _ = std::fs::remove_file(f);
+                }
+            }
+        }
+        let mut cleanup = Cleanup {
+            dirs: Vec::new(),
+            files: Vec::new(),
+        };
+        let extract_dir = technic_root.join(uuid::Uuid::new_v4().to_string());
+        cleanup.dirs.push(extract_dir.clone());
+        if cleanup_upload {
+            cleanup.files.push(zip_path.clone());
+        }
+
+        let result = run_technic_import(
+            &handle,
+            &mgr,
+            &http_client,
+            &zip_path,
+            &extract_dir,
+            &meta,
+            &gd,
+            &name,
+        )
+        .await;
+        drop(cleanup);
+        if result.is_err() {
+            // 回滚：删除实例记录 + 版本隔离目录（同 MultiMC：删除失败保留记录
+            // 防幽灵实例，错误并入任务失败信息）。
+            if let Err(e) = inst_svc.try_delete(&inst_id_inner) {
+                let msg = format!(
+                    "{}；另：{e}，实例记录已保留，请手动删除或重试",
+                    result.as_ref().err().map(String::as_str).unwrap_or("")
+                );
+                return Err(msg);
+            }
+        }
+        result
+    });
+
+    Ok(Json(ModpackInstallDirectResponse { instance_id }))
+}
+
+/// Technic SingleZip 导入后台任务（issue #123 期1）：
+/// 1. extract：zip 解压到临时目录（zip 根 = minecraft 目录）；
+/// 2. install-game：标准安装管线装 MC + loader（loader 由 version.json 识别）；
+/// 3. copy-files：包内容（zip 根）拷入 `versions/{name}/`；
+/// 4. finalize：收尾（图标落盘）。
+///
+/// 对齐 Prism：version.json 仅用于**识别** MC/loader，游戏文件由安装管线按
+/// 官方 manifest 下载（不信任包内 bin/ 的第三方库副本）；bin/modpack.jar
+/// 内含 version.json 的标准包**不注入** jar 本体（其 mod 内容在包根 mods/ 等
+/// 目录已就位）。
+#[allow(clippy::too_many_arguments)]
+async fn run_technic_import(
+    handle: &InstallHandle,
+    mgr: &Arc<qomicex_downloader::DownloadManager>,
+    http_client: &reqwest::Client,
+    zip_path: &std::path::Path,
+    extract_dir: &std::path::Path,
+    meta: &crate::services::technic::TechnicMeta,
+    game_dir: &str,
+    version_dir_name: &str,
+) -> Result<(), String> {
+    use InstallStepSpec as S;
+    handle.define_steps(
+        &[
+            S {
+                id: "extract",
+                weight: 15.0,
+            },
+            S {
+                id: "install-game",
+                weight: 55.0,
+            },
+            S {
+                id: "copy-files",
+                weight: 25.0,
+            },
+            S {
+                id: "finalize",
+                weight: 5.0,
+            },
+        ],
+        crate::services::install_service::INSTALL_STEP_BUDGET_TOP,
+    );
+
+    // === 1. 解压（zip 根 = minecraft 目录）===
+    handle.mark_step("extract", "active");
+    handle.set_stage("extracting-modpack");
+    extract_zip_file_progressed(zip_path, extract_dir, &mut |done, total| {
+        let pct = if total > 0 {
+            done as f64 * 100.0 / total as f64
+        } else {
+            100.0
+        };
+        handle.set_step_percent("extract", pct);
+        handle.set_current_file(&format!("解压整合包文件 {done}/{total}..."));
+    })?;
+    handle.mark_step("extract", "done");
+
+    // === 2. 安装 MC + loader（标准管线，嵌套步骤以 step_budget 平铺进本表）===
+    handle.mark_step("install-game", "active");
+    handle.set_stage("downloading-game");
+    let loader_msg = match (&meta.loader, &meta.loader_version) {
+        (Some(l), Some(v)) => format!("Minecraft {} + {l} {v}", meta.game_version),
+        (Some(l), None) => format!("Minecraft {} + {l}", meta.game_version),
+        _ => format!("Minecraft {}", meta.game_version),
+    };
+    handle.update(|f| {
+        f.set_status(InstallStatus::Installing);
+        f.current_file = loader_msg;
+    });
+    let data = InstallRequestData {
+        game_version: meta.game_version.clone(),
+        game_dir: game_dir.to_string(),
+        version_dir_name: version_dir_name.to_string(),
+        loader: meta.loader.clone(),
+        loader_version: meta.loader_version.clone(),
+        addons: Vec::new(),
+        download_threads: 8,
+        version_isolation: true,
+        download_source_id: crate::settings::get_global_file_download_source(),
+        optifine_version: None,
+    };
+    run_install_pipeline(handle, mgr.clone(), http_client.clone(), "", data, 55.0).await?;
+    handle.mark_step("install-game", "done");
+
+    // === 3. 拷贝包内容（zip 根 = minecraft 目录 → versions/{name}/）===
+    handle.mark_step("copy-files", "active");
+    handle.set_stage("copying-files");
+    handle.set_current_file("拷贝实例内容...");
+    // Technic zip 根直接就是 minecraft 目录（无 .minecraft 包装），按 MultiMC 的
+    // 顶层拷贝语义拷入版本隔离目录；libraries 仍落共享库目录。
+    copy_technic_content(extract_dir, Path::new(game_dir), version_dir_name)?;
+    handle.mark_step("copy-files", "done");
+
+    // === 4. 收尾 ===
+    handle.mark_step("finalize", "active");
+    handle.set_stage("finishing");
+    handle.set_current_file("导入完成");
+    handle.mark_step("finalize", "done");
+    Ok(())
+}
+
+/// 拷贝 Technic 包内容（zip 根 = minecraft 目录）到 `versions/{name}/`。
+///
+/// 规则：顶层 `bin/` 是 Technic 安装残壳（modpack.jar / version.json），元数据
+/// 已消费，内容不参与启动，不拷（对齐 Prism 只消费元数据的行为）；顶层
+/// `libraries/` 落共享库目录；其余递归拷入版本隔离目录。
+fn copy_technic_content(
+    extract_root: &Path,
+    game_root: &Path,
+    version_dir_name: &str,
+) -> Result<u64, String> {
+    let dest = game_root.join("versions").join(version_dir_name);
+    std::fs::create_dir_all(&dest)
+        .map_err(|e| format!("创建实例目录失败 {}: {e}", dest.display()))?;
+    let mut files = 0u64;
+    let entries = std::fs::read_dir(extract_root)
+        .map_err(|e| format!("读取 {} 失败: {e}", extract_root.display()))?;
+    for e in entries.flatten() {
+        let p = e.path();
+        let name = e.file_name().to_string_lossy().into_owned();
+        if p.is_dir() {
+            if name == "bin" {
+                continue;
+            }
+            let target = if name == "libraries" {
+                game_root.join("libraries")
+            } else {
+                dest.join(&name)
+            };
+            files += copy_tree_simple(&p, &target)?;
+        } else {
+            let target = dest.join(&name);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("创建目录失败 {}: {e}", parent.display()))?;
+            }
+            std::fs::copy(&p, &target)
+                .map_err(|e| format!("拷贝失败 {} → {}: {e}", p.display(), target.display()))?;
+            files += 1;
+        }
+    }
+    Ok(files)
+}
+
+/// 递归拷贝目录树（Technic 包内容用；multimc::copy_tree 为私有，此处不引入
+/// 可见性扩散，独立实现——语义就是普通递归拷贝）。
+fn copy_tree_simple(src: &Path, dest: &Path) -> Result<u64, String> {
+    // 先建目标目录本身：递归子目录时目标父目录链由本行保证存在
+    // （复测发现：仅拷文件时建父目录，嵌套目录 a/b/c 的拷贝会在 b 层失败）。
+    std::fs::create_dir_all(dest)
+        .map_err(|e| format!("创建目录失败 {}: {e}", dest.display()))?;
+    let mut files = 0u64;
+    let entries =
+        std::fs::read_dir(src).map_err(|e| format!("读取 {} 失败: {e}", src.display()))?;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let file_name = entry.file_name();
+        if p.is_dir() {
+            files += copy_tree_simple(&p, &dest.join(&file_name))?;
+        } else {
+            let target = dest.join(&file_name);
+            std::fs::copy(&p, &target)
+                .map_err(|e| format!("拷贝失败 {} → {}: {e}", p.display(), target.display()))?;
+            files += 1;
+        }
+    }
+    Ok(files)
+}
+
+/// `{BaseDir}/temp/technic-imports/`（zip 解压根）；顺带清理超过 1 天的残留
+/// （同 multimc_imports_dir）。
+fn technic_imports_dir() -> ApiResult<PathBuf> {
+    let dir = crate::settings::resolve_base_dir()
+        .join("temp")
+        .join("technic-imports");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| ApiError::internal(format!("创建导入目录失败: {e}")))?;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    if let Ok(age) = modified.elapsed() {
+                        if age.as_secs() > 24 * 3600 {
+                            let _ = std::fs::remove_dir_all(entry.path());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(dir)
 }
 
 /// 把整合包图标（data URI）落盘为 `{gameDir}/versions/{name}/icon.png`
@@ -1732,6 +2149,21 @@ impl ModpackServiceData {
                     s,
                     MultiMcImportRequest {
                         source_id: None,
+                        source_path: Some(path.to_string()),
+                        name: req.id,
+                        game_dir: req.game_dir,
+                        version_isolation: req.version_isolation,
+                    },
+                )
+                .await?;
+                return Ok(resp.0.instance_id);
+            }
+            // Technic SingleZip（含 bin/modpack.jar / bin/version.json）：走
+            // Technic 导入管线（同 MultiMC 语义，版本隔离强制）。
+            if crate::services::technic::is_technic_zip(Path::new(path)) {
+                let resp = technic_import_impl(
+                    s,
+                    TechnicImportRequest {
                         source_path: Some(path.to_string()),
                         name: req.id,
                         game_dir: req.game_dir,

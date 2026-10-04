@@ -646,13 +646,14 @@ async fn clear_mod_updates_cache(
 }
 
 /// POST /api/settings/clear-modpack-temp — 清理整合包导入临时文件
-/// （{BaseDir}/temp/ 下 modpack-uploads / multimc-imports 及超期残留）。
+/// （{BaseDir}/temp/ 下 modpack-uploads / multimc-imports / technic-imports 及超期残留）。
 async fn clear_modpack_temp(
     State(state): State<SharedState>,
 ) -> ApiResult<Json<ClearCacheResponse>> {
     let temp_dir = state.data_dir.join("temp");
     let mut deleted = delete_all_files_in_dir(&temp_dir.join("modpack-uploads"));
     deleted += delete_all_files_in_dir(&temp_dir.join("multimc-imports"));
+    deleted += delete_all_files_in_dir(&temp_dir.join("technic-imports"));
     Ok(Json(ClearCacheResponse { deleted }))
 }
 
@@ -714,6 +715,7 @@ async fn cache_stats(State(state): State<SharedState>) -> ApiResult<Json<CacheSt
     let temp = std::env::temp_dir();
     let uploads = stat_all_files_in_dir(&state.data_dir.join("temp").join("modpack-uploads"));
     let imports = stat_all_files_in_dir(&state.data_dir.join("temp").join("multimc-imports"));
+    let technic = stat_all_files_in_dir(&state.data_dir.join("temp").join("technic-imports"));
     Ok(Json(CacheStatsResponse {
         forge_versions: stat_files_in_dir(&temp.join("ForgeVersionCache"), "html"),
         neoforge: stat_files_in_dir(&temp.join("NeoForgeVersionCache"), "json"),
@@ -727,8 +729,8 @@ async fn cache_stats(State(state): State<SharedState>) -> ApiResult<Json<CacheSt
             "json",
         ),
         modpack_temp: CacheDirStats {
-            files: uploads.files + imports.files,
-            bytes: uploads.bytes + imports.bytes,
+            files: uploads.files + imports.files + technic.files,
+            bytes: uploads.bytes + imports.bytes + technic.bytes,
         },
     }))
 }
