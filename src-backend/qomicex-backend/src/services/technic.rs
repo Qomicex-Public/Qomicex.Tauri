@@ -61,6 +61,22 @@ pub fn is_technic_zip(zip_path: &Path) -> bool {
 /// 256 MiB 上限留足余量且杜绝 4 GiB 级炸压。
 const MAX_JAR_BYTES: u64 = 256 * 1024 * 1024;
 
+/// 元数据条目（version.json / fmlversion.properties）解压后字节上限。
+/// 真实 version.json 为 KB 级；1 MiB 覆盖一切合法包且防炸压。
+pub(crate) const MAX_METADATA_ENTRY_BYTES: u64 = 1024 * 1024;
+
+/// 有界读字符串：超过 [`MAX_METADATA_ENTRY_BYTES`] 视为非法条目返回 None。
+pub(crate) fn read_bounded_string<R: std::io::Read>(entry: &mut R) -> Option<String> {
+    let mut bytes = Vec::new();
+    std::io::Read::take(entry, MAX_METADATA_ENTRY_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_METADATA_ENTRY_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
 /// 从 Technic SingleZip 包解析元数据（探测已由调用方完成）。
 ///
 /// 读取顺序对齐 Prism `TechnicPackProcessor`：
@@ -78,10 +94,8 @@ pub fn parse_technic_zip(zip_path: &Path) -> Result<TechnicMeta, String> {
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
 
     if let Ok(mut entry) = archive.by_name("bin/version.json") {
-        let mut content = String::new();
-        entry
-            .read_to_string(&mut content)
-            .map_err(|e| format!("读取 bin/version.json 失败: {e}"))?;
+        let content = read_bounded_string(&mut entry)
+            .ok_or_else(|| "读取 bin/version.json 失败或超出 1 MiB 限制".to_string())?;
         let root: Value = serde_json::from_str(&content)
             .map_err(|e| format!("解析 bin/version.json 失败: {e}"))?;
         return meta_from_version_json(&root, None);
@@ -92,7 +106,7 @@ pub fn parse_technic_zip(zip_path: &Path) -> Result<TechnicMeta, String> {
         .by_name("bin/modpack.jar")
         .map_err(|_| "整合包缺少 bin/modpack.jar".to_string())?;
     // 大小预检 + take 双保险（中央目录的 size 由包作者控制，不可信）。
-    if jar.size() as u64 > MAX_JAR_BYTES {
+    if jar.size() > MAX_JAR_BYTES {
         return Err(format!(
             "bin/modpack.jar 过大（{} MiB，上限 256 MiB），疑似异常包",
             jar.size() / 1024 / 1024
@@ -109,15 +123,14 @@ pub fn parse_technic_zip(zip_path: &Path) -> Result<TechnicMeta, String> {
     // 先判存在再读（借用分两段，避免 entry 借用与 fml 读取冲突）
     let has_version_json = inner.by_name("version.json").is_ok();
     if has_version_json {
-        let mut content = String::new();
-        {
+        let content = {
             let mut entry = inner
                 .by_name("version.json")
                 .map_err(|e| format!("读取 modpack.jar 内 version.json 失败: {e}"))?;
-            entry
-                .read_to_string(&mut content)
-                .map_err(|e| format!("读取 modpack.jar 内 version.json 失败: {e}"))?;
-        }
+            read_bounded_string(&mut entry).ok_or_else(|| {
+                "读取 modpack.jar 内 version.json 失败或超出 1 MiB 限制".to_string()
+            })?
+        };
         let root: Value = serde_json::from_str(&content)
             .map_err(|e| format!("解析 modpack.jar 内 version.json 失败: {e}"))?;
         // fml 兜底 MC 版本（Prism 同款）：version.json 的 inheritsFrom 缺失时，
@@ -140,8 +153,7 @@ fn read_fml_mcversion<R: std::io::Read + std::io::Seek>(
     inner: &mut zip::ZipArchive<R>,
 ) -> Option<String> {
     let mut entry = inner.by_name("fmlversion.properties").ok()?;
-    let mut content = String::new();
-    entry.read_to_string(&mut content).ok()?;
+    let content = read_bounded_string(&mut entry)?;
     for line in content.lines() {
         let line = line.trim();
         if let Some(v) = line.strip_prefix("fmlbuild.mcversion=") {

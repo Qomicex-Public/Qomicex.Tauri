@@ -1024,9 +1024,8 @@ fn technic_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<Pac
         name: &str,
     ) -> Option<String> {
         let mut f = archive.by_name(name).ok()?;
-        let mut s = String::new();
-        std::io::Read::read_to_string(&mut f, &mut s).ok()?;
-        Some(s)
+        // 有界读：元数据条目超 1 MiB 视为非法（与 services::technic 同语义）
+        crate::services::technic::read_bounded_string(&mut f)
     }
     // bin/version.json（zip 根）→ modpack.jar 内 version.json（含 fml 兜底）
     let version_json_text = read_text(archive, "bin/version.json").or_else(|| {
