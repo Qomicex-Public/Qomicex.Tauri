@@ -1161,6 +1161,7 @@ fn is_updatable_origin(req: &ModpackInstallRequest) -> bool {
 }
 
 /// 安装成功后落清单所需的元数据（issue #118）。
+#[derive(Clone)]
 struct ModpackManifestMeta {
     game_dir: String,
     version_dir_name: String,
@@ -1620,12 +1621,47 @@ impl ModpackServiceData {
                 optional_file_ids.as_deref(),
             )
             .await;
-            // 安装成功 → 落托管文件清单（issue #118 的更新基线）。
+            // 安装成功 → 用管线内确定的**生效版本**回写实例记录与托管清单。
+            // （CodeRabbit 评审 #183：实例在管线前以请求原始值（如 1.12）创建、
+            // 清单元数据同源，而实际安装的是 manifest 权威值（如 1.12.2）——
+            // 不回写会让两处持久化与实际安装版本不一致。）
+            // ⚠️ 实例回写**不看出处**（CodeRabbit 二轮评审）：install_direct 等入口
+            // origin=None → manifest_meta=None，若回写套在 Some(meta) 分支内，直接
+            // 安装（拖入/一键装/插件）的实例永远不会被修正。清单落盘仍仅在
+            // manifest_meta 存在（可更新实例）时执行——那是它独有的用途。
             // 清单失败**只告警**：安装本身已经完成，不能因为一份辅助记录把成功的安装
             // 报成失败（那会误导用户重装）。
             let result = match (result, &manifest_meta) {
-                (Ok(content_rels), Some(meta)) => {
-                    write_manifest_after_install(meta, version_isolation, &content_rels);
+                (Ok((content_rels, effective_gv)), meta) => {
+                    if let Some(meta) = meta {
+                        // 清单元数据改为生效版本后落清单（仅可更新实例有清单）
+                        let meta = ModpackManifestMeta {
+                            game_version: effective_gv.clone(),
+                            ..meta.clone()
+                        };
+                        write_manifest_after_install(&meta, version_isolation, &content_rels);
+                    }
+                    // 实例记录回写生效版本（失败只告警——安装已完成）
+                    if let Some(mut inst) = inst_svc.get_by_id(&inst_id_inner) {
+                        if inst.game_version != effective_gv {
+                            tracing::info!(
+                                instance = %inst_id_inner,
+                                requested = %inst.game_version,
+                                effective = %effective_gv,
+                                "整合包生效游戏版本与请求值不一致，已按 manifest 回写实例"
+                            );
+                            inst.game_version = effective_gv.clone();
+                            if let Some(meta) = meta {
+                                inst.loader_version = meta.loader_version.clone();
+                            }
+                            if inst_svc.update(&inst_id_inner, inst).is_none() {
+                                tracing::warn!(
+                                    instance = %inst_id_inner,
+                                    "生效版本回写实例失败（实例可能已被删除）"
+                                );
+                            }
+                        }
+                    }
                     Ok(())
                 }
                 (other, _) => other.map(|_| ()),
@@ -1932,7 +1968,30 @@ fn mirror_mod_url(
     (rewritten, headers)
 }
 
+/// 确定整合包安装的生效游戏版本（issue #176 复盘，评审确认的方向 A）。
+///
+/// **manifest 解析结果优先，调用方传入值仅兜底**。此前是「调用方优先，manifest 补全」，
+/// 实测踩坑：CF 的 `sortableGameVersions` 顺序为 `["1.12", "Forge", "1.12.2"]`
+/// （MeatballCraft 全部文件实测如此），前端把 `gameVersions[0]`（"1.12"）作为
+/// gameVersion 传入，而包内 `manifest.json` 的 `minecraft.version` 才是权威值
+/// （"1.12.2"）——沿用调用方值会用 1.12 去查 Forge 版本列表（112 个候选无
+/// 14.23.5.2860）→「找不到 forge x 的安装器」。
+///
+/// manifest 未覆盖该字段的场景（FTB 在线解析不下载包体、`resolve_curseforge_online`
+/// 预览留空）仍回落调用方传入值，不破坏既有入口。
+fn resolve_effective_game_version(game_version_in: &str, parsed: Option<&ParsedModpack>) -> String {
+    parsed
+        .map(|p| p.game_version.clone())
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| game_version_in.to_string())
+}
+
 /// 主安装管道（后台任务 runner）。任一步失败 → Err(msg) → tracker 置 Failed。
+///
+/// 成功返回 `(content_rels, effective_game_version)`：生效版本是管线内按
+/// `resolve_effective_game_version`（manifest 优先）确定的，调用方必须用它
+/// 回写实例记录与托管清单元数据——否则两处持久化仍标请求原始值（如 1.12），
+/// 与实际安装的 1.12.2 不一致（CodeRabbit 评审 #183 指出）。
 ///
 /// `local_pack_path` 非空时跳过包体下载，直接用该文件解析 manifest 并释放
 /// overrides（本地导入；mods 仍按源下载——mr 按 URL、cf 按 projectID:fileID）。
@@ -1957,7 +2016,7 @@ pub(crate) async fn run_modpack_pipeline(
     file_download_source: i32,
     icon_data: Option<String>,
     optional_file_ids: Option<&[i64]>,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, String), String> {
     let src = source.to_ascii_lowercase();
     let mut zip_path: Option<PathBuf> = None;
     let mut parsed: Option<ParsedModpack> = None;
@@ -2079,14 +2138,12 @@ pub(crate) async fn run_modpack_pipeline(
         apply_optional_selection(p, optional_file_ids);
     }
 
-    // === 3. 确定 game_version / loader / loader_version（调用方传入优先，manifest 补全）===
-    let mut game_version = game_version_in.to_string();
+    // === 3. 确定 game_version / loader / loader_version ===
+    // 详见 resolve_effective_game_version 的文档：game_version 以 manifest 优先。
+    let mut game_version = resolve_effective_game_version(game_version_in, parsed.as_ref());
     let mut loader = loader_in.unwrap_or_default().to_string();
     let mut loader_version = loader_version_in.unwrap_or_default().to_string();
     if let Some(p) = parsed.as_ref() {
-        if game_version.is_empty() {
-            game_version = p.game_version.clone();
-        }
         if loader.is_empty() {
             loader = p.loader.clone();
         }
@@ -2432,7 +2489,7 @@ pub(crate) async fn run_modpack_pipeline(
     });
     // 图标落盘 versions/{name}/icon.png（HMCL 约定，扫描兜底读取；CF/MR 与 MultiMC 导入一致）。
     write_pack_icon(game_dir, version_dir_name, icon_data.as_deref())?;
-    Ok(content_rels)
+    Ok((content_rels, game_version))
 }
 
 /// 把一个绝对路径折算成相对**实例根目录**的相对路径（清单基线用）。
@@ -3298,8 +3355,53 @@ mod tests {
     use super::{
         apply_optional_selection, cf_placeholder_path, is_multimc_zip, is_updatable_origin,
         modpack_target_path, parse_curseforge_manifest, parse_local_pack_file,
-        release_qml_overrides, ModpackInstallRequest, ModpackOptionalFile, ParsedModpack,
+        release_qml_overrides, resolve_effective_game_version, ModpackInstallRequest,
+        ModpackOptionalFile, ParsedModpack,
     };
+
+    /// issue #176 复盘回归：gameVersion 决策必须 manifest 优先。
+    ///
+    /// 实测背景：CF `sortableGameVersions` = ["1.12", "Forge", "1.12.2"]，
+    /// 前端传 gameVersions[0]（"1.12"），包内 manifest 是权威值 "1.12.2"。
+    /// 修复前「调用方优先」会用 1.12 查 Forge 列表（112 候选无 14.23.5.2860）
+    /// →「找不到 forge 14.23.5.2860 的安装器」。
+    #[test]
+    fn effective_game_version_prefers_manifest_over_caller() {
+        let parsed = ParsedModpack {
+            game_version: "1.12.2".to_string(),
+            loader: "forge".to_string(),
+            loader_version: "14.23.5.2860".to_string(),
+            files: Vec::new(),
+            optional_files: Vec::new(),
+        };
+
+        // 调用方传了错误值（前端 gameVersions[0]="1.12"）→ manifest 赢
+        assert_eq!(
+            resolve_effective_game_version("1.12", Some(&parsed)),
+            "1.12.2",
+            "manifest 的权威版本必须覆盖调用方传入值"
+        );
+        // 调用方传了正确值 → 仍以 manifest 为准（口径唯一，不依赖前端正确性）
+        assert_eq!(
+            resolve_effective_game_version("1.12.2", Some(&parsed)),
+            "1.12.2"
+        );
+
+        // manifest 未覆盖该字段（FTB 在线解析 / 预览留空）→ 调用方值兜底
+        let empty = ParsedModpack {
+            game_version: String::new(),
+            loader: String::new(),
+            loader_version: String::new(),
+            files: Vec::new(),
+            optional_files: Vec::new(),
+        };
+        assert_eq!(
+            resolve_effective_game_version("1.12.2", Some(&empty)),
+            "1.12.2",
+            "manifest 为空时回落调用方传入值"
+        );
+        assert_eq!(resolve_effective_game_version("1.12.2", None), "1.12.2");
+    }
 
     /// 构造「资源中心在线安装」的合法请求，测试在此基础上逐项破坏。
     fn updatable_req() -> ModpackInstallRequest {
