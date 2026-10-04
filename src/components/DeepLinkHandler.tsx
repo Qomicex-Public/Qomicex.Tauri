@@ -23,9 +23,6 @@ import {
 /** 同一条 URL 在「事件」与「待处理集合」两条路径上可能各到一次，短窗内去重。 */
 const DEDUPE_WINDOW_MS = 3000
 
-/** 「用户拒绝注册协议关联」的记忆键：拒绝后不再每次启动都问。 */
-const REGISTER_DECLINED_KEY = 'qomicex-deeplink-register-declined'
-
 /**
  * 已取出、但**尚未处理**的 URL（后端未就绪或组件正被卸载时暂存）。
  *
@@ -378,37 +375,6 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
       dispatchCurrent?.(raw)
     }
   }, [actionsReady])
-
-  // --- 协议关联引导：未关联时询问用户；用户拒绝后不再打扰 ---
-  useEffect(() => {
-    if (!isTauri() || !backendReady || blocked) return
-    if (localStorage.getItem(REGISTER_DECLINED_KEY) === '1') return
-    let cancelled = false
-    void (async () => {
-      try {
-        const registered = await invoke<boolean>('deep_link_registration_status')
-        if (cancelled || registered) return
-        const ok = await confirm(t('deepLink.registerDesc'), t('deepLink.registerTitle'))
-        if (cancelled) return
-        if (!ok) {
-          localStorage.setItem(REGISTER_DECLINED_KEY, '1')
-          notify(t('deepLink.registerDeclined'), 'info')
-          return
-        }
-        const done = await invoke<boolean>('register_deep_link')
-        if (cancelled) return
-        notify(
-          t(done ? 'deepLink.registerSuccess' : 'deepLink.registerFailed'),
-          done ? 'success' : 'error',
-        )
-      } catch (e) {
-        console.error('[deep-link] registration check failed:', e)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [backendReady, blocked, confirm, notify, t])
 
   return null
 }

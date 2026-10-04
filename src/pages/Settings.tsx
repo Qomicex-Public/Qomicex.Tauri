@@ -20,6 +20,7 @@ import { PageShell } from '../components/PageShell.tsx'
 import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
 import RelayNodesSection from '../components/settings/RelayNodesSection.tsx'
 import DebugTab from '../components/DebugTab.tsx'
+import DeepLinkSection from '../components/DeepLinkSection.tsx'
 import LogTab from '../components/LogTab.tsx'
 import ToolboxTab from '../components/ToolboxTab.tsx'
 import PluginStoreTab from '../components/PluginStoreTab.tsx'
@@ -1679,6 +1680,8 @@ export default function Settings() {
                 }}
               />
             </SettingSection>
+
+            <DeepLinkSection />
 
             <SettingSection title={t('settings.network.proxy')} icon={<Globe className="h-4 w-4" />}>
               <SettingRow
