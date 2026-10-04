@@ -331,8 +331,8 @@ pub fn run() {
             updater::take_pending_update_notice,
             deep_link::take_pending_deep_link,
             deep_link::complete_deep_link,
-            deep_link::deep_link_registration_status,
-            deep_link::register_deep_link
+            deep_link::deep_link_status,
+            deep_link::set_deep_link_enabled
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

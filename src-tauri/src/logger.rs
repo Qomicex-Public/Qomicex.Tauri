@@ -16,7 +16,10 @@ static LOG_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// 解析数据目录：`QOMICEX_HOME` 环境变量优先，否则 `{LocalAppData}/qomicex-launcher`
 /// （与后端 settings.rs 的 `resolve_base_dir` 对齐；不读 bootstrap 文件）。
-fn base_dir() -> PathBuf {
+///
+/// 对 crate 内可见：`deep_link` 用它定位 `deep-link.json` 偏好文件。统一走这里，
+/// 避免再多出一套数据目录解析逻辑。
+pub(crate) fn base_dir() -> PathBuf {
     if let Ok(env) = std::env::var("QOMICEX_HOME") {
         if !env.trim().is_empty() {
             return PathBuf::from(env);

@@ -118,25 +118,24 @@ pub fn init(app: &AppHandle) {
     register_scheme(app);
 }
 
-/// 确保本可执行文件是 `qomicex-launcher://` 的处理器——**只在需要时写**。
+/// 确保本可执行文件是 `qomicex-launcher://` 的处理器——**默认自动写**。
 ///
-/// 为什么不是无条件 `register_all()`：Windows 上它把 `HKCU\Software\Classes\qomicex-launcher`
-/// 的处理器改写成「当前 exe」。启动器同时存在 NSIS 安装版与免安装/解压版，无条件重写会让
-/// 后运行的任意一份构建（含临时目录里的 dev 产物）抢走整个系统的协议关联，那份文件一被
-/// 删除，链接就彻底打不开。故先用 `is_registered()` 查：已是当前 exe 就什么都不做。
+/// 为什么默认就写：协议关联是用户装这个启动器时期望拿到的能力（否则网页/快捷方式里的
+/// `qomicex-launcher://` 链接一律无效，等于该功能不存在）。关联写入限于当前用户
+/// （Windows `HKCU`、Linux 用户级 `.desktop`），不需要管理员权限，且随时可在
+/// 「设置 → 系统集成」里关掉——所以默认开、可关，而不是每次启动弹窗问一遍。
 ///
-/// 不满足时**不在这里补注册**，而是置一个「需要注册」标记，由前端在初始化向导（OOBE）
-/// 阶段或启动时提示用户确认——注册表写入属用户可见的系统改动，不该在无人知情时发生。
+/// **用户意图与实际关联状态必须分开看**：用户关掉开关后我们调用 `unregister()`，
+/// 下次启动 `is_registered()` 自然是 false——若只看它就会**又注册回去**，开关形同虚设。
+/// 故先读 [`DeepLinkPreference`]（缺省 `auto_register = true`），只有用户显式关过才不写。
+///
 /// 失败只记日志：注册不了不应让启动器起不来。
 fn register_scheme(app: &AppHandle) {
     #[cfg(any(windows, target_os = "linux"))]
     {
-        // Linux 上 `is_registered()` 只跑 `xdg-mime query default x-scheme-handler/<scheme>`
-        // 并检查输出里是否含按**可执行文件名**拼的 `<name>-handler.desktop`（见 crate
-        // 2.4.10 源码），**不核对那个 desktop 文件的 `Exec=` 指向哪个文件**。于是安装版与
-        // 便携版同名（都叫 `Qomicex Launcher`）但路径不同时，它会报 true，而实际关联可能
-        // 指向另一份已被删/被移走的程序——用户点链接会静默失败。
-        // 因此 Linux 上再补一步：读出真实 desktop 文件的 Exec，确认指向当前可执行文件。
+        let preference = DeepLinkPreference::load();
+
+        // 先查「当前是否真的关联到本构建」——Linux 上要比对 desktop 的 Exec（见下）。
         #[cfg(target_os = "linux")]
         let associated = app.deep_link().is_registered(SCHEME).unwrap_or(false)
             && linux_handler_exec_matches(SCHEME);
@@ -149,27 +148,133 @@ fn register_scheme(app: &AppHandle) {
             }
         };
 
-        if associated {
-            crate::tauri_log!("deep-link", "scheme '{SCHEME}' already associated");
-            app.state::<DeepLinkRegistration>().set_registered();
-        } else {
-            crate::tauri_log!(
-                "deep-link",
-                "scheme '{SCHEME}' not associated with this build; awaiting user"
-            );
-            app.state::<DeepLinkRegistration>().set_pending();
+        match startup_action(preference.auto_register, associated) {
+            StartupAction::LeaveDisabled => {
+                crate::tauri_log!("deep-link", "auto-register disabled by user; skipping");
+                app.state::<DeepLinkRegistration>().set_disabled();
+            }
+            StartupAction::KeepRegistered => {
+                crate::tauri_log!("deep-link", "scheme '{SCHEME}' already associated");
+                app.state::<DeepLinkRegistration>().set_registered();
+            }
+            StartupAction::Register => {
+                // 未关联（全新安装 / 关联被别的程序抢走 / 指向已删除的旧构建）→ 写入。
+                match app.deep_link().register_all() {
+                    Ok(()) => {
+                        crate::tauri_log!("deep-link", "scheme '{SCHEME}' auto-registered");
+                        app.state::<DeepLinkRegistration>().set_registered();
+                    }
+                    Err(e) => {
+                        crate::tauri_log!("deep-link", "auto-register failed: {e}");
+                        app.state::<DeepLinkRegistration>().set_failed();
+                    }
+                }
+            }
         }
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         // macOS 只支持构建期由 Info.plist 注册（crate 层返回 UnsupportedPlatform）。
+        // 装机即有，无需也无法在运行时改。
         app.state::<DeepLinkRegistration>().set_registered();
+    }
+}
+
+/// 启动时该对协议关联做什么。
+#[derive(Debug, PartialEq, Eq)]
+enum StartupAction {
+    /// 用户显式关过 → 什么都不做（**不因为「检测到未关联」就注册回去**）。
+    LeaveDisabled,
+    /// 已关联到本构建 → 保持。
+    KeepRegistered,
+    /// 应当写入关联。
+    Register,
+}
+
+/// 启动决策（纯函数，便于测试）。
+///
+/// 这是本次改动最容易写错的一处：把「用户意图」与「实际关联状态」两个布尔组合成正确动作。
+/// 尤其**不能**写成「未关联就注册」——用户主动关掉后 `associated` 必然是 false，
+/// 那样写会让开关在下次启动时被自动撤销。
+fn startup_action(auto_register: bool, associated: bool) -> StartupAction {
+    if !auto_register {
+        StartupAction::LeaveDisabled
+    } else if associated {
+        StartupAction::KeepRegistered
+    } else {
+        StartupAction::Register
+    }
+}
+
+/// 用户对协议关联的**意图**（与「当前是否真的关联」是两件事）。
+///
+/// 持久化在 `{BaseDir}/deep-link.json`，与 `updater` 把交接文件放在 `{data_dir}/updates/`
+/// 同一思路——放数据目录而不是 localStorage，因为**启动阶段的 Rust 侧要能读到它**
+/// （前端那时还没跑起来）。缺省 `auto_register = true`：全新安装与老用户都默认开。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct DeepLinkPreference {
+    #[serde(default = "auto_register_default")]
+    auto_register: bool,
+}
+
+/// 「自动注册」的默认值——**唯一事实源**。
+///
+/// 两个调用点共用它：serde 反序列化缺字段时（`#[serde(default = ...)]`）与
+/// [`DeepLinkPreference::default`]（文件缺失/损坏时）。二者若各写一个字面量 `true`，
+/// 改一处就会漏掉另一处、导致「缺字段」与「文件损坏」行为不一致
+/// （实测：把 `default_true` 改成 false 时，只有「缺字段」那条测试失败）。
+const fn auto_register_default() -> bool {
+    true
+}
+
+impl Default for DeepLinkPreference {
+    fn default() -> Self {
+        Self {
+            auto_register: auto_register_default(),
+        }
+    }
+}
+
+impl DeepLinkPreference {
+    fn path() -> std::path::PathBuf {
+        crate::logger::base_dir().join("deep-link.json")
+    }
+
+    /// 读取偏好。文件缺失/损坏一律回落到默认（true）——默认开是期望行为，
+    /// 不能因为一个坏文件就让功能静默失效。
+    fn load() -> Self {
+        Self::load_from(&Self::path())
+    }
+
+    /// 写入偏好。失败只记日志：关不掉开关比启动失败轻得多。
+    fn save(&self) {
+        if let Err(e) = self.save_to(&Self::path()) {
+            crate::tauri_log!("deep-link", "write preference failed: {e}");
+        }
+    }
+
+    /// 路径参数化的读取（供测试注入临时目录）。
+    fn load_from(path: &std::path::Path) -> Self {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    /// 路径参数化的写入（供测试注入临时目录）。
+    fn save_to(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| std::io::Error::other(e.to_string()))?;
+        std::fs::write(path, json)
     }
 }
 
 /// Linux：确认 `x-scheme-handler/<scheme>` 对应的 desktop 文件 `Exec=` 指向**当前可执行文件**。
 ///
-/// 找不到文件/读不出 Exec 时返回 `false`（宁可提示用户重新确认一次，也不要让一个指向别处的
+/// 找不到文件/读不出 Exec 时返回 `false`（宁可重新写一次关联，也不要让一个指向别处的
 /// 关联被当成「已就绪」）。
 #[cfg(target_os = "linux")]
 fn linux_handler_exec_matches(scheme: &str) -> bool {
@@ -242,20 +347,38 @@ fn linux_handler_exec_matches(scheme: &str) -> bool {
     false
 }
 
-/// 协议关联状态，供前端决定是否在 OOBE / 启动时提示注册。
+/// 协议关联状态：供前端渲染「设置 → 系统集成」开关的初始态。
+///
+/// 三态而非布尔：`Failed` 是「想注册但写失败了」，UI 应显示为未启用并允许重试，
+/// 不能与「用户主动关掉」混为一谈（后者不该被自动纠正回来）。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationState {
+    /// 已关联（或 macOS 这种构建期即关联）。
+    #[default]
+    Registered,
+    /// 用户显式关闭，且已（尝试）注销。
+    Disabled,
+    /// 想注册但失败（权限/系统限制），可重试。
+    Failed,
+}
+
 #[derive(Default)]
-pub struct DeepLinkRegistration(Mutex<bool>);
+pub struct DeepLinkRegistration(Mutex<RegistrationState>);
 
 impl DeepLinkRegistration {
     fn set_registered(&self) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = RegistrationState::Registered;
     }
 
-    fn set_pending(&self) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    fn set_disabled(&self) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = RegistrationState::Disabled;
     }
 
-    fn is_registered(&self) -> bool {
+    fn set_failed(&self) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = RegistrationState::Failed;
+    }
+
+    fn get(&self) -> RegistrationState {
         *self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
@@ -288,33 +411,237 @@ pub fn complete_deep_link(state: tauri::State<'_, PendingDeepLink>, url: String)
     state.complete(&url)
 }
 
-/// 查询协议关联状态（false = 需要用户确认后注册）。
-#[tauri::command]
-pub fn deep_link_registration_status(state: tauri::State<'_, DeepLinkRegistration>) -> bool {
-    state.is_registered()
+/// 协议关联状态快照（设置页开关的初始值）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepLinkStatus {
+    /// 开关是否处于「已启用」。
+    enabled: bool,
+    /// 当前平台是否支持运行时开启/关闭。
+    ///
+    /// macOS 恒为 `false`：协议由打包期 `Info.plist` 的 `CFBundleURLTypes` 声明，
+    /// crate 的 `register`/`unregister` 都返回 `UnsupportedPlatform`。UI 据此把开关
+    /// 置灰只读并说明原因，而不是给一个点了没反应的开关。
+    changeable: bool,
+    /// 上一次自动注册是否失败（UI 可提示「重试」）。
+    failed: bool,
 }
 
-/// 写入协议关联（前端在 OOBE / 提示确认后调用）。返回是否成功。
-#[cfg(any(windows, target_os = "linux"))]
+/// 查询协议关联状态。
 #[tauri::command]
-pub fn register_deep_link(app: AppHandle) -> bool {
-    match app.deep_link().register_all() {
-        Ok(()) => {
-            app.state::<DeepLinkRegistration>().set_registered();
-            // 成功路径同样不记 argv / 不记额外信息，只记结果。
-            crate::tauri_log!("deep-link", "scheme '{SCHEME}' registration confirmed");
-            true
-        }
-        Err(e) => {
-            crate::tauri_log!("deep-link", "register_all failed: {e}");
-            false
-        }
+pub fn deep_link_status(state: tauri::State<'_, DeepLinkRegistration>) -> DeepLinkStatus {
+    let current = state.get();
+    DeepLinkStatus {
+        enabled: current == RegistrationState::Registered,
+        changeable: cfg!(any(windows, target_os = "linux")),
+        failed: current == RegistrationState::Failed,
     }
 }
 
-/// macOS 无运行时注册能力（由 Info.plist 在打包期声明），恒返回 false。
-#[cfg(not(any(windows, target_os = "linux")))]
+/// 开启/关闭协议关联（设置页开关）。返回操作后的状态快照。
+///
+/// 关闭时**同时**把用户意图写进 [`DeepLinkPreference`]，否则下次启动会因为
+/// 「检测到未关联」而自动注册回去——开关就白关了。
 #[tauri::command]
-pub fn register_deep_link(_app: AppHandle) -> bool {
-    false
+pub fn set_deep_link_enabled(app: AppHandle, enabled: bool) -> DeepLinkStatus {
+    let state = app.state::<DeepLinkRegistration>();
+
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        if enabled {
+            match app.deep_link().register_all() {
+                Ok(()) => {
+                    DeepLinkPreference {
+                        auto_register: true,
+                    }
+                    .save();
+                    state.set_registered();
+                    crate::tauri_log!("deep-link", "scheme '{SCHEME}' enabled by user");
+                }
+                Err(e) => {
+                    crate::tauri_log!("deep-link", "enable failed: {e}");
+                    // 注册失败不写偏好：意图仍是想开，下次启动应再试一次。
+                    state.set_failed();
+                }
+            }
+        } else {
+            match app.deep_link().unregister(SCHEME) {
+                Ok(()) => {
+                    DeepLinkPreference {
+                        auto_register: false,
+                    }
+                    .save();
+                    state.set_disabled();
+                    crate::tauri_log!("deep-link", "scheme '{SCHEME}' disabled by user");
+                }
+                Err(e) => {
+                    // 注销失败就不改意图，也不谎报已关——否则用户以为关了、链接却还能唤起。
+                    crate::tauri_log!("deep-link", "disable failed: {e}");
+                    state.set_registered();
+                }
+            }
+        }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        // macOS：协议写在 Info.plist，运行时改不了。这里不该被调用（changeable=false
+        // 时前端已置灰），真被调用也保持原状、只记日志。
+        let _ = enabled;
+        crate::tauri_log!("deep-link", "runtime toggle unsupported on this platform");
+    }
+
+    let current = state.get();
+    DeepLinkStatus {
+        enabled: current == RegistrationState::Registered,
+        changeable: cfg!(any(windows, target_os = "linux")),
+        failed: current == RegistrationState::Failed,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        // 同一进程内多次调用要有区别：拼上纳秒时间戳。
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("qmx-deeplink-{tag}-{}-{nanos}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// 本次改动的**核心不变量**：偏好文件缺失时必须默认「自动注册」。
+    ///
+    /// 若这里退化成 false，全新安装的用户会打不开链接，而且没有任何 UI 提示
+    /// （开关会显示成关，用户不知道该开）——功能静默失效。
+    #[test]
+    fn preference_defaults_to_auto_register_when_missing() {
+        let dir = temp_dir("missing");
+        let path = dir.join("deep-link.json");
+        assert!(!path.exists());
+        assert!(
+            DeepLinkPreference::load_from(&path).auto_register,
+            "偏好文件缺失时应默认自动注册"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 用户关掉开关后写下的意图，必须在下次启动时被读到——否则
+    /// `register_scheme` 会因为「检测到未关联」而重新注册，开关等于失效。
+    #[test]
+    fn disabled_intent_survives_roundtrip() {
+        let dir = temp_dir("roundtrip");
+        let path = dir.join("deep-link.json");
+
+        DeepLinkPreference {
+            auto_register: false,
+        }
+        .save_to(&path)
+        .expect("save");
+        assert!(
+            !DeepLinkPreference::load_from(&path).auto_register,
+            "写下的「已关闭」意图必须能读回来"
+        );
+
+        // 再切回开启也要能往返
+        DeepLinkPreference {
+            auto_register: true,
+        }
+        .save_to(&path)
+        .expect("save");
+        assert!(DeepLinkPreference::load_from(&path).auto_register);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 文件损坏按默认处理（true），不能让一个坏 JSON 把功能关掉。
+    #[test]
+    fn corrupted_preference_falls_back_to_enabled() {
+        let dir = temp_dir("corrupt");
+        let path = dir.join("deep-link.json");
+        std::fs::write(&path, "{ this is not json").expect("write");
+        assert!(
+            DeepLinkPreference::load_from(&path).auto_register,
+            "损坏的偏好文件应回落为自动注册，而不是静默关闭功能"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 旧版本写的 JSON 缺字段时也按默认（true）。
+    #[test]
+    fn preference_missing_field_defaults_true() {
+        let dir = temp_dir("partial");
+        let path = dir.join("deep-link.json");
+        std::fs::write(&path, "{}").expect("write");
+        assert!(DeepLinkPreference::load_from(&path).auto_register);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 状态机三态互不混淆：Failed（想开但失败）不能被当成 Disabled（用户主动关），
+    /// 否则 UI 会把「可重试的失败」显示成「已按你要求关闭」，用户无从恢复。
+    #[test]
+    fn registration_states_are_distinct() {
+        let s = DeepLinkRegistration::default();
+        s.set_failed();
+        assert_eq!(s.get(), RegistrationState::Failed);
+        s.set_disabled();
+        assert_eq!(s.get(), RegistrationState::Disabled);
+        s.set_registered();
+        assert_eq!(s.get(), RegistrationState::Registered);
+    }
+
+    /// 启动决策的**核心不变量**：用户关掉后即便处于「未关联」，也绝不自动注册回去。
+    ///
+    /// 这一条是反向探针逼出来的——最初这段逻辑内联在需要 `AppHandle` 的
+    /// `register_scheme` 里，把 `if !白名单` 改成 `if false` 后**全部测试照样通过**，
+    /// 等于「开关会不会失效」这件事没有任何覆盖。抽成纯函数后才钉得住。
+    ///
+    /// 若这里退化成 `Register`：用户关掉开关 → unregister → 下次启动检测到未关联
+    /// → 又注册回去 → 开关形同虚设（而 UI 上还会显示成「已关闭」，自相矛盾）。
+    #[test]
+    fn user_disabled_wins_over_unassociated() {
+        assert_eq!(
+            startup_action(false, false),
+            StartupAction::LeaveDisabled,
+            "用户已关闭时必须保持关闭，即便当前未关联"
+        );
+        // 用户关闭后关联被别的程序建起来，也不该去动它
+        assert_eq!(
+            startup_action(false, true),
+            StartupAction::LeaveDisabled,
+            "用户已关闭时不要插手关联状态"
+        );
+    }
+
+    /// 默认（未关闭）时的决策矩阵。
+    #[test]
+    fn default_intent_registers_only_when_unassociated() {
+        assert_eq!(
+            startup_action(true, false),
+            StartupAction::Register,
+            "默认开启且未关联 → 应写入"
+        );
+        assert_eq!(
+            startup_action(true, true),
+            StartupAction::KeepRegistered,
+            "默认开启且已关联 → 不该重复写"
+        );
+    }
+
+    /// 默认值的两个入口必须一致（单一事实源）。
+    #[test]
+    fn default_value_has_single_source_of_truth() {
+        assert!(auto_register_default());
+        assert!(DeepLinkPreference::default().auto_register);
+        // 经 serde 走「JSON 缺字段」路径也应与 Default 一致
+        let from_empty: DeepLinkPreference = serde_json::from_str("{}").expect("parse {}");
+        assert_eq!(
+            from_empty.auto_register,
+            DeepLinkPreference::default().auto_register,
+            "serde 缺字段回落与 Default 必须同源，否则两条路径会漂移"
+        );
+    }
 }
