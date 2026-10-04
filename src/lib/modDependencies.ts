@@ -28,6 +28,25 @@ import type { ModDependency, ModMetadata } from '../types/index.ts'
  * 加载器 / 平台自身提供的 mod id：这些条目在模组元数据里普遍被声明为强制依赖，
  * 但它们的「提供方」是加载器而非某个 jar，恒被满足，因此必须排除，否则每个
  * Forge/Fabric 模组都会被标成「缺失依赖」。
+ *
+ * ⚠️ 只放**加载器自身**的 id。判断标准是「该 id 是否由加载器在运行时恒提供」，
+ * 有权威依据（加载器自己的元数据文件）才收录：
+ * - `minecraft` / `java`：游戏与 JVM，加载器内置（Fabric `MinecraftGameProvider`
+ *   返回 `minecraft`）；
+ * - `fabricloader`：Fabric Loader 自身 `fabric.mod.json` 的 `id`
+ *   （https://github.com/FabricMC/fabric-loader/blob/master/src/main/resources/fabric.mod.json）；
+ * - `quilt_loader`：Quilt Loader 自身 `quilt.mod.json` 的 `id`；它另通过 `provides`
+ *   声明 `fabricloader`（https://github.com/QuiltMC/quilt-loader/blob/master/src/main/resources/quilt.mod.json）；
+ * - `forge` / `neoforge`：各自加载器的 mod id；
+ * - `javafml` / `lowcodefml` / `modlauncher`：随 Forge 系加载器一同提供的语言/加载组件。
+ *
+ * 🚫 **不要把「模组 / API 的 id」放进来**（PR #177 评审指出后修正）：
+ * - `fabric` 是 **1.19.2 之前旧版 Fabric API 的 mod id**（1.19.2 起改为 `fabric-api`，
+ *   见 https://wiki.fabricmc.net/tutorial:setup）。把它当平台 id 会让「装了依赖旧版
+ *   Fabric API 的模组、但没装该 API」这一真实的启动失败原因被静默吞掉。
+ * - `quilt` 同理不是加载器 id（Quilt Loader 自身是 `quilt_loader`）。
+ * 这类 id 应当正常走「已启用模组的 modId / providesIds」匹配——装了就能匹配上，
+ * 没装就该报缺失，这正是本功能的目的。
  */
 const PLATFORM_PROVIDED_IDS: ReadonlySet<string> = new Set([
   'minecraft',
@@ -36,10 +55,8 @@ const PLATFORM_PROVIDED_IDS: ReadonlySet<string> = new Set([
   'neoforge',
   'fabricloader',
   'fabric-loader',
-  'fabric',
   'quilt_loader',
   'quiltloader',
-  'quilt',
   'javafml',
   'lowcodefml',
   'modlauncher',
