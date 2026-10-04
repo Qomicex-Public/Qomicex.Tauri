@@ -117,6 +117,38 @@ impl IntoResponse for ApiError {
 /// 便捷 Result 别名，供各端点 handler 使用。
 pub type ApiResult<T> = Result<T, ApiError>;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::endpoints::connector::map_connector_error;
+
+    /// 回归（issue #182）：联机 join/host 失败时真实报错（如「未在 EasyTier 网络
+    /// 中发现联机中心（超时 30s）」）被塞进 UPSTREAM_ERROR 的 message，而前端
+    /// CODE_TO_KEY 把 UPSTREAM_ERROR 翻译成通用文案「上游服务请求失败」并丢弃
+    /// message → 用户无法排障。改用专属错误码 CONNECTOR_FAILED：不在前端映射表
+    /// 中，displayMessage 回退后端 message，真实原因原样透出。
+    #[test]
+    fn connector_error_uses_dedicated_code_and_keeps_message() {
+        let err = map_connector_error(qomicex_connector::error::ScaffoldingError::CenterNotFound(
+            "未在 EasyTier 网络中发现联机中心（超时 30s）".to_string(),
+        ));
+        assert_eq!(err.code, "CONNECTOR_FAILED");
+        assert_eq!(err.status, reqwest::StatusCode::BAD_GATEWAY);
+        assert!(
+            err.message.contains("未在 EasyTier 网络中发现联机中心"),
+            "message 必须保留真实报错，实际: {}",
+            err.message
+        );
+    }
+
+    /// 守护：非联机场景的 upstream() 语义不变（仍是 UPSTREAM_ERROR）。
+    #[test]
+    fn upstream_error_code_unchanged_for_other_callers() {
+        let err = ApiError::upstream("资源站不可达");
+        assert_eq!(err.code, "UPSTREAM_ERROR");
+    }
+}
+
 /// 将 std::io::Error 映射为 HTTP 错误（对应源 ErrorHandlingMiddleware.MapException）：
 /// `NotFound`→404（FileNotFoundException 语义）、`PermissionDenied`→403、
 /// 其余→500（IOException 语义）。

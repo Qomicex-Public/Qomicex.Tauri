@@ -62,3 +62,40 @@ host 建房后 guest 无法加入；排查发现 host 端 easytier 出站 UDP �
 - 绑定物理网卡 IP 后，easytier 只从该网卡收发——若中继仅能经其他网卡可达会受限（可接受，正常多网卡环境物理网卡即主出口）
 - 数据面（P2P/中继转发）仍需真实双机验证；本机可验证监听地址绑定（建房后 netstat 看 qomicex-backend 的 easytier 监听端口绑定物理 IP 而非 0.0.0.0）
 
+## 追加：中继列表全灭导致 join 失败 + 真实报错被 UPSTREAM_ERROR 覆盖（issue #182，2026-10-04）
+
+### 现象
+
+WLAN 多网卡两台设备联机，guest join 失败且固定显示「上游服务请求失败」。报障当日（10-04）3 台机器全部复现。
+
+### 根因（两级）
+
+**A. host 端中继列表全灭（联机失败主因）**
+
+1. host 日志 `16:10:07.034 WARN 获取中继节点失败，回退到内置默认节点`（`relay/provider.rs::fetch_nodes` 网络层失败）
+2. `DEFAULT_NODES` 兜底全灭：`cgk1.clusters.zeabur.com:22171` TCP 通但 easytier 握手被服务端 reset（host 日志 10054 ×2.5 分钟，易逝免费部署已废）；`tcp.ap-northeast-1.clawcloudrun.com:45146` TCP 不通
+3. → host 在 EasyTier 网络孤立（guest 日志 `sync_route_info failed dst_peer_id=10000001`）→ guest `discover` 30s 超时 → join 失败
+4. 报障次日存活普查：官方 ET-Public `public.easytier.cn` DNS 已无记录（本地/1.1.1.1/223.5.5.5 三处确认）；私有列表内 QML-Main/QML-Fork-2/QML-Edge/ECL/HMCL×2 存活，QML-Fork/ECL2/ECL2.1 死亡
+5. 节点 API 与 UA 门控本身正常：带 `QML/` UA 返回 15 节点，无 UA 仅返回 ET-Public
+
+**B. 真实报错被覆盖（可见性缺陷）**
+
+- 后端 `map_connector_error`（connector.rs）→ 502 `UPSTREAM_ERROR`，真实原因挂在 message
+- 前端 `src/i18n/errors.ts` 把 `UPSTREAM_ERROR` 翻译成通用文案并丢弃 message（`client.ts` `displayMessage` 优先取翻译）→ 用户只见「上游服务请求失败」
+
+### 修复（经用户确认的范围）
+
+- **B**（主仓 `fix/issue-182-connector-error-code`）：`map_connector_error` 改用专属码 `CONNECTOR_FAILED`（502）——不在前端映射表中，`displayMessage` 回退后端 message，真实原因透出；`ApiError::upstream` 其余调用方语义不变。守护测试 ×2（`error.rs` tests）
+- **Retry**（qomicex-connector-rust `58d26cc`，分支 `fix/relay-fetch-retry`）：`fetch_from` 失败重试一次再回退；3 测试守护（重试成功→恰 2 次请求采用重试结果 / 双失败→恰 2 次回退默认 / 首次成功→恰 1 次不重试）
+- **明确不做**：`DEFAULT_NODES` 硬编码私有节点——私有节点靠 UA 门控保护，硬编码进开源仓库等于废掉门禁（用户否决）
+
+### E2E 实测（修复后）
+
+`POST /api/connector/join`（假房间码，自建实例 5117 端口）→ `502 CONNECTOR_FAILED`，message `联机失败: 未在 EasyTier 网络中发现联机中心（超时 30s）`（修复前为 `UPSTREAM_ERROR` + 前端通用文案）。
+
+### 遗留（未修）
+
+- `DEFAULT_NODES` 两个易逝部署已死：正确解法在服务端（如 UA 门控的 fallback 端点），非客户端硬编码
+- guest 端 faketcp PnetTun `Network interface 'WLAN' not found`（easytier fork 按名称匹配接口失败，非阻塞缺陷，wss/tcp 正常）
+- 「3 台机器拉取列表失败」的底层网络诱因未定位（需出问题机器的当日后端日志核对是否同 WARN）
+
