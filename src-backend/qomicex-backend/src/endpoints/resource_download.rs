@@ -1012,11 +1012,13 @@ fn multimc_pack_meta(
 
 /// Technic SingleZip 整合包预览元数据（issue #123 期1）：
 /// name 取 `bin/version.json`（或 modpack.jar 内 version.json）的 `name`；
-/// game_version/loader 复用 `services::technic` 的识别逻辑。解析失败返回
-/// 缺省元数据（探测已命中，真正的失败由安装处以明确错误报告）。
+/// game_version/loader 复用 `services::technic` 的识别逻辑（含
+/// fmlversion.properties 的 fmlbuild.mcversion 兜底，Agrarian Skies 实测场景）。
+/// 解析失败返回缺省元数据（探测已命中，真正的失败由安装处以明确错误报告）。
 fn technic_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<PackMeta> {
-    // 拿到的 archive 属于 classify 阶段的临时文件，直接复用 services::technic
-    // 需要路径；此处从打开的 archive 逐条目读关键文件（三个小文件，代价可忽略）。
+    // modpack.jar 读入内存上限（与 services::technic::MAX_JAR_BYTES 同语义；
+    // classify 是拖拽预览热路径，上限收紧到 64 MiB）。
+    const MAX_JAR_BYTES: u64 = 64 * 1024 * 1024;
     fn read_text<R: std::io::Read + std::io::Seek>(
         archive: &mut zip::ZipArchive<R>,
         name: &str,
@@ -1026,18 +1028,26 @@ fn technic_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<Pac
         std::io::Read::read_to_string(&mut f, &mut s).ok()?;
         Some(s)
     }
-    // bin/version.json（zip 根）→ modpack.jar 内 version.json
+    // bin/version.json（zip 根）→ modpack.jar 内 version.json（含 fml 兜底）
     let version_json_text = read_text(archive, "bin/version.json").or_else(|| {
         let jar_bytes = {
             let mut f = archive.by_name("bin/modpack.jar").ok()?;
+            if f.size() as u64 > MAX_JAR_BYTES {
+                return None;
+            }
             let mut b = Vec::new();
-            std::io::Read::read_to_end(&mut f, &mut b).ok()?;
+            use std::io::Read as _;
+            std::io::Read::take(&mut f, MAX_JAR_BYTES)
+                .read_to_end(&mut b)
+                .ok()?;
             b
         };
         let mut inner = zip::ZipArchive::new(std::io::Cursor::new(&jar_bytes)).ok()?;
         read_text(&mut inner, "version.json")
     })?;
     let root: serde_json::Value = serde_json::from_str(&version_json_text).ok()?;
+    // game_version：inheritsFrom 缺失时由 loader 坐标兜底不了版本本身，预览阶段
+    // 允许为空（安装时 parse_technic_zip 会做 fml 兜底并强制校验）。
     let game_version = root
         .get("inheritsFrom")
         .and_then(|v| v.as_str())

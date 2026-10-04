@@ -1142,7 +1142,7 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **格式识别**：`/modpack/parse`、`/modpack/parse-path`、`/install-direct`（`path` 分支）与拖拽分类均已自动识别 Technic 特征（zip 中央目录含 `bin/modpack.jar` 或 `bin/version.json`），返回 `packType: "technic"`、`source: "technic"`。
 
-**错误码：** `TECHNIC_SOURCE_REQUIRED`(400)、`TECHNIC_SOURCE_NOT_FOUND`(404)、`TECHNIC_PARSE_FAILED`(400，detail 含 `TECHNIC_JARMOD_UNSUPPORTED` = 古董包 modpack.jar 无 version.json，需 JarMod 支持，见 issue #180)、`TECHNIC_SOURCE_PATH_*`(400 路径校验)。
+**错误码：** `TECHNIC_SOURCE_REQUIRED`(400)、`TECHNIC_SOURCE_NOT_FOUND`(404)、`TECHNIC_PARSE_FAILED`(400，detail 含 `TECHNIC_JARMOD_UNSUPPORTED` = 古董包 modpack.jar 无 version.json，需 JarMod 支持，见 issue #180)、`MULTIMC_SOURCE_PATH_RELATIVE`(400 源路径非绝对)、`MULTIMC_SOURCE_PATH_TRAVERSAL`(400 源路径含 `..`，与 MultiMC 导入共用 `validate_source_path`)。
 
 ### 整合包原地更新（issue #118）
 

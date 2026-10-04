@@ -56,6 +56,11 @@ pub fn is_technic_zip(zip_path: &Path) -> bool {
     false
 }
 
+/// modpack.jar 读入内存的上限（CodeRabbit review：zip 压缩比攻击面）。
+/// Technic modpack.jar 实际为 2~20 MB 级（多为合并的 Forge universal + 基础库），
+/// 256 MiB 上限留足余量且杜绝 4 GiB 级炸压。
+const MAX_JAR_BYTES: u64 = 256 * 1024 * 1024;
+
 /// 从 Technic SingleZip 包解析元数据（探测已由调用方完成）。
 ///
 /// 读取顺序对齐 Prism `TechnicPackProcessor`：
@@ -86,8 +91,16 @@ pub fn parse_technic_zip(zip_path: &Path) -> Result<TechnicMeta, String> {
     let mut jar = archive
         .by_name("bin/modpack.jar")
         .map_err(|_| "整合包缺少 bin/modpack.jar".to_string())?;
+    // 大小预检 + take 双保险（中央目录的 size 由包作者控制，不可信）。
+    if jar.size() as u64 > MAX_JAR_BYTES {
+        return Err(format!(
+            "bin/modpack.jar 过大（{} MiB，上限 256 MiB），疑似异常包",
+            jar.size() / 1024 / 1024
+        ));
+    }
     let mut jar_bytes = Vec::new();
-    jar.read_to_end(&mut jar_bytes)
+    std::io::Read::take(&mut jar, MAX_JAR_BYTES)
+        .read_to_end(&mut jar_bytes)
         .map_err(|e| format!("读取 bin/modpack.jar 失败: {e}"))?;
     drop(jar);
     let mut inner = zip::ZipArchive::new(std::io::Cursor::new(&jar_bytes))

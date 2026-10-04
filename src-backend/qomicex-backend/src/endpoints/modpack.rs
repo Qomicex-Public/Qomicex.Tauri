@@ -229,8 +229,12 @@ async fn parse(
     // 探测阶段不落盘（只读中央目录 + 少量条目）；安装阶段（technic_import）再
     // 解压到临时目录并清理（大包解压耗时，必须后台可见进度，同 MultiMC / #89）。
     if crate::services::technic::is_technic_zip(&path) {
-        let meta = crate::services::technic::parse_technic_zip(&path)
-            .map_err(|e| ApiError::bad_request("TECHNIC_PARSE_FAILED", e))?;
+        let meta = crate::services::technic::parse_technic_zip(&path).map_err(|e| {
+            // 解析失败（含古董包 jarmod 不支持）→ 删除上传临时文件，对齐
+            // parse_local_pack_file 分支行为（4 GiB 上限的残留不能等 24h 自动清理）。
+            let _ = std::fs::remove_file(&path);
+            ApiError::bad_request("TECHNIC_PARSE_FAILED", e)
+        })?;
         let name = meta.name.clone().unwrap_or_else(|| {
             // 无 name：退化为 zip 文件名（去扩展名）
             path.file_stem()
@@ -1169,7 +1173,11 @@ fn copy_technic_content(
             } else {
                 dest.join(&name)
             };
-            files += copy_tree_simple(&p, &target)?;
+            // 共享目录（libraries）不覆盖已有文件：install-game 刚从官方源下载的库
+            // 可能已被其他实例共享，包内同路径副本（可能更旧/被改）不得回写覆盖
+            // （CodeRabbit review：数据完整性）。版本目录内是本实例私有内容，正常覆盖。
+            let skip_existing = name == "libraries";
+            files += copy_tree_simple(&p, &target, skip_existing)?;
         } else {
             let target = dest.join(&name);
             if let Some(parent) = target.parent() {
@@ -1186,7 +1194,8 @@ fn copy_technic_content(
 
 /// 递归拷贝目录树（Technic 包内容用；multimc::copy_tree 为私有，此处不引入
 /// 可见性扩散，独立实现——语义就是普通递归拷贝）。
-fn copy_tree_simple(src: &Path, dest: &Path) -> Result<u64, String> {
+/// `skip_existing` = 目标已存在的文件直接跳过（共享库目录防覆盖语义）。
+fn copy_tree_simple(src: &Path, dest: &Path, skip_existing: bool) -> Result<u64, String> {
     // 先建目标目录本身：递归子目录时目标父目录链由本行保证存在
     // （复测发现：仅拷文件时建父目录，嵌套目录 a/b/c 的拷贝会在 b 层失败）。
     std::fs::create_dir_all(dest).map_err(|e| format!("创建目录失败 {}: {e}", dest.display()))?;
@@ -1197,9 +1206,12 @@ fn copy_tree_simple(src: &Path, dest: &Path) -> Result<u64, String> {
         let p = entry.path();
         let file_name = entry.file_name();
         if p.is_dir() {
-            files += copy_tree_simple(&p, &dest.join(&file_name))?;
+            files += copy_tree_simple(&p, &dest.join(&file_name), skip_existing)?;
         } else {
             let target = dest.join(&file_name);
+            if skip_existing && target.is_file() {
+                continue;
+            }
             std::fs::copy(&p, &target)
                 .map_err(|e| format!("拷贝失败 {} → {}: {e}", p.display(), target.display()))?;
             files += 1;
