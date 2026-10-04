@@ -2235,8 +2235,17 @@ fn build_launch_options(
     }
 }
 
-fn map_connector_error(e: qomicex_connector::error::ScaffoldingError) -> ApiError {
-    ApiError::upstream(format!("联机失败: {e}"))
+/// 联机会话错误映射（issue #182）：不用 `ApiError::upstream` 的 `UPSTREAM_ERROR`——
+/// 前端把该码翻译成通用文案「上游服务请求失败」并丢弃 message，真实报错
+/// （如「未在 EasyTier 网络中发现联机中心（超时 30s）」）对用户不可见，无法排障。
+/// 专属码 `CONNECTOR_FAILED` 不在前端映射表中，`displayMessage` 回退后端
+/// message，真实原因原样透出。
+pub(crate) fn map_connector_error(e: qomicex_connector::error::ScaffoldingError) -> ApiError {
+    ApiError::new(
+        reqwest::StatusCode::BAD_GATEWAY,
+        "CONNECTOR_FAILED",
+        format!("联机失败: {e}"),
+    )
 }
 
 // =====================================================================
