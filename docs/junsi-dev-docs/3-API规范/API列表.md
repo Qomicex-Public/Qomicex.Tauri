@@ -1551,13 +1551,13 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 | 端点 | technic 行为 |
 |------|------|
 | `/resources/search` | 需要 `keyword`；**无关键词时后端自动改走 `GET /trending`**（该 API 对空 `q` 返回 400）。服务端**固定返回 15 条**（trending 20 条）且忽略 `sort`/`page` → 后端如实回报 `total`，不伪造分页（`page>1` 自然为空） |
-| `/resources/{id}` | `{id}` 必须是 **slug**（数字 id 返回 404，实测）；`id` 字段回传 API 的数字 id，`slug` 为详情里的 `name` |
+| `/resources/{id}` | `{id}` 必须是 **slug**（数字 id 返回 404，实测）；响应 `id` 同样回传 **slug**（与列表项一致，保证收藏唯一键一致），数字 id 不出现在 DTO 里，网页地址见 `projectUrl` |
 | `/resources/{id}/versions` | Technic **无版本列表**：把「包本身」建模为唯一版本条目。SingleZip 的直链填入 `downloads`；Solder 包 `downloads` 为空（前端据此提示期3 支持） |
 | `/resources/categories` | 返回空（该平台无类别体系；`tags` 为自由文本且形态不稳定：逗号/空格分隔或 null） |
-| `/resources/loaders` | 仅 `modpack` 返回 `forge`/`fabric`/`neoforge`（列表接口拿不到真实加载器，需读包内元数据，故只给可安全筛选的项） |
+| `/resources/loaders` | 仅 `modpack` 返回 `forge`/`fabric`/`neoforge`。**注意：这些值不可用于筛选**——Technic 列表接口不提供加载器维度，后端不执行 `loader` 过滤（前端也据此隐藏该控件）；提交 `loader` 会得到未过滤结果 |
 | `/resources/{id}/dependencies` | 返回空（无依赖模型） |
 
-technic **纳入聚合源**（`source=all` + `category=modpack`）：接受其无分页的限制，聚合时如实参与归并、不伪造总页数。
+technic **纳入聚合源**（`source=all` + `category=modpack`）：接受其无分页的限制，聚合时如实参与归并。聚合的 `total` 会收敛到实际可浏览上限（最多 200 条），避免报出取不到的条目数。
 
 ### GET `/api/resources/{id}?source={src}`
 

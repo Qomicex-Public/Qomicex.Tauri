@@ -1024,7 +1024,8 @@ async fn search(
     let window = aggregate_window(merged, page, page_size);
     Ok(Json(ResourceSearchResponse {
         items: window,
-        total,
+        // total 收敛到实际可浏览的上限（见 aggregate_honest_total 的说明）。
+        total: aggregate_honest_total(total),
         page,
         page_size,
     }))
@@ -1043,7 +1044,12 @@ const AGGREGATE_TYPES: [&str; 6] = [
 /// 聚合查询单源累计取回的上限（`page × page_size` 的上界）。
 ///
 /// 聚合改为「取累计前缀 → 全局排序 → 切窗口」后，深页码会放大单源取回量；这个上限
-/// 保证最坏情况仍是一次有界的请求（200 条足够覆盖正常翻页，超出部分用户改走具体源）。
+/// 保证最坏情况仍是一次有界的请求。
+///
+/// ⚠️ 上限必须与 `total` **一致**（CodeRabbit 在 PR #187 指出）：若只截断取回量而
+/// `total` 仍报各源总数之和，用户翻到上限之后会拿到空页，而那部分条目被 `total`
+/// 统计着却永远取不到。故 [`aggregate_window`] 的调用方要用
+/// [`aggregate_honest_total`] 把 total 收敛到这个上限。
 const MAX_AGGREGATE_FETCH: i32 = 200;
 
 /// 聚合窗口裁剪：按 `(source,id)` 去重 → 按下载量降序 → 切出
@@ -1073,6 +1079,15 @@ fn aggregate_window(
         .skip(offset)
         .take(page_size.max(0) as usize)
         .collect()
+}
+
+/// 聚合对外报告的 `total`：把各源 total 之和收敛到**实际可浏览**的范围内。
+///
+/// 聚合每次只取 `min(page × pageSize, MAX_AGGREGATE_FETCH)` 条前缀，因此可浏览的条目
+/// 最多 `MAX_AGGREGATE_FETCH` 条。如实按这个上界回报，避免出现「翻到后面是空页、但
+/// total 说还有更多」的虚假承诺（前端据此判断是否还有下一页）。
+fn aggregate_honest_total(sum_of_totals: i32) -> i32 {
+    sum_of_totals.min(MAX_AGGREGATE_FETCH)
 }
 
 /// 某资源类型实际存在的平台 —— 与 `search` 中 `all` 分支的口径保持一致：
@@ -1134,6 +1149,8 @@ async fn search_aggregate_category(
         .min(MAX_AGGREGATE_FETCH);
     let futures = queries.into_iter().map(|(ty, platform)| async move {
         if !cn_candidates.is_empty() && (ty == "mod" || ty == "datapack") {
+            // 中文候选分支必须与其它分支取**同一个累计前缀**（CodeRabbit 在 PR #187
+            // 指出）：否则中文搜索的后续页不是同一累计结果集的连续窗口，会漏项/重复。
             let (items, total) = search_cn_candidates(
                 state,
                 cn_candidates,
@@ -1143,8 +1160,8 @@ async fn search_aggregate_category(
                 loader,
                 sort,
                 tags,
-                page,
-                page_size,
+                1,
+                fetch_size,
             )
             .await;
             Ok((items, total))
@@ -1174,9 +1191,10 @@ async fn search_aggregate_category(
         total = total.saturating_add(t);
         merged.extend(items);
     }
-    // 全局排序后切出请求页（分页连续性见 `aggregate_window` 的说明）。
+    // 全局排序后切出请求页（分页连续性见 `aggregate_window` 的说明），
+    // total 收敛到实际可浏览的上限（见 `aggregate_honest_total`）。
     let window = aggregate_window(merged, page, page_size);
-    Ok((window, total))
+    Ok((window, aggregate_honest_total(total)))
 }
 
 /// 中文关键词候选检索：Modrinth 批量取回候选 slug + 首候选搜索补充；
@@ -3603,5 +3621,39 @@ mod favorites_tests {
         };
         let out = aggregate_window(vec![mk("mod", 5), mk("datapack", 9)], 1, 10);
         assert_eq!(out.len(), 1, "同 (source,id) 应去重");
+    }
+
+    /// `total` 必须收敛到实际可浏览上限（CodeRabbit PR #187 第二轮 finding）。
+    ///
+    /// 聚合每次只取 `min(page×pageSize, MAX_AGGREGATE_FETCH)` 条前缀，因此超过 200 条的
+    /// 部分永远取不到；若 total 仍报各源总数之和，前端会以为还有下一页 → 出现「翻到
+    /// 后面是空页但按钮还在」的虚假承诺。
+    #[test]
+    fn aggregate_total_is_capped_to_reachable_range() {
+        // 未达上限：如实回报
+        assert_eq!(aggregate_honest_total(37), 37);
+        assert_eq!(
+            aggregate_honest_total(MAX_AGGREGATE_FETCH),
+            MAX_AGGREGATE_FETCH
+        );
+        // 超过上限：收敛（否则报出取不到的条目数）
+        assert_eq!(
+            aggregate_honest_total(MAX_AGGREGATE_FETCH + 1),
+            MAX_AGGREGATE_FETCH
+        );
+        assert_eq!(aggregate_honest_total(100_000), MAX_AGGREGATE_FETCH);
+    }
+
+    /// 取回上限与 `total` 口径必须一致：`fetch_size` 的封顶值就是可浏览条目数的上界。
+    #[test]
+    fn fetch_cap_matches_reachable_total() {
+        // 深页码时 fetch_size 封顶在 MAX_AGGREGATE_FETCH
+        let page: i32 = 999;
+        let page_size: i32 = 20;
+        let fetch_size = page.saturating_mul(page_size).min(MAX_AGGREGATE_FETCH);
+        assert_eq!(
+            fetch_size, MAX_AGGREGATE_FETCH,
+            "深页码的单源取回量应封顶，且该封顶即 total 的上界"
+        );
     }
 }

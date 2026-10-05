@@ -582,7 +582,13 @@ export default function ResourceCenter() {
     const fallback = sortOptionsFor(categoryInitFixed, sourceInit)[0].key
     return urlSort ?? (!freshEntry ? snap?.sort : undefined) ?? fallback
   })
-  const [gameVersion, setGameVersion] = useState(() => urlGameVersion ?? (!freshEntry ? snap?.gameVersion : undefined) ?? '')
+  // 游戏版本初值：Technic 不参与版本筛选（该来源的控件被隐藏、后端也不过滤），
+  // 因此不能继承 URL/快照里的旧值——否则筛选态不可见却仍进入请求与 URL
+  // （CodeRabbit 在 PR #187 指出）。
+  const [gameVersion, setGameVersion] = useState(() => {
+    if (!gameVersionSupported(sourceInit)) return ''
+    return urlGameVersion ?? (!freshEntry ? snap?.gameVersion : undefined) ?? ''
+  })
   const [loader, setLoader] = useState(() => (urlLoader ?? (!freshEntry ? snap?.loader : undefined) ?? '').toLowerCase())
   const [tags, setTags] = useState<string[]>(() => {
     const raw = urlTags ? urlTags.split(',').map((t) => t.trim()).filter(Boolean)
@@ -1043,6 +1049,9 @@ export default function ResourceCenter() {
     // 切换来源会改变标签体系（Modrinth / CurseForge），跨体系的标签 slug 不通用，
     // 因此来源词汇变化时清空已选标签，避免误把一套标签发给另一套来源。
     if (tagsForSource(nextSource, category) !== tagsForSource(source, category)) setTags([])
+    // 切到不支持游戏版本筛选的来源（Technic）时必须清空已选版本：该来源的版本控件
+    // 会被隐藏、后端也不过滤，留着旧值会出现「筛选态不可见但仍在 URL/请求里」。
+    if (!gameVersionSupported(nextSource)) setGameVersion('')
     setSource(nextSource)
     if (isModpackOnlySource(nextSource)) {
       // FTB / Technic 只有整合包：强制类型与默认排序（FTB 支持 relevance，
