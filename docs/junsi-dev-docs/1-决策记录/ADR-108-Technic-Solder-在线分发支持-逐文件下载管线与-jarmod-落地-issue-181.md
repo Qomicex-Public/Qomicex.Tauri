@@ -1,4 +1,4 @@
-# ADR-107：Technic Solder 在线分发支持：逐文件下载管线 + jarmod 落地（issue #181，#123 期3）
+# ADR-108：Technic Solder 在线分发支持：逐文件下载管线 + jarmod 落地（issue #181，#123 期3）
 
 | 属性 | 内容 |
 |---|---|

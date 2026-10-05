@@ -1486,7 +1486,7 @@ pub(crate) struct SolderImportRequest {
 /// POST /modpack/install-direct 的 Solder 分支入口：同步解析 Solder 元数据并
 /// 创建实例 + 后台任务（骨架与 [`technic_import_impl`] 一致，差异在后台管线）。
 ///
-/// 与 SingleZip 路径的模型差异（决策见 ADR-107）：
+/// 与 SingleZip 路径的模型差异（决策见 ADR-108）：
 /// - **无包体直链**：Solder 是逐文件分发，先拉 build 清单再逐文件下载；
 /// - **元数据请求期即可解析**（Solder build 接口就是完整元数据源），不像
 ///   SingleZip 在线路径要下载 zip 后二次解析——因此实例元数据一次写对，无需回写；
@@ -1664,7 +1664,7 @@ pub(crate) async fn solder_import_impl(
 /// copy-files(15) → jarmod(5)。
 ///
 /// 数据流：Solder mods[] 按**数组顺序**逐 zip 解压叠加到 extract_dir（后者覆盖
-/// 前者——`z-` 前缀配置包排在清单末尾最后覆盖是 Technic 约定，见 ADR-107），
+/// 前者——`z-` 前缀配置包排在清单末尾最后覆盖是 Technic 约定，见 ADR-108），
 /// 然后 vanilla 安装管线装 MC，最后把包内容拷进版本隔离目录并注入 jarmod。
 #[allow(clippy::too_many_arguments)]
 async fn run_solder_import(
@@ -3061,7 +3061,7 @@ impl ModpackServiceData {
                         })?;
                     // Solder（url=null 且有 solder）：Solder 是逐文件分发协议
                     // （issue #181 期3），后端解析 build 清单与 mod 列表后走专用
-                    // 管线，Forge 经包内 modpack.jar 注入（ADR-107）。
+                    // 管线，Forge 经包内 modpack.jar 注入（ADR-108）。
                     if detail.distribution()
                         == qomicex_core::models::expansion::technic::TechnicDistribution::Solder
                     {

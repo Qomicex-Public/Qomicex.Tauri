@@ -1,7 +1,7 @@
 # Technic 整合包支持：实现地图与排障
 
 > 最后更新：2026-10-05（期3 Solder 实现后）。本文是 Technic 相关开发的**入口文档**：先读本文定位文件与锚点，再按需读 ADR。
-> 关联 ADR：[ADR-102（期1 SingleZip 本地导入）](../1-决策记录/ADR-102-Technic-SingleZip-整合包本地导入-issue-123期1.md)、[ADR-105（期2 资源中心 Technic 源 + 401 归因修正）](../1-决策记录/ADR-105-资源中心-Technic-源-API-模型对齐-后端代理安装与-build-参数-401-归因修正-issue-151.md)、[ADR-106（期2 JarMod）](../1-决策记录/ADR-106-JarMod-支持-非破坏性派生-jar-注入古董包-modpack-jar-issue-180.md)、[ADR-107（期3 Solder）](../1-决策记录/ADR-107-Technic-Solder-在线分发支持-逐文件下载管线与-jarmod-落地-issue-181.md)
+> 关联 ADR：[ADR-102（期1 SingleZip 本地导入）](../1-决策记录/ADR-102-Technic-SingleZip-整合包本地导入-issue-123期1.md)、[ADR-105（期2 资源中心 Technic 源 + 401 归因修正）](../1-决策记录/ADR-105-资源中心-Technic-源-API-模型对齐-后端代理安装与-build-参数-401-归因修正-issue-151.md)、[ADR-106（期2 JarMod）](../1-决策记录/ADR-106-JarMod-支持-非破坏性派生-jar-注入古董包-modpack-jar-issue-180.md)、[ADR-108（期3 Solder）](../1-决策记录/ADR-108-Technic-Solder-在线分发支持-逐文件下载管线与-jarmod-落地-issue-181.md)
 > 相关 issue：#123（本体，OPEN）、#151（资源中心源，已实现）、#180（JarMod，已实现）、#181（Solder，已实现 = 期3）
 
 ---
@@ -13,7 +13,7 @@
 | 期1 | SingleZip **本地**导入（zip 含 `bin/modpack.jar`，jar 内**有** version.json） | ✅ 已合入 | 主仓 `20b63d53`(#186) / core `dbd8b70`(#4) |
 | 期2-A | 资源中心 **Technic 源**（搜索/详情/一键在线安装） | ✅ 已合入 | 主仓 `732bb176`(#187) / core `4857539`(#5) / i18n #18 |
 | 期2-B | **JarMod**（古董包 jar 内**无** version.json） | ✅ 已合入 | 主仓 `a63bf400`(#190) / core `fd1e982`(#6) |
-| 期3 | **Solder** 在线分发格式（`url=null` + `solder` 有值） | ✅ **已实现**（ADR-107，feature 分支） | 待 PR |
+| 期3 | **Solder** 在线分发格式（`url=null` + `solder` 有值） | ✅ **已实现**（ADR-108） | 待 PR |
 
 ---
 
@@ -25,7 +25,7 @@
 |---|---|---|
 | **SingleZip（标准）** | `url` 是字符串直链；且 `bin/modpack.jar` 内**有** `version.json` | 期1 管线：读 version.json 定 MC+loader，jar 本体**不注入** |
 | **SingleZip（古董）** | `url` 是字符串直链；但 `bin/modpack.jar` 内**无** `version.json` | 期2-B **JarMod** 路径：jar 落盘为 jarmod + 派生 jar |
-| **Solder** | `url` 为 `null` 且 `solder` 有值 | 期3 **Solder 管线**（ADR-107）：逐文件下载 + jarmod 落地 |
+| **Solder** | `url` 为 `null` 且 `solder` 有值 | 期3 **Solder 管线**（ADR-108）：逐文件下载 + jarmod 落地 |
 
 实测比例（45 个候选）：32 个 SingleZip、13 个 Solder。1.4.7 时代的知名包（tekkit-classic / hexxit / tekkit-legends）**已全部转为 Solder**。
 
@@ -149,7 +149,7 @@
  → 下载完成后重新解析 zip 元数据 → 回写实例 gameVersion/loader/modpackSource
 ```
 
-### 4.3 资源中心在线安装——Solder（期3，ADR-107）
+### 4.3 资源中心在线安装——Solder（期3，ADR-108）
 ```
 install_direct {type:technic, projectId:slug}
  → get_pack_detail(slug).distribution() == Solder
@@ -176,7 +176,7 @@ install_direct {type:technic, projectId:slug}
 | 改搜索/详情口径 | `resource_center.rs` 对应分支 + `technic_summary_to_item`；注意 `total` 与分页语义 |
 | 新增 Technic 支持的资源类型 | **不支持**——Technic 只有整合包；`platforms_for_type` 只放 modpack 一行 |
 | 改错误码 | `modpack.rs::technic_parse_error`（前缀识别表）+ API 文档 `3-API规范/API列表.md` |
-| 支持 Solder | **已实现**（ADR-107）：改 build 选择语义 → `TechnicSolderPack::selected_build`；改管线 → `run_solder_import` |
+| 支持 Solder | **已实现**（ADR-108）：改 build 选择语义 → `TechnicSolderPack::selected_build`；改管线 → `run_solder_import` |
 | 支持 MultiMC 原生 `jarMods` | `jarmod.rs` 需补「库对象 → maven 落盘路径」解析（**当前只支持字符串数组**，遇到对象会告警） |
 | 改导入管线步骤 | `technic_import_impl`（步骤权重表）；**注意本地/在线两路径都要看** |
 | 改文案 | `qomicex-tauri-i18n/src/*/dialogs.ts`（submodule，需单独提交推送） |
@@ -231,7 +231,7 @@ POST /api/modpack/parse-path  {path:"<无 version.json 且无 fmlversion 的包>
 ### 6.4 真实包端到端记录
 **期2（agrarian-skies 59.8MB，SingleZip）**：completed 100%、72 mods、`mainClass=net.minecraft.launchwrapper.Launch`、实例回写 `1.6.4`/`forge 9.11.1.965`/`modpackSource=technic`；`bin/` 残壳剔除、无 pack.zip 泄漏、temp 清理干净。直链主机慢（数百 KB/s，约 8~10 分钟）。
 
-**期3（Tekkit Classic 3.1.2，Solder 真机安装，ADR-107 验收）**：
+**期3（Tekkit Classic 3.1.2，Solder 真机安装，ADR-108 验收）**：
 - 请求受理 200 → 任务 completed 100%（478 files，约 2 分钟：30 zip 并行下载 + MD5 全过 + vanilla 1.2.5 安装 + jarmod 注入）
 - 版本隔离目录：`mods/` 548 文件、`config/` 含 `z-tekkit-configs` 覆盖结果（IC2.cfg 等）、`resources/`、`jarmods/modpack.jar`（1285906 字节，与分发 zip 内条目精确一致）
 - 版本 JSON 声明 `"jarmods": ["jarmods/modpack.jar"]`；派生 jar 未预生成（启动时才合并，符合期2-B 设计）
@@ -269,13 +269,13 @@ POST /api/modpack/parse-path  {path:"<无 version.json 且无 fmlversion 的包>
 
 ---
 
-## 9. Solder 实现要点（期3，ADR-107）
+## 9. Solder 实现要点（期3，ADR-108）
 
 **判据与入口**：`get_pack_detail(slug).distribution() == Solder` → `install_direct` 的 technic 分支进入 `solder_import_impl`。
 
 **Solder 端点**：`{solder}/modpack/{slug}`（build 列表）与 `{solder}/modpack/{slug}/{build}`（build 详情）；**无需 UA / build 参数**。
 
-**关键设计决策**（详见 ADR-107）：
+**关键设计决策**（详见 ADR-108）：
 1. **build 选择**：`recommended` → `latest` → builds 末位（降序列表的最旧兜底）；MVP 不露 UI，后续增强。
 2. **Forge 落地**：1.2.5 时代 Forge 本体在 basemods zip 的 `bin/modpack.jar`（实测验证），安装管线装 vanilla，jarmod 机制注入；`forge=164` 仅元数据标注。
 3. **解压覆盖语义**：按 `mods[]` 数组顺序、**后者覆盖前者**（`z-` 前缀配置包排末尾最后覆盖是 Technic 约定）。
