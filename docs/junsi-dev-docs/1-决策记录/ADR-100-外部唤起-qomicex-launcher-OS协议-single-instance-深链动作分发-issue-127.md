@@ -31,7 +31,7 @@ Issue #127（[Improvement] 添加 qomicex:// 协议支持）诉求：浏览器�
    - `qomicex-launcher://install/plugin?slug=<slug>&version=<v>`（商店，带签名校验）
    - `qomicex-launcher://install/plugin?url=<https://….qplugin>`
    - `qomicex-launcher://install/modpack?type=modrinth|curseforge|ftb&projectId=<p>&fileId=<f>[&name=<实例名>]`
-   - `qomicex-launcher://install/modpack?type=technic&projectId=<slug>[&name=<实例名>]`（issue #151 新增：Technic 无 fileId 概念，一个包 = 一个直链，详见 ADR-103）
+   - `qomicex-launcher://install/modpack?type=technic&projectId=<slug>[&name=<实例名>]`（issue #151 新增：Technic 无 fileId 概念，一个包 = 一个直链，详见 ADR-105）
 5. **`install/modpack` 必须带 projectId+fileId**：后端 `/modpack/install-direct` 在线分支两者缺一即 400 `MODPACK_SOURCE_REQUIRED`（`id` 字段语义是「目标实例名」而非项目 id）。**唯一例外是 `type=technic`**：该来源无版本/fileId 概念，只要求 `projectId`（= slug），判定集中在 `sourceNeedsFileId()`。不支持 `path=`，那条分支等于让网页指定本地磁盘文件。
 6. **安全模型**：深链可被任意网页触发。可落地代码的动作一律先确认，仅当 URL 来源主机命中官方白名单（`AUTO_INSTALL_HOSTS`，**精确匹配 host 且必须 https**）时免确认；商店 `slug=` 无来源域可判，恒需确认；确认后放行无签名包的口径与设置页「本地上传 + 风险确认后重试」一致。`open` 只接受白名单路由前缀。
 7. **新增后端端点 `POST /api/plugins/install-url`**（body `{url}`，query `allowUnsigned`）：与 `/plugins/upload` 只差「字节从哪来」，校验与安装复用同一条 `install_from_package`；SSRF 复用 `/plugins/proxy` 的 `validate_target`（DNS 解析后逐 IP 拒内网/保留地址），不另写一套以免规则漂移；下载上限 64 MiB。

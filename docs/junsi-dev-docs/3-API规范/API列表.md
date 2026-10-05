@@ -1546,7 +1546,7 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 #### Technic 源（issue #151）
 
-`source=technic` 时，资源中心的所有端点都委派给 core 的 `TechnicSource`（`api.technicpack.net`）。**实测的语义差异（消费方必读，详见 ADR-103）：**
+`source=technic` 时，资源中心的所有端点都委派给 core 的 `TechnicSource`（`api.technicpack.net`）。**实测的语义差异（消费方必读，详见 ADR-105）：**
 
 | 端点 | technic 行为 |
 |------|------|
