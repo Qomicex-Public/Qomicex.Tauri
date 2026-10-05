@@ -1176,7 +1176,7 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **分发形态判据**（`url` 字段）：字符串 = SingleZip（本分支支持）；`null` 且 `solder` 有值 = Solder 在线分发（期3 #181 已支持，走 Solder 专用管线）。实测 45 个候选中 32 个 SingleZip、13 个 Solder。
 
-**Solder 分支（期3 #181，ADR-108）**：`distribution() == Solder` 时后端解析 `{solder}/modpack/{slug}`（选 build：recommended → latest → builds 末位）与 `{solder}/modpack/{slug}/{build}`（mod 清单），专用管线：并行下载全部 mod zip（带 MD5 校验）→ 按清单顺序解压叠加 → 装 vanilla MC → `copy-files` → jarmod 注入（Forge/FML 本体在包内 `bin/modpack.jar`，1.2.5 时代无 installer）。实例元数据 `loader=forge`/`loaderVersion={forge build}` 仅作标注（版本 JSON 是 vanilla 的，启动链不受影响）、`modpackVersion=所选 build`。**管线步骤**：`download-mods`(25) → `verify`(5) → `extract-merge`(10) → `install-game`(40) → `copy-files`(15) → `jarmod`(5)。
+**Solder 分支（期3 #181，ADR-108）**：`distribution() == Solder` 时后端解析 `{solder}/modpack/{slug}`（选 build：recommended → latest → builds 末位）与 `{solder}/modpack/{slug}/{build}`（mod 清单），专用管线：并行下载全部 mod zip（带 MD5 校验，**清单项缺 md5 时跳过该条校验**、缺 url 时整条跳过下载/校验/解压）→ 按清单顺序解压叠加 → 装 vanilla MC → `copy-files` → jarmod 注入（Forge/FML 本体在包内 `bin/modpack.jar`，1.2.5 时代无 installer）。实例元数据 `loader=forge`/`loaderVersion={forge build}` 仅作标注（版本 JSON 是 vanilla 的，启动链不受影响）、`modpackVersion=所选 build`。**管线步骤**：`download-mods`(25) → `verify`(5) → `extract-merge`(10) → `install-game`(40) → `copy-files`(15) → `jarmod`(5)。
 
 **不支持原地更新**：technic 实例不写入 `modpackOrigin`（`is_updatable_origin` 白名单仅 modrinth/curseforge）——该平台无「版本 id」可作更新判据，与 FTB 同待遇。
 

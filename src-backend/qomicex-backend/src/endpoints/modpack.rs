@@ -1764,6 +1764,11 @@ async fn run_solder_import(
     });
     let mut checked = 0usize;
     for (i, m) in build.mods.iter().enumerate() {
+        // 与下载/解压步骤同一过滤条件：无 URL 的条目三阶段一致跳过（否则
+        // verify 会去读一个从未下载的 zip，导入必然失败——CodeRabbit #196）。
+        if m.url.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            continue;
+        }
         let Some(expected) = m.md5.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
             continue;
         };

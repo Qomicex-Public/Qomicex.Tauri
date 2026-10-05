@@ -104,11 +104,13 @@ pub(crate) struct ResourceVersionDto {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) version_number: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    // gameVersions/loaders/downloads **不带** skip_serializing_if：wire 契约
+    // 必须与前端 ResourceVersion 的必填数组类型一致（src/types/index.ts）。
+    // 实测缺陷（issue #151 遗留，PR #197 同根因）：空数组省键 → 前端
+    // `version.loaders.map(...)` 对 undefined 调 map 抛 TypeError → 详情页崩溃。
+    // Technic 的 loaders 恒为空数组，必然命中——空数组必须显式下发为 []。
     pub(crate) game_versions: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) loaders: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) downloads: Vec<ResourceFileDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) dependencies: Option<Vec<ResourceDependencyDto>>,
