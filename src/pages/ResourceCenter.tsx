@@ -734,6 +734,28 @@ export default function ResourceCenter() {
     setSearchParams(params, { replace: true })
   }, [category, keyword, setSearchParams, sort, source, gameVersion, loader, tags, instanceId, view])
 
+  /**
+   * 回填中文名。
+   * - 追加时**合并**：`loadCnNames` 只返回本页条目的中文名，整体替换会把前页已显示的
+   *   中文名抹掉——无限滚动每滚一页就犯一次（手动分页时期路径相同，只是触发少）。
+   * - 非追加（新一轮）整体替换；本页无待查条目时：追加保持不动（保留前页），非追加清空。
+   * - 受请求序号保护：过期搜索的回填不得覆盖当前列表的中文名。
+   */
+  const applyCnNames = useCallback((items: ResourceItem[], append: boolean, seq: number) => {
+    const cnItems = cnEligibleItems(items, category)
+    if (cnItems.length === 0) {
+      if (!append) setCnNames({})
+      return
+    }
+    loadCnNames(cnItems)
+      .then((names) => {
+        if (seq !== requestSeqRef.current) return
+        setCnNames((prev) => (append ? { ...prev, ...names } : names))
+      })
+      // 中文名是增强项，失败静默；显式 catch 以免将来 loadCnNames 改为抛错时变成未处理拒绝。
+      .catch(() => { /* 中文名失败不影响列表可用性 */ })
+  }, [category])
+
   const doSearch = useCallback(async (pageNum: number, append: boolean) => {
     // 本次请求的序号：只有序号仍是最新的请求才有权写结果/错误，否则一律早退。
     const seq = ++requestSeqRef.current
@@ -768,9 +790,10 @@ export default function ResourceCenter() {
       if (!append) setIsReplacing(false)
       // 空页 = 缓存里也没这一页（超出后端可翻页数）→ 停止自动加载
       if (append && cached.items.length === 0) setExhausted(true)
-      const cnItems = cnEligibleItems(cached.items, category)
-      if (cnItems.length > 0) loadCnNames(cnItems).then(setCnNames)
-      else setCnNames({})
+      // 中文名：**追加时合并**（`loadCnNames` 只覆盖本页条目，整体替换会把前页已显示的
+      // 中文名抹掉——无限滚动每滚一页犯一次）；非追加（新一轮）才整体替换。
+      // 异步回填同样受请求序号保护，避免过期搜索结果覆盖当前列表的中文名。
+      applyCnNames(cached.items, append, seq)
       return
     }
     if (!append) setIsReplacing(true)
@@ -803,9 +826,8 @@ export default function ResourceCenter() {
       // 仅「空页」判定到底：聚合分页按各类型/来源分别取第 N 页再去重截断，去重后
       // 可能少于 pageSize 而下一页仍有新条目——按「未满 pageSize」判定会提前掐断。
       if (append && pageItems.length === 0) setExhausted(true)
-      const cnItems = cnEligibleItems(pageItems, category)
-      if (cnItems.length > 0) loadCnNames(cnItems).then(setCnNames)
-      else setCnNames({})
+      // 同缓存分支：追加合并、非追加替换，并受序号保护。
+      applyCnNames(pageItems, append, seq)
     } catch (e) {
       if (seq !== requestSeqRef.current) return
       const msg = e instanceof Error ? e.message : t('resource.searchFailed')
@@ -824,7 +846,7 @@ export default function ResourceCenter() {
     setLoading(false)
     setInitialLoading(false)
     setIsReplacing(false)
-  }, [category, keyword, sort, source, gameVersion, loader, tags])
+  }, [category, keyword, sort, source, gameVersion, loader, tags, applyCnNames])
 
   const scrollEl = () => document.querySelector('main')
 
