@@ -612,3 +612,241 @@ ADR-081 的 API 侧改动**已部署**（本地 `pnpm deploy:api`，绕开持续
 `deploy.yml` 的 `Cloudflare API Authentication failed (status: 400) [code: 9106]`
 未修（GH secret `CLOUDFLARE_API_TOKEN` 仍无效）。本次为本地手动部署，
 后续 master push 不会自动生效，需继续手动 `pnpm deploy:api` 或修 secret。
+
+
+### 2026-10-05 更新
+
+### 2026-10-05 更新（ADR-107：默认自动下载 + Toast 待安装）
+
+> 需求：有更新时**默认自动下载**并弹可点击的 Toast；**不点击则下次打开
+> 自动装完**；设置里可改回原有的弹出 Dialog。完整决策见
+> `1-决策记录/ADR-107-启动器更新改为默认自动下载并弹Toast待安装-不点击下次启动自动装完-设置可回退弹窗.md`。
+
+## 与原有链路的差别
+
+原链路（上方数据流）在「下载完成」到「用户点立即更新」之间**没有任何持久化状态**：
+`updaterStore` 只把进度放在内存里，进程一关就必须重下几十 MB，无法实现「下次打开自动
+装完」。ADR-107 在壳侧补一份**待安装记录**，把这一刻变成可跨进程的持久事实。
+
+```
+App.tsx 启动 5s 后台检查 → plan（普通更新且开关开）
+  → updaterStore.autoStart(plan)              （不主动重启）
+      → POST /api/plugins/download/start      （同上，落 <DATA>/updates/*.zip）
+      → 轮询到 completed
+      → invoke('stage_pending_update_install') → 写 update-auto-install.json
+      → phase='ready' → UpdateReadyToast（底部居中横幅，点击=立即重启安装）
+  → 用户不点，关掉启动器
+下次启动（无实例在跑）
+  → invoke('take_pending_update_install')     → ready（attempts 已 +1 并落盘）
+  → 复用同一条 run_updater 链路 → 覆盖安装 → 新版本启动
+  → invoke('take_pending_update_install')     → installed（版本已一致）→ 清记录，不再重复装
+```
+
+## 待安装记录（壳侧持久化）
+
+`{dataDir}/updates/update-auto-install.json`，与 `.zip`/`.sig` 同目录（dataDir 改了记录
+跟着走，不会出现「记录在 localStorage 而包在旧 dataDir」的错配）：
+
+```json
+{
+  "pending": { "version": "0.1.0-beta32.0", "packagePath": "<DATA>/updates/qomicex-update-….zip",
+               "signature": "<minisign armor>", "changelog": "…", "attempts": 1, "channel": "beta" },
+  "abandonedVersion": "0.1.0-beta31.0"
+}
+```
+
+写入一律「先写 `.tmp` 再 rename」原子覆盖（与 `pending-update-notice.json` 同语义）；
+内容为空时删除文件，不在 `updates/` 留残渣。
+
+> 与 `pending-update-notice.json` 的区别：那个是更新**完成后**的交接（给新进程弹「更新
+> 完成」），这个是更新**开始前**的交接（给新进程自动装完）。方向相反、文件名不同。
+
+## Tauri 命令（4 个）
+
+| 命令 | 作用 |
+|---|---|
+| `update_auto_install_state(dataDir)` | 只读 peek：`hasPending` / `abandonedVersion` / `pending`。**不推进 attempts** |
+| `stage_pending_update_install(dataDir, packagePath, signature, version, changelog?)` | 下载完成后落记录；拒绝空版本/空签名/包不存在 |
+| `take_pending_update_install(dataDir)` | 消费记录（读后按结果写回），返回状态机结果 |
+| `clear_pending_update_install(dataDir)` | 清记录与抑制标记（用户稍后 / 手动安装后 / 开关关闭） |
+
+`take` 的状态机：
+
+| 状态 | 条件 | 动作 |
+|---|---|---|
+| `installed` | 目标版本 == 当前运行版本（**已装成**），或目标版本**旧于**当前版本 | 清记录；前端不安装（收敛点 + 防静默降级） |
+| `missing` | 包文件已不在（临时目录被清理/手删） | 作废记录可重下；**不**计入抑制（可恢复） |
+| `abandoned` | `attempts >= 3` | 记 `abandonedVersion` 并清 pending；该版本不再自动装、回退弹窗 |
+| `ready` | 其它 | 先递增 `attempts` **落盘**，再交给调用方 spawn updater |
+| `none` | 无记录 | 无事可做 |
+
+> `attempts` 必须在 spawn **之前**落盘：顺序颠倒会让「spawn 后进程崩溃」不计入重试，
+> 重试上限形同虚设。
+
+## 自动模式的触发条件
+
+`App.tsx` 的 `resolveAutoInstallPlan()`，**全部**满足才走自动路径：
+
+- 后台检查发现更新（`plan.hasUpdate && plan.version`）
+- `updateAutoInstall !== false`（设置项，默认开）
+- `!required`（强制更新保留「必须更新才能继续使用」语义，不静默）
+- `!channelSwitch`（跨通道切换需用户知晓，见 ADR-081）
+- 该版本未被 `abandonedVersion` 抑制
+- 当前没有已 staged 的记录（不重复下载）
+- `dataDir` 非空
+
+任一查询失败 → 回退弹窗（宁可走原行为，也不要出现「既没弹窗也没提示」的黑洞）。
+
+`required` / `channelSwitch` / 开关关闭 / 已作废 → 走**原有** `UpdateDialog` 路径，
+原行为的 snooze（24h）与设置页常驻提示（ADR-095）不变。
+
+## 启动自动安装
+
+`backendState==='ready' && settingsReady` 后 2s（`autoInstallChecked` 只判一次）：
+
+- **有实例在跑** → 推迟到下次启动，并把磁盘记录 `restoreStaged` 成可点击的 Toast
+  （否则已下好的包在本会话完全不可见）。推迟是必需的：安装会 `app.exit(0)` 重启启动器，
+  会把用户正在玩的游戏连启动器一起关掉。
+- 无实例 → `installStagedOnLaunch()` 直接装完。
+
+## 防静默降级
+
+`is_older_than(staged, current)`：用户手动点过「立即更新」装上更新版本后，磁盘上可能残留
+上一轮自动下载的**旧**包记录；照常安装就是一次静默降级。semver 比较，**解析失败时返回
+false 保守放行**（不因解析不了就吞掉用户已下好的更新）。
+
+前端 `store.start()` 同样收敛：待安装记录与本次手动目标**同版本** → 直接装（不重复下载）；
+**不同版本** → 先清旧记录再走手动路径（否则旧记录会在下次启动把用户降级回去）。
+
+## 设置项
+
+`updateAutoInstall: Option<bool>`（`SettingsResponse`，`None`/`true` = 开启）。
+UI：「设置 → 关于 → 更新」区新增一行 `Switch`。**关闭时同时清掉已 staged 的记录**，
+否则那份记录会在下次启动被静默装完，用户会以为开关没生效。
+
+## 本地验证
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib updater`（22 例，其中新增 12 例：
+  生命周期端到端 / 防降级 / peek 不消费 attempts / 重试上限与作废 / 包缺失不作废 /
+  损坏记录 / 空 dataDir / 重新 stage 清抑制）
+- `pnpm run typecheck` + `pnpm run build`
+- 全链路（下载→覆盖→重启）仍需 release 构建或双机实测
+
+
+### 2026-10-05 更新
+
+## 评审修正（PR #193 review，2026-10-05）
+
+> 决策与教训详见 `1-决策记录/ADR-107-启动器更新改为默认自动下载并弹Toast待安装-不点击下次启动自动装完-设置可回退弹窗.md`
+> 的「评审修正」一节。此处只记运行时行为变化。
+
+### 记录格式新增 `channel`
+
+```json
+{
+  "pending": { "version": "…", "packagePath": "…", "signature": "…",
+               "changelog": "…", "attempts": 1, "channel": "beta" },
+  "abandonedVersion": "…"
+}
+```
+
+`channel` = 落盘时 update plan 的通道。**跨列车不得自动安装**（ADR-081）：用户可能在
+下载完成后又切了通道，此时这份包已不属于当前列车，无人值守装上它就是一次静默的
+跨列车更新。缺少该字段的旧记录视为「无法判定」**不拦**（否则老记录永远装不上）。
+
+判定函数 `lib/updateChannel.ts::stagedChannelMatchesCurrent()` 由**自动安装**与
+**恢复 Toast** 两条路径共用，保证结论一致——否则会出现「启动时不装，却给了个点了
+就装的入口」这种自相矛盾。
+
+### `take` 状态机新增 `unpersisted`
+
+| 状态 | 条件 | 动作 |
+|---|---|---|
+| `unpersisted` | 尝试计数**写不进盘**（`.tmp` 写入失败等） | 拒绝本次无人值守安装，回退弹窗（保留手动入口） |
+
+为什么必须拒装：计数存不下去时重试上限不再是可靠的失败遏制边界——每次启动都读到那个
+没被递增过的旧计数，一个始终失败的包会被无限次自动重装、永远到不了「作废 + 回退弹窗」。
+**手动路径（点 Toast → `installStaged`）不经过这条**，不受影响。
+
+### 设置开关关闭 = 磁盘 + store 一起清
+
+仅删磁盘记录不够：Toast 渲染自 store 的 `staged`，磁盘清掉后 Toast 仍在屏幕上且仍能
+点击安装。关闭时调用 `updaterStore.discardStaged()`（清 `staged`/`phase`、停轮询）
+**并** `clear_pending_update_install`。
+
+### `autoStart` 在暂存边界复检开关
+
+下载可能耗时几十秒，用户可能在期间关掉自动更新。下载完成后、写记录**之前**复检
+`updateAutoInstall === false`；若已关闭则清掉刚下的记录、回 idle，不进入 `ready`。
+
+### `fetchAutoInstallState` 的错误语义
+
+IPC 失败**抛出**，由调用方 `resolveAutoInstallPlan` 的 catch 回退到更新对话框。
+吞成「无待安装记录」会让它以为可以安全走自动下载（随后 autoStart 静默失败），
+结果是既没对话框也没 Toast。只有空 `dataDir` 按无记录处理。
+
+### 本地验证（更新）
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib updater` → **25 例**（新增
+  通道往返/旧记录兼容/写失败拒装 3 例）
+- `pnpm run typecheck`（含 i18n submodule）、`cargo fmt --check` 双 crate 通过
+
+
+
+### 2026-10-06 更新
+
+## 评审修正（第二轮，2026-10-05）
+
+> 决策与实测证据见 ADR-107 的「评审修正（第二轮）」。
+
+### 版本比较：必须数值感知，不能用 semver 的 Ord
+
+`is_older_than` / `is_train_upgrade` 从 semver 改为**与后端同语义的数值解析**
+（`parse_train_version` / `first_number_run`）。实测 semver 1.x：
+
+```
+parse("0.1.0-beta9.0") < parse("0.1.0-beta10.0")  ==  false   // beta9 被判成"更新"
+```
+
+原因：semver 对 pre-release 标识符按 ASCII 字典序比较，只有"纯数字标识符"才比数值；
+而 `beta10` 整体是一个标识符，`'9' > '1'`。若不改，`take` 会把"待安装 beta10、
+当前 beta9"误判为记录更旧 → 返回 `installed` 清记录 → **自动安装被静默跳过**。
+
+| 输入 | semver Ord | 本实现（数值感知） |
+|---|---|---|
+| `beta9` vs `beta10` | beta9 更新（**错**） | beta9 更旧（对） |
+| `beta9` vs `beta32` | beta9 更新（**错**） | beta9 更旧（对） |
+| `beta31` vs `release1` | 可比（**错**） | 跨列车不可比 → false |
+| `alpha…22.9` vs `…22.10` | 字典序（**错**） | 数值（对） |
+
+跨列车返回 false（各列车序数独立计数，无法裁决 → 保守放行，不误判降级）。
+
+### `takePendingInstall` 错误语义
+
+IPC 失败**抛出**，不再返回 `none`：返回 `none` 会让 `installStagedOnLaunch` 当作
+"没有待安装记录"直接返回 → 更新永久卡住且用户毫无提示。调用方 catch 后保留
+`available`，由后台检查弹更新对话框。只有空 `dataDir` 返回 `none`。
+
+### 自动更新开关：经父级 `update()` 写入
+
+`AboutTab` 不再自持开关状态，改由父级下发值 + 回调，走 `update('updateAutoInstall', …)`。
+原因：父级 `update()` 以 `{ ...settings, [key]: value }` 整体重建，而父级不订阅
+`onSettingsChange`；若开关绕过父级直接 `saveSettings`，父级快照仍是旧值，用户之后改
+任何其他设置都会把该项覆盖回 `true`。
+
+### 下载终止：generation 代号
+
+模块级 `downloadGeneration`；每个下载开始时捕获，**每次 await 之后**比对。
+`stopPolling()`（含 `invalidateDownloads()`）被 `discardStaged` / `reset` 调用后，
+在飞轮询以 `DOWNLOAD_ABORTED` reject、不写状态、不重排 timer。
+
+为什么仅 `clearTimeout` 不够：它只能清掉尚未触发的 setTimeout。若正卡在
+`await get(…progress)`，返回后仍会重排 timer 并把 phase 写回 `downloading`
+（UI 被从 idle 拽回"下载中"），且 `downloadToUpdates` 的 Promise 永不 settle、
+`autoStart` 一直挂着。调用方对该错误码静默收尾，不显示成"下载失败"。
+
+### 本地验证（本轮）
+
+- `cargo test --lib updater` → **28 例**；tauri 44、backend 419
+- `pnpm run typecheck`（含 i18n submodule）、`pnpm run build`、`cargo fmt --check` 通过
+

@@ -27,7 +27,7 @@ import ToolboxTab from '../components/ToolboxTab.tsx'
 import PluginStoreTab from '../components/PluginStoreTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
-import { fetchUpdatePlan, type UpdatePlan } from '../api/update.ts'
+import { fetchUpdatePlan, clearPendingInstall as clearPendingUpdateInstall, type UpdatePlan } from '../api/update.ts'
 import { isDevBuild, resolveChannel, trainLabelKey, trainOf, channelTrainOf, UPDATE_CHANNEL_KEY } from '../lib/updateChannel.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
@@ -54,7 +54,7 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, getSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
 import type { CacheStats, CacheDirStats } from '../api/settings.ts'
 import { cacheInvalidate } from '../lib/simple-cache.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
@@ -230,10 +230,20 @@ function BackgroundPreview({ name, url, className }: { name: string; url: string
   return <img src={url} alt={name} className={className} />
 }
 
-function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
+function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog, autoInstall, onAutoInstallChange }: {
   sysInfo: SystemInfo | null
   licenseStatus: LicenseStatus | null
   onOpenLicenseDialog: () => void
+  /**
+   * 自动更新开关的当前值（由父级 `settings` state 下发，**不由本组件自己持有**）。
+   *
+   * 为什么必须走父级：父级 `update()` 会以 `{ ...settings, [key]: value }` 整体
+   * 重建并落盘。若本组件只调 `saveSettings` 改 `updateAutoInstall`，父级的
+   * `settings` 快照仍是旧值（父级并不订阅 `onSettingsChange`），用户之后改任何
+   * 其他设置都会用旧快照把 `updateAutoInstall` 覆盖回去——自动安装被悄悄重新打开。
+   */
+  autoInstall: boolean
+  onAutoInstallChange: (next: boolean) => void
 }) {
   const [expandedDep, setExpandedDep] = useState<string | null>(null)
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
@@ -522,6 +532,35 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               </button>
             )}
           </div>
+
+          {/* 自动更新开关。`!== false` 的口径与后端
+              SettingsResponse::default() 的 Some(true) 对齐，避免老配置升级后
+              被误解为关闭。 */}
+          <SettingRow
+            label={t('settings.about.updateAutoInstall')}
+            description={t('settings.about.updateAutoInstallDesc')}
+            control={
+              <Switch
+                checked={autoInstall}
+                onCheckedChange={(c) => {
+                  const next = c === true
+                  // 经父级 update() 写入：父级会以最新 settings 快照整体重建并落盘，
+                  // 保证后续任何设置改动都不会用陈旧快照把本项覆盖回旧值（review 指出）。
+                  onAutoInstallChange(next)
+                  if (!next) {
+                    // 关闭自动更新时，磁盘记录**和** store 里的 staged 都要清掉：
+                    // - 磁盘记录不清，下次启动会被 `installStagedOnLaunch` 读到并静默
+                    //   装完，用户会以为开关没生效；
+                    // - store 不清，本次会话里 Toast 仍挂在屏幕上、仍能点着立即安装，
+                    //   与「已关闭自动更新」自相矛盾（review 指出）。
+                    // 清掉后要更新只能走「检查更新 → 弹窗 → 立即更新」。
+                    useUpdaterStore.getState().discardStaged()
+                    void clearPendingUpdateInstall((getSettings().dataDir || '').replace(/[\\/]+$/, ''))
+                  }
+                }}
+              />
+            }
+          />
 
         </div>
       </SettingSection>
@@ -2625,7 +2664,7 @@ export default function Settings() {
 
           <TabContent activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
           <TabContent activeTab={category} tabId="plugins"><PluginStoreTab /></TabContent>
-          <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} /></TabContent>
+          <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} autoInstall={settings.updateAutoInstall !== false} onAutoInstallChange={(next) => update('updateAutoInstall', next)} /></TabContent>
           <TabContent activeTab={category} tabId="logs"><LogTab /></TabContent>
           <TabContent activeTab={category} tabId="debug"><DebugTab /></TabContent>
 
