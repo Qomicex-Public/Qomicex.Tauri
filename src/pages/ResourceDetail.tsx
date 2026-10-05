@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, StickyNote, Tag, User } from 'lucide-react'
+import { ArrowLeft, BookOpen, Check, ChevronDown, Copy, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, StickyNote, Tag, User } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import ReactMarkdown from 'react-markdown'
@@ -17,7 +17,9 @@ import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
 import { get, post, API_BASE, ApiError } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, getResourceDependencies, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
-import { lookupChineseName } from '../api/mcmod.ts'
+import { lookupChineseEntry } from '../api/mcmod.ts'
+import type { McmodLookupResult } from '../api/mcmod.ts'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { translateCategory } from '../lib/categoryTranslations.ts'
 import { normalizeResourceKind } from '../lib/downloadGroups.ts'
 import { downloadTo } from '../api/resource-download.ts'
@@ -35,14 +37,20 @@ import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 import { useI18n } from '../i18n/index.tsx'
 
 /**
- * 解析一个资源的中文名：优先用标题精确匹配（CurseForge 标题常带括号后缀，
+ * 解析一个资源的 mcmod 词条：优先用标题精确匹配（CurseForge 标题常带括号后缀，
  * 后端 lookup 已对末尾括号后缀做剥离 fallback），标题未命中时退回用 slug。
+ *
+ * 返回中文名与 mcmod.cn 词条 id：id 只有词条收录且带 id 时才有值，用于「跳 MC百科」。
  */
-async function resolveCnName(title: string, slug?: string): Promise<string | null> {
-  const cn = await lookupChineseName(title)
-  if (cn) return cn
-  if (slug && slug.trim()) return lookupChineseName(slug)
-  return null
+async function resolveMcmodEntry(title: string, slug?: string): Promise<McmodLookupResult> {
+  const byTitle = await lookupChineseEntry(title)
+  if (byTitle.cnName) return byTitle
+  if (slug && slug.trim()) {
+    const bySlug = await lookupChineseEntry(slug)
+    // 标题未命中中文名时，slug 命中的 id 同样可信（同一词条）。
+    return bySlug
+  }
+  return byTitle
 }
 
 
@@ -215,6 +223,15 @@ export default function ResourceDetailPage() {
   const [modpackGameDir, setModpackGameDir] = useState('')
   const [modpackIsolation, setModpackIsolation] = useState(true)
   const [cnName, setCnName] = useState<string | null>(null)
+  /**
+   * mcmod.cn 词条 id（`/class/{id}`，与实例模组卡片同一口径）。
+   * null = 未收录 / 词条无 id → **不渲染** MC百科入口（宁缺勿误导）。
+   */
+  const [mcmodId, setMcmodId] = useState<number | null>(null)
+  /** 复制名称后的短暂勾选态（图标 Copy → Check，800ms 后复原）。 */
+  const [nameCopied, setNameCopied] = useState(false)
+  /** 勾选态复位定时器句柄（连点时先清旧的，避免旧定时器提前抹掉新状态）。 */
+  const copiedTimerRef = useRef<number | null>(null)
   const [translation, setTranslation] = useState<{ original: string; translated: string; translatedAt: string } | null>(null)
   const [translating, setTranslating] = useState(false)
   const [bodyTranslation, setBodyTranslation] = useState<string | null>(null)
@@ -263,6 +280,43 @@ export default function ResourceDetailPage() {
     cacheInvalidate('api-resource-versions')
     setDetailRefreshKey(k => k + 1)
   }, [])
+
+  /**
+   * 复制资源名称（原标题，跨语言一致：粘到任意地方都能搜到该资源）。
+   * 失败必须可见——剪贴板在无权限/非安全上下文时会拒绝，静默失败等于按钮没反应。
+   */
+  const handleCopyName = useCallback(async () => {
+    const name = detail?.title
+    if (!name) return
+    try {
+      await navigator.clipboard.writeText(name)
+      setNameCopied(true)
+      notify(t('common.copied'), 'success')
+      // 句柄存起来：连点会起多个定时器，后到者可能提前把新一次的勾选态抹掉；
+      // 且卸载后仍会 setState（React 19 不报警，但属无谓更新）。
+      if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null
+        setNameCopied(false)
+      }, 800)
+    } catch {
+      notify(t('resourceDetail.copyNameFailed'), 'error')
+    }
+  }, [detail, notify, t])
+
+  // 卸载时清掉在飞的勾选态定时器，避免卸载后回调仍触发 setState。
+  useEffect(() => () => {
+    if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current)
+  }, [])
+
+  /** MC百科入口：仅当解析出词条 id 时可用（与实例模组卡片同一跳转口径）。 */
+  const handleOpenMcmod = useCallback(() => {
+    if (!mcmodId) return
+    openUrl(`https://www.mcmod.cn/class/${mcmodId}`).catch((e) => {
+      console.error('Open mcmod failed:', mcmodId, e)
+      notify(t('dialogs.common.openFailed'), 'error')
+    })
+  }, [mcmodId, notify, t])
 
   const handleDownload = useCallback(async (versionId: string, url: string, fileName: string) => {
     // Everything awaited must stay inside the try: a rejection from the CurseForge
@@ -381,19 +435,35 @@ export default function ResourceDetailPage() {
       setError(null)
       setTranslation(null)
       setBodyTranslation(null)
+      setMcmodId(null)
+      // mcmod 词条查询与详情请求并行、失败静默（增强项，不阻塞详情渲染）。
+      // 序号防竞态：缓存命中时会先查一次、详情返回后再查一次，两次的返回顺序不确定，
+      // 若不加序号，先发后到的旧结果会覆盖新结果（中文名与跳转入口都写错）。
+      let mcmodSeq = 0
+      const loadMcmod = (title: string, slug?: string) => {
+        const seq = ++mcmodSeq
+        resolveMcmodEntry(title, slug)
+          .then((entry) => {
+            if (cancelled || seq !== mcmodSeq) return
+            setCnName(entry.cnName)
+            setMcmodId(entry.mcmodId)
+          })
+          // 增强项失败静默；显式 catch 以免将来 resolveMcmodEntry 改为抛错时变成未处理拒绝。
+          .catch(() => { /* 中文名与 MC百科入口都是增强项，失败不影响详情可用 */ })
+      }
       try {
         const cacheKey = `api-resource-detail-${id}-${source}`
         const cached = cacheGet<ResourceDetail>(cacheKey)
         if (cached) {
           setDetail(cached); setLoading(false)
-          // 缓存命中时立即查中文名：网络请求失败/慢时标题也不缺翻译
-          if (category === 'mod') resolveCnName(cached.title, cached.slug).then(setCnName)
+          // 缓存命中时立即查 mcmod：网络请求失败/慢时标题也不缺翻译与跳转入口
+          if (category === 'mod') loadMcmod(cached.title, cached.slug)
         }
         const resourceDetail = await getResourceDetail(id, source, category)
         if (cancelled) return
         setDetail(resourceDetail)
         cacheSet(cacheKey, resourceDetail)
-        if (category === 'mod') resolveCnName(resourceDetail.title, resourceDetail.slug).then(setCnName)
+        if (category === 'mod') loadMcmod(resourceDetail.title, resourceDetail.slug)
         setLoading(false)
       } catch (e) {
         if (cancelled) return
@@ -586,6 +656,16 @@ export default function ResourceDetailPage() {
                   <MorphActionIcon active={loading} busy={RotateCwData} rest={RotateCwData} className="h-3.5 w-3.5" />
                 </Button>
               </Tooltip>
+              {/* MC百科：只在 mcmod 词库收录（拿到词条 id）时出现 —— 拿不到 id 时
+                  不渲染，避免点了跳到搜索页/空页给用户错觉（与实例模组卡片口径一致）。 */}
+              {mcmodId ? (
+                <Tooltip content={t('resourceDetail.mcmod')}>
+                  <Button variant="outline" size="sm" aria-label={t('resourceDetail.mcmod')} onClick={handleOpenMcmod}>
+                    <BookOpen className="h-3.5 w-3.5" />
+                    {t('resourceDetail.mcmod')}
+                  </Button>
+                </Tooltip>
+              ) : null}
               {detail?.projectUrl ? (
                 <Button asChild variant="outline" size="sm">
                   <a href={detail.projectUrl} target="_blank" rel="noopener noreferrer">
@@ -674,6 +754,18 @@ export default function ResourceDetailPage() {
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-2xl font-semibold leading-tight">{lang.startsWith('zh') && cnName ? <>{cnName}<span className="ml-1.5 text-sm font-normal text-muted-foreground/60">| {detail.title}</span></> : detail.title}</h2>
+                      {/* 复制资源名称：紧贴标题（复制的是标题本身，位置与语义一致）。
+                          图标态反馈（Copy→Check）叠加 toast，两者都失败时至少有一次可见提示。 */}
+                      <Tooltip content={t('resourceDetail.copyName')}>
+                        <button
+                          type="button"
+                          onClick={handleCopyName}
+                          aria-label={t('resourceDetail.copyName')}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        >
+                          {nameCopied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
+                        </button>
+                      </Tooltip>
                       <Badge variant="secondary">{getSourceLabel(detail.source)}</Badge>
                       {detail.latestVersion && <Badge variant="outline">{t('resourceDetail.latest', { version: detail.latestVersion })}</Badge>}
                     </div>

@@ -990,9 +990,14 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 ### GET `/api/mcmod/lookup?name={name}`
 
-查询模组中文名。
+查询模组中文名与 mcmod.cn 词条 id。
 
-**响应：** `{ "cnName": "..." }` （null 表示未找到）
+**响应：** `{ "cnName": "钠", "mcmodId": 2785 }`
+
+- `cnName`：中文名；未收录为 `null`。
+- `mcmodId`：mcmod.cn `/class/{id}` 的词条 id；未收录或词条无 id 时为 `null`。前端据此渲染「MC百科」跳转入口，为 `null` 时**不渲染**（避免跳到空页）。该字段为后加项（原 C# DTO 无），只读 `cnName` 的旧调用方不受影响。
+
+未收录示例：`{ "cnName": null, "mcmodId": null }`
 
 ### POST `/api/mcmod/batch`
 

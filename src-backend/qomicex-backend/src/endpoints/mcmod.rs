@@ -455,8 +455,15 @@ pub fn router() -> Router<SharedState> {
 // ---------------------------------------------------------------------------
 
 async fn lookup(Query(q): Query<LookupQuery>) -> ApiResult<Json<CnNameResponse>> {
-    let cn = mcmod_data().lookup(q.name.trim());
-    Ok(Json(CnNameResponse { cn_name: cn }))
+    // 用 lookup_with_id 而非 lookup：同时回填 mcmod.cn 的 class id，供前端「跳 MC百科」
+    // 直达 `/class/{id}`（与实例模组卡片同一口径）。索引里的 id 缺失时为 0——
+    // 那不是合法词条，按未命中处理，避免前端拼出 `/class/0`。
+    let (cn_name, mcmod_id) = match mcmod_data().lookup_with_id(q.name.trim()) {
+        Some((cn, id)) if id > 0 => (Some(cn), Some(id)),
+        Some((cn, _)) => (Some(cn), None),
+        None => (None, None),
+    };
+    Ok(Json(CnNameResponse { cn_name, mcmod_id }))
 }
 
 async fn batch(Json(names): Json<Vec<String>>) -> ApiResult<Json<HashMap<String, String>>> {
@@ -481,8 +488,13 @@ struct LookupQuery {
 }
 
 /// Matches C# `CnNameResponse`; `cnName` stays `null` when unresolved.
+///
+/// `mcmodId` 是后加字段（原 C# DTO 没有）：mcmod.cn 词条 id，前端据此跳
+/// `/class/{id}`。为 null 时前端不渲染跳转入口。纯新增字段，现有调用方
+/// （只读 `cnName`）不受影响。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CnNameResponse {
     cn_name: Option<String>,
+    mcmod_id: Option<i32>,
 }

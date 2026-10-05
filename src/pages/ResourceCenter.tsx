@@ -566,6 +566,30 @@ export default function ResourceCenter() {
   const [initialLoading, setInitialLoading] = useState(() => !snap || freshEntry)
   const [isReplacing, setIsReplacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /**
+   * 无限滚动（替代原「加载更多」按钮）：
+   * - `exhausted`：后端已无更多（追加返回空页，或已取满 total）。聚合分类的 total 是
+   *   各源之和的**近似值**，实际可翻页数常常小于它，故不能只靠 `items.length < total`
+   *   判断到底，必须用「空页」兜底，否则会无限空请求。
+   * - `loadMoreError`：**追加**失败的页脚内联错误。不能复用整页 `error`——那会把已经
+   *   加载出来的列表整片换成错误页，滚动位置也随之丢失。置位后暂停自动加载，等用户点重试。
+   */
+  const [exhausted, setExhausted] = useState(false)
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
+  /** 列表底部哨兵：进入视口即触发下一页（IO 观察点必须常驻，条件渲染会断开自动加载链路）。 */
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  /** 同步防重入：IO 回调可能在 `setLoading(true)` 生效前连续触发，重复请求会插进重复卡片。 */
+  const loadMoreBusyRef = useRef(false)
+  /**
+   * 请求序号：只允许「最新一次」请求写结果。
+   *
+   * 筛选条件变化会启动新的 `doSearch(1, false)`，而上一轮的追加请求可能仍在飞行中；
+   * 若它晚到，会把旧筛选的结果拼进新列表、并覆盖 `total` / `page`（分页游标错乱）。
+   * 非追加请求同时递增 `loadMoreRunRef`：作废在飞的追加run，使其 `finally` 不会误清
+   * 新一代追加的闸门（否则闸门被提前打开 → 同一页被并发请求）。
+   */
+  const requestSeqRef = useRef(0)
+  const loadMoreRunRef = useRef(0)
   const [installDialogItem, setInstallDialogItem] = useState<ResourceItem | null>(null)
   const [modpackInstallItem, setModpackInstallItem] = useState<ResourceItem | null>(null)
   const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => freshEntry ? {} : (snap?.cnNames ?? {}))
@@ -710,20 +734,66 @@ export default function ResourceCenter() {
     setSearchParams(params, { replace: true })
   }, [category, keyword, setSearchParams, sort, source, gameVersion, loader, tags, instanceId, view])
 
+  /**
+   * 回填中文名。
+   * - 追加时**合并**：`loadCnNames` 只返回本页条目的中文名，整体替换会把前页已显示的
+   *   中文名抹掉——无限滚动每滚一页就犯一次（手动分页时期路径相同，只是触发少）。
+   * - 非追加（新一轮）整体替换；本页无待查条目时：追加保持不动（保留前页），非追加清空。
+   * - 受请求序号保护：过期搜索的回填不得覆盖当前列表的中文名。
+   */
+  const applyCnNames = useCallback((items: ResourceItem[], append: boolean, seq: number) => {
+    const cnItems = cnEligibleItems(items, category)
+    if (cnItems.length === 0) {
+      if (!append) setCnNames({})
+      return
+    }
+    loadCnNames(cnItems)
+      .then((names) => {
+        if (seq !== requestSeqRef.current) return
+        setCnNames((prev) => (append ? { ...prev, ...names } : names))
+      })
+      // 中文名是增强项，失败静默；显式 catch 以免将来 loadCnNames 改为抛错时变成未处理拒绝。
+      .catch(() => { /* 中文名失败不影响列表可用性 */ })
+  }, [category])
+
   const doSearch = useCallback(async (pageNum: number, append: boolean) => {
+    // 本次请求的序号：只有序号仍是最新的请求才有权写结果/错误，否则一律早退。
+    const seq = ++requestSeqRef.current
+    if (!append) {
+      // 新一轮搜索作废在飞的追加 run：同时开闸（本轮的追加由新一轮自行发起），
+      // 并递增 run 号使其 finally 不再误清新闸门。
+      loadMoreBusyRef.current = false
+      loadMoreRunRef.current += 1
+    }
     setLoading(true)
     setError(null)
+    // 新的一轮（页码 1 且非追加）必然重开列表：重置「到底」与页脚错误，
+    // 否则上一次搜索的 exhausted 会把新搜索的自动加载永久关掉。
+    if (!append) {
+      setExhausted(false)
+      setLoadMoreError(null)
+    }
     const key = cacheKey(category, keyword, sort, source, gameVersion, loader, tags)
     const cached = searchCache.get(key)?.get(pageNum)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      setItems((prev) => append ? [...prev, ...cached.items] : cached.items)
+      setItems((prev) => {
+        if (!append) return cached.items
+        const seen = new Set(prev.map((i) => `${i.source}-${i.id}`))
+        return [...prev, ...cached.items.filter((i) => !seen.has(`${i.source}-${i.id}`))]
+      })
       setTotal(cached.total)
       setPage(pageNum)
       setLoading(false)
       setInitialLoading(false)
-      const cnItems = cnEligibleItems(cached.items, category)
-      if (cnItems.length > 0) loadCnNames(cnItems).then(setCnNames)
-      else setCnNames({})
+      // 上一轮非追加请求可能已把 isReplacing 置位、且会因序号过期而早退不再清除；
+      // 缓存命中的本轮必须自己收尾，否则骨架屏会一直挂着。
+      if (!append) setIsReplacing(false)
+      // 空页 = 缓存里也没这一页（超出后端可翻页数）→ 停止自动加载
+      if (append && cached.items.length === 0) setExhausted(true)
+      // 中文名：**追加时合并**（`loadCnNames` 只覆盖本页条目，整体替换会把前页已显示的
+      // 中文名抹掉——无限滚动每滚一页犯一次）；非追加（新一轮）才整体替换。
+      // 异步回填同样受请求序号保护，避免过期搜索结果覆盖当前列表的中文名。
+      applyCnNames(cached.items, append, seq)
       return
     }
     if (!append) setIsReplacing(true)
@@ -739,28 +809,44 @@ export default function ResourceCenter() {
         loader: (loader || '').toLowerCase() || undefined,
         tags: tags.length > 0 ? tags.join(',') : undefined,
       })
+      // 筛选已变化（有更新的请求在跑）：本次结果作废，不能污染新列表与分页游标。
+      if (seq !== requestSeqRef.current) return
       const pageItems = res.items
       if (!searchCache.has(key)) searchCache.set(key, new Map())
       searchCache.get(key)!.set(pageNum, { items: pageItems, total: res.total, timestamp: Date.now() })
-      setItems((prev) => append ? [...prev, ...pageItems] : pageItems)
+      setItems((prev) => {
+        if (!append) return pageItems
+        // 按 source+id 去重：聚合分类的分页是近似的（各源第 N 页合并截断），
+        // 相邻页可能吐出同一条，直接拼接会出现重复 React key 与重复卡片。
+        const seen = new Set(prev.map((i) => `${i.source}-${i.id}`))
+        return [...prev, ...pageItems.filter((i) => !seen.has(`${i.source}-${i.id}`))]
+      })
       setTotal(res.total)
       setPage(pageNum)
-      const cnItems = cnEligibleItems(pageItems, category)
-      if (cnItems.length > 0) loadCnNames(cnItems).then(setCnNames)
-      else setCnNames({})
+      // 仅「空页」判定到底：聚合分页按各类型/来源分别取第 N 页再去重截断，去重后
+      // 可能少于 pageSize 而下一页仍有新条目——按「未满 pageSize」判定会提前掐断。
+      if (append && pageItems.length === 0) setExhausted(true)
+      // 同缓存分支：追加合并、非追加替换，并受序号保护。
+      applyCnNames(pageItems, append, seq)
     } catch (e) {
+      if (seq !== requestSeqRef.current) return
       const msg = e instanceof Error ? e.message : t('resource.searchFailed')
-      if (msg.includes('404') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-        setError(t('resource.backendUnreachable'))
+      const friendly = (msg.includes('404') || msg.includes('Failed to fetch') || msg.includes('NetworkError'))
+        ? t('resource.backendUnreachable')
+        : msg
+      if (append) {
+        // 追加失败不能走整页错误分支：已加载的列表必须留在屏幕上，只在页脚提示并
+        // 暂停自动加载，等用户显式重试（否则 IO 会在停顿后反复重打同一个失败请求）。
+        setLoadMoreError(friendly)
       } else {
-        setError(msg)
+        setError(friendly)
+        setItems([])
       }
-      if (!append) setItems([])
     }
     setLoading(false)
     setInitialLoading(false)
     setIsReplacing(false)
-  }, [category, keyword, sort, source, gameVersion, loader, tags])
+  }, [category, keyword, sort, source, gameVersion, loader, tags, applyCnNames])
 
   const scrollEl = () => document.querySelector('main')
 
@@ -969,9 +1055,67 @@ export default function ResourceCenter() {
     }
   }
 
-  const loadMore = () => {
-    if (!loading && items.length < total) doSearch(page + 1, true)
-  }
+  /**
+   * 追加下一页。`loadMoreBusyRef` 是同步闸门：IntersectionObserver 在 fast scroll 下
+   * 可能在 React 提交 `setLoading(true)` 之前连发多次回调，只靠 `loading` 状态会重复请求，
+   * 结果就是同一页被追加两遍、React key 撞车。
+   */
+  const loadMore = useCallback(async () => {
+    if (loadMoreBusyRef.current || loading) return
+    if (view !== 'search' || exhausted || loadMoreError) return
+    if (items.length >= total) { setExhausted(true); return }
+    // run 号用于收尾判定：若本次追加飞行途中来了新一轮搜索（run 被递增），
+    // 本次的 finally 不得清闸门——那时闸门已属于新一轮，误清会导致并发请求同一页。
+    const run = ++loadMoreRunRef.current
+    loadMoreBusyRef.current = true
+    try {
+      await doSearch(page + 1, true)
+    } finally {
+      if (run === loadMoreRunRef.current) loadMoreBusyRef.current = false
+    }
+  }, [loading, view, exhausted, loadMoreError, items.length, total, page, doSearch])
+
+  /**
+   * 页脚「重试」：清掉错误后立刻重打同一页（不走 IO 等待）。
+   *
+   * 必须与 `loadMore` 共用同一道同步闸门：`loading` 在同一次渲染内不生效，连点「重试」
+   * 会并发发出同一页的多个请求（虽有去重托底，但多余请求与竞态仍应避免）。
+   */
+  const retryLoadMore = useCallback(() => {
+    if (loadMoreBusyRef.current) return
+    setLoadMoreError(null)
+    // 失败页的页码没有推进（doSearch 抛错时 setPage 不执行），page+1 正是那一页。
+    const run = ++loadMoreRunRef.current
+    loadMoreBusyRef.current = true
+    void doSearch(page + 1, true).finally(() => {
+      if (run === loadMoreRunRef.current) loadMoreBusyRef.current = false
+    })
+  }, [page, doSearch])
+
+  // 无限滚动：观察列表底部哨兵，进入视口（rootMargin 预取 300px）即加载下一页。
+  //
+  // root 用最近的可滚动祖先（PageShell 自身 `overflow-y-auto`）而非 viewport ——
+  // 页面滚动发生在这个内层容器上，用 viewport 作 root 的哨兵永远不会相交（列表卡死）。
+  // 依赖 `loadMore` 让 IO 在每次状态变化后重建：目标元素不变时旧 observer 仍持旧闭包，
+  // 不重建会用过期条件判断（如已 exhausted 还在请求）。
+  useEffect(() => {
+    if (view !== 'search') return
+    const target = sentinelRef.current
+    if (!target) return
+    if (exhausted || loadMoreError || initialLoading) return
+
+    let node: HTMLElement | null = target.parentElement
+    while (node) {
+      const style = getComputedStyle(node)
+      if (/(auto|scroll|overlay)/.test(style.overflowY)) break
+      node = node.parentElement
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) void loadMore()
+    }, { root: node, rootMargin: '300px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [view, loadMore, exhausted, loadMoreError, initialLoading])
 
   // ---- P2：收藏夹增删改 + 标签过滤 ----
 
@@ -1535,18 +1679,27 @@ export default function ResourceCenter() {
             })}
           </div>
 
-          {view === 'search' && (
-            !initialLoading && !isReplacing && !error && items.length > 0 && (
-              items.length < total ? (
-                <div className="mt-5 flex justify-center">
-                  <Button variant="outline" size="sm" onClick={loadMore} disabled={loading} className="min-w-[160px] gap-1.5">
-                    {loading ? <><RotateCw className="h-3 w-3 animate-spin" />{t('resource.loading')}</> : <>{t('resource.loadMore', { current: items.length, total })}</>}
+          {view === 'search' && !initialLoading && !isReplacing && !error && items.length > 0 && (
+            /* 无限滚动页脚：哨兵常驻（条件渲染会让 IO 目标消失、自动加载断链），
+               状态文案叠在它上面。追加失败时只在这里提示 + 重试，不动已加载列表。 */
+            <div ref={sentinelRef} className="mt-5 flex min-h-[32px] flex-col items-center justify-center gap-2">
+              {loadMoreError ? (
+                <>
+                  <p className="text-xs text-destructive">{loadMoreError}</p>
+                  <Button variant="outline" size="sm" onClick={retryLoadMore} className="gap-1.5">
+                    <RotateCw className="h-3 w-3" />
+                    {t('resource.retry')}
                   </Button>
-                </div>
-              ) : (
-                <p className="mt-5 text-center text-xs text-muted-foreground/50">{t('resource.allShown', { count: total })}</p>
-              )
-            )
+                </>
+              ) : exhausted || items.length >= total ? (
+                <p className="text-center text-xs text-muted-foreground/50">{t('resource.allShown', { count: items.length })}</p>
+              ) : loading ? (
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground/70">
+                  <RotateCw className="h-3 w-3 animate-spin" />
+                  {t('resource.loading')}
+                </p>
+              ) : null}
+            </div>
           )}
         </>
       )}
