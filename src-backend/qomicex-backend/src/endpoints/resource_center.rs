@@ -2441,10 +2441,13 @@ fn apply_technic_detail(
             item.categories = cats;
         }
     }
-    // 标题与详情页取同一口径（displayName → name → id），保证列表与详情一致。
-    let display = d.instance_name();
-    if !display.trim().is_empty() {
-        item.title = display.to_string();
+    // 标题与详情页取同一口径（displayName → name），保证列表与详情一致。
+    //
+    // ⚠️ 只在 `display_name` / `name` **真的有值**时才覆盖：`instance_name()` 的兜底是
+    // 数字 `id`（如 `1540828`），若照它的返回值判空，详情缺名时会把列表里已有的正常
+    // 标题替换成数字 id（CodeRabbit PR #197 finding）。
+    if !d.display_name.trim().is_empty() || !d.name.trim().is_empty() {
+        item.title = d.instance_name().to_string();
     }
     // 列表接口的 iconUrl 实测可为显式 null → 空串；详情有 icon/logo 时补齐。
     if item.icon_url.trim().is_empty() {
@@ -3879,6 +3882,33 @@ mod favorites_tests {
         // 寻址键绝不能被补全改写（数字 id 在详情接口 404，见 ADR-103）
         assert_eq!(item.id, "agrarian-skies");
         assert_eq!(item.slug, "agrarian-skies");
+    }
+
+    /// 详情**缺名**时不得把列表标题替换成数字 id（CodeRabbit PR #197 finding）。
+    ///
+    /// `instance_name()` 的兜底是 `id`（详情接口实测为**数字**，如 `1540828`）。若按它的
+    /// 返回值判空，详情只有 `id` 时列表标题会被写成 `"1540828"`，卡片显示一串数字。
+    #[test]
+    fn technic_detail_enrichment_does_not_clobber_title_with_numeric_id() {
+        use qomicex_core::models::expansion::technic::{TechnicPackDetail, TechnicPackSummary};
+        let p = TechnicPackSummary {
+            id: "1540828".into(),
+            name: "Agrarian Skies".into(),
+            slug: "agrarian-skies".into(),
+            url: "u".into(),
+            icon_url: "i".into(),
+        };
+        // 详情只有数字 id：display_name 与 name 都缺失
+        let d: TechnicPackDetail = serde_json::from_str(r#"{"id":1540828}"#).unwrap();
+        assert_eq!(d.instance_name(), "1540828", "前提：兜底确实是数字 id");
+
+        let mut item = technic_summary_to_item(&p, "modpack");
+        apply_technic_detail(&mut item, &d);
+
+        assert_eq!(
+            item.title, "Agrarian Skies",
+            "详情无 displayName/name 时应保留列表标题，而不是写成数字 id"
+        );
     }
 
     /// 详情字段缺失时**不得**用空值抹掉列表已有数据（降级而非倒退）。
