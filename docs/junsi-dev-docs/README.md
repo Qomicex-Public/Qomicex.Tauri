@@ -106,6 +106,8 @@
 - [ADR-102：Technic SingleZip 整合包本地导入（issue #123 期1）——探测/转换对齐 Prism，古董包 JarMod 拒绝并转 #180](1-决策记录/ADR-102-Technic-SingleZip-整合包本地导入-issue-123期1.md)
 - [ADR-103：资源详情页 MC百科跳转与复制名称 / 资源中心改无限滚动（issue #188）](1-决策记录/ADR-103-资源详情MC百科跳转与复制名称-资源中心改无限滚动.md)
 - [ADR-104：复制按钮统一 CopyActionIcon，并修复其定时器被 cleanup 清掉的缺陷（issue #191）](1-决策记录/ADR-104-复制按钮统一CopyActionIcon并修复定时器缺陷-issue-191.md)
+- [ADR-105：资源中心 Technic 源：API 模型对齐、后端代理安装与 build 参数 401 归因修正（issue #151）](1-决策记录/ADR-105-资源中心-Technic-源-API-模型对齐-后端代理安装与-build-参数-401-归因修正-issue-151.md)
+- [ADR-106：JarMod 支持：非破坏性派生 jar 注入古董包 modpack.jar（issue #180）](1-决策记录/ADR-106-JarMod-支持-非破坏性派生-jar-注入古董包-modpack-jar-issue-180.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
