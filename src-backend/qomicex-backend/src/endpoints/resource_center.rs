@@ -696,6 +696,12 @@ async fn categories(
     let source = q.source.clone().unwrap_or_else(|| "modrinth".to_string());
     let category = q.category.clone().unwrap_or_else(|| "mod".to_string());
 
+    // Technic 无类别体系（列表接口无分类字段，详情 tags 为自由文本且形态不稳定）
+    // → 返回空列表，前端回退到静态兜底（issue #151）。
+    if source.eq_ignore_ascii_case("technic") {
+        return Ok(Json(Vec::new()));
+    }
+
     if source.eq_ignore_ascii_case("curseforge") {
         let mut out: Vec<ResourceCategoryDto> = Vec::new();
         if let Some(class_id) = map_cf_class_id(Some(&category)) {
@@ -801,7 +807,7 @@ async fn loaders(
     let aggregate = category.eq_ignore_ascii_case("aggregate");
 
     let srcs: Vec<&str> = if source.eq_ignore_ascii_case("all") {
-        vec!["modrinth", "curseforge", "ftb"]
+        vec!["modrinth", "curseforge", "ftb", "technic"]
     } else {
         vec![source.as_str()]
     };
@@ -831,6 +837,15 @@ async fn loaders(
         } else if src.eq_ignore_ascii_case("ftb") {
             // FTB 仅整合包。加载器名为自由文本 target name，实测（94 个包全覆盖）
             // 只出现 forge / fabric / neoforge（另有字面量 "unknown"，非加载器，排除）。
+            if aggregate || category.eq_ignore_ascii_case("modpack") {
+                for slug in ["forge", "fabric", "neoforge"] {
+                    out.push((slug.to_string(), loader_display_name(slug)));
+                }
+            }
+        } else if src.eq_ignore_ascii_case("technic") {
+            // Technic 仅整合包。加载器维度**无法从列表接口得知**（列表只有 5 个字段），
+            // 实测该平台以 Forge 为主（Technic 时代几乎全是 Forge/ModLoader）。
+            // 这里只列出可安全筛选的项，避免给出查不到结果的选项（#163 的口径）。
             if aggregate || category.eq_ignore_ascii_case("modpack") {
                 for slug in ["forge", "fabric", "neoforge"] {
                     out.push((slug.to_string(), loader_display_name(slug)));
@@ -938,12 +953,16 @@ async fn search(
     }
 
     // "all" = 聚合源：按分类决定可聚合的源。save 仅 CurseForge；
-    // modpack 额外含 FTB；其余为 Modrinth + CurseForge。
+    // modpack 额外含 FTB 与 Technic（issue #151）；其余为 Modrinth + CurseForge。
+    //
+    // Technic 的加入是**用户确认过的范围**（issue #151 期2）：它的搜索无分页
+    // （固定 15 条），在聚合里会如实参与归并——见 search_one 的 technic 分支
+    // 对分页语义的说明。
     let sources: Vec<&str> = if src.eq_ignore_ascii_case("all") {
         match category.as_deref() {
             Some(c) if c.eq_ignore_ascii_case("save") => vec!["curseforge"],
             Some(c) if c.eq_ignore_ascii_case("modpack") => {
-                vec!["modrinth", "curseforge", "ftb"]
+                vec!["modrinth", "curseforge", "ftb", "technic"]
             }
             _ => vec!["modrinth", "curseforge"],
         }
@@ -1018,12 +1037,14 @@ const AGGREGATE_TYPES: [&str; 6] = [
 ];
 
 /// 某资源类型实际存在的平台 —— 与 `search` 中 `all` 分支的口径保持一致：
-/// save 仅 CurseForge（Modrinth 无此工程类型）；modpack 额外含 FTB；其余为
-/// Modrinth + CurseForge。
+/// save 仅 CurseForge（Modrinth 无此工程类型）；modpack 额外含 FTB 与 Technic；
+/// 其余为 Modrinth + CurseForge。
+///
+/// Technic 仅提供整合包（无模组/光影等），故只出现在 modpack 一行。
 fn platforms_for_type(ty: &str) -> &'static [&'static str] {
     match ty {
         "save" => &["curseforge"],
-        "modpack" => &["modrinth", "curseforge", "ftb"],
+        "modpack" => &["modrinth", "curseforge", "ftb", "technic"],
         _ => &["modrinth", "curseforge"],
     }
 }
@@ -1449,6 +1470,37 @@ async fn search_one(
             .map(|p| ftb_pack_to_item(p, "ftb", "modpack"))
             .collect();
         Ok((items, total))
+    } else if source.eq_ignore_ascii_case("technic") {
+        // Technic 只有整合包（issue #151）。
+        if !category.unwrap_or("").eq_ignore_ascii_case("modpack") {
+            return Ok((vec![], 0));
+        }
+        let technic = state.core.create_technic_source();
+        // 无关键词 → 服务端 /search 返回 400，改走 /trending 填默认列表（实测）。
+        let (packs, total) = if keyword.trim().is_empty() {
+            technic.trending().await
+        } else {
+            technic.search(keyword).await
+        }
+        .map_err(|e| ApiError::upstream(e.to_string()))?;
+        // ⚠️ 分页语义：Technic API **无分页**（固定 15 / 20 条，忽略 page）。
+        //
+        // 这里仍按 page/page_size 做内存切片，保证与其它源的契约一致；但
+        // ①`total` 回报**本次实际条数**（不伪造总数，否则前端「加载更多」会
+        // 无限拉取永远取不到的第 2 页）；②只有第 1 页可能非空——`page>1` 时
+        // 切片结果自然为空，这正是「服务端没有更多数据」的如实表达。
+        //
+        // 因此**不把 technic 计入聚合分页**会更好，但用户已确认纳入聚合源
+        // （见 platforms_for_type / sources）；聚合分支用的是 `search_one` 的
+        // 返回值并统一按下载量归并截断，故此处语义安全。
+        let offset = ((page - 1).max(0) as usize) * page_size.max(0) as usize;
+        let items: Vec<ResourceItemDto> = packs
+            .iter()
+            .skip(offset)
+            .take(page_size.max(0) as usize)
+            .map(|p| technic_summary_to_item(p, category.unwrap_or("modpack")))
+            .collect();
+        Ok((items, total))
     } else {
         Ok((vec![], 0))
     }
@@ -1585,6 +1637,48 @@ async fn detail(
             project_url: format!("https://www.feed-the-beast.com/modpacks/{}", slug),
             slug: slug.clone(),
             body: pack.description.clone().unwrap_or_default(),
+        })
+        .into_response());
+    }
+
+    if src.eq_ignore_ascii_case("technic") {
+        // id 即 slug：实测数字 id 在详情接口上 404，slug 是唯一键（ADR-103）。
+        let technic = state.core.create_technic_source();
+        let pack = technic
+            .get_pack_detail(&id)
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let pack = match pack {
+            Some(p) => p,
+            None => {
+                return Err(ApiError::not_found(
+                    "NOT_FOUND",
+                    "Technic modpack not found",
+                ))
+            }
+        };
+        return Ok(Json(ResourceDetailDto {
+            id: pack.id.clone(),
+            title: pack.instance_name().to_string(),
+            description: pack.description.clone(),
+            author: pack.user.clone(),
+            icon_url: pack
+                .icon
+                .as_ref()
+                .map(|a| a.url().to_string())
+                .or_else(|| pack.logo.as_ref().map(|a| a.url().to_string()))
+                .unwrap_or_default(),
+            download_count: pack.installs,
+            source: "technic".to_string(),
+            // tags 实测形态不稳定（逗号/空格分隔/null），尽力拆分；拆不出就空。
+            categories: pack
+                .tags
+                .as_deref()
+                .map(qomicex_core::models::expansion::technic::split_tags)
+                .unwrap_or_default(),
+            project_url: pack.web_url(),
+            slug: pack.name.clone(),
+            body: String::new(),
         })
         .into_response());
     }
@@ -1778,6 +1872,57 @@ async fn versions(
         return Ok(Json(dtos));
     }
 
+    if src.eq_ignore_ascii_case("technic") {
+        // Technic **无版本列表**：一个包只有一个 `version` 字符串 + 一个直链
+        // （ADR-103 实测）。因此这里把「包本身」建模成唯一的版本条目，让前端
+        // 现有的「选版本 → 安装」流程无需特殊分支即可工作。
+        //
+        // 版本 id 用 slug（唯一键）；SingleZip 的直链填进 downloads，使前端的
+        // 「保存到本地」按钮也能用。Solder / 不可用包给空 downloads，前端据此
+        // 提示「暂不支持」（期3 #181）。
+        let technic = state.core.create_technic_source();
+        let pack = technic
+            .get_pack_detail(&id)
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let Some(pack) = pack else {
+            return Ok(Json(vec![]));
+        };
+        // 版本号：API 的 version 字段（如 "4.1.0"）；空则退化为 slug。
+        let version_number = if pack.version.trim().is_empty() {
+            pack.name.clone()
+        } else {
+            pack.version.clone()
+        };
+        let downloads = match pack.single_zip_url() {
+            Some(u) => vec![ResourceFileDto {
+                url: u.to_string(),
+                // 文件名：列表接口不给包体文件名，用 slug-version.zip 构造（仅展示用，
+                // 真实下载由后端按 URL 落地，不经前端文件名）。
+                filename: format!("{}-{}.zip", pack.name, version_number),
+                size: 0,
+            }],
+            None => Vec::new(),
+        };
+        let game_versions = if pack.minecraft.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![pack.minecraft.clone()]
+        };
+        return Ok(Json(vec![ResourceVersionDto {
+            id: pack.name.clone(),
+            name: version_number.clone(),
+            version_number,
+            game_versions,
+            // 加载器维度需读包内 version.json，列表/详情接口拿不到 → 留空由
+            // 安装管线自行识别（technic 转换器会解析出真实 loader）。
+            loaders: Vec::new(),
+            downloads,
+            dependencies: None,
+            date_published: None,
+        }]));
+    }
+
     Ok(Json(vec![]))
 }
 
@@ -1868,6 +2013,29 @@ async fn version_downloads(
                 size: f.size,
             })
             .collect();
+        return Ok(Json(files));
+    }
+
+    if src.eq_ignore_ascii_case("technic") {
+        // Technic 无版本概念（`version_id` 即 slug 回显，见 versions 分支），
+        // 直链直接由详情给出；这里同样按详情解析，保证与 versions 分支一致。
+        let technic = state.core.create_technic_source();
+        let pack = technic
+            .get_pack_detail(&id)
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let Some(pack) = pack else {
+            return Ok(Json(vec![]));
+        };
+        let files = match pack.single_zip_url() {
+            Some(u) => vec![ResourceFileDto {
+                url: u.to_string(),
+                filename: format!("{}-{}.zip", pack.name, pack.version),
+                size: 0,
+            }],
+            // Solder / 不可用：无直链（前端据此提示「暂不支持」，期3 #181）
+            None => Vec::new(),
+        };
         return Ok(Json(files));
     }
 
@@ -2133,6 +2301,35 @@ fn ftb_pack_to_item(
             .unwrap_or_default(),
         project_url: format!("https://www.feed-the-beast.com/modpacks/{}", slug),
         slug: slug.clone(),
+        category: category.to_string(),
+    }
+}
+
+/// Technic 列表项 → 通用资源条目（issue #151）。
+///
+/// Technic 列表接口只给 5 个字段（id/name/slug/url/iconUrl），没有下载量/作者/
+/// 简介——**详情接口才有**。为不在搜索路径上多打 N 次详情请求，这里按可得字段
+/// 填充，缺失项留空：
+/// - `id` 用 **slug**（唯一可寻址键，详见 technic 模块注释）；数字 id 仅作
+///   `project_url` 的组成部分。
+/// - `download_count` 置 0：列表接口不提供，前端按下载量排序时该项恒排末尾
+///   （不伪造数字，避免误导排序）。
+/// - `project_url` 用列表项自带的网页地址（实测可靠）。
+fn technic_summary_to_item(
+    p: &qomicex_core::models::expansion::technic::TechnicPackSummary,
+    category: &str,
+) -> ResourceItemDto {
+    ResourceItemDto {
+        id: p.slug.clone(),
+        title: p.name.clone(),
+        description: String::new(),
+        author: String::new(),
+        icon_url: p.icon_url.clone(),
+        download_count: 0,
+        source: "technic".to_string(),
+        categories: Vec::new(),
+        project_url: p.url.clone(),
+        slug: p.slug.clone(),
         category: category.to_string(),
     }
 }
@@ -3194,5 +3391,75 @@ mod favorites_tests {
         assert_eq!(v["slug"], "neoforge");
         assert_eq!(v["name"], "NeoForge");
         assert_eq!(v.as_object().unwrap().len(), 2);
+    }
+
+    // =================================================================
+    // #151 Technic 源
+    // =================================================================
+
+    /// Technic 只提供整合包：类型表必须只在 modpack 一行出现它，且不污染其它类型。
+    #[test]
+    fn technic_is_only_a_modpack_platform() {
+        assert!(platforms_for_type("modpack").contains(&"technic"));
+        for ty in ["mod", "shader", "resourcepack", "datapack", "save"] {
+            assert!(
+                !platforms_for_type(ty).contains(&"technic"),
+                "{ty} 不应包含 technic（该平台无此类资源）"
+            );
+        }
+    }
+
+    /// 聚合源的 modpack 分支必须包含 technic（用户确认纳入聚合，见决策记录）。
+    #[test]
+    fn technic_aggregates_for_modpack() {
+        // 与 `search` 中 all + modpack 的映射保持同步：四处清单任一不同步，
+        // 聚合结果就会与单源结果不一致（这类漂移无编译期保护，只能靠测试守）。
+        assert!(platforms_for_type("modpack").contains(&"technic"));
+    }
+
+    /// 列表项 → DTO：`id` 必须是 **slug**（唯一可寻址键），不是数字 id。
+    ///
+    /// 数字 id 在详情接口上 404（ADR-103 实测），若这里误用 `p.id`，
+    /// 前端点进详情/安装会全部失败。
+    #[test]
+    fn technic_summary_maps_slug_as_id() {
+        use qomicex_core::models::expansion::technic::TechnicPackSummary;
+        let p = TechnicPackSummary {
+            id: "1540828".into(),
+            name: "Agrarian Skies".into(),
+            slug: "agrarian-skies".into(),
+            url: "https://www.technicpack.net/modpack/agrarian-skies.1540828".into(),
+            icon_url: "https://cdn/icon.png".into(),
+        };
+        let item = technic_summary_to_item(&p, "modpack");
+        assert_eq!(
+            item.id, "agrarian-skies",
+            "id 必须是 slug（数字 id 会 404）"
+        );
+        assert_eq!(item.slug, "agrarian-skies");
+        assert_eq!(item.title, "Agrarian Skies");
+        assert_eq!(item.source, "technic");
+        assert_eq!(item.category, "modpack");
+        assert_eq!(item.project_url, p.url);
+        // 列表接口不提供下载量：如实为 0，不伪造
+        assert_eq!(item.download_count, 0);
+    }
+
+    /// DTO 的 JSON 契约：前端按 camelCase 解构（`iconUrl` / `downloadCount`）。
+    #[test]
+    fn technic_item_json_contract_is_camel_case() {
+        use qomicex_core::models::expansion::technic::TechnicPackSummary;
+        let p = TechnicPackSummary {
+            id: "1".into(),
+            name: "X".into(),
+            slug: "x".into(),
+            url: "u".into(),
+            icon_url: "i".into(),
+        };
+        let v = serde_json::to_value(technic_summary_to_item(&p, "modpack")).unwrap();
+        assert!(v.as_object().unwrap().contains_key("iconUrl"));
+        assert!(v.as_object().unwrap().contains_key("downloadCount"));
+        assert!(v.as_object().unwrap().contains_key("projectUrl"));
+        assert!(!v.as_object().unwrap().contains_key("icon_url"));
     }
 }

@@ -89,7 +89,21 @@ const SOURCES = [
   { key: 'modrinth', label: 'Modrinth' },
   { key: 'curseforge', label: 'CurseForge' },
   { key: 'ftb', label: 'FTB' },
+  { key: 'technic', label: 'Technic' },
 ]
+
+/**
+ * 只提供整合包的来源（issue #151）。
+ *
+ * 选中这些来源时资源类型被强制为 `modpack`（它们的 API 没有其它类型的资源），
+ * 且排序项也有各自的可用集合。集中在这里判断，避免在 category/sort/source
+ * 三处各写一遍 `source === 'ftb' || source === 'technic'`。
+ */
+const MODPACK_ONLY_SOURCES: readonly string[] = ['ftb', 'technic']
+
+function isModpackOnlySource(source: string): boolean {
+  return MODPACK_ONLY_SOURCES.includes(source.toLowerCase())
+}
 
 const GAME_VERSIONS = ['26.2', '26.1.2', '26.1.1', '26.1', '1.21.11', '1.21.10', '1.21.9', '1.21.8', '1.21.7', '1.21.6', '1.21.5', '1.21.4', '1.21.3', '1.21.2', '1.21.1', '1.21', '1.20.6', '1.20.5', '1.20.4', '1.20.3', '1.20.2', '1.20.1', '1.20', '1.19.4', '1.19.3', '1.19.2', '1.19.1', '1.19', '1.18.2', '1.18.1', '1.18', '1.17.1', '1.17', '1.16.5', '1.16.4', '1.16.3', '1.16.2', '1.16.1', '1.16']
 
@@ -130,6 +144,11 @@ const SORT_OPTIONS: Record<string, { key: string }[]> = {
     { key: 'updated' },
     { key: 'name' },
     { key: 'newest' },
+  ],
+  // Technic API 无排序/分页参数（固定返回若干条，ADR-103 实测）→ 只给一个
+  // 稳定的默认项，避免给用户「换了排序但结果没变」的错觉。
+  technic: [
+    { key: 'relevance' },
   ],
 }
 
@@ -197,20 +216,20 @@ function formatDownloads(n: number): string {
 }
 
 function getSourceLabel(source: string): string {
-  const map: Record<string, string> = { modrinth: 'Modrinth', curseforge: 'CurseForge', ftb: 'FTB' }
+  const map: Record<string, string> = { modrinth: 'Modrinth', curseforge: 'CurseForge', ftb: 'FTB', technic: 'Technic' }
   return map[source] ?? source
 }
 
 // 标签/类别筛选对哪些资源类型生效（ENH-04：全类型类别筛选）。
 // - save：无类别体系
-// - ftb：用自身分类（暂不扩展）
+// - ftb / technic：仅整合包，且无类别体系（暂不扩展）
 // - curseforge：仅 mod/modpack 有 classId 分类
 // - 其余（modrinth / all 聚合）：mod/modpack/shader/resourcepack/datapack 均支持
 function tagsSupported(source: string, category: string): boolean {
   // 聚合分类同时包含多套类型，各自类别体系不同，无法用一套标签筛选。
   if (category === AGGREGATE_CATEGORY) return false
   if (category === 'save') return false
-  if (source === 'ftb') return false
+  if (source === 'ftb' || source === 'technic') return false
   if (source === 'curseforge') return category === 'mod' || category === 'modpack'
   return category === 'mod' || category === 'modpack' || category === 'shader' || category === 'resourcepack' || category === 'datapack'
 }
@@ -245,13 +264,13 @@ function fallbackLoaders(category: string): ResourceCategory[] {
  * 与后端 `/resources/loaders` 的口径保持一致：
  * - `save`（存档）任何来源都无加载器概念
  * - CurseForge 仅 mod/modpack 有（其余类型 classId 无加载器维度）
- * - FTB 仅 modpack
+ * - FTB / Technic 仅 modpack
  * - Modrinth / 聚合：mod/modpack/shader/resourcepack/datapack 都有真实加载器
  *   （shader→iris/optifine、resourcepack→minecraft、datapack→datapack）
  */
 function loadersSupported(source: string, category: string): boolean {
   if (category === 'save') return false
-  if (source === 'ftb') return category === 'modpack'
+  if (source === 'ftb' || source === 'technic') return category === 'modpack'
   if (source === 'curseforge') return category === 'mod' || category === 'modpack'
   // modrinth / all（含聚合分类）：除存档外都有加载器维度
   return true
@@ -531,16 +550,20 @@ export default function ResourceCenter() {
   const categoryInit = urlCategory ?? (!freshEntry ? snap?.category : undefined) ?? AGGREGATE_CATEGORY
   const sourceInit = (() => {
     const src = urlSource ?? (!freshEntry ? snap?.source : undefined) ?? 'all'
-    return categoryInit === 'save' ? 'curseforge' : src
+    if (categoryInit === 'save') return 'curseforge'
+    return src
   })()
-  const [category, setCategory] = useState(categoryInit)
+  // 只提供整合包的来源（FTB/Technic）：URL 或快照可能带着非 modpack 的 category
+  // （如从聚合切过来），此类组合后端恒返回空列表 → 进入时强制纠正为 modpack。
+  const categoryInitFixed = isModpackOnlySource(sourceInit) ? 'modpack' : categoryInit
+  const [category, setCategory] = useState(categoryInitFixed)
   const [source, setSource] = useState(sourceInit)
   const [keyword, setKeyword] = useState(() => urlKeyword ?? (!freshEntry ? snap?.keyword : undefined) ?? '')
   const [searchInput, setSearchInput] = useState(() => urlKeyword ?? (!freshEntry ? snap?.searchInput : undefined) ?? '')
   const [sort, setSort] = useState(() => {
     // 默认排序取当前「分类 + 来源」组合的第一个合法项，而不是写死 relevance：
     // 默认已落在聚合（只有 downloads），写死 relevance 会让下拉先渲染一帧空白。
-    const fallback = sortOptionsFor(categoryInit, sourceInit)[0].key
+    const fallback = sortOptionsFor(categoryInitFixed, sourceInit)[0].key
     return urlSort ?? (!freshEntry ? snap?.sort : undefined) ?? fallback
   })
   const [gameVersion, setGameVersion] = useState(() => urlGameVersion ?? (!freshEntry ? snap?.gameVersion : undefined) ?? '')
@@ -548,7 +571,7 @@ export default function ResourceCenter() {
   const [tags, setTags] = useState<string[]>(() => {
     const raw = urlTags ? urlTags.split(',').map((t) => t.trim()).filter(Boolean)
       : (!freshEntry && snap?.tags ? snap.tags : [])
-    return tagsSupported(categoryInit, source) ? normalizeTags(raw, source, categoryInit) : []
+    return tagsSupported(source, categoryInitFixed) ? normalizeTags(raw, source, categoryInitFixed) : []
   })
   const instanceId = searchParams.get('instanceId') ?? ''
   // 视图不参与 freshEntry 判定：从详情页带 `?view=favorites` 返回时，筛选未变，
@@ -983,7 +1006,7 @@ export default function ResourceCenter() {
   }
 
   const handleCategoryChange = (nextCategory: string) => {
-    if (source === 'ftb' && nextCategory !== 'modpack') return
+    if (isModpackOnlySource(source) && nextCategory !== 'modpack') return
     // 聚合分类跨多套类型，任何一套的类别标签都不适用；排序也只有下载量可比。
     if (nextCategory !== 'mod') setTags([])
     if (nextCategory === AGGREGATE_CATEGORY) {
@@ -1005,7 +1028,9 @@ export default function ResourceCenter() {
     // 因此来源词汇变化时清空已选标签，避免误把一套标签发给另一套来源。
     if (tagsForSource(nextSource, category) !== tagsForSource(source, category)) setTags([])
     setSource(nextSource)
-    if (nextSource === 'ftb') {
+    if (isModpackOnlySource(nextSource)) {
+      // FTB / Technic 只有整合包：强制类型与默认排序（FTB 支持 relevance，
+      // Technic 也以 relevance 为唯一项，故统一用 relevance）。
       setCategory('modpack')
       setSort('relevance')
       return
@@ -1426,7 +1451,7 @@ export default function ResourceCenter() {
             </div>
             <div className="space-y-2 xl:ml-auto">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('resource.categoryLabel')}</p>
-              <Tabs tabs={CATEGORIES.map(c => ({ id: c.key, label: t(`resource.categories.${c.key}`), disabled: (source === 'ftb' && c.key !== 'modpack') || (source !== 'curseforge' && source !== 'all' && c.key === 'save') }))} activeTab={category} onChange={handleCategoryChange} />
+              <Tabs tabs={CATEGORIES.map(c => ({ id: c.key, label: t(`resource.categories.${c.key}`), disabled: (isModpackOnlySource(source) && c.key !== 'modpack') || (source !== 'curseforge' && source !== 'all' && c.key === 'save') }))} activeTab={category} onChange={handleCategoryChange} />
             </div>
           </div>
 

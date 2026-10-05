@@ -891,8 +891,28 @@ async fn run_multimc_import(
 #[serde(rename_all = "camelCase")]
 pub struct TechnicImportRequest {
     /// Technic SingleZip 包体绝对路径（parse / parse-path 已验证存在）。
+    ///
+    /// 与 `download_url` 二选一：本地导入给 `source_path`；资源中心在线安装
+    /// （`install-direct` 的 technic 分支）给 `download_url`，由后台任务先下载。
     #[serde(default)]
     pub source_path: Option<String>,
+    /// SingleZip 直链（issue #151 在线安装用）。
+    ///
+    /// **只能由后端填入**（`install_direct` 调 Technic API 解析得到），不从
+    /// 前端请求体读取——否则等于开放「下载任意 URL」的面。
+    #[serde(default)]
+    pub download_url: Option<String>,
+    /// MC 版本提示（在线安装时来自 API 详情的 `minecraft` 字段）。
+    ///
+    /// 仅用于**创建实例记录时的初始值**：真实版本以下载后解析 zip 内
+    /// `version.json` / `fmlversion.properties` 的结果为准，解析完会回写覆盖
+    /// （Technic 该字段与包内元数据实测可能不一致）。
+    #[serde(default)]
+    pub game_version_hint: Option<String>,
+    /// 资源中心的 Technic slug（在线安装时由 `install_direct` 填入，
+    /// 用于写实例的来源字段）。本地导入为 None。
+    #[serde(default)]
+    pub slug: Option<String>,
     pub name: String,
     pub game_dir: String,
     /// 接受但忽略：Technic zip 根 = minecraft 目录，隔离强制（同 MultiMC，
@@ -917,9 +937,11 @@ async fn technic_import_impl(
     s: SharedState,
     req: TechnicImportRequest,
 ) -> ApiResult<Json<ModpackInstallDirectResponse>> {
-    // 源 zip 必须存在（parse-path 前置解析过，此处兜底：用户可能在预览后移动/
-    // 删除了文件）。
-    let zip_path = match req.source_path.as_deref() {
+    // 两种入口（issue #151 期2 扩展）：
+    // - 本地导入：`source_path` 给已有 zip → 请求期即可解析元数据；
+    // - 在线安装：`download_url` 为后端解析出的 SingleZip 直链 → zip 尚不存在，
+    //   元数据必须**下载后**在后台任务里解析（见 run_technic_import）。
+    let local_zip = match req.source_path.as_deref() {
         Some(p) => {
             let p = validate_source_path(p)?;
             if !p.is_file() {
@@ -928,28 +950,54 @@ async fn technic_import_impl(
                     "Technic 整合包文件不存在或已被移动/删除，请重新选择",
                 ));
             }
-            p.to_path_buf()
+            Some(p.to_path_buf())
         }
-        None => {
-            return Err(ApiError::bad_request(
-                "TECHNIC_SOURCE_REQUIRED",
-                "缺少 sourcePath（Technic 包体绝对路径）",
-            ))
-        }
+        None => None,
     };
+    let download_url = req
+        .download_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(str::to_string);
+    if local_zip.is_none() && download_url.is_none() {
+        return Err(ApiError::bad_request(
+            "TECHNIC_SOURCE_REQUIRED",
+            "缺少 sourcePath（本地包体）或 downloadUrl（在线直链）",
+        ));
+    }
     // 上传的 zip（位于 modpack-uploads/）导入完成后删除，避免累积（同 MultiMC）。
-    let cleanup_upload = zip_path.starts_with(&modpack_uploads_dir()?);
+    let cleanup_upload = local_zip
+        .as_ref()
+        .is_some_and(|p| p.starts_with(&modpack_uploads_dir().unwrap_or_default()));
 
-    // 元数据只读解析（zip 根 bin/version.json 或 modpack.jar 内 version.json）。
-    let meta = crate::services::technic::parse_technic_zip(&zip_path)
-        .map_err(|e| ApiError::bad_request("TECHNIC_PARSE_FAILED", e))?;
-    let game_version = meta.game_version.clone();
-    let fallback_name = meta.name.clone().unwrap_or_else(|| {
-        zip_path
-            .file_stem()
-            .map(|st| st.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    });
+    // 本地路径：请求期解析元数据（快速失败，用户立刻看到「不是有效 Technic 包」）。
+    // 在线路径：先用 API 给的 MC 版本提示建实例，真实值由任务内解析后回写。
+    let meta = match local_zip.as_deref() {
+        Some(p) => Some(
+            crate::services::technic::parse_technic_zip(p)
+                .map_err(|e| ApiError::bad_request("TECHNIC_PARSE_FAILED", e))?,
+        ),
+        None => None,
+    };
+    let game_version = meta
+        .as_ref()
+        .map(|m| m.game_version.clone())
+        .or_else(|| {
+            req.game_version_hint
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_default();
+    let fallback_name = meta
+        .as_ref()
+        .and_then(|m| m.name.clone())
+        .or_else(|| {
+            local_zip
+                .as_ref()
+                .and_then(|p| p.file_stem().map(|st| st.to_string_lossy().into_owned()))
+        })
+        .unwrap_or_default();
     let base_name = sanitize_instance_name(if req.name.trim().is_empty() {
         fallback_name.as_str()
     } else {
@@ -970,8 +1018,8 @@ async fn technic_import_impl(
     let mut inst = crate::services::instance::GameInstance::default();
     inst.name = name.clone();
     inst.game_version = game_version.clone();
-    inst.loader = meta.loader.clone();
-    inst.loader_version = meta.loader_version.clone();
+    inst.loader = meta.as_ref().and_then(|m| m.loader.clone());
+    inst.loader_version = meta.as_ref().and_then(|m| m.loader_version.clone());
     inst.game_dir = game_dir.to_string_lossy().into_owned();
     inst.version_isolation = Some(version_isolation);
     inst.modpack_name = Some(base_name.clone());
@@ -986,6 +1034,8 @@ async fn technic_import_impl(
     let gd = game_dir.to_string_lossy().into_owned();
     let inst_id_inner = instance_id.clone();
     let technic_root = technic_imports_dir()?;
+    // 在线安装的 slug（写入实例来源字段用；本地导入为 None）。
+    let source_slug = req.slug.clone();
 
     tracker.start_modpack_install(instance_id.clone(), move |handle| async move {
         // RAII：失败/成功都清理解压目录与上传 zip（成功路径在导入体内已无临时
@@ -1008,21 +1058,42 @@ async fn technic_import_impl(
             dirs: Vec::new(),
             files: Vec::new(),
         };
-        let extract_dir = technic_root.join(uuid::Uuid::new_v4().to_string());
-        cleanup.dirs.push(extract_dir.clone());
+        // 任务专属目录：**解压目录与包体必须分开放**。
+        //
+        // 实测缺陷：把在线包体下到 `extract_dir/pack.zip` 时，`copy_technic_content`
+        // 会把这个 60 MB 的 zip 当成整合包内容一起拷进 `versions/{name}/`，
+        // 在实例根留下一个无用的大文件（本次 E2E 抓到）。
+        let task_dir = technic_root.join(uuid::Uuid::new_v4().to_string());
+        let extract_dir = task_dir.join("extract");
+        cleanup.dirs.push(task_dir.clone());
         if cleanup_upload {
-            cleanup.files.push(zip_path.clone());
+            if let Some(p) = local_zip.as_ref() {
+                cleanup.files.push(p.clone());
+            }
+        }
+        // 在线包体下到任务目录下（**与解压目录平级，不在 extract/ 内**），
+        // 随任务结束一并清理（RAII 已覆盖 task_dir）。
+        let download_zip = download_url.as_ref().map(|_| task_dir.join("pack.zip"));
+        if let Some(z) = download_zip.as_ref() {
+            if let Some(parent) = z.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
         }
 
         let result = run_technic_import(
             &handle,
             &mgr,
             &http_client,
-            &zip_path,
+            local_zip.as_deref(),
+            download_url.as_deref(),
+            download_zip.as_deref(),
             &extract_dir,
-            &meta,
+            meta.as_ref(),
             &gd,
             &name,
+            &inst_svc,
+            &inst_id_inner,
+            source_slug.as_deref(),
         )
         .await;
         drop(cleanup);
@@ -1043,30 +1114,68 @@ async fn technic_import_impl(
     Ok(Json(ModpackInstallDirectResponse { instance_id }))
 }
 
-/// Technic SingleZip 导入后台任务（issue #123 期1）：
+/// Technic SingleZip 导入后台任务（issue #123 期1；#151 期2 增加在线下载入口）：
+/// 0. download（仅在线）：把 SingleZip 直链下到临时目录，**再**解析元数据；
 /// 1. extract：zip 解压到临时目录（zip 根 = minecraft 目录）；
 /// 2. install-game：标准安装管线装 MC + loader（loader 由 version.json 识别）；
 /// 3. copy-files：包内容（zip 根）拷入 `versions/{name}/`；
-/// 4. finalize：收尾（图标落盘）。
+/// 4. finalize：收尾（图标落盘，由 `run_install_pipeline` 的调用方语义决定）。
 ///
 /// 对齐 Prism：version.json 仅用于**识别** MC/loader，游戏文件由安装管线按
 /// 官方 manifest 下载（不信任包内 bin/ 的第三方库副本）；bin/modpack.jar
 /// 内含 version.json 的标准包**不注入** jar 本体（其 mod 内容在包根 mods/ 等
 /// 目录已就位）。
+///
+/// # 在线路径为什么要在任务内解析元数据
+///
+/// 本地导入时 `meta` 已在请求期解析好（可以快速失败）。在线安装时 zip 还不存在，
+/// 只能先建实例（用 API 的 `minecraft` 字段做初始值）再下载解析——因此解析出
+/// 真实 MC/loader 后必须**回写实例记录**，否则实例元数据会与磁盘上的版本 JSON
+/// 不一致（启动/校验都依赖 `inst.game_version`）。
 #[allow(clippy::too_many_arguments)]
 async fn run_technic_import(
     handle: &InstallHandle,
     mgr: &Arc<qomicex_downloader::DownloadManager>,
     http_client: &reqwest::Client,
-    zip_path: &std::path::Path,
+    local_zip: Option<&std::path::Path>,
+    download_url: Option<&str>,
+    download_zip: Option<&std::path::Path>,
     extract_dir: &std::path::Path,
-    meta: &crate::services::technic::TechnicMeta,
+    meta: Option<&crate::services::technic::TechnicMeta>,
     game_dir: &str,
     version_dir_name: &str,
+    inst_svc: &crate::services::instance::InstanceService,
+    instance_id: &str,
+    source_slug: Option<&str>,
 ) -> Result<(), String> {
     use InstallStepSpec as S;
-    handle.define_steps(
-        &[
+    let online = local_zip.is_none();
+    // 在线安装多一个 download 段；权重之和仍为 100（进度百分比语义不变）。
+    let specs: Vec<InstallStepSpec> = if online {
+        vec![
+            S {
+                id: "download",
+                weight: 20.0,
+            },
+            S {
+                id: "extract",
+                weight: 12.0,
+            },
+            S {
+                id: "install-game",
+                weight: 48.0,
+            },
+            S {
+                id: "copy-files",
+                weight: 15.0,
+            },
+            S {
+                id: "finalize",
+                weight: 5.0,
+            },
+        ]
+    } else {
+        vec![
             S {
                 id: "extract",
                 weight: 15.0,
@@ -1083,9 +1192,73 @@ async fn run_technic_import(
                 id: "finalize",
                 weight: 5.0,
             },
-        ],
+        ]
+    };
+    handle.define_steps(
+        &specs,
         crate::services::install_service::INSTALL_STEP_BUDGET_TOP,
     );
+
+    // === 0. 在线：下载包体 ===
+    // `meta` 在本地路径由调用方给出；在线路径下载后才解析。用 `Cow` 避免为
+    // 「本地已有 meta」的情形多拷贝一份数据。
+    let owned_meta: Option<crate::services::technic::TechnicMeta>;
+    let meta: &crate::services::technic::TechnicMeta = match meta {
+        Some(m) => m,
+        None => {
+            let url = download_url.ok_or("在线导入缺少 downloadUrl")?;
+            let zip_path = download_zip.ok_or("在线导入缺少临时包体路径")?;
+            handle.mark_step("download", "active");
+            handle.set_stage("downloading-modpack");
+            // 必须显式切到 Downloading：任务初始状态是 Queued，只有 `download_batch`
+            // 内部才会写字节进度，但**状态**得由调用方设置。漏掉这一步的实测后果是
+            // 整个下载期间 UI 一直显示「排队中（0%）」，看起来像卡死（本次 E2E 抓到的
+            // 真实缺陷，对照 `run_modpack_pipeline` 的 download-modpack 段同为显式设置）。
+            handle.update(|f| {
+                f.set_status(InstallStatus::Downloading);
+                f.current_file = "下载整合包包体...".to_string();
+            });
+            // 复用下载管理器：进度/重试/镜像逻辑与其它安装一致。
+            let targets: Vec<crate::services::install_service::DownloadTarget> = vec![(
+                url.to_string(),
+                zip_path.to_path_buf(),
+                technic_download_headers(),
+            )];
+            crate::services::install_service::download_batch(
+                handle,
+                mgr,
+                targets,
+                Some("download"),
+            )
+            .await?;
+            handle.mark_step("download", "done");
+
+            handle.set_stage("parsing-modpack");
+            handle.update(|f| {
+                f.set_status(InstallStatus::Installing);
+                f.current_file = "解析整合包元数据...".to_string();
+            });
+            let parsed = crate::services::technic::parse_technic_zip(zip_path)
+                .map_err(|e| format!("在线整合包解析失败（{url}）: {e}"))?;
+            // 回写实例元数据：请求期只能用 API 的 minecraft 提示，真实值以包内
+            // version.json / fmlversion.properties 为准（Technic 该字段实测会不一致）。
+            if let Some(mut inst) = inst_svc.get_by_id(instance_id) {
+                inst.game_version = parsed.game_version.clone();
+                inst.loader = parsed.loader.clone();
+                inst.loader_version = parsed.loader_version.clone();
+                // 记录来源（不改 modpack_origin：technic 不支持原地更新，见决策）
+                inst.modpack_source = Some("technic".to_string());
+                inst.modpack_project_id = source_slug.map(str::to_string);
+                let _ = inst_svc.update(instance_id, inst);
+            }
+            owned_meta = Some(parsed);
+            owned_meta.as_ref().expect("刚赋值")
+        }
+    };
+    let zip_path: &std::path::Path = match local_zip {
+        Some(p) => p,
+        None => download_zip.ok_or("在线导入缺少临时包体路径")?,
+    };
 
     // === 1. 解压（zip 根 = minecraft 目录）===
     handle.mark_step("extract", "active");
@@ -2176,6 +2349,9 @@ impl ModpackServiceData {
                     s,
                     TechnicImportRequest {
                         source_path: Some(path.to_string()),
+                        download_url: None,
+                        game_version_hint: None,
+                        slug: None,
                         name: req.id,
                         game_dir: req.game_dir,
                         version_isolation: req.version_isolation,
@@ -2212,10 +2388,25 @@ impl ModpackServiceData {
         } else {
             let project_id = req.project_id.as_deref().unwrap_or_default();
             let file_id = req.file_id.as_deref().unwrap_or_default();
-            if project_id.is_empty() || file_id.is_empty() {
+            // Technic 例外：它没有 fileId 概念（一个包 = 一个直链，ADR-103 实测），
+            // 只要 projectId（slug）。其余源仍要求两者齐备（fileId 是版本身份）。
+            let is_technic = req
+                .r#type
+                .as_deref()
+                .is_some_and(|t| t.eq_ignore_ascii_case("technic"));
+            let ids_ok = if is_technic {
+                !project_id.is_empty()
+            } else {
+                !project_id.is_empty() && !file_id.is_empty()
+            };
+            if !ids_ok {
                 return Err(ApiError::bad_request(
                     "MODPACK_SOURCE_REQUIRED",
-                    "Must provide projectId+fileId (online) or path (local)",
+                    if is_technic {
+                        "Technic 安装需要 projectId（整合包 slug）"
+                    } else {
+                        "Must provide projectId+fileId (online) or path (local)"
+                    },
                 ));
             }
             let source = match req
@@ -2227,13 +2418,65 @@ impl ModpackServiceData {
                 Some("mr") | Some("modrinth") => "modrinth",
                 Some("cf") | Some("curseforge") => "curseforge",
                 Some("ftb") => "ftb",
+                Some("technic") => {
+                    // === Technic 在线安装（issue #151）===
+                    //
+                    // 与其它源的模型差异（ADR-103 实测）：
+                    // - projectId 语义是 **slug**（数字 id 在详情接口上 404）；
+                    // - **无 fileId**（一个包只有一个直链），故这里不要求 fileId；
+                    // - 直链由**后端**从 Technic API 解析后交给导入管线下载，
+                    //   绝不接受前端提交的 URL（否则等于开放任意 URL 下载面）。
+                    let slug = project_id.trim();
+                    if slug.is_empty() {
+                        return Err(ApiError::bad_request(
+                            "MODPACK_SOURCE_REQUIRED",
+                            "Technic 安装需要 projectId（整合包 slug）",
+                        ));
+                    }
+                    let detail = s
+                        .core
+                        .create_technic_source()
+                        .get_pack_detail(slug)
+                        .await
+                        .map_err(|e| ApiError::upstream(e.to_string()))?
+                        .ok_or_else(|| {
+                            ApiError::not_found(
+                                "MODPACK_NOT_FOUND",
+                                format!("Technic 整合包不存在: {slug}"),
+                            )
+                        })?;
+                    // Solder（url=null 且有 solder）：期3 #181 才支持，明确拒绝并
+                    // 说明原因，避免用户以为是网络问题。
+                    let Some(zip_url) = detail.single_zip_url().map(str::to_string) else {
+                        return Err(ApiError::bad_request(
+                            "TECHNIC_SOLDER_UNSUPPORTED",
+                            "该整合包使用 Solder 在线分发格式，暂不支持（issue #181）",
+                        ));
+                    };
+                    let resp = technic_import_impl(
+                        s,
+                        TechnicImportRequest {
+                            source_path: None,
+                            download_url: Some(zip_url),
+                            game_version_hint: Some(detail.minecraft.clone()),
+                            slug: Some(slug.to_string()),
+                            name: req.id,
+                            game_dir: req.game_dir,
+                            version_isolation: req.version_isolation,
+                        },
+                    )
+                    .await?;
+                    return Ok(resp.0.instance_id);
+                }
                 _ => {
                     return Err(ApiError::bad_request(
                         "MODPACK_SOURCE_INVALID",
-                        "Invalid modpack source type (mr/cf/ftb)",
+                        "Invalid modpack source type (mr/cf/ftb/technic)",
                     ))
                 }
             };
+            // Technic 走上面的早返回分支；此处只剩 modrinth/cf/ftb 三家，
+            // 它们都要求 projectId+fileId 同时存在。
             self.resolve_online(source, project_id, file_id).await?
         };
 
@@ -2375,6 +2618,18 @@ fn modpack_headers(url: &str, cf_api_key: &str) -> Vec<(String, String)> {
             crate::state::USER_AGENT.to_string(),
         )]
     }
+}
+
+/// Technic SingleZip 直链下载头（issue #151）。
+///
+/// 实测该直链是普通静态托管（无需 `build` 参数、无需特定 UA），带上自标识 UA
+/// 仅为对齐 ADR-025 的约定。**不放任何鉴权头**：直链由后端从 Technic API 解析，
+/// 不接收前端提交的 URL（避免开放任意下载面）。
+fn technic_download_headers() -> Vec<(String, String)> {
+    vec![(
+        "User-Agent".to_string(),
+        crate::state::USER_AGENT.to_string(),
+    )]
 }
 
 fn is_cf_host(url: &str) -> bool {

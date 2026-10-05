@@ -17,6 +17,7 @@ import {
   isTrustedInstallUrl,
   matchLaunchTarget,
   parseDeepLink,
+  sourceNeedsFileId,
   type DeepLinkAction,
 } from '../lib/deepLink.ts'
 
@@ -227,8 +228,10 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
 
         case 'installModpack': {
           // 深链不带 name 时先解析整合包拿到官方包名，避免把 projectId 当实例名。
+          // Technic 无 `/modpack/resolve` 在线分支（它走 install-direct 的 technic
+          // 专用分支），故这里跳过预解析，用 projectId（slug）兜底命名。
           let name = action.name
-          if (!name) {
+          if (!name && sourceNeedsFileId(action.source)) {
             try {
               const resolved = await resolveModpack(action.source, action.projectId, action.fileId)
               name = resolved.name
@@ -247,7 +250,8 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
               id: finalName,
               type: action.source,
               projectId: action.projectId,
-              fileId: action.fileId,
+              // Technic 无 fileId：不传（后端 technic 分支只认 projectId）。
+              fileId: sourceNeedsFileId(action.source) ? action.fileId : undefined,
               gameDir: getSettings().gameDir,
             })
             navigate('/instances')

@@ -4,11 +4,19 @@ import { Button } from './ui'
 import { Input } from './ui'
 import { Label } from './ui'
 import { Separator } from './ui'
-import { startModpackInstall, resolveModpack } from '../api/instance.ts'
+import { startModpackInstall, resolveModpack, installModpackDirect } from '../api/instance.ts'
 import type { ResourceVersion } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
 import { addTask, updateTask, removeTask } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
+
+/**
+ * Technic 是「一个包 = 一个直链」，无版本/fileId 概念（issue #151，ADR-103）。
+ *
+ * 后端 `/modpack/install-direct` 的 technic 分支自行解析直链并下载导入，
+ * 前端只传 slug（projectId）——不传 URL。
+ */
+const isTechnic = (source: string) => source.toLowerCase() === 'technic'
 
 interface ModpackInstallDialogProps {
   open: boolean
@@ -32,7 +40,8 @@ export default function ModpackInstallDialog({
   const [error, setError] = useState('')
 
   const handleInstall = async () => {
-    if (!selectedVersion) return
+    // Technic 无版本选择（包内元数据决定），故不要求 selectedVersion。
+    if (!selectedVersion && !isTechnic(source)) return
     setStep('starting')
     setError('')
 
@@ -41,7 +50,7 @@ export default function ModpackInstallDialog({
       id: taskId,
       name: instanceName,
       type: 'modpack',
-      gameVersion: selectedVersion.gameVersions[0] || '',
+      gameVersion: selectedVersion?.gameVersions[0] || '',
       status: 'queued',
       progress: 0,
       icon: iconUrl,
@@ -49,10 +58,35 @@ export default function ModpackInstallDialog({
     })
 
     try {
-      const resolved = await resolveModpack(source, projectId, selectedVersion.id)
+      if (isTechnic(source)) {
+        // 后端解析直链 → 下载 → 期1 导入管线（technic_import_impl）。
+        const { instanceId } = await installModpackDirect({
+          id: instanceName,
+          type: 'technic',
+          projectId,
+          gameDir,
+          versionIsolation,
+        })
+        removeTask(taskId)
+        addTask({
+          id: instanceId,
+          name: instanceName,
+          type: 'modpack',
+          gameVersion: '',
+          status: 'downloading',
+          progress: 0,
+          icon: iconUrl,
+          createdAt: new Date().toISOString(),
+          instanceId,
+        })
+        onClose()
+        navigate('/downloads')
+        return
+      }
+      const resolved = await resolveModpack(source, projectId, selectedVersion!.id)
       const { instanceId } = await startModpackInstall({
         name: instanceName,
-        gameVersion: selectedVersion.gameVersions[0] || resolved.gameVersion,
+        gameVersion: selectedVersion!.gameVersions[0] || resolved.gameVersion,
         loader: resolved.loader,
         loaderVersion: resolved.loaderVersion,
         gameDir,
@@ -66,18 +100,18 @@ export default function ModpackInstallDialog({
         modpackSummary: resolved.summary,
         source,
         projectId,
-        versionId: selectedVersion.id,
+        versionId: selectedVersion!.id,
         // 资源中心安装标记（issue #118）：使该实例可原地更新。
         // 只有本对话框与 ModpackQuickInstallDialog 发送；本地导入/拖入/MultiMC 不发。
         origin: 'resource-center',
-        versionPublishedAt: selectedVersion.datePublished || null,
+        versionPublishedAt: selectedVersion!.datePublished || null,
       })
       removeTask(taskId)
       addTask({
         id: instanceId,
         name: instanceName,
         type: 'modpack',
-        gameVersion: selectedVersion.gameVersions[0] || resolved.gameVersion,
+        gameVersion: selectedVersion!.gameVersions[0] || resolved.gameVersion,
         loader: resolved.loader || undefined,
         loaderVersion: resolved.loaderVersion || undefined,
         status: 'downloading',
