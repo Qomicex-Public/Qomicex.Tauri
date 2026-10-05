@@ -580,6 +580,16 @@ export default function ResourceCenter() {
   const sentinelRef = useRef<HTMLDivElement>(null)
   /** 同步防重入：IO 回调可能在 `setLoading(true)` 生效前连续触发，重复请求会插进重复卡片。 */
   const loadMoreBusyRef = useRef(false)
+  /**
+   * 请求序号：只允许「最新一次」请求写结果。
+   *
+   * 筛选条件变化会启动新的 `doSearch(1, false)`，而上一轮的追加请求可能仍在飞行中；
+   * 若它晚到，会把旧筛选的结果拼进新列表、并覆盖 `total` / `page`（分页游标错乱）。
+   * 非追加请求同时递增 `loadMoreRunRef`：作废在飞的追加run，使其 `finally` 不会误清
+   * 新一代追加的闸门（否则闸门被提前打开 → 同一页被并发请求）。
+   */
+  const requestSeqRef = useRef(0)
+  const loadMoreRunRef = useRef(0)
   const [installDialogItem, setInstallDialogItem] = useState<ResourceItem | null>(null)
   const [modpackInstallItem, setModpackInstallItem] = useState<ResourceItem | null>(null)
   const [cnNames, setCnNames] = useState<Record<string, string | null>>(() => freshEntry ? {} : (snap?.cnNames ?? {}))
@@ -725,6 +735,14 @@ export default function ResourceCenter() {
   }, [category, keyword, setSearchParams, sort, source, gameVersion, loader, tags, instanceId, view])
 
   const doSearch = useCallback(async (pageNum: number, append: boolean) => {
+    // 本次请求的序号：只有序号仍是最新的请求才有权写结果/错误，否则一律早退。
+    const seq = ++requestSeqRef.current
+    if (!append) {
+      // 新一轮搜索作废在飞的追加 run：同时开闸（本轮的追加由新一轮自行发起），
+      // 并递增 run 号使其 finally 不再误清新闸门。
+      loadMoreBusyRef.current = false
+      loadMoreRunRef.current += 1
+    }
     setLoading(true)
     setError(null)
     // 新的一轮（页码 1 且非追加）必然重开列表：重置「到底」与页脚错误，
@@ -745,6 +763,9 @@ export default function ResourceCenter() {
       setPage(pageNum)
       setLoading(false)
       setInitialLoading(false)
+      // 上一轮非追加请求可能已把 isReplacing 置位、且会因序号过期而早退不再清除；
+      // 缓存命中的本轮必须自己收尾，否则骨架屏会一直挂着。
+      if (!append) setIsReplacing(false)
       // 空页 = 缓存里也没这一页（超出后端可翻页数）→ 停止自动加载
       if (append && cached.items.length === 0) setExhausted(true)
       const cnItems = cnEligibleItems(cached.items, category)
@@ -765,6 +786,8 @@ export default function ResourceCenter() {
         loader: (loader || '').toLowerCase() || undefined,
         tags: tags.length > 0 ? tags.join(',') : undefined,
       })
+      // 筛选已变化（有更新的请求在跑）：本次结果作废，不能污染新列表与分页游标。
+      if (seq !== requestSeqRef.current) return
       const pageItems = res.items
       if (!searchCache.has(key)) searchCache.set(key, new Map())
       searchCache.get(key)!.set(pageNum, { items: pageItems, total: res.total, timestamp: Date.now() })
@@ -777,12 +800,14 @@ export default function ResourceCenter() {
       })
       setTotal(res.total)
       setPage(pageNum)
-      // 追加页为空（或后端 total 突然缩到已加载条数以内）→ 到底，不再自动请求
-      if (append && (pageItems.length === 0 || pageItems.length < pageSize)) setExhausted(true)
+      // 仅「空页」判定到底：聚合分页按各类型/来源分别取第 N 页再去重截断，去重后
+      // 可能少于 pageSize 而下一页仍有新条目——按「未满 pageSize」判定会提前掐断。
+      if (append && pageItems.length === 0) setExhausted(true)
       const cnItems = cnEligibleItems(pageItems, category)
       if (cnItems.length > 0) loadCnNames(cnItems).then(setCnNames)
       else setCnNames({})
     } catch (e) {
+      if (seq !== requestSeqRef.current) return
       const msg = e instanceof Error ? e.message : t('resource.searchFailed')
       const friendly = (msg.includes('404') || msg.includes('Failed to fetch') || msg.includes('NetworkError'))
         ? t('resource.backendUnreachable')
@@ -1017,19 +1042,32 @@ export default function ResourceCenter() {
     if (loadMoreBusyRef.current || loading) return
     if (view !== 'search' || exhausted || loadMoreError) return
     if (items.length >= total) { setExhausted(true); return }
+    // run 号用于收尾判定：若本次追加飞行途中来了新一轮搜索（run 被递增），
+    // 本次的 finally 不得清闸门——那时闸门已属于新一轮，误清会导致并发请求同一页。
+    const run = ++loadMoreRunRef.current
     loadMoreBusyRef.current = true
     try {
       await doSearch(page + 1, true)
     } finally {
-      loadMoreBusyRef.current = false
+      if (run === loadMoreRunRef.current) loadMoreBusyRef.current = false
     }
   }, [loading, view, exhausted, loadMoreError, items.length, total, page, doSearch])
 
-  /** 页脚「重试」：清掉错误后立刻重打同一页（不走 IO 等待）。 */
+  /**
+   * 页脚「重试」：清掉错误后立刻重打同一页（不走 IO 等待）。
+   *
+   * 必须与 `loadMore` 共用同一道同步闸门：`loading` 在同一次渲染内不生效，连点「重试」
+   * 会并发发出同一页的多个请求（虽有去重托底，但多余请求与竞态仍应避免）。
+   */
   const retryLoadMore = useCallback(() => {
+    if (loadMoreBusyRef.current) return
     setLoadMoreError(null)
     // 失败页的页码没有推进（doSearch 抛错时 setPage 不执行），page+1 正是那一页。
-    void doSearch(page + 1, true)
+    const run = ++loadMoreRunRef.current
+    loadMoreBusyRef.current = true
+    void doSearch(page + 1, true).finally(() => {
+      if (run === loadMoreRunRef.current) loadMoreBusyRef.current = false
+    })
   }, [page, doSearch])
 
   // 无限滚动：观察列表底部哨兵，进入视口（rootMargin 预取 300px）即加载下一页。

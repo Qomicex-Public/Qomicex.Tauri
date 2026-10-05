@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { ArrowLeft, BookOpen, Check, ChevronDown, Copy, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, StickyNote, Tag, User } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
@@ -230,6 +230,8 @@ export default function ResourceDetailPage() {
   const [mcmodId, setMcmodId] = useState<number | null>(null)
   /** 复制名称后的短暂勾选态（图标 Copy → Check，800ms 后复原）。 */
   const [nameCopied, setNameCopied] = useState(false)
+  /** 勾选态复位定时器句柄（连点时先清旧的，避免旧定时器提前抹掉新状态）。 */
+  const copiedTimerRef = useRef<number | null>(null)
   const [translation, setTranslation] = useState<{ original: string; translated: string; translatedAt: string } | null>(null)
   const [translating, setTranslating] = useState(false)
   const [bodyTranslation, setBodyTranslation] = useState<string | null>(null)
@@ -290,11 +292,22 @@ export default function ResourceDetailPage() {
       await navigator.clipboard.writeText(name)
       setNameCopied(true)
       notify(t('common.copied'), 'success')
-      window.setTimeout(() => setNameCopied(false), 800)
+      // 句柄存起来：连点会起多个定时器，后到者可能提前把新一次的勾选态抹掉；
+      // 且卸载后仍会 setState（React 19 不报警，但属无谓更新）。
+      if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null
+        setNameCopied(false)
+      }, 800)
     } catch {
       notify(t('resourceDetail.copyNameFailed'), 'error')
     }
   }, [detail, notify, t])
+
+  // 卸载时清掉在飞的勾选态定时器，避免卸载后回调仍触发 setState。
+  useEffect(() => () => {
+    if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current)
+  }, [])
 
   /** MC百科入口：仅当解析出词条 id 时可用（与实例模组卡片同一跳转口径）。 */
   const handleOpenMcmod = useCallback(() => {
@@ -424,12 +437,19 @@ export default function ResourceDetailPage() {
       setBodyTranslation(null)
       setMcmodId(null)
       // mcmod 词条查询与详情请求并行、失败静默（增强项，不阻塞详情渲染）。
+      // 序号防竞态：缓存命中时会先查一次、详情返回后再查一次，两次的返回顺序不确定，
+      // 若不加序号，先发后到的旧结果会覆盖新结果（中文名与跳转入口都写错）。
+      let mcmodSeq = 0
       const loadMcmod = (title: string, slug?: string) => {
-        resolveMcmodEntry(title, slug).then((entry) => {
-          if (cancelled) return
-          setCnName(entry.cnName)
-          setMcmodId(entry.mcmodId)
-        })
+        const seq = ++mcmodSeq
+        resolveMcmodEntry(title, slug)
+          .then((entry) => {
+            if (cancelled || seq !== mcmodSeq) return
+            setCnName(entry.cnName)
+            setMcmodId(entry.mcmodId)
+          })
+          // 增强项失败静默；显式 catch 以免将来 resolveMcmodEntry 改为抛错时变成未处理拒绝。
+          .catch(() => { /* 中文名与 MC百科入口都是增强项，失败不影响详情可用 */ })
       }
       try {
         const cacheKey = `api-resource-detail-${id}-${source}`
