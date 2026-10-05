@@ -156,3 +156,23 @@ export function channelLabelKey(channel: string | undefined): string | undefined
 export function channelTrainOf(channel: string): string {
   return channel === 'stable' ? 'release' : channel
 }
+
+/**
+ * 已下载待安装的包是否仍属于**当前有效通道**（ADR-081：跨列车不得自动安装）。
+ *
+ * 用户可能在更新包下载完成后又去设置里切了通道；那份包已不属于当前想要的列车，
+ * 无人值守地装上它就是一次静默的跨列车更新——而通道切换本应由用户显式决定。
+ *
+ * 返回 `true` = 允许（含两种情况：记录没带通道的旧版记录、当前构建无有效通道
+ * 如 dev 构建）。这两种情况都**无法判定**，按「不拦」处理——否则老记录会永远
+ * 装不上、dev 构建也永远用不了自动安装。
+ */
+export function stagedChannelMatchesCurrent(
+  stagedChannel: string | undefined,
+  version: string,
+): boolean {
+  if (!stagedChannel) return true
+  const current = resolveChannel(version)
+  if (!current) return true
+  return channelTrainOf(current) === stagedChannel
+}

@@ -27,7 +27,7 @@ import ToolboxTab from '../components/ToolboxTab.tsx'
 import PluginStoreTab from '../components/PluginStoreTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
-import { fetchUpdatePlan, type UpdatePlan } from '../api/update.ts'
+import { fetchUpdatePlan, clearPendingInstall as clearPendingUpdateInstall, type UpdatePlan } from '../api/update.ts'
 import { isDevBuild, resolveChannel, trainLabelKey, trainOf, channelTrainOf, UPDATE_CHANNEL_KEY } from '../lib/updateChannel.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
@@ -54,7 +54,7 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, getSettings, onSettingsChange, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
 import type { CacheStats, CacheDirStats } from '../api/settings.ts'
 import { cacheInvalidate } from '../lib/simple-cache.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
@@ -239,6 +239,21 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
   const [pendingUpdate, setPendingUpdate] = useState<UpdatePlan | null>(null)
   const [updateError, setUpdateError] = useState<string>()
+  /**
+   * 自动更新开关的本地状态。
+   *
+   * 取值口径与后端 `SettingsResponse::default()` 一致：**缺失/false 之外的任何值
+   * 都视为开启**（默认开）。这里从全局设置快照初始化，改动即经 `saveSettings`
+   * 落盘并广播（`onSettingsChange`），无需重新加载。
+   */
+  const [autoInstall, setAutoInstall] = useState(() => getSettings().updateAutoInstall !== false)
+
+  // 与全局设置快照保持同步：设置可能在别处被重新加载（后端就绪后 loadSettings、
+  // 或 App 的初始化向导写回），此时开关必须反映真实落盘值而不是挂载时的旧值。
+  useEffect(
+    () => onSettingsChange((s) => setAutoInstall(s.updateAutoInstall !== false)),
+    [],
+  )
   // 默认通道跟随已安装构建所属列车（beta 构建默认 beta），不再硬编码 stable。
   const [channel, setChannel] = useState(() => resolveChannel(APP_INFO.version) ?? 'stable')
   /**
@@ -522,6 +537,34 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
               </button>
             )}
           </div>
+
+          {/* 自动更新开关。`!== false` 的口径与后端
+              SettingsResponse::default() 的 Some(true) 对齐，避免老配置升级后
+              被误解为关闭。 */}
+          <SettingRow
+            label={t('settings.about.updateAutoInstall')}
+            description={t('settings.about.updateAutoInstallDesc')}
+            control={
+              <Switch
+                checked={autoInstall}
+                onCheckedChange={(c) => {
+                  const next = c === true
+                  setAutoInstall(next)
+                  void saveSettings({ ...getSettings(), updateAutoInstall: next })
+                  if (!next) {
+                    // 关闭自动更新时，磁盘记录**和** store 里的 staged 都要清掉：
+                    // - 磁盘记录不清，下次启动会被 `installStagedOnLaunch` 读到并静默
+                    //   装完，用户会以为开关没生效；
+                    // - store 不清，本次会话里 Toast 仍挂在屏幕上、仍能点着立即安装，
+                    //   与「已关闭自动更新」自相矛盾（review 指出）。
+                    // 清掉后要更新只能走「检查更新 → 弹窗 → 立即更新」。
+                    useUpdaterStore.getState().discardStaged()
+                    void clearPendingUpdateInstall((getSettings().dataDir || '').replace(/[\\/]+$/, ''))
+                  }
+                }}
+              />
+            }
+          />
 
         </div>
       </SettingSection>

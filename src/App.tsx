@@ -32,10 +32,11 @@ import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
 import UpdateCompleteDialog from './components/UpdateCompleteDialog.tsx'
+import UpdateReadyToast from './components/UpdateReadyToast.tsx'
 import { get } from './api/client.ts'
 import { initApiTransport, isIpcMode } from './api/ipc.ts'
-import { fetchUpdatePlan, takeUpdateNotice, type UpdatePlan, type UpdateNotice } from './api/update.ts'
-import { resolveChannel } from './lib/updateChannel.ts'
+import { fetchUpdatePlan, fetchAutoInstallState, clearPendingInstall as clearPendingInstallFromApi, takeUpdateNotice, type UpdatePlan, type UpdateNotice } from './api/update.ts'
+import { resolveChannel, stagedChannelMatchesCurrent } from './lib/updateChannel.ts'
 import { APP_INFO } from './constants/credits.ts'
 import { applyThemeColor } from './lib/themeColor.ts'
 import { restoreSavedTheme } from './theme/index.ts'
@@ -83,16 +84,63 @@ function RunningNotifyBridge() {
   return null
 }
 
+/**
+ * 判断本次发现的更新是否走「自动下载 + Toast」路径。
+ *
+ * 返回 `null` = 回落到原有更新对话框，原因可能是：
+ * - 用户关掉了「自动下载并安装更新」开关（`updateAutoInstall === false`）；
+ * - `required` 强制更新——它的语义是"必须更新后才能继续使用"，静默下载 + 一个
+ *   可关闭的 Toast 会弱化这一点，且用户可能一直不点导致永远卡在旧版；
+ * - `channelSwitch` 跨通道切换——用户需要明确知晓自己在换发布列车（ADR-081），
+ *   悄悄装完等于绕过了这个知情前提；
+ * - 该版本此前自动安装失败已超重试上限（壳侧记的 abandonedVersion）——再自动
+ *   下载只会重复失败，交回弹窗让用户主动决定；
+ * - 已有下载完成、待安装的记录（`staged`）——不重复下载几十 MB。
+ *
+ * 任何一次查询失败都返回 `null`（回落到弹窗）：自动路径是附加体验，读不到状态时
+ * 宁可按原有行为走，也不要出现"既没弹窗也没提示"的黑洞。
+ */
+async function resolveAutoInstallPlan(
+  plan: UpdatePlan,
+  required: boolean,
+): Promise<UpdatePlan | null> {
+  if (required || plan.channelSwitch) return null
+  if (getSettings().updateAutoInstall === false) return null
+  if (useUpdaterStore.getState().staged) return null
+  const dataDir = (getSettings().dataDir || '').replace(/[\\/]+$/, '')
+  if (!dataDir) return null
+  try {
+    const state = await fetchAutoInstallState(dataDir)
+    // 该版本已因重试超限作废：不再自动下载，回退弹窗
+    if (state.abandonedVersion && state.abandonedVersion === plan.version) return null
+    if (state.hasPending) return null
+    return plan
+  } catch (e) {
+    console.warn('[updater] auto install state check failed:', e)
+    return null
+  }
+}
+
 function AppContent() {
   const [backendState, setBackendState] = useState<'loading' | 'ready' | 'error'>('loading')
   const { closeWithGuard, Provider } = useCloseGuard()
   const { alert } = useMessageBox()
   const { t } = useI18n()
   const { crashDialogState, clearCrashDialog } = useRunning()
+  /** 正在运行的实例：自动安装前据此推迟，避免把用户正在玩的游戏连启动器一起关掉 */
+  const { runningInstances } = useRunning()
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<UpdatePlan | null>(null)
   const [pendingUpdateRequired, setPendingUpdateRequired] = useState(false)
   const updateNoticeChecked = useRef(false)
+  /** 启动时的自动安装只判定一次（与 autoCheckDone/javaChecked 同模式） */
+  const autoInstallChecked = useRef(false)
+  /**
+   * 运行中实例数的最新值。自动安装判定跑在一次性的 setTimeout 里（不随
+   * runningInstances 重排），用 ref 读取避免闭包拿到过期的空数组而误判「没在跑」。
+   */
+  const runningCountRef = useRef(0)
+  runningCountRef.current = runningInstances.length
   /** 「更新完成」交接提示（自更新重启后的首次启动，只弹一次，见 UpdateCompleteDialog） */
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null)
   const autoCheckDone = useRef(false)
@@ -197,6 +245,25 @@ function AppContent() {
         // 「下次再说」后仍应在设置页看到提示，避免"有新版本却哪都不说"。
         setUpdateAvailable(plan)
 
+        // 自动模式：普通更新 → 后台静默下载，完成后弹可点击的 Toast；
+        // 强制更新与跨通道切换仍走原对话框（见下面 resolveAutoInstallPlan 的注释）。
+        const autoPlan = await resolveAutoInstallPlan(plan, required)
+        if (autoPlan) {
+          void useUpdaterStore.getState().autoStart(autoPlan)
+          return
+        }
+
+        // 该版本已下载完成、正等着安装（Toast 已在显示）→ 不再弹对话框。
+        // 两条提示同时出现会让人以为要装两遍，且对话框的「立即更新」会走一遍
+        // 多余的下载前置检查。
+        //
+        // 例外：phase === 'error' —— 已尝试安装但没成功（例如 updater 没起来）。
+        // 此时必须把对话框放出来作为**可见的失败出口**：Toast 在 error 下已隐藏，
+        // 否则用户只看到提示消失、没有任何重试入口。对话框的「立即更新」会经
+        // store.start 收敛到已下载的那个包（不重复下载）。
+        const current = useUpdaterStore.getState()
+        if (current.staged && current.staged.version === plan.version && current.phase !== 'error') return
+
         // snooze 键带通道：同版本号在不同通道下是不同目标，不能互相抵消。
         const snooze = localStorage.getItem('snooze-update')
         if (!required && snooze) {
@@ -216,7 +283,52 @@ function AppContent() {
       }
     }, 5000)
     return () => clearTimeout(timer)
+    // `resolveAutoInstallPlan` 是模块级纯函数（依赖经 getSettings/getState 现取），
+    // 不进依赖数组——放进去只会让 effect 在每次渲染重排 timer。
   }, [backendState, setUpdateAvailable])
+
+  // 自动安装：启动时若磁盘上已有「下载完成、待安装」的记录，
+  // 直接装完——这正是「Toast 不点击，下次打开还是会自动安装完」的落点。
+  //
+  // 有实例正在运行时**推迟**：此时安装会 restart 启动器，等于把用户正在玩的游戏
+  // 连同启动器一起关掉。推迟是安全的——记录留在磁盘上，下次启动再消费；
+  // 同时把记录恢复成 Toast，让用户在本会话里也能主动安装。
+  useEffect(() => {
+    if (backendState !== 'ready' || !settingsReady || autoInstallChecked.current) return
+    const timer = setTimeout(async () => {
+      autoInstallChecked.current = true
+      const dataDir = (getSettings().dataDir || '').replace(/[\\/]+$/, '')
+      if (!dataDir) return
+      // 开关关闭时不碰记录：用户明确要求手动更新（记录也已由设置页在关闭时清掉）。
+      if (getSettings().updateAutoInstall === false) return
+
+      if (runningCountRef.current > 0) {
+        // 推迟到下次启动；但要把已下好的包在本次会话里恢复成可点击的 Toast，
+        // 否则它完全不可见，用户既不知道已就绪也无法现在装。
+        try {
+          const state = await fetchAutoInstallState(dataDir)
+          if (state.pending) {
+            // 跨列车守卫（ADR-081）：用户中途切了通道时，这份包已不属于当前列车，
+            // 不能给它一个"点这里安装"的入口（否则等于绕过通道切换的显式前提）。
+            // 与 installStagedOnLaunch 用同一个判定函数，两条路径结论必须一致。
+            if (stagedChannelMatchesCurrent(state.pending.channel, APP_INFO.version)) {
+              useUpdaterStore.getState().restoreStaged(state.pending)
+              console.warn('[updater] 有实例运行中，推迟自动安装到下次启动')
+            } else {
+              console.warn('[updater] 暂存包属于别的通道，不提供自动安装入口')
+              void clearPendingInstallFromApi(dataDir)
+            }
+            return
+          }
+        } catch (e) {
+          console.warn('[updater] restore staged state failed:', e)
+        }
+        return
+      }
+      void useUpdaterStore.getState().installStagedOnLaunch()
+    }, 2000)
+    return () => clearTimeout(timer)
+  }, [backendState, settingsReady])
 
   // 更新完成交接（#108）：自更新重启后的首次启动读取旧进程留下的交接文件，
   // 弹「更新完成」对话框展示新版本与 changelog。读后即删，只提示一次；
@@ -363,6 +475,9 @@ function AppContent() {
         notice={updateNotice}
         onClose={() => setUpdateNotice(null)}
       />
+      {/* 自动更新「已准备好安装」Toast：下载完成后弹，点击立即重启
+          安装，不点击则下次启动由 installStagedOnLaunch 自动装完。 */}
+      <UpdateReadyToast />
     </Provider>
   )
 }
