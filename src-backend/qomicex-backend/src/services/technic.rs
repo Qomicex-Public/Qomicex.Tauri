@@ -21,7 +21,10 @@ use std::path::Path;
 
 use serde_json::Value;
 
-/// 古董包（modpack.jar 无 version.json）需要 jarmod，本期不支持（issue #180）。
+/// 古董包（jar 内无 version.json）在**未实现 JarMod 前**的拒绝错误码。
+///
+/// 期2（#180）起该路径已支持：保留常量仅用于历史错误串的兼容识别（release notes /
+/// 用户历史日志里可能出现），新代码不应再产生它。
 pub const JARMOD_UNSUPPORTED: &str = "TECHNIC_JARMOD_UNSUPPORTED";
 
 /// Technic 包元数据（解析结果，前端预览 + 导入管线共用）。
@@ -35,6 +38,11 @@ pub struct TechnicMeta {
     pub loader: Option<String>,
     /// 加载器版本。
     pub loader_version: Option<String>,
+    /// 是否需要把 `bin/modpack.jar` 作为 **JarMod** 注入（issue #180）。
+    ///
+    /// 仅古董包（jar 内无 `version.json`）为 `true`；标准包的内容已在包根 `mods/` 等
+    /// 目录就位，jar 本体不注入（对齐 Prism 只消费 version.json 的行为）。
+    pub jarmod: bool,
 }
 
 /// 探测 zip 是否为 Technic SingleZip 包。
@@ -139,11 +147,79 @@ pub fn parse_technic_zip(zip_path: &Path) -> Result<TechnicMeta, String> {
         return meta_from_version_json(&root, fml_mc.as_deref());
     }
 
-    // === 古董包：jar 内无 version.json，需要 jarmod（#180）===
-    // Prism 行为：net.minecraft + installJarMods({modpack.jar})，forge 走
-    // forgeversion.properties。QML core 无 jarmod 概念，明确拒绝。
-    Err(format!(
-        "{JARMOD_UNSUPPORTED}: modpack.jar 内无 version.json（需要 JarMod 注入，暂不支持，见 issue #180）"
+    // === 古董包：jar 内无 version.json → 需要 JarMod 注入（issue #180）===
+    // Prism 行为（`TechnicPackProcessor.cpp`）：net.minecraft + installJarMods({modpack.jar})，
+    // MC 版本走 fmlversion.properties，Forge 版本走 forgeversion.properties。
+    // QML 侧对应实现：把 jar 作为 jarmod 落盘 + 在版本 JSON 声明 `jarmods`，
+    // 由 core 启动链合并出派生 jar（见 qomicex-core-rust/src/services/jarmod.rs）。
+    let game_version = read_fml_mcversion(&mut inner).unwrap_or_default();
+    if game_version.is_empty() {
+        return Err(
+            "TECHNIC_ANCIENT_PACK_NO_VERSION: modpack.jar 内无 version.json，且 \
+             fmlversion.properties 缺少 fmlbuild.mcversion（无法确定 Minecraft 版本）"
+                .to_string(),
+        );
+    }
+    // Forge 版本：forge.major.minor.revision.build（Prism 同款拼接）。
+    let loader_version = read_forge_version(&mut inner);
+    let (loader, loader_version) = match loader_version {
+        Some(v) => (Some("forge".to_string()), Some(v)),
+        // 无 forgeversion.properties：可能是不带 Forge 的纯 jarmod 包（F1b 夹具场景）
+        None => (None, None),
+    };
+    Ok(TechnicMeta {
+        name: None,
+        game_version,
+        loader,
+        loader_version,
+        // 古董包必须注入 modpack.jar 本体（这是它唯一的 mod 载体）
+        jarmod: true,
+    })
+}
+
+/// 读 jar 内 `forgeversion.properties` 并拼出 Forge 版本（Prism `TechnicPackProcessor` 同款）。
+///
+/// 拼法：`{forge.major.number}.{forge.minor.number}.{forge.revision.number}.{forge.build.number}`
+/// （如 9.11.1.965）。任一字段缺失/非数字 → `None`（宁可不识别 loader，也不要拼出一个
+/// 不存在的版本号让安装管线去 404）。
+fn read_forge_version<R: std::io::Read + std::io::Seek>(
+    inner: &mut zip::ZipArchive<R>,
+) -> Option<String> {
+    let mut entry = inner.by_name("forgeversion.properties").ok()?;
+    let content = read_bounded_string(&mut entry)?;
+    let mut major = None;
+    let mut minor = None;
+    let mut revision = None;
+    let mut build = None;
+    for line in content.lines() {
+        let line = line.trim();
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let v = v.trim();
+        if v.is_empty() {
+            continue;
+        }
+        match k.trim() {
+            "forge.major.number" => major = Some(v.to_string()),
+            "forge.minor.number" => minor = Some(v.to_string()),
+            "forge.revision.number" => revision = Some(v.to_string()),
+            "forge.build.number" => build = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    // 四个字段必须齐备**且都是数字**才拼版本号（与函数注释的承诺一致）。
+    //
+    // 只查非空是不够的：`forge.major.number=abc` 这类畸形属性文件会拼出
+    // `abc.11.1.965` 并被交给安装管线去下载一个不存在的 Forge 版本，最终报出难以理解
+    // 的 404（CodeRabbit PR #190 finding）。宁可识别不出 loader，也不要造出假版本号。
+    let parts = [major?, minor?, revision?, build?];
+    if parts.iter().any(|p| !p.chars().all(|c| c.is_ascii_digit())) {
+        return None;
+    }
+    Some(format!(
+        "{}.{}.{}.{}",
+        parts[0], parts[1], parts[2], parts[3]
     ))
 }
 
@@ -200,6 +276,9 @@ fn meta_from_version_json(
         game_version,
         loader,
         loader_version,
+        // 标准包（jar 内含 version.json）：内容在包根 mods/ 等目录已就位，
+        // jar 本体**不注入**（对齐 Prism 只消费 version.json 的行为）。
+        jarmod: false,
     })
 }
 
@@ -551,19 +630,128 @@ mod tests {
     }
 
     #[test]
-    fn parse_ancient_pack_reports_jarmod_unsupported() {
-        // 古董包：jar 内无 version.json（fmlversion.properties 有/无都一样）
+    fn parse_ancient_pack_uses_fml_and_marks_jarmod() {
+        // 古董包（issue #180）：jar 内无 version.json → MC 版本走 fmlversion.properties，
+        // 并要求把 jar 本体作为 jarmod 注入。
         let dir = temp_zip_dir("ancient");
         let jar = build_modpack_jar(&[(
             "fmlversion.properties",
             b"fmlbuild.mcversion=1.4.7\n".as_slice(),
         )]);
         let zip_path = write_technic_zip(&dir, &[("bin/modpack.jar", jar)]);
+        let meta = super::parse_technic_zip(&zip_path).unwrap();
+        assert_eq!(meta.game_version, "1.4.7");
+        assert!(meta.jarmod, "古董包必须标记需要 jarmod 注入");
+        // 无 forgeversion.properties → 不识别 loader（纯 jarmod 包）
+        assert!(meta.loader.is_none());
+        assert!(meta.loader_version.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn parse_ancient_pack_reads_forge_version() {
+        // 真实 Agrarian Skies 形态（F1a 夹具同款）：fmlversion.properties 给 MC，
+        // forgeversion.properties 四个数字段拼出 Forge 版本（Prism 同款）。
+        let dir = temp_zip_dir("ancient-forge");
+        let jar = build_modpack_jar(&[
+            (
+                "fmlversion.properties",
+                b"fmlbuild.mcversion=1.6.4\n".as_slice(),
+            ),
+            (
+                "forgeversion.properties",
+                b"forge.major.number=9\nforge.minor.number=11\nforge.revision.number=1\nforge.build.number=965\n"
+                    .as_slice(),
+            ),
+        ]);
+        let zip_path = write_technic_zip(&dir, &[("bin/modpack.jar", jar)]);
+        let meta = super::parse_technic_zip(&zip_path).unwrap();
+        assert_eq!(meta.game_version, "1.6.4");
+        assert_eq!(meta.loader.as_deref(), Some("forge"));
+        assert_eq!(meta.loader_version.as_deref(), Some("9.11.1.965"));
+        assert!(meta.jarmod);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn parse_ancient_pack_incomplete_forge_version_yields_no_loader() {
+        // forgeversion.properties 缺字段 → 不拼出半截版本号（否则安装管线会去 404）。
+        // 这是「宁可不识别 loader，也不要造出不存在的版本」的回归护栏。
+        let dir = temp_zip_dir("ancient-partial-forge");
+        let jar = build_modpack_jar(&[
+            (
+                "fmlversion.properties",
+                b"fmlbuild.mcversion=1.6.4\n".as_slice(),
+            ),
+            (
+                "forgeversion.properties",
+                b"forge.major.number=9\nforge.minor.number=11\n".as_slice(),
+            ),
+        ]);
+        let zip_path = write_technic_zip(&dir, &[("bin/modpack.jar", jar)]);
+        let meta = super::parse_technic_zip(&zip_path).unwrap();
+        assert_eq!(meta.game_version, "1.6.4");
+        assert!(meta.loader.is_none(), "缺字段时不应识别出 loader");
+        assert!(meta.jarmod);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn parse_ancient_pack_non_numeric_forge_version_yields_no_loader() {
+        // 四字段齐备但含非数字（畸形属性文件）→ 不得拼出 `abc.11.1.965` 这种假版本号
+        // （CodeRabbit PR #190 finding：函数注释承诺非数字返回 None，实现须一致）。
+        let dir = temp_zip_dir("ancient-nonnumeric-forge");
+        let jar = build_modpack_jar(&[
+            (
+                "fmlversion.properties",
+                b"fmlbuild.mcversion=1.6.4\n".as_slice(),
+            ),
+            (
+                "forgeversion.properties",
+                b"forge.major.number=abc\nforge.minor.number=11\nforge.revision.number=1\nforge.build.number=965\n"
+                    .as_slice(),
+            ),
+        ]);
+        let zip_path = write_technic_zip(&dir, &[("bin/modpack.jar", jar)]);
+        let meta = super::parse_technic_zip(&zip_path).unwrap();
+        assert_eq!(meta.game_version, "1.6.4");
+        assert!(
+            meta.loader.is_none(),
+            "非数字版本字段不应被拼成 Forge 版本号（否则安装管线会去下载不存在的版本）"
+        );
+        assert!(meta.jarmod);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn parse_ancient_pack_without_fml_mcversion_is_error() {
+        // 既无 version.json 又无 fmlbuild.mcversion → 无法确定 MC 版本，必须明确报错
+        // （不能猜一个版本让后续安装乱跑）。
+        let dir = temp_zip_dir("ancient-nofml");
+        let jar = build_modpack_jar(&[("dummy.txt", b"x".as_slice())]);
+        let zip_path = write_technic_zip(&dir, &[("bin/modpack.jar", jar)]);
         let err = super::parse_technic_zip(&zip_path).unwrap_err();
         assert!(
-            err.starts_with(super::JARMOD_UNSUPPORTED),
-            "应报 TECHNIC_JARMOD_UNSUPPORTED，实际: {err}"
+            err.contains("TECHNIC_ANCIENT_PACK_NO_VERSION"),
+            "应明确报缺 MC 版本，实际: {err}"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn standard_pack_is_not_marked_as_jarmod() {
+        // 标准包（含 version.json）**不**需要 jarmod —— 这条断言保证 #180 的改动
+        // 对期1 已支持的包零影响。
+        let dir = temp_zip_dir("std-no-jarmod");
+        let zip_path = write_technic_zip(
+            &dir,
+            &[(
+                "bin/version.json",
+                br#"{"inheritsFrom":"1.6.4","libraries":[]}"#.to_vec(),
+            )],
+        );
+        let meta = super::parse_technic_zip(&zip_path).unwrap();
+        assert!(!meta.jarmod, "标准包不应标记 jarmod");
         std::fs::remove_dir_all(&dir).ok();
     }
 

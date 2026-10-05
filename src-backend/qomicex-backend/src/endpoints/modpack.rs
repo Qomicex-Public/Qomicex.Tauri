@@ -229,11 +229,11 @@ async fn parse(
     // 探测阶段不落盘（只读中央目录 + 少量条目）；安装阶段（technic_import）再
     // 解压到临时目录并清理（大包解压耗时，必须后台可见进度，同 MultiMC / #89）。
     if crate::services::technic::is_technic_zip(&path) {
-        let meta = crate::services::technic::parse_technic_zip(&path).map_err(|e| {
-            // 解析失败（含古董包 jarmod 不支持）→ 删除上传临时文件，对齐
+        let meta = parse_technic_or_api_error(&path).map_err(|e| {
+            // 解析失败（含古董包缺 MC 版本）→ 删除上传临时文件，对齐
             // parse_local_pack_file 分支行为（4 GiB 上限的残留不能等 24h 自动清理）。
             let _ = std::fs::remove_file(&path);
-            ApiError::bad_request("TECHNIC_PARSE_FAILED", e)
+            e
         })?;
         let name = meta.name.clone().unwrap_or_else(|| {
             // 无 name：退化为 zip 文件名（去扩展名）
@@ -335,8 +335,7 @@ async fn parse_path(
 
     // Technic SingleZip 整合包：同 parse 的探测（不落盘）。
     if crate::services::technic::is_technic_zip(path) {
-        let meta = crate::services::technic::parse_technic_zip(path)
-            .map_err(|e| ApiError::bad_request("TECHNIC_PARSE_FAILED", e))?;
+        let meta = parse_technic_or_api_error(path)?;
         let name = meta.name.clone().unwrap_or_else(|| {
             path.file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -886,6 +885,31 @@ async fn run_multimc_import(
     Ok(())
 }
 
+/// Technic 解析错误 → `ApiError`（issue #180）。
+///
+/// 解析器用错误文本前缀携带**具体**错误码（如
+/// `TECHNIC_ANCIENT_PACK_NO_VERSION`）。若一律包成 `TECHNIC_PARSE_FAILED`，
+/// API 文档承诺的专门错误码就永远不会出现——调用方（含前端按码分支）拿不到可判别的
+/// 原因（CodeRabbit PR #190 finding）。故这里识别已知前缀并提升为对应的 `code`，
+/// 其余仍归 `TECHNIC_PARSE_FAILED`。
+fn technic_parse_error(e: String) -> ApiError {
+    // 已知的「解析失败但原因明确」前缀 → 专门错误码
+    const KNOWN: [&str; 2] = [
+        "TECHNIC_ANCIENT_PACK_NO_VERSION",
+        crate::services::technic::JARMOD_UNSUPPORTED,
+    ];
+    match KNOWN.iter().find(|code| e.starts_with(**code)) {
+        Some(code) => ApiError::bad_request(*code, e),
+        None => ApiError::bad_request("TECHNIC_PARSE_FAILED", e),
+    }
+}
+
+/// Technic SingleZip 整合包探测（只读，不落盘）：`/modpack/parse`、
+/// `/modpack/parse-path`、`classify` 与安装前的预览共用。
+fn parse_technic_or_api_error(path: &Path) -> ApiResult<crate::services::technic::TechnicMeta> {
+    crate::services::technic::parse_technic_zip(path).map_err(technic_parse_error)
+}
+
 /// POST /modpack/technic/import 请求体。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -991,10 +1015,7 @@ async fn technic_import_impl(
     // 本地路径：请求期解析元数据（快速失败，用户立刻看到「不是有效 Technic 包」）。
     // 在线路径：先用 API 给的 MC 版本提示建实例，真实值由任务内解析后回写。
     let meta = match local_zip.as_deref() {
-        Some(p) => Some(
-            crate::services::technic::parse_technic_zip(p)
-                .map_err(|e| ApiError::bad_request("TECHNIC_PARSE_FAILED", e))?,
-        ),
+        Some(p) => Some(parse_technic_or_api_error(p)?),
         None => None,
     };
     let game_version = meta
@@ -1325,6 +1346,14 @@ async fn run_technic_import(
     // Technic zip 根直接就是 minecraft 目录（无 .minecraft 包装），按 MultiMC 的
     // 顶层拷贝语义拷入版本隔离目录；libraries 仍落共享库目录。
     copy_technic_content(extract_dir, Path::new(game_dir), version_dir_name)?;
+
+    // === 3.5 JarMod 注入（issue #180，仅古董包）===
+    // 必须在 copy-files 之后：版本 JSON 由 run_install_pipeline（install-game 段）
+    // 生成，jarmod 声明要追加到那个文件上。
+    if meta.jarmod {
+        handle.set_current_file("注入 JarMod（modpack.jar）...");
+        install_technic_jarmod(extract_dir, Path::new(game_dir), version_dir_name)?;
+    }
     handle.mark_step("copy-files", "done");
 
     // === 4. 收尾 ===
@@ -1380,6 +1409,63 @@ fn copy_technic_content(
         }
     }
     Ok(files)
+}
+
+/// 把古董包的 `bin/modpack.jar` 落盘为 jarmod 并在版本 JSON 声明 `jarmods`（issue #180）。
+///
+/// 只在 `meta.jarmod` 为 true（标准包之外的古董包）时调用。
+///
+/// 落盘形态（对齐 Prism/MultiMC 的组件 patch 思路，与本仓库既有的「实例级 patch」约定同构）：
+/// - jar 复制到 `versions/{VDN}/jarmods/modpack.jar`（实例内、版本作用域）；
+/// - 版本 JSON 增 `jarmods: ["jarmods/modpack.jar"]`（**相对版本目录**）。
+///
+/// 随后 core 启动链（`services/jarmod.rs` + `jvm_args.rs`）会合并出**非破坏性派生 jar**
+/// `{VDN}-jarmod.jar` 并顶替主 jar 进入 classpath；主 jar 保持原样，SHA1 校验不受影响。
+///
+/// 失败即导入失败（不静默降级）：jarmod 是这类包唯一的 mod 载体，落盘不成功的话实例
+/// 即使「装上了」也跑不出整合包内容，属于必须让用户知道的失败。
+fn install_technic_jarmod(
+    extract_root: &Path,
+    game_root: &Path,
+    version_dir_name: &str,
+) -> Result<(), String> {
+    let src = extract_root.join("bin").join("modpack.jar");
+    if !src.is_file() {
+        return Err(format!(
+            "古董包缺少 bin/modpack.jar（{}），无法注入 JarMod",
+            src.display()
+        ));
+    }
+    let version_dir = game_root.join("versions").join(version_dir_name);
+    let jarmod_dir = version_dir.join("jarmods");
+    std::fs::create_dir_all(&jarmod_dir)
+        .map_err(|e| format!("创建 jarmods 目录失败 {}: {e}", jarmod_dir.display()))?;
+    let dest_jar = jarmod_dir.join("modpack.jar");
+    std::fs::copy(&src, &dest_jar).map_err(|e| {
+        format!(
+            "复制 modpack.jar 到 jarmods 失败 {}: {e}",
+            dest_jar.display()
+        )
+    })?;
+
+    // 在版本 JSON 里声明 jarmods（读-改-写；JSON 由 run_install_pipeline 生成，
+    // 此处只追加一个数组字段，不触碰其它键）。
+    let json_path = version_dir.join(format!("{version_dir_name}.json"));
+    let text = std::fs::read_to_string(&json_path)
+        .map_err(|e| format!("读取版本 JSON 失败 {}: {e}", json_path.display()))?;
+    let mut root: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("解析版本 JSON 失败 {}: {e}", json_path.display()))?;
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| format!("版本 JSON 不是对象: {}", json_path.display()))?;
+    obj.insert(
+        "jarmods".to_string(),
+        serde_json::json!(["jarmods/modpack.jar"]),
+    );
+    let out = serde_json::to_string(&root).map_err(|e| format!("序列化版本 JSON 失败: {e}"))?;
+    std::fs::write(&json_path, out)
+        .map_err(|e| format!("写入版本 JSON 失败 {}: {e}", json_path.display()))?;
+    Ok(())
 }
 
 /// 递归拷贝目录树（Technic 包内容用；multimc::copy_tree 为私有，此处不引入
