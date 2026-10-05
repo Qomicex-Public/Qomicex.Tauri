@@ -184,6 +184,8 @@ Exception: directory barrels like `src/components/ui` (its `index.ts`) resolve f
 - **Tooltip**: use instead of native `title`. Always wrap icon-only buttons.
 - **Select**: use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>`.
 - **Button icon animations**: Use `MorphActionIcon` (`src/components/MorphActionIcon.tsx`) for action buttons that trigger async operations (clear, delete, refresh, etc.). Pattern: `active` state → busy icon spins → success check flashes → rest icon. Example: download clear button uses `Trash2` (rest) → `RotateCw` (busy) → `Check` (success flash 800ms). Always wrap with `Tooltip` for icon-only buttons.
+- **Copy buttons**: use `CopyActionIcon` (`src/components/CopyActionIcon.tsx`) — it owns the Copy ⇄ Check morph and the flash timer. Do **not** hand-write `{copied ? <Check/> : <Copy/>}`; that kills the morph animation and re-implements the timer. Pass the parent's `copied` boolean; the parent must still flip it back to `false` (keep the `setTimeout` + clear-on-repeat pattern, see `Connect.tsx`) or a second click won't re-trigger the animation.
+- **Never hand-write icon ternary switches**: for any icon↔icon state toggle use `MorphIcon` (`icon={cond ? XData : YData}` + `spring="snappy" reducedMotion="user"`); for copy feedback use `CopyActionIcon`; for async actions use `MorphActionIcon`. The full migration mapping and the "not converted" criteria live in `docs/junsi-dev-docs/6-UI/组件设计/MAPPING_TABLE-icon-ternary-to-MorphIcon.yaml`.
 
 ## 浏览器调试（Playwright Tauri mock 注入）
 

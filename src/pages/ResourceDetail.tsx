@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { ArrowLeft, BookOpen, Check, ChevronDown, Copy, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, StickyNote, Tag, User } from 'lucide-react'
+import { ArrowLeft, BookOpen, ChevronDown, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, StickyNote, Tag, User } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
+import { CopyActionIcon } from '../components/CopyActionIcon.tsx'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
@@ -755,7 +756,8 @@ export default function ResourceDetailPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-2xl font-semibold leading-tight">{lang.startsWith('zh') && cnName ? <>{cnName}<span className="ml-1.5 text-sm font-normal text-muted-foreground/60">| {detail.title}</span></> : detail.title}</h2>
                       {/* 复制资源名称：紧贴标题（复制的是标题本身，位置与语义一致）。
-                          图标态反馈（Copy→Check）叠加 toast，两者都失败时至少有一次可见提示。 */}
+                          图标用 CopyActionIcon（内含 MorphIcon 形变动画：Copy ⇄ Check），
+                          与联机房间码等复制入口同一实现，不自行做三元硬切换。 */}
                       <Tooltip content={t('resourceDetail.copyName')}>
                         <button
                           type="button"
@@ -763,7 +765,7 @@ export default function ResourceDetailPage() {
                           aria-label={t('resourceDetail.copyName')}
                           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
-                          {nameCopied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
+                          <CopyActionIcon copied={nameCopied} className="h-3.5 w-3.5" />
                         </button>
                       </Tooltip>
                       <Badge variant="secondary">{getSourceLabel(detail.source)}</Badge>

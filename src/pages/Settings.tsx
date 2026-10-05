@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
-import { ArrowUp, BookOpen, Boxes, Bot, Bug, Check, CheckCircle2, ChevronRight, Coffee, Copy, Database, Download, ExternalLink, FileText, Folder, FolderOpen, Globe, Heart, Image, Info, Key, Loader2, Minus, Monitor, Palette, Plus, Puzzle, Rocket, RotateCw, Scale, Search, Server, Settings as SettingsIcon, ShieldHalf, SlidersHorizontal, Tag, Trash2, TriangleAlert, Users, Zap } from 'lucide-react'
+import { ArrowUp, BookOpen, Boxes, Bot, Bug, Check, CheckCircle2, ChevronRight, Coffee, Database, Download, ExternalLink, FileText, Folder, FolderOpen, Globe, Heart, Image, Info, Key, Loader2, Minus, Monitor, Palette, Plus, Puzzle, Rocket, RotateCw, Scale, Search, Server, Settings as SettingsIcon, ShieldHalf, SlidersHorizontal, Tag, Trash2, TriangleAlert, Users, Zap } from 'lucide-react'
 import { ArrowUp as ArrowUpData, ChevronDown as ChevronDownData, ChevronRight as ChevronRightData, RotateCw as RotateCwData, Search as SearchData, Trash2 as Trash2Data, Zap as ZapData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
+import { CopyActionIcon } from '../components/CopyActionIcon.tsx'
 import { MorphIcon } from 'morphicons/react'
 import { Button } from '../components/ui'
 import { Input } from '../components/ui'
@@ -471,7 +472,7 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                   setTimeout(() => setLicenseCopied(false), 2000)
                 }}
               >
-                {licenseCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                <CopyActionIcon copied={licenseCopied} className="h-3 w-3" />
               </Button>
             </Tooltip>
           </div>

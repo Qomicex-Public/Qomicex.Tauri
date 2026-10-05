@@ -6,7 +6,8 @@ import { Button } from './ui'
 import { Tooltip } from './ui'
 import { fetchLicenseStatus, activateLicense } from '../api/license.ts'
 import type { LicenseStatus } from '../api/license.ts'
-import { Check, Copy, Key, LogOut, ShieldHalf } from 'lucide-react'
+import { Key, LogOut, ShieldHalf } from 'lucide-react'
+import { CopyActionIcon } from './CopyActionIcon.tsx'
 import { exit } from '@tauri-apps/plugin-process'
 import { useI18n } from '../i18n/index.tsx'
 
@@ -92,7 +93,7 @@ export default function LicenseActivationDialog({ open, onActivated, onClose }: 
                   setTimeout(() => setCopied(false), 2000)
                 }}
               >
-                {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                <CopyActionIcon copied={copied} className="h-3 w-3" />
               </Button>
             </Tooltip>
           </div>
