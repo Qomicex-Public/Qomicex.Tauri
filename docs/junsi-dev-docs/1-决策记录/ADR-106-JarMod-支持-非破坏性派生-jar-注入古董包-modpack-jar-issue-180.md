@@ -1,4 +1,4 @@
-# ADR-104：JarMod 支持：非破坏性派生 jar 注入古董包 modpack.jar（issue #180）
+# ADR-106：JarMod 支持：非破坏性派生 jar 注入古董包 modpack.jar（issue #180）
 
 | 属性 | 内容 |
 |---|---|

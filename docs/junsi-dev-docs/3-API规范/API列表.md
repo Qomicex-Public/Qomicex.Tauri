@@ -1149,7 +1149,7 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **错误码：** `TECHNIC_SOURCE_REQUIRED`(400)、`TECHNIC_SOURCE_NOT_FOUND`(404)、`TECHNIC_PARSE_FAILED`(400)、`TECHNIC_ANCIENT_PACK_NO_VERSION`(400，古董包无 `version.json` 且 `fmlversion.properties` 缺 `fmlbuild.mcversion`，无法确定 MC 版本)、`MULTIMC_SOURCE_PATH_RELATIVE`(400 源路径非绝对)、`MULTIMC_SOURCE_PATH_TRAVERSAL`(400 源路径含 `..`，与 MultiMC 导入共用 `validate_source_path`)。
 
-> **古董包（JarMod）已支持（issue #180，ADR-104）**：`bin/modpack.jar` 内**无** `version.json` 的包不再报 `TECHNIC_JARMOD_UNSUPPORTED`（该错误码仅保留用于识别历史日志）。此类包改为：① MC 版本取 `fmlversion.properties` 的 `fmlbuild.mcversion`；② Forge 版本由 `forgeversion.properties` 的 `forge.major/minor/revision/build.number` 拼成（任一字段缺失则不识别 loader，而非拼出半截版本号）；③ 导入时把 jar 落盘到 `versions/{VDN}/jarmods/modpack.jar` 并在版本 JSON 声明 `jarmods`，由启动链合并出**非破坏性派生 jar** `{VDN}-jarmod.jar` 顶替主 jar 进入 classpath（主 jar 保持字节不变，SHA1 校验不受影响）。
+> **古董包（JarMod）已支持（issue #180，ADR-106）**：`bin/modpack.jar` 内**无** `version.json` 的包不再报 `TECHNIC_JARMOD_UNSUPPORTED`（该错误码仅保留用于识别历史日志）。此类包改为：① MC 版本取 `fmlversion.properties` 的 `fmlbuild.mcversion`；② Forge 版本由 `forgeversion.properties` 的 `forge.major/minor/revision/build.number` 拼成（任一字段缺失则不识别 loader，而非拼出半截版本号）；③ 导入时把 jar 落盘到 `versions/{VDN}/jarmods/modpack.jar` 并在版本 JSON 声明 `jarmods`，由启动链合并出**非破坏性派生 jar** `{VDN}-jarmod.jar` 顶替主 jar 进入 classpath（主 jar 保持字节不变，SHA1 校验不受影响）。
 
 #### 在线安装分支（issue #123 期2 / #151）
 
