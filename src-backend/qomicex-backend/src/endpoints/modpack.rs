@@ -900,18 +900,27 @@ pub struct TechnicImportRequest {
     ///
     /// **只能由后端填入**（`install_direct` 调 Technic API 解析得到），不从
     /// 前端请求体读取——否则等于开放「下载任意 URL」的面。
-    #[serde(default)]
+    /// `skip_deserializing` 是这条约束的**强制手段**（注释挡不住伪造请求体）：
+    /// 该端点本地可达，任何调用方都能提交任意 `downloadUrl` 并被后端下载落盘。
+    #[serde(default, skip_deserializing)]
     pub download_url: Option<String>,
     /// MC 版本提示（在线安装时来自 API 详情的 `minecraft` 字段）。
     ///
     /// 仅用于**创建实例记录时的初始值**：真实版本以下载后解析 zip 内
     /// `version.json` / `fmlversion.properties` 的结果为准，解析完会回写覆盖
     /// （Technic 该字段与包内元数据实测可能不一致）。
-    #[serde(default)]
+    ///
+    /// 同样 `skip_deserializing`：它是给实例记录**预填元数据**的字段，外部可伪造
+    /// 一个与包体不符的版本号（例如把 1.6.4 的包标成 1.20.1），不影响下载但会误导
+    /// 用户在实例列表里看到错误的版本。
+    #[serde(default, skip_deserializing)]
     pub game_version_hint: Option<String>,
     /// 资源中心的 Technic slug（在线安装时由 `install_direct` 填入，
     /// 用于写实例的来源字段）。本地导入为 None。
-    #[serde(default)]
+    ///
+    /// `skip_deserializing`：来源字段是**安装方声明**，不该由调用方自报——否则可
+    /// 伪造出「来自 technic 某包」的实例记录。
+    #[serde(default, skip_deserializing)]
     pub slug: Option<String>,
     pub name: String,
     pub game_dir: String,
@@ -967,9 +976,17 @@ async fn technic_import_impl(
         ));
     }
     // 上传的 zip（位于 modpack-uploads/）导入完成后删除，避免累积（同 MultiMC）。
-    let cleanup_upload = local_zip
-        .as_ref()
-        .is_some_and(|p| p.starts_with(&modpack_uploads_dir().unwrap_or_default()));
+    //
+    // ⚠️ 目录解析失败时必须按「**不清理**」处理（CodeRabbit 在 PR #187 指出的数据丢失
+    // 风险，已实测确认）：`PathBuf::default()` 是空路径，而 `Path::starts_with("")`
+    // 对**任何**路径都返回 true（它按路径组件比较，空前缀是任意路径的前缀）。
+    // 若用 `unwrap_or_default()`，则目录创建失败时 `cleanup_upload` 会变成 true，
+    // 任务是结束后把用户自己选的本地 zip 一并删掉——不可恢复。
+    let cleanup_upload = match (local_zip.as_ref(), modpack_uploads_dir()) {
+        (Some(p), Ok(dir)) => p.starts_with(&dir),
+        // 没有本地包体 / 目录不可解析 → 一律不清理调用方的文件
+        _ => false,
+    };
 
     // 本地路径：请求期解析元数据（快速失败，用户立刻看到「不是有效 Technic 包」）。
     // 在线路径：先用 API 给的 MC 版本提示建实例，真实值由任务内解析后回写。

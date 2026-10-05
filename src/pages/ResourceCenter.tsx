@@ -264,16 +264,32 @@ function fallbackLoaders(category: string): ResourceCategory[] {
  * 与后端 `/resources/loaders` 的口径保持一致：
  * - `save`（存档）任何来源都无加载器概念
  * - CurseForge 仅 mod/modpack 有（其余类型 classId 无加载器维度）
- * - FTB / Technic 仅 modpack
+ * - FTB 仅 modpack
+ * - **Technic：无**（见 `gameVersionSupported` 的说明：列表接口不返回加载器维度，
+ *   后端无法据此过滤，故不提供该筛选项）
  * - Modrinth / 聚合：mod/modpack/shader/resourcepack/datapack 都有真实加载器
  *   （shader→iris/optifine、resourcepack→minecraft、datapack→datapack）
  */
 function loadersSupported(source: string, category: string): boolean {
   if (category === 'save') return false
-  if (source === 'ftb' || source === 'technic') return category === 'modpack'
+  // Technic 列表接口只给 id/name/slug/url/iconUrl（见 ADR-103），没有加载器维度，
+  // 后端无法在服务端过滤 → 提供该控件只会「选了等于没选」。
+  if (source === 'technic') return false
+  if (source === 'ftb') return category === 'modpack'
   if (source === 'curseforge') return category === 'mod' || category === 'modpack'
   // modrinth / all（含聚合分类）：除存档外都有加载器维度
   return true
+}
+
+/**
+ * 游戏版本筛选对哪些来源生效。
+ *
+ * 与 `loadersSupported` 同一口径（CodeRabbit 在 PR #187 指出的问题）：筛选控件必须
+ * 与后端实际执行的过滤一致。Technic 的列表接口**不返回 MC 版本**（详情接口才有），
+ * 服务端无法据此过滤，因此该来源不显示版本下拉，避免「界面显示已筛选、结果却是全量」。
+ */
+function gameVersionSupported(source: string): boolean {
+  return source !== 'technic'
 }
 
 /**
@@ -1468,6 +1484,9 @@ export default function ResourceCenter() {
                 ))}
               </Select>
             </div>
+            {/* 游戏版本筛选：与后端实际过滤能力对齐（Technic 列表接口不返回 MC 版本，
+                后端无法过滤 → 不渲染，避免「选了等于没选」）。 */}
+            {gameVersionSupported(source) && (
             <div className="space-y-1">
               <p className="text-[11px] font-medium text-muted-foreground">{t('resource.gameVersionLabel')}</p>
               <div className="flex items-center gap-1">
@@ -1479,9 +1498,7 @@ export default function ResourceCenter() {
                 )}
               </div>
             </div>
-            {/* 加载器（#163）：选项按当前来源+资源类型动态下发；该组合没有加载器
-                概念时（如存档、FTB 非整合包、CurseForge 光影包）整个控件不渲染，
-                避免给出选了必然空结果的筛选。 */}
+            )}
             {loadersSupported(source, category) && (
               <div className="space-y-1">
                 <p className="text-[11px] font-medium text-muted-foreground">{t('resource.loaderLabel')}</p>

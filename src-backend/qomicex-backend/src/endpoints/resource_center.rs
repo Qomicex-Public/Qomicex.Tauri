@@ -994,6 +994,13 @@ async fn search(
 
     // ponytail: 顺序聚合，各源失败即整体失败（与单源一致）；并发可用
     // tokio::join! 提升延迟，量级不大暂不做
+    //
+    // 各源取**累计前缀**再全局排序切窗口（同 `search_aggregate_category`）：若各源只取
+    // 「第 page 页」，`download_count=0` 的源（Technic）在全局排序后落到第一页之外时
+    // 后续页永远取不到，但 total 里仍统计了它们。
+    let fetch_size = (page.max(1))
+        .saturating_mul(page_size.max(1))
+        .min(MAX_AGGREGATE_FETCH);
     let mut merged: Vec<ResourceItemDto> = Vec::new();
     let mut total = 0i32;
     for source in sources {
@@ -1006,20 +1013,17 @@ async fn search(
             loader.as_deref(),
             sort.as_deref(),
             tags.as_deref(),
-            page,
-            page_size,
+            1,
+            fetch_size,
         )
         .await?;
         total = total.saturating_add(t);
         merged.extend(items);
     }
-    // 聚合排序统一按下载量，跨源可比
-    merged.sort_by(|a, b| b.download_count.cmp(&a.download_count));
-    merged.truncate(page_size as usize);
-    // ponytail: total 为各源 total 之和（近似）；各源各自取第 N 页后合并截断，
-    // 跨源混合页语义本就是近似，精确交叉分页不值得做
+    // 全局排序（跨源按下载量可比）后切出请求页。
+    let window = aggregate_window(merged, page, page_size);
     Ok(Json(ResourceSearchResponse {
-        items: merged,
+        items: window,
         total,
         page,
         page_size,
@@ -1036,6 +1040,41 @@ const AGGREGATE_TYPES: [&str; 6] = [
     "save",
 ];
 
+/// 聚合查询单源累计取回的上限（`page × page_size` 的上界）。
+///
+/// 聚合改为「取累计前缀 → 全局排序 → 切窗口」后，深页码会放大单源取回量；这个上限
+/// 保证最坏情况仍是一次有界的请求（200 条足够覆盖正常翻页，超出部分用户改走具体源）。
+const MAX_AGGREGATE_FETCH: i32 = 200;
+
+/// 聚合窗口裁剪：按 `(source,id)` 去重 → 按下载量降序 → 切出
+/// `[(page-1)×pageSize, page×pageSize)`。
+///
+/// **为什么必须是「先全局排序再切窗口」**：各源各自取第 N 页再合并排序时，全局顺序与
+/// 「各源第 N 页」不对应——`download_count` 为 0 的条目（Technic 列表接口不提供下载量，
+/// 见 ADR-103）在第一页排序后必然被 `truncate` 掉，而第 2 页又从各源的
+/// `offset = pageSize` 开始，于是这些条目**永远无法被浏览到**，但 `total` 里却统计了
+/// 它们（CodeRabbit 在 PR #187 指出的问题）。改为累计取前缀后切窗口，分页即连续。
+fn aggregate_window(
+    merged: Vec<ResourceItemDto>,
+    page: i32,
+    page_size: i32,
+) -> Vec<ResourceItemDto> {
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    // 同一工程可能以多种类型命中（如既是 mod 又是 datapack），按 (source,id) 去重，
+    // 保留先出现的类型，避免同一条目在列表里出现两次。
+    let mut deduped: Vec<ResourceItemDto> = merged
+        .into_iter()
+        .filter(|it| seen.insert((it.source.clone(), it.id.clone())))
+        .collect();
+    deduped.sort_by(|a, b| b.download_count.cmp(&a.download_count));
+    let offset = ((page - 1).max(0) as usize) * page_size.max(0) as usize;
+    deduped
+        .into_iter()
+        .skip(offset)
+        .take(page_size.max(0) as usize)
+        .collect()
+}
+
 /// 某资源类型实际存在的平台 —— 与 `search` 中 `all` 分支的口径保持一致：
 /// save 仅 CurseForge（Modrinth 无此工程类型）；modpack 额外含 FTB 与 Technic；
 /// 其余为 Modrinth + CurseForge。
@@ -1050,10 +1089,10 @@ fn platforms_for_type(ty: &str) -> &'static [&'static str] {
 }
 
 /// 分类聚合（category=aggregate）：把「类型 × 平台」的查询全部并发发出，再按
-/// (source,id) 去重、按下载量归并、截断到一页。
+/// (source,id) 去重、按下载量归并、切出请求页。
 ///
-/// 分页语义与「聚合源」一致，同样是**近似**：各组合各自取第 N 页后合并再截断，
-/// 精确交叉分页不值得做（total 为各组合 total 之和）。
+/// 分页语义：各源取**累计前缀**（`page × pageSize`）后全局排序再切窗口，保证翻页连续
+/// （`total` 仍为各源 total 之和，是上界近似）。
 async fn search_aggregate_category(
     state: &SharedState,
     src: &str,
@@ -1087,6 +1126,12 @@ async fn search_aggregate_category(
     // ponytail: 分类聚合把请求量放大到最多 12 组（6 类型 × 2~3 平台），顺序执行会
     // 把延迟叠成十几秒，所以这里并发发出；各请求互相独立，任一失败即整体失败
     // （与单源/聚合源的既有语义一致）。
+    //
+    // 各源取**累计前缀**（0 到 `page × pageSize`）而非「第 page 页」：否则全局排序后
+    // 落到第一页之外的条目（典型是 download_count=0 的 Technic）会在后续页永远取不到。
+    let fetch_size = (page.max(1))
+        .saturating_mul(page_size.max(1))
+        .min(MAX_AGGREGATE_FETCH);
     let futures = queries.into_iter().map(|(ty, platform)| async move {
         if !cn_candidates.is_empty() && (ty == "mod" || ty == "datapack") {
             let (items, total) = search_cn_candidates(
@@ -1113,8 +1158,9 @@ async fn search_aggregate_category(
                 loader,
                 sort,
                 tags,
-                page,
-                page_size,
+                // 累计前缀：page=1 起取 0..fetch_size
+                1,
+                fetch_size,
             )
             .await
         }
@@ -1122,22 +1168,15 @@ async fn search_aggregate_category(
     let results = futures::future::join_all(futures).await;
 
     let mut merged: Vec<ResourceItemDto> = Vec::new();
-    let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut total = 0i32;
     for result in results {
         let (items, t) = result?;
         total = total.saturating_add(t);
-        for it in items {
-            // 同一工程可能以多种类型命中（如既是 mod 又是 datapack），按 (source,id)
-            // 去重，保留先出现的类型，避免同一条目在列表里出现两次。
-            if seen.insert((it.source.clone(), it.id.clone())) {
-                merged.push(it);
-            }
-        }
+        merged.extend(items);
     }
-    merged.sort_by(|a, b| b.download_count.cmp(&a.download_count));
-    merged.truncate(page_size as usize);
-    Ok((merged, total))
+    // 全局排序后切出请求页（分页连续性见 `aggregate_window` 的说明）。
+    let window = aggregate_window(merged, page, page_size);
+    Ok((window, total))
 }
 
 /// 中文关键词候选检索：Modrinth 批量取回候选 slug + 首候选搜索补充；
@@ -1658,7 +1697,13 @@ async fn detail(
             }
         };
         return Ok(Json(ResourceDetailDto {
-            id: pack.id.clone(),
+            // `id` 必须是 **slug**，与列表项（`technic_summary_to_item`）保持一致。
+            //
+            // CodeRabbit 在 PR #187 指出（已核实为真缺陷）：列表用 slug 作 id，而这里
+            // 原先用数字 id，导致详情页收藏时 `toggleFavorite(detail)` 写入数字 id 的
+            // 记录，而收藏态判定用的是 URL 里的 slug → 按钮永远显示未收藏、且产生重复记录。
+            // 数字 id 在 DTO 里无处需要（`project_url` 已含网页地址），故直接用 slug。
+            id: pack.name.clone(),
             title: pack.instance_name().to_string(),
             description: pack.description.clone(),
             author: pack.user.clone(),
@@ -3461,5 +3506,102 @@ mod favorites_tests {
         assert!(v.as_object().unwrap().contains_key("downloadCount"));
         assert!(v.as_object().unwrap().contains_key("projectUrl"));
         assert!(!v.as_object().unwrap().contains_key("icon_url"));
+    }
+
+    /// 聚合分页连续性（CodeRabbit PR #187 的回归护栏）。
+    ///
+    /// Technic 条目的 `download_count` 恒为 0（列表接口不提供，见 ADR-103），按下载量
+    /// 排序后必然排在最后。若「各源只取第 page 页再排序截断」，这些条目在第 1 页被
+    /// `truncate` 掉、第 2 页又从各源 offset=pageSize 开始 → **永远浏览不到，但 total
+    /// 统计了它们**。`aggregate_window` 改为「累计取前缀 → 全局排序 → 切窗口」后，
+    /// 逐页遍历必须能覆盖到每一条。
+    #[test]
+    fn aggregate_window_pages_cover_zero_download_entries() {
+        let mk = |source: &str, id: &str, downloads: i64| ResourceItemDto {
+            id: id.to_string(),
+            title: id.to_string(),
+            description: String::new(),
+            author: String::new(),
+            icon_url: String::new(),
+            download_count: downloads,
+            source: source.to_string(),
+            categories: Vec::new(),
+            project_url: String::new(),
+            slug: id.to_string(),
+            category: "modpack".to_string(),
+        };
+
+        // 30 条高下载量 + 3 条 download_count=0 的 technic 条目（模拟聚合池）
+        let mut pool: Vec<ResourceItemDto> = (0..30)
+            .map(|i| mk("modrinth", &format!("mr{i}"), 1000 - i as i64))
+            .collect();
+        pool.extend((0..3).map(|i| mk("technic", &format!("tc{i}"), 0)));
+
+        let page_size = 10;
+        // 逐页取窗口（模拟带累计前缀的真实取数：每页用完整的 pool 当「已取前缀」）
+        let mut seen: Vec<String> = Vec::new();
+        for page in 1..=4 {
+            let w = aggregate_window(pool.clone(), page, page_size);
+            for it in &w {
+                assert!(!seen.contains(&it.id), "条目 {} 跨页重复", it.id);
+                seen.push(it.id.clone());
+            }
+        }
+        // 零下载量的 technic 条目必须全部可达（这正是修复前失败的点）
+        for i in 0..3 {
+            assert!(
+                seen.contains(&format!("tc{i}")),
+                "download_count=0 的 technic 条目 tc{i} 应可被翻页取到"
+            );
+        }
+        // 第 1 页仍必须是最高下载量在前（排序语义不变）
+        let first = aggregate_window(pool, 1, page_size);
+        assert_eq!(first[0].download_count, 1000);
+        assert!(first.iter().all(|it| it.download_count > 0));
+    }
+
+    /// 聚合窗口的边界：空输入、越界页码、page=0、pageSize=0 都不 panic 且返回空。
+    #[test]
+    fn aggregate_window_handles_edges() {
+        let mk = |id: &str| ResourceItemDto {
+            id: id.to_string(),
+            title: id.to_string(),
+            description: String::new(),
+            author: String::new(),
+            icon_url: String::new(),
+            download_count: 1,
+            source: "modrinth".to_string(),
+            categories: Vec::new(),
+            project_url: String::new(),
+            slug: id.to_string(),
+            category: "mod".to_string(),
+        };
+        assert!(aggregate_window(Vec::new(), 1, 10).is_empty());
+        // 越界页
+        assert!(aggregate_window(vec![mk("a")], 5, 10).is_empty());
+        // page=0 视作第 1 页（offset 钳位），不 panic
+        assert_eq!(aggregate_window(vec![mk("a")], 0, 10).len(), 1);
+        // pageSize=0 → 空且不 panic
+        assert!(aggregate_window(vec![mk("a")], 1, 0).is_empty());
+    }
+
+    /// `(source,id)` 去重：同一工程以多类型命中时只保留先出现的一条。
+    #[test]
+    fn aggregate_window_dedups_by_source_and_id() {
+        let mk = |cat: &str, downloads: i64| ResourceItemDto {
+            id: "same".to_string(),
+            title: "T".to_string(),
+            description: String::new(),
+            author: String::new(),
+            icon_url: String::new(),
+            download_count: downloads,
+            source: "modrinth".to_string(),
+            categories: Vec::new(),
+            project_url: String::new(),
+            slug: "same".to_string(),
+            category: cat.to_string(),
+        };
+        let out = aggregate_window(vec![mk("mod", 5), mk("datapack", 9)], 1, 10);
+        assert_eq!(out.len(), 1, "同 (source,id) 应去重");
     }
 }
