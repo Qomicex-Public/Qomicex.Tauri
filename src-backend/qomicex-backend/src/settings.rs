@@ -218,6 +218,15 @@ pub struct SettingsResponse {
     /// 语义（JSON 链的值就是最终值），但要清楚：ADR-082「fast 段猜测值不落盘」的
     /// 前提（前端只在 full 后 sync）在这里被有意打破。关掉开关即恢复原语义。
     pub scan_skip_jar_probe: Option<bool>,
+    /// 自动下载并安装更新。`None`/`Some(true)` = 开启（默认）：
+    /// 后台发现更新后**自动下载**，下载完成弹可点击的 Toast，用户不点击则下次
+    /// 启动时自动安装完成。`Some(false)` = 关闭，恢复为原有的「发现新版本 → 弹
+    /// 更新对话框，等用户点『立即更新』」行为。
+    ///
+    /// 只对普通更新生效：`required`（强制更新，有"必须更新才能继续使用"语义）与
+    /// `channelSwitch`（跨通道切换，需用户明确知晓）一律仍走对话框。
+    #[serde(default)]
+    pub update_auto_install: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -300,6 +309,8 @@ impl Default for SettingsResponse {
             ignore_ssl_cert: None,
             http1_parallel: false,
             scan_skip_jar_probe: None,
+            // 默认开启自动下载并安装更新（None 亦视为开启，见字段注释）。
+            update_auto_install: Some(true),
         }
     }
 }

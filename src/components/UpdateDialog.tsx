@@ -142,7 +142,11 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
             <span>{t('dialogs.update.downloadingAction')}</span>
           </div>
         )}
-        {phase === 'idle' && !required && (
+        {/* phase === 'ready' = 自动模式已把包下好、正等着安装（Toast 同时也在显示，
+            例如用户点设置页的「发现新版本」提示打开了本对话框）。这里必须给出按钮：
+            否则弹窗会呈现一个没有主操作的空壳，用户只能关掉它。两个按钮都合法——
+            「立即更新」经 store.start 收敛到已下载的那个包，不会重复下载。 */}
+        {(phase === 'idle' || phase === 'ready') && !required && (
           <Button variant="outline" size="sm" onClick={onClose}>{t('dialogs.update.later')}</Button>
         )}
         {phase === 'error' && (
@@ -151,10 +155,10 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
             {t('dialogs.update.retry')}
           </Button>
         )}
-        {(phase === 'idle' || phase === 'error') && (
+        {(phase === 'idle' || phase === 'error' || phase === 'ready') && (
           <Button size="sm" onClick={handleUpdate}>
             <Download className="mr-1 h-3 w-3" />
-            {t('dialogs.update.updateNow')}
+            {phase === 'ready' ? t('dialogs.updateReady.installNow') : t('dialogs.update.updateNow')}
           </Button>
         )}
       </DialogFooter>

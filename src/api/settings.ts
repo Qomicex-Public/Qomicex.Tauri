@@ -102,6 +102,14 @@ export interface AppSettings {
    *  true = 一律按 JSON 链推断，不再打开任何 jar（大实例目录冷扫更快，但 JSON 缺字段的
    *  整合包 gameVersion 可能退化成 inheritsFrom/目录名）。仅影响 /versions/scan。 */
   scanSkipJarProbe?: boolean
+  /**
+   * 自动下载并安装更新。缺失/true = 开启（默认）：后台发现更新后
+   * **自动下载**，下载完成弹可点击的 Toast，用户不点击则下次启动自动安装完成。
+   * false = 关闭，恢复原有「发现新版本 → 弹更新对话框等用户点『立即更新』」行为。
+   *
+   * 只对普通更新生效：强制更新（required）与跨通道切换（channelSwitch）一律仍走对话框。
+   */
+  updateAutoInstall?: boolean
   /** 资源文件下载命名格式（ENH-10）：cn-name-ver / name-cn-ver / cn-name / name-ver / name */
   fileNaming?: string
 }
@@ -164,6 +172,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   proxyHost: '',
   ignoreSslCert: false,
   http1Parallel: false,
+  updateAutoInstall: true,
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }
