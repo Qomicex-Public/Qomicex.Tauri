@@ -1176,7 +1176,7 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **分发形态判据**（`url` 字段）：字符串 = SingleZip（本分支支持）；`null` 且 `solder` 有值 = Solder 在线分发（期3 #181 已支持，走 Solder 专用管线）。实测 45 个候选中 32 个 SingleZip、13 个 Solder。
 
-**Solder 分支（期3 #181，ADR-107）**：`distribution() == Solder` 时后端解析 `{solder}/modpack/{slug}`（选 build：recommended → latest → builds 末位）与 `{solder}/modpack/{slug}/{build}`（mod 清单），专用管线：并行下载全部 mod zip（带 MD5 校验）→ 按清单顺序解压叠加 → 装 vanilla MC → `copy-files` → jarmod 注入（Forge/FLM 本体在包内 `bin/modpack.jar`，1.2.5 时代无 installer）。实例元数据 `loader=forge`/`loaderVersion={forge build}` 仅作标注（版本 JSON 是 vanilla 的，启动链不受影响）、`modpackVersion=所选 build`。**管线步骤**：`download-mods`(25) → `verify`(5) → `extract-merge`(10) → `install-game`(40) → `copy-files`(15) → `jarmod`(5)。
+**Solder 分支（期3 #181，ADR-107）**：`distribution() == Solder` 时后端解析 `{solder}/modpack/{slug}`（选 build：recommended → latest → builds 末位）与 `{solder}/modpack/{slug}/{build}`（mod 清单），专用管线：并行下载全部 mod zip（带 MD5 校验）→ 按清单顺序解压叠加 → 装 vanilla MC → `copy-files` → jarmod 注入（Forge/FML 本体在包内 `bin/modpack.jar`，1.2.5 时代无 installer）。实例元数据 `loader=forge`/`loaderVersion={forge build}` 仅作标注（版本 JSON 是 vanilla 的，启动链不受影响）、`modpackVersion=所选 build`。**管线步骤**：`download-mods`(25) → `verify`(5) → `extract-merge`(10) → `install-game`(40) → `copy-files`(15) → `jarmod`(5)。
 
 **不支持原地更新**：technic 实例不写入 `modpackOrigin`（`is_updatable_origin` 白名单仅 modrinth/curseforge）——该平台无「版本 id」可作更新判据，与 FTB 同待遇。
 
@@ -1554,9 +1554,9 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 | 端点 | technic 行为 |
 |------|------|
-| `/resources/search` | 需要 `keyword`；**无关键词时后端自动改走 `GET /trending`**（该 API 对空 `q` 返回 400）。服务端**固定返回 15 条**（trending 20 条）且忽略 `sort`/`page` → 后端如实回报 `total`，不伪造分页（`page>1` 自然为空） |
+| `/resources/search` | 需要 `keyword`；**无关键词时后端自动改走 `GET /trending`**（该 API 对空 `q` 返回 400）。服务端**固定返回 15 条**（trending 20 条）且忽略 `sort`/`page` → 后端如实回报 `total`，不伪造分页（`page>1` 自然为空）。**列表项会并发打详情接口补全 `description`/`author`/`downloadCount`/`categories`/`iconUrl`**（列表接口只给 5 个字段），结果按 slug 缓存 1h，单条失败降级为列表数据 |
 | `/resources/{id}` | `{id}` 必须是 **slug**（数字 id 返回 404，实测）；响应 `id` 同样回传 **slug**（与列表项一致，保证收藏唯一键一致），数字 id 不出现在 DTO 里，网页地址见 `projectUrl` |
-| `/resources/{id}/versions` | Technic **无版本列表**：把「包本身」建模为唯一版本条目。SingleZip 的直链填入 `downloads`；Solder 包 `downloads` 为空（前端据此提示期3 支持） |
+| `/resources/{id}/versions` | Technic **无版本列表**：把「包本身」建模为唯一版本条目。SingleZip 的直链填入 `downloads`；Solder 包 `downloads` 为空（前端据此提示期3 支持）。`loaders` 恒为**空数组**（加载器需读包内 `version.json`，列表/详情接口拿不到）——注意该键**必须显式下发**，见下方契约说明 |
 | `/resources/categories` | 返回空（该平台无类别体系；`tags` 为自由文本且形态不稳定：逗号/空格分隔或 null） |
 | `/resources/loaders` | 仅 `modpack` 返回 `forge`/`fabric`/`neoforge`。**注意：这些值不可用于筛选**——Technic 列表接口不提供加载器维度，后端不执行 `loader` 过滤（前端也据此隐藏该控件）；提交 `loader` 会得到未过滤结果 |
 | `/resources/{id}/dependencies` | 返回空（无依赖模型） |
@@ -1574,6 +1574,15 @@ technic **纳入聚合源**（`source=all` + `category=modpack`）：接受其�
 获取资源版本列表。
 
 **响应：** `List<ResourceVersionDto>`
+
+> ⚠️ **契约（消费方必读）**：`gameVersions` / `loaders` / `downloads` 在**无值时也必须是空数组**，不能省略键。
+>
+> 前端 `ResourceVersion`（`src/types/index.ts`）把三者声明为**必填数组**，`ResourceDetail.tsx` 直接 `version.loaders.map(...)`。早期这三个字段带 `skip_serializing_if = "Vec::is_empty"`，空数组时整个键被序列化掉 → 前端反序列化后为 `undefined` → `undefined.map` 抛
+> `TypeError: Cannot read properties of undefined (reading 'map')` → 详情页整页崩进 ErrorBoundary（显示「页面渲染异常」）。
+>
+> Technic 源**恒为**空 `loaders`（加载器需读包内 `version.json`，列表/详情接口拿不到），因此该来源的详情页**必然**命中此缺陷（issue #151 期2）。已移除这三个字段的 `skip_serializing_if`；`dependencies` / `datePublished` 等**可选**字段仍保持「无值不下发」。
+>
+> 回归护栏：`resource_version_dto_always_serializes_empty_arrays`（backend）。
 
 ### GET `/api/resources/{id}/versions/{versionId}/downloads?source={src}`
 

@@ -1774,11 +1774,11 @@ async fn run_solder_import(
                 path.display()
             )
         })?;
-        use md5::Digest;
-        let mut hasher = md5::Md5::new();
-        md5::Digest::update(&mut hasher, &bytes);
-        let got = format!("{:x}", md5::Digest::finalize(hasher));
-        if !got.eq_ignore_ascii_case(expected) {
+        if !solder_md5_matches(&bytes, expected) {
+            use md5::Digest;
+            let mut hasher = md5::Md5::new();
+            md5::Digest::update(&mut hasher, &bytes);
+            let got = format!("{:x}", md5::Digest::finalize(hasher));
             return Err(format!(
                 "TECHNIC_SOLDER_MD5_MISMATCH: mod {}({}) MD5 不符（期望 {expected}，实际 {got}），分发文件可能损坏",
                 m.name, m.version
@@ -1793,13 +1793,20 @@ async fn run_solder_import(
     handle.mark_step("extract-merge", "active");
     handle.set_stage("extracting-modpack");
     std::fs::create_dir_all(extract_dir).map_err(|e| format!("创建解压目录失败: {e}"))?;
+    // 进度序号用独立计数器（done）：清单索引 i 含跳过项，若有条目缺 URL，
+    // i+1 会超过 total_mods 显示出 (31/30) 的假进度（CodeRabbit #196 finding）。
+    let mut done = 0usize;
     for (i, m) in build.mods.iter().enumerate() {
         if m.url.as_deref().map(str::trim).unwrap_or("").is_empty() {
             continue;
         }
+        done += 1;
         let path = solder_mod_zip_path(zips_dir, i, &m.name);
-        handle.set_current_file(&format!("解压 {} ({}/{})...", m.name, i + 1, total_mods));
-        handle.set_step_percent("extract-merge", (i as f64) * 100.0 / total_mods as f64);
+        handle.set_current_file(&format!("解压 {} ({done}/{total_mods})...", m.name));
+        handle.set_step_percent(
+            "extract-merge",
+            ((done - 1) as f64) * 100.0 / total_mods as f64,
+        );
         // archive::extract_zip_file 允许目标已有文件（File::create 直接覆盖），
         // 正是「后者覆盖前者」的叠加语义；zip-slip / 炸弹防护由共享实现兜底。
         crate::services::archive::extract_zip_file(&path, extract_dir).map_err(|e| {
@@ -1888,6 +1895,18 @@ fn solder_mod_zip_path(zips_dir: &Path, index: usize, mod_name: &str) -> PathBuf
     ))
 }
 
+/// Solder 分发文件 MD5 判定（`run_solder_import` 的 verify 步骤与单测共用）。
+///
+/// 大小写不敏感比对：Solder 契约给小写 hex，容忍镜像端大写形态；`expected`
+/// 先 trim，容忍响应里的首尾空白。
+fn solder_md5_matches(bytes: &[u8], expected: &str) -> bool {
+    use md5::Digest;
+    let mut hasher = md5::Md5::new();
+    Digest::update(&mut hasher, bytes);
+    let got = format!("{:x}", Digest::finalize(hasher));
+    got.eq_ignore_ascii_case(expected.trim())
+}
+
 /// Solder 管线单元测试（issue #181）。
 ///
 /// 端到端在线安装依赖外网与真实 Solder 服务，这里覆盖**纯逻辑**部分：落盘命名
@@ -1921,30 +1940,21 @@ mod solder_tests {
         );
     }
 
-    /// MD5 判定逻辑（与 run_solder_import 的 verify 步骤同语义）。
-    mod md5_match {
-        use md5::Digest;
-
-        pub fn compute_hex(bytes: &[u8]) -> String {
-            let mut h = md5::Md5::new();
-            Digest::update(&mut h, bytes);
-            format!("{:x}", Digest::finalize(h))
-        }
-
-        pub fn matches(computed: &str, expected: &str) -> bool {
-            computed.eq_ignore_ascii_case(expected.trim())
-        }
-    }
-
     #[test]
     fn md5_compare_is_case_insensitive() {
         let data = b"tekkit";
-        let got = md5_match::compute_hex(data);
-        // Solder 契约给小写 hex；大小写不敏感比对防御镜像端大写形态
-        assert!(md5_match::matches(&got, &got.to_uppercase()));
-        assert!(md5_match::matches(&got, &format!("  {}  ", got)));
-        assert!(!md5_match::matches(
-            &got,
+        let got = {
+            use md5::Digest;
+            let mut h = md5::Md5::new();
+            Digest::update(&mut h, data);
+            format!("{:x}", Digest::finalize(h))
+        };
+        // 与 run_solder_import 的 verify 步骤**同一个**生产函数：生产逻辑回归时
+        // 本测试必然失败（CodeRabbit #196 finding：测试不得持有比对逻辑的副本）。
+        assert!(solder_md5_matches(data, &got.to_uppercase()));
+        assert!(solder_md5_matches(data, &format!("  {}  ", got)));
+        assert!(!solder_md5_matches(
+            data,
             "00000000000000000000000000000000"
         ));
     }
@@ -1952,14 +1962,20 @@ mod solder_tests {
     #[test]
     fn md5_known_vector() {
         // RFC 1321 空串与 "abc" 向量：证明用的是标准 MD5 而非自造哈希
-        assert_eq!(
-            md5_match::compute_hex(b""),
-            "d41d8cd98f00b204e9800998ecf8427e"
-        );
-        assert_eq!(
-            md5_match::compute_hex(b"abc"),
+        assert!(solder_md5_matches(b"", "d41d8cd98f00b204e9800998ecf8427e"));
+        assert!(solder_md5_matches(
+            b"abc",
             "900150983cd24fb0d6963f7d28e17f72"
-        );
+        ));
+        // 大写期望值也应通过（大小写不敏感语义）
+        assert!(solder_md5_matches(
+            b"abc",
+            "900150983CD24FB0D6963F7D28E17F72"
+        ));
+        assert!(!solder_md5_matches(
+            b"abc",
+            "00000000000000000000000000000000"
+        ));
     }
 }
 
