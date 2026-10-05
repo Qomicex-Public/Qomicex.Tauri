@@ -109,6 +109,7 @@
 - [ADR-105：资源中心 Technic 源：API 模型对齐、后端代理安装与 build 参数 401 归因修正（issue #151）](1-决策记录/ADR-105-资源中心-Technic-源-API-模型对齐-后端代理安装与-build-参数-401-归因修正-issue-151.md)
 - [ADR-106：JarMod 支持：非破坏性派生 jar 注入古董包 modpack.jar（issue #180）](1-决策记录/ADR-106-JarMod-支持-非破坏性派生-jar-注入古董包-modpack-jar-issue-180.md)
 - [ADR-107：启动器更新改为默认自动下载 + Toast 待安装，不点击则下次启动自动装完，设置可回退弹窗](1-决策记录/ADR-107-启动器更新改为默认自动下载并弹Toast待安装-不点击下次启动自动装完-设置可回退弹窗.md)
+- [ADR-108：Technic Solder 在线分发支持：逐文件下载管线 + jarmod 落地（issue #181，#123 期3）](1-决策记录/ADR-108-Technic-Solder-在线分发支持-逐文件下载管线与-jarmod-落地-issue-181.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
