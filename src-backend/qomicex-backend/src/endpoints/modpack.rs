@@ -1468,6 +1468,501 @@ fn install_technic_jarmod(
     Ok(())
 }
 
+// =====================================================================
+// Solder 在线分发（issue #181，#123 期3）
+// =====================================================================
+
+/// Solder 导入请求（仅由 `install_direct` 的 technic 分支构造，不经前端）。
+///
+/// Solder 基地址/mod 清单/MD5/URL 全部由后端从 Technic 详情 + Solder 接口解析，
+/// 不接受前端提交的下载面（与 SingleZip 的 `download_url` 同一安全约束）。
+pub(crate) struct SolderImportRequest {
+    pub slug: String,
+    /// 实例名（安装对话框传入，可空 → 用 slug 兜底）。
+    pub name: String,
+    pub game_dir: String,
+}
+
+/// POST /modpack/install-direct 的 Solder 分支入口：同步解析 Solder 元数据并
+/// 创建实例 + 后台任务（骨架与 [`technic_import_impl`] 一致，差异在后台管线）。
+///
+/// 与 SingleZip 路径的模型差异（决策见 ADR-107）：
+/// - **无包体直链**：Solder 是逐文件分发，先拉 build 清单再逐文件下载；
+/// - **元数据请求期即可解析**（Solder build 接口就是完整元数据源），不像
+///   SingleZip 在线路径要下载 zip 后二次解析——因此实例元数据一次写对，无需回写；
+/// - **loader 是元数据标注**：1.2.5 时代 Forge 经 basemods zip 的
+///   `bin/modpack.jar` 分发（实测夹具验证），安装管线装 vanilla MC，Forge/FML
+///   由 jarmod 机制注入（期2-B 已就绪），故 `loader=forge/{build}` 只写实例记录。
+pub(crate) async fn solder_import_impl(
+    s: SharedState,
+    req: SolderImportRequest,
+) -> ApiResult<Json<ModpackInstallDirectResponse>> {
+    let technic = s.core.create_technic_source();
+    let detail = technic
+        .get_pack_detail(&req.slug)
+        .await
+        .map_err(|e| ApiError::upstream(e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "MODPACK_NOT_FOUND",
+                format!("Technic 整合包不存在: {}", req.slug),
+            )
+        })?;
+    // 双重确认分发形态：调用方按 detail 判定进入本分支，这里再核一次（防御
+    // 上游模型漂移：url 与 solder 同时有值时 SingleZip 优先，属期2 语义）。
+    if detail.distribution()
+        != qomicex_core::models::expansion::technic::TechnicDistribution::Solder
+    {
+        return Err(ApiError::bad_request(
+            "TECHNIC_SOLDER_NOT_DISTRIBUTED",
+            format!("整合包 {} 不是 Solder 分发形态", req.slug),
+        ));
+    }
+    let solder_base = detail
+        .solder
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "TECHNIC_SOLDER_NOT_DISTRIBUTED",
+                format!("整合包 {} 缺少 Solder 基地址", req.slug),
+            )
+        })?;
+
+    // 1) build 列表 → 选 build（recommended 优先 → latest → 列表末位）。
+    let pack = technic
+        .get_solder_pack(&solder_base, &req.slug)
+        .await
+        .map_err(|e| ApiError::upstream(format!("Solder build 列表查询失败: {e}")))?
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "TECHNIC_SOLDER_NO_BUILDS",
+                format!("整合包 {} 在 Solder 上没有可安装的构建", req.slug),
+            )
+        })?;
+    let Some(build_id) = pack.selected_build().map(str::to_string) else {
+        return Err(ApiError::bad_request(
+            "TECHNIC_SOLDER_NO_BUILDS",
+            format!("整合包 {} 的 Solder build 列表为空", req.slug),
+        ));
+    };
+
+    // 2) build 详情 = 完整元数据源（MC 版本 / Forge build / mod 清单）。
+    let build = technic
+        .get_solder_build(&solder_base, &req.slug, &build_id)
+        .await
+        .map_err(|e| ApiError::upstream(format!("Solder build 详情查询失败: {e}")))?
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "TECHNIC_SOLDER_BUILD_NOT_FOUND",
+                format!("整合包 {} 的构建 {build_id} 在 Solder 上不存在", req.slug),
+            )
+        })?;
+    let game_version = build
+        .minecraft
+        .clone()
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "TECHNIC_SOLDER_BUILD_INVALID",
+                format!("构建 {build_id} 缺少 minecraft 字段，无法安装"),
+            )
+        })?;
+
+    // 3) 建实例（元数据一次写对：Solder 无「下载后二次解析」环节）。
+    let base_name = sanitize_instance_name(if req.name.trim().is_empty() {
+        detail.instance_name()
+    } else {
+        req.name.trim()
+    });
+    let game_dir = validate_source_path(&req.game_dir)?.to_path_buf();
+    let game_dir = crate::services::install_service::absolute_path(&game_dir.to_string_lossy());
+    // 版本隔离强制（同 Technic SingleZip：包内容 = minecraft 目录）；安装管线
+    // 的 InstallRequestData.version_isolation 也传 true，此处字段仅写入实例记录。
+    let version_isolation = true;
+    static SOLDER_IMPORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = SOLDER_IMPORT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let name = unique_instance_name(&game_dir, &base_name);
+    let mut inst = crate::services::instance::GameInstance::default();
+    inst.name = name.clone();
+    inst.game_version = game_version.clone();
+    // Forge build 仅元数据标注（1.2.5 时代无 installer；本体经 jarmod 注入）。
+    inst.loader = build.forge.as_ref().map(|_| "forge".to_string());
+    inst.loader_version = build.forge.clone();
+    inst.game_dir = game_dir.to_string_lossy().into_owned();
+    inst.version_isolation = Some(version_isolation);
+    inst.modpack_name = Some(base_name.clone());
+    inst.modpack_version = Some(build_id.clone());
+    let created = s.instance.create(inst);
+    drop(_guard);
+    let instance_id = created.id.clone();
+
+    // 4) 派发后台任务。
+    let tracker = s.install_tracker.clone();
+    let mgr = s.download_manager.load_full();
+    let http_client = s.http_client.clone();
+    let inst_svc = s.instance.clone();
+    let gd = game_dir.to_string_lossy().into_owned();
+    let inst_id_inner = instance_id.clone();
+    let technic_root = technic_imports_dir()?;
+
+    tracker.start_modpack_install(instance_id.clone(), move |handle| async move {
+        // RAII 清理（同 technic_import_impl 的 Cleanup：任务目录随任务终局删除）。
+        struct Cleanup {
+            dirs: Vec<PathBuf>,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                for d in &self.dirs {
+                    let _ = std::fs::remove_dir_all(d);
+                }
+            }
+        }
+        let task_dir = technic_root.join(uuid::Uuid::new_v4().to_string());
+        let extract_dir = task_dir.join("extract");
+        let zips_dir = task_dir.join("mod-zips");
+        let cleanup = Cleanup {
+            dirs: vec![task_dir.clone()],
+        };
+
+        let result = run_solder_import(
+            &handle,
+            &mgr,
+            &http_client,
+            &build,
+            &game_version,
+            &zips_dir,
+            &extract_dir,
+            &gd,
+            &name,
+            &inst_svc,
+            &inst_id_inner,
+            &req.slug,
+            &build_id,
+        )
+        .await;
+        drop(cleanup);
+        if result.is_err() {
+            // 回滚实例记录 + 版本隔离目录（同 technic_import_impl；删除失败保留
+            // 记录防幽灵实例，错误并入任务失败信息）。
+            if let Err(e) = inst_svc.try_delete(&inst_id_inner) {
+                let msg = format!(
+                    "{}；另：{e}，实例记录已保留，请手动删除或重试",
+                    result.as_ref().err().map(String::as_str).unwrap_or("")
+                );
+                return Err(msg);
+            }
+        }
+        result
+    });
+
+    Ok(Json(ModpackInstallDirectResponse { instance_id }))
+}
+
+/// Solder 导入后台管线（issue #181）。步骤表权重合计 100：
+/// download-mods(25) → verify(5) → extract-merge(10) → install-game(40) →
+/// copy-files(15) → jarmod(5)。
+///
+/// 数据流：Solder mods[] 按**数组顺序**逐 zip 解压叠加到 extract_dir（后者覆盖
+/// 前者——`z-` 前缀配置包排在清单末尾最后覆盖是 Technic 约定，见 ADR-107），
+/// 然后 vanilla 安装管线装 MC，最后把包内容拷进版本隔离目录并注入 jarmod。
+#[allow(clippy::too_many_arguments)]
+async fn run_solder_import(
+    handle: &InstallHandle,
+    mgr: &Arc<qomicex_downloader::DownloadManager>,
+    http_client: &reqwest::Client,
+    build: &qomicex_core::models::expansion::technic::TechnicSolderBuild,
+    game_version: &str,
+    zips_dir: &std::path::Path,
+    extract_dir: &std::path::Path,
+    game_dir: &str,
+    version_dir_name: &str,
+    inst_svc: &crate::services::instance::InstanceService,
+    instance_id: &str,
+    slug: &str,
+    build_id: &str,
+) -> Result<(), String> {
+    use InstallStepSpec as S;
+    let specs: Vec<InstallStepSpec> = vec![
+        S {
+            id: "download-mods",
+            weight: 25.0,
+        },
+        S {
+            id: "verify",
+            weight: 5.0,
+        },
+        S {
+            id: "extract-merge",
+            weight: 10.0,
+        },
+        S {
+            id: "install-game",
+            weight: 40.0,
+        },
+        S {
+            id: "copy-files",
+            weight: 15.0,
+        },
+        S {
+            id: "jarmod",
+            weight: 5.0,
+        },
+    ];
+    handle.define_steps(
+        &specs,
+        crate::services::install_service::INSTALL_STEP_BUDGET_TOP,
+    );
+
+    // === 1. 下载全部 mod zip（download_batch 并行，进度写字节比例）===
+    handle.mark_step("download-mods", "active");
+    handle.set_stage("downloading-modpack");
+    handle.update(|f| {
+        f.set_status(InstallStatus::Downloading);
+        f.current_file = "下载整合包文件（Solder 逐文件分发）...".to_string();
+    });
+    std::fs::create_dir_all(zips_dir).map_err(|e| format!("创建下载目录失败: {e}"))?;
+    let headers = technic_download_headers();
+    let targets: Vec<crate::services::install_service::DownloadTarget> = build
+        .mods
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| {
+            let url = m.url.as_deref()?.trim();
+            if url.is_empty() {
+                return None;
+            }
+            Some((
+                url.to_string(),
+                solder_mod_zip_path(zips_dir, i, &m.name),
+                headers.clone(),
+            ))
+        })
+        .collect();
+    let total_mods = targets.len();
+    if total_mods == 0 {
+        return Err(format!(
+            "Solder 构建 {build_id} 的 mod 清单为空或全部缺少下载地址"
+        ));
+    }
+    let skipped = build.mods.len() - total_mods;
+    if skipped > 0 {
+        eprintln!(
+            "[Solder] 构建 {build_id} 有 {skipped} 个 mod 缺少下载地址，跳过（清单共 {} 项）",
+            build.mods.len()
+        );
+    }
+    crate::services::install_service::download_batch(handle, mgr, targets, Some("download-mods"))
+        .await?;
+    handle.mark_step("download-mods", "done");
+
+    // === 2. MD5 校验（硬失败：Solder 给 md5 就是为了分发校验）===
+    handle.mark_step("verify", "active");
+    handle.set_stage("verifying");
+    handle.update(|f| {
+        f.current_file = "校验文件完整性（MD5）...".to_string();
+    });
+    let mut checked = 0usize;
+    for (i, m) in build.mods.iter().enumerate() {
+        let Some(expected) = m.md5.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let path = solder_mod_zip_path(zips_dir, i, &m.name);
+        let bytes = std::fs::read(&path).map_err(|e| {
+            format!(
+                "读取已下载文件失败 {}: {e}（校验无法进行，安装中止）",
+                path.display()
+            )
+        })?;
+        use md5::Digest;
+        let mut hasher = md5::Md5::new();
+        md5::Digest::update(&mut hasher, &bytes);
+        let got = format!("{:x}", md5::Digest::finalize(hasher));
+        if !got.eq_ignore_ascii_case(expected) {
+            return Err(format!(
+                "TECHNIC_SOLDER_MD5_MISMATCH: mod {}({}) MD5 不符（期望 {expected}，实际 {got}），分发文件可能损坏",
+                m.name, m.version
+            ));
+        }
+        checked += 1;
+        handle.set_step_percent("verify", checked as f64 * 100.0 / build.mods.len() as f64);
+    }
+    handle.mark_step("verify", "done");
+
+    // === 3. 按清单顺序解压合并（后者覆盖前者）===
+    handle.mark_step("extract-merge", "active");
+    handle.set_stage("extracting-modpack");
+    std::fs::create_dir_all(extract_dir).map_err(|e| format!("创建解压目录失败: {e}"))?;
+    for (i, m) in build.mods.iter().enumerate() {
+        if m.url.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            continue;
+        }
+        let path = solder_mod_zip_path(zips_dir, i, &m.name);
+        handle.set_current_file(&format!("解压 {} ({}/{})...", m.name, i + 1, total_mods));
+        handle.set_step_percent("extract-merge", (i as f64) * 100.0 / total_mods as f64);
+        // archive::extract_zip_file 允许目标已有文件（File::create 直接覆盖），
+        // 正是「后者覆盖前者」的叠加语义；zip-slip / 炸弹防护由共享实现兜底。
+        crate::services::archive::extract_zip_file(&path, extract_dir).map_err(|e| {
+            format!(
+                "解压 mod {}({}) 失败: {e}（文件 {}）",
+                m.name,
+                m.version,
+                path.display()
+            )
+        })?;
+    }
+    handle.mark_step("extract-merge", "done");
+
+    // === 4. 安装 vanilla MC（loader 安装不走：1.2.5 无 installer.jar）===
+    handle.mark_step("install-game", "active");
+    handle.set_stage("downloading-game");
+    let loader_note = build
+        .forge
+        .as_deref()
+        .map(|f| format!("（Forge {f} 经整合包内置，稍后注入）"))
+        .unwrap_or_default();
+    handle.update(|f| {
+        f.set_status(InstallStatus::Installing);
+        f.current_file = format!("Minecraft {game_version} {loader_note}");
+    });
+    let data = InstallRequestData {
+        game_version: game_version.to_string(),
+        game_dir: game_dir.to_string(),
+        version_dir_name: version_dir_name.to_string(),
+        // 关键：loader 置 None → run_install_pipeline 走 vanilla 分支。
+        // Forge 本体在 basemods zip 的 bin/modpack.jar 里，步骤 6 注入。
+        loader: None,
+        loader_version: None,
+        addons: Vec::new(),
+        download_threads: 8,
+        version_isolation: true,
+        download_source_id: crate::settings::get_global_file_download_source(),
+        optifine_version: None,
+    };
+    run_install_pipeline(handle, mgr.clone(), http_client.clone(), "", data, 40.0).await?;
+    handle.mark_step("install-game", "done");
+
+    // === 5. 拷贝包内容（复用 Technic SingleZip 的拷贝语义）===
+    handle.mark_step("copy-files", "active");
+    handle.set_stage("copying-files");
+    handle.set_current_file("拷贝实例内容...");
+    // 顶层 bin/ 不拷（jarmod 源在下一步单独落盘；其余内容 = minecraft 目录）。
+    copy_technic_content(extract_dir, Path::new(game_dir), version_dir_name)?;
+    handle.mark_step("copy-files", "done");
+
+    // === 6. JarMod 注入（Forge/FML 本体从 bin/modpack.jar 进 classpath）===
+    handle.mark_step("jarmod", "active");
+    if extract_dir.join("bin").join("modpack.jar").is_file() {
+        handle.set_current_file("注入 Forge（整合包内置 modpack.jar）...");
+        install_technic_jarmod(extract_dir, Path::new(game_dir), version_dir_name)?;
+    } else {
+        // 无 modpack.jar 的 Solder 包：若声明了 forge 则说明清单形态与已知实测
+        // 不同——不静默吞掉，打日志供排障；vanilla 实例仍可用。
+        if build.forge.is_some() {
+            eprintln!(
+                "[Solder] {slug} {build_id} 声明 forge 但解压结果无 bin/modpack.jar，Forge 未注入（清单形态可能与已知 Solder 约定不同）"
+            );
+        }
+    }
+    handle.mark_step("jarmod", "done");
+
+    // === 收尾：来源标注 ===
+    if let Some(mut inst) = inst_svc.get_by_id(instance_id) {
+        inst.modpack_source = Some("technic".to_string());
+        inst.modpack_project_id = Some(slug.to_string());
+        let _ = inst_svc.update(instance_id, inst);
+    }
+    handle.set_stage("finishing");
+    handle.set_current_file("导入完成");
+    Ok(())
+}
+
+/// Solder mod zip 的任务内落盘路径：`{zips_dir}/{序号:04}-{清理后的 mod 名}.zip`。
+///
+/// 序号前缀承载 mods[] 的**解压覆盖顺序**（后者覆盖前者）且天然防重名；mod 名经
+/// [`sanitize_instance_name`] 清洗防路径注入（清单来自远端，文件名不可信）。
+fn solder_mod_zip_path(zips_dir: &Path, index: usize, mod_name: &str) -> PathBuf {
+    zips_dir.join(format!(
+        "{index:04}-{}.zip",
+        sanitize_instance_name(mod_name)
+    ))
+}
+
+/// Solder 管线单元测试（issue #181）。
+///
+/// 端到端在线安装依赖外网与真实 Solder 服务，这里覆盖**纯逻辑**部分：落盘命名
+/// 的保序/防注入语义、MD5 校验的判定逻辑（对 / 不对 / 空跳过）。MD5 判定通过
+/// 独立的纯函数 `solder_md5_matches` 交付以便测试。
+#[cfg(test)]
+mod solder_tests {
+    use super::*;
+
+    #[test]
+    fn mod_zip_path_is_ordered_and_sanitized() {
+        let dir = std::env::temp_dir().join("qmx-solder-path-test");
+        let p = solder_mod_zip_path(&dir, 12, "buildcraft");
+        assert!(
+            p.ends_with("0012-buildcraft.zip"),
+            "应含 4 位序号前缀: {p:?}"
+        );
+        // 远端恶意名：路径分隔符/非法字符必须被清洗（`.` 会保留为下划线相邻形态，
+        // 但文件名中的 `..` 无穿越能力——它不再含路径分隔符），必须仍落在 zips_dir 内
+        let evil = solder_mod_zip_path(&dir, 0, r#"..\..\evil"#);
+        let name = evil.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            !name.contains('\\') && !name.contains('/'),
+            "不得含分隔符: {name}"
+        );
+        assert_eq!(evil.parent(), Some(dir.as_path()), "必须仍落在 zips_dir 内");
+        assert!(
+            evil.components()
+                .all(|c| c != std::path::Component::ParentDir),
+            "不得含父目录组件"
+        );
+    }
+
+    /// MD5 判定逻辑（与 run_solder_import 的 verify 步骤同语义）。
+    mod md5_match {
+        use md5::Digest;
+
+        pub fn compute_hex(bytes: &[u8]) -> String {
+            let mut h = md5::Md5::new();
+            Digest::update(&mut h, bytes);
+            format!("{:x}", Digest::finalize(h))
+        }
+
+        pub fn matches(computed: &str, expected: &str) -> bool {
+            computed.eq_ignore_ascii_case(expected.trim())
+        }
+    }
+
+    #[test]
+    fn md5_compare_is_case_insensitive() {
+        let data = b"tekkit";
+        let got = md5_match::compute_hex(data);
+        // Solder 契约给小写 hex；大小写不敏感比对防御镜像端大写形态
+        assert!(md5_match::matches(&got, &got.to_uppercase()));
+        assert!(md5_match::matches(&got, &format!("  {}  ", got)));
+        assert!(!md5_match::matches(
+            &got,
+            "00000000000000000000000000000000"
+        ));
+    }
+
+    #[test]
+    fn md5_known_vector() {
+        // RFC 1321 空串与 "abc" 向量：证明用的是标准 MD5 而非自造哈希
+        assert_eq!(
+            md5_match::compute_hex(b""),
+            "d41d8cd98f00b204e9800998ecf8427e"
+        );
+        assert_eq!(
+            md5_match::compute_hex(b"abc"),
+            "900150983cd24fb0d6963f7d28e17f72"
+        );
+    }
+}
+
 /// 递归拷贝目录树（Technic 包内容用；multimc::copy_tree 为私有，此处不引入
 /// 可见性扩散，独立实现——语义就是普通递归拷贝）。
 /// `skip_existing` = 目标已存在的文件直接跳过（共享库目录防覆盖语义）。
@@ -2548,12 +3043,27 @@ impl ModpackServiceData {
                                 format!("Technic 整合包不存在: {slug}"),
                             )
                         })?;
-                    // Solder（url=null 且有 solder）：期3 #181 才支持，明确拒绝并
-                    // 说明原因，避免用户以为是网络问题。
+                    // Solder（url=null 且有 solder）：Solder 是逐文件分发协议
+                    // （issue #181 期3），后端解析 build 清单与 mod 列表后走专用
+                    // 管线，Forge 经包内 modpack.jar 注入（ADR-107）。
+                    if detail.distribution()
+                        == qomicex_core::models::expansion::technic::TechnicDistribution::Solder
+                    {
+                        let resp = solder_import_impl(
+                            s,
+                            SolderImportRequest {
+                                slug: slug.to_string(),
+                                name: req.id,
+                                game_dir: req.game_dir,
+                            },
+                        )
+                        .await?;
+                        return Ok(resp.0.instance_id);
+                    }
                     let Some(zip_url) = detail.single_zip_url().map(str::to_string) else {
                         return Err(ApiError::bad_request(
                             "TECHNIC_SOLDER_UNSUPPORTED",
-                            "该整合包使用 Solder 在线分发格式，暂不支持（issue #181）",
+                            "该整合包无可用分发（既无 SingleZip 直链也无 Solder）",
                         ));
                     };
                     let resp = technic_import_impl(

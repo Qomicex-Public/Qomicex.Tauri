@@ -1174,11 +1174,13 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **管线步骤**：`download`（后端解析直链 → 下载包体到任务目录）→ `extract` → `install-game` → `copy-files` → `finalize`。下载完成后会重新解析包内元数据并**回写实例记录**（`gameVersion`/`loader`/`loaderVersion`，以及 `modpackSource="technic"`、`modpackProjectId=slug`）——请求期只能用 API 的 `minecraft` 字段做初始提示，实测该字段与包内元数据可能不一致。
 
-**分发形态判据**（`url` 字段）：字符串 = SingleZip（本分支支持）；`null` 且 `solder` 有值 = Solder 在线分发（期3 #181）。实测 45 个候选中 32 个 SingleZip、13 个 Solder。
+**分发形态判据**（`url` 字段）：字符串 = SingleZip（本分支支持）；`null` 且 `solder` 有值 = Solder 在线分发（期3 #181 已支持，走 Solder 专用管线）。实测 45 个候选中 32 个 SingleZip、13 个 Solder。
+
+**Solder 分支（期3 #181，ADR-107）**：`distribution() == Solder` 时后端解析 `{solder}/modpack/{slug}`（选 build：recommended → latest → builds 末位）与 `{solder}/modpack/{slug}/{build}`（mod 清单），专用管线：并行下载全部 mod zip（带 MD5 校验）→ 按清单顺序解压叠加 → 装 vanilla MC → `copy-files` → jarmod 注入（Forge/FLM 本体在包内 `bin/modpack.jar`，1.2.5 时代无 installer）。实例元数据 `loader=forge`/`loaderVersion={forge build}` 仅作标注（版本 JSON 是 vanilla 的，启动链不受影响）、`modpackVersion=所选 build`。**管线步骤**：`download-mods`(25) → `verify`(5) → `extract-merge`(10) → `install-game`(40) → `copy-files`(15) → `jarmod`(5)。
 
 **不支持原地更新**：technic 实例不写入 `modpackOrigin`（`is_updatable_origin` 白名单仅 modrinth/curseforge）——该平台无「版本 id」可作更新判据，与 FTB 同待遇。
 
-**错误码（在线分支）：** `MODPACK_SOURCE_REQUIRED`(400，缺 `projectId`)、`MODPACK_NOT_FOUND`(404，slug 不存在)、`TECHNIC_SOLDER_UNSUPPORTED`(400，该包是 Solder 分发，期3 #181 支持)、`MODPACK_SOURCE_INVALID`(400，未知 type)。
+**错误码（在线分支）：** `MODPACK_SOURCE_REQUIRED`(400，缺 `projectId`)、`MODPACK_NOT_FOUND`(404，slug 不存在)、`MODPACK_SOURCE_INVALID`(400，未知 type)、Solder 分支：`TECHNIC_SOLDER_NO_BUILDS`(400，build 列表为空)、`TECHNIC_SOLDER_BUILD_NOT_FOUND`(400，所选 build 不存在)、`TECHNIC_SOLDER_BUILD_INVALID`(400，缺 minecraft 字段)、`TECHNIC_SOLDER_NOT_DISTRIBUTED`(400，非 Solder 分发却请求 Solder 管线)、`TECHNIC_SOLDER_MD5_MISMATCH`(500 任务失败，分发文件 MD5 校验不符)。`TECHNIC_SOLDER_UNSUPPORTED`(400) 保留但改义：既无 SingleZip 直链也无 Solder（无任何可用分发）。
 
 ### 整合包原地更新（issue #118）
 
