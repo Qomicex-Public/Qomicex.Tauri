@@ -1552,13 +1552,30 @@ async fn search_one(
         // 因此**不把 technic 计入聚合分页**会更好，但用户已确认纳入聚合源
         // （见 platforms_for_type / sources）；聚合分支用的是 `search_one` 的
         // 返回值并统一按下载量归并截断，故此处语义安全。
-        let offset = ((page - 1).max(0) as usize) * page_size.max(0) as usize;
-        let items: Vec<ResourceItemDto> = packs
-            .iter()
-            .skip(offset)
-            .take(page_size.max(0) as usize)
-            .map(|p| technic_summary_to_item(p, category.unwrap_or("modpack")))
-            .collect();
+        // ⚠️ 补全 + 排序**必须覆盖完整候选集，且发生在切片之前**（CodeRabbit PR #197）。
+        //
+        // 关键：本函数会被聚合分支以 `page=1, page_size=fetch_size`
+        // （`fetch_size = page × pageSize`）调用，再对全部源按 `download_count` 全局排序
+        // 切窗口。而补全前 Technic 条目的 `download_count` 恒为 0（列表接口不提供
+        // `installs`），一旦补全出真实值，排序结果就**取决于池子里有哪些条目**：
+        //
+        //   若「先按数组序切片、再补全」：pageSize=10 时 page1 池 = 前 10 条、
+        //   page2 池 = 前 20 条；第 11~20 条的真实安装量可能高于前 10 条，于是在
+        //   page2 的池里前插，把 page1 的边界挤走 → 跨页**重复或漏项**。
+        //
+        // 正确做法：先补全**完整候选集**，再按 `download_count` 降序整体排序，最后才切片。
+        // 这样 `take(F)` 恒等于「全局前 F 名」，小 F 的结果必然是大 F 结果的前缀 →
+        // 无论 `fetch_size` 取多少，聚合看到的都是稳定前缀，分页连续。
+        //
+        // 候选集大小有界：Technic 无分页，实测单次最多 20 条（trending）/ 15 条（search）。
+        let items = technic_search_page(
+            &*technic,
+            &packs,
+            category.unwrap_or("modpack"),
+            page,
+            page_size,
+        )
+        .await;
         Ok((items, total))
     } else {
         Ok((vec![], 0))
@@ -2370,15 +2387,188 @@ fn ftb_pack_to_item(
     }
 }
 
+/// Technic 详情缓存（slug → 时间戳 + 详情）。
+///
+/// 列表页要显示简介/作者/安装量，而这些只有详情接口有（列表接口固定 5 字段）。
+/// 若每次搜索都逐个打详情，翻页/切换关键词会反复放大上游请求；按 slug 缓存后
+/// trending 与常见关键词之间能大量复用。
+///
+/// 与 `mr_loaders_cache` 同样用 `OnceLock<Mutex<..>>`（进程内、无外部依赖）。
+fn technic_detail_cache() -> &'static Mutex<
+    HashMap<
+        String,
+        (
+            Instant,
+            qomicex_core::models::expansion::technic::TechnicPackDetail,
+        ),
+    >,
+> {
+    static CACHE: OnceLock<
+        Mutex<
+            HashMap<
+                String,
+                (
+                    Instant,
+                    qomicex_core::models::expansion::technic::TechnicPackDetail,
+                ),
+            >,
+        >,
+    > = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 把详情接口的字段回填到列表项。
+///
+/// 只做**有值覆盖**：详情缺字段时保留列表原值，绝不用空串把已有数据抹掉。
+fn apply_technic_detail(
+    item: &mut ResourceItemDto,
+    d: &qomicex_core::models::expansion::technic::TechnicPackDetail,
+) {
+    if !d.description.trim().is_empty() {
+        item.description = d.description.clone();
+    }
+    if !d.user.trim().is_empty() {
+        item.author = d.user.clone();
+    }
+    // `installs` 为 0 时无法区分「真 0 次」与「字段缺失」；实测热包恒 >0，
+    // 故 0 视为未知、保持列表口径（0），不伪造成「0 次下载」之外的语义。
+    if d.installs > 0 {
+        item.download_count = d.installs;
+    }
+    if let Some(tags) = d.tags.as_deref() {
+        let cats = qomicex_core::models::expansion::technic::split_tags(tags);
+        if !cats.is_empty() {
+            item.categories = cats;
+        }
+    }
+    // 标题与详情页取同一口径（displayName → name → id），保证列表与详情一致。
+    let display = d.instance_name();
+    if !display.trim().is_empty() {
+        item.title = display.to_string();
+    }
+    // 列表接口的 iconUrl 实测可为显式 null → 空串；详情有 icon/logo 时补齐。
+    if item.icon_url.trim().is_empty() {
+        if let Some(u) = d
+            .icon
+            .as_ref()
+            .map(|a| a.url())
+            .or_else(|| d.logo.as_ref().map(|a| a.url()))
+        {
+            item.icon_url = u.to_string();
+        }
+    }
+}
+
+/// Technic 搜索的单页取数：补全**完整候选集** → 按 `installs` 降序排序 → 再切片。
+///
+/// 排序必须发生在切片之前，且覆盖完整候选集（原因见调用点的长注释）：本函数被聚合分支
+/// 以 `page=1, page_size = page × pageSize` 调用，只有「先全量补全 + 全量排序」才能保证
+/// 任意 `fetch_size` 下返回的都是同一个稳定前缀，否则跨页会重复/漏项
+/// （CodeRabbit PR #197）。
+async fn technic_search_page(
+    technic: &dyn qomicex_core::api::expansion::TechnicSource,
+    packs: &[qomicex_core::models::expansion::technic::TechnicPackSummary],
+    category: &str,
+    page: i32,
+    page_size: i32,
+) -> Vec<ResourceItemDto> {
+    let mut ordered = technic_items_enriched(technic, packs, category).await;
+    // 与 aggregate_window 同口径的稳定排序（下载量降序；同值按 id 定序，不依赖原数组次序）。
+    ordered.sort_by(|a, b| {
+        b.download_count
+            .cmp(&a.download_count)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    let offset = ((page - 1).max(0) as usize) * page_size.max(0) as usize;
+    ordered
+        .into_iter()
+        .skip(offset)
+        .take(page_size.max(0) as usize)
+        .collect()
+}
+
+/// 用详情接口补全 Technic 列表项（简介/作者/安装量/标签/图标）。
+///
+/// 背景：Technic 的 `search` / `trending` 实测只返回 id/name/slug/url/iconUrl，
+/// 因此 `technic_summary_to_item` 只能把 description/author/download_count 留空，
+/// 卡片上表现为「简介空、未知作者、0 下载」。这里并发拉详情补全。
+///
+/// ⚠️ 传入的应是**完整候选集**而非已经切片的一页：排序键（`download_count`）由本函数
+/// 补出来，只有覆盖完整候选集，上层才能切出与页码无关的稳定前缀（见
+/// [`technic_search_page`]）。
+///
+/// 容错：单条详情失败（网络/404）**降级**为该条的列表数据并告警，不让一条坏数据
+/// 把整页搜索变成 500（与 `fetch_mr_loaders` 的容错口径一致）。
+async fn technic_items_enriched(
+    technic: &dyn qomicex_core::api::expansion::TechnicSource,
+    packs: &[qomicex_core::models::expansion::technic::TechnicPackSummary],
+    category: &str,
+) -> Vec<ResourceItemDto> {
+    /// 详情缓存有效期：安装量变动缓慢，1 小时内复用足够。
+    const TTL: Duration = Duration::from_secs(3600);
+
+    let mut items: Vec<ResourceItemDto> = Vec::with_capacity(packs.len());
+    let mut pending: Vec<(usize, String)> = Vec::new();
+
+    for p in packs {
+        items.push(technic_summary_to_item(p, category));
+        let idx = items.len() - 1;
+        let hit = {
+            let g = technic_detail_cache().lock().unwrap();
+            g.get(&p.slug)
+                .filter(|(ts, _)| ts.elapsed() < TTL)
+                .map(|(_, d)| d.clone())
+        };
+        match hit {
+            Some(d) => apply_technic_detail(&mut items[idx], &d),
+            None => pending.push((idx, p.slug.clone())),
+        }
+    }
+
+    if pending.is_empty() {
+        return items;
+    }
+
+    // 并发发出（实测 20 条 ≈2s）：详情接口是独立的 GET，串行会把延迟叠成几十秒。
+    let fetched = futures::future::join_all(
+        pending
+            .iter()
+            .map(|(_, slug)| technic.get_pack_detail(slug)),
+    )
+    .await;
+
+    for ((idx, slug), res) in pending.into_iter().zip(fetched) {
+        match res {
+            Ok(Some(d)) => {
+                {
+                    let mut g = technic_detail_cache().lock().unwrap();
+                    g.insert(slug, (Instant::now(), d.clone()));
+                }
+                apply_technic_detail(&mut items[idx], &d);
+            }
+            // 详情不存在（包下架）：保留列表数据，不阻断整页。
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    slug = %slug,
+                    error = %e,
+                    "Technic 详情补全失败，降级为列表数据"
+                );
+            }
+        }
+    }
+    items
+}
+
 /// Technic 列表项 → 通用资源条目（issue #151）。
 ///
 /// Technic 列表接口只给 5 个字段（id/name/slug/url/iconUrl），没有下载量/作者/
-/// 简介——**详情接口才有**。为不在搜索路径上多打 N 次详情请求，这里按可得字段
-/// 填充，缺失项留空：
+/// 简介——**详情接口才有**。本函数只做「列表接口能给的部分」：
 /// - `id` 用 **slug**（唯一可寻址键，详见 technic 模块注释）；数字 id 仅作
 ///   `project_url` 的组成部分。
-/// - `download_count` 置 0：列表接口不提供，前端按下载量排序时该项恒排末尾
-///   （不伪造数字，避免误导排序）。
+/// - `download_count` 置 0：列表接口不提供。**注意**：`author`/`description`/
+///   `download_count` 的空值是本函数的**中间态**，由 [`technic_items_enriched`]
+///   随后用详情接口补全——不要以为列表页就该是空的（曾因此被误判为「上游没数据」）。
 /// - `project_url` 用列表项自带的网页地址（实测可靠）。
 fn technic_summary_to_item(
     p: &qomicex_core::models::expansion::technic::TechnicPackSummary,
@@ -3603,6 +3793,233 @@ mod favorites_tests {
         assert_eq!(aggregate_window(vec![mk("a")], 0, 10).len(), 1);
         // pageSize=0 → 空且不 panic
         assert!(aggregate_window(vec![mk("a")], 1, 0).is_empty());
+    }
+
+    /// **回归护栏（详情页崩溃）**：空数组必须显式下发，不能因
+    /// `skip_serializing_if = "Vec::is_empty"` 而整个丢掉键。
+    ///
+    /// 故障链：Technic 的 versions 分支恒给 `loaders: Vec::new()`（加载器需读包内
+    /// version.json，列表/详情接口拿不到）→ 若 `loaders` 键被省略，前端反序列化后是
+    /// `undefined` → `ResourceDetail.tsx` 的 `version.loaders.map(...)` 抛
+    /// `TypeError: Cannot read properties of undefined (reading 'map')` → 整页崩进
+    /// ErrorBoundary（提示「页面渲染异常」）。用户报告「点开详情直接崩溃」即此。
+    #[test]
+    fn resource_version_dto_always_serializes_empty_arrays() {
+        let dto = ResourceVersionDto {
+            id: "agrarian-skies".into(),
+            name: "4.1.0".into(),
+            version_number: "4.1.0".into(),
+            // 三者皆空：模拟「列表/详情接口拿不到加载器与 MC 版本」的 Technic 分支
+            game_versions: Vec::new(),
+            loaders: Vec::new(),
+            downloads: Vec::new(),
+            dependencies: None,
+            date_published: None,
+        };
+        let v = serde_json::to_value(&dto).unwrap();
+        for key in ["gameVersions", "loaders", "downloads"] {
+            assert!(
+                v.get(key)
+                    .is_some_and(|x| x.as_array().is_some_and(|a| a.is_empty())),
+                "{key} 必须下发空数组：缺键会让前端 `undefined.map` 抛 TypeError 崩掉详情页"
+            );
+        }
+        // 可选字段仍保持「无值不下发」语义，不受本次修正影响
+        assert!(v.get("dependencies").is_none());
+        assert!(v.get("datePublished").is_none());
+    }
+
+    /// 详情补全：简介/作者/安装量/标签/图标都应回填到列表项。
+    #[test]
+    fn technic_detail_enrichment_fills_list_fields() {
+        use qomicex_core::models::expansion::technic::{TechnicPackDetail, TechnicPackSummary};
+        let p = TechnicPackSummary {
+            id: "1540828".into(),
+            name: "agrarian-skies".into(),
+            slug: "agrarian-skies".into(),
+            url: "https://www.technicpack.net/modpack/agrarian-skies.1540828".into(),
+            // 列表接口实测可为显式 null → 空串
+            icon_url: String::new(),
+        };
+        let d: TechnicPackDetail = serde_json::from_str(
+            r#"{
+                "id":1540828,"name":"agrarian-skies","displayName":"Agrarian Skies",
+                "user":"tecrogue","url":"http://apocgaming.net/mp/AS1-4.1.0.zip",
+                "platformUrl":"https://www.technicpack.net/modpack/agrarian-skies.1540828",
+                "minecraft":"1.6.4","version":"4.1.0","installs":23771,"runs":97690,"ratings":20,
+                "description":"Questing based modpack, produced by The Jaded Packs team.",
+                "tags":"agrarian skies skyblock questing hardcore",
+                "icon":{"url":"https://cdn/icon.png"}
+            }"#,
+        )
+        .unwrap();
+
+        let mut item = technic_summary_to_item(&p, "modpack");
+        // 补全前：正是用户看到的「简介空 / 未知作者 / 0 下载」
+        assert_eq!(item.description, "");
+        assert_eq!(item.author, "");
+        assert_eq!(item.download_count, 0);
+
+        apply_technic_detail(&mut item, &d);
+
+        assert_eq!(
+            item.description,
+            "Questing based modpack, produced by The Jaded Packs team."
+        );
+        assert_eq!(item.author, "tecrogue");
+        assert_eq!(item.download_count, 23771);
+        assert_eq!(
+            item.categories,
+            vec!["agrarian", "skies", "skyblock", "questing", "hardcore"]
+        );
+        // 标题统一走详情页口径（displayName 优先）
+        assert_eq!(item.title, "Agrarian Skies");
+        // 列表图标为空时用详情补齐
+        assert_eq!(item.icon_url, "https://cdn/icon.png");
+        // 寻址键绝不能被补全改写（数字 id 在详情接口 404，见 ADR-103）
+        assert_eq!(item.id, "agrarian-skies");
+        assert_eq!(item.slug, "agrarian-skies");
+    }
+
+    /// 详情字段缺失时**不得**用空值抹掉列表已有数据（降级而非倒退）。
+    #[test]
+    fn technic_detail_enrichment_keeps_list_values_when_detail_is_sparse() {
+        use qomicex_core::models::expansion::technic::{TechnicPackDetail, TechnicPackSummary};
+        let p = TechnicPackSummary {
+            id: "1".into(),
+            name: "X".into(),
+            slug: "x".into(),
+            url: "u".into(),
+            icon_url: "https://cdn/list-icon.png".into(),
+        };
+        let d: TechnicPackDetail = serde_json::from_str(r#"{"id":1,"name":"X"}"#).unwrap();
+        let mut item = technic_summary_to_item(&p, "modpack");
+        item.description = "list desc".into();
+        item.author = "list author".into();
+
+        apply_technic_detail(&mut item, &d);
+
+        assert_eq!(item.description, "list desc", "详情无简介时保留列表值");
+        assert_eq!(item.author, "list author", "详情无作者时保留列表值");
+        assert_eq!(
+            item.icon_url, "https://cdn/list-icon.png",
+            "详情无图标时不得清掉列表已有图标"
+        );
+    }
+
+    /// **回归护栏（CodeRabbit PR #197）**：补全必须覆盖完整候选集并在切片前排序，
+    /// 使「池子大小」变化时返回的都是**同一个稳定前缀**。
+    ///
+    /// 聚合分支以 `page=1, page_size = page × pageSize`（`fetch_size`）调用，再把各源条目
+    /// 一起按 `download_count` 全局排序切窗口。Technic 条目的下载量只有补全后才有真值
+    /// （列表接口不提供 `installs`，补全前恒为 0）。若「先按数组序切片、再补全」，则
+    /// `fetch_size` 不同 → 池子里有哪些条目不同 → 排序后的边界漂移 → 跨页**重复或漏项**。
+    #[tokio::test]
+    async fn technic_enrichment_prefix_is_stable_across_fetch_sizes() {
+        use qomicex_core::api::expansion::TechnicSource as _;
+        use qomicex_core::models::expansion::technic::{TechnicPackDetail, TechnicPackSummary};
+
+        /// 桩：20 条候选，`installs` 与**数组次序相反**（pack0 最低、pack19 最高）。
+        /// 这样「数组前 10 条」恰好是真实安装量最差的 10 条 —— 正是旧实现会取错的场景。
+        struct Stub;
+        #[async_trait::async_trait]
+        impl qomicex_core::api::expansion::TechnicSource for Stub {
+            async fn search(
+                &self,
+                _q: &str,
+            ) -> Result<(Vec<TechnicPackSummary>, i32), qomicex_core::error::Error> {
+                Ok((
+                    (0..20)
+                        .map(|i| TechnicPackSummary {
+                            id: format!("pack{i:02}"),
+                            name: format!("pack{i}"),
+                            slug: format!("pack{i}"),
+                            url: format!("https://www.technicpack.net/modpack/pack{i}.{i}"),
+                            icon_url: String::new(),
+                        })
+                        .collect(),
+                    20,
+                ))
+            }
+            async fn trending(
+                &self,
+            ) -> Result<(Vec<TechnicPackSummary>, i32), qomicex_core::error::Error> {
+                self.search("").await
+            }
+            async fn get_pack_detail(
+                &self,
+                slug: &str,
+            ) -> Result<Option<TechnicPackDetail>, qomicex_core::error::Error> {
+                let i: i64 = slug.trim_start_matches("pack").parse().unwrap_or(0);
+                let json = format!(
+                    r#"{{"id":{i},"name":"{slug}","user":"a{i}","installs":{},"description":"d{i}"}}"#,
+                    (i + 1) * 100
+                );
+                Ok(serde_json::from_str(&json).unwrap())
+            }
+            async fn get_solder_pack(
+                &self,
+                _b: &str,
+                _s: &str,
+            ) -> Result<
+                Option<qomicex_core::models::expansion::technic::TechnicSolderPack>,
+                qomicex_core::error::Error,
+            > {
+                Ok(None)
+            }
+            async fn get_solder_build(
+                &self,
+                _b: &str,
+                _s: &str,
+                _bd: &str,
+            ) -> Result<
+                Option<qomicex_core::models::expansion::technic::TechnicSolderBuild>,
+                qomicex_core::error::Error,
+            > {
+                Ok(None)
+            }
+        }
+
+        let stub = Stub;
+        let (packs, _) = stub.search("x").await.unwrap();
+
+        // 复现聚合分支的真实路径：以不同 fetch_size（= page × pageSize）取累计前缀，
+        // 再按 download_count 全局排序取第 1 页（aggregate_window 做的事）。
+        async fn first_page_of_pool(
+            stub: &Stub,
+            packs: &[TechnicPackSummary],
+            fetch: i32,
+        ) -> Vec<String> {
+            let pool = technic_search_page(stub, packs, "modpack", 1, fetch).await;
+            let mut merged = pool; // 单源即可暴露问题：聚合只是多加别的源
+            merged.sort_by(|a, b| {
+                b.download_count
+                    .cmp(&a.download_count)
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+            merged
+                .into_iter()
+                .take(10) // 第 1 页 pageSize=10
+                .map(|i| i.id)
+                .collect()
+        }
+
+        let page1_under_10 = first_page_of_pool(&stub, &packs, 10).await;
+        let page1_under_20 = first_page_of_pool(&stub, &packs, 20).await;
+
+        // 不变量：第 1 页内容不能随 fetch_size 变化，否则跨页会重复/漏项。
+        assert_eq!(
+            page1_under_10, page1_under_20,
+            "第 1 页随 fetch_size 变化 → 聚合跨页重复/漏项（CodeRabbit PR #197）。\
+             补全必须在切片前覆盖完整候选集并排序，使 take(F) 恒为「全局前 F 名」"
+        );
+        // 且必须是**按真实安装量**的全局前 10（pack19..pack10）。
+        // 若得到 pack09..pack00，说明是先按数组序切片再补全（未在切片前排序）。
+        let expected_top10: Vec<String> = (10..20).rev().map(|i| format!("pack{i:02}")).collect();
+        assert_eq!(
+            page1_under_10, expected_top10,
+            "第 1 页应为按 installs 的全局前 10；若为 pack09..pack00 说明未在切片前排序"
+        );
     }
 
     /// `(source,id)` 去重：同一工程以多类型命中时只保留先出现的一条。
