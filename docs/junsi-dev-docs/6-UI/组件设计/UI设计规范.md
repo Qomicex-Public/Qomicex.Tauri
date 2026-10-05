@@ -142,6 +142,41 @@ Layout
 | `PluginIcon` | 插件图标 |
 | `ContextMenu` | 右键菜单 |
 | `SplashScreen` | 启动等待画面 |
+| `MorphActionIcon` | 异步动作按钮图标（rest → busy 旋转 → success 勾闪） |
+| `CopyActionIcon` | 复制按钮图标（Copy ⇄ Check 形变动画） |
+
+### 5.3 状态切换图标：禁止三元硬切换
+
+**规则**：任何「图标 A ⇄ 图标 B」的状态切换都必须走 morph 动画，不得写成
+`{cond ? <A /> : <B />}` —— 硬切换是瞬间换 DOM 节点，没有形变过渡，视觉上「啪」地
+跳一下，与产品其它地方的动效语言不一致。
+
+按场景选组件：
+
+| 场景 | 用哪个 | 形态 |
+|------|--------|------|
+| 异步动作（清缓存 / 刷新 / 删除 / 安装 / 启动） | `MorphActionIcon` | `rest` → `busy`（`animate-spin`）→ `Check` 闪 800ms → `rest` |
+| 复制到剪贴板后给反馈 | `CopyActionIcon` | `Copy` ⇄ `Check`（勾选态为 `text-emerald-500`） |
+| 其余图标↔图标切换（展开/折叠、播放/暂停、网格/列表） | `MorphIcon` | `<MorphIcon icon={cond ? XData : YData} spring="snappy" reducedMotion="user" />` |
+
+`CopyActionIcon` 的两个要点：
+
+1. **组件自己管图标复位**（内部 `setTimeout` + 卸载清理），但**父级仍须把 `copied` 置回
+   `false`**，否则第二次点击时 `copied` 没有 false→true 的跳变，动画不会重新触发。
+   写法参照 `src/pages/Connect.tsx`：`if (timer.current) clearTimeout(timer.current)` 后
+   再 `setTimeout(() => setCopiedKey(null), 800)`。
+2. **不要自己再写一遍** `{copied ? <Check/> : <Copy/>}` —— 那既丢动画又重复实现定时器
+   （这正是本规范被加进来的原因：资源详情页的复制按钮曾如此）。
+
+**判定为「不需要改」的情形**（见迁移映射表的 `not_converted` 节）：
+
+- 三元一侧是 `null` 或纯文本，不是两个图标互切；
+- 图标是静态展示、无状态切换；
+- 复制点没有图标反馈语义（只弹 toast，如「复制 IP」「导出全部日志」）——给它们新增
+  图标反馈属于扩大范围，需单独评估。
+
+完整迁移映射（含逐文件行号与图标别名约定）见
+`MAPPING_TABLE-icon-ternary-to-MorphIcon.yaml`。
 
 ---
 
