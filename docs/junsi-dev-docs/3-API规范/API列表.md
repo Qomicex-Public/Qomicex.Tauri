@@ -1556,7 +1556,7 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 |------|------|
 | `/resources/search` | 需要 `keyword`；**无关键词时后端自动改走 `GET /trending`**（该 API 对空 `q` 返回 400）。服务端**固定返回 15 条**（trending 20 条）且忽略 `sort`/`page` → 后端如实回报 `total`，不伪造分页（`page>1` 自然为空）。**列表项会并发打详情接口补全 `description`/`author`/`downloadCount`/`categories`/`iconUrl`**（列表接口只给 5 个字段），结果按 slug 缓存 1h，单条失败降级为列表数据 |
 | `/resources/{id}` | `{id}` 必须是 **slug**（数字 id 返回 404，实测）；响应 `id` 同样回传 **slug**（与列表项一致，保证收藏唯一键一致），数字 id 不出现在 DTO 里，网页地址见 `projectUrl` |
-| `/resources/{id}/versions` | Technic **无版本列表**：把「包本身」建模为唯一版本条目。SingleZip 的直链填入 `downloads`；Solder 包 `downloads` 为空（前端据此提示期3 支持）。`loaders` 恒为**空数组**（加载器需读包内 `version.json`，列表/详情接口拿不到）——注意该键**必须显式下发**，见下方契约说明 |
+| `/resources/{id}/versions` | Technic **无版本列表**：把「包本身」建模为唯一版本条目。SingleZip 的直链填入 `downloads`；**Solder 包 `downloads` 为空数组只表示「无 SingleZip 直链」，不代表不支持安装**——Solder 包走 `install-direct` 的专用管线（见上方 Solder 分支说明），前端的「保存到本地」按钮对 Solder 包无意义。`loaders` 恒为**空数组**（加载器需读包内 `version.json`，列表/详情接口拿不到）——注意该键**必须显式下发**，见下方契约说明 |
 | `/resources/categories` | 返回空（该平台无类别体系；`tags` 为自由文本且形态不稳定：逗号/空格分隔或 null） |
 | `/resources/loaders` | 仅 `modpack` 返回 `forge`/`fabric`/`neoforge`。**注意：这些值不可用于筛选**——Technic 列表接口不提供加载器维度，后端不执行 `loader` 过滤（前端也据此隐藏该控件）；提交 `loader` 会得到未过滤结果 |
 | `/resources/{id}/dependencies` | 返回空（无依赖模型） |
