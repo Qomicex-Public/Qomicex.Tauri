@@ -1149,6 +1149,35 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **错误码：** `TECHNIC_SOURCE_REQUIRED`(400)、`TECHNIC_SOURCE_NOT_FOUND`(404)、`TECHNIC_PARSE_FAILED`(400，detail 含 `TECHNIC_JARMOD_UNSUPPORTED` = 古董包 modpack.jar 无 version.json，需 JarMod 支持，见 issue #180)、`MULTIMC_SOURCE_PATH_RELATIVE`(400 源路径非绝对)、`MULTIMC_SOURCE_PATH_TRAVERSAL`(400 源路径含 `..`，与 MultiMC 导入共用 `validate_source_path`)。
 
+#### 在线安装分支（issue #123 期2 / #151）
+
+`POST /api/modpack/install-direct` 支持 `type: "technic"`，从资源中心一键安装 Technic 整合包。**该分支不读取请求体里的任何 URL**：直链由后端调 `api.technicpack.net/modpack/{slug}` 解析后下载，避免开放「下载任意 URL」的面。
+
+```json
+{
+  "id": "My Technic Pack",
+  "type": "technic",
+  "projectId": "agrarian-skies",
+  "gameDir": "C:/games/instances",
+  "versionIsolation": true
+}
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `type` | ✅ | `"technic"` |
+| `projectId` | ✅ | **整合包 slug**（不是数字 id：实测 `/modpack/{数字 id}` 返回 404，slug 是唯一可寻址键） |
+| `fileId` | ❌ | **不接受**：Technic 无版本/fileId 概念（一个包 = 一个直链），此分支只要求 `projectId` |
+| `gameVersion` | ❌ | 不用传：MC 版本以 zip 内元数据为准 |
+
+**管线步骤**：`download`（后端解析直链 → 下载包体到任务目录）→ `extract` → `install-game` → `copy-files` → `finalize`。下载完成后会重新解析包内元数据并**回写实例记录**（`gameVersion`/`loader`/`loaderVersion`，以及 `modpackSource="technic"`、`modpackProjectId=slug`）——请求期只能用 API 的 `minecraft` 字段做初始提示，实测该字段与包内元数据可能不一致。
+
+**分发形态判据**（`url` 字段）：字符串 = SingleZip（本分支支持）；`null` 且 `solder` 有值 = Solder 在线分发（期3 #181）。实测 45 个候选中 32 个 SingleZip、13 个 Solder。
+
+**不支持原地更新**：technic 实例不写入 `modpackOrigin`（`is_updatable_origin` 白名单仅 modrinth/curseforge）——该平台无「版本 id」可作更新判据，与 FTB 同待遇。
+
+**错误码（在线分支）：** `MODPACK_SOURCE_REQUIRED`(400，缺 `projectId`)、`MODPACK_NOT_FOUND`(404，slug 不存在)、`TECHNIC_SOLDER_UNSUPPORTED`(400，该包是 Solder 分发，期3 #181 支持)、`MODPACK_SOURCE_INVALID`(400，未知 type)。
+
 ### 整合包原地更新（issue #118）
 
 > 仅**资源中心在线安装**（`origin: "resource-center"`）且**启用版本隔离**的整合包实例可更新。
@@ -1504,7 +1533,7 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| source | string | `all`（默认）、`modrinth`、`curseforge`、`ftb` |
+| source | string | `all`（默认）、`modrinth`、`curseforge`、`ftb`、`technic` |
 | category | string | `mod`（默认）、`modpack`、`resourcepack`、`shader`、`datapack`、`save`、`aggregate` |
 
 **响应：** `List<{ slug, name }>`
@@ -1514,6 +1543,21 @@ data: {"type":"progress","installs":[...],"javaDownloads":[...],"resources":[...
 - FTB 仅 `modpack`，取其实测 `modloader` target 名（`forge` / `fabric` / `neoforge`）。
 - `category=aggregate`（聚合）返回各类型可用加载器的并集。
 - 返回空列表表示该组合没有加载器概念，前端应隐藏该筛选控件。
+
+#### Technic 源（issue #151）
+
+`source=technic` 时，资源中心的所有端点都委派给 core 的 `TechnicSource`（`api.technicpack.net`）。**实测的语义差异（消费方必读，详见 ADR-105）：**
+
+| 端点 | technic 行为 |
+|------|------|
+| `/resources/search` | 需要 `keyword`；**无关键词时后端自动改走 `GET /trending`**（该 API 对空 `q` 返回 400）。服务端**固定返回 15 条**（trending 20 条）且忽略 `sort`/`page` → 后端如实回报 `total`，不伪造分页（`page>1` 自然为空） |
+| `/resources/{id}` | `{id}` 必须是 **slug**（数字 id 返回 404，实测）；响应 `id` 同样回传 **slug**（与列表项一致，保证收藏唯一键一致），数字 id 不出现在 DTO 里，网页地址见 `projectUrl` |
+| `/resources/{id}/versions` | Technic **无版本列表**：把「包本身」建模为唯一版本条目。SingleZip 的直链填入 `downloads`；Solder 包 `downloads` 为空（前端据此提示期3 支持） |
+| `/resources/categories` | 返回空（该平台无类别体系；`tags` 为自由文本且形态不稳定：逗号/空格分隔或 null） |
+| `/resources/loaders` | 仅 `modpack` 返回 `forge`/`fabric`/`neoforge`。**注意：这些值不可用于筛选**——Technic 列表接口不提供加载器维度，后端不执行 `loader` 过滤（前端也据此隐藏该控件）；提交 `loader` 会得到未过滤结果 |
+| `/resources/{id}/dependencies` | 返回空（无依赖模型） |
+
+technic **纳入聚合源**（`source=all` + `category=modpack`）：接受其无分页的限制，聚合时如实参与归并。聚合的 `total` 会收敛到实际可浏览上限（最多 200 条），避免报出取不到的条目数。
 
 ### GET `/api/resources/{id}?source={src}`
 

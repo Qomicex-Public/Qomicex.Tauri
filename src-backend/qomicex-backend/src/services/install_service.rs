@@ -1088,7 +1088,7 @@ fn normalize_sep(dest: PathBuf) -> PathBuf {
 }
 
 /// 批量下载的单条目标：（下载 URL, 归一化后的目标路径, 任务级请求头）。
-type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
+pub(crate) type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
 
 /// 目标目录所在文件系统是否大小写不敏感（`Foo.jar` 与 `foo.jar` 会落到同一个文件）。
 ///

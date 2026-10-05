@@ -696,6 +696,12 @@ async fn categories(
     let source = q.source.clone().unwrap_or_else(|| "modrinth".to_string());
     let category = q.category.clone().unwrap_or_else(|| "mod".to_string());
 
+    // Technic 无类别体系（列表接口无分类字段，详情 tags 为自由文本且形态不稳定）
+    // → 返回空列表，前端回退到静态兜底（issue #151）。
+    if source.eq_ignore_ascii_case("technic") {
+        return Ok(Json(Vec::new()));
+    }
+
     if source.eq_ignore_ascii_case("curseforge") {
         let mut out: Vec<ResourceCategoryDto> = Vec::new();
         if let Some(class_id) = map_cf_class_id(Some(&category)) {
@@ -801,7 +807,7 @@ async fn loaders(
     let aggregate = category.eq_ignore_ascii_case("aggregate");
 
     let srcs: Vec<&str> = if source.eq_ignore_ascii_case("all") {
-        vec!["modrinth", "curseforge", "ftb"]
+        vec!["modrinth", "curseforge", "ftb", "technic"]
     } else {
         vec![source.as_str()]
     };
@@ -831,6 +837,15 @@ async fn loaders(
         } else if src.eq_ignore_ascii_case("ftb") {
             // FTB 仅整合包。加载器名为自由文本 target name，实测（94 个包全覆盖）
             // 只出现 forge / fabric / neoforge（另有字面量 "unknown"，非加载器，排除）。
+            if aggregate || category.eq_ignore_ascii_case("modpack") {
+                for slug in ["forge", "fabric", "neoforge"] {
+                    out.push((slug.to_string(), loader_display_name(slug)));
+                }
+            }
+        } else if src.eq_ignore_ascii_case("technic") {
+            // Technic 仅整合包。加载器维度**无法从列表接口得知**（列表只有 5 个字段），
+            // 实测该平台以 Forge 为主（Technic 时代几乎全是 Forge/ModLoader）。
+            // 这里只列出可安全筛选的项，避免给出查不到结果的选项（#163 的口径）。
             if aggregate || category.eq_ignore_ascii_case("modpack") {
                 for slug in ["forge", "fabric", "neoforge"] {
                     out.push((slug.to_string(), loader_display_name(slug)));
@@ -938,12 +953,16 @@ async fn search(
     }
 
     // "all" = 聚合源：按分类决定可聚合的源。save 仅 CurseForge；
-    // modpack 额外含 FTB；其余为 Modrinth + CurseForge。
+    // modpack 额外含 FTB 与 Technic（issue #151）；其余为 Modrinth + CurseForge。
+    //
+    // Technic 的加入是**用户确认过的范围**（issue #151 期2）：它的搜索无分页
+    // （固定 15 条），在聚合里会如实参与归并——见 search_one 的 technic 分支
+    // 对分页语义的说明。
     let sources: Vec<&str> = if src.eq_ignore_ascii_case("all") {
         match category.as_deref() {
             Some(c) if c.eq_ignore_ascii_case("save") => vec!["curseforge"],
             Some(c) if c.eq_ignore_ascii_case("modpack") => {
-                vec!["modrinth", "curseforge", "ftb"]
+                vec!["modrinth", "curseforge", "ftb", "technic"]
             }
             _ => vec!["modrinth", "curseforge"],
         }
@@ -975,6 +994,13 @@ async fn search(
 
     // ponytail: 顺序聚合，各源失败即整体失败（与单源一致）；并发可用
     // tokio::join! 提升延迟，量级不大暂不做
+    //
+    // 各源取**累计前缀**再全局排序切窗口（同 `search_aggregate_category`）：若各源只取
+    // 「第 page 页」，`download_count=0` 的源（Technic）在全局排序后落到第一页之外时
+    // 后续页永远取不到，但 total 里仍统计了它们。
+    let fetch_size = (page.max(1))
+        .saturating_mul(page_size.max(1))
+        .min(MAX_AGGREGATE_FETCH);
     let mut merged: Vec<ResourceItemDto> = Vec::new();
     let mut total = 0i32;
     for source in sources {
@@ -987,21 +1013,19 @@ async fn search(
             loader.as_deref(),
             sort.as_deref(),
             tags.as_deref(),
-            page,
-            page_size,
+            1,
+            fetch_size,
         )
         .await?;
         total = total.saturating_add(t);
         merged.extend(items);
     }
-    // 聚合排序统一按下载量，跨源可比
-    merged.sort_by(|a, b| b.download_count.cmp(&a.download_count));
-    merged.truncate(page_size as usize);
-    // ponytail: total 为各源 total 之和（近似）；各源各自取第 N 页后合并截断，
-    // 跨源混合页语义本就是近似，精确交叉分页不值得做
+    // 全局排序（跨源按下载量可比）后切出请求页。
+    let window = aggregate_window(merged, page, page_size);
     Ok(Json(ResourceSearchResponse {
-        items: merged,
-        total,
+        items: window,
+        // total 收敛到实际可浏览的上限（见 aggregate_honest_total 的说明）。
+        total: aggregate_honest_total(total),
         page,
         page_size,
     }))
@@ -1017,22 +1041,73 @@ const AGGREGATE_TYPES: [&str; 6] = [
     "save",
 ];
 
+/// 聚合查询单源累计取回的上限（`page × page_size` 的上界）。
+///
+/// 聚合改为「取累计前缀 → 全局排序 → 切窗口」后，深页码会放大单源取回量；这个上限
+/// 保证最坏情况仍是一次有界的请求。
+///
+/// ⚠️ 上限必须与 `total` **一致**（CodeRabbit 在 PR #187 指出）：若只截断取回量而
+/// `total` 仍报各源总数之和，用户翻到上限之后会拿到空页，而那部分条目被 `total`
+/// 统计着却永远取不到。故 [`aggregate_window`] 的调用方要用
+/// [`aggregate_honest_total`] 把 total 收敛到这个上限。
+const MAX_AGGREGATE_FETCH: i32 = 200;
+
+/// 聚合窗口裁剪：按 `(source,id)` 去重 → 按下载量降序 → 切出
+/// `[(page-1)×pageSize, page×pageSize)`。
+///
+/// **为什么必须是「先全局排序再切窗口」**：各源各自取第 N 页再合并排序时，全局顺序与
+/// 「各源第 N 页」不对应——`download_count` 为 0 的条目（Technic 列表接口不提供下载量，
+/// 见 ADR-103）在第一页排序后必然被 `truncate` 掉，而第 2 页又从各源的
+/// `offset = pageSize` 开始，于是这些条目**永远无法被浏览到**，但 `total` 里却统计了
+/// 它们（CodeRabbit 在 PR #187 指出的问题）。改为累计取前缀后切窗口，分页即连续。
+fn aggregate_window(
+    merged: Vec<ResourceItemDto>,
+    page: i32,
+    page_size: i32,
+) -> Vec<ResourceItemDto> {
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    // 同一工程可能以多种类型命中（如既是 mod 又是 datapack），按 (source,id) 去重，
+    // 保留先出现的类型，避免同一条目在列表里出现两次。
+    let mut deduped: Vec<ResourceItemDto> = merged
+        .into_iter()
+        .filter(|it| seen.insert((it.source.clone(), it.id.clone())))
+        .collect();
+    deduped.sort_by(|a, b| b.download_count.cmp(&a.download_count));
+    let offset = ((page - 1).max(0) as usize) * page_size.max(0) as usize;
+    deduped
+        .into_iter()
+        .skip(offset)
+        .take(page_size.max(0) as usize)
+        .collect()
+}
+
+/// 聚合对外报告的 `total`：把各源 total 之和收敛到**实际可浏览**的范围内。
+///
+/// 聚合每次只取 `min(page × pageSize, MAX_AGGREGATE_FETCH)` 条前缀，因此可浏览的条目
+/// 最多 `MAX_AGGREGATE_FETCH` 条。如实按这个上界回报，避免出现「翻到后面是空页、但
+/// total 说还有更多」的虚假承诺（前端据此判断是否还有下一页）。
+fn aggregate_honest_total(sum_of_totals: i32) -> i32 {
+    sum_of_totals.min(MAX_AGGREGATE_FETCH)
+}
+
 /// 某资源类型实际存在的平台 —— 与 `search` 中 `all` 分支的口径保持一致：
-/// save 仅 CurseForge（Modrinth 无此工程类型）；modpack 额外含 FTB；其余为
-/// Modrinth + CurseForge。
+/// save 仅 CurseForge（Modrinth 无此工程类型）；modpack 额外含 FTB 与 Technic；
+/// 其余为 Modrinth + CurseForge。
+///
+/// Technic 仅提供整合包（无模组/光影等），故只出现在 modpack 一行。
 fn platforms_for_type(ty: &str) -> &'static [&'static str] {
     match ty {
         "save" => &["curseforge"],
-        "modpack" => &["modrinth", "curseforge", "ftb"],
+        "modpack" => &["modrinth", "curseforge", "ftb", "technic"],
         _ => &["modrinth", "curseforge"],
     }
 }
 
 /// 分类聚合（category=aggregate）：把「类型 × 平台」的查询全部并发发出，再按
-/// (source,id) 去重、按下载量归并、截断到一页。
+/// (source,id) 去重、按下载量归并、切出请求页。
 ///
-/// 分页语义与「聚合源」一致，同样是**近似**：各组合各自取第 N 页后合并再截断，
-/// 精确交叉分页不值得做（total 为各组合 total 之和）。
+/// 分页语义：各源取**累计前缀**（`page × pageSize`）后全局排序再切窗口，保证翻页连续
+/// （`total` 仍为各源 total 之和，是上界近似）。
 async fn search_aggregate_category(
     state: &SharedState,
     src: &str,
@@ -1066,8 +1141,16 @@ async fn search_aggregate_category(
     // ponytail: 分类聚合把请求量放大到最多 12 组（6 类型 × 2~3 平台），顺序执行会
     // 把延迟叠成十几秒，所以这里并发发出；各请求互相独立，任一失败即整体失败
     // （与单源/聚合源的既有语义一致）。
+    //
+    // 各源取**累计前缀**（0 到 `page × pageSize`）而非「第 page 页」：否则全局排序后
+    // 落到第一页之外的条目（典型是 download_count=0 的 Technic）会在后续页永远取不到。
+    let fetch_size = (page.max(1))
+        .saturating_mul(page_size.max(1))
+        .min(MAX_AGGREGATE_FETCH);
     let futures = queries.into_iter().map(|(ty, platform)| async move {
         if !cn_candidates.is_empty() && (ty == "mod" || ty == "datapack") {
+            // 中文候选分支必须与其它分支取**同一个累计前缀**（CodeRabbit 在 PR #187
+            // 指出）：否则中文搜索的后续页不是同一累计结果集的连续窗口，会漏项/重复。
             let (items, total) = search_cn_candidates(
                 state,
                 cn_candidates,
@@ -1077,8 +1160,8 @@ async fn search_aggregate_category(
                 loader,
                 sort,
                 tags,
-                page,
-                page_size,
+                1,
+                fetch_size,
             )
             .await;
             Ok((items, total))
@@ -1092,8 +1175,9 @@ async fn search_aggregate_category(
                 loader,
                 sort,
                 tags,
-                page,
-                page_size,
+                // 累计前缀：page=1 起取 0..fetch_size
+                1,
+                fetch_size,
             )
             .await
         }
@@ -1101,22 +1185,16 @@ async fn search_aggregate_category(
     let results = futures::future::join_all(futures).await;
 
     let mut merged: Vec<ResourceItemDto> = Vec::new();
-    let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut total = 0i32;
     for result in results {
         let (items, t) = result?;
         total = total.saturating_add(t);
-        for it in items {
-            // 同一工程可能以多种类型命中（如既是 mod 又是 datapack），按 (source,id)
-            // 去重，保留先出现的类型，避免同一条目在列表里出现两次。
-            if seen.insert((it.source.clone(), it.id.clone())) {
-                merged.push(it);
-            }
-        }
+        merged.extend(items);
     }
-    merged.sort_by(|a, b| b.download_count.cmp(&a.download_count));
-    merged.truncate(page_size as usize);
-    Ok((merged, total))
+    // 全局排序后切出请求页（分页连续性见 `aggregate_window` 的说明），
+    // total 收敛到实际可浏览的上限（见 `aggregate_honest_total`）。
+    let window = aggregate_window(merged, page, page_size);
+    Ok((window, aggregate_honest_total(total)))
 }
 
 /// 中文关键词候选检索：Modrinth 批量取回候选 slug + 首候选搜索补充；
@@ -1449,6 +1527,37 @@ async fn search_one(
             .map(|p| ftb_pack_to_item(p, "ftb", "modpack"))
             .collect();
         Ok((items, total))
+    } else if source.eq_ignore_ascii_case("technic") {
+        // Technic 只有整合包（issue #151）。
+        if !category.unwrap_or("").eq_ignore_ascii_case("modpack") {
+            return Ok((vec![], 0));
+        }
+        let technic = state.core.create_technic_source();
+        // 无关键词 → 服务端 /search 返回 400，改走 /trending 填默认列表（实测）。
+        let (packs, total) = if keyword.trim().is_empty() {
+            technic.trending().await
+        } else {
+            technic.search(keyword).await
+        }
+        .map_err(|e| ApiError::upstream(e.to_string()))?;
+        // ⚠️ 分页语义：Technic API **无分页**（固定 15 / 20 条，忽略 page）。
+        //
+        // 这里仍按 page/page_size 做内存切片，保证与其它源的契约一致；但
+        // ①`total` 回报**本次实际条数**（不伪造总数，否则前端「加载更多」会
+        // 无限拉取永远取不到的第 2 页）；②只有第 1 页可能非空——`page>1` 时
+        // 切片结果自然为空，这正是「服务端没有更多数据」的如实表达。
+        //
+        // 因此**不把 technic 计入聚合分页**会更好，但用户已确认纳入聚合源
+        // （见 platforms_for_type / sources）；聚合分支用的是 `search_one` 的
+        // 返回值并统一按下载量归并截断，故此处语义安全。
+        let offset = ((page - 1).max(0) as usize) * page_size.max(0) as usize;
+        let items: Vec<ResourceItemDto> = packs
+            .iter()
+            .skip(offset)
+            .take(page_size.max(0) as usize)
+            .map(|p| technic_summary_to_item(p, category.unwrap_or("modpack")))
+            .collect();
+        Ok((items, total))
     } else {
         Ok((vec![], 0))
     }
@@ -1585,6 +1694,54 @@ async fn detail(
             project_url: format!("https://www.feed-the-beast.com/modpacks/{}", slug),
             slug: slug.clone(),
             body: pack.description.clone().unwrap_or_default(),
+        })
+        .into_response());
+    }
+
+    if src.eq_ignore_ascii_case("technic") {
+        // id 即 slug：实测数字 id 在详情接口上 404，slug 是唯一键（ADR-103）。
+        let technic = state.core.create_technic_source();
+        let pack = technic
+            .get_pack_detail(&id)
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let pack = match pack {
+            Some(p) => p,
+            None => {
+                return Err(ApiError::not_found(
+                    "NOT_FOUND",
+                    "Technic modpack not found",
+                ))
+            }
+        };
+        return Ok(Json(ResourceDetailDto {
+            // `id` 必须是 **slug**，与列表项（`technic_summary_to_item`）保持一致。
+            //
+            // CodeRabbit 在 PR #187 指出（已核实为真缺陷）：列表用 slug 作 id，而这里
+            // 原先用数字 id，导致详情页收藏时 `toggleFavorite(detail)` 写入数字 id 的
+            // 记录，而收藏态判定用的是 URL 里的 slug → 按钮永远显示未收藏、且产生重复记录。
+            // 数字 id 在 DTO 里无处需要（`project_url` 已含网页地址），故直接用 slug。
+            id: pack.name.clone(),
+            title: pack.instance_name().to_string(),
+            description: pack.description.clone(),
+            author: pack.user.clone(),
+            icon_url: pack
+                .icon
+                .as_ref()
+                .map(|a| a.url().to_string())
+                .or_else(|| pack.logo.as_ref().map(|a| a.url().to_string()))
+                .unwrap_or_default(),
+            download_count: pack.installs,
+            source: "technic".to_string(),
+            // tags 实测形态不稳定（逗号/空格分隔/null），尽力拆分；拆不出就空。
+            categories: pack
+                .tags
+                .as_deref()
+                .map(qomicex_core::models::expansion::technic::split_tags)
+                .unwrap_or_default(),
+            project_url: pack.web_url(),
+            slug: pack.name.clone(),
+            body: String::new(),
         })
         .into_response());
     }
@@ -1778,6 +1935,57 @@ async fn versions(
         return Ok(Json(dtos));
     }
 
+    if src.eq_ignore_ascii_case("technic") {
+        // Technic **无版本列表**：一个包只有一个 `version` 字符串 + 一个直链
+        // （ADR-103 实测）。因此这里把「包本身」建模成唯一的版本条目，让前端
+        // 现有的「选版本 → 安装」流程无需特殊分支即可工作。
+        //
+        // 版本 id 用 slug（唯一键）；SingleZip 的直链填进 downloads，使前端的
+        // 「保存到本地」按钮也能用。Solder / 不可用包给空 downloads，前端据此
+        // 提示「暂不支持」（期3 #181）。
+        let technic = state.core.create_technic_source();
+        let pack = technic
+            .get_pack_detail(&id)
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let Some(pack) = pack else {
+            return Ok(Json(vec![]));
+        };
+        // 版本号：API 的 version 字段（如 "4.1.0"）；空则退化为 slug。
+        let version_number = if pack.version.trim().is_empty() {
+            pack.name.clone()
+        } else {
+            pack.version.clone()
+        };
+        let downloads = match pack.single_zip_url() {
+            Some(u) => vec![ResourceFileDto {
+                url: u.to_string(),
+                // 文件名：列表接口不给包体文件名，用 slug-version.zip 构造（仅展示用，
+                // 真实下载由后端按 URL 落地，不经前端文件名）。
+                filename: format!("{}-{}.zip", pack.name, version_number),
+                size: 0,
+            }],
+            None => Vec::new(),
+        };
+        let game_versions = if pack.minecraft.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![pack.minecraft.clone()]
+        };
+        return Ok(Json(vec![ResourceVersionDto {
+            id: pack.name.clone(),
+            name: version_number.clone(),
+            version_number,
+            game_versions,
+            // 加载器维度需读包内 version.json，列表/详情接口拿不到 → 留空由
+            // 安装管线自行识别（technic 转换器会解析出真实 loader）。
+            loaders: Vec::new(),
+            downloads,
+            dependencies: None,
+            date_published: None,
+        }]));
+    }
+
     Ok(Json(vec![]))
 }
 
@@ -1868,6 +2076,29 @@ async fn version_downloads(
                 size: f.size,
             })
             .collect();
+        return Ok(Json(files));
+    }
+
+    if src.eq_ignore_ascii_case("technic") {
+        // Technic 无版本概念（`version_id` 即 slug 回显，见 versions 分支），
+        // 直链直接由详情给出；这里同样按详情解析，保证与 versions 分支一致。
+        let technic = state.core.create_technic_source();
+        let pack = technic
+            .get_pack_detail(&id)
+            .await
+            .map_err(|e| ApiError::upstream(e.to_string()))?;
+        let Some(pack) = pack else {
+            return Ok(Json(vec![]));
+        };
+        let files = match pack.single_zip_url() {
+            Some(u) => vec![ResourceFileDto {
+                url: u.to_string(),
+                filename: format!("{}-{}.zip", pack.name, pack.version),
+                size: 0,
+            }],
+            // Solder / 不可用：无直链（前端据此提示「暂不支持」，期3 #181）
+            None => Vec::new(),
+        };
         return Ok(Json(files));
     }
 
@@ -2133,6 +2364,35 @@ fn ftb_pack_to_item(
             .unwrap_or_default(),
         project_url: format!("https://www.feed-the-beast.com/modpacks/{}", slug),
         slug: slug.clone(),
+        category: category.to_string(),
+    }
+}
+
+/// Technic 列表项 → 通用资源条目（issue #151）。
+///
+/// Technic 列表接口只给 5 个字段（id/name/slug/url/iconUrl），没有下载量/作者/
+/// 简介——**详情接口才有**。为不在搜索路径上多打 N 次详情请求，这里按可得字段
+/// 填充，缺失项留空：
+/// - `id` 用 **slug**（唯一可寻址键，详见 technic 模块注释）；数字 id 仅作
+///   `project_url` 的组成部分。
+/// - `download_count` 置 0：列表接口不提供，前端按下载量排序时该项恒排末尾
+///   （不伪造数字，避免误导排序）。
+/// - `project_url` 用列表项自带的网页地址（实测可靠）。
+fn technic_summary_to_item(
+    p: &qomicex_core::models::expansion::technic::TechnicPackSummary,
+    category: &str,
+) -> ResourceItemDto {
+    ResourceItemDto {
+        id: p.slug.clone(),
+        title: p.name.clone(),
+        description: String::new(),
+        author: String::new(),
+        icon_url: p.icon_url.clone(),
+        download_count: 0,
+        source: "technic".to_string(),
+        categories: Vec::new(),
+        project_url: p.url.clone(),
+        slug: p.slug.clone(),
         category: category.to_string(),
     }
 }
@@ -3194,5 +3454,206 @@ mod favorites_tests {
         assert_eq!(v["slug"], "neoforge");
         assert_eq!(v["name"], "NeoForge");
         assert_eq!(v.as_object().unwrap().len(), 2);
+    }
+
+    // =================================================================
+    // #151 Technic 源
+    // =================================================================
+
+    /// Technic 只提供整合包：类型表必须只在 modpack 一行出现它，且不污染其它类型。
+    #[test]
+    fn technic_is_only_a_modpack_platform() {
+        assert!(platforms_for_type("modpack").contains(&"technic"));
+        for ty in ["mod", "shader", "resourcepack", "datapack", "save"] {
+            assert!(
+                !platforms_for_type(ty).contains(&"technic"),
+                "{ty} 不应包含 technic（该平台无此类资源）"
+            );
+        }
+    }
+
+    /// 聚合源的 modpack 分支必须包含 technic（用户确认纳入聚合，见决策记录）。
+    #[test]
+    fn technic_aggregates_for_modpack() {
+        // 与 `search` 中 all + modpack 的映射保持同步：四处清单任一不同步，
+        // 聚合结果就会与单源结果不一致（这类漂移无编译期保护，只能靠测试守）。
+        assert!(platforms_for_type("modpack").contains(&"technic"));
+    }
+
+    /// 列表项 → DTO：`id` 必须是 **slug**（唯一可寻址键），不是数字 id。
+    ///
+    /// 数字 id 在详情接口上 404（ADR-103 实测），若这里误用 `p.id`，
+    /// 前端点进详情/安装会全部失败。
+    #[test]
+    fn technic_summary_maps_slug_as_id() {
+        use qomicex_core::models::expansion::technic::TechnicPackSummary;
+        let p = TechnicPackSummary {
+            id: "1540828".into(),
+            name: "Agrarian Skies".into(),
+            slug: "agrarian-skies".into(),
+            url: "https://www.technicpack.net/modpack/agrarian-skies.1540828".into(),
+            icon_url: "https://cdn/icon.png".into(),
+        };
+        let item = technic_summary_to_item(&p, "modpack");
+        assert_eq!(
+            item.id, "agrarian-skies",
+            "id 必须是 slug（数字 id 会 404）"
+        );
+        assert_eq!(item.slug, "agrarian-skies");
+        assert_eq!(item.title, "Agrarian Skies");
+        assert_eq!(item.source, "technic");
+        assert_eq!(item.category, "modpack");
+        assert_eq!(item.project_url, p.url);
+        // 列表接口不提供下载量：如实为 0，不伪造
+        assert_eq!(item.download_count, 0);
+    }
+
+    /// DTO 的 JSON 契约：前端按 camelCase 解构（`iconUrl` / `downloadCount`）。
+    #[test]
+    fn technic_item_json_contract_is_camel_case() {
+        use qomicex_core::models::expansion::technic::TechnicPackSummary;
+        let p = TechnicPackSummary {
+            id: "1".into(),
+            name: "X".into(),
+            slug: "x".into(),
+            url: "u".into(),
+            icon_url: "i".into(),
+        };
+        let v = serde_json::to_value(technic_summary_to_item(&p, "modpack")).unwrap();
+        assert!(v.as_object().unwrap().contains_key("iconUrl"));
+        assert!(v.as_object().unwrap().contains_key("downloadCount"));
+        assert!(v.as_object().unwrap().contains_key("projectUrl"));
+        assert!(!v.as_object().unwrap().contains_key("icon_url"));
+    }
+
+    /// 聚合分页连续性（CodeRabbit PR #187 的回归护栏）。
+    ///
+    /// Technic 条目的 `download_count` 恒为 0（列表接口不提供，见 ADR-103），按下载量
+    /// 排序后必然排在最后。若「各源只取第 page 页再排序截断」，这些条目在第 1 页被
+    /// `truncate` 掉、第 2 页又从各源 offset=pageSize 开始 → **永远浏览不到，但 total
+    /// 统计了它们**。`aggregate_window` 改为「累计取前缀 → 全局排序 → 切窗口」后，
+    /// 逐页遍历必须能覆盖到每一条。
+    #[test]
+    fn aggregate_window_pages_cover_zero_download_entries() {
+        let mk = |source: &str, id: &str, downloads: i64| ResourceItemDto {
+            id: id.to_string(),
+            title: id.to_string(),
+            description: String::new(),
+            author: String::new(),
+            icon_url: String::new(),
+            download_count: downloads,
+            source: source.to_string(),
+            categories: Vec::new(),
+            project_url: String::new(),
+            slug: id.to_string(),
+            category: "modpack".to_string(),
+        };
+
+        // 30 条高下载量 + 3 条 download_count=0 的 technic 条目（模拟聚合池）
+        let mut pool: Vec<ResourceItemDto> = (0..30)
+            .map(|i| mk("modrinth", &format!("mr{i}"), 1000 - i as i64))
+            .collect();
+        pool.extend((0..3).map(|i| mk("technic", &format!("tc{i}"), 0)));
+
+        let page_size = 10;
+        // 逐页取窗口（模拟带累计前缀的真实取数：每页用完整的 pool 当「已取前缀」）
+        let mut seen: Vec<String> = Vec::new();
+        for page in 1..=4 {
+            let w = aggregate_window(pool.clone(), page, page_size);
+            for it in &w {
+                assert!(!seen.contains(&it.id), "条目 {} 跨页重复", it.id);
+                seen.push(it.id.clone());
+            }
+        }
+        // 零下载量的 technic 条目必须全部可达（这正是修复前失败的点）
+        for i in 0..3 {
+            assert!(
+                seen.contains(&format!("tc{i}")),
+                "download_count=0 的 technic 条目 tc{i} 应可被翻页取到"
+            );
+        }
+        // 第 1 页仍必须是最高下载量在前（排序语义不变）
+        let first = aggregate_window(pool, 1, page_size);
+        assert_eq!(first[0].download_count, 1000);
+        assert!(first.iter().all(|it| it.download_count > 0));
+    }
+
+    /// 聚合窗口的边界：空输入、越界页码、page=0、pageSize=0 都不 panic 且返回空。
+    #[test]
+    fn aggregate_window_handles_edges() {
+        let mk = |id: &str| ResourceItemDto {
+            id: id.to_string(),
+            title: id.to_string(),
+            description: String::new(),
+            author: String::new(),
+            icon_url: String::new(),
+            download_count: 1,
+            source: "modrinth".to_string(),
+            categories: Vec::new(),
+            project_url: String::new(),
+            slug: id.to_string(),
+            category: "mod".to_string(),
+        };
+        assert!(aggregate_window(Vec::new(), 1, 10).is_empty());
+        // 越界页
+        assert!(aggregate_window(vec![mk("a")], 5, 10).is_empty());
+        // page=0 视作第 1 页（offset 钳位），不 panic
+        assert_eq!(aggregate_window(vec![mk("a")], 0, 10).len(), 1);
+        // pageSize=0 → 空且不 panic
+        assert!(aggregate_window(vec![mk("a")], 1, 0).is_empty());
+    }
+
+    /// `(source,id)` 去重：同一工程以多类型命中时只保留先出现的一条。
+    #[test]
+    fn aggregate_window_dedups_by_source_and_id() {
+        let mk = |cat: &str, downloads: i64| ResourceItemDto {
+            id: "same".to_string(),
+            title: "T".to_string(),
+            description: String::new(),
+            author: String::new(),
+            icon_url: String::new(),
+            download_count: downloads,
+            source: "modrinth".to_string(),
+            categories: Vec::new(),
+            project_url: String::new(),
+            slug: "same".to_string(),
+            category: cat.to_string(),
+        };
+        let out = aggregate_window(vec![mk("mod", 5), mk("datapack", 9)], 1, 10);
+        assert_eq!(out.len(), 1, "同 (source,id) 应去重");
+    }
+
+    /// `total` 必须收敛到实际可浏览上限（CodeRabbit PR #187 第二轮 finding）。
+    ///
+    /// 聚合每次只取 `min(page×pageSize, MAX_AGGREGATE_FETCH)` 条前缀，因此超过 200 条的
+    /// 部分永远取不到；若 total 仍报各源总数之和，前端会以为还有下一页 → 出现「翻到
+    /// 后面是空页但按钮还在」的虚假承诺。
+    #[test]
+    fn aggregate_total_is_capped_to_reachable_range() {
+        // 未达上限：如实回报
+        assert_eq!(aggregate_honest_total(37), 37);
+        assert_eq!(
+            aggregate_honest_total(MAX_AGGREGATE_FETCH),
+            MAX_AGGREGATE_FETCH
+        );
+        // 超过上限：收敛（否则报出取不到的条目数）
+        assert_eq!(
+            aggregate_honest_total(MAX_AGGREGATE_FETCH + 1),
+            MAX_AGGREGATE_FETCH
+        );
+        assert_eq!(aggregate_honest_total(100_000), MAX_AGGREGATE_FETCH);
+    }
+
+    /// 取回上限与 `total` 口径必须一致：`fetch_size` 的封顶值就是可浏览条目数的上界。
+    #[test]
+    fn fetch_cap_matches_reachable_total() {
+        // 深页码时 fetch_size 封顶在 MAX_AGGREGATE_FETCH
+        let page: i32 = 999;
+        let page_size: i32 = 20;
+        let fetch_size = page.saturating_mul(page_size).min(MAX_AGGREGATE_FETCH);
+        assert_eq!(
+            fetch_size, MAX_AGGREGATE_FETCH,
+            "深页码的单源取回量应封顶，且该封顶即 total 的上界"
+        );
     }
 }

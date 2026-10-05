@@ -181,7 +181,7 @@ export function matchLaunchTarget<T extends LaunchCandidate>(
 }
 
 /** 后端 `install-direct` 在线分支接受的来源标识（见 `modpack.rs` 的 source 匹配）。 */
-export type ModpackSource = 'modrinth' | 'curseforge' | 'ftb'
+export type ModpackSource = 'modrinth' | 'curseforge' | 'ftb' | 'technic'
 
 function normalizeModpackSource(raw: string | null): ModpackSource | null {
   switch ((raw ?? '').trim().toLowerCase()) {
@@ -193,9 +193,22 @@ function normalizeModpackSource(raw: string | null): ModpackSource | null {
       return 'curseforge'
     case 'ftb':
       return 'ftb'
+    case 'technic':
+      return 'technic'
     default:
       return null
   }
+}
+
+/**
+ * 该来源是否**只**需要 projectId（无 fileId 概念）。
+ *
+ * Technic 一个包只有一个直链，没有「版本 id」这一层（issue #151，ADR-103）：
+ * `projectId` 即 slug。其余三个源的 `fileId` 是版本身份，缺一不可——
+ * 后端 `install_direct` 对非 technic 源仍强制要求两者齐备。
+ */
+export function sourceNeedsFileId(source: ModpackSource): boolean {
+  return source !== 'technic'
 }
 
 /**
@@ -263,9 +276,11 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
         if (!source) return null
         const projectId = url.searchParams.get('projectId')?.trim()
         const fileId = url.searchParams.get('fileId')?.trim()
-        if (!projectId || !fileId) return null
+        // Technic 无 fileId（一个包 = 一个直链）；其余源必须有版本身份。
+        if (!projectId) return null
+        if (sourceNeedsFileId(source) && !fileId) return null
         const name = url.searchParams.get('name')?.trim() || undefined
-        return { kind: 'installModpack', source, projectId, fileId, name }
+        return { kind: 'installModpack', source, projectId, fileId: fileId ?? '', name }
       }
       return null
     }

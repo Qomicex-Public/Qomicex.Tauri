@@ -66,6 +66,7 @@ function getSourceLabel(source: string): string {
     modrinth: 'Modrinth',
     curseforge: 'CurseForge',
     ftb: 'FTB',
+    technic: 'Technic',
   }
   return map[source] ?? source
 }
