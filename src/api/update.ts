@@ -182,17 +182,22 @@ export async function stagePendingInstall(
   })
 }
 
-/** 消费待安装记录（读后按结果写回：递增尝试数 / 清记录 / 记作废版本）。 */
+/**
+ * 消费待安装记录（读后按结果写回：递增尝试数 / 清记录 / 记作废版本）。
+ *
+ * **IPC 失败必须抛出**（与 `fetchAutoInstallState` 同理）：调用方
+ * `installStagedOnLaunch` 只在 `ready` 时装，把失败伪装成 `none` 会让它以为
+ * 「没有待安装记录」而静默返回——用户既看不到更新对话框，也没有任何提示，更新
+ * 就此永久卡住。抛出后由调用方明确区分「无记录」与「读不出来」：后者记 warn 并
+ * 让后台检查（`resolveAutoInstallPlan`）走它自己的回退分支。
+ *
+ * 只有空 dataDir（设置尚未加载完，连 updates 目录都拼不出来）按 `none` 处理。
+ */
 export async function takePendingInstall(dataDir: string): Promise<AutoInstallTake> {
   if (!dataDir) return { status: 'none' }
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    const res = await invoke<AutoInstallTake>('take_pending_update_install', { dataDir })
-    return res ?? { status: 'none' }
-  } catch {
-    // 非 Tauri 环境（浏览器 dev）→ 当作无记录，不影响启动
-    return { status: 'none' }
-  }
+  const { invoke } = await import('@tauri-apps/api/core')
+  const res = await invoke<AutoInstallTake>('take_pending_update_install', { dataDir })
+  return res ?? { status: 'none' }
 }
 
 /** 清除待安装记录与作废标记（用户选择稍后 / 手动安装后 / 已作废提示过后）。 */

@@ -171,3 +171,80 @@ JarMod 注入，关联 issue **#180**），与启动器自动更新毫无关系�
 > 被当成「无记录」返回 `none`，根本走不到目标分支。正确注入点是 `write_auto_install`
 > 实际写入的 `.tmp` 路径——要求「记录可读、写入失败」。
 
+
+
+### 2026-10-06 更新
+
+## 评审修正（第二轮，2026-10-05）
+
+第二轮 review 又抓到 4 项，其中一项是**真 bug**（已用实测确认）。
+
+### 1. 序数必须按数值比较，不能用 semver 的 Ord（Major，真 bug）
+
+`is_older_than` 初版用 `semver::Version` 的 `Ord`。semver 规范对 pre-release
+标识符按 **ASCII 字典序**逐字符比较（只有"纯数字标识符"之间才比数值），而我们的
+版本号把发布序数直接拼进类型名 —— `beta10.0` 整体是一个标识符 `beta10`，不满足
+纯数字条件，于是吃不到数值比较规则：`'9' > '1'` → **`beta9 > beta10`**。
+
+实测确认（semver 1.x）：
+
+```
+parse("0.1.0-beta9.0") < parse("0.1.0-beta10.0")  ==  false
+```
+
+**后果**：磁盘上待安装 beta10、当前跑 beta9 时，防降级守卫把记录误判为"更旧"，
+`take` 返回 `installed` 并清掉记录 → **beta10 的自动安装被静默跳过**，用户永远
+装不上，且没有任何提示。
+
+**修正**：移植后端 `services/update_channel.rs::is_train_upgrade` 的数值解析语义
+（`parse_train_version` / `first_number_run` 逐条对齐），不再用 semver 的 Ord。
+`src-tauri` 不依赖后端 crate（壳与后端是两个独立可执行体），所以是**移植**而非复用；
+代码注释里写明"改这里必须同步改后端，反之亦然"。
+
+> 这个坑后端**早就记录在案**：`update_channel.rs:268` 的注释「semver 规范的 ASCII
+> 字典序会把 '1' < '9'，导致 beta10 < beta9 的误判」，其测试
+> `ordinals_are_numeric_not_lexicographic` 是同一约定的既有护栏。我实现壳侧比较时
+> 没去查后端已有的同类实现，重复踩了一遍。
+
+新增三个测试：`version_order_is_numeric_not_lexicographic`（beta9/beta10 双向）、
+`cross_train_versions_are_never_ordered`（跨列车不可比）、
+`version_parsing_matches_backend_conventions`（只剥小写 v、`beta-x` → Unknown、
+序数取第一串数字等解析约定）。
+
+### 2. `takePendingInstall` 不得把 IPC 错误吞成 `none`
+
+与第一轮 `fetchAutoInstallState` 同类问题：读不出记录时返回 `none`，`installStagedOnLaunch`
+会当作"没有待安装记录"直接返回 —— 用户既看不到更新对话框也没有任何提示，更新**永久卡住**。
+
+修正：API 层抛出，调用方 `installStagedOnLaunch` 显式 catch 并保留 `available`，
+让 App.tsx 的后台检查照常弹更新对话框；只有空 `dataDir` 返回 `none`。
+
+### 3. 开关必须经**父级** `update()` 写入（Major）
+
+`AboutTab` 原来自持 `autoInstall` state 并直接 `saveSettings()`。但父级 `Settings`
+的 `update()` 是 `{ ...settings, [key]: value }` **整体重建**，而父级并不订阅
+`onSettingsChange` → 它的 `settings` 快照里 `updateAutoInstall` 仍是旧值。用户改完
+开关后再改任何其他设置，就会用旧快照把该项**覆盖回 `true`** —— 自动安装被悄悄重新打开。
+
+修正：把值与回调提升到父级（`autoInstall` + `onAutoInstallChange` props），
+开关改动走 `update('updateAutoInstall', next)`，与其余所有设置项同一路径。
+
+### 4. 下载轮询需要 generation 代号才能被真正终止
+
+`discardStaged` / `reset` 原先只 `stopPolling()`，而它仅能清掉**尚未触发**的
+setTimeout。若此刻正卡在 `await get(...progress)`，那次请求返回后仍会继续跑：
+重排下一个 timer、并通过 `onProgress` 把 phase 写回 `downloading`（UI 被从 idle
+拽回"下载中"）；`downloadToUpdates` 的 Promise 也永不 settle，`autoStart` 一直挂着。
+
+修正：引入模块级 `downloadGeneration` 代号。每个下载在开始时捕获当前值，并在
+**每次 await 之后**重新比对；`invalidateDownloads()`（由 `stopPolling` 调用，因而
+`discardStaged`/`reset` 都覆盖）自增代号 → 在飞轮询立即以 `DOWNLOAD_ABORTED`
+reject、不再写状态、不再重排 timer。调用方对该错误码静默收尾（用户已明确取消，
+不该显示成"下载失败"，也不该再写 idle 覆盖取消时刚设好的状态）。
+
+### 验证（本轮）
+
+- `cargo test --lib updater` → **28 例**（新增 3 例）
+- tauri 44 例、backend 419 例；`cargo fmt --check` 双 crate 通过
+- `pnpm run typecheck`（含 i18n submodule）、`pnpm run build` 通过
+

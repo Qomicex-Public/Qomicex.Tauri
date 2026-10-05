@@ -791,3 +791,62 @@ IPC 失败**抛出**，由调用方 `resolveAutoInstallPlan` 的 catch 回退到
   通道往返/旧记录兼容/写失败拒装 3 例）
 - `pnpm run typecheck`（含 i18n submodule）、`cargo fmt --check` 双 crate 通过
 
+
+
+### 2026-10-06 更新
+
+## 评审修正（第二轮，2026-10-05）
+
+> 决策与实测证据见 ADR-107 的「评审修正（第二轮）」。
+
+### 版本比较：必须数值感知，不能用 semver 的 Ord
+
+`is_older_than` / `is_train_upgrade` 从 semver 改为**与后端同语义的数值解析**
+（`parse_train_version` / `first_number_run`）。实测 semver 1.x：
+
+```
+parse("0.1.0-beta9.0") < parse("0.1.0-beta10.0")  ==  false   // beta9 被判成"更新"
+```
+
+原因：semver 对 pre-release 标识符按 ASCII 字典序比较，只有"纯数字标识符"才比数值；
+而 `beta10` 整体是一个标识符，`'9' > '1'`。若不改，`take` 会把"待安装 beta10、
+当前 beta9"误判为记录更旧 → 返回 `installed` 清记录 → **自动安装被静默跳过**。
+
+| 输入 | semver Ord | 本实现（数值感知） |
+|---|---|---|
+| `beta9` vs `beta10` | beta9 更新（**错**） | beta9 更旧（对） |
+| `beta9` vs `beta32` | beta9 更新（**错**） | beta9 更旧（对） |
+| `beta31` vs `release1` | 可比（**错**） | 跨列车不可比 → false |
+| `alpha…22.9` vs `…22.10` | 字典序（**错**） | 数值（对） |
+
+跨列车返回 false（各列车序数独立计数，无法裁决 → 保守放行，不误判降级）。
+
+### `takePendingInstall` 错误语义
+
+IPC 失败**抛出**，不再返回 `none`：返回 `none` 会让 `installStagedOnLaunch` 当作
+"没有待安装记录"直接返回 → 更新永久卡住且用户毫无提示。调用方 catch 后保留
+`available`，由后台检查弹更新对话框。只有空 `dataDir` 返回 `none`。
+
+### 自动更新开关：经父级 `update()` 写入
+
+`AboutTab` 不再自持开关状态，改由父级下发值 + 回调，走 `update('updateAutoInstall', …)`。
+原因：父级 `update()` 以 `{ ...settings, [key]: value }` 整体重建，而父级不订阅
+`onSettingsChange`；若开关绕过父级直接 `saveSettings`，父级快照仍是旧值，用户之后改
+任何其他设置都会把该项覆盖回 `true`。
+
+### 下载终止：generation 代号
+
+模块级 `downloadGeneration`；每个下载开始时捕获，**每次 await 之后**比对。
+`stopPolling()`（含 `invalidateDownloads()`）被 `discardStaged` / `reset` 调用后，
+在飞轮询以 `DOWNLOAD_ABORTED` reject、不写状态、不重排 timer。
+
+为什么仅 `clearTimeout` 不够：它只能清掉尚未触发的 setTimeout。若正卡在
+`await get(…progress)`，返回后仍会重排 timer 并把 phase 写回 `downloading`
+（UI 被从 idle 拽回"下载中"），且 `downloadToUpdates` 的 Promise 永不 settle、
+`autoStart` 一直挂着。调用方对该错误码静默收尾，不显示成"下载失败"。
+
+### 本地验证（本轮）
+
+- `cargo test --lib updater` → **28 例**；tauri 44、backend 419
+- `pnpm run typecheck`（含 i18n submodule）、`pnpm run build`、`cargo fmt --check` 通过
+

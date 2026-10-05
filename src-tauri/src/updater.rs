@@ -300,20 +300,173 @@ fn same_version(a: &str, b: &str) -> bool {
     !a.trim().is_empty() && norm(a) == norm(b)
 }
 
+// ---------------------------------------------------------------------------
+// 版本比较：**数值感知**，不能直接用 semver 的 Ord
+// ---------------------------------------------------------------------------
+//
+// 为什么不能用 `semver::Version`：semver 规范对 pre-release 标识符按 **ASCII
+// 字典序**逐字符比较（数字标识符之间才比数值），于是 `beta9` > `beta10`——因为
+// `'9' > '1'`。实测确认：
+//
+//     semver::Version::parse("0.1.0-beta9.0") < parse("0.1.0-beta10.0")  ==  false
+//
+// 我们的版本号把**发布序数直接拼进类型名**（`beta10.0`），整体是一个标识符
+// `beta10`，不满足 semver 的「纯数字标识符」条件，所以吃不到数值比较规则。
+// 用 semver 判「谁更新」会把 beta10 当成比 beta9 旧 → 误判为降级 → 自动安装被
+// 静默跳过。
+//
+// 本仓库后端 `services/update_channel.rs::is_train_upgrade` 早已为此实现了数值
+// 解析（其测试 `ordinals_are_numeric_not_lexicographic` 专门锁住这个坑）。
+// `src-tauri` 不依赖后端 crate（壳与后端是两个独立可执行体），因此这里**移植同一
+// 套解析语义**（`parse_train_version` / `first_number_run` 的行为逐条对齐），
+// 而不是引入 `semver` 的 Ord。
+//
+// 语义对齐要点（改这里必须同步改后端，反之亦然）：
+// - 剥 `v` 前缀（只剥小写，与后端 `strip_v` 一致）
+// - 核心段取前三段数字；pre-release 首段是「类型名 + 序数」，第二段是 legacy
+//   构建号（`alpha260719.build3`）
+// - 序数取该段**第一串连续数字**（不要求段首）
+// - **跨列车不可比**（各自计数，`release1` 与 `beta31` 分属不同列车）
+
+/// 发布列车（与后端 `Train` 对齐；本处只需区分"是否同一列车"）。
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+enum Train {
+    Release,
+    Beta,
+    Alpha,
+    Dev,
+    Unknown,
+}
+
+/// 解析后的版本：核心三段 + 列车 + 两个序数段。
+///
+/// **刻意不 derive `Ord`**：比较由 [`is_train_upgrade`] 显式做（先判同列车，再比
+/// 五元组），因为 `train` 不是"越大越新"的语义——`Train` 自身没有全序。
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+struct TrainVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    suffix1: u64,
+    suffix2: u64,
+    train: Train,
+}
+
+/// 取一段中**第一串连续数字**的数值；无数字返回 0（对齐后端 `first_number_run`）。
+fn first_number_run(seg: &str) -> u64 {
+    let mut digits = String::new();
+    for c in seg.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    digits.parse().unwrap_or(0)
+}
+
+/// 核心段是否全为数字（容忍空段，如 `1..2`）。
+fn core_is_numeric(core: &str) -> bool {
+    core.split('.')
+        .all(|s| s.is_empty() || s.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// 解析 pre-release 首段（`beta31` / `release1` / `alpha20260823`）为
+/// 「列车 + 序数」。类型名后必须为空或紧跟数字（`beta-x` 不合法 → Unknown）。
+fn parse_type_segment(seg: &str) -> (Train, u64) {
+    let lower = seg.to_ascii_lowercase();
+    for (name, train) in [
+        ("release", Train::Release),
+        ("beta", Train::Beta),
+        ("alpha", Train::Alpha),
+    ] {
+        if let Some(rest) = lower.strip_prefix(name) {
+            if rest.is_empty() || rest.starts_with(|c: char| c.is_ascii_digit()) {
+                return (train, first_number_run(rest));
+            }
+        }
+    }
+    (Train::Unknown, 0)
+}
+
+/// 解析启动器版本号；无法解析（空串 / 核心段非数字）返回 `None`。
+fn parse_train_version(raw: &str) -> Option<TrainVersion> {
+    let v = raw.trim().trim_start_matches('v');
+    if v.is_empty() {
+        return None;
+    }
+    let (core, pre) = match v.split_once('-') {
+        Some((c, p)) => (c, Some(p)),
+        None => (v, None),
+    };
+    if !core_is_numeric(core) {
+        return None;
+    }
+    let mut nums = core
+        .split('.')
+        .filter(|s| !s.is_empty())
+        .map(first_number_run);
+    let major = nums.next()?;
+    let minor = nums.next().unwrap_or(0);
+    let patch = nums.next().unwrap_or(0);
+
+    let Some(pre) = pre else {
+        // 无 pre-release 后缀 = 本地开发构建，不属于任何已发布列车。
+        return Some(TrainVersion {
+            major,
+            minor,
+            patch,
+            train: Train::Dev,
+            suffix1: 0,
+            suffix2: 0,
+        });
+    };
+    let mut segs = pre.split('.');
+    let (train, suffix1) = parse_type_segment(segs.next().unwrap_or(""));
+    let suffix2 = segs.next().map(first_number_run).unwrap_or(0);
+    Some(TrainVersion {
+        major,
+        minor,
+        patch,
+        train,
+        suffix1,
+        suffix2,
+    })
+}
+
+/// 同列车内 `candidate` 是否比 `current` 新（数值感知，`beta10.0 > beta9.0`）。
+///
+/// **跨列车一律 false**：各列车序数独立计数（`beta31` 与 `release1` 不可比）。
+fn is_train_upgrade(current: &str, candidate: &str) -> bool {
+    let (Some(cur), Some(cand)) = (parse_train_version(current), parse_train_version(candidate))
+    else {
+        return false;
+    };
+    if cur.train != cand.train {
+        return false;
+    }
+    (
+        cand.major,
+        cand.minor,
+        cand.patch,
+        cand.suffix1,
+        cand.suffix2,
+    ) > (cur.major, cur.minor, cur.patch, cur.suffix1, cur.suffix2)
+}
+
 /// `staged` 是否**旧于** `current`（为真 = 该记录已被运行中的版本取代，不该再装）。
 ///
 /// 这是自动安装链路的**防降级守卫**：用户手动点过「立即更新」装上更新的版本后，
 /// 磁盘上可能还留着上一轮自动下载的旧包记录；照常安装就是一次静默降级。
 ///
-/// 版本号无法解析（非 semver）时返回 false —— 宁可放行（走原有安装路径），
-/// 也不要因为解析不了就悄悄吞掉用户已经下载好的更新。同一版本不算 old
-/// （那由 [`same_version`] 先处理）。
+/// 判定用 [`is_train_upgrade`]（数值感知）而不是 semver 的 Ord —— 后者会把
+/// `beta10` 当成比 `beta9` 旧（见上方模块注释），导致本守卫误判成"记录更新"而
+/// 放行一次降级。**跨列车返回 false**（无法裁决，保守放行），无法解析同样 false：
+/// 宁可放行（走原有安装路径），也不要因为判不出来就悄悄吞掉用户已下好的更新。
+/// 同一版本不算 old（那由 [`same_version`] 先处理）。
 fn is_older_than(staged: &str, current: &str) -> bool {
-    let parse = |v: &str| semver::Version::parse(v.trim().trim_start_matches(['v', 'V'])).ok();
-    match (parse(staged), parse(current)) {
-        (Some(s), Some(c)) => s < c,
-        _ => false,
-    }
+    // staged < current：即"反过来看，current 比 staged 新"。
+    is_train_upgrade(staged, current)
 }
 
 fn auto_install_path(updates_dir: &Path) -> std::path::PathBuf {
@@ -1300,6 +1453,84 @@ mod tests {
             "解析失败必须保守放行"
         );
         assert!(!is_older_than("1.0.0", "not-a-version"));
+    }
+
+    /// **序数必须按数值比较，不能走 semver 的 Ord**（CodeRabbit review 抓到的真
+    /// bug）：semver 对 `beta10` 这种「类型名+序数」整体是一个标识符，按 ASCII
+    /// 字典序逐字符比 → `beta9 > beta10`。
+    ///
+    /// 实测（semver 1.x）：`parse("0.1.0-beta9.0") < parse("0.1.0-beta10.0")` 为
+    /// **false**。若用 semver 的 Ord，beta10 会被判成比 beta9 旧，`is_older_than`
+    /// 于是把"磁盘上 beta10 待安装、当前跑 beta9"误判为「记录更旧、该丢弃」，自动
+    /// 安装被静默跳过。
+    ///
+    /// 两个方向都要锁：本仓库后端 `update_channel.rs` 的
+    /// `ordinals_are_numeric_not_lexicographic` 是同一约定的既有护栏。
+    #[test]
+    fn version_order_is_numeric_not_lexicographic() {
+        // 9 → 10 是升级（字典序会判反）
+        assert!(
+            is_older_than("0.1.0-beta9.0", "0.1.0-beta10.0"),
+            "beta9 早于 beta10，应判定为更旧"
+        );
+        assert!(
+            !is_older_than("0.1.0-beta10.0", "0.1.0-beta9.0"),
+            "beta10 不早于 beta9（字典序会误判为更旧）"
+        );
+        // 同列车更大的序数：自动安装必须放行
+        assert!(is_older_than("0.1.0-beta31.0", "0.1.0-beta32.0"));
+        assert!(!is_older_than("0.1.0-beta32.0", "0.1.0-beta31.0"));
+        // alpha 日期序数（legacy 形态的第二段构建号同样数值比较）
+        assert!(is_older_than(
+            "0.1.0-alpha20260822.9",
+            "0.1.0-alpha20260822.10"
+        ));
+        assert!(is_older_than(
+            "0.1.0-alpha260719.build1",
+            "0.1.0-alpha260719.build2"
+        ));
+        // 核心段数值比较
+        assert!(is_older_than("0.1.0-beta1.0", "0.2.0-beta1.0"));
+        assert!(is_older_than("0.1.0-release1.0", "0.1.1-release1.0"));
+    }
+
+    /// 跨列车**不可比**：各列车序数独立计数，返回 false（保守放行，不误判降级）。
+    #[test]
+    fn cross_train_versions_are_never_ordered() {
+        assert!(!is_older_than("0.1.0-beta31.0", "0.1.0-release1.0"));
+        assert!(!is_older_than("0.1.0-release1.0", "0.1.0-beta31.0"));
+        assert!(!is_older_than("0.1.0-alpha20260823.0", "0.1.0-beta31.0"));
+        // dev 构建（裸 X.Y.Z）不属任何列车
+        assert!(!is_older_than("0.1.0", "0.1.0-release1.0"));
+    }
+
+    /// 解析语义必须与后端 `parse_train_version` 逐条对齐：
+    /// 只剥小写 `v`、`beta-x` 之类非法类型段 → Unknown（跨列车 → 不比）。
+    #[test]
+    fn version_parsing_matches_backend_conventions() {
+        assert_eq!(
+            parse_train_version("0.1.0-beta31.0").unwrap().train,
+            Train::Beta
+        );
+        assert_eq!(
+            parse_train_version("v0.1.0-release1.0").unwrap().train,
+            Train::Release
+        );
+        assert_eq!(parse_train_version("0.1.0").unwrap().train, Train::Dev);
+        // 大写 V 不剥 → 核心段 `V0.1.0` 非数字 → 解析失败（与后端同结论）
+        assert!(parse_train_version("V0.1.0-beta1.0").is_none());
+        // `beta-x` 不算合法序数段 → Unknown
+        assert_eq!(
+            parse_train_version("0.1.0-beta-x").unwrap().train,
+            Train::Unknown
+        );
+        // 序数取该段第一串连续数字（不要求段首）
+        assert_eq!(
+            parse_train_version("0.1.0-beta12-hotfix").unwrap().suffix1,
+            12
+        );
+        assert_eq!(first_number_run("build3"), 3);
+        assert_eq!(first_number_run("nodigits"), 0);
     }
 
     /// peek（`auto_install_state`）必须**不推进 attempts**：前端每次渲染/每次启动

@@ -4,6 +4,7 @@ import {
   clearPendingInstall,
   stagePendingInstall,
   takePendingInstall,
+  type AutoInstallTake,
   type PendingUpdateInstall,
   type UpdatePlan,
 } from '../api/update.ts'
@@ -93,12 +94,35 @@ interface UpdaterState {
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * 下载代号（generation）。每次「取消/丢弃/复位」自增一次。
+ *
+ * 为什么需要它：`stopPolling()` 只能清掉**尚未触发**的 setTimeout。若此刻正卡在
+ * `await get(...progress)` 里，那次请求返回后仍会继续跑——重新排下一个 timer，并
+ * 通过 `onProgress` 把 phase 写回 `'downloading'`，把 UI 从 idle 拽回"下载中"。
+ * 更糟的是 `downloadToUpdates` 的 Promise 永不 settle，`autoStart` 一直挂着、闭包
+ * 不释放（review 指出）。
+ *
+ * 所以每个下载在开始时捕获当前代号，并在**每次 await 之后**重新比对：代号变了就
+ * 立即以中止错误 reject，不再写任何状态、也不再重排 timer。
+ */
+let downloadGeneration = 0
+
+/** 让所有在飞下载失效（配合各自的代号比对使用）。 */
+function invalidateDownloads() {
+  downloadGeneration += 1
+}
+
 function stopPolling() {
   if (pollTimer) {
     clearTimeout(pollTimer)
     pollTimer = null
   }
+  invalidateDownloads()
 }
+
+/** 下载被「取消/丢弃/复位」中止时抛出的错误码（与真实下载失败区分）。 */
+const DOWNLOAD_ABORTED = 'UPDATE_DOWNLOAD_ABORTED'
 
 async function runUpdater(packagePath: string, signature: string, version: string, changelog: string | undefined) {
   const { invoke } = await import('@tauri-apps/api/core')
@@ -115,6 +139,9 @@ function currentDataDir(): string {
  *
  * 手动（`start`）与自动（`autoStart`）共用这段下载逻辑，只有**完成后的动作**
  * 不同——这样两条路径的进度/失败语义（含「单次轮询失败不终止」的重试）不会漂移。
+ *
+ * 被 `invalidateDownloads()` 中止（用户关开关/复位）时以 `DOWNLOAD_ABORTED` reject，
+ * 调用方据此静默收尾，不当成下载失败。
  */
 async function downloadToUpdates(
   plan: UpdatePlan,
@@ -127,12 +154,20 @@ async function downloadToUpdates(
     targetPath: `${dataDir}/updates/${fileName}`,
   })
 
+  // 捕获本次下载的代号：此后每次 await 之后都比对，变了说明已被取消。
+  const generation = downloadGeneration
+
   await new Promise<void>((resolve, reject) => {
     const poll = async () => {
       try {
         const p = await get<{ status: string; progress?: number; error?: string | null }>(
           `/plugins/download/${res.taskId}/progress`,
         )
+        // await 之后先查代号：已被取消则不再写状态、不再重排 timer，直接中止。
+        if (generation !== downloadGeneration) {
+          reject(new Error(DOWNLOAD_ABORTED))
+          return
+        }
         if (p.status === 'completed') {
           resolve()
           return
@@ -148,7 +183,12 @@ async function downloadToUpdates(
         if (typeof p.progress === 'number') onProgress(Math.min(99, p.progress))
         pollTimer = setTimeout(poll, 1000)
       } catch {
-        // 单次轮询失败不终止流程（后端短暂不可达），1s 后重试
+        // 单次轮询失败不终止流程（后端短暂不可达），1s 后重试。
+        // 但若这期间已被取消（代号变了），不再重排——否则被取消的下载会自己复活。
+        if (generation !== downloadGeneration) {
+          reject(new Error(DOWNLOAD_ABORTED))
+          return
+        }
         pollTimer = setTimeout(poll, 1000)
       }
     }
@@ -197,6 +237,8 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
       // 成功路径应用已退出；若仍在运行说明 updater 未生效
       set({ phase: 'error', error: 'UPDATER_NOT_CONFIRMED' })
     } catch (e) {
+      // 被复位中止（用户点了「重试」/关开关）：静默回 idle，不显示成下载失败。
+      if (e instanceof Error && e.message === DOWNLOAD_ABORTED) return
       set({ phase: 'error', error: e instanceof Error ? e.message : String(e) })
     }
   },
@@ -239,6 +281,9 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
       })
       set({ phase: 'ready', progress: 100, staged, toastDismissed: false })
     } catch (e) {
+      // 被「关开关/复位」中止：用户已明确不要这次下载，静默收尾即可——**不要**写
+      // idle（discardStaged/reset 已经写过状态，这里再写可能覆盖它们刚设好的值）。
+      if (e instanceof Error && e.message === DOWNLOAD_ABORTED) return
       // 自动流程失败不打扰用户：回到 idle，保留 available 供手动更新入口使用。
       console.warn('[updater] auto download failed:', e)
       set({ phase: 'idle', progress: 0, error: undefined })
@@ -263,7 +308,16 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
     if (!dataDir) return
     // 启动路径只处理 ready：安装失败后不应在同一次启动里反复重试。
     if (getState().phase !== 'idle') return
-    const taken = await takePendingInstall(dataDir)
+    let taken: AutoInstallTake
+    try {
+      taken = await takePendingInstall(dataDir)
+    } catch (e) {
+      // 读不出待安装记录（IPC 失败/后端未就绪）：**不能**当成「没有记录」静默返回，
+      // 否则更新就此永久卡住且用户毫无提示。这里保留 available，让 App.tsx 的后台
+      // 检查（5s，晚于本函数的 2s）照常弹更新对话框，用户仍有手动入口。
+      console.warn('[updater] take pending install failed — 回退手动更新入口:', e)
+      return
+    }
     if (taken.status === 'installed') {
       // 目标版本已在运行 = 上次更新装成了、或用户已通过别的途径升到更新版本，
       // 记录已被壳侧清掉（自动流程的收敛点）。
@@ -310,11 +364,14 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
   },
 
   discardStaged() {
+    // stopPolling 内含 invalidateDownloads()：在飞的轮询会在下一个 await 后中止，
+    // 不会再把 phase 写回 downloading，也不会重排 timer（review 指出）。
     stopPolling()
     set({ phase: 'idle', progress: 0, version: undefined, staged: null, toastDismissed: false, error: undefined })
   },
 
   reset() {
+    // 同样经 stopPolling 让在飞轮询失效（见 discardStaged 注释）。
     stopPolling()
     // 只复位下载/安装流程状态，**不动 `available`**：reset 是「重试下载」的入口
     // （UpdateDialog 下载失败后调用），下载失败不代表更新不再可用，清掉提示会让

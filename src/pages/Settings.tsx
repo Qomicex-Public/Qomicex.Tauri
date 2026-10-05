@@ -54,7 +54,7 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, getSettings, onSettingsChange, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, getSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
 import type { CacheStats, CacheDirStats } from '../api/settings.ts'
 import { cacheInvalidate } from '../lib/simple-cache.ts'
 import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
@@ -230,30 +230,25 @@ function BackgroundPreview({ name, url, className }: { name: string; url: string
   return <img src={url} alt={name} className={className} />
 }
 
-function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
+function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog, autoInstall, onAutoInstallChange }: {
   sysInfo: SystemInfo | null
   licenseStatus: LicenseStatus | null
   onOpenLicenseDialog: () => void
+  /**
+   * 自动更新开关的当前值（由父级 `settings` state 下发，**不由本组件自己持有**）。
+   *
+   * 为什么必须走父级：父级 `update()` 会以 `{ ...settings, [key]: value }` 整体
+   * 重建并落盘。若本组件只调 `saveSettings` 改 `updateAutoInstall`，父级的
+   * `settings` 快照仍是旧值（父级并不订阅 `onSettingsChange`），用户之后改任何
+   * 其他设置都会用旧快照把 `updateAutoInstall` 覆盖回去——自动安装被悄悄重新打开。
+   */
+  autoInstall: boolean
+  onAutoInstallChange: (next: boolean) => void
 }) {
   const [expandedDep, setExpandedDep] = useState<string | null>(null)
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'uptodate' | 'error'>('idle')
   const [pendingUpdate, setPendingUpdate] = useState<UpdatePlan | null>(null)
   const [updateError, setUpdateError] = useState<string>()
-  /**
-   * 自动更新开关的本地状态。
-   *
-   * 取值口径与后端 `SettingsResponse::default()` 一致：**缺失/false 之外的任何值
-   * 都视为开启**（默认开）。这里从全局设置快照初始化，改动即经 `saveSettings`
-   * 落盘并广播（`onSettingsChange`），无需重新加载。
-   */
-  const [autoInstall, setAutoInstall] = useState(() => getSettings().updateAutoInstall !== false)
-
-  // 与全局设置快照保持同步：设置可能在别处被重新加载（后端就绪后 loadSettings、
-  // 或 App 的初始化向导写回），此时开关必须反映真实落盘值而不是挂载时的旧值。
-  useEffect(
-    () => onSettingsChange((s) => setAutoInstall(s.updateAutoInstall !== false)),
-    [],
-  )
   // 默认通道跟随已安装构建所属列车（beta 构建默认 beta），不再硬编码 stable。
   const [channel, setChannel] = useState(() => resolveChannel(APP_INFO.version) ?? 'stable')
   /**
@@ -549,8 +544,9 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog }: {
                 checked={autoInstall}
                 onCheckedChange={(c) => {
                   const next = c === true
-                  setAutoInstall(next)
-                  void saveSettings({ ...getSettings(), updateAutoInstall: next })
+                  // 经父级 update() 写入：父级会以最新 settings 快照整体重建并落盘，
+                  // 保证后续任何设置改动都不会用陈旧快照把本项覆盖回旧值（review 指出）。
+                  onAutoInstallChange(next)
                   if (!next) {
                     // 关闭自动更新时，磁盘记录**和** store 里的 staged 都要清掉：
                     // - 磁盘记录不清，下次启动会被 `installStagedOnLaunch` 读到并静默
@@ -2668,7 +2664,7 @@ export default function Settings() {
 
           <TabContent activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
           <TabContent activeTab={category} tabId="plugins"><PluginStoreTab /></TabContent>
-          <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} /></TabContent>
+          <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} autoInstall={settings.updateAutoInstall !== false} onAutoInstallChange={(next) => update('updateAutoInstall', next)} /></TabContent>
           <TabContent activeTab={category} tabId="logs"><LogTab /></TabContent>
           <TabContent activeTab={category} tabId="debug"><DebugTab /></TabContent>
 
